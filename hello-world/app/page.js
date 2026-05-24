@@ -376,8 +376,6 @@ export default function Home() {
 
         {hasCompletedCall && result ? (
           <section className={styles.resultSection}>
-            <h2 className={styles.resultTitle}>Gemini Output</h2>
-            <pre className={styles.result}>{result}</pre>
             <button
               type="button"
               className={styles.secondaryButton}
