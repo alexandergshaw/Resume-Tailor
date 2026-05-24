@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Document, Packer, Paragraph, TextRun } from "docx";
 import JSZip from "jszip";
 import styles from "./page.module.css";
 
@@ -18,15 +17,42 @@ export default function Home() {
   const [hasCompletedCall, setHasCompletedCall] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
 
-  function getDownloadFileName() {
-    const fallback = "tailored-resume.docx";
+  function sanitizeFileNamePart(value) {
+    return value
+      .replace(/[\\/:*?"<>|]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
 
-    if (!resumeFile?.name) {
-      return fallback;
+  function inferJobTitleFromPosting(posting) {
+    const lines = posting
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    const titlePrefixPattern = /^(job title|title|role|position)\s*[:\-]\s*(.+)$/i;
+
+    for (const line of lines) {
+      const prefixedMatch = line.match(titlePrefixPattern);
+
+      if (prefixedMatch?.[2]) {
+        return sanitizeFileNamePart(prefixedMatch[2]);
+      }
     }
 
-    const withoutExtension = resumeFile.name.replace(/\.[^/.]+$/, "");
-    return `${withoutExtension}-tailored.docx`;
+    const firstUsefulLine = lines.find((line) => line.length <= 100) || lines[0] || "";
+    const cleaned = firstUsefulLine
+      .replace(/\s+at\s+.+$/i, "")
+      .replace(/\s*\|\s*.+$/, "")
+      .replace(/^[\-:]+|[\-:]+$/g, "")
+      .trim();
+
+    return sanitizeFileNamePart(cleaned);
+  }
+
+  function getDownloadFileName() {
+    const inferredTitle = inferJobTitleFromPosting(jobPosting) || "Target Role";
+    return `Resume - ${inferredTitle}.docx`;
   }
 
   function isDocxResume(file) {
@@ -238,33 +264,21 @@ export default function Home() {
       return;
     }
 
+    if (!isDocxResume(resumeFile)) {
+      setError(
+        "To preserve internal metadata and formatting exactly, upload the source resume as .docx.",
+      );
+      return;
+    }
+
     setIsDownloading(true);
 
     try {
-      let blob;
-
-      if (isDocxResume(resumeFile)) {
-        blob = await buildDocxFromUploadedTemplate(resumeFile, result, resultLines);
-      } else {
-        const paragraphs = result.split("\n").map((line) => {
-          if (!line.trim()) {
-            return new Paragraph({ children: [new TextRun("")] });
-          }
-
-          return new Paragraph({ children: [new TextRun(line)] });
-        });
-
-        const doc = new Document({
-          sections: [
-            {
-              properties: {},
-              children: paragraphs,
-            },
-          ],
-        });
-
-        blob = await Packer.toBlob(doc);
-      }
+      const blob = await buildDocxFromUploadedTemplate(
+        resumeFile,
+        result,
+        resultLines,
+      );
 
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
