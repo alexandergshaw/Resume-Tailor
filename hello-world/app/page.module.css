@@ -27,6 +27,18 @@
   color: #132033;
 }
 
+.subtitle {
+  margin: 0;
+  color: #516173;
+  line-height: 1.5;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
 .fieldGroup {
   display: flex;
   flex-direction: column;
@@ -65,6 +77,52 @@
   background: #ffffff;
   color: #132033;
   font: inherit;
+}
+
+.button {
+  width: fit-content;
+  border: none;
+  border-radius: 10px;
+  padding: 12px 18px;
+  background: #1f5dc9;
+  color: #ffffff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.error {
+  margin: 0;
+  color: #c1292e;
+  font-weight: 600;
+}
+
+.resultSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.resultTitle {
+  margin: 0;
+  color: #132033;
+  font-size: 1.2rem;
+}
+
+.result {
+  margin: 0;
+  border: 1px solid #d9dee5;
+  border-radius: 10px;
+  padding: 14px;
+  background: #f7f9fc;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
 }
 
 @media (max-width: 640px) {

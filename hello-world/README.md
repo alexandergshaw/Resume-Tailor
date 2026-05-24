@@ -1,5 +1,25 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Gemini API Architecture
+
+The app is wired to call Gemini from the server:
+
+- UI form in `app/page.js`
+- API route in `app/api/tailor/route.js`
+- Gemini service in `lib/llm/tailorResume.js`
+- Gemini client in `lib/llm/geminiClient.js`
+- Server env helper in `lib/config/env.js`
+
+### Environment Variables
+
+Create a `.env.local` file in the project root:
+
+```bash
+GEMINI_API_KEY=your_api_key_here
+# Optional override (defaults to gemini-2.5-flash)
+GEMINI_MODEL=gemini-2.5-flash
+```
+
 ## Getting Started
 
 First, run the development server:
