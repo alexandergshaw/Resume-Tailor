@@ -19,7 +19,7 @@ function createTabId() {
 function createResumeTab(index) {
   return {
     id: createTabId(),
-    title: `Resume ${index}`,
+    title: `Job Posting ${index}`,
     jobPosting: "",
     resumeFile: null,
     result: "",
@@ -495,15 +495,30 @@ export default function Home() {
                   <Tab
                     value={tab.id}
                     label={
-                      <Box sx={{ display: "inline-flex", alignItems: "center", gap: 1 }}>
+                      <Box
+                        sx={{
+                          position: "relative",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 1,
+                          width: "100%",
+                          pr: 2,
+                        }}
+                      >
+                        <span>{tab.title}</span>
                         <Badge
                           color="error"
                           variant="dot"
-                          overlap="circular"
                           invisible={!tab.hasDownloadNotification}
-                        >
-                          <span>{tab.title}</span>
-                        </Badge>
+                          sx={{
+                            position: "absolute",
+                            top: -4,
+                            right: -2,
+                            "& .MuiBadge-badge": {
+                              transform: "none",
+                            },
+                          }}
+                        />
                         {tabs.length > 1 ? (
                           <Box
                             component="span"
