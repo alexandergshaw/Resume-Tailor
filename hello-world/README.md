@@ -15,7 +15,7 @@ The app is wired to call Gemini from the server:
 Create a `.env.local` file in the project root:
 
 ```bash
-GEMINI_API_KEY=your_api_key_here
+Gemini_LLM_API_Key=your_api_key_here
 # Optional override (defaults to gemini-2.5-flash)
 GEMINI_MODEL=gemini-2.5-flash
 ```

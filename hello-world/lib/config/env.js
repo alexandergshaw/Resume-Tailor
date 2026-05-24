@@ -1,4 +1,4 @@
-const REQUIRED_SERVER_KEYS = ["GEMINI_API_KEY"];
+const REQUIRED_SERVER_KEYS = ["Gemini_LLM_API_Key"];
 
 export function getServerEnv() {
   const missingKeys = REQUIRED_SERVER_KEYS.filter((key) => !process.env[key]);
@@ -10,7 +10,7 @@ export function getServerEnv() {
   }
 
   return {
-    geminiApiKey: process.env.GEMINI_API_KEY,
+    geminiApiKey: process.env.Gemini_LLM_API_Key,
     geminiModel: process.env.GEMINI_MODEL || "gemini-2.5-flash",
   };
 }
