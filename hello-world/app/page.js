@@ -475,12 +475,16 @@ export default function Home() {
                 borderTopRightRadius: 10,
                 marginRight: "6px",
                 backgroundColor: "var(--bg-soft)",
-                color: "var(--text-secondary)",
+                color: "var(--text-muted)",
                 padding: "6px 10px",
+                transition: "background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease",
               },
               "& .MuiTab-root.Mui-selected": {
-                color: "var(--text-primary)",
+                color: "var(--accent)",
                 backgroundColor: "var(--bg-surface)",
+                borderColor: "var(--accent)",
+                boxShadow: "inset 0 3px 0 0 var(--accent)",
+                fontWeight: 700,
               },
               "& .MuiTabs-indicator": {
                 display: "none",
