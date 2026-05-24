@@ -23,6 +23,11 @@ export default function Home() {
       return;
     }
 
+    if (!resumeFile) {
+      setError("Please upload a resume file.");
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -59,8 +64,9 @@ export default function Home() {
       <main className={styles.main}>
         <h1 className={styles.title}>Resume Tailor</h1>
         <p className={styles.subtitle}>
-          Submit a job posting and your resume, then the backend calls Gemini to
-          produce a tailored resume draft.
+          Upload a resume (.txt, .md, or .docx) and a job posting, then Gemini
+          will generate a tailored version that mirrors the original layout and
+          formatting.
         </p>
 
         <form className={styles.form} onSubmit={handleSubmit}>
@@ -87,7 +93,7 @@ export default function Home() {
               name="resume"
               type="file"
               className={styles.fileInput}
-              accept=".txt,.md,.pdf,.doc,.docx"
+              accept=".txt,.md,.markdown,.docx"
               onChange={(event) => {
                 setResumeFile(event.target.files?.[0] || null);
               }}
