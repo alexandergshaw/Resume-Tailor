@@ -493,11 +493,23 @@ export default function Home() {
           >
             {tabs.map((tab) => {
               const tooltipTitle = tab.generatedJobTitle || tab.title;
+              const isActive = tab.id === activeTab.id;
 
               return (
                 <Tooltip key={tab.id} title={tooltipTitle} arrow>
                   <Tab
                     value={tab.id}
+                    sx={{
+                      backgroundColor: isActive
+                        ? "rgba(13, 74, 143, 0.12)"
+                        : "var(--bg-soft)",
+                      color: isActive ? "var(--accent)" : "var(--text-muted)",
+                      borderColor: isActive ? "var(--accent)" : "var(--border)",
+                      boxShadow: isActive
+                        ? "inset 0 3px 0 0 var(--accent), 0 0 0 1px rgba(13, 74, 143, 0.16)"
+                        : "none",
+                      fontWeight: isActive ? 800 : 600,
+                    }}
                     label={
                       <Box
                         sx={{
