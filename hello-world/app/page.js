@@ -35,6 +35,7 @@ function createResumeTab(index) {
 const INITIAL_TAB = createResumeTab(1);
 
 export default function Home() {
+  const [resumeFile, setResumeFile] = useState(null);
   const [tabs, setTabs] = useState([INITIAL_TAB]);
   const [activeTabId, setActiveTabId] = useState(INITIAL_TAB.id);
 
@@ -89,6 +90,11 @@ export default function Home() {
       0,
       90,
     );
+    return `Resume - ${cleanedTitle || "Target Role"}.docx`;
+  }
+
+  function getDownloadFileNameForTitle(jobTitle) {
+    const cleanedTitle = sanitizeFileNamePart(jobTitle || "").slice(0, 90);
     return `Resume - ${cleanedTitle || "Target Role"}.docx`;
   }
 
@@ -295,44 +301,49 @@ export default function Home() {
     });
   }
 
-  async function handleDownloadDocx() {
-    if (!activeTab.result.trim()) {
-      updateTab(activeTab.id, { error: "Nothing to download yet. Generate a resume first." });
+  async function downloadDocxForTab({ tabId, jobTitle, result, resultLines }) {
+    if (!result.trim()) {
+      updateTab(tabId, { error: "Nothing to download yet. Generate a resume first." });
       return;
     }
 
-    if (!isDocxResume(activeTab.resumeFile)) {
-      updateTab(activeTab.id, {
+    if (!isDocxResume(resumeFile)) {
+      updateTab(tabId, {
         error:
           "To preserve internal metadata and formatting exactly, upload the source resume as .docx.",
       });
       return;
     }
 
-    updateTab(activeTab.id, { isDownloading: true, error: "" });
+    updateTab(tabId, { isDownloading: true, error: "" });
 
     try {
-      const blob = await buildDocxFromUploadedTemplate(
-        activeTab.resumeFile,
-        activeTab.result,
-        activeTab.resultLines,
-      );
+      const blob = await buildDocxFromUploadedTemplate(resumeFile, result, resultLines);
 
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = getDownloadFileName();
+      link.download = getDownloadFileNameForTitle(jobTitle);
       document.body.appendChild(link);
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
     } catch (downloadError) {
-      updateTab(activeTab.id, {
+      updateTab(tabId, {
         error: downloadError.message || "Unable to download DOCX file.",
       });
     } finally {
-      updateTab(activeTab.id, { isDownloading: false });
+      updateTab(tabId, { isDownloading: false });
     }
+  }
+
+  async function handleDownloadDocx() {
+    await downloadDocxForTab({
+      tabId: activeTab.id,
+      jobTitle: activeTab.generatedJobTitle,
+      result: activeTab.result,
+      resultLines: activeTab.resultLines,
+    });
   }
 
   async function handleSubmit(event) {
@@ -358,7 +369,7 @@ export default function Home() {
       return;
     }
 
-    if (!tabSnapshot.resumeFile) {
+    if (!resumeFile) {
       updateTab(tabId, { error: "Please upload a resume file." });
       return;
     }
@@ -368,10 +379,10 @@ export default function Home() {
     try {
       const formData = new FormData();
       formData.append("jobPosting", tabSnapshot.jobPosting);
-      const templateLines = await buildTemplateLinesForUpload(tabSnapshot.resumeFile);
+      const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
 
-      formData.append("resume", tabSnapshot.resumeFile);
+      formData.append("resume", resumeFile);
 
       const response = await fetch("/api/tailor", {
         method: "POST",
@@ -384,18 +395,29 @@ export default function Home() {
         throw new Error(payload.error || "Failed to generate a response.");
       }
 
+      const nextResult = payload.result?.trim() || "No output returned from Gemini.";
+      const nextResultLines = Array.isArray(payload.resultLines) ? payload.resultLines : [];
+      const nextJobTitle =
+        typeof payload.jobTitle === "string" ? payload.jobTitle.trim() : "";
+
       updateTab(tabId, (tab) => ({
         ...tab,
-        result: payload.result?.trim() || "No output returned from Gemini.",
-        resultLines: Array.isArray(payload.resultLines) ? payload.resultLines : [],
-        generatedJobTitle:
-          typeof payload.jobTitle === "string" ? payload.jobTitle.trim() : "",
+        result: nextResult,
+        resultLines: nextResultLines,
+        generatedJobTitle: nextJobTitle,
         hasCompletedCall: true,
         title:
-          typeof payload.jobTitle === "string" && payload.jobTitle.trim()
-            ? payload.jobTitle.trim().slice(0, 36)
+          nextJobTitle
+            ? nextJobTitle.slice(0, 36)
             : tab.title,
       }));
+
+      await downloadDocxForTab({
+        tabId,
+        jobTitle: nextJobTitle,
+        result: nextResult,
+        resultLines: nextResultLines,
+      });
     } catch (submitError) {
       updateTab(tabId, {
         error: submitError.message || "Unexpected error.",
@@ -415,6 +437,22 @@ export default function Home() {
           will generate a tailored version that mirrors the original layout and
           formatting.
         </p>
+
+        <div className={styles.fieldGroup}>
+          <label htmlFor="resume" className={styles.label}>
+            Resume
+          </label>
+          <input
+            id="resume"
+            name="resume"
+            type="file"
+            className={styles.fileInput}
+            accept=".txt,.md,.markdown,.docx"
+            onChange={(event) => {
+              setResumeFile(event.target.files?.[0] || null);
+            }}
+          />
+        </div>
 
         <Box className={styles.tabsBar}>
           <Tabs
@@ -446,39 +484,44 @@ export default function Home() {
               },
             }}
           >
-            {tabs.map((tab) => (
-              <Tab
-                key={tab.id}
-                value={tab.id}
-                label={
-                  <Box sx={{ display: "inline-flex", alignItems: "center", gap: 1 }}>
-                    <span>{tab.title}</span>
-                    {tabs.length > 1 ? (
-                      <Box
-                        component="span"
-                        sx={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          width: 16,
-                          height: 16,
-                          borderRadius: "50%",
-                          fontSize: 12,
-                          lineHeight: 1,
-                          "&:hover": { backgroundColor: "rgba(0,0,0,0.1)" },
-                        }}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          closeTab(tab.id);
-                        }}
-                      >
-                        x
+            {tabs.map((tab) => {
+              const tooltipTitle = tab.generatedJobTitle || tab.title;
+
+              return (
+                <Tooltip key={tab.id} title={tooltipTitle} arrow>
+                  <Tab
+                    value={tab.id}
+                    label={
+                      <Box sx={{ display: "inline-flex", alignItems: "center", gap: 1 }}>
+                        <span>{tab.title}</span>
+                        {tabs.length > 1 ? (
+                          <Box
+                            component="span"
+                            sx={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              width: 16,
+                              height: 16,
+                              borderRadius: "50%",
+                              fontSize: 12,
+                              lineHeight: 1,
+                              "&:hover": { backgroundColor: "rgba(0,0,0,0.1)" },
+                            }}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              closeTab(tab.id);
+                            }}
+                          >
+                            x
+                          </Box>
+                        ) : null}
                       </Box>
-                    ) : null}
-                  </Box>
-                }
-              />
-            ))}
+                    }
+                  />
+                </Tooltip>
+              );
+            })}
           </Tabs>
           <Tooltip title="New tab">
             <IconButton
@@ -510,22 +553,6 @@ export default function Home() {
               value={activeTab.jobPosting}
               onChange={(event) => {
                 updateTab(activeTab.id, { jobPosting: event.target.value });
-              }}
-            />
-          </div>
-
-          <div className={styles.fieldGroup}>
-            <label htmlFor="resume" className={styles.label}>
-              Resume
-            </label>
-            <input
-              id="resume"
-              name="resume"
-              type="file"
-              className={styles.fileInput}
-              accept=".txt,.md,.markdown,.docx"
-              onChange={(event) => {
-                updateTab(activeTab.id, { resumeFile: event.target.files?.[0] || null });
               }}
             />
           </div>
