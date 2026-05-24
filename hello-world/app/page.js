@@ -8,6 +8,8 @@ import styles from "./page.module.css";
 const WORDPROCESSINGML_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
+const HEADING_STYLE_HINTS = ["heading", "title", "subtitle", "header"];
+
 export default function Home() {
   const [jobPosting, setJobPosting] = useState("");
   const [resumeFile, setResumeFile] = useState(null);
@@ -37,6 +39,85 @@ export default function Home() {
       .replace(/\r\n/g, "\n")
       .split("\n")
       .map((line) => line.trimEnd());
+  }
+
+  function getDirectChildrenByTag(parentNode, localTagName) {
+    return Array.from(parentNode.childNodes).filter(
+      (node) =>
+        node.nodeType === Node.ELEMENT_NODE &&
+        node.localName === localTagName &&
+        node.namespaceURI === WORDPROCESSINGML_NS,
+    );
+  }
+
+  function getParagraphPlainText(paragraphNode) {
+    const textNodes = paragraphNode.getElementsByTagNameNS(
+      WORDPROCESSINGML_NS,
+      "t",
+    );
+
+    return Array.from(textNodes)
+      .map((node) => node.textContent || "")
+      .join("");
+  }
+
+  function classifyGeneratedLine(line) {
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      return "blank";
+    }
+
+    if (/^[-*•]\s+/.test(trimmed)) {
+      return "list";
+    }
+
+    if ((trimmed.endsWith(":") && trimmed.length <= 70) || /^[A-Z0-9\s&/,-]+$/.test(trimmed)) {
+      return "heading";
+    }
+
+    return "body";
+  }
+
+  function classifyTemplateParagraph(paragraphNode) {
+    const plainText = getParagraphPlainText(paragraphNode).trim();
+    const paragraphProperties = paragraphNode.getElementsByTagNameNS(
+      WORDPROCESSINGML_NS,
+      "pPr",
+    )[0];
+
+    if (!plainText) {
+      return "blank";
+    }
+
+    if (
+      paragraphProperties?.getElementsByTagNameNS(WORDPROCESSINGML_NS, "numPr")
+        .length
+    ) {
+      return "list";
+    }
+
+    const paragraphStyle = paragraphProperties
+      ?.getElementsByTagNameNS(WORDPROCESSINGML_NS, "pStyle")?.[0]
+      ?.getAttributeNS(WORDPROCESSINGML_NS, "val")
+      ?.toLowerCase();
+
+    if (
+      paragraphStyle &&
+      HEADING_STYLE_HINTS.some((hint) => paragraphStyle.includes(hint))
+    ) {
+      return "heading";
+    }
+
+    if (plainText.length <= 70 && /^[A-Z0-9\s&/,-]+$/.test(plainText)) {
+      return "heading";
+    }
+
+    return "body";
+  }
+
+  function removeBulletPrefix(line) {
+    return line.replace(/^[-*•]\s+/, "").trimStart();
   }
 
   function setParagraphText(paragraphNode, value, xmlDoc) {
@@ -86,27 +167,74 @@ export default function Home() {
     }
 
     const lines = normalizeResultLines(generatedText);
-    const existingParagraphs = Array.from(
-      bodyNode.getElementsByTagNameNS(WORDPROCESSINGML_NS, "p"),
-    );
+    const existingParagraphs = getDirectChildrenByTag(bodyNode, "p");
 
     if (existingParagraphs.length === 0) {
       throw new Error("Uploaded DOCX template has no editable paragraphs.");
     }
 
-    for (let index = 0; index < existingParagraphs.length; index += 1) {
-      setParagraphText(existingParagraphs[index], lines[index] || "", xmlDoc);
-    }
+    const paragraphsByType = {
+      heading: [],
+      list: [],
+      body: [],
+      blank: [],
+    };
 
-    if (lines.length > existingParagraphs.length) {
-      const referenceParagraph = existingParagraphs[existingParagraphs.length - 1];
+    existingParagraphs.forEach((paragraphNode) => {
+      const type = classifyTemplateParagraph(paragraphNode);
+      paragraphsByType[type].push(paragraphNode);
+    });
 
-      for (let index = existingParagraphs.length; index < lines.length; index += 1) {
-        const clonedParagraph = referenceParagraph.cloneNode(true);
-        setParagraphText(clonedParagraph, lines[index], xmlDoc);
-        bodyNode.insertBefore(clonedParagraph, bodyNode.lastChild);
+    const fallbackTemplate =
+      paragraphsByType.body[0] ||
+      paragraphsByType.list[0] ||
+      paragraphsByType.heading[0] ||
+      existingParagraphs[0];
+
+    const cursors = {
+      heading: 0,
+      list: 0,
+      body: 0,
+      blank: 0,
+    };
+
+    function takeTemplateParagraph(type) {
+      const pool = paragraphsByType[type];
+
+      if (pool.length > 0) {
+        const index = Math.min(cursors[type], pool.length - 1);
+        cursors[type] += 1;
+        return pool[index];
       }
+
+      return fallbackTemplate;
     }
+
+    const generatedParagraphs = lines.map((line) => {
+      const lineType = classifyGeneratedLine(line);
+      const templateParagraph = takeTemplateParagraph(lineType);
+      const clonedParagraph = templateParagraph.cloneNode(true);
+      const usesListTemplate = classifyTemplateParagraph(templateParagraph) === "list";
+      const finalText =
+        lineType === "list" && usesListTemplate ? removeBulletPrefix(line) : line;
+
+      setParagraphText(clonedParagraph, finalText, xmlDoc);
+      return clonedParagraph;
+    });
+
+    const sectionNode = getDirectChildrenByTag(bodyNode, "sectPr")[0] || null;
+
+    existingParagraphs.forEach((paragraphNode) => {
+      bodyNode.removeChild(paragraphNode);
+    });
+
+    generatedParagraphs.forEach((paragraphNode) => {
+      if (sectionNode) {
+        bodyNode.insertBefore(paragraphNode, sectionNode);
+      } else {
+        bodyNode.appendChild(paragraphNode);
+      }
+    });
 
     const serializedXml = new XMLSerializer().serializeToString(xmlDoc);
     zip.file(documentXmlPath, serializedXml);
