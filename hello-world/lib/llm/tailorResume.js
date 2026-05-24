@@ -10,7 +10,7 @@ function buildTemplateLinesBlock(templateLines) {
 function buildTailorPrompt({ jobPosting, resumeText, resumeFileName, templateLines }) {
   return [
     "You are an expert resume editor.",
-    "Rewrite the resume to match the job posting while preserving the source resume layout as closely as possible.",
+    "Rewrite the resume to match the job posting as aggressively as possible while preserving the source resume layout exactly.",
     "",
     "Hard constraints:",
     "1) Keep the exact section order, heading style, capitalization, and punctuation pattern from the original resume.",
@@ -23,11 +23,15 @@ function buildTailorPrompt({ jobPosting, resumeText, resumeFileName, templateLin
       .map(() => "\"\"")
       .join(", ")}]}`,
     `8) resultLines must contain exactly ${templateLines.length} strings.`,
+    "9) Preserve contact identity lines (name, email, phone, LinkedIn, portfolio links) unless the line clearly is not contact info.",
     "",
-    "Content goals:",
-    "1) Tailor wording and accomplishments to the job posting keywords.",
-    "2) Preserve truthful information from the original resume.",
-    "3) Improve impact and relevance without inventing facts.",
+    "Aggressive optimization goals:",
+    "1) Maximize semantic overlap with the job posting using the posting's exact terminology.",
+    "2) Rewrite titles, professional summary, skills, projects, and experience bullets to mirror the target role language.",
+    "3) Inject missing required tools, technologies, and domain keywords from the posting into the most relevant line slots.",
+    "4) Prioritize posting alignment over preserving original phrasing.",
+    "5) Keep output realistic and coherent as a resume.",
+    "6) Internally self-check that major required keywords from the posting appear across resultLines before final output.",
     "",
     `Job posting:\n${jobPosting}`,
     "",
