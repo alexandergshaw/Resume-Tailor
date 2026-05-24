@@ -467,23 +467,29 @@ export default function Home() {
               minHeight: 0,
               flex: 1,
               "& .MuiTab-root": {
-                minHeight: 38,
+                minHeight: 40,
                 textTransform: "none",
                 border: "1px solid var(--border)",
                 borderBottom: "none",
-                borderTopLeftRadius: 10,
-                borderTopRightRadius: 10,
-                marginRight: "6px",
-                backgroundColor: "var(--bg-soft)",
+                borderTopLeftRadius: 12,
+                borderTopRightRadius: 12,
+                marginRight: "8px",
+                backgroundColor: "rgba(255, 255, 255, 0.7)",
                 color: "var(--text-muted)",
-                padding: "6px 10px",
-                transition: "background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease",
+                padding: "6px 12px",
+                backdropFilter: "blur(4px)",
+                transition:
+                  "background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease",
+                "&:hover": {
+                  backgroundColor: "rgba(255, 255, 255, 0.94)",
+                  color: "var(--text-primary)",
+                },
               },
               "& .MuiTab-root.Mui-selected": {
                 color: "var(--accent)",
                 backgroundColor: "var(--bg-surface)",
-                borderColor: "var(--accent)",
-                boxShadow: "inset 0 3px 0 0 var(--accent)",
+                borderColor: "var(--border-strong)",
+                boxShadow: "0 8px 16px -14px rgba(17, 60, 110, 0.55)",
                 fontWeight: 700,
               },
               "& .MuiTabs-indicator": {
@@ -500,15 +506,17 @@ export default function Home() {
                   <Tab
                     value={tab.id}
                     sx={{
-                      backgroundColor: isActive
-                        ? "rgba(13, 74, 143, 0.12)"
-                        : "var(--bg-soft)",
-                      color: isActive ? "var(--accent)" : "var(--text-muted)",
-                      borderColor: isActive ? "var(--accent)" : "var(--border)",
-                      boxShadow: isActive
-                        ? "inset 0 3px 0 0 var(--accent), 0 0 0 1px rgba(13, 74, 143, 0.16)"
-                        : "none",
-                      fontWeight: isActive ? 800 : 600,
+                      "&::after": {
+                        content: '""',
+                        position: "absolute",
+                        left: 10,
+                        right: 10,
+                        bottom: 0,
+                        height: 2,
+                        borderRadius: 999,
+                        backgroundColor: isActive ? "var(--accent)" : "transparent",
+                        transition: "background-color 0.2s ease",
+                      },
                     }}
                     label={
                       <Box
@@ -543,13 +551,18 @@ export default function Home() {
                               display: "inline-flex",
                               alignItems: "center",
                               justifyContent: "center",
-                              width: 16,
-                              height: 16,
+                              width: 18,
+                              height: 18,
                               borderRadius: "50%",
-                              fontSize: 12,
+                              fontSize: 13,
                               lineHeight: 1,
                               marginLeft: "auto",
-                              "&:hover": { backgroundColor: "rgba(0,0,0,0.1)" },
+                              color: "var(--text-secondary)",
+                              transition: "background-color 0.15s ease, color 0.15s ease",
+                              "&:hover": {
+                                backgroundColor: "rgba(17, 34, 51, 0.08)",
+                                color: "var(--text-primary)",
+                              },
                             }}
                             onClick={(event) => {
                               event.stopPropagation();
@@ -572,10 +585,16 @@ export default function Home() {
               onClick={addTab}
               sx={{
                 border: "1px solid var(--border)",
-                borderRadius: "10px 10px 0 0",
+                borderRadius: "12px 12px 0 0",
                 width: 38,
                 height: 38,
-                backgroundColor: "var(--bg-soft)",
+                backgroundColor: "rgba(255, 255, 255, 0.78)",
+                color: "var(--text-secondary)",
+                transition: "background-color 0.2s ease, color 0.2s ease",
+                "&:hover": {
+                  backgroundColor: "var(--bg-surface)",
+                  color: "var(--accent)",
+                },
               }}
             >
               +
