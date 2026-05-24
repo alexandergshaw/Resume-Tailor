@@ -1,7 +1,13 @@
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 
-function buildTailorPrompt({ jobPosting, resumeText, resumeFileName }) {
+function buildTemplateLinesBlock(templateLines) {
+  return templateLines
+    .map((line, index) => `${index + 1}. ${line || ""}`)
+    .join("\n");
+}
+
+function buildTailorPrompt({ jobPosting, resumeText, resumeFileName, templateLines }) {
   return [
     "You are an expert resume editor.",
     "Rewrite the resume to match the job posting while preserving the source resume layout as closely as possible.",
@@ -10,10 +16,13 @@ function buildTailorPrompt({ jobPosting, resumeText, resumeFileName }) {
     "1) Keep the exact section order, heading style, capitalization, and punctuation pattern from the original resume.",
     "2) Keep line-break rhythm, indentation, and bullet style consistent with the original resume.",
     "3) Keep date/location formatting and overall positioning conventions consistent with the original resume.",
-    "4) Keep the same number of non-empty lines as the original resume whenever possible.",
-    "5) Keep each revised line close in length to the corresponding original line to minimize layout shifts.",
-    "6) Do not add explanatory notes, JSON, markdown fences, or commentary.",
-    "7) Return only the final revised resume text.",
+    "4) Rewrite each line slot in order without changing slot count.",
+    "5) Keep each rewritten line close in length to its source line to minimize layout shifts.",
+    "6) Do not add explanatory notes, markdown, or extra keys.",
+    `7) Output JSON only in this exact shape: {\"resultLines\": [${templateLines
+      .map(() => "\"\"")
+      .join(", ")}]}`,
+    `8) resultLines must contain exactly ${templateLines.length} strings.`,
     "",
     "Content goals:",
     "1) Tailor wording and accomplishments to the job posting keywords.",
@@ -24,28 +33,100 @@ function buildTailorPrompt({ jobPosting, resumeText, resumeFileName }) {
     "",
     `Resume file name: ${resumeFileName || "Not provided"}`,
     `Resume content:\n${resumeText || "Not provided"}`,
+    "",
+    "Line slots to rewrite:",
+    buildTemplateLinesBlock(templateLines),
   ].join("\n");
+}
+
+function fitLinesToCount(lines, targetCount) {
+  if (targetCount <= 0) {
+    return [];
+  }
+
+  if (!Array.isArray(lines) || lines.length === 0) {
+    return new Array(targetCount).fill("");
+  }
+
+  if (lines.length < targetCount) {
+    return [...lines, ...new Array(targetCount - lines.length).fill("")];
+  }
+
+  if (lines.length > targetCount) {
+    return lines.slice(0, targetCount);
+  }
+
+  return lines;
+}
+
+function parseStructuredResult(rawText, targetCount) {
+  if (!rawText) {
+    return new Array(targetCount).fill("");
+  }
+
+  const directJsonMatch = rawText.match(/\{[\s\S]*\}/);
+
+  if (directJsonMatch) {
+    try {
+      const parsed = JSON.parse(directJsonMatch[0]);
+      if (Array.isArray(parsed.resultLines)) {
+        return fitLinesToCount(
+          parsed.resultLines.map((line) => (typeof line === "string" ? line : "")),
+          targetCount,
+        );
+      }
+    } catch {
+      // Fall through to line-based fallback parsing.
+    }
+  }
+
+  return fitLinesToCount(
+    rawText
+      .trim()
+      .split("\n")
+      .map((line) => line.trimEnd()),
+    targetCount,
+  );
 }
 
 export async function generateTailoredResumeDraft({
   jobPosting,
   resumeText,
   resumeFileName,
+  templateLines,
 }) {
+  const normalizedTemplateLines = Array.isArray(templateLines)
+    ? templateLines.filter((line) => typeof line === "string")
+    : [];
+
+  if (normalizedTemplateLines.length === 0) {
+    throw new Error("Template lines are required to preserve resume layout fidelity.");
+  }
+
   const { geminiModel } = getServerEnv();
   const client = getGeminiClient();
-  const prompt = buildTailorPrompt({ jobPosting, resumeText, resumeFileName });
+  const prompt = buildTailorPrompt({
+    jobPosting,
+    resumeText,
+    resumeFileName,
+    templateLines: normalizedTemplateLines,
+  });
 
   const response = await client.models.generateContent({
     model: geminiModel,
     contents: prompt,
   });
 
-  const output = response.text?.trim();
+  const output = response.text?.trim() || "";
+  const resultLines = parseStructuredResult(output, normalizedTemplateLines.length);
+  const result = resultLines.join("\n").trim();
 
   if (!output) {
     throw new Error("Gemini returned an empty response.");
   }
 
-  return output;
+  return {
+    result,
+    resultLines,
+  };
 }

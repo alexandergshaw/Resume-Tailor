@@ -12,6 +12,7 @@ export default function Home() {
   const [jobPosting, setJobPosting] = useState("");
   const [resumeFile, setResumeFile] = useState(null);
   const [result, setResult] = useState("");
+  const [resultLines, setResultLines] = useState([]);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasCompletedCall, setHasCompletedCall] = useState(false);
@@ -30,6 +31,13 @@ export default function Home() {
 
   function isDocxResume(file) {
     return file?.name?.toLowerCase().endsWith(".docx");
+  }
+
+  function isTextResume(file) {
+    const lowerName = file?.name?.toLowerCase() || "";
+    return [".txt", ".md", ".markdown"].some((extension) =>
+      lowerName.endsWith(extension),
+    );
   }
 
   function normalizeResultLines(text) {
@@ -75,6 +83,44 @@ export default function Home() {
     const head = lines.slice(0, targetCount - 1);
     const tail = lines.slice(targetCount - 1).join(" ").replace(/\s+/g, " ").trim();
     return [...head, tail];
+  }
+
+  async function extractTemplateLinesFromDocx(file) {
+    const zip = await JSZip.loadAsync(await file.arrayBuffer());
+    const documentXmlPath = "word/document.xml";
+    const xmlContent = await zip.file(documentXmlPath)?.async("string");
+
+    if (!xmlContent) {
+      throw new Error("Unable to read DOCX template content.");
+    }
+
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(xmlContent, "application/xml");
+    const bodyNode = xmlDoc.getElementsByTagNameNS(WORDPROCESSINGML_NS, "body")[0];
+
+    if (!bodyNode) {
+      throw new Error("Uploaded DOCX template is missing body content.");
+    }
+
+    const existingParagraphs = getDirectChildrenByTag(bodyNode, "p");
+    const editableParagraphs = existingParagraphs.filter(
+      (paragraphNode) => getParagraphPlainText(paragraphNode).length > 0,
+    );
+
+    return editableParagraphs.map((paragraphNode) => getParagraphPlainText(paragraphNode));
+  }
+
+  async function buildTemplateLinesForUpload(file) {
+    if (isDocxResume(file)) {
+      return extractTemplateLinesFromDocx(file);
+    }
+
+    if (isTextResume(file)) {
+      const text = await file.text();
+      return normalizeResultLines(text).filter((line) => line.trim().length > 0);
+    }
+
+    return [];
   }
 
   function setParagraphText(paragraphNode, value, xmlDoc) {
@@ -137,7 +183,7 @@ export default function Home() {
     paragraphNode.appendChild(runNode);
   }
 
-  async function buildDocxFromUploadedTemplate(file, generatedText) {
+  async function buildDocxFromUploadedTemplate(file, generatedText, generatedLines = []) {
     const zip = await JSZip.loadAsync(await file.arrayBuffer());
     const documentXmlPath = "word/document.xml";
     const xmlContent = await zip.file(documentXmlPath)?.async("string");
@@ -154,7 +200,8 @@ export default function Home() {
       throw new Error("Uploaded DOCX template is missing body content.");
     }
 
-    const lines = normalizeResultLines(generatedText);
+    const lines =
+      generatedLines.length > 0 ? generatedLines : normalizeResultLines(generatedText);
     const existingParagraphs = getDirectChildrenByTag(bodyNode, "p");
 
     if (existingParagraphs.length === 0) {
@@ -197,7 +244,7 @@ export default function Home() {
       let blob;
 
       if (isDocxResume(resumeFile)) {
-        blob = await buildDocxFromUploadedTemplate(resumeFile, result);
+        blob = await buildDocxFromUploadedTemplate(resumeFile, result, resultLines);
       } else {
         const paragraphs = result.split("\n").map((line) => {
           if (!line.trim()) {
@@ -239,6 +286,7 @@ export default function Home() {
 
     setError("");
     setResult("");
+    setResultLines([]);
     setHasCompletedCall(false);
 
     if (!jobPosting.trim()) {
@@ -256,6 +304,8 @@ export default function Home() {
     try {
       const formData = new FormData();
       formData.append("jobPosting", jobPosting);
+      const templateLines = await buildTemplateLinesForUpload(resumeFile);
+      formData.append("templateLines", JSON.stringify(templateLines));
 
       if (resumeFile) {
         formData.append("resume", resumeFile);
@@ -273,6 +323,7 @@ export default function Home() {
       }
 
       setResult(payload.result?.trim() || "No output returned from Gemini.");
+      setResultLines(Array.isArray(payload.resultLines) ? payload.resultLines : []);
       setHasCompletedCall(true);
     } catch (submitError) {
       setError(submitError.message || "Unexpected error.");

@@ -51,11 +51,34 @@ async function readResumeText(file) {
   return "";
 }
 
+function parseTemplateLines(rawTemplateLines) {
+  if (!rawTemplateLines) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(rawTemplateLines);
+
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .map((line) => (typeof line === "string" ? line : ""))
+      .slice(0, 600);
+  } catch {
+    return [];
+  }
+}
+
 export async function POST(request) {
   try {
     const formData = await request.formData();
 
     const jobPosting = formData.get("jobPosting")?.toString().trim() || "";
+    const templateLines = parseTemplateLines(
+      formData.get("templateLines")?.toString() || "",
+    );
     const resumeFile = formData.get("resume");
 
     if (!jobPosting) {
@@ -88,9 +111,10 @@ export async function POST(request) {
       jobPosting,
       resumeText,
       resumeFileName: resumeFile.name,
+      templateLines,
     });
 
-    return NextResponse.json({ result });
+    return NextResponse.json(result);
   } catch (error) {
     console.error("Error generating tailored resume:", error);
     return NextResponse.json(
