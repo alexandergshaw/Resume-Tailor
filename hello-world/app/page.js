@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Box, IconButton, Tab, Tabs, Tooltip } from "@mui/material";
+import { Badge, Box, IconButton, Tab, Tabs, Tooltip } from "@mui/material";
 import JSZip from "jszip";
 import styles from "./page.module.css";
 
@@ -25,6 +25,7 @@ function createResumeTab(index) {
     result: "",
     resultLines: [],
     generatedJobTitle: "",
+    hasDownloadNotification: false,
     error: "",
     isSubmitting: false,
     hasCompletedCall: false,
@@ -328,6 +329,8 @@ export default function Home() {
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
+
+      updateTab(tabId, { hasDownloadNotification: true });
     } catch (downloadError) {
       updateTab(tabId, {
         error: downloadError.message || "Unable to download DOCX file.",
@@ -374,7 +377,7 @@ export default function Home() {
       return;
     }
 
-    updateTab(tabId, { isSubmitting: true });
+    updateTab(tabId, { isSubmitting: true, hasDownloadNotification: false });
 
     try {
       const formData = new FormData();
@@ -493,7 +496,14 @@ export default function Home() {
                     value={tab.id}
                     label={
                       <Box sx={{ display: "inline-flex", alignItems: "center", gap: 1 }}>
-                        <span>{tab.title}</span>
+                        <Badge
+                          color="error"
+                          variant="dot"
+                          overlap="circular"
+                          invisible={!tab.hasDownloadNotification}
+                        >
+                          <span>{tab.title}</span>
+                        </Badge>
                         {tabs.length > 1 ? (
                           <Box
                             component="span"
