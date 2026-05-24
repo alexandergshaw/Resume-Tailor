@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import styles from "./page.module.css";
 
 export default function Home() {
@@ -9,16 +9,14 @@ export default function Home() {
   const [result, setResult] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const buttonLabel = useMemo(() => {
-    return isSubmitting ? "Generating..." : "Generate Tailored Draft";
-  }, [isSubmitting]);
+  const [hasCompletedCall, setHasCompletedCall] = useState(false);
 
   async function handleSubmit(event) {
     event.preventDefault();
 
     setError("");
     setResult("");
+    setHasCompletedCall(false);
 
     if (!jobPosting.trim()) {
       setError("Please provide a job posting.");
@@ -46,9 +44,11 @@ export default function Home() {
         throw new Error(payload.error || "Failed to generate a response.");
       }
 
-      setResult(payload.result || "");
+      setResult(payload.result?.trim() || "No output returned from Gemini.");
+      setHasCompletedCall(true);
     } catch (submitError) {
       setError(submitError.message || "Unexpected error.");
+      setHasCompletedCall(true);
     } finally {
       setIsSubmitting(false);
     }
@@ -95,13 +95,13 @@ export default function Home() {
           </div>
 
           <button className={styles.button} type="submit" disabled={isSubmitting}>
-            {buttonLabel}
+            {isSubmitting ? "Generating..." : "Generate"}
           </button>
         </form>
 
         {error ? <p className={styles.error}>{error}</p> : null}
 
-        {result ? (
+        {hasCompletedCall && result ? (
           <section className={styles.resultSection}>
             <h2 className={styles.resultTitle}>Gemini Output</h2>
             <pre className={styles.result}>{result}</pre>
