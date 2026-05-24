@@ -50,6 +50,15 @@
   gap: 24px;
 }
 
+.uploadRow {
+  display: flex;
+  gap: 16px;
+}
+
+.uploadRow > .fieldGroup {
+  flex: 1;
+}
+
 .fieldGroup {
   display: flex;
   flex-direction: column;

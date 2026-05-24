@@ -38,6 +38,7 @@ const INITIAL_TAB = createResumeTab(1);
 
 export default function Home() {
   const [resumeFile, setResumeFile] = useState(null);
+  const [coverLetterFile, setCoverLetterFile] = useState(null);
   const [tabs, setTabs] = useState([INITIAL_TAB]);
   const [activeTabId, setActiveTabId] = useState(INITIAL_TAB.id);
 
@@ -446,20 +447,37 @@ export default function Home() {
           formatting.
         </p>
 
-        <div className={styles.fieldGroup}>
-          <label htmlFor="resume" className={styles.label}>
-            Resume
-          </label>
-          <input
-            id="resume"
-            name="resume"
-            type="file"
-            className={styles.fileInput}
-            accept=".txt,.md,.markdown,.docx"
-            onChange={(event) => {
-              setResumeFile(event.target.files?.[0] || null);
-            }}
-          />
+        <div className={styles.uploadRow}>
+          <div className={styles.fieldGroup}>
+            <label htmlFor="resume" className={styles.label}>
+              Resume
+            </label>
+            <input
+              id="resume"
+              name="resume"
+              type="file"
+              className={styles.fileInput}
+              accept=".txt,.md,.markdown,.docx"
+              onChange={(event) => {
+                setResumeFile(event.target.files?.[0] || null);
+              }}
+            />
+          </div>
+          <div className={styles.fieldGroup}>
+            <label htmlFor="cover-letter" className={styles.label}>
+              Cover Letter
+            </label>
+            <input
+              id="cover-letter"
+              name="coverLetter"
+              type="file"
+              className={styles.fileInput}
+              accept=".txt,.md,.markdown,.docx"
+              onChange={(event) => {
+                setCoverLetterFile(event.target.files?.[0] || null);
+              }}
+            />
+          </div>
         </div>
 
         <Box className={styles.tabsBar}>
