@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 import { Document, Packer, Paragraph, TextRun } from "docx";
+import JSZip from "jszip";
 import styles from "./page.module.css";
+
+const WORDPROCESSINGML_NS =
+  "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
 export default function Home() {
   const [jobPosting, setJobPosting] = useState("");
@@ -24,6 +28,96 @@ export default function Home() {
     return `${withoutExtension}-tailored.docx`;
   }
 
+  function isDocxResume(file) {
+    return file?.name?.toLowerCase().endsWith(".docx");
+  }
+
+  function normalizeResultLines(text) {
+    return text
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      .map((line) => line.trimEnd());
+  }
+
+  function setParagraphText(paragraphNode, value, xmlDoc) {
+    const textNodes = paragraphNode.getElementsByTagNameNS(
+      WORDPROCESSINGML_NS,
+      "t",
+    );
+
+    if (textNodes.length > 0) {
+      textNodes[0].textContent = value || "";
+
+      if (value && (value.startsWith(" ") || value.endsWith(" "))) {
+        textNodes[0].setAttribute("xml:space", "preserve");
+      } else {
+        textNodes[0].removeAttribute("xml:space");
+      }
+
+      for (let index = 1; index < textNodes.length; index += 1) {
+        textNodes[index].textContent = "";
+      }
+
+      return;
+    }
+
+    const runNode = xmlDoc.createElementNS(WORDPROCESSINGML_NS, "w:r");
+    const textNode = xmlDoc.createElementNS(WORDPROCESSINGML_NS, "w:t");
+    textNode.textContent = value || "";
+    runNode.appendChild(textNode);
+    paragraphNode.appendChild(runNode);
+  }
+
+  async function buildDocxFromUploadedTemplate(file, generatedText) {
+    const zip = await JSZip.loadAsync(await file.arrayBuffer());
+    const documentXmlPath = "word/document.xml";
+    const xmlContent = await zip.file(documentXmlPath)?.async("string");
+
+    if (!xmlContent) {
+      throw new Error("Unable to read DOCX template content.");
+    }
+
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(xmlContent, "application/xml");
+    const bodyNode = xmlDoc.getElementsByTagNameNS(WORDPROCESSINGML_NS, "body")[0];
+
+    if (!bodyNode) {
+      throw new Error("Uploaded DOCX template is missing body content.");
+    }
+
+    const lines = normalizeResultLines(generatedText);
+    const existingParagraphs = Array.from(
+      bodyNode.getElementsByTagNameNS(WORDPROCESSINGML_NS, "p"),
+    );
+
+    if (existingParagraphs.length === 0) {
+      throw new Error("Uploaded DOCX template has no editable paragraphs.");
+    }
+
+    for (let index = 0; index < existingParagraphs.length; index += 1) {
+      setParagraphText(existingParagraphs[index], lines[index] || "", xmlDoc);
+    }
+
+    if (lines.length > existingParagraphs.length) {
+      const referenceParagraph = existingParagraphs[existingParagraphs.length - 1];
+
+      for (let index = existingParagraphs.length; index < lines.length; index += 1) {
+        const clonedParagraph = referenceParagraph.cloneNode(true);
+        setParagraphText(clonedParagraph, lines[index], xmlDoc);
+        bodyNode.insertBefore(clonedParagraph, bodyNode.lastChild);
+      }
+    }
+
+    const serializedXml = new XMLSerializer().serializeToString(xmlDoc);
+    zip.file(documentXmlPath, serializedXml);
+
+    return zip.generateAsync({
+      type: "blob",
+      mimeType:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    });
+  }
+
   async function handleDownloadDocx() {
     if (!result.trim()) {
       setError("Nothing to download yet. Generate a resume first.");
@@ -33,24 +127,31 @@ export default function Home() {
     setIsDownloading(true);
 
     try {
-      const paragraphs = result.split("\n").map((line) => {
-        if (!line.trim()) {
-          return new Paragraph({ children: [new TextRun("")] });
-        }
+      let blob;
 
-        return new Paragraph({ children: [new TextRun(line)] });
-      });
+      if (isDocxResume(resumeFile)) {
+        blob = await buildDocxFromUploadedTemplate(resumeFile, result);
+      } else {
+        const paragraphs = result.split("\n").map((line) => {
+          if (!line.trim()) {
+            return new Paragraph({ children: [new TextRun("")] });
+          }
 
-      const doc = new Document({
-        sections: [
-          {
-            properties: {},
-            children: paragraphs,
-          },
-        ],
-      });
+          return new Paragraph({ children: [new TextRun(line)] });
+        });
 
-      const blob = await Packer.toBlob(doc);
+        const doc = new Document({
+          sections: [
+            {
+              properties: {},
+              children: paragraphs,
+            },
+          ],
+        });
+
+        blob = await Packer.toBlob(doc);
+      }
+
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
