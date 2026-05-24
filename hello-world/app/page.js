@@ -12,6 +12,7 @@ export default function Home() {
   const [resumeFile, setResumeFile] = useState(null);
   const [result, setResult] = useState("");
   const [resultLines, setResultLines] = useState([]);
+  const [generatedJobTitle, setGeneratedJobTitle] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasCompletedCall, setHasCompletedCall] = useState(false);
@@ -24,155 +25,9 @@ export default function Home() {
       .trim();
   }
 
-  function cleanTitleCandidate(value) {
-    return value
-      .replace(/^[:\-\s]+/, "")
-      .replace(/\s*\((remote|hybrid|onsite|on-site)\)\s*$/i, "")
-      .replace(/\s+[\-|\|]\s+.+$/, "")
-      .replace(/\s{2,}/g, " ")
-      .trim();
-  }
-
-  function scoreTitleCandidate(candidate, lineIndex) {
-    const lowered = candidate.toLowerCase();
-    const words = candidate.split(/\s+/).filter(Boolean);
-    const roleKeywords = [
-      "engineer",
-      "developer",
-      "manager",
-      "director",
-      "analyst",
-      "scientist",
-      "specialist",
-      "architect",
-      "consultant",
-      "designer",
-      "lead",
-      "principal",
-      "coordinator",
-      "administrator",
-      "officer",
-      "associate",
-      "recruiter",
-      "product",
-      "project",
-      "program",
-      "marketing",
-      "sales",
-      "account",
-      "operations",
-      "customer",
-      "qa",
-      "devops",
-      "security",
-      "data",
-      "full stack",
-      "frontend",
-      "backend",
-    ];
-    const bannedKeywords = [
-      "responsibilities",
-      "requirements",
-      "qualifications",
-      "benefits",
-      "about",
-      "company",
-      "summary",
-      "overview",
-      "description",
-      "salary",
-      "compensation",
-      "location",
-      "experience",
-      "years",
-    ];
-
-    let score = 0;
-
-    if (words.length >= 2 && words.length <= 8) {
-      score += 3;
-    }
-
-    if (roleKeywords.some((keyword) => lowered.includes(keyword))) {
-      score += 7;
-    }
-
-    if (/^[A-Z][A-Za-z0-9+&/\-\s(),.]*$/.test(candidate)) {
-      score += 2;
-    }
-
-    if (lineIndex >= 0) {
-      score += Math.max(0, 5 - Math.floor(lineIndex / 4));
-    }
-
-    if (bannedKeywords.some((keyword) => lowered.includes(keyword))) {
-      score -= 8;
-    }
-
-    if (candidate.length > 80 || candidate.length < 3) {
-      score -= 5;
-    }
-
-    return score;
-  }
-
-  function inferJobTitleFromPosting(posting) {
-    const lines = posting
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-    const maxLinesToInspect = Math.min(lines.length, 80);
-    const candidates = [];
-
-    function addCandidate(rawValue, lineIndex = -1, bonus = 0) {
-      const cleaned = cleanTitleCandidate(rawValue || "");
-
-      if (!cleaned) {
-        return;
-      }
-
-      candidates.push({
-        value: cleaned,
-        score: scoreTitleCandidate(cleaned, lineIndex) + bonus,
-      });
-    }
-
-    const labeledPattern =
-      /^(job title|title|role|position|opening|opportunity)\s*[:\-]\s*(.+)$/i;
-    const phrasePattern =
-      /(?:hiring|seeking|looking for|position(?:\s+is)?|role(?:\s+is)?|opening(?:\s+for)?|join us as)\s+(?:an?\s+)?([A-Z][A-Za-z0-9+&/\-\s(),]{2,80})/i;
-
-    for (let index = 0; index < maxLinesToInspect; index += 1) {
-      const line = lines[index];
-      const labeledMatch = line.match(labeledPattern);
-
-      if (labeledMatch?.[2]) {
-        addCandidate(labeledMatch[2], index, 12);
-      }
-
-      const phraseMatch = line.match(phrasePattern);
-      if (phraseMatch?.[1]) {
-        addCandidate(phraseMatch[1], index, 9);
-      }
-
-      const segmentedParts = line.split(/\s*[|\u2022]\s*|\s+-\s+|\s+@\s+|\s+at\s+/i);
-      segmentedParts.forEach((part) => addCandidate(part, index));
-    }
-
-    if (candidates.length === 0) {
-      const fallback = lines[0] || "Target Role";
-      return sanitizeFileNamePart(cleanTitleCandidate(fallback)) || "Target Role";
-    }
-
-    candidates.sort((left, right) => right.score - left.score);
-    const best = candidates[0].value;
-
-    return sanitizeFileNamePart(best).slice(0, 90) || "Target Role";
-  }
-
   function getDownloadFileName() {
-    const inferredTitle = inferJobTitleFromPosting(jobPosting) || "Target Role";
-    return `Resume - ${inferredTitle}.docx`;
+    const cleanedTitle = sanitizeFileNamePart(generatedJobTitle || "").slice(0, 90);
+    return `Resume - ${cleanedTitle || "Target Role"}.docx`;
   }
 
   function isDocxResume(file) {
@@ -421,6 +276,7 @@ export default function Home() {
     setError("");
     setResult("");
     setResultLines([]);
+    setGeneratedJobTitle("");
     setHasCompletedCall(false);
 
     if (!jobPosting.trim()) {
@@ -458,6 +314,9 @@ export default function Home() {
 
       setResult(payload.result?.trim() || "No output returned from Gemini.");
       setResultLines(Array.isArray(payload.resultLines) ? payload.resultLines : []);
+      setGeneratedJobTitle(
+        typeof payload.jobTitle === "string" ? payload.jobTitle.trim() : "",
+      );
       setHasCompletedCall(true);
     } catch (submitError) {
       setError(submitError.message || "Unexpected error.");
