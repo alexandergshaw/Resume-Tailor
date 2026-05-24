@@ -21,7 +21,8 @@ function createResumeTab(index) {
     id: createTabId(),
     title: `Job Posting ${index}`,
     jobPosting: "",
-    resumeFile: null,
+    additionalContext: "",
+    contextFiles: [],
     result: "",
     resultLines: [],
     generatedJobTitle: "",
@@ -382,8 +383,12 @@ export default function Home() {
     try {
       const formData = new FormData();
       formData.append("jobPosting", tabSnapshot.jobPosting);
+      formData.append("additionalContext", tabSnapshot.additionalContext || "");
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
+      tabSnapshot.contextFiles.forEach((file) => {
+        formData.append("contextFiles", file);
+      });
 
       formData.append("resume", resumeFile);
 
@@ -617,6 +622,48 @@ export default function Home() {
                 updateTab(activeTab.id, { jobPosting: event.target.value });
               }}
             />
+          </div>
+
+          <div className={styles.fieldGroup}>
+            <label htmlFor="additional-context" className={styles.label}>
+              Additional Context
+            </label>
+            <textarea
+              id="additional-context"
+              name="additionalContext"
+              className={`${styles.textarea} ${styles.contextTextarea}`}
+              placeholder="Add extra direction for Gemini (priority skills, key achievements to emphasize, domain specifics, preferred wording, etc.)"
+              value={activeTab.additionalContext}
+              onChange={(event) => {
+                updateTab(activeTab.id, { additionalContext: event.target.value });
+              }}
+            />
+          </div>
+
+          <div className={styles.fieldGroup}>
+            <label htmlFor="context-files" className={styles.label}>
+              Supporting Files
+            </label>
+            <input
+              id="context-files"
+              name="contextFiles"
+              type="file"
+              multiple
+              className={styles.fileInput}
+              accept=".txt,.md,.markdown,.docx,.pdf"
+              onChange={(event) => {
+                updateTab(activeTab.id, {
+                  contextFiles: Array.from(event.target.files || []),
+                });
+              }}
+            />
+            <p className={styles.helperText}>
+              {activeTab.contextFiles.length > 0
+                ? `${activeTab.contextFiles.length} supporting file${
+                    activeTab.contextFiles.length > 1 ? "s" : ""
+                  } selected`
+                : "Optional: upload extra files to provide more context for Gemini."}
+            </p>
           </div>
 
           <button className={styles.button} type="submit" disabled={activeTab.isSubmitting}>

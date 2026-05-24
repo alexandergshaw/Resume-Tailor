@@ -77,6 +77,10 @@
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
+.contextTextarea {
+  min-height: 180px;
+}
+
 .textarea:focus,
 .fileInput:focus {
   outline: none;
@@ -149,6 +153,13 @@
   margin: 0;
   color: var(--danger);
   font-weight: 600;
+}
+
+.helperText {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  line-height: 1.4;
 }
 
 .resultSection {

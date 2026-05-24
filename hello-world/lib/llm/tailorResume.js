@@ -7,7 +7,29 @@ function buildTemplateLinesBlock(templateLines) {
     .join("\n");
 }
 
-function buildTailorPrompt({ jobPosting, resumeText, resumeFileName, templateLines }) {
+function buildContextDocumentsBlock(contextDocuments) {
+  if (!Array.isArray(contextDocuments) || contextDocuments.length === 0) {
+    return "None provided.";
+  }
+
+  return contextDocuments
+    .map((document, index) => {
+      return [
+        `Document ${index + 1}: ${document.name || "Unnamed file"}`,
+        document.content || "No extractable content.",
+      ].join("\n");
+    })
+    .join("\n\n");
+}
+
+function buildTailorPrompt({
+  jobPosting,
+  resumeText,
+  resumeFileName,
+  templateLines,
+  additionalContext,
+  contextDocuments,
+}) {
   return [
     "You are an expert resume editor.",
     "Rewrite the resume to match the job posting as aggressively as possible while preserving the source resume layout exactly.",
@@ -36,8 +58,13 @@ function buildTailorPrompt({ jobPosting, resumeText, resumeFileName, templateLin
     "",
     `Job posting:\n${jobPosting}`,
     "",
+    `Additional context:\n${additionalContext || "None provided."}`,
+    "",
     `Resume file name: ${resumeFileName || "Not provided"}`,
     `Resume content:\n${resumeText || "Not provided"}`,
+    "",
+    "Supporting documents:",
+    buildContextDocumentsBlock(contextDocuments),
     "",
     "Line slots to rewrite:",
     buildTemplateLinesBlock(templateLines),
@@ -108,6 +135,8 @@ export async function generateTailoredResumeDraft({
   resumeText,
   resumeFileName,
   templateLines,
+  additionalContext,
+  contextDocuments,
 }) {
   const normalizedTemplateLines = Array.isArray(templateLines)
     ? templateLines.filter((line) => typeof line === "string")
@@ -124,6 +153,8 @@ export async function generateTailoredResumeDraft({
     resumeText,
     resumeFileName,
     templateLines: normalizedTemplateLines,
+    additionalContext,
+    contextDocuments,
   });
 
   const response = await client.models.generateContent({

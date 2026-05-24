@@ -5,6 +5,8 @@ import { generateTailoredResumeDraft } from "@/lib/llm/tailorResume";
 export const runtime = "nodejs";
 
 const MAX_RESUME_CHARS = 20000;
+const MAX_CONTEXT_CHARS = 12000;
+const MAX_CONTEXT_FILES = 10;
 const TEXT_MIME_PREFIX = "text/";
 const TEXT_EXTENSIONS = [".txt", ".md", ".markdown"];
 const DOCX_EXTENSIONS = [".docx"];
@@ -51,6 +53,38 @@ async function readResumeText(file) {
   return "";
 }
 
+async function readContextFile(file) {
+  if (isTextLikeFile(file)) {
+    const rawText = await file.text();
+    return rawText ? rawText.slice(0, MAX_CONTEXT_CHARS) : "";
+  }
+
+  if (isDocxFile(file)) {
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const { value } = await mammoth.extractRawText({ buffer });
+    return value ? value.slice(0, MAX_CONTEXT_CHARS) : "";
+  }
+
+  return "Unsupported file type for text extraction.";
+}
+
+async function parseContextDocuments(formData) {
+  const rawFiles = formData.getAll("contextFiles");
+  const contextFiles = rawFiles.filter((value) => value instanceof File).slice(0, MAX_CONTEXT_FILES);
+
+  const documents = [];
+
+  for (const file of contextFiles) {
+    const content = await readContextFile(file);
+    documents.push({
+      name: file.name,
+      content,
+    });
+  }
+
+  return documents;
+}
+
 function parseTemplateLines(rawTemplateLines) {
   if (!rawTemplateLines) {
     return [];
@@ -76,6 +110,9 @@ export async function POST(request) {
     const formData = await request.formData();
 
     const jobPosting = formData.get("jobPosting")?.toString().trim() || "";
+    const additionalContext =
+      formData.get("additionalContext")?.toString().trim().slice(0, 12000) || "";
+    const contextDocuments = await parseContextDocuments(formData);
     const templateLines = parseTemplateLines(
       formData.get("templateLines")?.toString() || "",
     );
@@ -112,6 +149,8 @@ export async function POST(request) {
       resumeText,
       resumeFileName: resumeFile.name,
       templateLines,
+      additionalContext,
+      contextDocuments,
     });
 
     return NextResponse.json(result);
