@@ -498,14 +498,15 @@ export default function Home() {
                       <Box
                         sx={{
                           position: "relative",
-                          display: "inline-flex",
+                          display: "flex",
                           alignItems: "center",
-                          gap: 1,
+                          justifyContent: "space-between",
                           width: "100%",
-                          pr: 2,
+                          minWidth: 130,
+                          pr: 0.5,
                         }}
                       >
-                        <span>{tab.title}</span>
+                        <span style={{ paddingRight: 8 }}>{tab.title}</span>
                         <Badge
                           color="error"
                           variant="dot"
@@ -513,7 +514,7 @@ export default function Home() {
                           sx={{
                             position: "absolute",
                             top: -4,
-                            right: -2,
+                            right: 2,
                             "& .MuiBadge-badge": {
                               transform: "none",
                             },
@@ -531,6 +532,7 @@ export default function Home() {
                               borderRadius: "50%",
                               fontSize: 12,
                               lineHeight: 1,
+                              marginLeft: "auto",
                               "&:hover": { backgroundColor: "rgba(0,0,0,0.1)" },
                             }}
                             onClick={(event) => {
