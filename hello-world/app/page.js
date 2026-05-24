@@ -24,30 +24,150 @@ export default function Home() {
       .trim();
   }
 
+  function cleanTitleCandidate(value) {
+    return value
+      .replace(/^[:\-\s]+/, "")
+      .replace(/\s*\((remote|hybrid|onsite|on-site)\)\s*$/i, "")
+      .replace(/\s+[\-|\|]\s+.+$/, "")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+  }
+
+  function scoreTitleCandidate(candidate, lineIndex) {
+    const lowered = candidate.toLowerCase();
+    const words = candidate.split(/\s+/).filter(Boolean);
+    const roleKeywords = [
+      "engineer",
+      "developer",
+      "manager",
+      "director",
+      "analyst",
+      "scientist",
+      "specialist",
+      "architect",
+      "consultant",
+      "designer",
+      "lead",
+      "principal",
+      "coordinator",
+      "administrator",
+      "officer",
+      "associate",
+      "recruiter",
+      "product",
+      "project",
+      "program",
+      "marketing",
+      "sales",
+      "account",
+      "operations",
+      "customer",
+      "qa",
+      "devops",
+      "security",
+      "data",
+      "full stack",
+      "frontend",
+      "backend",
+    ];
+    const bannedKeywords = [
+      "responsibilities",
+      "requirements",
+      "qualifications",
+      "benefits",
+      "about",
+      "company",
+      "summary",
+      "overview",
+      "description",
+      "salary",
+      "compensation",
+      "location",
+      "experience",
+      "years",
+    ];
+
+    let score = 0;
+
+    if (words.length >= 2 && words.length <= 8) {
+      score += 3;
+    }
+
+    if (roleKeywords.some((keyword) => lowered.includes(keyword))) {
+      score += 7;
+    }
+
+    if (/^[A-Z][A-Za-z0-9+&/\-\s(),.]*$/.test(candidate)) {
+      score += 2;
+    }
+
+    if (lineIndex >= 0) {
+      score += Math.max(0, 5 - Math.floor(lineIndex / 4));
+    }
+
+    if (bannedKeywords.some((keyword) => lowered.includes(keyword))) {
+      score -= 8;
+    }
+
+    if (candidate.length > 80 || candidate.length < 3) {
+      score -= 5;
+    }
+
+    return score;
+  }
+
   function inferJobTitleFromPosting(posting) {
     const lines = posting
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean);
+    const maxLinesToInspect = Math.min(lines.length, 80);
+    const candidates = [];
 
-    const titlePrefixPattern = /^(job title|title|role|position)\s*[:\-]\s*(.+)$/i;
+    function addCandidate(rawValue, lineIndex = -1, bonus = 0) {
+      const cleaned = cleanTitleCandidate(rawValue || "");
 
-    for (const line of lines) {
-      const prefixedMatch = line.match(titlePrefixPattern);
-
-      if (prefixedMatch?.[2]) {
-        return sanitizeFileNamePart(prefixedMatch[2]);
+      if (!cleaned) {
+        return;
       }
+
+      candidates.push({
+        value: cleaned,
+        score: scoreTitleCandidate(cleaned, lineIndex) + bonus,
+      });
     }
 
-    const firstUsefulLine = lines.find((line) => line.length <= 100) || lines[0] || "";
-    const cleaned = firstUsefulLine
-      .replace(/\s+at\s+.+$/i, "")
-      .replace(/\s*\|\s*.+$/, "")
-      .replace(/^[\-:]+|[\-:]+$/g, "")
-      .trim();
+    const labeledPattern =
+      /^(job title|title|role|position|opening|opportunity)\s*[:\-]\s*(.+)$/i;
+    const phrasePattern =
+      /(?:hiring|seeking|looking for|position(?:\s+is)?|role(?:\s+is)?|opening(?:\s+for)?|join us as)\s+(?:an?\s+)?([A-Z][A-Za-z0-9+&/\-\s(),]{2,80})/i;
 
-    return sanitizeFileNamePart(cleaned);
+    for (let index = 0; index < maxLinesToInspect; index += 1) {
+      const line = lines[index];
+      const labeledMatch = line.match(labeledPattern);
+
+      if (labeledMatch?.[2]) {
+        addCandidate(labeledMatch[2], index, 12);
+      }
+
+      const phraseMatch = line.match(phrasePattern);
+      if (phraseMatch?.[1]) {
+        addCandidate(phraseMatch[1], index, 9);
+      }
+
+      const segmentedParts = line.split(/\s*[|\u2022]\s*|\s+-\s+|\s+@\s+|\s+at\s+/i);
+      segmentedParts.forEach((part) => addCandidate(part, index));
+    }
+
+    if (candidates.length === 0) {
+      const fallback = lines[0] || "Target Role";
+      return sanitizeFileNamePart(cleanTitleCandidate(fallback)) || "Target Role";
+    }
+
+    candidates.sort((left, right) => right.score - left.score);
+    const best = candidates[0].value;
+
+    return sanitizeFileNamePart(best).slice(0, 90) || "Target Role";
   }
 
   function getDownloadFileName() {
