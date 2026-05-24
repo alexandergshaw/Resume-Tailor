@@ -25,6 +25,7 @@ function createResumeTab(index) {
     contextFiles: [],
     result: "",
     resultLines: [],
+    coverLetterResultLines: [],
     generatedJobTitle: "",
     hasDownloadNotification: false,
     error: "",
@@ -99,6 +100,11 @@ export default function Home() {
   function getDownloadFileNameForTitle(jobTitle) {
     const cleanedTitle = sanitizeFileNamePart(jobTitle || "").slice(0, 90);
     return `Resume - ${cleanedTitle || "Target Role"}.docx`;
+  }
+
+  function getDownloadCoverLetterFileNameForTitle(jobTitle) {
+    const cleanedTitle = sanitizeFileNamePart(jobTitle || "").slice(0, 90);
+    return `Cover Letter - ${cleanedTitle || "Target Role"}.docx`;
   }
 
   function isDocxResume(file) {
@@ -304,7 +310,7 @@ export default function Home() {
     });
   }
 
-  async function downloadDocxForTab({ tabId, jobTitle, result, resultLines }) {
+  async function downloadDocxForTab({ tabId, jobTitle, result, resultLines, coverLetterResultLines }) {
     if (!result.trim()) {
       updateTab(tabId, { error: "Nothing to download yet. Generate a resume first." });
       return;
@@ -332,6 +338,27 @@ export default function Home() {
       link.remove();
       URL.revokeObjectURL(url);
 
+      if (
+        coverLetterFile &&
+        isDocxResume(coverLetterFile) &&
+        Array.isArray(coverLetterResultLines) &&
+        coverLetterResultLines.length > 0
+      ) {
+        const clBlob = await buildDocxFromUploadedTemplate(
+          coverLetterFile,
+          coverLetterResultLines.join("\n"),
+          coverLetterResultLines,
+        );
+        const clUrl = URL.createObjectURL(clBlob);
+        const clLink = document.createElement("a");
+        clLink.href = clUrl;
+        clLink.download = getDownloadCoverLetterFileNameForTitle(jobTitle);
+        document.body.appendChild(clLink);
+        clLink.click();
+        clLink.remove();
+        URL.revokeObjectURL(clUrl);
+      }
+
       updateTab(tabId, { hasDownloadNotification: true });
     } catch (downloadError) {
       updateTab(tabId, {
@@ -348,6 +375,7 @@ export default function Home() {
       jobTitle: activeTab.generatedJobTitle,
       result: activeTab.result,
       resultLines: activeTab.resultLines,
+      coverLetterResultLines: activeTab.coverLetterResultLines,
     });
   }
 
@@ -393,6 +421,12 @@ export default function Home() {
 
       formData.append("resume", resumeFile);
 
+      if (coverLetterFile) {
+        const coverLetterTemplateLines = await buildTemplateLinesForUpload(coverLetterFile);
+        formData.append("coverLetterTemplateLines", JSON.stringify(coverLetterTemplateLines));
+        formData.append("coverLetter", coverLetterFile);
+      }
+
       const response = await fetch("/api/tailor", {
         method: "POST",
         body: formData,
@@ -408,11 +442,15 @@ export default function Home() {
       const nextResultLines = Array.isArray(payload.resultLines) ? payload.resultLines : [];
       const nextJobTitle =
         typeof payload.jobTitle === "string" ? payload.jobTitle.trim() : "";
+      const nextCoverLetterResultLines = Array.isArray(payload.coverLetterResultLines)
+        ? payload.coverLetterResultLines
+        : [];
 
       updateTab(tabId, (tab) => ({
         ...tab,
         result: nextResult,
         resultLines: nextResultLines,
+        coverLetterResultLines: nextCoverLetterResultLines,
         generatedJobTitle: nextJobTitle,
         hasCompletedCall: true,
         title:
@@ -426,6 +464,7 @@ export default function Home() {
         jobTitle: nextJobTitle,
         result: nextResult,
         resultLines: nextResultLines,
+        coverLetterResultLines: nextCoverLetterResultLines,
       });
     } catch (submitError) {
       updateTab(tabId, {
@@ -447,37 +486,35 @@ export default function Home() {
           formatting.
         </p>
 
-        <div className={styles.uploadRow}>
-          <div className={styles.fieldGroup}>
-            <label htmlFor="resume" className={styles.label}>
-              Resume
-            </label>
-            <input
-              id="resume"
-              name="resume"
-              type="file"
-              className={styles.fileInput}
-              accept=".txt,.md,.markdown,.docx"
-              onChange={(event) => {
-                setResumeFile(event.target.files?.[0] || null);
-              }}
-            />
-          </div>
-          <div className={styles.fieldGroup}>
-            <label htmlFor="cover-letter" className={styles.label}>
-              Cover Letter
-            </label>
-            <input
-              id="cover-letter"
-              name="coverLetter"
-              type="file"
-              className={styles.fileInput}
-              accept=".txt,.md,.markdown,.docx"
-              onChange={(event) => {
-                setCoverLetterFile(event.target.files?.[0] || null);
-              }}
-            />
-          </div>
+        <div className={styles.fieldGroup}>
+          <label htmlFor="resume" className={styles.label}>
+            Resume
+          </label>
+          <input
+            id="resume"
+            name="resume"
+            type="file"
+            className={styles.fileInput}
+            accept=".txt,.md,.markdown,.docx"
+            onChange={(event) => {
+              setResumeFile(event.target.files?.[0] || null);
+            }}
+          />
+        </div>
+        <div className={styles.fieldGroup}>
+          <label htmlFor="cover-letter" className={styles.label}>
+            Cover Letter
+          </label>
+          <input
+            id="cover-letter"
+            name="coverLetter"
+            type="file"
+            className={styles.fileInput}
+            accept=".txt,.md,.markdown,.docx"
+            onChange={(event) => {
+              setCoverLetterFile(event.target.files?.[0] || null);
+            }}
+          />
         </div>
 
         <Box className={styles.tabsBar}>

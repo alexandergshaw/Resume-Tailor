@@ -130,6 +130,118 @@ function parseStructuredResult(rawText, targetCount) {
   };
 }
 
+function buildCoverLetterPrompt({
+  jobPosting,
+  coverLetterText,
+  coverLetterFileName,
+  templateLines,
+  resumeText,
+  additionalContext,
+}) {
+  return [
+    "You are an expert cover letter writer.",
+    "Rewrite the cover letter to aggressively target the job posting while preserving the original letter's structure exactly.",
+    "",
+    "Hard constraints:",
+    "1) Keep the exact line count — output exactly the same number of lines as the original.",
+    "2) Preserve paragraph breaks, greeting, and closing line positions from the original.",
+    "3) Keep each rewritten line close in length to its corresponding source line.",
+    "4) Do not add markdown, explanatory notes, or extra keys.",
+    `5) Output JSON only in this exact shape: {\"coverLetterLines\": [${templateLines.map(() => '""').join(", ")}]}`,
+    `6) coverLetterLines must contain exactly ${templateLines.length} strings.`,
+    "7) Preserve contact/header identity lines (name, date, address, salutation recipient) unless clearly not identity info.",
+    "",
+    "Aggressive optimization goals:",
+    "1) Rewrite body paragraphs to mirror the job posting's exact terminology and required skills.",
+    "2) Demonstrate enthusiasm and specific alignment with the role across every body paragraph.",
+    "3) Inject required tools, technologies, and domain keywords from the posting into relevant lines.",
+    "4) Make the letter sound confident, direct, and tailored — not generic.",
+    "5) Internally verify that major required keywords from the posting appear in the output before finalizing.",
+    "",
+    `Job posting:\n${jobPosting}`,
+    "",
+    `Additional context:\n${additionalContext || "None provided."}`,
+    "",
+    `Resume content (for background):\n${resumeText ? resumeText.slice(0, 4000) : "Not provided."}`,
+    "",
+    `Cover letter file name: ${coverLetterFileName || "Not provided"}`,
+    `Original cover letter content:\n${coverLetterText || "Not provided"}`,
+    "",
+    "Line slots to rewrite:",
+    buildTemplateLinesBlock(templateLines),
+  ].join("\n");
+}
+
+function parseCoverLetterResult(rawText, targetCount) {
+  if (!rawText) {
+    return new Array(targetCount).fill("");
+  }
+
+  const directJsonMatch = rawText.match(/\{[\s\S]*\}/);
+
+  if (directJsonMatch) {
+    try {
+      const parsed = JSON.parse(directJsonMatch[0]);
+      if (Array.isArray(parsed.coverLetterLines)) {
+        return fitLinesToCount(
+          parsed.coverLetterLines.map((line) => (typeof line === "string" ? line : "")),
+          targetCount,
+        );
+      }
+    } catch {
+      // Fall through to line-based fallback.
+    }
+  }
+
+  return fitLinesToCount(
+    rawText.trim().split("\n").map((line) => line.trimEnd()),
+    targetCount,
+  );
+}
+
+export async function generateTailoredCoverLetterDraft({
+  jobPosting,
+  coverLetterText,
+  coverLetterFileName,
+  templateLines,
+  resumeText,
+  additionalContext,
+}) {
+  const normalizedTemplateLines = Array.isArray(templateLines)
+    ? templateLines.filter((line) => typeof line === "string")
+    : [];
+
+  if (normalizedTemplateLines.length === 0) {
+    throw new Error("Cover letter template lines are required.");
+  }
+
+  const { geminiModel } = getServerEnv();
+  const client = getGeminiClient();
+  const prompt = buildCoverLetterPrompt({
+    jobPosting,
+    coverLetterText,
+    coverLetterFileName,
+    templateLines: normalizedTemplateLines,
+    resumeText,
+    additionalContext,
+  });
+
+  const response = await client.models.generateContent({
+    model: geminiModel,
+    contents: prompt,
+  });
+
+  const output = response.text?.trim() || "";
+
+  if (!output) {
+    throw new Error("Gemini returned an empty response for the cover letter.");
+  }
+
+  return {
+    coverLetterLines: parseCoverLetterResult(output, normalizedTemplateLines.length),
+  };
+}
+
 export async function generateTailoredResumeDraft({
   jobPosting,
   resumeText,

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 // trigger deploy
 import mammoth from "mammoth";
-import { generateTailoredResumeDraft } from "@/lib/llm/tailorResume";
+import { generateTailoredResumeDraft, generateTailoredCoverLetterDraft } from "@/lib/llm/tailorResume";
 
 export const runtime = "nodejs";
 
@@ -118,6 +118,10 @@ export async function POST(request) {
       formData.get("templateLines")?.toString() || "",
     );
     const resumeFile = formData.get("resume");
+    const coverLetterFile = formData.get("coverLetter");
+    const coverLetterTemplateLines = parseTemplateLines(
+      formData.get("coverLetterTemplateLines")?.toString() || "",
+    );
 
     if (!jobPosting) {
       return NextResponse.json(
@@ -154,7 +158,25 @@ export async function POST(request) {
       contextDocuments,
     });
 
-    return NextResponse.json(result);
+    let coverLetterResultLines = [];
+
+    const hasCoverLetter =
+      coverLetterFile instanceof File && coverLetterTemplateLines.length > 0;
+
+    if (hasCoverLetter) {
+      const coverLetterText = await readResumeText(coverLetterFile);
+      const coverLetterResult = await generateTailoredCoverLetterDraft({
+        jobPosting,
+        coverLetterText,
+        coverLetterFileName: coverLetterFile.name,
+        templateLines: coverLetterTemplateLines,
+        resumeText,
+        additionalContext,
+      });
+      coverLetterResultLines = coverLetterResult.coverLetterLines;
+    }
+
+    return NextResponse.json({ ...result, coverLetterResultLines });
   } catch (error) {
     console.error("Error generating tailored resume:", error);
     return NextResponse.json(
