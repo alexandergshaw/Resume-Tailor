@@ -9,7 +9,10 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
     "@google/genai": "^2.6.0",
+    "@mui/material": "^9.0.1",
     "docx": "^9.6.1",
     "jszip": "^3.10.1",
     "mammoth": "^1.12.0",

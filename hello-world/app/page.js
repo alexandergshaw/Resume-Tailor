@@ -1,22 +1,81 @@
 "use client";
 
 import { useState } from "react";
+import { Box, IconButton, Tab, Tabs, Tooltip } from "@mui/material";
 import JSZip from "jszip";
 import styles from "./page.module.css";
 
 const WORDPROCESSINGML_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
+function createTabId() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+
+  return `tab-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function createResumeTab(index) {
+  return {
+    id: createTabId(),
+    title: `Resume ${index}`,
+    jobPosting: "",
+    resumeFile: null,
+    result: "",
+    resultLines: [],
+    generatedJobTitle: "",
+    error: "",
+    isSubmitting: false,
+    hasCompletedCall: false,
+    isDownloading: false,
+  };
+}
+
+const INITIAL_TAB = createResumeTab(1);
+
 export default function Home() {
-  const [jobPosting, setJobPosting] = useState("");
-  const [resumeFile, setResumeFile] = useState(null);
-  const [result, setResult] = useState("");
-  const [resultLines, setResultLines] = useState([]);
-  const [generatedJobTitle, setGeneratedJobTitle] = useState("");
-  const [error, setError] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [hasCompletedCall, setHasCompletedCall] = useState(false);
-  const [isDownloading, setIsDownloading] = useState(false);
+  const [tabs, setTabs] = useState([INITIAL_TAB]);
+  const [activeTabId, setActiveTabId] = useState(INITIAL_TAB.id);
+
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) || tabs[0];
+
+  function updateTab(tabId, updater) {
+    setTabs((currentTabs) =>
+      currentTabs.map((tab) => {
+        if (tab.id !== tabId) {
+          return tab;
+        }
+
+        if (typeof updater === "function") {
+          return updater(tab);
+        }
+
+        return { ...tab, ...updater };
+      }),
+    );
+  }
+
+  function addTab() {
+    const newTab = createResumeTab(tabs.length + 1);
+    setTabs((currentTabs) => [...currentTabs, newTab]);
+    setActiveTabId(newTab.id);
+  }
+
+  function closeTab(tabId) {
+    if (tabs.length === 1) {
+      return;
+    }
+
+    const closedTabIndex = tabs.findIndex((tab) => tab.id === tabId);
+    const updatedTabs = tabs.filter((tab) => tab.id !== tabId);
+    setTabs(updatedTabs);
+
+    if (activeTabId === tabId) {
+      const nextTab = updatedTabs[Math.max(0, closedTabIndex - 1)] || updatedTabs[0];
+      setActiveTabId(nextTab.id);
+    }
+  }
 
   function sanitizeFileNamePart(value) {
     return value
@@ -26,7 +85,10 @@ export default function Home() {
   }
 
   function getDownloadFileName() {
-    const cleanedTitle = sanitizeFileNamePart(generatedJobTitle || "").slice(0, 90);
+    const cleanedTitle = sanitizeFileNamePart(activeTab.generatedJobTitle || "").slice(
+      0,
+      90,
+    );
     return `Resume - ${cleanedTitle || "Target Role"}.docx`;
   }
 
@@ -234,25 +296,26 @@ export default function Home() {
   }
 
   async function handleDownloadDocx() {
-    if (!result.trim()) {
-      setError("Nothing to download yet. Generate a resume first.");
+    if (!activeTab.result.trim()) {
+      updateTab(activeTab.id, { error: "Nothing to download yet. Generate a resume first." });
       return;
     }
 
-    if (!isDocxResume(resumeFile)) {
-      setError(
-        "To preserve internal metadata and formatting exactly, upload the source resume as .docx.",
-      );
+    if (!isDocxResume(activeTab.resumeFile)) {
+      updateTab(activeTab.id, {
+        error:
+          "To preserve internal metadata and formatting exactly, upload the source resume as .docx.",
+      });
       return;
     }
 
-    setIsDownloading(true);
+    updateTab(activeTab.id, { isDownloading: true, error: "" });
 
     try {
       const blob = await buildDocxFromUploadedTemplate(
-        resumeFile,
-        result,
-        resultLines,
+        activeTab.resumeFile,
+        activeTab.result,
+        activeTab.resultLines,
       );
 
       const url = URL.createObjectURL(blob);
@@ -264,42 +327,51 @@ export default function Home() {
       link.remove();
       URL.revokeObjectURL(url);
     } catch (downloadError) {
-      setError(downloadError.message || "Unable to download DOCX file.");
+      updateTab(activeTab.id, {
+        error: downloadError.message || "Unable to download DOCX file.",
+      });
     } finally {
-      setIsDownloading(false);
+      updateTab(activeTab.id, { isDownloading: false });
     }
   }
 
   async function handleSubmit(event) {
     event.preventDefault();
 
-    setError("");
-    setResult("");
-    setResultLines([]);
-    setGeneratedJobTitle("");
-    setHasCompletedCall(false);
+    const tabId = activeTab.id;
+    const tabSnapshot = tabs.find((tab) => tab.id === tabId);
 
-    if (!jobPosting.trim()) {
-      setError("Please provide a job posting.");
+    updateTab(tabId, {
+      error: "",
+      result: "",
+      resultLines: [],
+      generatedJobTitle: "",
+      hasCompletedCall: false,
+    });
+
+    if (!tabSnapshot) {
       return;
     }
 
-    if (!resumeFile) {
-      setError("Please upload a resume file.");
+    if (!tabSnapshot.jobPosting.trim()) {
+      updateTab(tabId, { error: "Please provide a job posting." });
       return;
     }
 
-    setIsSubmitting(true);
+    if (!tabSnapshot.resumeFile) {
+      updateTab(tabId, { error: "Please upload a resume file." });
+      return;
+    }
+
+    updateTab(tabId, { isSubmitting: true });
 
     try {
       const formData = new FormData();
-      formData.append("jobPosting", jobPosting);
-      const templateLines = await buildTemplateLinesForUpload(resumeFile);
+      formData.append("jobPosting", tabSnapshot.jobPosting);
+      const templateLines = await buildTemplateLinesForUpload(tabSnapshot.resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
 
-      if (resumeFile) {
-        formData.append("resume", resumeFile);
-      }
+      formData.append("resume", tabSnapshot.resumeFile);
 
       const response = await fetch("/api/tailor", {
         method: "POST",
@@ -312,17 +384,25 @@ export default function Home() {
         throw new Error(payload.error || "Failed to generate a response.");
       }
 
-      setResult(payload.result?.trim() || "No output returned from Gemini.");
-      setResultLines(Array.isArray(payload.resultLines) ? payload.resultLines : []);
-      setGeneratedJobTitle(
-        typeof payload.jobTitle === "string" ? payload.jobTitle.trim() : "",
-      );
-      setHasCompletedCall(true);
+      updateTab(tabId, (tab) => ({
+        ...tab,
+        result: payload.result?.trim() || "No output returned from Gemini.",
+        resultLines: Array.isArray(payload.resultLines) ? payload.resultLines : [],
+        generatedJobTitle:
+          typeof payload.jobTitle === "string" ? payload.jobTitle.trim() : "",
+        hasCompletedCall: true,
+        title:
+          typeof payload.jobTitle === "string" && payload.jobTitle.trim()
+            ? payload.jobTitle.trim().slice(0, 36)
+            : tab.title,
+      }));
     } catch (submitError) {
-      setError(submitError.message || "Unexpected error.");
-      setHasCompletedCall(true);
+      updateTab(tabId, {
+        error: submitError.message || "Unexpected error.",
+        hasCompletedCall: true,
+      });
     } finally {
-      setIsSubmitting(false);
+      updateTab(tabId, { isSubmitting: false });
     }
   }
 
@@ -336,6 +416,87 @@ export default function Home() {
           formatting.
         </p>
 
+        <Box className={styles.tabsBar}>
+          <Tabs
+            value={activeTab.id}
+            onChange={(_, value) => setActiveTabId(value)}
+            variant="scrollable"
+            scrollButtons="auto"
+            sx={{
+              minHeight: 0,
+              flex: 1,
+              "& .MuiTab-root": {
+                minHeight: 38,
+                textTransform: "none",
+                border: "1px solid var(--border)",
+                borderBottom: "none",
+                borderTopLeftRadius: 10,
+                borderTopRightRadius: 10,
+                marginRight: "6px",
+                backgroundColor: "var(--bg-soft)",
+                color: "var(--text-secondary)",
+                padding: "6px 10px",
+              },
+              "& .MuiTab-root.Mui-selected": {
+                color: "var(--text-primary)",
+                backgroundColor: "var(--bg-surface)",
+              },
+              "& .MuiTabs-indicator": {
+                display: "none",
+              },
+            }}
+          >
+            {tabs.map((tab) => (
+              <Tab
+                key={tab.id}
+                value={tab.id}
+                label={
+                  <Box sx={{ display: "inline-flex", alignItems: "center", gap: 1 }}>
+                    <span>{tab.title}</span>
+                    {tabs.length > 1 ? (
+                      <Box
+                        component="span"
+                        sx={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          width: 16,
+                          height: 16,
+                          borderRadius: "50%",
+                          fontSize: 12,
+                          lineHeight: 1,
+                          "&:hover": { backgroundColor: "rgba(0,0,0,0.1)" },
+                        }}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          closeTab(tab.id);
+                        }}
+                      >
+                        x
+                      </Box>
+                    ) : null}
+                  </Box>
+                }
+              />
+            ))}
+          </Tabs>
+          <Tooltip title="New tab">
+            <IconButton
+              aria-label="Add new tab"
+              onClick={addTab}
+              sx={{
+                border: "1px solid var(--border)",
+                borderRadius: "10px 10px 0 0",
+                width: 38,
+                height: 38,
+                backgroundColor: "var(--bg-soft)",
+              }}
+            >
+              +
+            </IconButton>
+          </Tooltip>
+        </Box>
+
         <form className={styles.form} onSubmit={handleSubmit}>
           <div className={styles.fieldGroup}>
             <label htmlFor="job-posting" className={styles.label}>
@@ -346,8 +507,10 @@ export default function Home() {
               name="jobPosting"
               className={styles.textarea}
               placeholder="Paste the full job posting here..."
-              value={jobPosting}
-              onChange={(event) => setJobPosting(event.target.value)}
+              value={activeTab.jobPosting}
+              onChange={(event) => {
+                updateTab(activeTab.id, { jobPosting: event.target.value });
+              }}
             />
           </div>
 
@@ -362,27 +525,27 @@ export default function Home() {
               className={styles.fileInput}
               accept=".txt,.md,.markdown,.docx"
               onChange={(event) => {
-                setResumeFile(event.target.files?.[0] || null);
+                updateTab(activeTab.id, { resumeFile: event.target.files?.[0] || null });
               }}
             />
           </div>
 
-          <button className={styles.button} type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Generating..." : "Generate"}
+          <button className={styles.button} type="submit" disabled={activeTab.isSubmitting}>
+            {activeTab.isSubmitting ? "Generating..." : "Generate"}
           </button>
         </form>
 
-        {error ? <p className={styles.error}>{error}</p> : null}
+        {activeTab.error ? <p className={styles.error}>{activeTab.error}</p> : null}
 
-        {hasCompletedCall && result ? (
+        {activeTab.hasCompletedCall && activeTab.result ? (
           <section className={styles.resultSection}>
             <button
               type="button"
               className={styles.secondaryButton}
               onClick={handleDownloadDocx}
-              disabled={isDownloading}
+              disabled={activeTab.isDownloading}
             >
-              {isDownloading ? "Preparing DOCX..." : "Download Resume"}
+              {activeTab.isDownloading ? "Preparing DOCX..." : "Download Resume"}
             </button>
           </section>
         ) : null}
