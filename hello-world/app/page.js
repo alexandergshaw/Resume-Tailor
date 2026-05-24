@@ -8,8 +8,6 @@ import styles from "./page.module.css";
 const WORDPROCESSINGML_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
-const HEADING_STYLE_HINTS = ["heading", "title", "subtitle", "header"];
-
 export default function Home() {
   const [jobPosting, setJobPosting] = useState("");
   const [resumeFile, setResumeFile] = useState(null);
@@ -61,63 +59,22 @@ export default function Home() {
       .join("");
   }
 
-  function classifyGeneratedLine(line) {
-    const trimmed = line.trim();
-
-    if (!trimmed) {
-      return "blank";
+  function fitLinesToTemplate(lines, targetCount) {
+    if (targetCount <= 0) {
+      return [];
     }
 
-    if (/^[-*•]\s+/.test(trimmed)) {
-      return "list";
+    if (lines.length === 0) {
+      return new Array(targetCount).fill("");
     }
 
-    if ((trimmed.endsWith(":") && trimmed.length <= 70) || /^[A-Z0-9\s&/,-]+$/.test(trimmed)) {
-      return "heading";
+    if (lines.length <= targetCount) {
+      return [...lines, ...new Array(targetCount - lines.length).fill("")];
     }
 
-    return "body";
-  }
-
-  function classifyTemplateParagraph(paragraphNode) {
-    const plainText = getParagraphPlainText(paragraphNode).trim();
-    const paragraphProperties = paragraphNode.getElementsByTagNameNS(
-      WORDPROCESSINGML_NS,
-      "pPr",
-    )[0];
-
-    if (!plainText) {
-      return "blank";
-    }
-
-    if (
-      paragraphProperties?.getElementsByTagNameNS(WORDPROCESSINGML_NS, "numPr")
-        .length
-    ) {
-      return "list";
-    }
-
-    const paragraphStyle = paragraphProperties
-      ?.getElementsByTagNameNS(WORDPROCESSINGML_NS, "pStyle")?.[0]
-      ?.getAttributeNS(WORDPROCESSINGML_NS, "val")
-      ?.toLowerCase();
-
-    if (
-      paragraphStyle &&
-      HEADING_STYLE_HINTS.some((hint) => paragraphStyle.includes(hint))
-    ) {
-      return "heading";
-    }
-
-    if (plainText.length <= 70 && /^[A-Z0-9\s&/,-]+$/.test(plainText)) {
-      return "heading";
-    }
-
-    return "body";
-  }
-
-  function removeBulletPrefix(line) {
-    return line.replace(/^[-*•]\s+/, "").trimStart();
+    const head = lines.slice(0, targetCount - 1);
+    const tail = lines.slice(targetCount - 1).join(" ").replace(/\s+/g, " ").trim();
+    return [...head, tail];
   }
 
   function setParagraphText(paragraphNode, value, xmlDoc) {
@@ -127,16 +84,47 @@ export default function Home() {
     );
 
     if (textNodes.length > 0) {
-      textNodes[0].textContent = value || "";
+      const currentLengths = Array.from(textNodes).map(
+        (node) => (node.textContent || "").length,
+      );
+      const totalLength = currentLengths.reduce((sum, length) => sum + length, 0);
+      const fallbackLength = Math.max(1, Math.ceil((value || "").length / textNodes.length));
+      const effectiveLengths = currentLengths.map((length) =>
+        length > 0 ? length : fallbackLength,
+      );
+      const effectiveTotal =
+        totalLength > 0
+          ? totalLength
+          : effectiveLengths.reduce((sum, length) => sum + length, 0);
 
-      if (value && (value.startsWith(" ") || value.endsWith(" "))) {
-        textNodes[0].setAttribute("xml:space", "preserve");
-      } else {
-        textNodes[0].removeAttribute("xml:space");
+      let cursor = 0;
+
+      for (let index = 0; index < textNodes.length; index += 1) {
+        const isLast = index === textNodes.length - 1;
+        const sliceLength = isLast
+          ? Math.max(0, (value || "").length - cursor)
+          : Math.max(
+              0,
+              Math.round(((value || "").length * effectiveLengths[index]) / effectiveTotal),
+            );
+        const nextCursor = Math.min((value || "").length, cursor + sliceLength);
+        const chunk = (value || "").slice(cursor, nextCursor);
+
+        textNodes[index].textContent = chunk;
+
+        if (chunk.startsWith(" ") || chunk.endsWith(" ")) {
+          textNodes[index].setAttribute("xml:space", "preserve");
+        } else {
+          textNodes[index].removeAttribute("xml:space");
+        }
+
+        cursor = nextCursor;
       }
 
-      for (let index = 1; index < textNodes.length; index += 1) {
-        textNodes[index].textContent = "";
+      if (cursor < (value || "").length) {
+        const lastNode = textNodes[textNodes.length - 1];
+        const tail = (value || "").slice(cursor);
+        lastNode.textContent = `${lastNode.textContent || ""}${tail}`;
       }
 
       return;
@@ -173,67 +161,18 @@ export default function Home() {
       throw new Error("Uploaded DOCX template has no editable paragraphs.");
     }
 
-    const paragraphsByType = {
-      heading: [],
-      list: [],
-      body: [],
-      blank: [],
-    };
+    const editableParagraphs = existingParagraphs.filter(
+      (paragraphNode) => getParagraphPlainText(paragraphNode).length > 0,
+    );
 
-    existingParagraphs.forEach((paragraphNode) => {
-      const type = classifyTemplateParagraph(paragraphNode);
-      paragraphsByType[type].push(paragraphNode);
-    });
-
-    const fallbackTemplate =
-      paragraphsByType.body[0] ||
-      paragraphsByType.list[0] ||
-      paragraphsByType.heading[0] ||
-      existingParagraphs[0];
-
-    const cursors = {
-      heading: 0,
-      list: 0,
-      body: 0,
-      blank: 0,
-    };
-
-    function takeTemplateParagraph(type) {
-      const pool = paragraphsByType[type];
-
-      if (pool.length > 0) {
-        const index = Math.min(cursors[type], pool.length - 1);
-        cursors[type] += 1;
-        return pool[index];
-      }
-
-      return fallbackTemplate;
+    if (editableParagraphs.length === 0) {
+      throw new Error("Uploaded DOCX template has no text paragraphs to update.");
     }
 
-    const generatedParagraphs = lines.map((line) => {
-      const lineType = classifyGeneratedLine(line);
-      const templateParagraph = takeTemplateParagraph(lineType);
-      const clonedParagraph = templateParagraph.cloneNode(true);
-      const usesListTemplate = classifyTemplateParagraph(templateParagraph) === "list";
-      const finalText =
-        lineType === "list" && usesListTemplate ? removeBulletPrefix(line) : line;
+    const fittedLines = fitLinesToTemplate(lines, editableParagraphs.length);
 
-      setParagraphText(clonedParagraph, finalText, xmlDoc);
-      return clonedParagraph;
-    });
-
-    const sectionNode = getDirectChildrenByTag(bodyNode, "sectPr")[0] || null;
-
-    existingParagraphs.forEach((paragraphNode) => {
-      bodyNode.removeChild(paragraphNode);
-    });
-
-    generatedParagraphs.forEach((paragraphNode) => {
-      if (sectionNode) {
-        bodyNode.insertBefore(paragraphNode, sectionNode);
-      } else {
-        bodyNode.appendChild(paragraphNode);
-      }
+    editableParagraphs.forEach((paragraphNode, index) => {
+      setParagraphText(paragraphNode, fittedLines[index] || "", xmlDoc);
     });
 
     const serializedXml = new XMLSerializer().serializeToString(xmlDoc);
