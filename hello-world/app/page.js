@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Document, Packer, Paragraph, TextRun } from "docx";
 import styles from "./page.module.css";
 
 export default function Home() {
@@ -10,6 +11,60 @@ export default function Home() {
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasCompletedCall, setHasCompletedCall] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  function getDownloadFileName() {
+    const fallback = "tailored-resume.docx";
+
+    if (!resumeFile?.name) {
+      return fallback;
+    }
+
+    const withoutExtension = resumeFile.name.replace(/\.[^/.]+$/, "");
+    return `${withoutExtension}-tailored.docx`;
+  }
+
+  async function handleDownloadDocx() {
+    if (!result.trim()) {
+      setError("Nothing to download yet. Generate a resume first.");
+      return;
+    }
+
+    setIsDownloading(true);
+
+    try {
+      const paragraphs = result.split("\n").map((line) => {
+        if (!line.trim()) {
+          return new Paragraph({ children: [new TextRun("")] });
+        }
+
+        return new Paragraph({ children: [new TextRun(line)] });
+      });
+
+      const doc = new Document({
+        sections: [
+          {
+            properties: {},
+            children: paragraphs,
+          },
+        ],
+      });
+
+      const blob = await Packer.toBlob(doc);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = getDownloadFileName();
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (downloadError) {
+      setError(downloadError.message || "Unable to download DOCX file.");
+    } finally {
+      setIsDownloading(false);
+    }
+  }
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -111,6 +166,14 @@ export default function Home() {
           <section className={styles.resultSection}>
             <h2 className={styles.resultTitle}>Gemini Output</h2>
             <pre className={styles.result}>{result}</pre>
+            <button
+              type="button"
+              className={styles.secondaryButton}
+              onClick={handleDownloadDocx}
+              disabled={isDownloading}
+            >
+              {isDownloading ? "Preparing DOCX..." : "Download Resume"}
+            </button>
           </section>
         ) : null}
       </main>
