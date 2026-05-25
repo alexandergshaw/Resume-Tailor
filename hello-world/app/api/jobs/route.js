@@ -37,7 +37,7 @@ export async function GET(request) {
   }
 
   const fullQuery = `${query} remote`;
-  const cacheKey = `jobs:jsearch:remote:today:${query}`;
+  const cacheKey = `jobs:jsearch:remote:today:v2:${query}`;
 
   const cached = await getCached(cacheKey);
   if (cached) {
