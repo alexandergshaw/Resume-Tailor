@@ -334,8 +334,20 @@
 
 .jobGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(272px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
+}
+
+@media (max-width: 1400px) {
+  .jobGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .jobGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .jobCard {
@@ -479,6 +491,16 @@
   opacity: 0.45;
 }
 
+@keyframes cardHighlight {
+  0%   { box-shadow: 0 0 0 4px rgba(13, 74, 143, 0.7), 0 4px 24px -4px rgba(13, 74, 143, 0.4); border-color: var(--accent); }
+  55%  { box-shadow: 0 0 0 3px rgba(13, 74, 143, 0.25), 0 4px 18px -6px rgba(17, 60, 110, 0.22); border-color: var(--border-strong); }
+  100% { box-shadow: 0 4px 16px -8px rgba(17, 60, 110, 0.18); border-color: var(--border); }
+}
+
+.jobCardHighlighted {
+  animation: cardHighlight 2.8s ease-out forwards;
+}
+
 .ignoredSection {
   display: flex;
   flex-direction: column;
@@ -500,6 +522,215 @@
 
 .ignoredToggle:hover {
   color: var(--text-primary);
+}
+
+/* ── Floating viewed-postings toolbar ─────────────────────────── */
+
+.floatingToolbar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: #1c2333;
+  border-top: 1px solid #2e3a4e;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 20px;
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.3);
+}
+
+.toolbarLabel {
+  color: #7a8faf;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  flex-shrink: 0;
+}
+
+.toolbarItems {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.toolbarItems::-webkit-scrollbar {
+  display: none;
+}
+
+.toolbarArrow {
+  background: none;
+  border: 1px solid #2e3a4e;
+  color: #c0d0ee;
+  font-size: 1.25rem;
+  line-height: 1;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-family: inherit;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.toolbarArrow:hover {
+  background: #243049;
+}
+
+.toolbarArrowHidden {
+  opacity: 0.2;
+  pointer-events: none;
+}
+
+.toolbarChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: #243049;
+  border: 1px solid #354d6e;
+  color: #c0d0ee;
+  text-decoration: none;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.toolbarChip:hover {
+  background: #2e3d5e;
+  border-color: #4a6488;
+}
+
+.toolbarChipDone {
+  border-color: #2e7d32;
+  background: #172b1a;
+}
+
+.toolbarChipDone:hover {
+  background: #1d3622;
+}
+
+.toolbarChipGenerating {
+  border-color: #92400e;
+  background: #231608;
+}
+
+.toolbarChipError {
+  border-color: #991b1b;
+  background: #220e0e;
+}
+
+.toolbarChipTitle {
+  font-weight: 600;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toolbarChipCompany {
+  color: #7a8faf;
+  font-size: 0.76rem;
+}
+
+.toolbarChipBadge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #1b5e20;
+  color: #c8f0ca;
+  line-height: 1.5;
+}
+
+.toolbarChipGenerating .toolbarChipBadge {
+  background: #78350f;
+  color: #fde68a;
+}
+
+.toolbarChipRemove {
+  background: none;
+  border: none;
+  color: #5a6e90;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  display: flex;
+  align-items: center;
+  font-family: inherit;
+}
+
+.toolbarChipRemove:hover {
+  color: #c0d0ee;
+}
+
+.toolbarChipActions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+.toolbarChipBtn {
+  background: none;
+  border: none;
+  color: #5a6e90;
+  font-size: 0.82rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 3px 5px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  font-family: inherit;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.toolbarChipBtn:hover {
+  color: #c0d0ee;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.toolbarChipBtn:disabled {
+  opacity: 0.3;
+  cursor: default;
+  pointer-events: none;
+}
+
+.toolbarClear {
+  background: none;
+  border: 1px solid #2e3a4e;
+  color: #7a8faf;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 5px 10px;
+  border-radius: 7px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-family: inherit;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.toolbarClear:hover {
+  background: #243049;
+  color: #c0d0ee;
 }
 
 @media (max-width: 640px) {

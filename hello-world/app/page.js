@@ -54,6 +54,10 @@ export default function Home() {
   const [activeSection, setActiveSection] = useState("search");
   const [ignoredJobIds, setIgnoredJobIds] = useState(new Set());
   const [appliedJobIds, setAppliedJobIds] = useState(new Set());
+  const [trackedJobs, setTrackedJobs] = useState([]);
+  const [highlightedJobId, setHighlightedJobId] = useState(null);
+  const [toolbarCanScrollLeft, setToolbarCanScrollLeft] = useState(false);
+  const [toolbarCanScrollRight, setToolbarCanScrollRight] = useState(false);
   const [showIgnored, setShowIgnored] = useState(false);
   const [publisherFilter, setPublisherFilter] = useState([]);
   const [selectedCompanies, setSelectedCompanies] = useState([]);
@@ -64,6 +68,7 @@ export default function Home() {
   const activeQueryRef = useRef("");
   const jsearchResultsRef = useRef([]);
   const ghResultsRef = useRef([]);
+  const toolbarScrollRef = useRef(null);
 
   const JOB_BOARDS = ["LinkedIn", "Indeed", "ZipRecruiter", "Glassdoor", "Monster", "CareerBuilder", "Talent.com"];
 
@@ -99,6 +104,19 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("appliedJobIds", JSON.stringify([...appliedJobIds]));
   }, [appliedJobIds]);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("trackedJobs");
+      if (saved) setTrackedJobs(JSON.parse(saved));
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("trackedJobs", JSON.stringify(trackedJobs));
+    // Re-evaluate arrow visibility after chips update
+    setTimeout(handleToolbarScroll, 50);
+  }, [trackedJobs]);
 
   useEffect(() => {
     try {
@@ -559,12 +577,40 @@ export default function Home() {
     setAppliedJobIds((prev) => {
       const next = new Set(prev);
       if (next.has(jobId)) next.delete(jobId);
-      else next.add(jobId);
+      else {
+        next.add(jobId);
+        handleUntrackJob(jobId);
+      }
       return next;
     });
   }
 
+  function handleToolbarScroll() {
+    const el = toolbarScrollRef.current;
+    if (!el) return;
+    setToolbarCanScrollLeft(el.scrollLeft > 0);
+    setToolbarCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+  }
+
+  function scrollToolbar(dir) {
+    const el = toolbarScrollRef.current;
+    if (!el) return;
+    el.scrollBy({ left: dir * 320, behavior: "smooth" });
+  }
+
+  function handleTrackJob(job) {
+    setTrackedJobs((prev) => {
+      if (prev.some((j) => j.id === job.id)) return prev;
+      return [...prev, { id: job.id, title: job.title, company: job.company, url: job.url }];
+    });
+  }
+
+  function handleUntrackJob(jobId) {
+    setTrackedJobs((prev) => prev.filter((j) => j.id !== jobId));
+  }
+
   async function handleTailorJob(job) {
+    handleTrackJob(job);
     if (!resumeFile) {
       updateTailoringJob(job.id, { status: "error", error: "Upload a resume first." });
       return;
@@ -576,6 +622,7 @@ export default function Home() {
       result: "",
       resultLines: [],
       generatedJobTitle: "",
+      downloaded: false,
     });
 
     try {
@@ -623,6 +670,8 @@ export default function Home() {
 
       if (dlError) {
         updateTailoringJob(job.id, { error: dlError });
+      } else {
+        updateTailoringJob(job.id, { downloaded: true });
       }
     } catch (err) {
       updateTailoringJob(job.id, { status: "error", error: err.message || "Unexpected error." });
@@ -891,23 +940,13 @@ export default function Home() {
         {activeSection === "search" ? (
           <section className={styles.tabPanel}>
             <form onSubmit={handleJobSearch} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              <Box sx={{ display: "flex", gap: 1 }}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  label="Job title or keywords"
-                  value={jobQuery}
-                  onChange={(e) => setJobQuery(e.target.value)}
-                />
-                <Button
-                  type="submit"
-                  variant="contained"
-                  disabled={isSearching || !jobQuery.trim()}
-                  sx={{ whiteSpace: "nowrap" }}
-                >
-                  {isSearching ? "Searching..." : "Search Jobs"}
-                </Button>
-              </Box>
+              <TextField
+                fullWidth
+                size="small"
+                label="Job title or keywords"
+                value={jobQuery}
+                onChange={(e) => setJobQuery(e.target.value)}
+              />
               <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap", alignItems: "center" }}>
                 <FormControl size="small" sx={{ minWidth: 140 }}>
                   <InputLabel>Salary</InputLabel>
@@ -1016,6 +1055,14 @@ export default function Home() {
                   ))
                 }
               />
+              <Button
+                type="submit"
+                variant="contained"
+                disabled={isSearching || !jobQuery.trim()}
+                sx={{ whiteSpace: "nowrap", alignSelf: "flex-start" }}
+              >
+                {isSearching ? "Searching..." : "Search Jobs"}
+              </Button>
             </form>
 
             {jobSearchError ? <p className={styles.error}>{jobSearchError}</p> : null}
@@ -1039,11 +1086,12 @@ export default function Home() {
                         const tailoring = tailoringMap[job.id] || {};
                         const isDone = tailoring.status === "done";
                         const isTailoring = tailoring.status === "tailoring";
+                        const isDownloaded = tailoring.downloaded === true;
                         const isError = tailoring.status === "error";
                         const isApplied = appliedJobIds.has(job.id);
 
                         return (
-                          <div key={job.id} className={`${styles.jobCard}${isApplied ? ` ${styles.jobCardApplied}` : ""}`}>
+                          <div key={job.id} id={`job-card-${job.id}`} className={`${styles.jobCard}${isApplied ? ` ${styles.jobCardApplied}` : ""}${highlightedJobId === job.id ? ` ${styles.jobCardHighlighted}` : ""}`}>
                             <div>
                               <p className={styles.jobCardTitle}>{job.title}</p>
                               <p className={styles.jobCardMeta}>
@@ -1095,10 +1143,11 @@ export default function Home() {
                                 <button
                                   type="button"
                                   className={`${styles.cardBtn} ${styles.cardBtnPrimary}`}
-                                  disabled={isTailoring || isDone}
+                                  disabled={!resumeFile || isTailoring || (isDone && !isDownloaded)}
+                                  title={!resumeFile ? "Upload a resume to generate" : undefined}
                                   onClick={() => handleTailorJob(job)}
                                 >
-                                  {isTailoring ? "Tailoring..." : isDone ? "Done ✓" : "Generate"}
+                                  {isTailoring ? "Tailoring..." : isDownloaded ? "Regenerate" : isDone ? "Done ✓" : "Generate"}
                                 </button>
                               </div>
                             </div>
@@ -1243,6 +1292,124 @@ export default function Home() {
           </section>
         )}
       </main>
+
+      {trackedJobs.length > 0 ? (
+        <div className={styles.floatingToolbar}>
+          <span className={styles.toolbarLabel}>Generated ({trackedJobs.length})</span>
+          <button
+            type="button"
+            className={`${styles.toolbarArrow} ${!toolbarCanScrollLeft ? styles.toolbarArrowHidden : ""}`}
+            onClick={() => scrollToolbar(-1)}
+            aria-label="Scroll left"
+          >
+            ‹
+          </button>
+          <div
+            className={styles.toolbarItems}
+            ref={toolbarScrollRef}
+            onScroll={handleToolbarScroll}
+          >
+            {trackedJobs.map((job) => {
+              const tailoring = tailoringMap[job.id] || {};
+              const status = tailoring.status;
+              const fullJob = jobResults.find((j) => j.id === job.id);
+              const isTailoringChip = status === "tailoring";
+              const canRegenerate = !!resumeFile && !!fullJob && !isTailoringChip;
+              return (
+                <div
+                  key={job.id}
+                  className={`${styles.toolbarChip}${
+                    status === "done" ? ` ${styles.toolbarChipDone}` :
+                    status === "tailoring" ? ` ${styles.toolbarChipGenerating}` :
+                    status === "error" ? ` ${styles.toolbarChipError}` : ""
+                  }`}
+                >
+                  <span className={styles.toolbarChipTitle}>{job.title}</span>
+                  {job.company ? <span className={styles.toolbarChipCompany}>{job.company}</span> : null}
+                  {status === "done" ? (
+                    <span className={styles.toolbarChipBadge}>✓ Ready</span>
+                  ) : status === "tailoring" ? (
+                    <span className={styles.toolbarChipBadge}>Generating…</span>
+                  ) : null}
+                  <div className={styles.toolbarChipActions}>
+                    <button
+                      type="button"
+                      className={styles.toolbarChipBtn}
+                      title="Go to card"
+                      onClick={() => {
+                        const card = document.getElementById(`job-card-${job.id}`);
+                        if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
+                        setHighlightedJobId(job.id);
+                        setTimeout(() => setHighlightedJobId(null), 3000);
+                      }}
+                    >
+                      ↩
+                    </button>
+                    <a
+                      href={job.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={styles.toolbarChipBtn}
+                      title="View posting"
+                    >
+                      ↗
+                    </a>
+                    <button
+                      type="button"
+                      className={styles.toolbarChipBtn}
+                      title={canRegenerate ? "Regenerate" : !resumeFile ? "Upload a resume first" : "Regenerate"}
+                      disabled={!canRegenerate}
+                      onClick={() => fullJob && handleTailorJob(fullJob)}
+                    >
+                      ↺
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.toolbarChipBtn}
+                      title="Mark as applied"
+                      onClick={() => handleToggleApplied(job.id)}
+                    >
+                      ✓
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.toolbarChipBtn}
+                      title="Ignore"
+                      onClick={() => { handleIgnoreJob(job.id); handleUntrackJob(job.id); }}
+                    >
+                      ⊗
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.toolbarChipRemove}
+                      title="Remove"
+                      onClick={() => handleUntrackJob(job.id)}
+                      aria-label="Remove"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            className={`${styles.toolbarArrow} ${!toolbarCanScrollRight ? styles.toolbarArrowHidden : ""}`}
+            onClick={() => scrollToolbar(1)}
+            aria-label="Scroll right"
+          >
+            ›
+          </button>
+          <button
+            type="button"
+            className={styles.toolbarClear}
+            onClick={() => setTrackedJobs([])}
+          >
+            Clear all
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
