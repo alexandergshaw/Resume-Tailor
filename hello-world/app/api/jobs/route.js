@@ -28,14 +28,15 @@ function normalizeJob(raw) {
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const query = searchParams.get("query")?.trim();
-  const location = searchParams.get("location")?.trim() || "";
+  const minSalary = parseInt(searchParams.get("minSalary") || "0", 10);
+  const excludeNoSalary = searchParams.get("excludeNoSalary") === "1";
 
   if (!query) {
     return Response.json({ error: "query parameter is required." }, { status: 400 });
   }
 
-  const fullQuery = location ? `${query} in ${location}` : query;
-  const cacheKey = `jobs:jsearch:${fullQuery}`;
+  const fullQuery = `${query} remote`;
+  const cacheKey = `jobs:jsearch:remote:today:${query}`;
 
   const cached = await getCached(cacheKey);
   if (cached) {
@@ -48,6 +49,7 @@ export async function GET(request) {
     query: fullQuery,
     num_pages: "1",
     page: "1",
+    date_posted: "today",
   });
 
   let data;
@@ -72,7 +74,18 @@ export async function GET(request) {
     return Response.json({ error: `Failed to reach JSearch: ${err.message}` }, { status: 502 });
   }
 
-  const jobs = (data.data || []).slice(0, RESULTS_PER_PAGE).map(normalizeJob);
+  let jobs = (data.data || []).slice(0, RESULTS_PER_PAGE).map(normalizeJob);
+
+  if (minSalary > 0) {
+    jobs = jobs.filter(
+      (job) => job.salaryMin === null || job.salaryMin >= minSalary,
+    );
+  }
+
+  if (excludeNoSalary) {
+    jobs = jobs.filter((job) => job.salaryMin !== null || job.salaryMax !== null);
+  }
+
   await setCached(cacheKey, jobs, CACHE_TTL_SECONDS);
 
   return Response.json({ jobs, fromCache: false });

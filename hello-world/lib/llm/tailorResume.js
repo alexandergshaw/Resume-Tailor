@@ -24,12 +24,16 @@ function buildContextDocumentsBlock(contextDocuments) {
 
 function buildTailorPrompt({
   jobPosting,
+  jobPostingUrl,
   resumeText,
   resumeFileName,
   templateLines,
   additionalContext,
   contextDocuments,
 }) {
+  const jobPostingBlock = jobPostingUrl
+    ? `Job posting URL: ${jobPostingUrl}\nFetch the full job description from this URL and use it to tailor the resume.`
+    : `Job posting:\n${jobPosting}`;
   return [
     "You are an expert resume editor.",
     "Rewrite the resume to match the job posting as aggressively as possible while preserving the source resume layout exactly.",
@@ -56,7 +60,7 @@ function buildTailorPrompt({
     "5) Keep output realistic and coherent as a resume.",
     "6) Internally self-check that major required keywords from the posting appear across resultLines before final output.",
     "",
-    `Job posting:\n${jobPosting}`,
+    jobPostingBlock,
     "",
     `Additional context:\n${additionalContext || "None provided."}`,
     "",
@@ -139,6 +143,7 @@ function parseStructuredResult(rawText, targetCount) {
 
 export async function generateTailoredResumeDraft({
   jobPosting,
+  jobPostingUrl,
   resumeText,
   resumeFileName,
   templateLines,
@@ -157,6 +162,7 @@ export async function generateTailoredResumeDraft({
   const client = getGeminiClient();
   const prompt = buildTailorPrompt({
     jobPosting,
+    jobPostingUrl,
     resumeText,
     resumeFileName,
     templateLines: normalizedTemplateLines,
@@ -167,6 +173,7 @@ export async function generateTailoredResumeDraft({
   const response = await client.models.generateContent({
     model: geminiModel,
     contents: prompt,
+    ...(jobPostingUrl ? { tools: [{ urlContext: {} }] } : {}),
   });
 
   const output = response.text?.trim() || "";
