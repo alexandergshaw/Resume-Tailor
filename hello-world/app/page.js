@@ -390,14 +390,32 @@ export default function Home() {
       if (excludeNoSalary) params.set("excludeNoSalary", "1");
       if (datePosted !== "today") params.set("datePosted", datePosted);
 
-      const response = await fetch(`/api/jobs?${params.toString()}`);
-      const payload = await response.json();
+      const [jsearchResult, ghResult] = await Promise.allSettled([
+        fetch(`/api/jobs?${params.toString()}`).then((r) => r.json()),
+        fetch(`/api/greenhouse?query=${encodeURIComponent(jobQuery.trim())}`).then((r) => r.json()),
+      ]);
 
-      if (!response.ok) {
-        throw new Error(payload.error || "Failed to fetch jobs.");
+      const jsearchJobs =
+        jsearchResult.status === "fulfilled" && jsearchResult.value.jobs
+          ? jsearchResult.value.jobs
+          : [];
+      const ghJobs =
+        ghResult.status === "fulfilled" && ghResult.value.jobs
+          ? ghResult.value.jobs
+          : [];
+
+      if (jsearchJobs.length === 0 && ghJobs.length === 0) {
+        const err =
+          jsearchResult.status === "rejected"
+            ? jsearchResult.reason?.message
+            : jsearchResult.value?.error;
+        throw new Error(err || "Failed to fetch jobs.");
       }
 
-      setJobResults(payload.jobs || []);
+      const seenUrls = new Set(ghJobs.map((j) => j.url));
+      const merged = [...ghJobs, ...jsearchJobs.filter((j) => j.url && !seenUrls.has(j.url))];
+
+      setJobResults(merged);
     } catch (err) {
       setJobSearchError(err.message || "Failed to fetch jobs.");
     } finally {
