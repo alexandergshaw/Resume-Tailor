@@ -12,13 +12,19 @@ The app is wired to call Gemini from the server:
 
 ### Environment Variables
 
-Create a `.env.local` file in the project root:
+All variables must be set in Vercel → **Settings → Environment Variables** (Production, Preview, Development).
 
-```bash
-Gemini_LLM_API_Key=your_api_key_here
-# Optional override (defaults to gemini-2.5-flash)
-GEMINI_MODEL=gemini-2.5-flash
-```
+For local development, create a `.env.local` file in the project root or run `npx vercel env pull hello-world/.env.local` to pull them from Vercel.
+
+| Variable | Required | Where to get it |
+|---|---|---|
+| `Gemini_LLM_API_Key` | Yes | [Google AI Studio](https://aistudio.google.com/app/apikey) |
+| `GEMINI_MODEL` | No | Defaults to `gemini-2.5-flash` |
+| `RAPID_API_KEY` | Yes | [RapidAPI → JSearch by letscrape](https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch) — subscribe to the Basic (free) plan |
+| `KV_REST_API_URL` | Yes | Vercel Dashboard → Storage → your Redis database |
+| `KV_REST_API_TOKEN` | Yes | Vercel Dashboard → Storage → your Redis database |
+
+The `KV_REST_API_URL` and `KV_REST_API_TOKEN` variables are injected automatically when you create a Redis database via **Vercel Storage** and connect it to this project.
 
 ## Getting Started
 
