@@ -41,6 +41,7 @@ export default function Home() {
   const [resumeFile, setResumeFile] = useState(null);
   const [coverLetterFile, setCoverLetterFile] = useState(null);
   const [jobQuery, setJobQuery] = useState("");
+  const [minSalary, setMinSalary] = useState("0");
   const [jobResults, setJobResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [jobSearchError, setJobSearchError] = useState("");
@@ -405,6 +406,7 @@ export default function Home() {
 
     try {
       const params = new URLSearchParams({ query: jobQuery.trim() });
+      if (minSalary !== "0") params.set("minSalary", minSalary);
 
       const response = await fetch(`/api/jobs?${params.toString()}`);
       const payload = await response.json();
@@ -630,6 +632,20 @@ export default function Home() {
               value={jobQuery}
               onChange={(e) => setJobQuery(e.target.value)}
             />
+            <select
+              className={styles.searchInput}
+              value={minSalary}
+              onChange={(e) => setMinSalary(e.target.value)}
+            >
+              <option value="0">Any salary</option>
+              <option value="50000">$50k+</option>
+              <option value="75000">$75k+</option>
+              <option value="100000">$100k+</option>
+              <option value="125000">$125k+</option>
+              <option value="150000">$150k+</option>
+              <option value="175000">$175k+</option>
+              <option value="200000">$200k+</option>
+            </select>
             <button
               type="submit"
               className={styles.button}
