@@ -684,7 +684,6 @@ export default function Home() {
         </div>
 
         <hr className={styles.sectionDivider} />
-        <p className={styles.label}>Job Posting</p>
 
         <div className={styles.sectionTabs}>
           <button
@@ -837,7 +836,7 @@ export default function Home() {
                                 rel="noopener noreferrer"
                                 className={styles.jobCardLink}
                               >
-                                View posting
+                                View
                               </a>
                               <div className={styles.cardActions}>
                                 <button
@@ -898,7 +897,7 @@ export default function Home() {
                                   rel="noopener noreferrer"
                                   className={styles.jobCardLink}
                                 >
-                                  View posting
+                                  View
                                 </a>
                                 <div className={styles.cardActions}>
                                   <button
