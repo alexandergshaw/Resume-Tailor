@@ -673,6 +673,9 @@ export default function Home() {
           </p>
         </div>
 
+        <hr className={styles.sectionDivider} />
+        <p className={styles.label}>Job Posting</p>
+
         <div className={styles.sectionTabs}>
           <button
             type="button"

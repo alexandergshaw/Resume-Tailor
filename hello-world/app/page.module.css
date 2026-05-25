@@ -19,6 +19,12 @@
   box-shadow: var(--shadow);
 }
 
+.sectionDivider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 4px 0 0;
+}
+
 .sectionTabs {
   display: flex;
   gap: 0;
