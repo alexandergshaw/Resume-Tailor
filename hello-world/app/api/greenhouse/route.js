@@ -5,6 +5,23 @@ export const runtime = "nodejs";
 
 const CACHE_TTL_SECONDS = 14400; // 4 hours
 
+const NON_US_PATTERNS = [
+  /\bcanada\b/, /\buk\b/, /\bunited kingdom\b/, /\bengland\b/, /\bscotland\b/,
+  /\bireland\b/, /\baustralia\b/, /\bgermany\b/, /\bfrance\b/, /\bnetherlands\b/,
+  /\bindia\b/, /\bsingapore\b/, /\bspain\b/, /\bitaly\b/, /\bsweden\b/,
+  /\bdenmark\b/, /\bnorway\b/, /\bfinland\b/, /\bpoland\b/, /\bbrazil\b/,
+  /\bmexico\b/, /\bnew zealand\b/, /\bjapan\b/, /\bchina\b/, /\bhong kong\b/,
+  /\btaiwan\b/, /\bportugal\b/, /\bbelgium\b/, /\bswitzerland\b/, /\baustria\b/,
+  /\bcolombia\b/, /\bchile\b/, /\bargentina\b/, /\bisrael\b/, /\bemea\b/,
+  /\bapac\b/, /\blatam\b/, /\beurope\b/, /\beu\b(?!\s*\.\s*s)/,
+];
+
+function isUsOrUnspecifiedLocation(locationName) {
+  if (!locationName) return true;
+  const lower = locationName.toLowerCase();
+  return !NON_US_PATTERNS.some((re) => re.test(lower));
+}
+
 function stripHtml(html) {
   return html
     .replace(/&amp;/g, "&")
@@ -84,6 +101,7 @@ export async function GET(request) {
     .flat()
     .filter((job) => {
       if (!job.isRemote) return false;
+      if (!isUsOrUnspecifiedLocation(job.location)) return false;
       const titleLower = job.title.toLowerCase();
       return queryWords.some((word) => titleLower.includes(word));
     });
