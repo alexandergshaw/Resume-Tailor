@@ -805,7 +805,7 @@ export default function Home() {
                                   disabled={isTailoring || isDone}
                                   onClick={() => handleTailorJob(job)}
                                 >
-                                  {isTailoring ? "Tailoring..." : isDone ? "Done ✓" : "Tailor Resume"}
+                                  {isTailoring ? "Tailoring..." : isDone ? "Done ✓" : "Generate"}
                                 </button>
                               </div>
                             </div>
