@@ -571,7 +571,10 @@ export default function Home() {
     setAppliedJobIds((prev) => {
       const next = new Set(prev);
       if (next.has(jobId)) next.delete(jobId);
-      else next.add(jobId);
+      else {
+        next.add(jobId);
+        handleUntrackJob(jobId);
+      }
       return next;
     });
   }
@@ -1122,6 +1125,7 @@ export default function Home() {
                                   type="button"
                                   className={`${styles.cardBtn} ${styles.cardBtnPrimary}`}
                                   disabled={!resumeFile || isTailoring || (isDone && !isDownloaded)}
+                                  title={!resumeFile ? "Upload a resume to generate" : undefined}
                                   onClick={() => handleTailorJob(job)}
                                 >
                                   {isTailoring ? "Tailoring..." : isDownloaded ? "Regenerate" : isDone ? "Done ✓" : "Generate"}
