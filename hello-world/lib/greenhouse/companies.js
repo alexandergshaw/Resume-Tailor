@@ -142,7 +142,7 @@ export const GREENHOUSE_COMPANIES = [
   { slug: "zapier", name: "Zapier", categories: ["B2B SaaS"] },
   { slug: "zendesk", name: "Zendesk", categories: ["B2B SaaS"] },
   { slug: "zocdoc", name: "Zocdoc", categories: ["Healthcare & Wellness"] },
-``
+
   // AI & ML (expanded)
   { slug: "openai", name: "OpenAI", categories: ["AI & ML"] },
   { slug: "cohere", name: "Cohere", categories: ["AI & ML"] },
