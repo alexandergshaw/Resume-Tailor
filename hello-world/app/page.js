@@ -62,6 +62,7 @@ export default function Home() {
   const [publisherFilter, setPublisherFilter] = useState([]);
   const [selectedCompanies, setSelectedCompanies] = useState([]);
   const [selectedCategories, setSelectedCategories] = useState([]);
+  const [maxYearsExp, setMaxYearsExp] = useState("any");
 
   // Refs for targeted re-fetches when individual controls change
   const hasFetchedRef = useRef(false);
@@ -139,6 +140,8 @@ export default function Home() {
       }
       const savedCategories = localStorage.getItem("selectedCategories");
       if (savedCategories) setSelectedCategories(JSON.parse(savedCategories));
+      const yrs = localStorage.getItem("maxYearsExp");
+      if (yrs) setMaxYearsExp(yrs);
       if (url) setUrlPosting(url);
       if (manual) setJobPosting(manual);
     } catch {}
@@ -151,6 +154,7 @@ export default function Home() {
   useEffect(() => { localStorage.setItem("publisherFilter", JSON.stringify(publisherFilter)); }, [publisherFilter]);
   useEffect(() => { localStorage.setItem("selectedCompanies", JSON.stringify(selectedCompanies.map((c) => c.slug))); }, [selectedCompanies]);
   useEffect(() => { localStorage.setItem("selectedCategories", JSON.stringify(selectedCategories)); }, [selectedCategories]);
+  useEffect(() => { localStorage.setItem("maxYearsExp", maxYearsExp); }, [maxYearsExp]);
 
   // When categories change, drive the company multiselect
   useEffect(() => {
@@ -236,6 +240,29 @@ export default function Home() {
 
   useEffect(() => { localStorage.setItem("urlPosting", urlPosting); }, [urlPosting]);
   useEffect(() => { localStorage.setItem("jobPosting", jobPosting); }, [jobPosting]);
+
+  function extractMinYearsRequired(description) {
+    if (!description) return null;
+    const text = description.toLowerCase();
+    const patterns = [
+      /(\d+)\s*\+\s*years?/,
+      /(\d+)\s*or\s*more\s*years?/,
+      /at\s*least\s*(\d+)\s*years?/,
+      /minimum\s*(?:of\s*)?(\d+)\s*years?/,
+      /(\d+)\s*-\s*\d+\s*years?/,
+      /(\d+)\s*to\s*\d+\s*years?/,
+      /(\d+)\s*years?\s*(?:of\s*)?(?:professional\s*)?(?:experience|exp)/,
+    ];
+    const found = [];
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match) {
+        const yrs = parseInt(match[1], 10);
+        if (!isNaN(yrs) && yrs <= 25) found.push(yrs);
+      }
+    }
+    return found.length > 0 ? Math.min(...found) : null;
+  }
 
   function sanitizeFileNamePart(value) {
     return value
@@ -1009,6 +1036,23 @@ export default function Home() {
                     ))}
                   </Select>
                 </FormControl>
+                <FormControl size="small" sx={{ minWidth: 150 }}>
+                  <InputLabel>Experience</InputLabel>
+                  <Select
+                    label="Experience"
+                    value={maxYearsExp}
+                    onChange={(e) => setMaxYearsExp(e.target.value)}
+                  >
+                    <MenuItem value="any">Any experience</MenuItem>
+                    <MenuItem value="0">Entry level (0 yrs)</MenuItem>
+                    <MenuItem value="1">Up to 1 yr</MenuItem>
+                    <MenuItem value="2">Up to 2 yrs</MenuItem>
+                    <MenuItem value="3">Up to 3 yrs</MenuItem>
+                    <MenuItem value="5">Up to 5 yrs</MenuItem>
+                    <MenuItem value="7">Up to 7 yrs</MenuItem>
+                    <MenuItem value="10">Up to 10 yrs</MenuItem>
+                  </Select>
+                </FormControl>
                 <FormControlLabel
                   control={
                     <Checkbox
@@ -1083,8 +1127,16 @@ export default function Home() {
                         j.publisher?.toLowerCase().includes(b.toLowerCase())
                       )
                     );
-              const visibleJobs = boardFiltered.filter((j) => !ignoredJobIds.has(j.id));
-              const ignoredInResults = boardFiltered.filter((j) => ignoredJobIds.has(j.id));
+              const yearsFiltered =
+                maxYearsExp === "any"
+                  ? boardFiltered
+                  : boardFiltered.filter((j) => {
+                      const minReq = extractMinYearsRequired(j.description);
+                      if (minReq === null) return true;
+                      return minReq <= parseInt(maxYearsExp, 10);
+                    });
+              const visibleJobs = yearsFiltered.filter((j) => !ignoredJobIds.has(j.id));
+              const ignoredInResults = yearsFiltered.filter((j) => ignoredJobIds.has(j.id));
               return (
                 <>
                   {visibleJobs.length > 0 ? (
