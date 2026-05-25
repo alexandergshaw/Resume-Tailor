@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-// trigger deploy
+import pdfParse from "pdf-parse";
 import mammoth from "mammoth";
-import { generateTailoredResumeDraft, generateTailoredCoverLetterDraft } from "@/lib/llm/tailorResume";
+import { generateTailoredResumeDraft } from "@/lib/llm/tailorResume";
 
 export const runtime = "nodejs";
 
@@ -15,6 +15,7 @@ const DOCX_MIME_TYPES = [
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/octet-stream",
 ];
+const PDF_MIME_TYPES = ["application/pdf"];
 
 function isTextLikeFile(file) {
   if (file.type && file.type.startsWith(TEXT_MIME_PREFIX)) {
@@ -35,6 +36,16 @@ function isDocxFile(file) {
   return file.type ? DOCX_MIME_TYPES.includes(file.type) : false;
 }
 
+function isPdfFile(file) {
+  const lowerName = file.name.toLowerCase();
+
+  if (lowerName.endsWith(".pdf")) {
+    return true;
+  }
+
+  return file.type ? PDF_MIME_TYPES.includes(file.type) : false;
+}
+
 async function readResumeText(file) {
   if (!file) {
     return "";
@@ -51,6 +62,12 @@ async function readResumeText(file) {
     return value ? value.slice(0, MAX_RESUME_CHARS) : "";
   }
 
+  if (isPdfFile(file)) {
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const parsed = await pdfParse(buffer);
+    return parsed.text ? parsed.text.slice(0, MAX_RESUME_CHARS) : "";
+  }
+
   return "";
 }
 
@@ -64,6 +81,12 @@ async function readContextFile(file) {
     const buffer = Buffer.from(await file.arrayBuffer());
     const { value } = await mammoth.extractRawText({ buffer });
     return value ? value.slice(0, MAX_CONTEXT_CHARS) : "";
+  }
+
+  if (isPdfFile(file)) {
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const parsed = await pdfParse(buffer);
+    return parsed.text ? parsed.text.slice(0, MAX_CONTEXT_CHARS) : "";
   }
 
   return "Unsupported file type for text extraction.";
@@ -84,6 +107,10 @@ async function parseContextDocuments(formData) {
   }
 
   return documents;
+}
+
+function parseAdditionalContext(rawAdditionalContext) {
+  return rawAdditionalContext ? rawAdditionalContext.toString().trim().slice(0, MAX_CONTEXT_CHARS) : "";
 }
 
 function parseTemplateLines(rawTemplateLines) {
@@ -111,17 +138,12 @@ export async function POST(request) {
     const formData = await request.formData();
 
     const jobPosting = formData.get("jobPosting")?.toString().trim() || "";
-    const additionalContext =
-      formData.get("additionalContext")?.toString().trim().slice(0, 12000) || "";
+    const additionalContext = parseAdditionalContext(formData.get("additionalContext"));
     const contextDocuments = await parseContextDocuments(formData);
     const templateLines = parseTemplateLines(
       formData.get("templateLines")?.toString() || "",
     );
     const resumeFile = formData.get("resume");
-    const coverLetterFile = formData.get("coverLetter");
-    const coverLetterTemplateLines = parseTemplateLines(
-      formData.get("coverLetterTemplateLines")?.toString() || "",
-    );
 
     if (!jobPosting) {
       return NextResponse.json(
@@ -158,25 +180,7 @@ export async function POST(request) {
       contextDocuments,
     });
 
-    let coverLetterResultLines = [];
-
-    const hasCoverLetter =
-      coverLetterFile instanceof File && coverLetterTemplateLines.length > 0;
-
-    if (hasCoverLetter) {
-      const coverLetterText = await readResumeText(coverLetterFile);
-      const coverLetterResult = await generateTailoredCoverLetterDraft({
-        jobPosting,
-        coverLetterText,
-        coverLetterFileName: coverLetterFile.name,
-        templateLines: coverLetterTemplateLines,
-        resumeText,
-        additionalContext,
-      });
-      coverLetterResultLines = coverLetterResult.coverLetterLines;
-    }
-
-    return NextResponse.json({ ...result, coverLetterResultLines });
+    return NextResponse.json(result);
   } catch (error) {
     console.error("Error generating tailored resume:", error);
     return NextResponse.json(
