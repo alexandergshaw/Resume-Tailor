@@ -705,7 +705,7 @@ export default function Home() {
               type="file"
               multiple
               className={styles.fileInput}
-              accept=".txt,.md,.markdown,.docx,.pdf"
+              accept=".txt,.md,.markdown,.docx"
               onChange={(event) => {
                 updateTab(activeTab.id, {
                   contextFiles: Array.from(event.target.files || []),

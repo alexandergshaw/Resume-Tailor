@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import pdfParse from "pdf-parse";
 import mammoth from "mammoth";
 import { generateTailoredResumeDraft } from "@/lib/llm/tailorResume";
 
@@ -15,7 +14,6 @@ const DOCX_MIME_TYPES = [
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/octet-stream",
 ];
-const PDF_MIME_TYPES = ["application/pdf"];
 
 function isTextLikeFile(file) {
   if (file.type && file.type.startsWith(TEXT_MIME_PREFIX)) {
@@ -36,16 +34,6 @@ function isDocxFile(file) {
   return file.type ? DOCX_MIME_TYPES.includes(file.type) : false;
 }
 
-function isPdfFile(file) {
-  const lowerName = file.name.toLowerCase();
-
-  if (lowerName.endsWith(".pdf")) {
-    return true;
-  }
-
-  return file.type ? PDF_MIME_TYPES.includes(file.type) : false;
-}
-
 async function readResumeText(file) {
   if (!file) {
     return "";
@@ -62,12 +50,6 @@ async function readResumeText(file) {
     return value ? value.slice(0, MAX_RESUME_CHARS) : "";
   }
 
-  if (isPdfFile(file)) {
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const parsed = await pdfParse(buffer);
-    return parsed.text ? parsed.text.slice(0, MAX_RESUME_CHARS) : "";
-  }
-
   return "";
 }
 
@@ -81,12 +63,6 @@ async function readContextFile(file) {
     const buffer = Buffer.from(await file.arrayBuffer());
     const { value } = await mammoth.extractRawText({ buffer });
     return value ? value.slice(0, MAX_CONTEXT_CHARS) : "";
-  }
-
-  if (isPdfFile(file)) {
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const parsed = await pdfParse(buffer);
-    return parsed.text ? parsed.text.slice(0, MAX_CONTEXT_CHARS) : "";
   }
 
   return "Unsupported file type for text extraction.";
