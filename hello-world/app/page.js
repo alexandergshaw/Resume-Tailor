@@ -588,6 +588,7 @@ export default function Home() {
   }
 
   async function handleTailorJob(job) {
+    handleTrackJob(job);
     if (!resumeFile) {
       updateTailoringJob(job.id, { status: "error", error: "Upload a resume first." });
       return;
@@ -1095,7 +1096,6 @@ export default function Home() {
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className={styles.jobCardLink}
-                                onClick={() => handleTrackJob(job)}
                               >
                                 View
                               </a>
