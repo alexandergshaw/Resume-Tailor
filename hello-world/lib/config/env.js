@@ -1,4 +1,4 @@
-const REQUIRED_SERVER_KEYS = ["Gemini_LLM_API_Key"];
+const REQUIRED_SERVER_KEYS = ["Gemini_LLM_API_Key", "RAPID_API_KEY"];
 
 export function getServerEnv() {
   const missingKeys = REQUIRED_SERVER_KEYS.filter((key) => !process.env[key]);
@@ -14,5 +14,6 @@ export function getServerEnv() {
     geminiModel: process.env.GEMINI_MODEL || "gemini-2.5-flash",
     kvRestApiUrl: process.env.KV_REST_API_URL || null,
     kvRestApiToken: process.env.KV_REST_API_TOKEN || null,
+    rapidApiKey: process.env.RAPID_API_KEY,
   };
 }
