@@ -621,6 +621,7 @@ export default function Home() {
         </div>
 
         <section className={styles.jobSearchSection}>
+          <p className={styles.label}>Job Search</p>
           <form className={styles.searchBar} onSubmit={handleJobSearch}>
             <input
               type="text"
