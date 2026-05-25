@@ -5,11 +5,8 @@ import JSZip from "jszip";
 import styles from "./page.module.css";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
-import Checkbox from "@mui/material/Checkbox";
 import FormControl from "@mui/material/FormControl";
-import FormControlLabel from "@mui/material/FormControlLabel";
 import InputLabel from "@mui/material/InputLabel";
-import ListItemText from "@mui/material/ListItemText";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import TextField from "@mui/material/TextField";
@@ -26,9 +23,6 @@ export default function Home() {
   const [additionalContext, setAdditionalContext] = useState("");
   const [contextFiles, setContextFiles] = useState([]);
   const [jobQuery, setJobQuery] = useState("");
-  const [minSalary, setMinSalary] = useState("0");
-  const [datePosted, setDatePosted] = useState("today");
-  const [excludeNoSalary, setExcludeNoSalary] = useState(false);
   const [jobResults, setJobResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [jobSearchError, setJobSearchError] = useState("");
@@ -59,7 +53,6 @@ export default function Home() {
   const [toolbarCanScrollLeft, setToolbarCanScrollLeft] = useState(false);
   const [toolbarCanScrollRight, setToolbarCanScrollRight] = useState(false);
   const [showIgnored, setShowIgnored] = useState(false);
-  const [publisherFilter, setPublisherFilter] = useState([]);
   const [selectedCompanies, setSelectedCompanies] = useState([]);
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [maxYearsExp, setMaxYearsExp] = useState("any");
@@ -67,11 +60,7 @@ export default function Home() {
   // Refs for targeted re-fetches when individual controls change
   const hasFetchedRef = useRef(false);
   const activeQueryRef = useRef("");
-  const jsearchResultsRef = useRef([]);
-  const ghResultsRef = useRef([]);
   const toolbarScrollRef = useRef(null);
-
-  const JOB_BOARDS = ["LinkedIn", "Indeed", "ZipRecruiter", "Glassdoor", "Monster", "CareerBuilder", "Talent.com"];
 
   useEffect(() => {
     const saved = localStorage.getItem("activeSection");
@@ -122,17 +111,9 @@ export default function Home() {
   useEffect(() => {
     try {
       const q = localStorage.getItem("jobQuery");
-      const sal = localStorage.getItem("minSalary");
-      const date = localStorage.getItem("datePosted");
-      const excl = localStorage.getItem("excludeNoSalary");
-      const boards = localStorage.getItem("publisherFilter");
       const url = localStorage.getItem("urlPosting");
       const manual = localStorage.getItem("jobPosting");
       if (q) setJobQuery(q);
-      if (sal) setMinSalary(sal);
-      if (date) setDatePosted(date);
-      if (excl !== null) setExcludeNoSalary(excl === "true");
-      if (boards) setPublisherFilter(JSON.parse(boards));
       const companySlugs = localStorage.getItem("selectedCompanies");
       if (companySlugs) {
         const slugs = JSON.parse(companySlugs);
@@ -148,10 +129,6 @@ export default function Home() {
   }, []);
 
   useEffect(() => { localStorage.setItem("jobQuery", jobQuery); }, [jobQuery]);
-  useEffect(() => { localStorage.setItem("minSalary", minSalary); }, [minSalary]);
-  useEffect(() => { localStorage.setItem("datePosted", datePosted); }, [datePosted]);
-  useEffect(() => { localStorage.setItem("excludeNoSalary", String(excludeNoSalary)); }, [excludeNoSalary]);
-  useEffect(() => { localStorage.setItem("publisherFilter", JSON.stringify(publisherFilter)); }, [publisherFilter]);
   useEffect(() => { localStorage.setItem("selectedCompanies", JSON.stringify(selectedCompanies.map((c) => c.slug))); }, [selectedCompanies]);
   useEffect(() => { localStorage.setItem("selectedCategories", JSON.stringify(selectedCategories)); }, [selectedCategories]);
   useEffect(() => { localStorage.setItem("maxYearsExp", maxYearsExp); }, [maxYearsExp]);
@@ -177,63 +154,25 @@ export default function Home() {
     }`;
     fetch(ghUrl)
       .then((r) => r.json())
-      .then((data) => {
-        const ghJobs = data.jobs || [];
-        ghResultsRef.current = ghJobs;
-        const seenUrls = new Set(ghJobs.map((j) => j.url));
-        const jsJobs = jsearchResultsRef.current;
-        setJobResults([...ghJobs, ...jsJobs.filter((j) => j.url && !seenUrls.has(j.url))]);
-      })
+      .then((data) => { setJobResults(data.jobs || []); })
       .catch(() => {});
   }, [selectedCompanies]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-fetch JSearch when salary/date/salary-filter controls change
-  useEffect(() => {
-    if (!hasFetchedRef.current || !activeQueryRef.current) return;
-    const query = activeQueryRef.current;
-    const params = new URLSearchParams({ query });
-    if (minSalary !== "0") params.set("minSalary", minSalary);
-    if (excludeNoSalary) params.set("excludeNoSalary", "1");
-    if (datePosted !== "today") params.set("datePosted", datePosted);
-    setIsSearching(true);
-    fetch(`/api/jobs?${params.toString()}`)
-      .then((r) => r.json())
-      .then((data) => {
-        const jsJobs = data.jobs || [];
-        jsearchResultsRef.current = jsJobs;
-        const ghJobs = ghResultsRef.current;
-        const seenUrls = new Set(ghJobs.map((j) => j.url));
-        setJobResults([...ghJobs, ...jsJobs.filter((j) => j.url && !seenUrls.has(j.url))]);
-      })
-      .catch(() => {})
-      .finally(() => setIsSearching(false));
-  }, [minSalary, datePosted, excludeNoSalary]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Re-run full search (debounced) when the query text changes
+  // Re-run search (debounced) when the query text changes
   useEffect(() => {
     if (!hasFetchedRef.current || !jobQuery.trim()) return;
     const timer = setTimeout(() => {
       activeQueryRef.current = jobQuery.trim();
-      const params = new URLSearchParams({ query: jobQuery.trim() });
-      if (minSalary !== "0") params.set("minSalary", minSalary);
-      if (excludeNoSalary) params.set("excludeNoSalary", "1");
-      if (datePosted !== "today") params.set("datePosted", datePosted);
       setIsSearching(true);
       setJobSearchError("");
       const ghCompanyParam = selectedCompanies.length > 0
         ? `&companies=${selectedCompanies.map((c) => c.slug).join(",")}`
         : "";
-      Promise.allSettled([
-        fetch(`/api/jobs?${params.toString()}`).then((r) => r.json()),
-        fetch(`/api/greenhouse?query=${encodeURIComponent(jobQuery.trim())}${ghCompanyParam}`).then((r) => r.json()),
-      ]).then(([jsearchResult, ghResult]) => {
-        const jsJobs = jsearchResult.status === "fulfilled" && jsearchResult.value.jobs ? jsearchResult.value.jobs : [];
-        const ghJobs = ghResult.status === "fulfilled" && ghResult.value.jobs ? ghResult.value.jobs : [];
-        jsearchResultsRef.current = jsJobs;
-        ghResultsRef.current = ghJobs;
-        const seenUrls = new Set(ghJobs.map((j) => j.url));
-        setJobResults([...ghJobs, ...jsJobs.filter((j) => j.url && !seenUrls.has(j.url))]);
-      }).catch(() => {}).finally(() => setIsSearching(false));
+      fetch(`/api/greenhouse?query=${encodeURIComponent(jobQuery.trim())}${ghCompanyParam}`)
+        .then((r) => r.json())
+        .then((data) => { setJobResults(data.jobs || []); })
+        .catch(() => {})
+        .finally(() => setIsSearching(false));
     }, 500);
     return () => clearTimeout(timer);
   }, [jobQuery]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -547,40 +486,18 @@ export default function Home() {
     activeQueryRef.current = jobQuery.trim();
 
     try {
-      const params = new URLSearchParams({ query: jobQuery.trim() });
-      if (minSalary !== "0") params.set("minSalary", minSalary);
-      if (excludeNoSalary) params.set("excludeNoSalary", "1");
-      if (datePosted !== "today") params.set("datePosted", datePosted);
+      const ghCompanyParam = selectedCompanies.length > 0
+        ? `&companies=${selectedCompanies.map((c) => c.slug).join(",")}`
+        : "";
+      const data = await fetch(
+        `/api/greenhouse?query=${encodeURIComponent(jobQuery.trim())}${ghCompanyParam}`
+      ).then((r) => r.json());
 
-      const [jsearchResult, ghResult] = await Promise.allSettled([
-        fetch(`/api/jobs?${params.toString()}`).then((r) => r.json()),
-        fetch(`/api/greenhouse?query=${encodeURIComponent(jobQuery.trim())}${selectedCompanies.length > 0 ? `&companies=${selectedCompanies.map((c) => c.slug).join(",")}` : ""}`).then((r) => r.json()),
-      ]);
+      const ghJobs = data.jobs || [];
+      if (ghJobs.length === 0) throw new Error(data.error || "No jobs found.");
 
-      const jsearchJobs =
-        jsearchResult.status === "fulfilled" && jsearchResult.value.jobs
-          ? jsearchResult.value.jobs
-          : [];
-      const ghJobs =
-        ghResult.status === "fulfilled" && ghResult.value.jobs
-          ? ghResult.value.jobs
-          : [];
-
-      if (jsearchJobs.length === 0 && ghJobs.length === 0) {
-        const err =
-          jsearchResult.status === "rejected"
-            ? jsearchResult.reason?.message
-            : jsearchResult.value?.error;
-        throw new Error(err || "Failed to fetch jobs.");
-      }
-
-      jsearchResultsRef.current = jsearchJobs;
-      ghResultsRef.current = ghJobs;
       hasFetchedRef.current = true;
-      const seenUrls = new Set(ghJobs.map((j) => j.url));
-      const merged = [...ghJobs, ...jsearchJobs.filter((j) => j.url && !seenUrls.has(j.url))];
-
-      setJobResults(merged);
+      setJobResults(ghJobs);
     } catch (err) {
       setJobSearchError(err.message || "Failed to fetch jobs.");
     } finally {
@@ -981,89 +898,23 @@ export default function Home() {
                 value={jobQuery}
                 onChange={(e) => setJobQuery(e.target.value)}
               />
-              <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap", alignItems: "center" }}>
-                <FormControl size="small" sx={{ minWidth: 140 }}>
-                  <InputLabel>Salary</InputLabel>
-                  <Select
-                    label="Salary"
-                    value={minSalary}
-                    onChange={(e) => setMinSalary(e.target.value)}
-                  >
-                    <MenuItem value="0">Any salary</MenuItem>
-                    <MenuItem value="50000">$50k+</MenuItem>
-                    <MenuItem value="75000">$75k+</MenuItem>
-                    <MenuItem value="100000">$100k+</MenuItem>
-                    <MenuItem value="125000">$125k+</MenuItem>
-                    <MenuItem value="150000">$150k+</MenuItem>
-                    <MenuItem value="175000">$175k+</MenuItem>
-                    <MenuItem value="200000">$200k+</MenuItem>
-                  </Select>
-                </FormControl>
-                <FormControl size="small" sx={{ minWidth: 150 }}>
-                  <InputLabel>Date posted</InputLabel>
-                  <Select
-                    label="Date posted"
-                    value={datePosted}
-                    onChange={(e) => setDatePosted(e.target.value)}
-                  >
-                    <MenuItem value="today">Past 24 hours</MenuItem>
-                    <MenuItem value="3days">Past 3 days</MenuItem>
-                    <MenuItem value="week">Past week</MenuItem>
-                    <MenuItem value="month">Past month</MenuItem>
-                  </Select>
-                </FormControl>
-                <FormControl size="small" sx={{ minWidth: 180 }}>
-                  <InputLabel>Job boards</InputLabel>
-                  <Select
-                    multiple
-                    label="Job boards"
-                    value={publisherFilter}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setPublisherFilter(typeof val === "string" ? val.split(",") : val);
-                    }}
-                    renderValue={(selected) =>
-                      selected.length === 0
-                        ? "All boards"
-                        : `${selected.length} board${selected.length > 1 ? "s" : ""} selected`
-                    }
-                  >
-                    {JOB_BOARDS.map((board) => (
-                      <MenuItem key={board} value={board}>
-                        <Checkbox checked={publisherFilter.includes(board)} size="small" />
-                        <ListItemText primary={board} />
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-                <FormControl size="small" sx={{ minWidth: 150 }}>
-                  <InputLabel>Experience</InputLabel>
-                  <Select
-                    label="Experience"
-                    value={maxYearsExp}
-                    onChange={(e) => setMaxYearsExp(e.target.value)}
-                  >
-                    <MenuItem value="any">Any experience</MenuItem>
-                    <MenuItem value="0">Entry level (0 yrs)</MenuItem>
-                    <MenuItem value="1">Up to 1 yr</MenuItem>
-                    <MenuItem value="2">Up to 2 yrs</MenuItem>
-                    <MenuItem value="3">Up to 3 yrs</MenuItem>
-                    <MenuItem value="5">Up to 5 yrs</MenuItem>
-                    <MenuItem value="7">Up to 7 yrs</MenuItem>
-                    <MenuItem value="10">Up to 10 yrs</MenuItem>
-                  </Select>
-                </FormControl>
-                <FormControlLabel
-                  control={
-                    <Checkbox
-                      checked={excludeNoSalary}
-                      onChange={(e) => setExcludeNoSalary(e.target.checked)}
-                      size="small"
-                    />
-                  }
-                  label="Listed salary only"
-                />
-              </Box>
+              <FormControl size="small" sx={{ minWidth: 150, alignSelf: "flex-start" }}>
+                <InputLabel>Experience</InputLabel>
+                <Select
+                  label="Experience"
+                  value={maxYearsExp}
+                  onChange={(e) => setMaxYearsExp(e.target.value)}
+                >
+                  <MenuItem value="any">Any experience</MenuItem>
+                  <MenuItem value="0">Entry level (0 yrs)</MenuItem>
+                  <MenuItem value="1">Up to 1 yr</MenuItem>
+                  <MenuItem value="2">Up to 2 yrs</MenuItem>
+                  <MenuItem value="3">Up to 3 yrs</MenuItem>
+                  <MenuItem value="5">Up to 5 yrs</MenuItem>
+                  <MenuItem value="7">Up to 7 yrs</MenuItem>
+                  <MenuItem value="10">Up to 10 yrs</MenuItem>
+                </Select>
+              </FormControl>
               <Autocomplete
                 multiple
                 options={COMPANY_CATEGORIES}
@@ -1119,18 +970,10 @@ export default function Home() {
             {jobSearchError ? <p className={styles.error}>{jobSearchError}</p> : null}
 
             {jobResults.length > 0 ? (() => {
-              const boardFiltered =
-                publisherFilter.length === 0
-                  ? jobResults
-                  : jobResults.filter((j) =>
-                      publisherFilter.some((b) =>
-                        j.publisher?.toLowerCase().includes(b.toLowerCase())
-                      )
-                    );
               const yearsFiltered =
                 maxYearsExp === "any"
-                  ? boardFiltered
-                  : boardFiltered.filter((j) => {
+                  ? jobResults
+                  : jobResults.filter((j) => {
                       const minReq = extractMinYearsRequired(j.description);
                       if (minReq === null) return true;
                       return minReq <= parseInt(maxYearsExp, 10);
