@@ -1,45 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { Badge, Box, IconButton, Tab, Tabs, Tooltip } from "@mui/material";
 import JSZip from "jszip";
 import styles from "./page.module.css";
 
 const WORDPROCESSINGML_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
-function createTabId() {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-
-  return `tab-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function createResumeTab(index) {
-  return {
-    id: createTabId(),
-    title: `Job Posting ${index}`,
-    jobPosting: "",
-    additionalContext: "",
-    contextFiles: [],
-    result: "",
-    resultLines: [],
-    coverLetterResultLines: [],
-    generatedJobTitle: "",
-    hasDownloadNotification: false,
-    error: "",
-    isSubmitting: false,
-    hasCompletedCall: false,
-    isDownloading: false,
-  };
-}
-
-const INITIAL_TAB = createResumeTab(1);
-
 export default function Home() {
   const [resumeFile, setResumeFile] = useState(null);
   const [coverLetterFile, setCoverLetterFile] = useState(null);
+  const [additionalContext, setAdditionalContext] = useState("");
+  const [contextFiles, setContextFiles] = useState([]);
   const [jobQuery, setJobQuery] = useState("");
   const [minSalary, setMinSalary] = useState("0");
   const [excludeNoSalary, setExcludeNoSalary] = useState(false);
@@ -47,61 +19,22 @@ export default function Home() {
   const [isSearching, setIsSearching] = useState(false);
   const [jobSearchError, setJobSearchError] = useState("");
   const [tailoringMap, setTailoringMap] = useState({});
-  const [tabs, setTabs] = useState([INITIAL_TAB]);
-  const [activeTabId, setActiveTabId] = useState(INITIAL_TAB.id);
-
-  const activeTab = tabs.find((tab) => tab.id === activeTabId) || tabs[0];
-
-  function updateTab(tabId, updater) {
-    setTabs((currentTabs) =>
-      currentTabs.map((tab) => {
-        if (tab.id !== tabId) {
-          return tab;
-        }
-
-        if (typeof updater === "function") {
-          return updater(tab);
-        }
-
-        return { ...tab, ...updater };
-      }),
-    );
-  }
-
-  function addTab() {
-    const newTab = createResumeTab(tabs.length + 1);
-    setTabs((currentTabs) => [...currentTabs, newTab]);
-    setActiveTabId(newTab.id);
-  }
-
-  function closeTab(tabId) {
-    if (tabs.length === 1) {
-      return;
-    }
-
-    const closedTabIndex = tabs.findIndex((tab) => tab.id === tabId);
-    const updatedTabs = tabs.filter((tab) => tab.id !== tabId);
-    setTabs(updatedTabs);
-
-    if (activeTabId === tabId) {
-      const nextTab = updatedTabs[Math.max(0, closedTabIndex - 1)] || updatedTabs[0];
-      setActiveTabId(nextTab.id);
-    }
-  }
+  const [jobPosting, setJobPosting] = useState("");
+  const [manualResult, setManualResult] = useState("");
+  const [manualResultLines, setManualResultLines] = useState([]);
+  const [manualCoverLetterResultLines, setManualCoverLetterResultLines] = useState([]);
+  const [manualGeneratedJobTitle, setManualGeneratedJobTitle] = useState("");
+  const [manualIsSubmitting, setManualIsSubmitting] = useState(false);
+  const [manualError, setManualError] = useState("");
+  const [manualHasCompleted, setManualHasCompleted] = useState(false);
+  const [manualIsDownloading, setManualIsDownloading] = useState(false);
+  const [activeSection, setActiveSection] = useState("search");
 
   function sanitizeFileNamePart(value) {
     return value
       .replace(/[\\/:*?"<>|]/g, "")
       .replace(/\s+/g, " ")
       .trim();
-  }
-
-  function getDownloadFileName() {
-    const cleanedTitle = sanitizeFileNamePart(activeTab.generatedJobTitle || "").slice(
-      0,
-      90,
-    );
-    return `Resume - ${cleanedTitle || "Target Role"}.docx`;
   }
 
   function getDownloadFileNameForTitle(jobTitle) {
@@ -317,25 +250,12 @@ export default function Home() {
     });
   }
 
-  async function downloadDocxForTab({ tabId, jobTitle, result, resultLines, coverLetterResultLines }) {
-    if (!result.trim()) {
-      updateTab(tabId, { error: "Nothing to download yet. Generate a resume first." });
-      return;
-    }
-
-    if (!isDocxResume(resumeFile)) {
-      updateTab(tabId, {
-        error:
-          "To preserve internal metadata and formatting exactly, upload the source resume as .docx.",
-      });
-      return;
-    }
-
-    updateTab(tabId, { isDownloading: true, error: "" });
+  async function downloadDocxFiles({ jobTitle, result, resultLines, coverLetterResultLines }) {
+    if (!result?.trim()) return "Nothing to download yet.";
+    if (!isDocxResume(resumeFile)) return "Upload the source resume as .docx to download.";
 
     try {
       const blob = await buildDocxFromUploadedTemplate(resumeFile, result, resultLines);
-
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -365,25 +285,10 @@ export default function Home() {
         clLink.remove();
         URL.revokeObjectURL(clUrl);
       }
-
-      updateTab(tabId, { hasDownloadNotification: true });
-    } catch (downloadError) {
-      updateTab(tabId, {
-        error: downloadError.message || "Unable to download DOCX file.",
-      });
-    } finally {
-      updateTab(tabId, { isDownloading: false });
+      return null;
+    } catch (err) {
+      return err.message || "Unable to download DOCX.";
     }
-  }
-
-  async function handleDownloadDocx() {
-    await downloadDocxForTab({
-      tabId: activeTab.id,
-      jobTitle: activeTab.generatedJobTitle,
-      result: activeTab.result,
-      resultLines: activeTab.resultLines,
-      coverLetterResultLines: activeTab.coverLetterResultLines,
-    });
   }
 
   function updateTailoringJob(jobId, updater) {
@@ -442,9 +347,10 @@ export default function Home() {
     try {
       const formData = new FormData();
       formData.append("jobPosting", job.description);
-      formData.append("additionalContext", "");
+      formData.append("additionalContext", additionalContext);
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
+      contextFiles.forEach((file) => formData.append("contextFiles", file));
       formData.append("resume", resumeFile);
 
       if (coverLetterFile) {
@@ -474,58 +380,48 @@ export default function Home() {
         error: "",
       });
 
-      await downloadDocxForTab({
-        tabId: job.id,
+      const dlError = await downloadDocxFiles({
         jobTitle: generatedJobTitle || job.title,
         result,
         resultLines,
         coverLetterResultLines,
       });
+
+      if (dlError) {
+        updateTailoringJob(job.id, { error: dlError });
+      }
     } catch (err) {
       updateTailoringJob(job.id, { status: "error", error: err.message || "Unexpected error." });
     }
   }
 
-  async function handleSubmit(event) {
+  async function handleManualSubmit(event) {
     event.preventDefault();
 
-    const tabId = activeTab.id;
-    const tabSnapshot = tabs.find((tab) => tab.id === tabId);
-
-    updateTab(tabId, {
-      error: "",
-      result: "",
-      resultLines: [],
-      generatedJobTitle: "",
-      hasCompletedCall: false,
-    });
-
-    if (!tabSnapshot) {
-      return;
-    }
-
-    if (!tabSnapshot.jobPosting.trim()) {
-      updateTab(tabId, { error: "Please provide a job posting." });
+    if (!jobPosting.trim()) {
+      setManualError("Please provide a job posting.");
       return;
     }
 
     if (!resumeFile) {
-      updateTab(tabId, { error: "Please upload a resume file." });
+      setManualError("Please upload a resume file.");
       return;
     }
 
-    updateTab(tabId, { isSubmitting: true, hasDownloadNotification: false });
+    setManualError("");
+    setManualResult("");
+    setManualResultLines([]);
+    setManualGeneratedJobTitle("");
+    setManualHasCompleted(false);
+    setManualIsSubmitting(true);
 
     try {
       const formData = new FormData();
-      formData.append("jobPosting", tabSnapshot.jobPosting);
-      formData.append("additionalContext", tabSnapshot.additionalContext || "");
+      formData.append("jobPosting", jobPosting);
+      formData.append("additionalContext", additionalContext);
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
-      tabSnapshot.contextFiles.forEach((file) => {
-        formData.append("contextFiles", file);
-      });
-
+      contextFiles.forEach((file) => formData.append("contextFiles", file));
       formData.append("resume", resumeFile);
 
       if (coverLetterFile) {
@@ -534,53 +430,48 @@ export default function Home() {
         formData.append("coverLetter", coverLetterFile);
       }
 
-      const response = await fetch("/api/tailor", {
-        method: "POST",
-        body: formData,
-      });
-
+      const response = await fetch("/api/tailor", { method: "POST", body: formData });
       const payload = await response.json();
 
-      if (!response.ok) {
-        throw new Error(payload.error || "Failed to generate a response.");
-      }
+      if (!response.ok) throw new Error(payload.error || "Failed to generate a response.");
 
       const nextResult = payload.result?.trim() || "No output returned from Gemini.";
       const nextResultLines = Array.isArray(payload.resultLines) ? payload.resultLines : [];
-      const nextJobTitle =
-        typeof payload.jobTitle === "string" ? payload.jobTitle.trim() : "";
-      const nextCoverLetterResultLines = Array.isArray(payload.coverLetterResultLines)
-        ? payload.coverLetterResultLines
-        : [];
+      const nextJobTitle = typeof payload.jobTitle === "string" ? payload.jobTitle.trim() : "";
+      const nextCoverLetterResultLines = Array.isArray(payload.coverLetterResultLines) ? payload.coverLetterResultLines : [];
 
-      updateTab(tabId, (tab) => ({
-        ...tab,
-        result: nextResult,
-        resultLines: nextResultLines,
-        coverLetterResultLines: nextCoverLetterResultLines,
-        generatedJobTitle: nextJobTitle,
-        hasCompletedCall: true,
-        title:
-          nextJobTitle
-            ? nextJobTitle.slice(0, 36)
-            : tab.title,
-      }));
+      setManualResult(nextResult);
+      setManualResultLines(nextResultLines);
+      setManualCoverLetterResultLines(nextCoverLetterResultLines);
+      setManualGeneratedJobTitle(nextJobTitle);
+      setManualHasCompleted(true);
 
-      await downloadDocxForTab({
-        tabId,
+      const dlError = await downloadDocxFiles({
         jobTitle: nextJobTitle,
         result: nextResult,
         resultLines: nextResultLines,
         coverLetterResultLines: nextCoverLetterResultLines,
       });
-    } catch (submitError) {
-      updateTab(tabId, {
-        error: submitError.message || "Unexpected error.",
-        hasCompletedCall: true,
-      });
+
+      if (dlError) setManualError(dlError);
+    } catch (err) {
+      setManualError(err.message || "Unexpected error.");
+      setManualHasCompleted(true);
     } finally {
-      updateTab(tabId, { isSubmitting: false });
+      setManualIsSubmitting(false);
     }
+  }
+
+  async function handleManualDownload() {
+    setManualIsDownloading(true);
+    const dlError = await downloadDocxFiles({
+      jobTitle: manualGeneratedJobTitle,
+      result: manualResult,
+      resultLines: manualResultLines,
+      coverLetterResultLines: manualCoverLetterResultLines,
+    });
+    if (dlError) setManualError(dlError);
+    setManualIsDownloading(false);
   }
 
   return (
@@ -588,9 +479,8 @@ export default function Home() {
       <main className={styles.main}>
         <h1 className={styles.title}>Resume Tailor</h1>
         <p className={styles.subtitle}>
-          Upload a resume (.txt, .md, or .docx) and a job posting, then Gemini
-          will generate a tailored version that mirrors the original layout and
-          formatting.
+          Upload a resume, search for remote jobs, and let Gemini tailor your
+          resume to each posting.
         </p>
 
         <div className={styles.fieldGroup}>
@@ -603,11 +493,10 @@ export default function Home() {
             type="file"
             className={styles.fileInput}
             accept=".txt,.md,.markdown,.docx"
-            onChange={(event) => {
-              setResumeFile(event.target.files?.[0] || null);
-            }}
+            onChange={(event) => setResumeFile(event.target.files?.[0] || null)}
           />
         </div>
+
         <div className={styles.fieldGroup}>
           <label htmlFor="cover-letter" className={styles.label}>
             Cover Letter
@@ -618,334 +507,202 @@ export default function Home() {
             type="file"
             className={styles.fileInput}
             accept=".txt,.md,.markdown,.docx"
-            onChange={(event) => {
-              setCoverLetterFile(event.target.files?.[0] || null);
-            }}
+            onChange={(event) => setCoverLetterFile(event.target.files?.[0] || null)}
           />
         </div>
 
-        <section className={styles.jobSearchSection}>
-          <p className={styles.label}>Job Search</p>
-          <form className={styles.searchBar} onSubmit={handleJobSearch}>
-            <input
-              type="text"
-              className={styles.searchInput}
-              placeholder="Job title or keywords"
-              value={jobQuery}
-              onChange={(e) => setJobQuery(e.target.value)}
-            />
-            <select
-              className={styles.searchInput}
-              value={minSalary}
-              onChange={(e) => setMinSalary(e.target.value)}
-            >
-              <option value="0">Any salary</option>
-              <option value="50000">$50k+</option>
-              <option value="75000">$75k+</option>
-              <option value="100000">$100k+</option>
-              <option value="125000">$125k+</option>
-              <option value="150000">$150k+</option>
-              <option value="175000">$175k+</option>
-              <option value="200000">$200k+</option>
-            </select>
-            <label className={styles.checkboxLabel}>
-              <input
-                type="checkbox"
-                checked={excludeNoSalary}
-                onChange={(e) => setExcludeNoSalary(e.target.checked)}
-              />
-              Listed salary only
-            </label>
-            <button
-              type="submit"
-              className={styles.button}
-              disabled={isSearching || !jobQuery.trim()}
-            >
-              {isSearching ? "Searching..." : "Search Jobs"}
-            </button>
-          </form>
+        <div className={styles.fieldGroup}>
+          <label htmlFor="additional-context" className={styles.label}>
+            Additional Context
+          </label>
+          <textarea
+            id="additional-context"
+            name="additionalContext"
+            className={`${styles.textarea} ${styles.contextTextarea}`}
+            placeholder="Add extra direction for Gemini (priority skills, key achievements to emphasize, domain specifics, preferred wording, etc.)"
+            value={additionalContext}
+            onChange={(e) => setAdditionalContext(e.target.value)}
+          />
+        </div>
 
-          {jobSearchError ? <p className={styles.error}>{jobSearchError}</p> : null}
+        <div className={styles.fieldGroup}>
+          <label htmlFor="context-files" className={styles.label}>
+            Supporting Files
+          </label>
+          <input
+            id="context-files"
+            name="contextFiles"
+            type="file"
+            multiple
+            className={styles.fileInput}
+            accept=".txt,.md,.markdown,.docx"
+            onChange={(event) => setContextFiles(Array.from(event.target.files || []))}
+          />
+          <p className={styles.helperText}>
+            {contextFiles.length > 0
+              ? `${contextFiles.length} supporting file${
+                  contextFiles.length > 1 ? "s" : ""
+                } selected`
+              : "Optional: upload extra files to provide more context for Gemini."}
+          </p>
+        </div>
 
-          {jobResults.length > 0 ? (
-            <div className={styles.jobGrid}>
-              {jobResults.map((job) => {
-                const tailoring = tailoringMap[job.id] || {};
-                const isDone = tailoring.status === "done";
-                const isTailoring = tailoring.status === "tailoring";
-                const isError = tailoring.status === "error";
-
-                return (
-                  <div key={job.id} className={styles.jobCard}>
-                    <div>
-                      <p className={styles.jobCardTitle}>{job.title}</p>
-                      <p className={styles.jobCardMeta}>
-                        {[job.company, job.location].filter(Boolean).join(" · ")}
-                      </p>
-                      {(job.salaryMin || job.salaryMax) ? (
-                        <p className={styles.jobCardSalary}>
-                          {job.salaryMin && job.salaryMax
-                            ? `$${Math.round(job.salaryMin / 1000)}k–$${Math.round(job.salaryMax / 1000)}k`
-                            : job.salaryMin
-                            ? `From $${Math.round(job.salaryMin / 1000)}k`
-                            : `Up to $${Math.round(job.salaryMax / 1000)}k`}
-                        </p>
-                      ) : null}
-                      <p className={styles.jobCardDescription}>
-                        {job.description.slice(0, 220).trim()}&hellip;
-                      </p>
-                      {isError ? (
-                        <p className={styles.jobCardError}>{tailoring.error}</p>
-                      ) : null}
-                    </div>
-                    <div className={styles.jobCardFooter}>
-                      <a
-                        href={job.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={styles.jobCardLink}
-                      >
-                        View posting
-                      </a>
-                      <button
-                        type="button"
-                        className={styles.button}
-                        disabled={isTailoring || isDone}
-                        onClick={() => handleTailorJob(job)}
-                      >
-                        {isTailoring ? "Tailoring..." : isDone ? "Done ✓" : "Tailor Resume"}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : null}
-        </section>
-
-        <Box className={styles.tabsBar}>
-          <Tabs
-            value={activeTab.id}
-            onChange={(_, value) => setActiveTabId(value)}
-            variant="scrollable"
-            scrollButtons="auto"
-            sx={{
-              minHeight: 0,
-              flex: 1,
-              "& .MuiTab-root": {
-                minHeight: 40,
-                textTransform: "none",
-                border: "1px solid var(--border)",
-                borderBottom: "none",
-                borderTopLeftRadius: 12,
-                borderTopRightRadius: 12,
-                marginRight: "8px",
-                backgroundColor: "rgba(255, 255, 255, 0.7)",
-                color: "var(--text-muted)",
-                padding: "6px 12px",
-                backdropFilter: "blur(4px)",
-                transition:
-                  "background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease",
-                "&:hover": {
-                  backgroundColor: "rgba(255, 255, 255, 0.94)",
-                  color: "var(--text-primary)",
-                },
-              },
-              "& .MuiTab-root.Mui-selected": {
-                color: "var(--accent)",
-                backgroundColor: "var(--bg-surface)",
-                borderColor: "var(--border-strong)",
-                boxShadow: "0 8px 16px -14px rgba(17, 60, 110, 0.55)",
-                fontWeight: 700,
-              },
-              "& .MuiTabs-indicator": {
-                display: "none",
-              },
-            }}
+        <div className={styles.sectionTabs}>
+          <button
+            type="button"
+            className={activeSection === "search" ? styles.sectionTabActive : styles.sectionTab}
+            onClick={() => setActiveSection("search")}
           >
-            {tabs.map((tab) => {
-              const tooltipTitle = tab.generatedJobTitle || tab.title;
-              const isActive = tab.id === activeTab.id;
-
-              return (
-                <Tooltip key={tab.id} title={tooltipTitle} arrow>
-                  <Tab
-                    value={tab.id}
-                    sx={{
-                      "&::after": {
-                        content: '""',
-                        position: "absolute",
-                        left: 10,
-                        right: 10,
-                        bottom: 0,
-                        height: 2,
-                        borderRadius: 999,
-                        backgroundColor: isActive ? "var(--accent)" : "transparent",
-                        transition: "background-color 0.2s ease",
-                      },
-                    }}
-                    label={
-                      <Box
-                        sx={{
-                          position: "relative",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          width: "100%",
-                          minWidth: 130,
-                          pr: 0.5,
-                        }}
-                      >
-                        <span style={{ paddingRight: 8 }}>{tab.title}</span>
-                        <Badge
-                          color="error"
-                          variant="dot"
-                          invisible={!tab.hasDownloadNotification}
-                          sx={{
-                            position: "absolute",
-                            top: -4,
-                            right: 2,
-                            "& .MuiBadge-badge": {
-                              transform: "none",
-                            },
-                          }}
-                        />
-                        {tabs.length > 1 ? (
-                          <Box
-                            component="span"
-                            sx={{
-                              display: "inline-flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              width: 18,
-                              height: 18,
-                              borderRadius: "50%",
-                              fontSize: 13,
-                              lineHeight: 1,
-                              marginLeft: "auto",
-                              color: "var(--text-secondary)",
-                              transition: "background-color 0.15s ease, color 0.15s ease",
-                              "&:hover": {
-                                backgroundColor: "rgba(17, 34, 51, 0.08)",
-                                color: "var(--text-primary)",
-                              },
-                            }}
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              closeTab(tab.id);
-                            }}
-                          >
-                            x
-                          </Box>
-                        ) : null}
-                      </Box>
-                    }
-                  />
-                </Tooltip>
-              );
-            })}
-          </Tabs>
-          <Tooltip title="New tab">
-            <IconButton
-              aria-label="Add new tab"
-              onClick={addTab}
-              sx={{
-                border: "1px solid var(--border)",
-                borderRadius: "12px 12px 0 0",
-                width: 38,
-                height: 38,
-                backgroundColor: "rgba(255, 255, 255, 0.78)",
-                color: "var(--text-secondary)",
-                transition: "background-color 0.2s ease, color 0.2s ease",
-                "&:hover": {
-                  backgroundColor: "var(--bg-surface)",
-                  color: "var(--accent)",
-                },
-              }}
-            >
-              +
-            </IconButton>
-          </Tooltip>
-        </Box>
-
-        <form className={styles.form} onSubmit={handleSubmit}>
-          <div className={styles.fieldGroup}>
-            <label htmlFor="job-posting" className={styles.label}>
-              Job Posting
-            </label>
-            <textarea
-              id="job-posting"
-              name="jobPosting"
-              className={styles.textarea}
-              placeholder="Paste the full job posting here..."
-              value={activeTab.jobPosting}
-              onChange={(event) => {
-                updateTab(activeTab.id, { jobPosting: event.target.value });
-              }}
-            />
-          </div>
-
-          <div className={styles.fieldGroup}>
-            <label htmlFor="additional-context" className={styles.label}>
-              Additional Context
-            </label>
-            <textarea
-              id="additional-context"
-              name="additionalContext"
-              className={`${styles.textarea} ${styles.contextTextarea}`}
-              placeholder="Add extra direction for Gemini (priority skills, key achievements to emphasize, domain specifics, preferred wording, etc.)"
-              value={activeTab.additionalContext}
-              onChange={(event) => {
-                updateTab(activeTab.id, { additionalContext: event.target.value });
-              }}
-            />
-          </div>
-
-          <div className={styles.fieldGroup}>
-            <label htmlFor="context-files" className={styles.label}>
-              Supporting Files
-            </label>
-            <input
-              id="context-files"
-              name="contextFiles"
-              type="file"
-              multiple
-              className={styles.fileInput}
-              accept=".txt,.md,.markdown,.docx"
-              onChange={(event) => {
-                updateTab(activeTab.id, {
-                  contextFiles: Array.from(event.target.files || []),
-                });
-              }}
-            />
-            <p className={styles.helperText}>
-              {activeTab.contextFiles.length > 0
-                ? `${activeTab.contextFiles.length} supporting file${
-                    activeTab.contextFiles.length > 1 ? "s" : ""
-                  } selected`
-                : "Optional: upload extra files to provide more context for Gemini."}
-            </p>
-          </div>
-
-          <button className={styles.button} type="submit" disabled={activeTab.isSubmitting}>
-            {activeTab.isSubmitting ? "Generating..." : "Generate"}
+            Job Search
           </button>
-        </form>
+          <button
+            type="button"
+            className={activeSection === "manual" ? styles.sectionTabActive : styles.sectionTab}
+            onClick={() => setActiveSection("manual")}
+          >
+            Job Posting
+          </button>
+        </div>
 
-        {activeTab.error ? <p className={styles.error}>{activeTab.error}</p> : null}
+        {activeSection === "search" ? (
+          <section className={styles.tabPanel}>
+            <form className={styles.searchBar} onSubmit={handleJobSearch}>
+              <input
+                type="text"
+                className={styles.searchInput}
+                placeholder="Job title or keywords"
+                value={jobQuery}
+                onChange={(e) => setJobQuery(e.target.value)}
+              />
+              <select
+                className={styles.searchInput}
+                value={minSalary}
+                onChange={(e) => setMinSalary(e.target.value)}
+              >
+                <option value="0">Any salary</option>
+                <option value="50000">$50k+</option>
+                <option value="75000">$75k+</option>
+                <option value="100000">$100k+</option>
+                <option value="125000">$125k+</option>
+                <option value="150000">$150k+</option>
+                <option value="175000">$175k+</option>
+                <option value="200000">$200k+</option>
+              </select>
+              <label className={styles.checkboxLabel}>
+                <input
+                  type="checkbox"
+                  checked={excludeNoSalary}
+                  onChange={(e) => setExcludeNoSalary(e.target.checked)}
+                />
+                Listed salary only
+              </label>
+              <button
+                type="submit"
+                className={styles.button}
+                disabled={isSearching || !jobQuery.trim()}
+              >
+                {isSearching ? "Searching..." : "Search Jobs"}
+              </button>
+            </form>
 
-        {activeTab.hasCompletedCall && activeTab.result ? (
-          <section className={styles.resultSection}>
-            <button
-              type="button"
-              className={styles.secondaryButton}
-              onClick={handleDownloadDocx}
-              disabled={activeTab.isDownloading}
-            >
-              {activeTab.isDownloading ? "Preparing DOCX..." : "Download Resume"}
-            </button>
+            {jobSearchError ? <p className={styles.error}>{jobSearchError}</p> : null}
+
+            {jobResults.length > 0 ? (
+              <div className={styles.jobGrid}>
+                {jobResults.map((job) => {
+                  const tailoring = tailoringMap[job.id] || {};
+                  const isDone = tailoring.status === "done";
+                  const isTailoring = tailoring.status === "tailoring";
+                  const isError = tailoring.status === "error";
+
+                  return (
+                    <div key={job.id} className={styles.jobCard}>
+                      <div>
+                        <p className={styles.jobCardTitle}>{job.title}</p>
+                        <p className={styles.jobCardMeta}>
+                          {[job.company, job.location].filter(Boolean).join(" · ")}
+                        </p>
+                        {job.salaryMin || job.salaryMax ? (
+                          <p className={styles.jobCardSalary}>
+                            {job.salaryMin && job.salaryMax
+                              ? `$${Math.round(job.salaryMin / 1000)}k–$${Math.round(job.salaryMax / 1000)}k`
+                              : job.salaryMin
+                              ? `From $${Math.round(job.salaryMin / 1000)}k`
+                              : `Up to $${Math.round(job.salaryMax / 1000)}k`}
+                          </p>
+                        ) : null}
+                        <p className={styles.jobCardDescription}>
+                          {job.description.slice(0, 220).trim()}&hellip;
+                        </p>
+                        {isError ? (
+                          <p className={styles.jobCardError}>{tailoring.error}</p>
+                        ) : null}
+                      </div>
+                      <div className={styles.jobCardFooter}>
+                        <a
+                          href={job.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={styles.jobCardLink}
+                        >
+                          View posting
+                        </a>
+                        <button
+                          type="button"
+                          className={styles.button}
+                          disabled={isTailoring || isDone}
+                          onClick={() => handleTailorJob(job)}
+                        >
+                          {isTailoring ? "Tailoring..." : isDone ? "Done ✓" : "Tailor Resume"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
           </section>
-        ) : null}
+        ) : (
+          <section className={styles.tabPanel}>
+            <form className={styles.form} onSubmit={handleManualSubmit}>
+              <div className={styles.fieldGroup}>
+                <label htmlFor="job-posting" className={styles.label}>
+                  Job Posting
+                </label>
+                <textarea
+                  id="job-posting"
+                  name="jobPosting"
+                  className={styles.textarea}
+                  placeholder="Paste the full job posting here..."
+                  value={jobPosting}
+                  onChange={(e) => setJobPosting(e.target.value)}
+                />
+              </div>
+              <button
+                className={styles.button}
+                type="submit"
+                disabled={manualIsSubmitting}
+              >
+                {manualIsSubmitting ? "Generating..." : "Generate"}
+              </button>
+            </form>
+
+            {manualError ? <p className={styles.error}>{manualError}</p> : null}
+
+            {manualHasCompleted && manualResult ? (
+              <section className={styles.resultSection}>
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  onClick={handleManualDownload}
+                  disabled={manualIsDownloading}
+                >
+                  {manualIsDownloading ? "Preparing DOCX..." : "Download Resume"}
+                </button>
+              </section>
+            ) : null}
+          </section>
+        )}
       </main>
     </div>
   );

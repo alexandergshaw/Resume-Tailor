@@ -19,12 +19,48 @@
   box-shadow: var(--shadow);
 }
 
-.tabsBar {
+.sectionTabs {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  gap: 0;
   border-bottom: 1px solid var(--border);
-  padding-bottom: 2px;
+}
+
+.sectionTab {
+  padding: 8px 20px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.94rem;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.sectionTab:hover {
+  color: var(--text-primary);
+}
+
+.sectionTabActive {
+  padding: 8px 20px;
+  border: none;
+  border-bottom: 2px solid var(--accent);
+  margin-bottom: -1px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.94rem;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.tabPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .title {
