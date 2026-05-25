@@ -1312,6 +1312,9 @@ export default function Home() {
             {trackedJobs.map((job) => {
               const tailoring = tailoringMap[job.id] || {};
               const status = tailoring.status;
+              const fullJob = jobResults.find((j) => j.id === job.id);
+              const isTailoringChip = status === "tailoring";
+              const canRegenerate = !!resumeFile && !!fullJob && !isTailoringChip;
               return (
                 <div
                   key={job.id}
@@ -1329,23 +1332,6 @@ export default function Home() {
                     <span className={styles.toolbarChipBadge}>Generating…</span>
                   ) : null}
                   <div className={styles.toolbarChipActions}>
-                    <a
-                      href={job.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={styles.toolbarChipBtn}
-                      title="View posting"
-                    >
-                      ↗
-                    </a>
-                    <button
-                      type="button"
-                      className={styles.toolbarChipBtn}
-                      title="Mark as applied"
-                      onClick={() => handleToggleApplied(job.id)}
-                    >
-                      ✓
-                    </button>
                     <button
                       type="button"
                       className={styles.toolbarChipBtn}
@@ -1358,6 +1344,40 @@ export default function Home() {
                       }}
                     >
                       ↩
+                    </button>
+                    <a
+                      href={job.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={styles.toolbarChipBtn}
+                      title="View posting"
+                    >
+                      ↗
+                    </a>
+                    <button
+                      type="button"
+                      className={styles.toolbarChipBtn}
+                      title={canRegenerate ? "Regenerate" : !resumeFile ? "Upload a resume first" : "Regenerate"}
+                      disabled={!canRegenerate}
+                      onClick={() => fullJob && handleTailorJob(fullJob)}
+                    >
+                      ↺
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.toolbarChipBtn}
+                      title="Mark as applied"
+                      onClick={() => handleToggleApplied(job.id)}
+                    >
+                      ✓
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.toolbarChipBtn}
+                      title="Ignore"
+                      onClick={() => { handleIgnoreJob(job.id); handleUntrackJob(job.id); }}
+                    >
+                      ⊗
                     </button>
                     <button
                       type="button"

@@ -706,6 +706,12 @@
   background: rgba(255, 255, 255, 0.08);
 }
 
+.toolbarChipBtn:disabled {
+  opacity: 0.3;
+  cursor: default;
+  pointer-events: none;
+}
+
 .toolbarClear {
   background: none;
   border: 1px solid #2e3a4e;
