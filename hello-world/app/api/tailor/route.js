@@ -114,6 +114,7 @@ export async function POST(request) {
     const formData = await request.formData();
 
     const jobPosting = formData.get("jobPosting")?.toString().trim() || "";
+    const jobPostingUrl = formData.get("jobPostingUrl")?.toString().trim() || "";
     const additionalContext = parseAdditionalContext(formData.get("additionalContext"));
     const contextDocuments = await parseContextDocuments(formData);
     const templateLines = parseTemplateLines(
@@ -121,9 +122,9 @@ export async function POST(request) {
     );
     const resumeFile = formData.get("resume");
 
-    if (!jobPosting) {
+    if (!jobPosting && !jobPostingUrl) {
       return NextResponse.json(
-        { error: "jobPosting is required." },
+        { error: "jobPosting or jobPostingUrl is required." },
         { status: 400 },
       );
     }
@@ -149,6 +150,7 @@ export async function POST(request) {
 
     const result = await generateTailoredResumeDraft({
       jobPosting,
+      jobPostingUrl,
       resumeText,
       resumeFileName: resumeFile.name,
       templateLines,

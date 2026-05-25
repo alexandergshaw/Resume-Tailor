@@ -425,23 +425,8 @@ export default function Home() {
     setUrlIsSubmitting(true);
 
     try {
-      const fetchResponse = await fetch(
-        `/api/fetch-posting?url=${encodeURIComponent(urlPosting.trim())}`,
-      );
-      const fetchPayload = await fetchResponse.json();
-
-      if (!fetchResponse.ok) {
-        throw new Error(fetchPayload.error || "Failed to fetch job posting URL.");
-      }
-
-      const jobText = fetchPayload.text || "";
-
-      if (!jobText.trim()) {
-        throw new Error("No readable text found at that URL.");
-      }
-
       const formData = new FormData();
-      formData.append("jobPosting", jobText);
+      formData.append("jobPostingUrl", urlPosting.trim());
       formData.append("additionalContext", additionalContext);
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
