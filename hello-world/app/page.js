@@ -50,6 +50,7 @@ export default function Home() {
   const [urlIsDownloading, setUrlIsDownloading] = useState(false);
   const [activeSection, setActiveSection] = useState("search");
   const [ignoredJobIds, setIgnoredJobIds] = useState(new Set());
+  const [appliedJobIds, setAppliedJobIds] = useState(new Set());
   const [showIgnored, setShowIgnored] = useState(false);
   const [publisherFilter, setPublisherFilter] = useState([]);
 
@@ -76,6 +77,17 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("ignoredJobIds", JSON.stringify([...ignoredJobIds]));
   }, [ignoredJobIds]);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("appliedJobIds");
+      if (saved) setAppliedJobIds(new Set(JSON.parse(saved)));
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("appliedJobIds", JSON.stringify([...appliedJobIds]));
+  }, [appliedJobIds]);
 
   useEffect(() => {
     try {
@@ -431,6 +443,15 @@ export default function Home() {
     setIgnoredJobIds((prev) => {
       const next = new Set(prev);
       next.delete(jobId);
+      return next;
+    });
+  }
+
+  function handleToggleApplied(jobId) {
+    setAppliedJobIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(jobId)) next.delete(jobId);
+      else next.add(jobId);
       return next;
     });
   }
@@ -869,9 +890,10 @@ export default function Home() {
                         const isDone = tailoring.status === "done";
                         const isTailoring = tailoring.status === "tailoring";
                         const isError = tailoring.status === "error";
+                        const isApplied = appliedJobIds.has(job.id);
 
                         return (
-                          <div key={job.id} className={styles.jobCard}>
+                          <div key={job.id} className={`${styles.jobCard}${isApplied ? ` ${styles.jobCardApplied}` : ""}`}>
                             <div>
                               <p className={styles.jobCardTitle}>{job.title}</p>
                               <p className={styles.jobCardMeta}>
@@ -906,6 +928,13 @@ export default function Home() {
                                 View
                               </a>
                               <div className={styles.cardActions}>
+                                <button
+                                  type="button"
+                                  className={isApplied ? styles.appliedButton : styles.secondaryButton}
+                                  onClick={() => handleToggleApplied(job.id)}
+                                >
+                                  {isApplied ? "Applied ✓" : "Applied"}
+                                </button>
                                 <button
                                   type="button"
                                   className={styles.secondaryButton}
