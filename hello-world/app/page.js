@@ -589,6 +589,37 @@ export default function Home() {
           formatting.
         </p>
 
+        <div className={styles.fieldGroup}>
+          <label htmlFor="resume" className={styles.label}>
+            Resume
+          </label>
+          <input
+            id="resume"
+            name="resume"
+            type="file"
+            className={styles.fileInput}
+            accept=".txt,.md,.markdown,.docx"
+            onChange={(event) => {
+              setResumeFile(event.target.files?.[0] || null);
+            }}
+          />
+        </div>
+        <div className={styles.fieldGroup}>
+          <label htmlFor="cover-letter" className={styles.label}>
+            Cover Letter
+          </label>
+          <input
+            id="cover-letter"
+            name="coverLetter"
+            type="file"
+            className={styles.fileInput}
+            accept=".txt,.md,.markdown,.docx"
+            onChange={(event) => {
+              setCoverLetterFile(event.target.files?.[0] || null);
+            }}
+          />
+        </div>
+
         <section className={styles.jobSearchSection}>
           <form className={styles.searchBar} onSubmit={handleJobSearch}>
             <input
@@ -664,37 +695,6 @@ export default function Home() {
             </div>
           ) : null}
         </section>
-
-        <div className={styles.fieldGroup}>
-          <label htmlFor="resume" className={styles.label}>
-            Resume
-          </label>
-          <input
-            id="resume"
-            name="resume"
-            type="file"
-            className={styles.fileInput}
-            accept=".txt,.md,.markdown,.docx"
-            onChange={(event) => {
-              setResumeFile(event.target.files?.[0] || null);
-            }}
-          />
-        </div>
-        <div className={styles.fieldGroup}>
-          <label htmlFor="cover-letter" className={styles.label}>
-            Cover Letter
-          </label>
-          <input
-            id="cover-letter"
-            name="coverLetter"
-            type="file"
-            className={styles.fileInput}
-            accept=".txt,.md,.markdown,.docx"
-            onChange={(event) => {
-              setCoverLetterFile(event.target.files?.[0] || null);
-            }}
-          />
-        </div>
 
         <Box className={styles.tabsBar}>
           <Tabs
