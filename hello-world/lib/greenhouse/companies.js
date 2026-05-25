@@ -147,4 +147,3 @@ export const GREENHOUSE_COMPANIES = [
 export const COMPANY_CATEGORIES = [
   ...new Set(GREENHOUSE_COMPANIES.flatMap((c) => c.categories)),
 ].sort();
-  { slug: "airbnb", name: "Airbnb" },
