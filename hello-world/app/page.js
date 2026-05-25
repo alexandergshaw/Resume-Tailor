@@ -3,6 +3,16 @@
 import { useState, useEffect } from "react";
 import JSZip from "jszip";
 import styles from "./page.module.css";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import Checkbox from "@mui/material/Checkbox";
+import FormControl from "@mui/material/FormControl";
+import FormControlLabel from "@mui/material/FormControlLabel";
+import InputLabel from "@mui/material/InputLabel";
+import ListItemText from "@mui/material/ListItemText";
+import MenuItem from "@mui/material/MenuItem";
+import Select from "@mui/material/Select";
+import TextField from "@mui/material/TextField";
 
 const WORDPROCESSINGML_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -14,6 +24,7 @@ export default function Home() {
   const [contextFiles, setContextFiles] = useState([]);
   const [jobQuery, setJobQuery] = useState("");
   const [minSalary, setMinSalary] = useState("0");
+  const [datePosted, setDatePosted] = useState("today");
   const [excludeNoSalary, setExcludeNoSalary] = useState(false);
   const [jobResults, setJobResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -38,6 +49,11 @@ export default function Home() {
   const [urlHasCompleted, setUrlHasCompleted] = useState(false);
   const [urlIsDownloading, setUrlIsDownloading] = useState(false);
   const [activeSection, setActiveSection] = useState("search");
+  const [ignoredJobIds, setIgnoredJobIds] = useState(new Set());
+  const [showIgnored, setShowIgnored] = useState(false);
+  const [publisherFilter, setPublisherFilter] = useState([]);
+
+  const JOB_BOARDS = ["LinkedIn", "Indeed", "ZipRecruiter", "Glassdoor", "Monster", "CareerBuilder", "Talent.com"];
 
   useEffect(() => {
     const saved = localStorage.getItem("activeSection");
@@ -49,6 +65,44 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("activeSection", activeSection);
   }, [activeSection]);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("ignoredJobIds");
+      if (saved) setIgnoredJobIds(new Set(JSON.parse(saved)));
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("ignoredJobIds", JSON.stringify([...ignoredJobIds]));
+  }, [ignoredJobIds]);
+
+  useEffect(() => {
+    try {
+      const q = localStorage.getItem("jobQuery");
+      const sal = localStorage.getItem("minSalary");
+      const date = localStorage.getItem("datePosted");
+      const excl = localStorage.getItem("excludeNoSalary");
+      const boards = localStorage.getItem("publisherFilter");
+      const url = localStorage.getItem("urlPosting");
+      const manual = localStorage.getItem("jobPosting");
+      if (q) setJobQuery(q);
+      if (sal) setMinSalary(sal);
+      if (date) setDatePosted(date);
+      if (excl !== null) setExcludeNoSalary(excl === "true");
+      if (boards) setPublisherFilter(JSON.parse(boards));
+      if (url) setUrlPosting(url);
+      if (manual) setJobPosting(manual);
+    } catch {}
+  }, []);
+
+  useEffect(() => { localStorage.setItem("jobQuery", jobQuery); }, [jobQuery]);
+  useEffect(() => { localStorage.setItem("minSalary", minSalary); }, [minSalary]);
+  useEffect(() => { localStorage.setItem("datePosted", datePosted); }, [datePosted]);
+  useEffect(() => { localStorage.setItem("excludeNoSalary", String(excludeNoSalary)); }, [excludeNoSalary]);
+  useEffect(() => { localStorage.setItem("publisherFilter", JSON.stringify(publisherFilter)); }, [publisherFilter]);
+  useEffect(() => { localStorage.setItem("urlPosting", urlPosting); }, [urlPosting]);
+  useEffect(() => { localStorage.setItem("jobPosting", jobPosting); }, [jobPosting]);
 
   function sanitizeFileNamePart(value) {
     return value
@@ -334,6 +388,7 @@ export default function Home() {
       const params = new URLSearchParams({ query: jobQuery.trim() });
       if (minSalary !== "0") params.set("minSalary", minSalary);
       if (excludeNoSalary) params.set("excludeNoSalary", "1");
+      if (datePosted !== "today") params.set("datePosted", datePosted);
 
       const response = await fetch(`/api/jobs?${params.toString()}`);
       const payload = await response.json();
@@ -348,6 +403,18 @@ export default function Home() {
     } finally {
       setIsSearching(false);
     }
+  }
+
+  function handleIgnoreJob(jobId) {
+    setIgnoredJobIds((prev) => new Set([...prev, jobId]));
+  }
+
+  function handleRestoreJob(jobId) {
+    setIgnoredJobIds((prev) => {
+      const next = new Set(prev);
+      next.delete(jobId);
+      return next;
+    });
   }
 
   async function handleTailorJob(job) {
@@ -648,6 +715,8 @@ export default function Home() {
           </p>
         </div>
 
+        <hr className={styles.sectionDivider} />
+
         <div className={styles.sectionTabs}>
           <button
             type="button"
@@ -674,179 +743,304 @@ export default function Home() {
 
         {activeSection === "search" ? (
           <section className={styles.tabPanel}>
-            <form className={styles.searchBar} onSubmit={handleJobSearch}>
-              <input
-                type="text"
-                className={styles.searchInput}
-                placeholder="Job title or keywords"
-                value={jobQuery}
-                onChange={(e) => setJobQuery(e.target.value)}
-              />
-              <select
-                className={styles.searchInput}
-                value={minSalary}
-                onChange={(e) => setMinSalary(e.target.value)}
-              >
-                <option value="0">Any salary</option>
-                <option value="50000">$50k+</option>
-                <option value="75000">$75k+</option>
-                <option value="100000">$100k+</option>
-                <option value="125000">$125k+</option>
-                <option value="150000">$150k+</option>
-                <option value="175000">$175k+</option>
-                <option value="200000">$200k+</option>
-              </select>
-              <label className={styles.checkboxLabel}>
-                <input
-                  type="checkbox"
-                  checked={excludeNoSalary}
-                  onChange={(e) => setExcludeNoSalary(e.target.checked)}
+            <form onSubmit={handleJobSearch} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <Box sx={{ display: "flex", gap: 1 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Job title or keywords"
+                  value={jobQuery}
+                  onChange={(e) => setJobQuery(e.target.value)}
                 />
-                Listed salary only
-              </label>
-              <button
-                type="submit"
-                className={styles.button}
-                disabled={isSearching || !jobQuery.trim()}
-              >
-                {isSearching ? "Searching..." : "Search Jobs"}
-              </button>
+                <Button
+                  type="submit"
+                  variant="contained"
+                  disabled={isSearching || !jobQuery.trim()}
+                  sx={{ whiteSpace: "nowrap" }}
+                >
+                  {isSearching ? "Searching..." : "Search Jobs"}
+                </Button>
+              </Box>
+              <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap", alignItems: "center" }}>
+                <FormControl size="small" sx={{ minWidth: 140 }}>
+                  <InputLabel>Salary</InputLabel>
+                  <Select
+                    label="Salary"
+                    value={minSalary}
+                    onChange={(e) => setMinSalary(e.target.value)}
+                  >
+                    <MenuItem value="0">Any salary</MenuItem>
+                    <MenuItem value="50000">$50k+</MenuItem>
+                    <MenuItem value="75000">$75k+</MenuItem>
+                    <MenuItem value="100000">$100k+</MenuItem>
+                    <MenuItem value="125000">$125k+</MenuItem>
+                    <MenuItem value="150000">$150k+</MenuItem>
+                    <MenuItem value="175000">$175k+</MenuItem>
+                    <MenuItem value="200000">$200k+</MenuItem>
+                  </Select>
+                </FormControl>
+                <FormControl size="small" sx={{ minWidth: 150 }}>
+                  <InputLabel>Date posted</InputLabel>
+                  <Select
+                    label="Date posted"
+                    value={datePosted}
+                    onChange={(e) => setDatePosted(e.target.value)}
+                  >
+                    <MenuItem value="today">Past 24 hours</MenuItem>
+                    <MenuItem value="3days">Past 3 days</MenuItem>
+                    <MenuItem value="week">Past week</MenuItem>
+                    <MenuItem value="month">Past month</MenuItem>
+                  </Select>
+                </FormControl>
+                <FormControl size="small" sx={{ minWidth: 180 }}>
+                  <InputLabel>Job boards</InputLabel>
+                  <Select
+                    multiple
+                    label="Job boards"
+                    value={publisherFilter}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setPublisherFilter(typeof val === "string" ? val.split(",") : val);
+                    }}
+                    renderValue={(selected) =>
+                      selected.length === 0
+                        ? "All boards"
+                        : `${selected.length} board${selected.length > 1 ? "s" : ""} selected`
+                    }
+                  >
+                    {JOB_BOARDS.map((board) => (
+                      <MenuItem key={board} value={board}>
+                        <Checkbox checked={publisherFilter.includes(board)} size="small" />
+                        <ListItemText primary={board} />
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={excludeNoSalary}
+                      onChange={(e) => setExcludeNoSalary(e.target.checked)}
+                      size="small"
+                    />
+                  }
+                  label="Listed salary only"
+                />
+              </Box>
             </form>
 
             {jobSearchError ? <p className={styles.error}>{jobSearchError}</p> : null}
 
-            {jobResults.length > 0 ? (
-              <div className={styles.jobGrid}>
-                {jobResults.map((job) => {
-                  const tailoring = tailoringMap[job.id] || {};
-                  const isDone = tailoring.status === "done";
-                  const isTailoring = tailoring.status === "tailoring";
-                  const isError = tailoring.status === "error";
+            {jobResults.length > 0 ? (() => {
+              const boardFiltered =
+                publisherFilter.length === 0
+                  ? jobResults
+                  : jobResults.filter((j) =>
+                      publisherFilter.some((b) =>
+                        j.publisher?.toLowerCase().includes(b.toLowerCase())
+                      )
+                    );
+              const visibleJobs = boardFiltered.filter((j) => !ignoredJobIds.has(j.id));
+              const ignoredInResults = boardFiltered.filter((j) => ignoredJobIds.has(j.id));
+              return (
+                <>
+                  {visibleJobs.length > 0 ? (
+                    <div className={styles.jobGrid}>
+                      {visibleJobs.map((job) => {
+                        const tailoring = tailoringMap[job.id] || {};
+                        const isDone = tailoring.status === "done";
+                        const isTailoring = tailoring.status === "tailoring";
+                        const isError = tailoring.status === "error";
 
-                  return (
-                    <div key={job.id} className={styles.jobCard}>
-                      <div>
-                        <p className={styles.jobCardTitle}>{job.title}</p>
-                        <p className={styles.jobCardMeta}>
-                          {[job.company, job.location].filter(Boolean).join(" · ")}
-                        </p>
-                        {job.salaryMin || job.salaryMax ? (
-                          <p className={styles.jobCardSalary}>
-                            {job.salaryMin && job.salaryMax
-                              ? `$${Math.round(job.salaryMin / 1000)}k–$${Math.round(job.salaryMax / 1000)}k`
-                              : job.salaryMin
-                              ? `From $${Math.round(job.salaryMin / 1000)}k`
-                              : `Up to $${Math.round(job.salaryMax / 1000)}k`}
-                          </p>
-                        ) : null}
-                        <p className={styles.jobCardDescription}>
-                          {job.description.slice(0, 220).trim()}&hellip;
-                        </p>
-                        {isError ? (
-                          <p className={styles.jobCardError}>{tailoring.error}</p>
-                        ) : null}
-                      </div>
-                      <div className={styles.jobCardFooter}>
-                        <a
-                          href={job.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={styles.jobCardLink}
-                        >
-                          View posting
-                        </a>
-                        <button
-                          type="button"
-                          className={styles.button}
-                          disabled={isTailoring || isDone}
-                          onClick={() => handleTailorJob(job)}
-                        >
-                          {isTailoring ? "Tailoring..." : isDone ? "Done ✓" : "Tailor Resume"}
-                        </button>
-                      </div>
+                        return (
+                          <div key={job.id} className={styles.jobCard}>
+                            <div>
+                              <p className={styles.jobCardTitle}>{job.title}</p>
+                              <p className={styles.jobCardMeta}>
+                                {[job.company, job.location].filter(Boolean).join(" · ")}
+                              </p>
+                              {job.publisher ? (
+                                <p className={styles.jobCardPublisher}>{job.publisher}</p>
+                              ) : null}
+                              {job.salaryMin || job.salaryMax ? (
+                                <p className={styles.jobCardSalary}>
+                                  {job.salaryMin && job.salaryMax
+                                    ? `$${Math.round(job.salaryMin / 1000)}k–$${Math.round(job.salaryMax / 1000)}k`
+                                    : job.salaryMin
+                                    ? `From $${Math.round(job.salaryMin / 1000)}k`
+                                    : `Up to $${Math.round(job.salaryMax / 1000)}k`}
+                                </p>
+                              ) : null}
+                              <p className={styles.jobCardDescription}>
+                                {job.description.slice(0, 220).trim()}&hellip;
+                              </p>
+                              {isError ? (
+                                <p className={styles.jobCardError}>{tailoring.error}</p>
+                              ) : null}
+                            </div>
+                            <div className={styles.jobCardFooter}>
+                              <a
+                                href={job.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className={styles.jobCardLink}
+                              >
+                                View
+                              </a>
+                              <div className={styles.cardActions}>
+                                <button
+                                  type="button"
+                                  className={styles.secondaryButton}
+                                  onClick={() => handleIgnoreJob(job.id)}
+                                >
+                                  Ignore
+                                </button>
+                                <button
+                                  type="button"
+                                  className={styles.button}
+                                  disabled={isTailoring || isDone}
+                                  onClick={() => handleTailorJob(job)}
+                                >
+                                  {isTailoring ? "Tailoring..." : isDone ? "Done ✓" : "Generate"}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  );
-                })}
-              </div>
-            ) : null}
+                  ) : null}
+
+                  {ignoredInResults.length > 0 ? (
+                    <div className={styles.ignoredSection}>
+                      <button
+                        type="button"
+                        className={styles.ignoredToggle}
+                        onClick={() => setShowIgnored((v) => !v)}
+                      >
+                        {ignoredInResults.length} ignored{showIgnored ? " · Hide" : " · Show"}
+                      </button>
+                      {showIgnored ? (
+                        <div className={styles.jobGrid}>
+                          {ignoredInResults.map((job) => (
+                            <div key={job.id} className={`${styles.jobCard} ${styles.jobCardIgnored}`}>
+                              <div>
+                                <p className={styles.jobCardTitle}>{job.title}</p>
+                                <p className={styles.jobCardMeta}>
+                                  {[job.company, job.location].filter(Boolean).join(" · ")}
+                                </p>
+                                {job.salaryMin || job.salaryMax ? (
+                                  <p className={styles.jobCardSalary}>
+                                    {job.salaryMin && job.salaryMax
+                                      ? `$${Math.round(job.salaryMin / 1000)}k–$${Math.round(job.salaryMax / 1000)}k`
+                                      : job.salaryMin
+                                      ? `From $${Math.round(job.salaryMin / 1000)}k`
+                                      : `Up to $${Math.round(job.salaryMax / 1000)}k`}
+                                  </p>
+                                ) : null}
+                              </div>
+                              <div className={styles.jobCardFooter}>
+                                <a
+                                  href={job.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className={styles.jobCardLink}
+                                >
+                                  View
+                                </a>
+                                <div className={styles.cardActions}>
+                                  <button
+                                    type="button"
+                                    className={styles.secondaryButton}
+                                    onClick={() => handleRestoreJob(job.id)}
+                                  >
+                                    Restore
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </>
+              );
+            })() : null}
           </section>
         ) : activeSection === "manual" ? (
           <section className={styles.tabPanel}>
-            <form className={styles.form} onSubmit={handleManualSubmit}>
-              <div className={styles.fieldGroup}>
-                <label htmlFor="job-posting" className={styles.label}>
-                  Job Posting
-                </label>
-                <textarea
-                  id="job-posting"
-                  name="jobPosting"
-                  className={styles.textarea}
-                  placeholder="Paste the full job posting here..."
-                  value={jobPosting}
-                  onChange={(e) => setJobPosting(e.target.value)}
-                />
-              </div>
-              <button
-                className={styles.button}
-                type="submit"
-                disabled={manualIsSubmitting}
-              >
-                {manualIsSubmitting ? "Generating..." : "Generate"}
-              </button>
+            <form className={styles.form} onSubmit={handleManualSubmit} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <TextField
+                id="job-posting"
+                name="jobPosting"
+                label="Job Posting"
+                multiline
+                rows={10}
+                fullWidth
+                placeholder="Paste the full job posting here..."
+                value={jobPosting}
+                onChange={(e) => setJobPosting(e.target.value)}
+              />
+              <Box>
+                <Button
+                  type="submit"
+                  variant="contained"
+                  disabled={manualIsSubmitting}
+                >
+                  {manualIsSubmitting ? "Generating..." : "Generate"}
+                </Button>
+              </Box>
             </form>
 
             {manualError ? <p className={styles.error}>{manualError}</p> : null}
 
             {manualHasCompleted && manualResult ? (
               <section className={styles.resultSection}>
-                <button
-                  type="button"
-                  className={styles.secondaryButton}
+                <Button
+                  variant="outlined"
                   onClick={handleManualDownload}
                   disabled={manualIsDownloading}
                 >
                   {manualIsDownloading ? "Preparing DOCX..." : "Download Resume"}
-                </button>
+                </Button>
               </section>
             ) : null}
           </section>
         ) : (
           <section className={styles.tabPanel}>
-            <form className={styles.form} onSubmit={handleUrlSubmit}>
-              <div className={styles.fieldGroup}>
-                <label htmlFor="job-posting-url" className={styles.label}>
-                  Job Posting URL
-                </label>
-                <input
-                  id="job-posting-url"
-                  type="url"
-                  className={styles.searchInput}
-                  placeholder="https://..."
-                  value={urlPosting}
-                  onChange={(e) => setUrlPosting(e.target.value)}
-                />
-              </div>
-              <button
-                className={styles.button}
-                type="submit"
-                disabled={urlIsSubmitting}
-              >
-                {urlIsSubmitting ? "Generating..." : "Generate"}
-              </button>
+            <form className={styles.form} onSubmit={handleUrlSubmit} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <TextField
+                id="job-posting-url"
+                type="url"
+                label="Job Posting URL"
+                fullWidth
+                placeholder="https://..."
+                value={urlPosting}
+                onChange={(e) => setUrlPosting(e.target.value)}
+              />
+              <Box>
+                <Button
+                  type="submit"
+                  variant="contained"
+                  disabled={urlIsSubmitting}
+                >
+                  {urlIsSubmitting ? "Generating..." : "Generate"}
+                </Button>
+              </Box>
             </form>
 
             {urlError ? <p className={styles.error}>{urlError}</p> : null}
 
             {urlHasCompleted && urlResult ? (
               <section className={styles.resultSection}>
-                <button
-                  type="button"
-                  className={styles.secondaryButton}
+                <Button
+                  variant="outlined"
                   onClick={handleUrlDownload}
                   disabled={urlIsDownloading}
                 >
                   {urlIsDownloading ? "Preparing DOCX..." : "Download Resume"}
-                </button>
+                </Button>
               </section>
             ) : null}
           </section>
