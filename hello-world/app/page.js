@@ -40,6 +40,12 @@ const INITIAL_TAB = createResumeTab(1);
 export default function Home() {
   const [resumeFile, setResumeFile] = useState(null);
   const [coverLetterFile, setCoverLetterFile] = useState(null);
+  const [jobQuery, setJobQuery] = useState("");
+  const [jobLocation, setJobLocation] = useState("");
+  const [jobResults, setJobResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [jobSearchError, setJobSearchError] = useState("");
+  const [tailoringMap, setTailoringMap] = useState({});
   const [tabs, setTabs] = useState([INITIAL_TAB]);
   const [activeTabId, setActiveTabId] = useState(INITIAL_TAB.id);
 
@@ -379,6 +385,105 @@ export default function Home() {
     });
   }
 
+  function updateTailoringJob(jobId, updater) {
+    setTailoringMap((current) => ({
+      ...current,
+      [jobId]:
+        typeof updater === "function"
+          ? updater(current[jobId] || {})
+          : { ...(current[jobId] || {}), ...updater },
+    }));
+  }
+
+  async function handleJobSearch(event) {
+    event.preventDefault();
+    if (!jobQuery.trim()) return;
+
+    setIsSearching(true);
+    setJobSearchError("");
+    setJobResults([]);
+    setTailoringMap({});
+
+    try {
+      const params = new URLSearchParams({ query: jobQuery.trim() });
+      if (jobLocation.trim()) params.set("location", jobLocation.trim());
+
+      const response = await fetch(`/api/jobs?${params.toString()}`);
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to fetch jobs.");
+      }
+
+      setJobResults(payload.jobs || []);
+    } catch (err) {
+      setJobSearchError(err.message || "Failed to fetch jobs.");
+    } finally {
+      setIsSearching(false);
+    }
+  }
+
+  async function handleTailorJob(job) {
+    if (!resumeFile) {
+      updateTailoringJob(job.id, { status: "error", error: "Upload a resume first." });
+      return;
+    }
+
+    updateTailoringJob(job.id, {
+      status: "tailoring",
+      error: "",
+      result: "",
+      resultLines: [],
+      generatedJobTitle: "",
+    });
+
+    try {
+      const formData = new FormData();
+      formData.append("jobPosting", job.description);
+      formData.append("additionalContext", "");
+      const templateLines = await buildTemplateLinesForUpload(resumeFile);
+      formData.append("templateLines", JSON.stringify(templateLines));
+      formData.append("resume", resumeFile);
+
+      if (coverLetterFile) {
+        const coverLetterTemplateLines = await buildTemplateLinesForUpload(coverLetterFile);
+        formData.append("coverLetterTemplateLines", JSON.stringify(coverLetterTemplateLines));
+        formData.append("coverLetter", coverLetterFile);
+      }
+
+      const response = await fetch("/api/tailor", { method: "POST", body: formData });
+      const payload = await response.json();
+
+      if (!response.ok) throw new Error(payload.error || "Failed to generate.");
+
+      const result = payload.result?.trim() || "";
+      const resultLines = Array.isArray(payload.resultLines) ? payload.resultLines : [];
+      const generatedJobTitle = typeof payload.jobTitle === "string" ? payload.jobTitle.trim() : "";
+      const coverLetterResultLines = Array.isArray(payload.coverLetterResultLines)
+        ? payload.coverLetterResultLines
+        : [];
+
+      updateTailoringJob(job.id, {
+        status: "done",
+        result,
+        resultLines,
+        generatedJobTitle,
+        coverLetterResultLines,
+        error: "",
+      });
+
+      await downloadDocxForTab({
+        tabId: job.id,
+        jobTitle: generatedJobTitle || job.title,
+        result,
+        resultLines,
+        coverLetterResultLines,
+      });
+    } catch (err) {
+      updateTailoringJob(job.id, { status: "error", error: err.message || "Unexpected error." });
+    }
+  }
+
   async function handleSubmit(event) {
     event.preventDefault();
 
@@ -485,6 +590,89 @@ export default function Home() {
           will generate a tailored version that mirrors the original layout and
           formatting.
         </p>
+
+        <section className={styles.jobSearchSection}>
+          <form className={styles.searchBar} onSubmit={handleJobSearch}>
+            <input
+              type="text"
+              className={styles.searchInput}
+              placeholder="Job title or keywords"
+              value={jobQuery}
+              onChange={(e) => setJobQuery(e.target.value)}
+            />
+            <input
+              type="text"
+              className={styles.searchInput}
+              placeholder="Location (optional)"
+              value={jobLocation}
+              onChange={(e) => setJobLocation(e.target.value)}
+            />
+            <button
+              type="submit"
+              className={styles.button}
+              disabled={isSearching || !jobQuery.trim()}
+            >
+              {isSearching ? "Searching..." : "Search Jobs"}
+            </button>
+          </form>
+
+          {jobSearchError ? <p className={styles.error}>{jobSearchError}</p> : null}
+
+          {jobResults.length > 0 ? (
+            <div className={styles.jobGrid}>
+              {jobResults.map((job) => {
+                const tailoring = tailoringMap[job.id] || {};
+                const isDone = tailoring.status === "done";
+                const isTailoring = tailoring.status === "tailoring";
+                const isError = tailoring.status === "error";
+
+                return (
+                  <div key={job.id} className={styles.jobCard}>
+                    <div>
+                      <p className={styles.jobCardTitle}>{job.title}</p>
+                      <p className={styles.jobCardMeta}>
+                        {[job.company, job.location].filter(Boolean).join(" · ")}
+                      </p>
+                      {(job.salaryMin || job.salaryMax) ? (
+                        <p className={styles.jobCardSalary}>
+                          {job.salaryMin && job.salaryMax
+                            ? `$${Math.round(job.salaryMin / 1000)}k–$${Math.round(job.salaryMax / 1000)}k`
+                            : job.salaryMin
+                            ? `From $${Math.round(job.salaryMin / 1000)}k`
+                            : `Up to $${Math.round(job.salaryMax / 1000)}k`}
+                        </p>
+                      ) : null}
+                      <p className={styles.jobCardDescription}>
+                        {job.description.slice(0, 220).trim()}&hellip;
+                      </p>
+                      {isError ? (
+                        <p className={styles.jobCardError}>{tailoring.error}</p>
+                      ) : null}
+                    </div>
+                    <div className={styles.jobCardFooter}>
+                      <a
+                        href={job.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={styles.jobCardLink}
+                      >
+                        View posting
+                      </a>
+                      <button
+                        type="button"
+                        className={styles.button}
+                        disabled={isTailoring || isDone}
+                        onClick={() => handleTailorJob(job)}
+                      >
+                        {isTailoring ? "Tailoring..." : isDone ? "Done ✓" : "Tailor Resume"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+        </section>
 
         <div className={styles.fieldGroup}>
           <label htmlFor="resume" className={styles.label}>
