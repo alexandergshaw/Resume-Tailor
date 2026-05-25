@@ -502,6 +502,148 @@
   color: var(--text-primary);
 }
 
+/* ── Floating viewed-postings toolbar ─────────────────────────── */
+
+.floatingToolbar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  background: #1c2333;
+  border-top: 1px solid #2e3a4e;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 20px;
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.3);
+}
+
+.toolbarLabel {
+  color: #7a8faf;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  flex-shrink: 0;
+}
+
+.toolbarItems {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #2e3a4e transparent;
+}
+
+.toolbarChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: #243049;
+  border: 1px solid #354d6e;
+  color: #c0d0ee;
+  text-decoration: none;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.toolbarChip:hover {
+  background: #2e3d5e;
+  border-color: #4a6488;
+}
+
+.toolbarChipDone {
+  border-color: #2e7d32;
+  background: #172b1a;
+}
+
+.toolbarChipDone:hover {
+  background: #1d3622;
+}
+
+.toolbarChipGenerating {
+  border-color: #92400e;
+  background: #231608;
+}
+
+.toolbarChipError {
+  border-color: #991b1b;
+  background: #220e0e;
+}
+
+.toolbarChipTitle {
+  font-weight: 600;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.toolbarChipCompany {
+  color: #7a8faf;
+  font-size: 0.76rem;
+}
+
+.toolbarChipBadge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #1b5e20;
+  color: #c8f0ca;
+  line-height: 1.5;
+}
+
+.toolbarChipGenerating .toolbarChipBadge {
+  background: #78350f;
+  color: #fde68a;
+}
+
+.toolbarChipRemove {
+  background: none;
+  border: none;
+  color: #5a6e90;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  display: flex;
+  align-items: center;
+  font-family: inherit;
+}
+
+.toolbarChipRemove:hover {
+  color: #c0d0ee;
+}
+
+.toolbarClear {
+  background: none;
+  border: 1px solid #2e3a4e;
+  color: #7a8faf;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 5px 10px;
+  border-radius: 7px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-family: inherit;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.toolbarClear:hover {
+  background: #243049;
+  color: #c0d0ee;
+}
+
 @media (max-width: 640px) {
   .page {
     padding: 16px;

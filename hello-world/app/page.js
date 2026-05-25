@@ -54,6 +54,7 @@ export default function Home() {
   const [activeSection, setActiveSection] = useState("search");
   const [ignoredJobIds, setIgnoredJobIds] = useState(new Set());
   const [appliedJobIds, setAppliedJobIds] = useState(new Set());
+  const [trackedJobs, setTrackedJobs] = useState([]);
   const [showIgnored, setShowIgnored] = useState(false);
   const [publisherFilter, setPublisherFilter] = useState([]);
   const [selectedCompanies, setSelectedCompanies] = useState([]);
@@ -99,6 +100,17 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("appliedJobIds", JSON.stringify([...appliedJobIds]));
   }, [appliedJobIds]);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("trackedJobs");
+      if (saved) setTrackedJobs(JSON.parse(saved));
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("trackedJobs", JSON.stringify(trackedJobs));
+  }, [trackedJobs]);
 
   useEffect(() => {
     try {
@@ -562,6 +574,17 @@ export default function Home() {
       else next.add(jobId);
       return next;
     });
+  }
+
+  function handleTrackJob(job) {
+    setTrackedJobs((prev) => {
+      if (prev.some((j) => j.id === job.id)) return prev;
+      return [...prev, { id: job.id, title: job.title, company: job.company, url: job.url }];
+    });
+  }
+
+  function handleUntrackJob(jobId) {
+    setTrackedJobs((prev) => prev.filter((j) => j.id !== jobId));
   }
 
   async function handleTailorJob(job) {
@@ -1072,6 +1095,7 @@ export default function Home() {
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className={styles.jobCardLink}
+                                onClick={() => handleTrackJob(job)}
                               >
                                 View
                               </a>
@@ -1241,6 +1265,54 @@ export default function Home() {
           </section>
         )}
       </main>
+
+      {trackedJobs.length > 0 ? (
+        <div className={styles.floatingToolbar}>
+          <span className={styles.toolbarLabel}>Viewed ({trackedJobs.length})</span>
+          <div className={styles.toolbarItems}>
+            {trackedJobs.map((job) => {
+              const tailoring = tailoringMap[job.id] || {};
+              const status = tailoring.status;
+              return (
+                <a
+                  key={job.id}
+                  href={job.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`${styles.toolbarChip}${
+                    status === "done" ? ` ${styles.toolbarChipDone}` :
+                    status === "tailoring" ? ` ${styles.toolbarChipGenerating}` :
+                    status === "error" ? ` ${styles.toolbarChipError}` : ""
+                  }`}
+                >
+                  <span className={styles.toolbarChipTitle}>{job.title}</span>
+                  {job.company ? <span className={styles.toolbarChipCompany}>{job.company}</span> : null}
+                  {status === "done" ? (
+                    <span className={styles.toolbarChipBadge}>✓ Ready</span>
+                  ) : status === "tailoring" ? (
+                    <span className={styles.toolbarChipBadge}>Generating…</span>
+                  ) : null}
+                  <button
+                    type="button"
+                    className={styles.toolbarChipRemove}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleUntrackJob(job.id); }}
+                    aria-label="Remove"
+                  >
+                    ×
+                  </button>
+                </a>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            className={styles.toolbarClear}
+            onClick={() => setTrackedJobs([])}
+          >
+            Clear all
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
