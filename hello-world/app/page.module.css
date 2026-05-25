@@ -492,13 +492,13 @@
 }
 
 @keyframes cardHighlight {
-  0%   { box-shadow: 0 0 0 3px rgba(13, 74, 143, 0.45), 0 4px 20px -6px rgba(13, 74, 143, 0.25); border-color: var(--accent); }
-  65%  { box-shadow: 0 0 0 2px rgba(13, 74, 143, 0.15), 0 4px 16px -8px rgba(17, 60, 110, 0.18); border-color: var(--border-strong); }
+  0%   { box-shadow: 0 0 0 4px rgba(13, 74, 143, 0.7), 0 4px 24px -4px rgba(13, 74, 143, 0.4); border-color: var(--accent); }
+  55%  { box-shadow: 0 0 0 3px rgba(13, 74, 143, 0.25), 0 4px 18px -6px rgba(17, 60, 110, 0.22); border-color: var(--border-strong); }
   100% { box-shadow: 0 4px 16px -8px rgba(17, 60, 110, 0.18); border-color: var(--border); }
 }
 
 .jobCardHighlighted {
-  animation: cardHighlight 1.8s ease-out forwards;
+  animation: cardHighlight 2.8s ease-out forwards;
 }
 
 .ignoredSection {
@@ -674,6 +674,36 @@
 
 .toolbarChipRemove:hover {
   color: #c0d0ee;
+}
+
+.toolbarChipActions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+.toolbarChipBtn {
+  background: none;
+  border: none;
+  color: #5a6e90;
+  font-size: 0.82rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 3px 5px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  font-family: inherit;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+
+.toolbarChipBtn:hover {
+  color: #c0d0ee;
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .toolbarClear {

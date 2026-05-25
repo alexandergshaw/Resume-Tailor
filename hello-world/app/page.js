@@ -1313,11 +1313,8 @@ export default function Home() {
               const tailoring = tailoringMap[job.id] || {};
               const status = tailoring.status;
               return (
-                <a
+                <div
                   key={job.id}
-                  href={job.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
                   className={`${styles.toolbarChip}${
                     status === "done" ? ` ${styles.toolbarChipDone}` :
                     status === "tailoring" ? ` ${styles.toolbarChipGenerating}` :
@@ -1331,23 +1328,48 @@ export default function Home() {
                   ) : status === "tailoring" ? (
                     <span className={styles.toolbarChipBadge}>Generating…</span>
                   ) : null}
-                  <button
-                    type="button"
-                    className={styles.toolbarChipRemove}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      const card = document.getElementById(`job-card-${job.id}`);
-                      if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
-                      setHighlightedJobId(job.id);
-                      setTimeout(() => setHighlightedJobId(null), 2000);
-                      handleUntrackJob(job.id);
-                    }}
-                    aria-label="Remove"
-                  >
-                    ×
-                  </button>
-                </a>
+                  <div className={styles.toolbarChipActions}>
+                    <a
+                      href={job.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={styles.toolbarChipBtn}
+                      title="View posting"
+                    >
+                      ↗
+                    </a>
+                    <button
+                      type="button"
+                      className={styles.toolbarChipBtn}
+                      title="Mark as applied"
+                      onClick={() => handleToggleApplied(job.id)}
+                    >
+                      ✓
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.toolbarChipBtn}
+                      title="Go to card"
+                      onClick={() => {
+                        const card = document.getElementById(`job-card-${job.id}`);
+                        if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
+                        setHighlightedJobId(job.id);
+                        setTimeout(() => setHighlightedJobId(null), 3000);
+                      }}
+                    >
+                      ↩
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.toolbarChipRemove}
+                      title="Remove"
+                      onClick={() => handleUntrackJob(job.id)}
+                      aria-label="Remove"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
               );
             })}
           </div>
