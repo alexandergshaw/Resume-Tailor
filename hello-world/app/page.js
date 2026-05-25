@@ -785,21 +785,23 @@ export default function Home() {
                               >
                                 View posting
                               </a>
-                              <button
-                                type="button"
-                                className={styles.secondaryButton}
-                                onClick={() => handleIgnoreJob(job.id)}
-                              >
-                                Ignore
-                              </button>
-                              <button
-                                type="button"
-                                className={styles.button}
-                                disabled={isTailoring || isDone}
-                                onClick={() => handleTailorJob(job)}
-                              >
-                                {isTailoring ? "Tailoring..." : isDone ? "Done ✓" : "Tailor Resume"}
-                              </button>
+                              <div className={styles.cardActions}>
+                                <button
+                                  type="button"
+                                  className={styles.secondaryButton}
+                                  onClick={() => handleIgnoreJob(job.id)}
+                                >
+                                  Ignore
+                                </button>
+                                <button
+                                  type="button"
+                                  className={styles.button}
+                                  disabled={isTailoring || isDone}
+                                  onClick={() => handleTailorJob(job)}
+                                >
+                                  {isTailoring ? "Tailoring..." : isDone ? "Done ✓" : "Tailor Resume"}
+                                </button>
+                              </div>
                             </div>
                           </div>
                         );
@@ -844,13 +846,15 @@ export default function Home() {
                                 >
                                   View posting
                                 </a>
-                                <button
-                                  type="button"
-                                  className={styles.secondaryButton}
-                                  onClick={() => handleRestoreJob(job.id)}
-                                >
-                                  Restore
-                                </button>
+                                <div className={styles.cardActions}>
+                                  <button
+                                    type="button"
+                                    className={styles.secondaryButton}
+                                    onClick={() => handleRestoreJob(job.id)}
+                                  >
+                                    Restore
+                                  </button>
+                                </div>
                               </div>
                             </div>
                           ))}

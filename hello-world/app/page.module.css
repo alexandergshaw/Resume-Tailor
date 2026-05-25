@@ -330,6 +330,19 @@
   gap: 8px;
 }
 
+.cardActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cardActions .button,
+.cardActions .secondaryButton {
+  padding: 6px 12px;
+  font-size: 0.84rem;
+  border-radius: 8px;
+}
+
 .jobCardLink {
   color: var(--accent);
   font-size: 0.87rem;
