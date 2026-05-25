@@ -84,11 +84,15 @@ export default function Home() {
       const date = localStorage.getItem("datePosted");
       const excl = localStorage.getItem("excludeNoSalary");
       const boards = localStorage.getItem("publisherFilter");
+      const url = localStorage.getItem("urlPosting");
+      const manual = localStorage.getItem("jobPosting");
       if (q) setJobQuery(q);
       if (sal) setMinSalary(sal);
       if (date) setDatePosted(date);
       if (excl !== null) setExcludeNoSalary(excl === "true");
       if (boards) setPublisherFilter(JSON.parse(boards));
+      if (url) setUrlPosting(url);
+      if (manual) setJobPosting(manual);
     } catch {}
   }, []);
 
@@ -97,6 +101,8 @@ export default function Home() {
   useEffect(() => { localStorage.setItem("datePosted", datePosted); }, [datePosted]);
   useEffect(() => { localStorage.setItem("excludeNoSalary", String(excludeNoSalary)); }, [excludeNoSalary]);
   useEffect(() => { localStorage.setItem("publisherFilter", JSON.stringify(publisherFilter)); }, [publisherFilter]);
+  useEffect(() => { localStorage.setItem("urlPosting", urlPosting); }, [urlPosting]);
+  useEffect(() => { localStorage.setItem("jobPosting", jobPosting); }, [jobPosting]);
 
   function sanitizeFileNamePart(value) {
     return value
