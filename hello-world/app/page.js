@@ -662,17 +662,17 @@ export default function Home() {
           </button>
           <button
             type="button"
-            className={activeSection === "manual" ? styles.sectionTabActive : styles.sectionTab}
-            onClick={() => setActiveSection("manual")}
-          >
-            Job Posting
-          </button>
-          <button
-            type="button"
             className={activeSection === "url" ? styles.sectionTabActive : styles.sectionTab}
             onClick={() => setActiveSection("url")}
           >
             Posting URL
+          </button>
+          <button
+            type="button"
+            className={activeSection === "manual" ? styles.sectionTabActive : styles.sectionTab}
+            onClick={() => setActiveSection("manual")}
+          >
+            Job Posting
           </button>
         </div>
 
