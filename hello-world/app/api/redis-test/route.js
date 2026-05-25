@@ -3,16 +3,16 @@ import { Redis } from "@upstash/redis";
 export const runtime = "nodejs";
 
 export async function GET() {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  const url = process.env.KV_REST_API_URL;
+  const token = process.env.KV_REST_API_TOKEN;
 
   if (!url || !token) {
     return Response.json(
       {
         connected: false,
         error: "Env vars missing",
-        UPSTASH_REDIS_REST_URL: url ? "set" : "missing",
-        UPSTASH_REDIS_REST_TOKEN: token ? "set" : "missing",
+        KV_REST_API_URL: url ? "set" : "missing",
+        KV_REST_API_TOKEN: token ? "set" : "missing",
       },
       { status: 500 },
     );

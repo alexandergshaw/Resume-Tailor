@@ -12,7 +12,7 @@ export function getServerEnv() {
   return {
     geminiApiKey: process.env.Gemini_LLM_API_Key,
     geminiModel: process.env.GEMINI_MODEL || "gemini-2.5-flash",
-    upstashRedisUrl: process.env.UPSTASH_REDIS_REST_URL || null,
-    upstashRedisToken: process.env.UPSTASH_REDIS_REST_TOKEN || null,
+    kvRestApiUrl: process.env.KV_REST_API_URL || null,
+    kvRestApiToken: process.env.KV_REST_API_TOKEN || null,
   };
 }
