@@ -38,6 +38,8 @@ export default function Home() {
   const [urlHasCompleted, setUrlHasCompleted] = useState(false);
   const [urlIsDownloading, setUrlIsDownloading] = useState(false);
   const [activeSection, setActiveSection] = useState("search");
+  const [ignoredJobIds, setIgnoredJobIds] = useState(new Set());
+  const [showIgnored, setShowIgnored] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem("activeSection");
@@ -49,6 +51,17 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("activeSection", activeSection);
   }, [activeSection]);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("ignoredJobIds");
+      if (saved) setIgnoredJobIds(new Set(JSON.parse(saved)));
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("ignoredJobIds", JSON.stringify([...ignoredJobIds]));
+  }, [ignoredJobIds]);
 
   function sanitizeFileNamePart(value) {
     return value
@@ -348,6 +361,18 @@ export default function Home() {
     } finally {
       setIsSearching(false);
     }
+  }
+
+  function handleIgnoreJob(jobId) {
+    setIgnoredJobIds((prev) => new Set([...prev, jobId]));
+  }
+
+  function handleRestoreJob(jobId) {
+    setIgnoredJobIds((prev) => {
+      const next = new Set(prev);
+      next.delete(jobId);
+      return next;
+    });
   }
 
   async function handleTailorJob(job) {
@@ -715,60 +740,127 @@ export default function Home() {
 
             {jobSearchError ? <p className={styles.error}>{jobSearchError}</p> : null}
 
-            {jobResults.length > 0 ? (
-              <div className={styles.jobGrid}>
-                {jobResults.map((job) => {
-                  const tailoring = tailoringMap[job.id] || {};
-                  const isDone = tailoring.status === "done";
-                  const isTailoring = tailoring.status === "tailoring";
-                  const isError = tailoring.status === "error";
+            {jobResults.length > 0 ? (() => {
+              const visibleJobs = jobResults.filter((j) => !ignoredJobIds.has(j.id));
+              const ignoredInResults = jobResults.filter((j) => ignoredJobIds.has(j.id));
+              return (
+                <>
+                  {visibleJobs.length > 0 ? (
+                    <div className={styles.jobGrid}>
+                      {visibleJobs.map((job) => {
+                        const tailoring = tailoringMap[job.id] || {};
+                        const isDone = tailoring.status === "done";
+                        const isTailoring = tailoring.status === "tailoring";
+                        const isError = tailoring.status === "error";
 
-                  return (
-                    <div key={job.id} className={styles.jobCard}>
-                      <div>
-                        <p className={styles.jobCardTitle}>{job.title}</p>
-                        <p className={styles.jobCardMeta}>
-                          {[job.company, job.location].filter(Boolean).join(" · ")}
-                        </p>
-                        {job.salaryMin || job.salaryMax ? (
-                          <p className={styles.jobCardSalary}>
-                            {job.salaryMin && job.salaryMax
-                              ? `$${Math.round(job.salaryMin / 1000)}k–$${Math.round(job.salaryMax / 1000)}k`
-                              : job.salaryMin
-                              ? `From $${Math.round(job.salaryMin / 1000)}k`
-                              : `Up to $${Math.round(job.salaryMax / 1000)}k`}
-                          </p>
-                        ) : null}
-                        <p className={styles.jobCardDescription}>
-                          {job.description.slice(0, 220).trim()}&hellip;
-                        </p>
-                        {isError ? (
-                          <p className={styles.jobCardError}>{tailoring.error}</p>
-                        ) : null}
-                      </div>
-                      <div className={styles.jobCardFooter}>
-                        <a
-                          href={job.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={styles.jobCardLink}
-                        >
-                          View posting
-                        </a>
-                        <button
-                          type="button"
-                          className={styles.button}
-                          disabled={isTailoring || isDone}
-                          onClick={() => handleTailorJob(job)}
-                        >
-                          {isTailoring ? "Tailoring..." : isDone ? "Done ✓" : "Tailor Resume"}
-                        </button>
-                      </div>
+                        return (
+                          <div key={job.id} className={styles.jobCard}>
+                            <div>
+                              <p className={styles.jobCardTitle}>{job.title}</p>
+                              <p className={styles.jobCardMeta}>
+                                {[job.company, job.location].filter(Boolean).join(" · ")}
+                              </p>
+                              {job.salaryMin || job.salaryMax ? (
+                                <p className={styles.jobCardSalary}>
+                                  {job.salaryMin && job.salaryMax
+                                    ? `$${Math.round(job.salaryMin / 1000)}k–$${Math.round(job.salaryMax / 1000)}k`
+                                    : job.salaryMin
+                                    ? `From $${Math.round(job.salaryMin / 1000)}k`
+                                    : `Up to $${Math.round(job.salaryMax / 1000)}k`}
+                                </p>
+                              ) : null}
+                              <p className={styles.jobCardDescription}>
+                                {job.description.slice(0, 220).trim()}&hellip;
+                              </p>
+                              {isError ? (
+                                <p className={styles.jobCardError}>{tailoring.error}</p>
+                              ) : null}
+                            </div>
+                            <div className={styles.jobCardFooter}>
+                              <a
+                                href={job.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className={styles.jobCardLink}
+                              >
+                                View posting
+                              </a>
+                              <button
+                                type="button"
+                                className={styles.secondaryButton}
+                                onClick={() => handleIgnoreJob(job.id)}
+                              >
+                                Ignore
+                              </button>
+                              <button
+                                type="button"
+                                className={styles.button}
+                                disabled={isTailoring || isDone}
+                                onClick={() => handleTailorJob(job)}
+                              >
+                                {isTailoring ? "Tailoring..." : isDone ? "Done ✓" : "Tailor Resume"}
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  );
-                })}
-              </div>
-            ) : null}
+                  ) : null}
+
+                  {ignoredInResults.length > 0 ? (
+                    <div className={styles.ignoredSection}>
+                      <button
+                        type="button"
+                        className={styles.ignoredToggle}
+                        onClick={() => setShowIgnored((v) => !v)}
+                      >
+                        {ignoredInResults.length} ignored{showIgnored ? " · Hide" : " · Show"}
+                      </button>
+                      {showIgnored ? (
+                        <div className={styles.jobGrid}>
+                          {ignoredInResults.map((job) => (
+                            <div key={job.id} className={`${styles.jobCard} ${styles.jobCardIgnored}`}>
+                              <div>
+                                <p className={styles.jobCardTitle}>{job.title}</p>
+                                <p className={styles.jobCardMeta}>
+                                  {[job.company, job.location].filter(Boolean).join(" · ")}
+                                </p>
+                                {job.salaryMin || job.salaryMax ? (
+                                  <p className={styles.jobCardSalary}>
+                                    {job.salaryMin && job.salaryMax
+                                      ? `$${Math.round(job.salaryMin / 1000)}k–$${Math.round(job.salaryMax / 1000)}k`
+                                      : job.salaryMin
+                                      ? `From $${Math.round(job.salaryMin / 1000)}k`
+                                      : `Up to $${Math.round(job.salaryMax / 1000)}k`}
+                                  </p>
+                                ) : null}
+                              </div>
+                              <div className={styles.jobCardFooter}>
+                                <a
+                                  href={job.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className={styles.jobCardLink}
+                                >
+                                  View posting
+                                </a>
+                                <button
+                                  type="button"
+                                  className={styles.secondaryButton}
+                                  onClick={() => handleRestoreJob(job.id)}
+                                >
+                                  Restore
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </>
+              );
+            })() : null}
           </section>
         ) : activeSection === "manual" ? (
           <section className={styles.tabPanel}>
