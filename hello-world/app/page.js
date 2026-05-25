@@ -1072,7 +1072,7 @@ export default function Home() {
                         const isApplied = appliedJobIds.has(job.id);
 
                         return (
-                          <div key={job.id} className={`${styles.jobCard}${isApplied ? ` ${styles.jobCardApplied}` : ""}`}>
+                          <div key={job.id} id={`job-card-${job.id}`} className={`${styles.jobCard}${isApplied ? ` ${styles.jobCardApplied}` : ""}`}>
                             <div>
                               <p className={styles.jobCardTitle}>{job.title}</p>
                               <p className={styles.jobCardMeta}>
@@ -1303,7 +1303,13 @@ export default function Home() {
                   <button
                     type="button"
                     className={styles.toolbarChipRemove}
-                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleUntrackJob(job.id); }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const card = document.getElementById(`job-card-${job.id}`);
+                      if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
+                      handleUntrackJob(job.id);
+                    }}
                     aria-label="Remove"
                   >
                     ×
