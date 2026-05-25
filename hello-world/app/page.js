@@ -136,10 +136,12 @@ export default function Home() {
 
   // When categories change, drive the company multiselect
   useEffect(() => {
-    if (selectedCategories.length === 0) return;
-    const matched = GREENHOUSE_COMPANIES.filter((c) =>
-      c.categories.some((cat) => selectedCategories.includes(cat))
-    );
+    const matched =
+      selectedCategories.length === 0
+        ? []
+        : GREENHOUSE_COMPANIES.filter((c) =>
+            c.categories.some((cat) => selectedCategories.includes(cat))
+          );
     setSelectedCompanies(matched);
   }, [selectedCategories]);
 
@@ -978,7 +980,6 @@ export default function Home() {
                 value={selectedCategories}
                 onChange={(_, newValue) => {
                   setSelectedCategories(newValue);
-                  if (newValue.length === 0) setSelectedCompanies([]);
                 }}
                 renderInput={(params) => (
                   <TextField
