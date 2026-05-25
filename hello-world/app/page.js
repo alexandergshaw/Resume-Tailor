@@ -58,10 +58,11 @@ export default function Home() {
   const [publisherFilter, setPublisherFilter] = useState([]);
   const [selectedCompanies, setSelectedCompanies] = useState([]);
 
-  // Refs for targeted Greenhouse re-fetch when company selection changes
+  // Refs for targeted re-fetches when individual controls change
   const hasFetchedRef = useRef(false);
   const activeQueryRef = useRef("");
   const jsearchResultsRef = useRef([]);
+  const ghResultsRef = useRef([]);
 
   const JOB_BOARDS = ["LinkedIn", "Indeed", "ZipRecruiter", "Glassdoor", "Monster", "CareerBuilder", "Talent.com"];
 
@@ -141,12 +142,65 @@ export default function Home() {
       .then((r) => r.json())
       .then((data) => {
         const ghJobs = data.jobs || [];
+        ghResultsRef.current = ghJobs;
         const seenUrls = new Set(ghJobs.map((j) => j.url));
         const jsJobs = jsearchResultsRef.current;
         setJobResults([...ghJobs, ...jsJobs.filter((j) => j.url && !seenUrls.has(j.url))]);
       })
       .catch(() => {});
   }, [selectedCompanies]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-fetch JSearch when salary/date/salary-filter controls change
+  useEffect(() => {
+    if (!hasFetchedRef.current || !activeQueryRef.current) return;
+    const query = activeQueryRef.current;
+    const params = new URLSearchParams({ query });
+    if (minSalary !== "0") params.set("minSalary", minSalary);
+    if (excludeNoSalary) params.set("excludeNoSalary", "1");
+    if (datePosted !== "today") params.set("datePosted", datePosted);
+    setIsSearching(true);
+    fetch(`/api/jobs?${params.toString()}`)
+      .then((r) => r.json())
+      .then((data) => {
+        const jsJobs = data.jobs || [];
+        jsearchResultsRef.current = jsJobs;
+        const ghJobs = ghResultsRef.current;
+        const seenUrls = new Set(ghJobs.map((j) => j.url));
+        setJobResults([...ghJobs, ...jsJobs.filter((j) => j.url && !seenUrls.has(j.url))]);
+      })
+      .catch(() => {})
+      .finally(() => setIsSearching(false));
+  }, [minSalary, datePosted, excludeNoSalary]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-run full search (debounced) when the query text changes
+  useEffect(() => {
+    if (!hasFetchedRef.current || !jobQuery.trim()) return;
+    const timer = setTimeout(() => {
+      activeQueryRef.current = jobQuery.trim();
+      const params = new URLSearchParams({ query: jobQuery.trim() });
+      if (minSalary !== "0") params.set("minSalary", minSalary);
+      if (excludeNoSalary) params.set("excludeNoSalary", "1");
+      if (datePosted !== "today") params.set("datePosted", datePosted);
+      setIsSearching(true);
+      setJobSearchError("");
+      const ghCompanyParam = selectedCompanies.length > 0
+        ? `&companies=${selectedCompanies.map((c) => c.slug).join(",")}`
+        : "";
+      Promise.allSettled([
+        fetch(`/api/jobs?${params.toString()}`).then((r) => r.json()),
+        fetch(`/api/greenhouse?query=${encodeURIComponent(jobQuery.trim())}${ghCompanyParam}`).then((r) => r.json()),
+      ]).then(([jsearchResult, ghResult]) => {
+        const jsJobs = jsearchResult.status === "fulfilled" && jsearchResult.value.jobs ? jsearchResult.value.jobs : [];
+        const ghJobs = ghResult.status === "fulfilled" && ghResult.value.jobs ? ghResult.value.jobs : [];
+        jsearchResultsRef.current = jsJobs;
+        ghResultsRef.current = ghJobs;
+        const seenUrls = new Set(ghJobs.map((j) => j.url));
+        setJobResults([...ghJobs, ...jsJobs.filter((j) => j.url && !seenUrls.has(j.url))]);
+      }).catch(() => {}).finally(() => setIsSearching(false));
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [jobQuery]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => { localStorage.setItem("urlPosting", urlPosting); }, [urlPosting]);
   useEffect(() => { localStorage.setItem("jobPosting", jobPosting); }, [jobPosting]);
 
@@ -461,6 +515,7 @@ export default function Home() {
       }
 
       jsearchResultsRef.current = jsearchJobs;
+      ghResultsRef.current = ghJobs;
       hasFetchedRef.current = true;
       const seenUrls = new Set(ghJobs.map((j) => j.url));
       const merged = [...ghJobs, ...jsearchJobs.filter((j) => j.url && !seenUrls.has(j.url))];
