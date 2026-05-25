@@ -17,6 +17,7 @@ function normalizeJob(raw) {
     location: raw.job_is_remote ? "Remote" : locationParts.join(", "),
     description: raw.job_description || "",
     url: raw.job_apply_link || "",
+    publisher: raw.job_publisher || null,
     employmentType: raw.job_employment_type || null,
     isRemote: raw.job_is_remote ?? false,
     salaryMin: raw.job_min_salary ?? null,

@@ -760,6 +760,9 @@ export default function Home() {
                               <p className={styles.jobCardMeta}>
                                 {[job.company, job.location].filter(Boolean).join(" · ")}
                               </p>
+                              {job.publisher ? (
+                                <p className={styles.jobCardPublisher}>{job.publisher}</p>
+                              ) : null}
                               {job.salaryMin || job.salaryMax ? (
                                 <p className={styles.jobCardSalary}>
                                   {job.salaryMin && job.salaryMax

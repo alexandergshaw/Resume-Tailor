@@ -302,6 +302,13 @@
   font-size: 0.87rem;
 }
 
+.jobCardPublisher {
+  margin: 3px 0 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
 .jobCardSalary {
   margin: 4px 0 0;
   color: var(--text-secondary);
