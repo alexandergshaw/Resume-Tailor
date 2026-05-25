@@ -42,6 +42,7 @@ export default function Home() {
   const [coverLetterFile, setCoverLetterFile] = useState(null);
   const [jobQuery, setJobQuery] = useState("");
   const [minSalary, setMinSalary] = useState("0");
+  const [excludeNoSalary, setExcludeNoSalary] = useState(false);
   const [jobResults, setJobResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [jobSearchError, setJobSearchError] = useState("");
@@ -407,6 +408,7 @@ export default function Home() {
     try {
       const params = new URLSearchParams({ query: jobQuery.trim() });
       if (minSalary !== "0") params.set("minSalary", minSalary);
+      if (excludeNoSalary) params.set("excludeNoSalary", "1");
 
       const response = await fetch(`/api/jobs?${params.toString()}`);
       const payload = await response.json();
@@ -646,6 +648,14 @@ export default function Home() {
               <option value="175000">$175k+</option>
               <option value="200000">$200k+</option>
             </select>
+            <label className={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={excludeNoSalary}
+                onChange={(e) => setExcludeNoSalary(e.target.checked)}
+              />
+              Listed salary only
+            </label>
             <button
               type="submit"
               className={styles.button}

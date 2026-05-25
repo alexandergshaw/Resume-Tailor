@@ -188,6 +188,17 @@
   line-height: 1.5;
 }
 
+.checkboxLabel {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
 .jobSearchSection {
   display: flex;
   flex-direction: column;

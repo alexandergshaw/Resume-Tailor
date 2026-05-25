@@ -29,6 +29,7 @@ export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const query = searchParams.get("query")?.trim();
   const minSalary = parseInt(searchParams.get("minSalary") || "0", 10);
+  const excludeNoSalary = searchParams.get("excludeNoSalary") === "1";
 
   if (!query) {
     return Response.json({ error: "query parameter is required." }, { status: 400 });
@@ -79,6 +80,10 @@ export async function GET(request) {
     jobs = jobs.filter(
       (job) => job.salaryMin === null || job.salaryMin >= minSalary,
     );
+  }
+
+  if (excludeNoSalary) {
+    jobs = jobs.filter((job) => job.salaryMin !== null || job.salaryMax !== null);
   }
 
   await setCached(cacheKey, jobs, CACHE_TTL_SECONDS);
