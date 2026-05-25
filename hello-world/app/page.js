@@ -964,81 +964,77 @@ export default function Home() {
           </section>
         ) : activeSection === "manual" ? (
           <section className={styles.tabPanel}>
-            <form className={styles.form} onSubmit={handleManualSubmit}>
-              <div className={styles.fieldGroup}>
-                <label htmlFor="job-posting" className={styles.label}>
-                  Job Posting
-                </label>
-                <textarea
-                  id="job-posting"
-                  name="jobPosting"
-                  className={styles.textarea}
-                  placeholder="Paste the full job posting here..."
-                  value={jobPosting}
-                  onChange={(e) => setJobPosting(e.target.value)}
-                />
-              </div>
-              <button
-                className={styles.button}
-                type="submit"
-                disabled={manualIsSubmitting}
-              >
-                {manualIsSubmitting ? "Generating..." : "Generate"}
-              </button>
+            <form className={styles.form} onSubmit={handleManualSubmit} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <TextField
+                id="job-posting"
+                name="jobPosting"
+                label="Job Posting"
+                multiline
+                rows={10}
+                fullWidth
+                placeholder="Paste the full job posting here..."
+                value={jobPosting}
+                onChange={(e) => setJobPosting(e.target.value)}
+              />
+              <Box>
+                <Button
+                  type="submit"
+                  variant="contained"
+                  disabled={manualIsSubmitting}
+                >
+                  {manualIsSubmitting ? "Generating..." : "Generate"}
+                </Button>
+              </Box>
             </form>
 
             {manualError ? <p className={styles.error}>{manualError}</p> : null}
 
             {manualHasCompleted && manualResult ? (
               <section className={styles.resultSection}>
-                <button
-                  type="button"
-                  className={styles.secondaryButton}
+                <Button
+                  variant="outlined"
                   onClick={handleManualDownload}
                   disabled={manualIsDownloading}
                 >
                   {manualIsDownloading ? "Preparing DOCX..." : "Download Resume"}
-                </button>
+                </Button>
               </section>
             ) : null}
           </section>
         ) : (
           <section className={styles.tabPanel}>
-            <form className={styles.form} onSubmit={handleUrlSubmit}>
-              <div className={styles.fieldGroup}>
-                <label htmlFor="job-posting-url" className={styles.label}>
-                  Job Posting URL
-                </label>
-                <input
-                  id="job-posting-url"
-                  type="url"
-                  className={styles.searchInput}
-                  placeholder="https://..."
-                  value={urlPosting}
-                  onChange={(e) => setUrlPosting(e.target.value)}
-                />
-              </div>
-              <button
-                className={styles.button}
-                type="submit"
-                disabled={urlIsSubmitting}
-              >
-                {urlIsSubmitting ? "Generating..." : "Generate"}
-              </button>
+            <form className={styles.form} onSubmit={handleUrlSubmit} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <TextField
+                id="job-posting-url"
+                type="url"
+                label="Job Posting URL"
+                fullWidth
+                placeholder="https://..."
+                value={urlPosting}
+                onChange={(e) => setUrlPosting(e.target.value)}
+              />
+              <Box>
+                <Button
+                  type="submit"
+                  variant="contained"
+                  disabled={urlIsSubmitting}
+                >
+                  {urlIsSubmitting ? "Generating..." : "Generate"}
+                </Button>
+              </Box>
             </form>
 
             {urlError ? <p className={styles.error}>{urlError}</p> : null}
 
             {urlHasCompleted && urlResult ? (
               <section className={styles.resultSection}>
-                <button
-                  type="button"
-                  className={styles.secondaryButton}
+                <Button
+                  variant="outlined"
                   onClick={handleUrlDownload}
                   disabled={urlIsDownloading}
                 >
                   {urlIsDownloading ? "Preparing DOCX..." : "Download Resume"}
-                </button>
+                </Button>
               </section>
             ) : null}
           </section>
