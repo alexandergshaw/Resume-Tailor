@@ -56,6 +56,8 @@ export default function Home() {
   const [appliedJobIds, setAppliedJobIds] = useState(new Set());
   const [trackedJobs, setTrackedJobs] = useState([]);
   const [highlightedJobId, setHighlightedJobId] = useState(null);
+  const [toolbarCanScrollLeft, setToolbarCanScrollLeft] = useState(false);
+  const [toolbarCanScrollRight, setToolbarCanScrollRight] = useState(false);
   const [showIgnored, setShowIgnored] = useState(false);
   const [publisherFilter, setPublisherFilter] = useState([]);
   const [selectedCompanies, setSelectedCompanies] = useState([]);
@@ -66,6 +68,7 @@ export default function Home() {
   const activeQueryRef = useRef("");
   const jsearchResultsRef = useRef([]);
   const ghResultsRef = useRef([]);
+  const toolbarScrollRef = useRef(null);
 
   const JOB_BOARDS = ["LinkedIn", "Indeed", "ZipRecruiter", "Glassdoor", "Monster", "CareerBuilder", "Talent.com"];
 
@@ -111,6 +114,8 @@ export default function Home() {
 
   useEffect(() => {
     localStorage.setItem("trackedJobs", JSON.stringify(trackedJobs));
+    // Re-evaluate arrow visibility after chips update
+    setTimeout(handleToolbarScroll, 50);
   }, [trackedJobs]);
 
   useEffect(() => {
@@ -578,6 +583,19 @@ export default function Home() {
       }
       return next;
     });
+  }
+
+  function handleToolbarScroll() {
+    const el = toolbarScrollRef.current;
+    if (!el) return;
+    setToolbarCanScrollLeft(el.scrollLeft > 0);
+    setToolbarCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+  }
+
+  function scrollToolbar(dir) {
+    const el = toolbarScrollRef.current;
+    if (!el) return;
+    el.scrollBy({ left: dir * 320, behavior: "smooth" });
   }
 
   function handleTrackJob(job) {
@@ -1278,7 +1296,19 @@ export default function Home() {
       {trackedJobs.length > 0 ? (
         <div className={styles.floatingToolbar}>
           <span className={styles.toolbarLabel}>Generated ({trackedJobs.length})</span>
-          <div className={styles.toolbarItems}>
+          <button
+            type="button"
+            className={`${styles.toolbarArrow} ${!toolbarCanScrollLeft ? styles.toolbarArrowHidden : ""}`}
+            onClick={() => scrollToolbar(-1)}
+            aria-label="Scroll left"
+          >
+            ‹
+          </button>
+          <div
+            className={styles.toolbarItems}
+            ref={toolbarScrollRef}
+            onScroll={handleToolbarScroll}
+          >
             {trackedJobs.map((job) => {
               const tailoring = tailoringMap[job.id] || {};
               const status = tailoring.status;
@@ -1321,6 +1351,14 @@ export default function Home() {
               );
             })}
           </div>
+          <button
+            type="button"
+            className={`${styles.toolbarArrow} ${!toolbarCanScrollRight ? styles.toolbarArrowHidden : ""}`}
+            onClick={() => scrollToolbar(1)}
+            aria-label="Scroll right"
+          >
+            ›
+          </button>
           <button
             type="button"
             className={styles.toolbarClear}

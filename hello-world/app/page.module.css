@@ -557,8 +557,39 @@
   gap: 8px;
   flex: 1;
   overflow-x: auto;
-  scrollbar-width: thin;
-  scrollbar-color: #2e3a4e transparent;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.toolbarItems::-webkit-scrollbar {
+  display: none;
+}
+
+.toolbarArrow {
+  background: none;
+  border: 1px solid #2e3a4e;
+  color: #c0d0ee;
+  font-size: 1.25rem;
+  line-height: 1;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-family: inherit;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.toolbarArrow:hover {
+  background: #243049;
+}
+
+.toolbarArrowHidden {
+  opacity: 0.2;
+  pointer-events: none;
 }
 
 .toolbarChip {
