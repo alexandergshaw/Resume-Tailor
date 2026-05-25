@@ -15,7 +15,7 @@ import Select from "@mui/material/Select";
 import TextField from "@mui/material/TextField";
 import Autocomplete from "@mui/material/Autocomplete";
 import Chip from "@mui/material/Chip";
-import { GREENHOUSE_COMPANIES } from "../lib/greenhouse/companies";
+import { GREENHOUSE_COMPANIES, COMPANY_CATEGORIES } from "../lib/greenhouse/companies";
 
 const WORDPROCESSINGML_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -57,6 +57,7 @@ export default function Home() {
   const [showIgnored, setShowIgnored] = useState(false);
   const [publisherFilter, setPublisherFilter] = useState([]);
   const [selectedCompanies, setSelectedCompanies] = useState([]);
+  const [selectedCategories, setSelectedCategories] = useState([]);
 
   // Refs for targeted re-fetches when individual controls change
   const hasFetchedRef = useRef(false);
@@ -118,6 +119,8 @@ export default function Home() {
         const slugs = JSON.parse(companySlugs);
         setSelectedCompanies(GREENHOUSE_COMPANIES.filter((c) => slugs.includes(c.slug)));
       }
+      const savedCategories = localStorage.getItem("selectedCategories");
+      if (savedCategories) setSelectedCategories(JSON.parse(savedCategories));
       if (url) setUrlPosting(url);
       if (manual) setJobPosting(manual);
     } catch {}
@@ -129,6 +132,16 @@ export default function Home() {
   useEffect(() => { localStorage.setItem("excludeNoSalary", String(excludeNoSalary)); }, [excludeNoSalary]);
   useEffect(() => { localStorage.setItem("publisherFilter", JSON.stringify(publisherFilter)); }, [publisherFilter]);
   useEffect(() => { localStorage.setItem("selectedCompanies", JSON.stringify(selectedCompanies.map((c) => c.slug))); }, [selectedCompanies]);
+  useEffect(() => { localStorage.setItem("selectedCategories", JSON.stringify(selectedCategories)); }, [selectedCategories]);
+
+  // When categories change, drive the company multiselect
+  useEffect(() => {
+    if (selectedCategories.length === 0) return;
+    const matched = GREENHOUSE_COMPANIES.filter((c) =>
+      c.categories.some((cat) => selectedCategories.includes(cat))
+    );
+    setSelectedCompanies(matched);
+  }, [selectedCategories]);
 
   useEffect(() => {
     if (!hasFetchedRef.current || !activeQueryRef.current) return;
@@ -959,6 +972,28 @@ export default function Home() {
                   label="Listed salary only"
                 />
               </Box>
+              <Autocomplete
+                multiple
+                options={COMPANY_CATEGORIES}
+                value={selectedCategories}
+                onChange={(_, newValue) => {
+                  setSelectedCategories(newValue);
+                  if (newValue.length === 0) setSelectedCompanies([]);
+                }}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    size="small"
+                    label="Categories"
+                    placeholder={selectedCategories.length === 0 ? "All categories" : ""}
+                  />
+                )}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => (
+                    <Chip key={option} label={option} size="small" {...getTagProps({ index })} />
+                  ))
+                }
+              />
               <Autocomplete
                 multiple
                 options={GREENHOUSE_COMPANIES}
