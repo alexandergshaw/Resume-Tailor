@@ -35,7 +35,16 @@ const GREENHOUSE_COMPANIES = [
 ];
 
 function stripHtml(html) {
-  return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  return html
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function normalizeGreenhouseJob(raw, companyName) {
@@ -57,7 +66,7 @@ function normalizeGreenhouseJob(raw, companyName) {
 }
 
 async function fetchCompanyJobs(slug, name) {
-  const cacheKey = `gh:jobs:v2:${slug}`;
+  const cacheKey = `gh:jobs:v3:${slug}`;
   const cached = await getCached(cacheKey);
   if (cached) return cached;
 
