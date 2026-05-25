@@ -413,14 +413,54 @@
   gap: 6px;
 }
 
-.cardActions .button,
-.cardActions .secondaryButton {
-  padding: 6px 12px;
-  font-size: 0.84rem;
+.cardBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  height: 30px;
+  font-family: inherit;
+  font-size: 0.83rem;
+  font-weight: 600;
   border-radius: 8px;
-  height: 32px;
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
   box-sizing: border-box;
-  line-height: 1;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.cardBtnPrimary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.cardBtnPrimary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.cardBtnPrimary:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.cardBtnSecondary {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: var(--border-strong);
+}
+.cardBtnSecondary:hover {
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+
+.cardBtnApplied {
+  background: #e8f5e9;
+  color: #2e7d32;
+  border-color: #81c784;
+}
+.cardBtnApplied:hover {
+  background: #c8e6c9;
 }
 
 .jobCardLink {
@@ -440,21 +480,6 @@
 
 .jobCardApplied {
   opacity: 0.45;
-}
-
-.appliedButton {
-  padding: 6px 12px;
-  font-size: 0.84rem;
-  border-radius: 8px;
-  height: 32px;
-  box-sizing: border-box;
-  line-height: 1;
-  border: 1.5px solid #2e7d32;
-  background: transparent;
-  color: #2e7d32;
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
 }
 
 .ignoredSection {

@@ -930,21 +930,21 @@ export default function Home() {
                               <div className={styles.cardActions}>
                                 <button
                                   type="button"
-                                  className={isApplied ? styles.appliedButton : styles.secondaryButton}
+                                  className={`${styles.cardBtn} ${isApplied ? styles.cardBtnApplied : styles.cardBtnSecondary}`}
                                   onClick={() => handleToggleApplied(job.id)}
                                 >
                                   {isApplied ? "Applied ✓" : "Applied"}
                                 </button>
                                 <button
                                   type="button"
-                                  className={styles.secondaryButton}
+                                  className={`${styles.cardBtn} ${styles.cardBtnSecondary}`}
                                   onClick={() => handleIgnoreJob(job.id)}
                                 >
                                   Ignore
                                 </button>
                                 <button
                                   type="button"
-                                  className={styles.button}
+                                  className={`${styles.cardBtn} ${styles.cardBtnPrimary}`}
                                   disabled={isTailoring || isDone}
                                   onClick={() => handleTailorJob(job)}
                                 >
@@ -998,7 +998,7 @@ export default function Home() {
                                 <div className={styles.cardActions}>
                                   <button
                                     type="button"
-                                    className={styles.secondaryButton}
+                                    className={`${styles.cardBtn} ${styles.cardBtnSecondary}`}
                                     onClick={() => handleRestoreJob(job.id)}
                                   >
                                     Restore
