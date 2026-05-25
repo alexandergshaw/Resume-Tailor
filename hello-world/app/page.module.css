@@ -491,6 +491,16 @@
   opacity: 0.45;
 }
 
+@keyframes cardHighlight {
+  0%   { box-shadow: 0 0 0 3px rgba(13, 74, 143, 0.45), 0 4px 20px -6px rgba(13, 74, 143, 0.25); border-color: var(--accent); }
+  65%  { box-shadow: 0 0 0 2px rgba(13, 74, 143, 0.15), 0 4px 16px -8px rgba(17, 60, 110, 0.18); border-color: var(--border-strong); }
+  100% { box-shadow: 0 4px 16px -8px rgba(17, 60, 110, 0.18); border-color: var(--border); }
+}
+
+.jobCardHighlighted {
+  animation: cardHighlight 1.8s ease-out forwards;
+}
+
 .ignoredSection {
   display: flex;
   flex-direction: column;

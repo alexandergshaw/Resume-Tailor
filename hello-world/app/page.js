@@ -55,6 +55,7 @@ export default function Home() {
   const [ignoredJobIds, setIgnoredJobIds] = useState(new Set());
   const [appliedJobIds, setAppliedJobIds] = useState(new Set());
   const [trackedJobs, setTrackedJobs] = useState([]);
+  const [highlightedJobId, setHighlightedJobId] = useState(null);
   const [showIgnored, setShowIgnored] = useState(false);
   const [publisherFilter, setPublisherFilter] = useState([]);
   const [selectedCompanies, setSelectedCompanies] = useState([]);
@@ -1072,7 +1073,7 @@ export default function Home() {
                         const isApplied = appliedJobIds.has(job.id);
 
                         return (
-                          <div key={job.id} id={`job-card-${job.id}`} className={`${styles.jobCard}${isApplied ? ` ${styles.jobCardApplied}` : ""}`}>
+                          <div key={job.id} id={`job-card-${job.id}`} className={`${styles.jobCard}${isApplied ? ` ${styles.jobCardApplied}` : ""}${highlightedJobId === job.id ? ` ${styles.jobCardHighlighted}` : ""}`}>
                             <div>
                               <p className={styles.jobCardTitle}>{job.title}</p>
                               <p className={styles.jobCardMeta}>
@@ -1308,6 +1309,8 @@ export default function Home() {
                       e.stopPropagation();
                       const card = document.getElementById(`job-card-${job.id}`);
                       if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
+                      setHighlightedJobId(job.id);
+                      setTimeout(() => setHighlightedJobId(null), 2000);
                       handleUntrackJob(job.id);
                     }}
                     aria-label="Remove"
