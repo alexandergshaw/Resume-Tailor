@@ -672,7 +672,7 @@ export default function Home() {
             className={activeSection === "manual" ? styles.sectionTabActive : styles.sectionTab}
             onClick={() => setActiveSection("manual")}
           >
-            Job Posting
+            Job Description
           </button>
         </div>
 
