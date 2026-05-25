@@ -13,6 +13,9 @@ import ListItemText from "@mui/material/ListItemText";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import TextField from "@mui/material/TextField";
+import Autocomplete from "@mui/material/Autocomplete";
+import Chip from "@mui/material/Chip";
+import { GREENHOUSE_COMPANIES } from "../lib/greenhouse/companies";
 
 const WORDPROCESSINGML_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -53,6 +56,7 @@ export default function Home() {
   const [appliedJobIds, setAppliedJobIds] = useState(new Set());
   const [showIgnored, setShowIgnored] = useState(false);
   const [publisherFilter, setPublisherFilter] = useState([]);
+  const [selectedCompanies, setSelectedCompanies] = useState([]);
 
   const JOB_BOARDS = ["LinkedIn", "Indeed", "ZipRecruiter", "Glassdoor", "Monster", "CareerBuilder", "Talent.com"];
 
@@ -103,6 +107,11 @@ export default function Home() {
       if (date) setDatePosted(date);
       if (excl !== null) setExcludeNoSalary(excl === "true");
       if (boards) setPublisherFilter(JSON.parse(boards));
+      const companySlugs = localStorage.getItem("selectedCompanies");
+      if (companySlugs) {
+        const slugs = JSON.parse(companySlugs);
+        setSelectedCompanies(GREENHOUSE_COMPANIES.filter((c) => slugs.includes(c.slug)));
+      }
       if (url) setUrlPosting(url);
       if (manual) setJobPosting(manual);
     } catch {}
@@ -113,6 +122,7 @@ export default function Home() {
   useEffect(() => { localStorage.setItem("datePosted", datePosted); }, [datePosted]);
   useEffect(() => { localStorage.setItem("excludeNoSalary", String(excludeNoSalary)); }, [excludeNoSalary]);
   useEffect(() => { localStorage.setItem("publisherFilter", JSON.stringify(publisherFilter)); }, [publisherFilter]);
+  useEffect(() => { localStorage.setItem("selectedCompanies", JSON.stringify(selectedCompanies.map((c) => c.slug))); }, [selectedCompanies]);
   useEffect(() => { localStorage.setItem("urlPosting", urlPosting); }, [urlPosting]);
   useEffect(() => { localStorage.setItem("jobPosting", jobPosting); }, [jobPosting]);
 
@@ -404,7 +414,7 @@ export default function Home() {
 
       const [jsearchResult, ghResult] = await Promise.allSettled([
         fetch(`/api/jobs?${params.toString()}`).then((r) => r.json()),
-        fetch(`/api/greenhouse?query=${encodeURIComponent(jobQuery.trim())}`).then((r) => r.json()),
+        fetch(`/api/greenhouse?query=${encodeURIComponent(jobQuery.trim())}${selectedCompanies.length > 0 ? `&companies=${selectedCompanies.map((c) => c.slug).join(",")}` : ""}`).then((r) => r.json()),
       ]);
 
       const jsearchJobs =
@@ -866,6 +876,27 @@ export default function Home() {
                   label="Listed salary only"
                 />
               </Box>
+              <Autocomplete
+                multiple
+                options={GREENHOUSE_COMPANIES}
+                getOptionLabel={(option) => option.name}
+                value={selectedCompanies}
+                onChange={(_, newValue) => setSelectedCompanies(newValue)}
+                isOptionEqualToValue={(option, value) => option.slug === value.slug}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    size="small"
+                    label="Companies"
+                    placeholder={selectedCompanies.length === 0 ? "All Greenhouse companies" : ""}
+                  />
+                )}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => (
+                    <Chip key={option.slug} label={option.name} size="small" {...getTagProps({ index })} />
+                  ))
+                }
+              />
             </form>
 
             {jobSearchError ? <p className={styles.error}>{jobSearchError}</p> : null}
