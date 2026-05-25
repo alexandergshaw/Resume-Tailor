@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import JSZip from "jszip";
 import styles from "./page.module.css";
 import Box from "@mui/material/Box";
@@ -13,6 +13,9 @@ import ListItemText from "@mui/material/ListItemText";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import TextField from "@mui/material/TextField";
+import Autocomplete from "@mui/material/Autocomplete";
+import Chip from "@mui/material/Chip";
+import { GREENHOUSE_COMPANIES, COMPANY_CATEGORIES } from "../lib/greenhouse/companies";
 
 const WORDPROCESSINGML_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -50,8 +53,17 @@ export default function Home() {
   const [urlIsDownloading, setUrlIsDownloading] = useState(false);
   const [activeSection, setActiveSection] = useState("search");
   const [ignoredJobIds, setIgnoredJobIds] = useState(new Set());
+  const [appliedJobIds, setAppliedJobIds] = useState(new Set());
   const [showIgnored, setShowIgnored] = useState(false);
   const [publisherFilter, setPublisherFilter] = useState([]);
+  const [selectedCompanies, setSelectedCompanies] = useState([]);
+  const [selectedCategories, setSelectedCategories] = useState([]);
+
+  // Refs for targeted re-fetches when individual controls change
+  const hasFetchedRef = useRef(false);
+  const activeQueryRef = useRef("");
+  const jsearchResultsRef = useRef([]);
+  const ghResultsRef = useRef([]);
 
   const JOB_BOARDS = ["LinkedIn", "Indeed", "ZipRecruiter", "Glassdoor", "Monster", "CareerBuilder", "Talent.com"];
 
@@ -79,6 +91,17 @@ export default function Home() {
 
   useEffect(() => {
     try {
+      const saved = localStorage.getItem("appliedJobIds");
+      if (saved) setAppliedJobIds(new Set(JSON.parse(saved)));
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("appliedJobIds", JSON.stringify([...appliedJobIds]));
+  }, [appliedJobIds]);
+
+  useEffect(() => {
+    try {
       const q = localStorage.getItem("jobQuery");
       const sal = localStorage.getItem("minSalary");
       const date = localStorage.getItem("datePosted");
@@ -91,6 +114,13 @@ export default function Home() {
       if (date) setDatePosted(date);
       if (excl !== null) setExcludeNoSalary(excl === "true");
       if (boards) setPublisherFilter(JSON.parse(boards));
+      const companySlugs = localStorage.getItem("selectedCompanies");
+      if (companySlugs) {
+        const slugs = JSON.parse(companySlugs);
+        setSelectedCompanies(GREENHOUSE_COMPANIES.filter((c) => slugs.includes(c.slug)));
+      }
+      const savedCategories = localStorage.getItem("selectedCategories");
+      if (savedCategories) setSelectedCategories(JSON.parse(savedCategories));
       if (url) setUrlPosting(url);
       if (manual) setJobPosting(manual);
     } catch {}
@@ -101,6 +131,91 @@ export default function Home() {
   useEffect(() => { localStorage.setItem("datePosted", datePosted); }, [datePosted]);
   useEffect(() => { localStorage.setItem("excludeNoSalary", String(excludeNoSalary)); }, [excludeNoSalary]);
   useEffect(() => { localStorage.setItem("publisherFilter", JSON.stringify(publisherFilter)); }, [publisherFilter]);
+  useEffect(() => { localStorage.setItem("selectedCompanies", JSON.stringify(selectedCompanies.map((c) => c.slug))); }, [selectedCompanies]);
+  useEffect(() => { localStorage.setItem("selectedCategories", JSON.stringify(selectedCategories)); }, [selectedCategories]);
+
+  // When categories change, drive the company multiselect
+  useEffect(() => {
+    const matched =
+      selectedCategories.length === 0
+        ? []
+        : GREENHOUSE_COMPANIES.filter((c) =>
+            c.categories.some((cat) => selectedCategories.includes(cat))
+          );
+    setSelectedCompanies(matched);
+  }, [selectedCategories]);
+
+  useEffect(() => {
+    if (!hasFetchedRef.current || !activeQueryRef.current) return;
+    const query = activeQueryRef.current;
+    const ghUrl = `/api/greenhouse?query=${encodeURIComponent(query)}${
+      selectedCompanies.length > 0
+        ? `&companies=${selectedCompanies.map((c) => c.slug).join(",")}`
+        : ""
+    }`;
+    fetch(ghUrl)
+      .then((r) => r.json())
+      .then((data) => {
+        const ghJobs = data.jobs || [];
+        ghResultsRef.current = ghJobs;
+        const seenUrls = new Set(ghJobs.map((j) => j.url));
+        const jsJobs = jsearchResultsRef.current;
+        setJobResults([...ghJobs, ...jsJobs.filter((j) => j.url && !seenUrls.has(j.url))]);
+      })
+      .catch(() => {});
+  }, [selectedCompanies]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-fetch JSearch when salary/date/salary-filter controls change
+  useEffect(() => {
+    if (!hasFetchedRef.current || !activeQueryRef.current) return;
+    const query = activeQueryRef.current;
+    const params = new URLSearchParams({ query });
+    if (minSalary !== "0") params.set("minSalary", minSalary);
+    if (excludeNoSalary) params.set("excludeNoSalary", "1");
+    if (datePosted !== "today") params.set("datePosted", datePosted);
+    setIsSearching(true);
+    fetch(`/api/jobs?${params.toString()}`)
+      .then((r) => r.json())
+      .then((data) => {
+        const jsJobs = data.jobs || [];
+        jsearchResultsRef.current = jsJobs;
+        const ghJobs = ghResultsRef.current;
+        const seenUrls = new Set(ghJobs.map((j) => j.url));
+        setJobResults([...ghJobs, ...jsJobs.filter((j) => j.url && !seenUrls.has(j.url))]);
+      })
+      .catch(() => {})
+      .finally(() => setIsSearching(false));
+  }, [minSalary, datePosted, excludeNoSalary]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-run full search (debounced) when the query text changes
+  useEffect(() => {
+    if (!hasFetchedRef.current || !jobQuery.trim()) return;
+    const timer = setTimeout(() => {
+      activeQueryRef.current = jobQuery.trim();
+      const params = new URLSearchParams({ query: jobQuery.trim() });
+      if (minSalary !== "0") params.set("minSalary", minSalary);
+      if (excludeNoSalary) params.set("excludeNoSalary", "1");
+      if (datePosted !== "today") params.set("datePosted", datePosted);
+      setIsSearching(true);
+      setJobSearchError("");
+      const ghCompanyParam = selectedCompanies.length > 0
+        ? `&companies=${selectedCompanies.map((c) => c.slug).join(",")}`
+        : "";
+      Promise.allSettled([
+        fetch(`/api/jobs?${params.toString()}`).then((r) => r.json()),
+        fetch(`/api/greenhouse?query=${encodeURIComponent(jobQuery.trim())}${ghCompanyParam}`).then((r) => r.json()),
+      ]).then(([jsearchResult, ghResult]) => {
+        const jsJobs = jsearchResult.status === "fulfilled" && jsearchResult.value.jobs ? jsearchResult.value.jobs : [];
+        const ghJobs = ghResult.status === "fulfilled" && ghResult.value.jobs ? ghResult.value.jobs : [];
+        jsearchResultsRef.current = jsJobs;
+        ghResultsRef.current = ghJobs;
+        const seenUrls = new Set(ghJobs.map((j) => j.url));
+        setJobResults([...ghJobs, ...jsJobs.filter((j) => j.url && !seenUrls.has(j.url))]);
+      }).catch(() => {}).finally(() => setIsSearching(false));
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [jobQuery]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => { localStorage.setItem("urlPosting", urlPosting); }, [urlPosting]);
   useEffect(() => { localStorage.setItem("jobPosting", jobPosting); }, [jobPosting]);
 
@@ -383,6 +498,8 @@ export default function Home() {
     setJobSearchError("");
     setJobResults([]);
     setTailoringMap({});
+    hasFetchedRef.current = false;
+    activeQueryRef.current = jobQuery.trim();
 
     try {
       const params = new URLSearchParams({ query: jobQuery.trim() });
@@ -390,14 +507,35 @@ export default function Home() {
       if (excludeNoSalary) params.set("excludeNoSalary", "1");
       if (datePosted !== "today") params.set("datePosted", datePosted);
 
-      const response = await fetch(`/api/jobs?${params.toString()}`);
-      const payload = await response.json();
+      const [jsearchResult, ghResult] = await Promise.allSettled([
+        fetch(`/api/jobs?${params.toString()}`).then((r) => r.json()),
+        fetch(`/api/greenhouse?query=${encodeURIComponent(jobQuery.trim())}${selectedCompanies.length > 0 ? `&companies=${selectedCompanies.map((c) => c.slug).join(",")}` : ""}`).then((r) => r.json()),
+      ]);
 
-      if (!response.ok) {
-        throw new Error(payload.error || "Failed to fetch jobs.");
+      const jsearchJobs =
+        jsearchResult.status === "fulfilled" && jsearchResult.value.jobs
+          ? jsearchResult.value.jobs
+          : [];
+      const ghJobs =
+        ghResult.status === "fulfilled" && ghResult.value.jobs
+          ? ghResult.value.jobs
+          : [];
+
+      if (jsearchJobs.length === 0 && ghJobs.length === 0) {
+        const err =
+          jsearchResult.status === "rejected"
+            ? jsearchResult.reason?.message
+            : jsearchResult.value?.error;
+        throw new Error(err || "Failed to fetch jobs.");
       }
 
-      setJobResults(payload.jobs || []);
+      jsearchResultsRef.current = jsearchJobs;
+      ghResultsRef.current = ghJobs;
+      hasFetchedRef.current = true;
+      const seenUrls = new Set(ghJobs.map((j) => j.url));
+      const merged = [...ghJobs, ...jsearchJobs.filter((j) => j.url && !seenUrls.has(j.url))];
+
+      setJobResults(merged);
     } catch (err) {
       setJobSearchError(err.message || "Failed to fetch jobs.");
     } finally {
@@ -413,6 +551,15 @@ export default function Home() {
     setIgnoredJobIds((prev) => {
       const next = new Set(prev);
       next.delete(jobId);
+      return next;
+    });
+  }
+
+  function handleToggleApplied(jobId) {
+    setAppliedJobIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(jobId)) next.delete(jobId);
+      else next.add(jobId);
       return next;
     });
   }
@@ -827,6 +974,48 @@ export default function Home() {
                   label="Listed salary only"
                 />
               </Box>
+              <Autocomplete
+                multiple
+                options={COMPANY_CATEGORIES}
+                value={selectedCategories}
+                onChange={(_, newValue) => {
+                  setSelectedCategories(newValue);
+                }}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    size="small"
+                    label="Categories"
+                    placeholder={selectedCategories.length === 0 ? "All categories" : ""}
+                  />
+                )}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => (
+                    <Chip key={option} label={option} size="small" {...getTagProps({ index })} />
+                  ))
+                }
+              />
+              <Autocomplete
+                multiple
+                options={GREENHOUSE_COMPANIES}
+                getOptionLabel={(option) => option.name}
+                value={selectedCompanies}
+                onChange={(_, newValue) => setSelectedCompanies(newValue)}
+                isOptionEqualToValue={(option, value) => option.slug === value.slug}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    size="small"
+                    label="Companies"
+                    placeholder={selectedCompanies.length === 0 ? "All Greenhouse companies" : ""}
+                  />
+                )}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => (
+                    <Chip key={option.slug} label={option.name} size="small" {...getTagProps({ index })} />
+                  ))
+                }
+              />
             </form>
 
             {jobSearchError ? <p className={styles.error}>{jobSearchError}</p> : null}
@@ -851,9 +1040,10 @@ export default function Home() {
                         const isDone = tailoring.status === "done";
                         const isTailoring = tailoring.status === "tailoring";
                         const isError = tailoring.status === "error";
+                        const isApplied = appliedJobIds.has(job.id);
 
                         return (
-                          <div key={job.id} className={styles.jobCard}>
+                          <div key={job.id} className={`${styles.jobCard}${isApplied ? ` ${styles.jobCardApplied}` : ""}`}>
                             <div>
                               <p className={styles.jobCardTitle}>{job.title}</p>
                               <p className={styles.jobCardMeta}>
@@ -890,14 +1080,21 @@ export default function Home() {
                               <div className={styles.cardActions}>
                                 <button
                                   type="button"
-                                  className={styles.secondaryButton}
+                                  className={`${styles.cardBtn} ${isApplied ? styles.cardBtnApplied : styles.cardBtnSecondary}`}
+                                  onClick={() => handleToggleApplied(job.id)}
+                                >
+                                  {isApplied ? "Applied ✓" : "Applied"}
+                                </button>
+                                <button
+                                  type="button"
+                                  className={`${styles.cardBtn} ${styles.cardBtnSecondary}`}
                                   onClick={() => handleIgnoreJob(job.id)}
                                 >
                                   Ignore
                                 </button>
                                 <button
                                   type="button"
-                                  className={styles.button}
+                                  className={`${styles.cardBtn} ${styles.cardBtnPrimary}`}
                                   disabled={isTailoring || isDone}
                                   onClick={() => handleTailorJob(job)}
                                 >
@@ -951,7 +1148,7 @@ export default function Home() {
                                 <div className={styles.cardActions}>
                                   <button
                                     type="button"
-                                    className={styles.secondaryButton}
+                                    className={`${styles.cardBtn} ${styles.cardBtnSecondary}`}
                                     onClick={() => handleRestoreJob(job.id)}
                                   >
                                     Restore
