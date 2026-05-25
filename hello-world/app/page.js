@@ -600,6 +600,7 @@ export default function Home() {
       result: "",
       resultLines: [],
       generatedJobTitle: "",
+      downloaded: false,
     });
 
     try {
@@ -647,6 +648,8 @@ export default function Home() {
 
       if (dlError) {
         updateTailoringJob(job.id, { error: dlError });
+      } else {
+        updateTailoringJob(job.id, { downloaded: true });
       }
     } catch (err) {
       updateTailoringJob(job.id, { status: "error", error: err.message || "Unexpected error." });
@@ -1061,6 +1064,7 @@ export default function Home() {
                         const tailoring = tailoringMap[job.id] || {};
                         const isDone = tailoring.status === "done";
                         const isTailoring = tailoring.status === "tailoring";
+                        const isDownloaded = tailoring.downloaded === true;
                         const isError = tailoring.status === "error";
                         const isApplied = appliedJobIds.has(job.id);
 
@@ -1117,10 +1121,10 @@ export default function Home() {
                                 <button
                                   type="button"
                                   className={`${styles.cardBtn} ${styles.cardBtnPrimary}`}
-                                  disabled={isTailoring || isDone}
+                                  disabled={isTailoring || (isDone && !isDownloaded)}
                                   onClick={() => handleTailorJob(job)}
                                 >
-                                  {isTailoring ? "Tailoring..." : isDone ? "Done ✓" : "Generate"}
+                                  {isTailoring ? "Tailoring..." : isDownloaded ? "Regenerate" : isDone ? "Done ✓" : "Generate"}
                                 </button>
                               </div>
                             </div>
