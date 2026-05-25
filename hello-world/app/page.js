@@ -1121,7 +1121,7 @@ export default function Home() {
                                 <button
                                   type="button"
                                   className={`${styles.cardBtn} ${styles.cardBtnPrimary}`}
-                                  disabled={isTailoring || (isDone && !isDownloaded)}
+                                  disabled={!resumeFile || isTailoring || (isDone && !isDownloaded)}
                                   onClick={() => handleTailorJob(job)}
                                 >
                                   {isTailoring ? "Tailoring..." : isDownloaded ? "Regenerate" : isDone ? "Done ✓" : "Generate"}
