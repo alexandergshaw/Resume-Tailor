@@ -3,6 +3,16 @@
 import { useState, useEffect } from "react";
 import JSZip from "jszip";
 import styles from "./page.module.css";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import Checkbox from "@mui/material/Checkbox";
+import FormControl from "@mui/material/FormControl";
+import FormControlLabel from "@mui/material/FormControlLabel";
+import InputLabel from "@mui/material/InputLabel";
+import ListItemText from "@mui/material/ListItemText";
+import MenuItem from "@mui/material/MenuItem";
+import Select from "@mui/material/Select";
+import TextField from "@mui/material/TextField";
 
 const WORDPROCESSINGML_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -41,15 +51,8 @@ export default function Home() {
   const [ignoredJobIds, setIgnoredJobIds] = useState(new Set());
   const [showIgnored, setShowIgnored] = useState(false);
   const [publisherFilter, setPublisherFilter] = useState([]);
-  const [showBoardsDropdown, setShowBoardsDropdown] = useState(false);
 
   const JOB_BOARDS = ["LinkedIn", "Indeed", "ZipRecruiter", "Glassdoor", "Monster", "CareerBuilder", "Talent.com"];
-
-  function toggleBoard(board) {
-    setPublisherFilter((prev) =>
-      prev.includes(board) ? prev.filter((b) => b !== board) : [...prev, board]
-    );
-  }
 
   useEffect(() => {
     const saved = localStorage.getItem("activeSection");
@@ -711,73 +714,77 @@ export default function Home() {
 
         {activeSection === "search" ? (
           <section className={styles.tabPanel}>
-            <form className={styles.searchBar} onSubmit={handleJobSearch}>
-              <div className={styles.searchRow}>
-                <input
-                  type="text"
-                  className={styles.searchInput}
-                  placeholder="Job title or keywords"
+            <form onSubmit={handleJobSearch} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <Box sx={{ display: "flex", gap: 1 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Job title or keywords"
                   value={jobQuery}
                   onChange={(e) => setJobQuery(e.target.value)}
                 />
-                <button
+                <Button
                   type="submit"
-                  className={styles.button}
+                  variant="contained"
                   disabled={isSearching || !jobQuery.trim()}
+                  sx={{ whiteSpace: "nowrap" }}
                 >
                   {isSearching ? "Searching..." : "Search Jobs"}
-                </button>
-              </div>
-              <div className={styles.searchFilters}>
-                <select
-                  className={styles.filterSelect}
-                  value={minSalary}
-                  onChange={(e) => setMinSalary(e.target.value)}
-                >
-                  <option value="0">Any salary</option>
-                  <option value="50000">$50k+</option>
-                  <option value="75000">$75k+</option>
-                  <option value="100000">$100k+</option>
-                  <option value="125000">$125k+</option>
-                  <option value="150000">$150k+</option>
-                  <option value="175000">$175k+</option>
-                  <option value="200000">$200k+</option>
-                </select>
-                <div className={styles.boardsDropdownWrap}>
-                  <button
-                    type="button"
-                    className={styles.filterSelect}
-                    onClick={() => setShowBoardsDropdown((v) => !v)}
+                </Button>
+              </Box>
+              <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap", alignItems: "center" }}>
+                <FormControl size="small" sx={{ minWidth: 140 }}>
+                  <InputLabel>Salary</InputLabel>
+                  <Select
+                    label="Salary"
+                    value={minSalary}
+                    onChange={(e) => setMinSalary(e.target.value)}
                   >
-                    {publisherFilter.length === 0
-                      ? "All job boards"
-                      : `${publisherFilter.length} board${publisherFilter.length > 1 ? "s" : ""} selected`}
-                    <span className={styles.dropdownChevron}>▾</span>
-                  </button>
-                  {showBoardsDropdown && (
-                    <div className={styles.boardsDropdown}>
-                      {JOB_BOARDS.map((board) => (
-                        <label key={board} className={styles.checkboxLabel}>
-                          <input
-                            type="checkbox"
-                            checked={publisherFilter.includes(board)}
-                            onChange={() => toggleBoard(board)}
-                          />
-                          {board}
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <label className={styles.checkboxLabel}>
-                  <input
-                    type="checkbox"
-                    checked={excludeNoSalary}
-                    onChange={(e) => setExcludeNoSalary(e.target.checked)}
-                  />
-                  Listed salary only
-                </label>
-              </div>
+                    <MenuItem value="0">Any salary</MenuItem>
+                    <MenuItem value="50000">$50k+</MenuItem>
+                    <MenuItem value="75000">$75k+</MenuItem>
+                    <MenuItem value="100000">$100k+</MenuItem>
+                    <MenuItem value="125000">$125k+</MenuItem>
+                    <MenuItem value="150000">$150k+</MenuItem>
+                    <MenuItem value="175000">$175k+</MenuItem>
+                    <MenuItem value="200000">$200k+</MenuItem>
+                  </Select>
+                </FormControl>
+                <FormControl size="small" sx={{ minWidth: 180 }}>
+                  <InputLabel>Job boards</InputLabel>
+                  <Select
+                    multiple
+                    label="Job boards"
+                    value={publisherFilter}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setPublisherFilter(typeof val === "string" ? val.split(",") : val);
+                    }}
+                    renderValue={(selected) =>
+                      selected.length === 0
+                        ? "All boards"
+                        : `${selected.length} board${selected.length > 1 ? "s" : ""} selected`
+                    }
+                  >
+                    {JOB_BOARDS.map((board) => (
+                      <MenuItem key={board} value={board}>
+                        <Checkbox checked={publisherFilter.includes(board)} size="small" />
+                        <ListItemText primary={board} />
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={excludeNoSalary}
+                      onChange={(e) => setExcludeNoSalary(e.target.checked)}
+                      size="small"
+                    />
+                  }
+                  label="Listed salary only"
+                />
+              </Box>
             </form>
 
             {jobSearchError ? <p className={styles.error}>{jobSearchError}</p> : null}
