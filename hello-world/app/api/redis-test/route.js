@@ -1,17 +1,33 @@
-import { getCached, setCached } from "@/lib/cache/jobCache";
+import { Redis } from "@upstash/redis";
 
 export const runtime = "nodejs";
 
 export async function GET() {
-  const key = "redis-test";
-  const testValue = { ok: true, ts: Date.now() };
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
 
-  await setCached(key, testValue, 60);
-  const result = await getCached(key);
-
-  if (!result) {
-    return Response.json({ connected: false, error: "Write succeeded but read returned null. Check env vars." }, { status: 500 });
+  if (!url || !token) {
+    return Response.json(
+      {
+        connected: false,
+        error: "Env vars missing",
+        UPSTASH_REDIS_REST_URL: url ? "set" : "missing",
+        UPSTASH_REDIS_REST_TOKEN: token ? "set" : "missing",
+      },
+      { status: 500 },
+    );
   }
 
-  return Response.json({ connected: true, value: result });
+  try {
+    const redis = new Redis({ url, token });
+    const key = "redis-test";
+    const testValue = { ok: true, ts: Date.now() };
+
+    await redis.set(key, testValue, { ex: 60 });
+    const result = await redis.get(key);
+
+    return Response.json({ connected: !!result, value: result });
+  } catch (err) {
+    return Response.json({ connected: false, error: err.message }, { status: 500 });
+  }
 }
