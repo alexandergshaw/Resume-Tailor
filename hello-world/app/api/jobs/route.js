@@ -28,14 +28,13 @@ function normalizeJob(raw) {
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const query = searchParams.get("query")?.trim();
-  const location = searchParams.get("location")?.trim() || "";
 
   if (!query) {
     return Response.json({ error: "query parameter is required." }, { status: 400 });
   }
 
-  const fullQuery = location ? `${query} in ${location}` : query;
-  const cacheKey = `jobs:jsearch:${fullQuery}`;
+  const fullQuery = `${query} remote`;
+  const cacheKey = `jobs:jsearch:remote:today:${query}`;
 
   const cached = await getCached(cacheKey);
   if (cached) {
@@ -48,6 +47,7 @@ export async function GET(request) {
     query: fullQuery,
     num_pages: "1",
     page: "1",
+    date_posted: "today",
   });
 
   let data;

@@ -41,7 +41,6 @@ export default function Home() {
   const [resumeFile, setResumeFile] = useState(null);
   const [coverLetterFile, setCoverLetterFile] = useState(null);
   const [jobQuery, setJobQuery] = useState("");
-  const [jobLocation, setJobLocation] = useState("");
   const [jobResults, setJobResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [jobSearchError, setJobSearchError] = useState("");
@@ -406,7 +405,6 @@ export default function Home() {
 
     try {
       const params = new URLSearchParams({ query: jobQuery.trim() });
-      if (jobLocation.trim()) params.set("location", jobLocation.trim());
 
       const response = await fetch(`/api/jobs?${params.toString()}`);
       const payload = await response.json();
@@ -599,13 +597,6 @@ export default function Home() {
               placeholder="Job title or keywords"
               value={jobQuery}
               onChange={(e) => setJobQuery(e.target.value)}
-            />
-            <input
-              type="text"
-              className={styles.searchInput}
-              placeholder="Location (optional)"
-              value={jobLocation}
-              onChange={(e) => setJobLocation(e.target.value)}
             />
             <button
               type="submit"
