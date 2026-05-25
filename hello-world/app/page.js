@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import JSZip from "jszip";
 import styles from "./page.module.css";
 
@@ -38,6 +38,17 @@ export default function Home() {
   const [urlHasCompleted, setUrlHasCompleted] = useState(false);
   const [urlIsDownloading, setUrlIsDownloading] = useState(false);
   const [activeSection, setActiveSection] = useState("search");
+
+  useEffect(() => {
+    const saved = localStorage.getItem("activeSection");
+    if (saved === "search" || saved === "url" || saved === "manual") {
+      setActiveSection(saved);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("activeSection", activeSection);
+  }, [activeSection]);
 
   function sanitizeFileNamePart(value) {
     return value
