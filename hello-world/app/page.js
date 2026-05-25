@@ -598,6 +598,13 @@ export default function Home() {
     el.scrollBy({ left: dir * 320, behavior: "smooth" });
   }
 
+  function handleToolbarWheel(e) {
+    const el = toolbarScrollRef.current;
+    if (!el || el.scrollWidth <= el.clientWidth) return;
+    e.preventDefault();
+    el.scrollBy({ left: e.deltaY > 0 ? 120 : -120, behavior: "smooth" });
+  }
+
   function handleTrackJob(job) {
     setTrackedJobs((prev) => {
       if (prev.some((j) => j.id === job.id)) return prev;
@@ -1294,7 +1301,7 @@ export default function Home() {
       </main>
 
       {trackedJobs.length > 0 ? (
-        <div className={styles.floatingToolbar}>
+        <div className={styles.floatingToolbar} onWheel={handleToolbarWheel}>
           <span className={styles.toolbarLabel}>Generated ({trackedJobs.length})</span>
           <button
             type="button"
