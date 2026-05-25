@@ -1276,7 +1276,7 @@ export default function Home() {
 
       {trackedJobs.length > 0 ? (
         <div className={styles.floatingToolbar}>
-          <span className={styles.toolbarLabel}>Viewed ({trackedJobs.length})</span>
+          <span className={styles.toolbarLabel}>Generated ({trackedJobs.length})</span>
           <div className={styles.toolbarItems}>
             {trackedJobs.map((job) => {
               const tailoring = tailoringMap[job.id] || {};
