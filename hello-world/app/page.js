@@ -77,6 +77,27 @@ export default function Home() {
     localStorage.setItem("ignoredJobIds", JSON.stringify([...ignoredJobIds]));
   }, [ignoredJobIds]);
 
+  useEffect(() => {
+    try {
+      const q = localStorage.getItem("jobQuery");
+      const sal = localStorage.getItem("minSalary");
+      const date = localStorage.getItem("datePosted");
+      const excl = localStorage.getItem("excludeNoSalary");
+      const boards = localStorage.getItem("publisherFilter");
+      if (q) setJobQuery(q);
+      if (sal) setMinSalary(sal);
+      if (date) setDatePosted(date);
+      if (excl !== null) setExcludeNoSalary(excl === "true");
+      if (boards) setPublisherFilter(JSON.parse(boards));
+    } catch {}
+  }, []);
+
+  useEffect(() => { localStorage.setItem("jobQuery", jobQuery); }, [jobQuery]);
+  useEffect(() => { localStorage.setItem("minSalary", minSalary); }, [minSalary]);
+  useEffect(() => { localStorage.setItem("datePosted", datePosted); }, [datePosted]);
+  useEffect(() => { localStorage.setItem("excludeNoSalary", String(excludeNoSalary)); }, [excludeNoSalary]);
+  useEffect(() => { localStorage.setItem("publisherFilter", JSON.stringify(publisherFilter)); }, [publisherFilter]);
+
   function sanitizeFileNamePart(value) {
     return value
       .replace(/[\\/:*?"<>|]/g, "")
