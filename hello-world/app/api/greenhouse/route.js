@@ -83,6 +83,7 @@ export async function GET(request) {
   const jobs = allResults
     .flat()
     .filter((job) => {
+      if (!job.isRemote) return false;
       const titleLower = job.title.toLowerCase();
       return queryWords.some((word) => titleLower.includes(word));
     });
