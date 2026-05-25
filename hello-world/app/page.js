@@ -13,6 +13,7 @@ import TextField from "@mui/material/TextField";
 import Autocomplete from "@mui/material/Autocomplete";
 import Chip from "@mui/material/Chip";
 import { GREENHOUSE_COMPANIES, COMPANY_CATEGORIES } from "../lib/greenhouse/companies";
+import { createClient } from "../lib/supabase/client";
 
 const WORDPROCESSINGML_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -84,16 +85,32 @@ export default function Home() {
     localStorage.setItem("ignoredJobIds", JSON.stringify([...ignoredJobIds]));
   }, [ignoredJobIds]);
 
+  // Load applied jobs — from Supabase if signed in, localStorage if not
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem("appliedJobIds");
-      if (saved) setAppliedJobIds(new Set(JSON.parse(saved)));
-    } catch {}
-  }, []);
+    const supabase = createClient();
 
-  useEffect(() => {
-    localStorage.setItem("appliedJobIds", JSON.stringify([...appliedJobIds]));
-  }, [appliedJobIds]);
+    async function loadApplied() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const res = await fetch("/api/applied");
+        if (res.ok) {
+          const { jobs } = await res.json();
+          setAppliedJobIds(new Set(jobs.map((j) => j.job_id)));
+          return;
+        }
+      }
+      // Fallback: localStorage
+      try {
+        const saved = localStorage.getItem("appliedJobIds");
+        if (saved) setAppliedJobIds(new Set(JSON.parse(saved)));
+      } catch {}
+    }
+
+    loadApplied();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => loadApplied());
+    return () => subscription.unsubscribe();
+  }, []);
 
   useEffect(() => {
     try {
@@ -517,16 +534,52 @@ export default function Home() {
     });
   }
 
-  function handleToggleApplied(jobId) {
+  async function handleToggleApplied(job) {
+    const jobId = typeof job === "string" ? job : job.id;
+    const isApplied = appliedJobIds.has(jobId);
+
+    // Optimistic update
     setAppliedJobIds((prev) => {
       const next = new Set(prev);
-      if (next.has(jobId)) next.delete(jobId);
+      if (isApplied) next.delete(jobId);
       else {
         next.add(jobId);
         handleUntrackJob(jobId);
       }
       return next;
     });
+
+    // Persist to localStorage as fallback
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (user) {
+      if (isApplied) {
+        await fetch("/api/applied", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jobId }),
+        });
+      } else {
+        await fetch("/api/applied", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jobId,
+            jobTitle: job.title,
+            company: job.company,
+            jobUrl: job.url,
+            jobDescription: job.description,
+          }),
+        });
+      }
+    } else {
+      // Not signed in — persist to localStorage
+      setAppliedJobIds((current) => {
+        localStorage.setItem("appliedJobIds", JSON.stringify([...current]));
+        return current;
+      });
+    }
   }
 
   function handleToolbarScroll() {
@@ -1031,7 +1084,7 @@ export default function Home() {
                                 <button
                                   type="button"
                                   className={`${styles.cardBtn} ${isApplied ? styles.cardBtnApplied : styles.cardBtnSecondary}`}
-                                  onClick={() => handleToggleApplied(job.id)}
+                                  onClick={() => handleToggleApplied(job)}
                                 >
                                   {isApplied ? "Applied ✓" : "Applied"}
                                 </button>
@@ -1269,7 +1322,7 @@ export default function Home() {
                       type="button"
                       className={styles.toolbarChipBtn}
                       title="Mark as applied"
-                      onClick={() => handleToggleApplied(job.id)}
+                      onClick={() => handleToggleApplied(job)}
                     >
                       ✓
                     </button>
