@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import JSZip from "jszip";
 import styles from "./page.module.css";
 import Box from "@mui/material/Box";
@@ -57,6 +57,11 @@ export default function Home() {
   const [showIgnored, setShowIgnored] = useState(false);
   const [publisherFilter, setPublisherFilter] = useState([]);
   const [selectedCompanies, setSelectedCompanies] = useState([]);
+
+  // Refs for targeted Greenhouse re-fetch when company selection changes
+  const hasFetchedRef = useRef(false);
+  const activeQueryRef = useRef("");
+  const jsearchResultsRef = useRef([]);
 
   const JOB_BOARDS = ["LinkedIn", "Indeed", "ZipRecruiter", "Glassdoor", "Monster", "CareerBuilder", "Talent.com"];
 
@@ -123,6 +128,25 @@ export default function Home() {
   useEffect(() => { localStorage.setItem("excludeNoSalary", String(excludeNoSalary)); }, [excludeNoSalary]);
   useEffect(() => { localStorage.setItem("publisherFilter", JSON.stringify(publisherFilter)); }, [publisherFilter]);
   useEffect(() => { localStorage.setItem("selectedCompanies", JSON.stringify(selectedCompanies.map((c) => c.slug))); }, [selectedCompanies]);
+
+  useEffect(() => {
+    if (!hasFetchedRef.current || !activeQueryRef.current) return;
+    const query = activeQueryRef.current;
+    const ghUrl = `/api/greenhouse?query=${encodeURIComponent(query)}${
+      selectedCompanies.length > 0
+        ? `&companies=${selectedCompanies.map((c) => c.slug).join(",")}`
+        : ""
+    }`;
+    fetch(ghUrl)
+      .then((r) => r.json())
+      .then((data) => {
+        const ghJobs = data.jobs || [];
+        const seenUrls = new Set(ghJobs.map((j) => j.url));
+        const jsJobs = jsearchResultsRef.current;
+        setJobResults([...ghJobs, ...jsJobs.filter((j) => j.url && !seenUrls.has(j.url))]);
+      })
+      .catch(() => {});
+  }, [selectedCompanies]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { localStorage.setItem("urlPosting", urlPosting); }, [urlPosting]);
   useEffect(() => { localStorage.setItem("jobPosting", jobPosting); }, [jobPosting]);
 
@@ -405,6 +429,8 @@ export default function Home() {
     setJobSearchError("");
     setJobResults([]);
     setTailoringMap({});
+    hasFetchedRef.current = false;
+    activeQueryRef.current = jobQuery.trim();
 
     try {
       const params = new URLSearchParams({ query: jobQuery.trim() });
@@ -434,6 +460,8 @@ export default function Home() {
         throw new Error(err || "Failed to fetch jobs.");
       }
 
+      jsearchResultsRef.current = jsearchJobs;
+      hasFetchedRef.current = true;
       const seenUrls = new Set(ghJobs.map((j) => j.url));
       const merged = [...ghJobs, ...jsearchJobs.filter((j) => j.url && !seenUrls.has(j.url))];
 
