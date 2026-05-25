@@ -24,6 +24,7 @@ export default function Home() {
   const [contextFiles, setContextFiles] = useState([]);
   const [jobQuery, setJobQuery] = useState("");
   const [minSalary, setMinSalary] = useState("0");
+  const [datePosted, setDatePosted] = useState("today");
   const [excludeNoSalary, setExcludeNoSalary] = useState(false);
   const [jobResults, setJobResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -360,6 +361,7 @@ export default function Home() {
       const params = new URLSearchParams({ query: jobQuery.trim() });
       if (minSalary !== "0") params.set("minSalary", minSalary);
       if (excludeNoSalary) params.set("excludeNoSalary", "1");
+      if (datePosted !== "today") params.set("datePosted", datePosted);
 
       const response = await fetch(`/api/jobs?${params.toString()}`);
       const payload = await response.json();
@@ -748,6 +750,19 @@ export default function Home() {
                     <MenuItem value="150000">$150k+</MenuItem>
                     <MenuItem value="175000">$175k+</MenuItem>
                     <MenuItem value="200000">$200k+</MenuItem>
+                  </Select>
+                </FormControl>
+                <FormControl size="small" sx={{ minWidth: 150 }}>
+                  <InputLabel>Date posted</InputLabel>
+                  <Select
+                    label="Date posted"
+                    value={datePosted}
+                    onChange={(e) => setDatePosted(e.target.value)}
+                  >
+                    <MenuItem value="today">Past 24 hours</MenuItem>
+                    <MenuItem value="3days">Past 3 days</MenuItem>
+                    <MenuItem value="week">Past week</MenuItem>
+                    <MenuItem value="month">Past month</MenuItem>
                   </Select>
                 </FormControl>
                 <FormControl size="small" sx={{ minWidth: 180 }}>

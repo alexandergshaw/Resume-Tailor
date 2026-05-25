@@ -31,13 +31,17 @@ export async function GET(request) {
   const query = searchParams.get("query")?.trim();
   const minSalary = parseInt(searchParams.get("minSalary") || "0", 10);
   const excludeNoSalary = searchParams.get("excludeNoSalary") === "1";
+  const validDatePosted = ["today", "3days", "week", "month"];
+  const datePosted = validDatePosted.includes(searchParams.get("datePosted"))
+    ? searchParams.get("datePosted")
+    : "today";
 
   if (!query) {
     return Response.json({ error: "query parameter is required." }, { status: 400 });
   }
 
   const fullQuery = `${query} remote`;
-  const cacheKey = `jobs:jsearch:remote:today:v2:${query}`;
+  const cacheKey = `jobs:jsearch:remote:v2:${datePosted}:${query}`;
 
   const cached = await getCached(cacheKey);
   if (cached) {
@@ -50,7 +54,7 @@ export async function GET(request) {
     query: fullQuery,
     num_pages: "1",
     page: "1",
-    date_posted: "today",
+    date_posted: datePosted,
   });
 
   let data;
