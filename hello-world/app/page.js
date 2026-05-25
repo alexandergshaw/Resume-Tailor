@@ -28,6 +28,15 @@ export default function Home() {
   const [manualError, setManualError] = useState("");
   const [manualHasCompleted, setManualHasCompleted] = useState(false);
   const [manualIsDownloading, setManualIsDownloading] = useState(false);
+  const [urlPosting, setUrlPosting] = useState("");
+  const [urlResult, setUrlResult] = useState("");
+  const [urlResultLines, setUrlResultLines] = useState([]);
+  const [urlCoverLetterResultLines, setUrlCoverLetterResultLines] = useState([]);
+  const [urlGeneratedJobTitle, setUrlGeneratedJobTitle] = useState("");
+  const [urlIsSubmitting, setUrlIsSubmitting] = useState(false);
+  const [urlError, setUrlError] = useState("");
+  const [urlHasCompleted, setUrlHasCompleted] = useState(false);
+  const [urlIsDownloading, setUrlIsDownloading] = useState(false);
   const [activeSection, setActiveSection] = useState("search");
 
   function sanitizeFileNamePart(value) {
@@ -395,6 +404,102 @@ export default function Home() {
     }
   }
 
+  async function handleUrlSubmit(event) {
+    event.preventDefault();
+
+    if (!urlPosting.trim()) {
+      setUrlError("Please enter a job posting URL.");
+      return;
+    }
+
+    if (!resumeFile) {
+      setUrlError("Please upload a resume file.");
+      return;
+    }
+
+    setUrlError("");
+    setUrlResult("");
+    setUrlResultLines([]);
+    setUrlGeneratedJobTitle("");
+    setUrlHasCompleted(false);
+    setUrlIsSubmitting(true);
+
+    try {
+      const fetchResponse = await fetch(
+        `/api/fetch-posting?url=${encodeURIComponent(urlPosting.trim())}`,
+      );
+      const fetchPayload = await fetchResponse.json();
+
+      if (!fetchResponse.ok) {
+        throw new Error(fetchPayload.error || "Failed to fetch job posting URL.");
+      }
+
+      const jobText = fetchPayload.text || "";
+
+      if (!jobText.trim()) {
+        throw new Error("No readable text found at that URL.");
+      }
+
+      const formData = new FormData();
+      formData.append("jobPosting", jobText);
+      formData.append("additionalContext", additionalContext);
+      const templateLines = await buildTemplateLinesForUpload(resumeFile);
+      formData.append("templateLines", JSON.stringify(templateLines));
+      contextFiles.forEach((file) => formData.append("contextFiles", file));
+      formData.append("resume", resumeFile);
+
+      if (coverLetterFile) {
+        const coverLetterTemplateLines = await buildTemplateLinesForUpload(coverLetterFile);
+        formData.append("coverLetterTemplateLines", JSON.stringify(coverLetterTemplateLines));
+        formData.append("coverLetter", coverLetterFile);
+      }
+
+      const response = await fetch("/api/tailor", { method: "POST", body: formData });
+      const payload = await response.json();
+
+      if (!response.ok) throw new Error(payload.error || "Failed to generate a response.");
+
+      const nextResult = payload.result?.trim() || "No output returned from Gemini.";
+      const nextResultLines = Array.isArray(payload.resultLines) ? payload.resultLines : [];
+      const nextJobTitle = typeof payload.jobTitle === "string" ? payload.jobTitle.trim() : "";
+      const nextCoverLetterResultLines = Array.isArray(payload.coverLetterResultLines)
+        ? payload.coverLetterResultLines
+        : [];
+
+      setUrlResult(nextResult);
+      setUrlResultLines(nextResultLines);
+      setUrlCoverLetterResultLines(nextCoverLetterResultLines);
+      setUrlGeneratedJobTitle(nextJobTitle);
+      setUrlHasCompleted(true);
+
+      const dlError = await downloadDocxFiles({
+        jobTitle: nextJobTitle,
+        result: nextResult,
+        resultLines: nextResultLines,
+        coverLetterResultLines: nextCoverLetterResultLines,
+      });
+
+      if (dlError) setUrlError(dlError);
+    } catch (err) {
+      setUrlError(err.message || "Unexpected error.");
+      setUrlHasCompleted(true);
+    } finally {
+      setUrlIsSubmitting(false);
+    }
+  }
+
+  async function handleUrlDownload() {
+    setUrlIsDownloading(true);
+    const dlError = await downloadDocxFiles({
+      jobTitle: urlGeneratedJobTitle,
+      result: urlResult,
+      resultLines: urlResultLines,
+      coverLetterResultLines: urlCoverLetterResultLines,
+    });
+    if (dlError) setUrlError(dlError);
+    setUrlIsDownloading(false);
+  }
+
   async function handleManualSubmit(event) {
     event.preventDefault();
 
@@ -562,6 +667,13 @@ export default function Home() {
           >
             Job Posting
           </button>
+          <button
+            type="button"
+            className={activeSection === "url" ? styles.sectionTabActive : styles.sectionTab}
+            onClick={() => setActiveSection("url")}
+          >
+            Posting URL
+          </button>
         </div>
 
         {activeSection === "search" ? (
@@ -662,7 +774,7 @@ export default function Home() {
               </div>
             ) : null}
           </section>
-        ) : (
+        ) : activeSection === "manual" ? (
           <section className={styles.tabPanel}>
             <form className={styles.form} onSubmit={handleManualSubmit}>
               <div className={styles.fieldGroup}>
@@ -698,6 +810,46 @@ export default function Home() {
                   disabled={manualIsDownloading}
                 >
                   {manualIsDownloading ? "Preparing DOCX..." : "Download Resume"}
+                </button>
+              </section>
+            ) : null}
+          </section>
+        ) : (
+          <section className={styles.tabPanel}>
+            <form className={styles.form} onSubmit={handleUrlSubmit}>
+              <div className={styles.fieldGroup}>
+                <label htmlFor="job-posting-url" className={styles.label}>
+                  Job Posting URL
+                </label>
+                <input
+                  id="job-posting-url"
+                  type="url"
+                  className={styles.searchInput}
+                  placeholder="https://..."
+                  value={urlPosting}
+                  onChange={(e) => setUrlPosting(e.target.value)}
+                />
+              </div>
+              <button
+                className={styles.button}
+                type="submit"
+                disabled={urlIsSubmitting}
+              >
+                {urlIsSubmitting ? "Generating..." : "Generate"}
+              </button>
+            </form>
+
+            {urlError ? <p className={styles.error}>{urlError}</p> : null}
+
+            {urlHasCompleted && urlResult ? (
+              <section className={styles.resultSection}>
+                <button
+                  type="button"
+                  className={styles.secondaryButton}
+                  onClick={handleUrlDownload}
+                  disabled={urlIsDownloading}
+                >
+                  {urlIsDownloading ? "Preparing DOCX..." : "Download Resume"}
                 </button>
               </section>
             ) : null}
