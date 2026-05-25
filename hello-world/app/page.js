@@ -40,6 +40,16 @@ export default function Home() {
   const [activeSection, setActiveSection] = useState("search");
   const [ignoredJobIds, setIgnoredJobIds] = useState(new Set());
   const [showIgnored, setShowIgnored] = useState(false);
+  const [publisherFilter, setPublisherFilter] = useState([]);
+  const [showBoardsDropdown, setShowBoardsDropdown] = useState(false);
+
+  const JOB_BOARDS = ["LinkedIn", "Indeed", "ZipRecruiter", "Glassdoor", "Monster", "CareerBuilder", "Talent.com"];
+
+  function toggleBoard(board) {
+    setPublisherFilter((prev) =>
+      prev.includes(board) ? prev.filter((b) => b !== board) : [...prev, board]
+    );
+  }
 
   useEffect(() => {
     const saved = localStorage.getItem("activeSection");
@@ -703,49 +713,87 @@ export default function Home() {
         {activeSection === "search" ? (
           <section className={styles.tabPanel}>
             <form className={styles.searchBar} onSubmit={handleJobSearch}>
-              <input
-                type="text"
-                className={styles.searchInput}
-                placeholder="Job title or keywords"
-                value={jobQuery}
-                onChange={(e) => setJobQuery(e.target.value)}
-              />
-              <select
-                className={styles.searchInput}
-                value={minSalary}
-                onChange={(e) => setMinSalary(e.target.value)}
-              >
-                <option value="0">Any salary</option>
-                <option value="50000">$50k+</option>
-                <option value="75000">$75k+</option>
-                <option value="100000">$100k+</option>
-                <option value="125000">$125k+</option>
-                <option value="150000">$150k+</option>
-                <option value="175000">$175k+</option>
-                <option value="200000">$200k+</option>
-              </select>
-              <label className={styles.checkboxLabel}>
+              <div className={styles.searchRow}>
                 <input
-                  type="checkbox"
-                  checked={excludeNoSalary}
-                  onChange={(e) => setExcludeNoSalary(e.target.checked)}
+                  type="text"
+                  className={styles.searchInput}
+                  placeholder="Job title or keywords"
+                  value={jobQuery}
+                  onChange={(e) => setJobQuery(e.target.value)}
                 />
-                Listed salary only
-              </label>
-              <button
-                type="submit"
-                className={styles.button}
-                disabled={isSearching || !jobQuery.trim()}
-              >
-                {isSearching ? "Searching..." : "Search Jobs"}
-              </button>
+                <button
+                  type="submit"
+                  className={styles.button}
+                  disabled={isSearching || !jobQuery.trim()}
+                >
+                  {isSearching ? "Searching..." : "Search Jobs"}
+                </button>
+              </div>
+              <div className={styles.searchFilters}>
+                <select
+                  className={styles.filterSelect}
+                  value={minSalary}
+                  onChange={(e) => setMinSalary(e.target.value)}
+                >
+                  <option value="0">Any salary</option>
+                  <option value="50000">$50k+</option>
+                  <option value="75000">$75k+</option>
+                  <option value="100000">$100k+</option>
+                  <option value="125000">$125k+</option>
+                  <option value="150000">$150k+</option>
+                  <option value="175000">$175k+</option>
+                  <option value="200000">$200k+</option>
+                </select>
+                <div className={styles.boardsDropdownWrap}>
+                  <button
+                    type="button"
+                    className={styles.filterSelect}
+                    onClick={() => setShowBoardsDropdown((v) => !v)}
+                  >
+                    {publisherFilter.length === 0
+                      ? "All job boards"
+                      : `${publisherFilter.length} board${publisherFilter.length > 1 ? "s" : ""} selected`}
+                    <span className={styles.dropdownChevron}>▾</span>
+                  </button>
+                  {showBoardsDropdown && (
+                    <div className={styles.boardsDropdown}>
+                      {JOB_BOARDS.map((board) => (
+                        <label key={board} className={styles.checkboxLabel}>
+                          <input
+                            type="checkbox"
+                            checked={publisherFilter.includes(board)}
+                            onChange={() => toggleBoard(board)}
+                          />
+                          {board}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <label className={styles.checkboxLabel}>
+                  <input
+                    type="checkbox"
+                    checked={excludeNoSalary}
+                    onChange={(e) => setExcludeNoSalary(e.target.checked)}
+                  />
+                  Listed salary only
+                </label>
+              </div>
             </form>
 
             {jobSearchError ? <p className={styles.error}>{jobSearchError}</p> : null}
 
             {jobResults.length > 0 ? (() => {
-              const visibleJobs = jobResults.filter((j) => !ignoredJobIds.has(j.id));
-              const ignoredInResults = jobResults.filter((j) => ignoredJobIds.has(j.id));
+              const boardFiltered =
+                publisherFilter.length === 0
+                  ? jobResults
+                  : jobResults.filter((j) =>
+                      publisherFilter.some((b) =>
+                        j.publisher?.toLowerCase().includes(b.toLowerCase())
+                      )
+                    );
+              const visibleJobs = boardFiltered.filter((j) => !ignoredJobIds.has(j.id));
+              const ignoredInResults = boardFiltered.filter((j) => ignoredJobIds.has(j.id));
               return (
                 <>
                   {visibleJobs.length > 0 ? (
