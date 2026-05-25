@@ -891,23 +891,13 @@ export default function Home() {
         {activeSection === "search" ? (
           <section className={styles.tabPanel}>
             <form onSubmit={handleJobSearch} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              <Box sx={{ display: "flex", gap: 1 }}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  label="Job title or keywords"
-                  value={jobQuery}
-                  onChange={(e) => setJobQuery(e.target.value)}
-                />
-                <Button
-                  type="submit"
-                  variant="contained"
-                  disabled={isSearching || !jobQuery.trim()}
-                  sx={{ whiteSpace: "nowrap" }}
-                >
-                  {isSearching ? "Searching..." : "Search Jobs"}
-                </Button>
-              </Box>
+              <TextField
+                fullWidth
+                size="small"
+                label="Job title or keywords"
+                value={jobQuery}
+                onChange={(e) => setJobQuery(e.target.value)}
+              />
               <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap", alignItems: "center" }}>
                 <FormControl size="small" sx={{ minWidth: 140 }}>
                   <InputLabel>Salary</InputLabel>
@@ -1016,6 +1006,14 @@ export default function Home() {
                   ))
                 }
               />
+              <Button
+                type="submit"
+                variant="contained"
+                disabled={isSearching || !jobQuery.trim()}
+                sx={{ whiteSpace: "nowrap", alignSelf: "flex-start" }}
+              >
+                {isSearching ? "Searching..." : "Search Jobs"}
+              </Button>
             </form>
 
             {jobSearchError ? <p className={styles.error}>{jobSearchError}</p> : null}
