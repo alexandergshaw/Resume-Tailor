@@ -44,7 +44,7 @@ function normalizeGreenhouseJob(raw, companyName) {
     location: locationName,
     description: stripHtml(raw.content || ""),
     url: raw.absolute_url || "",
-    publisher: companyName,
+    publisher: "Greenhouse",
     employmentType: null,
     isRemote: locationName.toLowerCase().includes("remote"),
     salaryMin: null,
