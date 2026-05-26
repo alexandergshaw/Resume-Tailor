@@ -536,6 +536,41 @@ export default function Home() {
     setTimeout(handleToolbarScroll, 50);
   }, [trackedJobs]);
 
+  // Hydrate tailoringMap (chip statuses) from localStorage on mount. We only
+  // persist a slim summary per job (status/error/downloaded/generated title)
+  // so the floating toolbar chips render with their last-known status after a
+  // reload. Full tailored output (result, resultLines, coverLetterResultLines)
+  // is regenerated when the user clicks Regenerate.
+  const tailoringPersistMountedRef = useRef(false);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("tailoringMapStatus");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === "object") setTailoringMap(parsed);
+      }
+    } catch {}
+  }, []);
+  useEffect(() => {
+    if (!tailoringPersistMountedRef.current) {
+      tailoringPersistMountedRef.current = true;
+      return;
+    }
+    try {
+      const slim = {};
+      for (const [jobId, entry] of Object.entries(tailoringMap || {})) {
+        if (!entry || typeof entry !== "object") continue;
+        slim[jobId] = {
+          status: entry.status || null,
+          error: entry.error || "",
+          downloaded: !!entry.downloaded,
+          generatedJobTitle: entry.generatedJobTitle || "",
+        };
+      }
+      localStorage.setItem("tailoringMapStatus", JSON.stringify(slim));
+    } catch {}
+  }, [tailoringMap]);
+
   useEffect(() => {
     try {
       const q = localStorage.getItem("jobQuery");
@@ -1896,7 +1931,18 @@ export default function Home() {
     setIsSearching(true);
     setJobSearchError("");
     setJobResults([]);
-    setTailoringMap({});
+    // Drop tailoring entries for jobs that aren't currently tracked, so a
+    // fresh search doesn't show stale ✓ Ready badges on cards that no longer
+    // appear in the results — but preserve statuses for tracked jobs so the
+    // floating toolbar chips don't lose their state.
+    setTailoringMap((current) => {
+      const trackedIds = new Set(trackedJobs.map((j) => j.id));
+      const next = {};
+      for (const [jobId, entry] of Object.entries(current || {})) {
+        if (trackedIds.has(jobId)) next[jobId] = entry;
+      }
+      return next;
+    });
     hasFetchedRef.current = false;
     activeQueryRef.current = query;
 
