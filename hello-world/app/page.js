@@ -317,6 +317,7 @@ export default function Home() {
   const hasFetchedRef = useRef(false);
   const activeQueryRef = useRef("");
   const toolbarScrollRef = useRef(null);
+  const contextLoadedRef = useRef(false);
 
   useEffect(() => {
     const saved = localStorage.getItem("activeSection");
@@ -364,6 +365,19 @@ export default function Home() {
     localStorage.setItem("ignoredJobIds", JSON.stringify([...ignoredJobIds]));
   }, [ignoredJobIds]);
 
+  // Persist additional context to Redis (per-user), debounced
+  useEffect(() => {
+    if (!currentUser || !contextLoadedRef.current) return;
+    const handle = setTimeout(() => {
+      fetch("/api/user-context", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ additionalContext }),
+      }).catch(() => {});
+    }, 600);
+    return () => clearTimeout(handle);
+  }, [additionalContext, currentUser]);
+
   // Track auth state + load applied jobs + load stored files
   useEffect(() => {
     const supabase = createClient();
@@ -371,6 +385,19 @@ export default function Home() {
     async function loadUserData(user) {
       if (user) {
         setCurrentUser(user);
+
+        // Load saved additional context from Redis (per-user)
+        contextLoadedRef.current = false;
+        try {
+          const res = await fetch("/api/user-context", { cache: "no-store" });
+          if (res.ok) {
+            const json = await res.json();
+            if (typeof json?.additionalContext === "string") {
+              setAdditionalContext(json.additionalContext);
+            }
+          }
+        } catch {}
+        contextLoadedRef.current = true;
 
         // Load applied jobs from applications table
         const { data: appliedData } = await supabase
@@ -396,6 +423,7 @@ export default function Home() {
         }
       } else {
         setCurrentUser(null);
+        contextLoadedRef.current = false;
         // Fallback: localStorage for applied jobs
         try {
           const saved = localStorage.getItem("appliedJobIds");
