@@ -206,11 +206,13 @@ export async function POST(request) {
     let coverLetterResultLines = [];
     let coverLetterResult = "";
     let coverLetterError = "";
-    if (
-      coverLetterFile instanceof File
-      && coverLetterTemplateLines.length > 0
-      && (isTextLikeFile(coverLetterFile) || isDocxFile(coverLetterFile))
-    ) {
+    if (!(coverLetterFile instanceof File)) {
+      // No cover letter file uploaded — that's fine, just skip silently.
+    } else if (coverLetterTemplateLines.length === 0) {
+      coverLetterError = "Cover letter template appears empty; upload a .docx with text content.";
+    } else if (!isTextLikeFile(coverLetterFile) && !isDocxFile(coverLetterFile)) {
+      coverLetterError = "Cover letter must be .txt, .md, or .docx.";
+    } else {
       try {
         const coverDraft = await generateTailoredCoverLetterDraft({
           jobPosting: effectiveJobPosting,
@@ -226,7 +228,7 @@ export async function POST(request) {
         coverLetterResult = coverDraft.result;
       } catch (err) {
         console.error("Error generating tailored cover letter:", err);
-        coverLetterError = "Cover letter generation failed; the tailored resume is still available.";
+        coverLetterError = `Cover letter generation failed: ${err.message || "unknown error"}`;
       }
     }
 

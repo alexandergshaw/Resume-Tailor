@@ -357,15 +357,26 @@ export async function generateTailoredCoverLetterDraft({
   const response = await client.models.generateContent({
     model: geminiModel,
     contents: prompt,
-    ...(jobPostingUrl ? { tools: [{ urlContext: {} }] } : {}),
+    // urlContext tool isn't compatible with response_mime_type, so only force
+    // JSON when we are not also fetching a URL.
+    ...(jobPostingUrl
+      ? { tools: [{ urlContext: {} }] }
+      : { config: { responseMimeType: "application/json" } }),
   });
 
   const output = response.text?.trim() || "";
   if (!output) {
     throw new Error("Gemini returned an empty cover letter response.");
   }
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[cover-letter] raw output:", output.slice(0, 400));
+  }
 
   const parsed = parseStructuredResult(output, normalizedTemplateLines.length);
+  const hasContent = parsed.resultLines.some((line) => line && line.trim().length > 0);
+  if (!hasContent) {
+    throw new Error("Cover letter response did not contain any usable lines.");
+  }
   const enforced = enforceCoverLetterLengths(parsed.resultLines, normalizedTemplateLines);
 
   return {

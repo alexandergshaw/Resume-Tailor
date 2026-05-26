@@ -13,6 +13,9 @@ import InputLabel from "@mui/material/InputLabel";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import TextField from "@mui/material/TextField";
+import InputAdornment from "@mui/material/InputAdornment";
+import IconButton from "@mui/material/IconButton";
+import Tooltip from "@mui/material/Tooltip";
 import Autocomplete from "@mui/material/Autocomplete";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
@@ -365,6 +368,7 @@ export default function Home() {
   const activeQueryRef = useRef("");
   const toolbarScrollRef = useRef(null);
   const contextLoadedRef = useRef(false);
+  const uiPrefsLoadedRef = useRef(false);
 
   useEffect(() => {
     const saved = localStorage.getItem("activeSection");
@@ -425,6 +429,19 @@ export default function Home() {
     return () => clearTimeout(handle);
   }, [additionalContext, currentUser]);
 
+  // Persist UI prefs (accordion open/shut) to Redis (per-user), debounced
+  useEffect(() => {
+    if (!currentUser || !uiPrefsLoadedRef.current) return;
+    const handle = setTimeout(() => {
+      fetch("/api/user-prefs", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prefs: { referencesOpen, educationOpen } }),
+      }).catch(() => {});
+    }, 400);
+    return () => clearTimeout(handle);
+  }, [referencesOpen, educationOpen, currentUser]);
+
   // Track auth state + load applied jobs + load stored files
   useEffect(() => {
     const supabase = createClient();
@@ -445,6 +462,19 @@ export default function Home() {
           }
         } catch {}
         contextLoadedRef.current = true;
+
+        // Load saved UI prefs (accordion open/shut states) from Redis.
+        uiPrefsLoadedRef.current = false;
+        try {
+          const res = await fetch("/api/user-prefs", { cache: "no-store" });
+          if (res.ok) {
+            const json = await res.json();
+            const prefs = json?.prefs && typeof json.prefs === "object" ? json.prefs : {};
+            if (typeof prefs.referencesOpen === "boolean") setReferencesOpen(prefs.referencesOpen);
+            if (typeof prefs.educationOpen === "boolean") setEducationOpen(prefs.educationOpen);
+          }
+        } catch {}
+        uiPrefsLoadedRef.current = true;
 
         // Load applied jobs from applications table
         const { data: appliedData } = await supabase
@@ -471,6 +501,7 @@ export default function Home() {
       } else {
         setCurrentUser(null);
         contextLoadedRef.current = false;
+        uiPrefsLoadedRef.current = false;
         // Fallback: localStorage for applied jobs
         try {
           const saved = localStorage.getItem("appliedJobIds");
@@ -822,6 +853,46 @@ export default function Home() {
         setEducationCopiedId((current) => (current === entry.id ? null : current));
       }, 1500);
     } catch {}
+  }
+
+  // Per-field copy helper for references / education TextFields.
+  const [fieldCopyKey, setFieldCopyKey] = useState(null);
+  async function copyFieldValue(key, value) {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(String(value));
+      setFieldCopyKey(key);
+      setTimeout(() => {
+        setFieldCopyKey((current) => (current === key ? null : current));
+      }, 1200);
+    } catch {}
+  }
+  function copyAdornment(key, value) {
+    const copied = fieldCopyKey === key;
+    return {
+      endAdornment: (
+        <InputAdornment position="end">
+          <Tooltip title={copied ? "Copied" : "Copy"} arrow>
+            <span>
+              <IconButton
+                size="small"
+                edge="end"
+                disabled={!value}
+                onClick={() => copyFieldValue(key, value)}
+                aria-label={`Copy ${key}`}
+                sx={{ p: 0.25 }}
+              >
+                {copied ? (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                ) : (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                )}
+              </IconButton>
+            </span>
+          </Tooltip>
+        </InputAdornment>
+      ),
+    };
   }
 
   // When categories change, drive the company multiselect.
@@ -2135,6 +2206,7 @@ export default function Home() {
       const coverLetterResultLines = Array.isArray(payload.coverLetterResultLines)
         ? payload.coverLetterResultLines
         : [];
+      const coverLetterError = typeof payload.coverLetterError === "string" ? payload.coverLetterError : "";
 
       updateTailoringJob(job.id, {
         status: "done",
@@ -2142,7 +2214,7 @@ export default function Home() {
         resultLines,
         generatedJobTitle,
         coverLetterResultLines,
-        error: "",
+        error: coverLetterError || "",
       });
 
       // Persist the generated resume and link it to the application
@@ -2243,10 +2315,12 @@ export default function Home() {
       const nextCoverLetterResultLines = Array.isArray(payload.coverLetterResultLines)
         ? payload.coverLetterResultLines
         : [];
+      const nextCoverLetterError = typeof payload.coverLetterError === "string" ? payload.coverLetterError : "";
 
       setUrlResult(nextResult);
       setUrlResultLines(nextResultLines);
       setUrlCoverLetterResultLines(nextCoverLetterResultLines);
+      if (nextCoverLetterError) setUrlError(nextCoverLetterError);
       setUrlGeneratedJobTitle(nextJobTitle);
       setUrlHasCompleted(true);
 
@@ -2379,10 +2453,12 @@ export default function Home() {
       const nextResultLines = Array.isArray(payload.resultLines) ? payload.resultLines : [];
       const nextJobTitle = typeof payload.jobTitle === "string" ? payload.jobTitle.trim() : "";
       const nextCoverLetterResultLines = Array.isArray(payload.coverLetterResultLines) ? payload.coverLetterResultLines : [];
+      const nextCoverLetterError = typeof payload.coverLetterError === "string" ? payload.coverLetterError : "";
 
       setManualResult(nextResult);
       setManualResultLines(nextResultLines);
       setManualCoverLetterResultLines(nextCoverLetterResultLines);
+      if (nextCoverLetterError) setManualError(nextCoverLetterError);
       setManualGeneratedJobTitle(nextJobTitle);
       setManualHasCompleted(true);
 
@@ -2827,36 +2903,42 @@ export default function Home() {
                         label="Name"
                         value={ref.name}
                         onChange={(e) => updateReference(ref.id, "name", e.target.value)}
+                        InputProps={copyAdornment(`ref:${ref.id}:name`, ref.name)}
                       />
                       <TextField
                         size="small"
                         label="Title"
                         value={ref.title}
                         onChange={(e) => updateReference(ref.id, "title", e.target.value)}
+                        InputProps={copyAdornment(`ref:${ref.id}:title`, ref.title)}
                       />
                       <TextField
                         size="small"
                         label="Company"
                         value={ref.company}
                         onChange={(e) => updateReference(ref.id, "company", e.target.value)}
+                        InputProps={copyAdornment(`ref:${ref.id}:company`, ref.company)}
                       />
                       <TextField
                         size="small"
                         label="Relationship"
                         value={ref.relationship}
                         onChange={(e) => updateReference(ref.id, "relationship", e.target.value)}
+                        InputProps={copyAdornment(`ref:${ref.id}:relationship`, ref.relationship)}
                       />
                       <TextField
                         size="small"
                         label="Email"
                         value={ref.email}
                         onChange={(e) => updateReference(ref.id, "email", e.target.value)}
+                        InputProps={copyAdornment(`ref:${ref.id}:email`, ref.email)}
                       />
                       <TextField
                         size="small"
                         label="Phone"
                         value={ref.phone}
                         onChange={(e) => updateReference(ref.id, "phone", e.target.value)}
+                        InputProps={copyAdornment(`ref:${ref.id}:phone`, ref.phone)}
                       />
                     </Box>
                     <TextField
@@ -2866,6 +2948,7 @@ export default function Home() {
                       onChange={(e) => updateReference(ref.id, "notes", e.target.value)}
                       multiline
                       minRows={2}
+                      InputProps={copyAdornment(`ref:${ref.id}:notes`, ref.notes)}
                     />
                   </Box>
                 );
@@ -3017,42 +3100,49 @@ export default function Home() {
                         label="School"
                         value={entry.school}
                         onChange={(e) => updateEducationEntry(entry.id, "school", e.target.value)}
+                        InputProps={copyAdornment(`edu:${entry.id}:school`, entry.school)}
                       />
                       <TextField
                         size="small"
                         label="Degree"
                         value={entry.degree}
                         onChange={(e) => updateEducationEntry(entry.id, "degree", e.target.value)}
+                        InputProps={copyAdornment(`edu:${entry.id}:degree`, entry.degree)}
                       />
                       <TextField
                         size="small"
                         label="Field of study"
                         value={entry.field}
                         onChange={(e) => updateEducationEntry(entry.id, "field", e.target.value)}
+                        InputProps={copyAdornment(`edu:${entry.id}:field`, entry.field)}
                       />
                       <TextField
                         size="small"
                         label="Location"
                         value={entry.location}
                         onChange={(e) => updateEducationEntry(entry.id, "location", e.target.value)}
+                        InputProps={copyAdornment(`edu:${entry.id}:location`, entry.location)}
                       />
                       <TextField
                         size="small"
                         label="Start (e.g. Aug 2018)"
                         value={entry.startDate}
                         onChange={(e) => updateEducationEntry(entry.id, "startDate", e.target.value)}
+                        InputProps={copyAdornment(`edu:${entry.id}:startDate`, entry.startDate)}
                       />
                       <TextField
                         size="small"
                         label="End (e.g. May 2022)"
                         value={entry.endDate}
                         onChange={(e) => updateEducationEntry(entry.id, "endDate", e.target.value)}
+                        InputProps={copyAdornment(`edu:${entry.id}:endDate`, entry.endDate)}
                       />
                       <TextField
                         size="small"
                         label="GPA"
                         value={entry.gpa}
                         onChange={(e) => updateEducationEntry(entry.id, "gpa", e.target.value)}
+                        InputProps={copyAdornment(`edu:${entry.id}:gpa`, entry.gpa)}
                       />
                     </Box>
                     <TextField
@@ -3062,6 +3152,7 @@ export default function Home() {
                       onChange={(e) => updateEducationEntry(entry.id, "notes", e.target.value)}
                       multiline
                       minRows={2}
+                      InputProps={copyAdornment(`edu:${entry.id}:notes`, entry.notes)}
                     />
                   </Box>
                 );
