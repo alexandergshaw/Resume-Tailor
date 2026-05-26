@@ -7,6 +7,9 @@ export const runtime = "nodejs";
 const MAX_RESUME_CHARS = 20000;
 const MAX_CONTEXT_CHARS = 12000;
 const MAX_CONTEXT_FILES = 10;
+const DEFAULT_AGGRESSIVENESS = 3;
+const MIN_AGGRESSIVENESS = 1;
+const MAX_AGGRESSIVENESS = 5;
 const TEXT_MIME_PREFIX = "text/";
 const TEXT_EXTENSIONS = [".txt", ".md", ".markdown"];
 const DOCX_EXTENSIONS = [".docx"];
@@ -89,6 +92,16 @@ function parseAdditionalContext(rawAdditionalContext) {
   return rawAdditionalContext ? rawAdditionalContext.toString().trim().slice(0, MAX_CONTEXT_CHARS) : "";
 }
 
+function parseAggressiveness(rawAggressiveness) {
+  const parsed = Number.parseInt(rawAggressiveness?.toString() || "", 10);
+
+  if (Number.isNaN(parsed)) {
+    return DEFAULT_AGGRESSIVENESS;
+  }
+
+  return Math.min(MAX_AGGRESSIVENESS, Math.max(MIN_AGGRESSIVENESS, parsed));
+}
+
 function parseTemplateLines(rawTemplateLines) {
   if (!rawTemplateLines) {
     return [];
@@ -116,6 +129,7 @@ export async function POST(request) {
     const jobPosting = formData.get("jobPosting")?.toString().trim() || "";
     const jobPostingUrl = formData.get("jobPostingUrl")?.toString().trim() || "";
     const additionalContext = parseAdditionalContext(formData.get("additionalContext"));
+    const aggressiveness = parseAggressiveness(formData.get("aggressiveness"));
     const contextDocuments = await parseContextDocuments(formData);
     const templateLines = parseTemplateLines(
       formData.get("templateLines")?.toString() || "",
@@ -155,6 +169,7 @@ export async function POST(request) {
       resumeFileName: resumeFile.name,
       templateLines,
       additionalContext,
+      aggressiveness,
       contextDocuments,
     });
 

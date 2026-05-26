@@ -13,11 +13,13 @@ import TextField from "@mui/material/TextField";
 import Autocomplete from "@mui/material/Autocomplete";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
+import Collapse from "@mui/material/Collapse";
 import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
 import Fab from "@mui/material/Fab";
+import Slider from "@mui/material/Slider";
 import Table from "@mui/material/Table";
 import TableBody from "@mui/material/TableBody";
 import TableCell from "@mui/material/TableCell";
@@ -184,6 +186,20 @@ const STAGE_OUTCOME_OPTIONS = [
   ["cancelled", "Cancelled"],
 ];
 
+const AGGRESSIVENESS_MARKS = [
+  { value: 1, label: "Light" },
+  { value: 3, label: "Balanced" },
+  { value: 5, label: "Strong" },
+];
+
+const AGGRESSIVENESS_LABELS = {
+  1: "Light",
+  2: "Moderate",
+  3: "Balanced",
+  4: "Assertive",
+  5: "Strong",
+};
+
 function createStageDialogState(overrides = {}) {
   return {
     open: false,
@@ -258,6 +274,8 @@ export default function Home() {
   const [applicationError, setApplicationError] = useState(null);
   const [applicationStages, setApplicationStages] = useState({});
   const [interviewSearch, setInterviewSearch] = useState("");
+  const [contextPanelOpen, setContextPanelOpen] = useState(false);
+  const [aggressiveness, setAggressiveness] = useState(3);
   const [appDialog, setAppDialog] = useState({ open: false, rowIndex: null, kind: "jd" });
   const [stageDialog, setStageDialog] = useState(createStageDialogState());
   const [stageSaving, setStageSaving] = useState(false);
@@ -295,6 +313,14 @@ export default function Home() {
     if (savedTab === "applying" || savedTab === "interviewing") {
       setMainTab(savedTab);
     }
+    const savedContextPanel = localStorage.getItem("contextPanelOpen");
+    if (savedContextPanel === "true" || savedContextPanel === "false") {
+      setContextPanelOpen(savedContextPanel === "true");
+    }
+    const savedAggressiveness = Number.parseInt(localStorage.getItem("aggressiveness") || "", 10);
+    if (!Number.isNaN(savedAggressiveness) && savedAggressiveness >= 1 && savedAggressiveness <= 5) {
+      setAggressiveness(savedAggressiveness);
+    }
   }, []);
 
   useEffect(() => {
@@ -304,6 +330,14 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("mainTab", mainTab);
   }, [mainTab]);
+
+  useEffect(() => {
+    localStorage.setItem("contextPanelOpen", String(contextPanelOpen));
+  }, [contextPanelOpen]);
+
+  useEffect(() => {
+    localStorage.setItem("aggressiveness", String(aggressiveness));
+  }, [aggressiveness]);
 
   useEffect(() => {
     try {
@@ -1116,6 +1150,7 @@ export default function Home() {
       const formData = new FormData();
       formData.append("jobPosting", job.description);
       formData.append("additionalContext", additionalContext);
+      formData.append("aggressiveness", String(aggressiveness));
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
       contextFiles.forEach((file) => formData.append("contextFiles", file));
@@ -1210,6 +1245,7 @@ export default function Home() {
       const formData = new FormData();
       formData.append("jobPostingUrl", urlPosting.trim());
       formData.append("additionalContext", additionalContext);
+      formData.append("aggressiveness", String(aggressiveness));
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
       contextFiles.forEach((file) => formData.append("contextFiles", file));
@@ -1304,6 +1340,7 @@ export default function Home() {
       const formData = new FormData();
       formData.append("jobPosting", jobPosting);
       formData.append("additionalContext", additionalContext);
+      formData.append("aggressiveness", String(aggressiveness));
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
       contextFiles.forEach((file) => formData.append("contextFiles", file));
@@ -1468,41 +1505,95 @@ export default function Home() {
             </>
           )}
         </div>
-        <div className={styles.fieldGroup}>
-          <label htmlFor="additional-context" className={styles.label}>
-            Additional Context
-          </label>
-          <textarea
-            id="additional-context"
-            name="additionalContext"
-            className={`${styles.textarea} ${styles.contextTextarea}`}
-            placeholder="Add extra direction for Gemini (priority skills, key achievements to emphasize, domain specifics, preferred wording, etc.)"
-            value={additionalContext}
-            onChange={(e) => setAdditionalContext(e.target.value)}
-          />
-        </div>
+        <Box sx={{ mb: 3 }}>
+          <Button
+            type="button"
+            variant="outlined"
+            fullWidth
+            onClick={() => setContextPanelOpen((prev) => !prev)}
+            sx={{
+              justifyContent: "space-between",
+              textTransform: "none",
+              fontWeight: 700,
+              borderRadius: 2,
+              py: 1.1,
+              px: 1.75,
+            }}
+          >
+            <Box component="span">Add Context</Box>
+            <Box
+              component="span"
+              sx={{
+                fontSize: 18,
+                lineHeight: 1,
+                transform: contextPanelOpen ? "rotate(180deg)" : "rotate(0deg)",
+                transition: "transform 0.18s ease",
+              }}
+            >
+              ▾
+            </Box>
+          </Button>
+          <Collapse in={contextPanelOpen} timeout="auto">
+            <Box sx={{ pt: 2.25, display: "grid", gap: 2.25 }}>
+              <div className={styles.fieldGroup}>
+                <label htmlFor="aggressiveness" className={styles.label}>
+                  Aggressiveness
+                </label>
+                <Box sx={{ px: 1, pt: 1.25 }}>
+                  <Slider
+                    id="aggressiveness"
+                    min={1}
+                    max={5}
+                    step={1}
+                    marks={AGGRESSIVENESS_MARKS}
+                    value={aggressiveness}
+                    valueLabelDisplay="auto"
+                    onChange={(_event, value) => setAggressiveness(Array.isArray(value) ? value[0] : value)}
+                  />
+                </Box>
+                <p className={styles.helperText}>
+                  This control dictates how strongly the AI will attempt to tailor the resume to the posting. Current setting: {AGGRESSIVENESS_LABELS[aggressiveness]}.
+                </p>
+              </div>
 
-        <div className={styles.fieldGroup}>
-          <label htmlFor="context-files" className={styles.label}>
-            Supporting Files
-          </label>
-          <input
-            id="context-files"
-            name="contextFiles"
-            type="file"
-            multiple
-            className={styles.fileInput}
-            accept=".txt,.md,.markdown,.docx"
-            onChange={(event) => setContextFiles(Array.from(event.target.files || []))}
-          />
-          <p className={styles.helperText}>
-            {contextFiles.length > 0
-              ? `${contextFiles.length} supporting file${
-                  contextFiles.length > 1 ? "s" : ""
-                } selected`
-              : "Optional: upload extra files to provide more context for Gemini."}
-          </p>
-        </div>
+              <div className={styles.fieldGroup}>
+                <label htmlFor="additional-context" className={styles.label}>
+                  Additional Context
+                </label>
+                <textarea
+                  id="additional-context"
+                  name="additionalContext"
+                  className={`${styles.textarea} ${styles.contextTextarea}`}
+                  placeholder="Add extra direction for Gemini (priority skills, key achievements to emphasize, domain specifics, preferred wording, etc.)"
+                  value={additionalContext}
+                  onChange={(e) => setAdditionalContext(e.target.value)}
+                />
+              </div>
+
+              <div className={styles.fieldGroup}>
+                <label htmlFor="context-files" className={styles.label}>
+                  Supporting Files
+                </label>
+                <input
+                  id="context-files"
+                  name="contextFiles"
+                  type="file"
+                  multiple
+                  className={styles.fileInput}
+                  accept=".txt,.md,.markdown,.docx"
+                  onChange={(event) => setContextFiles(Array.from(event.target.files || []))}
+                />
+                <p className={styles.helperText}>
+                  {contextFiles.length > 0
+                    ? `${contextFiles.length} supporting file${
+                        contextFiles.length > 1 ? "s" : ""
+                      } selected`
+                    : "Optional: upload extra files to provide more context for Gemini."}
+                </p>
+              </div>
+            </Box>
+          </Collapse>
+        </Box>
 
         <hr className={styles.sectionDivider} />
 

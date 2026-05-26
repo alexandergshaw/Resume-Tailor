@@ -22,6 +22,38 @@ function buildContextDocumentsBlock(contextDocuments) {
     .join("\n\n");
 }
 
+function getAggressivenessConfig(aggressiveness) {
+  const normalized = Math.min(5, Math.max(1, Number.parseInt(aggressiveness, 10) || 3));
+
+  const configs = {
+    1: {
+      label: "Light",
+      guidance: "Stay close to the original phrasing. Make only the highest-signal keyword and wording adjustments that clearly improve fit.",
+    },
+    2: {
+      label: "Moderate",
+      guidance: "Make targeted rewrites across the summary, skills, and strongest experience bullets, but preserve more of the source wording.",
+    },
+    3: {
+      label: "Balanced",
+      guidance: "Balance source fidelity with meaningful job alignment. Rewrite the most relevant lines and incorporate important posting terminology.",
+    },
+    4: {
+      label: "Assertive",
+      guidance: "Strongly optimize wording toward the posting, aggressively aligning titles, summaries, skills, and experience bullets where the source supports it.",
+    },
+    5: {
+      label: "Strong",
+      guidance: "Maximize job-posting alignment in every eligible line while staying truthful to the source resume and preserving exact layout constraints.",
+    },
+  };
+
+  return {
+    level: normalized,
+    ...configs[normalized],
+  };
+}
+
 function buildTailorPrompt({
   jobPosting,
   jobPostingUrl,
@@ -29,14 +61,16 @@ function buildTailorPrompt({
   resumeFileName,
   templateLines,
   additionalContext,
+  aggressiveness,
   contextDocuments,
 }) {
+  const aggressivenessConfig = getAggressivenessConfig(aggressiveness);
   const jobPostingBlock = jobPostingUrl
     ? `Job posting URL: ${jobPostingUrl}\nFetch the full job description from this URL and use it to tailor the resume.`
     : `Job posting:\n${jobPosting}`;
   return [
     "You are an expert resume editor.",
-    "Rewrite the resume to match the job posting as aggressively as possible while preserving the source resume layout exactly.",
+    `Rewrite the resume to match the job posting with aggressiveness level ${aggressivenessConfig.level}/5 (${aggressivenessConfig.label}) while preserving the source resume layout exactly.`,
     "",
     "Hard constraints:",
     "1) Keep the exact section order, heading style, capitalization, and punctuation pattern from the original resume.",
@@ -51,6 +85,7 @@ function buildTailorPrompt({
     `8) resultLines must contain exactly ${templateLines.length} strings.`,
     "9) jobTitle must be the target role title from the posting, concise and clean (no company name, no location, no punctuation noise).",
     "10) Preserve contact identity lines (name, email, phone, LinkedIn, portfolio links) unless the line clearly is not contact info.",
+    "11) Do not fabricate employers, titles, dates, degrees, tools, certifications, or achievements that are not supported by the source resume or provided context.",
     "",
     "Aggressive optimization goals:",
     "1) Maximize semantic overlap with the job posting using the posting's exact terminology.",
@@ -59,6 +94,7 @@ function buildTailorPrompt({
     "4) Prioritize posting alignment over preserving original phrasing.",
     "5) Keep output realistic and coherent as a resume.",
     "6) Internally self-check that major required keywords from the posting appear across resultLines before final output.",
+    `7) Aggressiveness guidance: ${aggressivenessConfig.guidance}`,
     "",
     jobPostingBlock,
     "",
@@ -148,6 +184,7 @@ export async function generateTailoredResumeDraft({
   resumeFileName,
   templateLines,
   additionalContext,
+  aggressiveness,
   contextDocuments,
 }) {
   const normalizedTemplateLines = Array.isArray(templateLines)
@@ -167,6 +204,7 @@ export async function generateTailoredResumeDraft({
     resumeFileName,
     templateLines: normalizedTemplateLines,
     additionalContext,
+    aggressiveness,
     contextDocuments,
   });
 
