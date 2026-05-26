@@ -271,6 +271,15 @@ export default function Home() {
   const [applicationStages, setApplicationStages] = useState({});
   const [interviewSearch, setInterviewSearch] = useState("");
   const [interviewSort, setInterviewSort] = useState({ field: null, dir: "asc" });
+  // Width (in px) of the frozen columns on the Interviewing tab. User can drag
+  // the right edge of each header to resize; persisted to localStorage.
+  const [companyColWidth, setCompanyColWidth] = useState(140);
+  const [roleColWidth, setRoleColWidth] = useState(180);
+  // Position of the floating AI Help FAB; user can drag it anywhere.
+  // Stored as offsets from the right/bottom of the viewport (in px).
+  const [fabPos, setFabPos] = useState({ right: 24, bottom: 24 });
+  const [fabDragging, setFabDragging] = useState(false);
+  const fabDragStartRef = useRef(null);
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
   const [aggressiveness, setAggressiveness] = useState(3);
   const [chatOpen, setChatOpen] = useState(false);
@@ -523,6 +532,58 @@ export default function Home() {
   useEffect(() => { localStorage.setItem("excludedCompanies", JSON.stringify(excludedCompanies.map((c) => c.slug))); }, [excludedCompanies]);
   useEffect(() => { localStorage.setItem("selectedCategories", JSON.stringify(selectedCategories)); }, [selectedCategories]);
   useEffect(() => { localStorage.setItem("maxYearsExp", maxYearsExp); }, [maxYearsExp]);
+
+  // Hydrate UI layout prefs (frozen-column widths + FAB position) once on mount.
+  useEffect(() => {
+    try {
+      const cw = parseInt(localStorage.getItem("interviewCompanyColWidth") || "", 10);
+      if (Number.isFinite(cw) && cw >= 80 && cw <= 600) setCompanyColWidth(cw);
+      const rw = parseInt(localStorage.getItem("interviewRoleColWidth") || "", 10);
+      if (Number.isFinite(rw) && rw >= 80 && rw <= 600) setRoleColWidth(rw);
+      const fp = localStorage.getItem("fabPos");
+      if (fp) {
+        const parsed = JSON.parse(fp);
+        if (
+          parsed && typeof parsed.right === "number" && typeof parsed.bottom === "number"
+        ) {
+          setFabPos(parsed);
+        }
+      }
+    } catch {}
+  }, []);
+  useEffect(() => {
+    localStorage.setItem("interviewCompanyColWidth", String(companyColWidth));
+  }, [companyColWidth]);
+  useEffect(() => {
+    localStorage.setItem("interviewRoleColWidth", String(roleColWidth));
+  }, [roleColWidth]);
+  useEffect(() => {
+    localStorage.setItem("fabPos", JSON.stringify(fabPos));
+  }, [fabPos]);
+
+  // Drag handler shared by both frozen-column resize handles.
+  function startColResize(which, event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = which === "company" ? companyColWidth : roleColWidth;
+    const setter = which === "company" ? setCompanyColWidth : setRoleColWidth;
+    function onMove(e) {
+      const delta = e.clientX - startX;
+      const next = Math.min(600, Math.max(80, startWidth + delta));
+      setter(next);
+    }
+    function onUp() {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }
 
   // When categories change, drive the company multiselect.
   // Skip the initial mount so we don't clobber the value just restored from localStorage.
@@ -1081,10 +1142,29 @@ export default function Home() {
     })
     .sort((a, b) => {
       if (!interviewSort.field) return 0;
-      const key = interviewSort.field === "company" ? "company" : "title";
-      const av = (a.positions?.[key] || "").toString().toLowerCase();
-      const bv = (b.positions?.[key] || "").toString().toLowerCase();
-      // Empty values sort to the end regardless of direction.
+      const field = interviewSort.field;
+      let av;
+      let bv;
+      if (field === "company" || field === "title") {
+        av = (a.positions?.[field] || "").toString().toLowerCase();
+        bv = (b.positions?.[field] || "").toString().toLowerCase();
+      } else if (field === "status") {
+        av = (a.status || "").toString().toLowerCase();
+        bv = (b.status || "").toString().toLowerCase();
+      } else if (field === "applied_at") {
+        // Date sort: empty dates always sort to the bottom.
+        av = a.applied_at ? new Date(a.applied_at).getTime() : NaN;
+        bv = b.applied_at ? new Date(b.applied_at).getTime() : NaN;
+        const aMissing = Number.isNaN(av);
+        const bMissing = Number.isNaN(bv);
+        if (aMissing && !bMissing) return 1;
+        if (!aMissing && bMissing) return -1;
+        if (aMissing && bMissing) return 0;
+        return interviewSort.dir === "asc" ? av - bv : bv - av;
+      } else {
+        return 0;
+      }
+      // Empty string values sort to the end regardless of direction.
       if (!av && bv) return 1;
       if (av && !bv) return -1;
       if (!av && !bv) return 0;
@@ -1098,6 +1178,17 @@ export default function Home() {
       if (prev.dir === "asc") return { field, dir: "desc" };
       return { field: null, dir: "asc" }; // third click clears
     });
+  }
+
+  // Shared sx for sort labels so the arrow icon is always visible (dimmed when
+  // not the active sort column).
+  function sortLabelSx(field) {
+    const active = interviewSort.field === field;
+    return {
+      "& .MuiTableSortLabel-icon": {
+        opacity: active ? 1 : 0.35,
+      },
+    };
   }
 
   function extractMinYearsRequired(description) {
@@ -2820,40 +2911,102 @@ export default function Home() {
                             fontWeight: 700,
                             position: "sticky",
                             left: 0,
+                            width: companyColWidth,
+                            minWidth: companyColWidth,
+                            maxWidth: companyColWidth,
                             zIndex: 4,
                             backgroundColor: "var(--bg-surface, #fff)",
                             boxShadow: "1px 0 0 var(--border)",
                           }}
                         >
-                          <TableSortLabel
-                            active={interviewSort.field === "company"}
-                            direction={interviewSort.field === "company" ? interviewSort.dir : "asc"}
-                            onClick={() => toggleInterviewSort("company")}
-                          >
-                            Company
-                          </TableSortLabel>
+                          <Box sx={{ position: "relative", pr: 1.5 }}>
+                            <TableSortLabel
+                              active
+                              direction={interviewSort.field === "company" ? interviewSort.dir : "asc"}
+                              onClick={() => toggleInterviewSort("company")}
+                              sx={sortLabelSx("company")}
+                            >
+                              Company
+                            </TableSortLabel>
+                            <Box
+                              onPointerDown={(e) => startColResize("company", e)}
+                              sx={{
+                                position: "absolute",
+                                top: -8,
+                                right: -12,
+                                width: 10,
+                                height: "calc(100% + 16px)",
+                                cursor: "col-resize",
+                                "&:hover": { backgroundColor: "var(--accent, #1976d2)", opacity: 0.4 },
+                              }}
+                              title="Drag to resize"
+                            />
+                          </Box>
                         </TableCell>
                         <TableCell
                           sortDirection={interviewSort.field === "title" ? interviewSort.dir : false}
                           sx={{
                             fontWeight: 700,
                             position: "sticky",
-                            left: 140,
+                            left: companyColWidth,
+                            width: roleColWidth,
+                            minWidth: roleColWidth,
+                            maxWidth: roleColWidth,
                             zIndex: 4,
                             backgroundColor: "var(--bg-surface, #fff)",
                             boxShadow: "1px 0 0 var(--border)",
                           }}
                         >
+                          <Box sx={{ position: "relative", pr: 1.5 }}>
+                            <TableSortLabel
+                              active
+                              direction={interviewSort.field === "title" ? interviewSort.dir : "asc"}
+                              onClick={() => toggleInterviewSort("title")}
+                              sx={sortLabelSx("title")}
+                            >
+                              Role
+                            </TableSortLabel>
+                            <Box
+                              onPointerDown={(e) => startColResize("role", e)}
+                              sx={{
+                                position: "absolute",
+                                top: -8,
+                                right: -12,
+                                width: 10,
+                                height: "calc(100% + 16px)",
+                                cursor: "col-resize",
+                                "&:hover": { backgroundColor: "var(--accent, #1976d2)", opacity: 0.4 },
+                              }}
+                              title="Drag to resize"
+                            />
+                          </Box>
+                        </TableCell>
+                        <TableCell
+                          sortDirection={interviewSort.field === "status" ? interviewSort.dir : false}
+                          sx={{ fontWeight: 700 }}
+                        >
                           <TableSortLabel
-                            active={interviewSort.field === "title"}
-                            direction={interviewSort.field === "title" ? interviewSort.dir : "asc"}
-                            onClick={() => toggleInterviewSort("title")}
+                            active
+                            direction={interviewSort.field === "status" ? interviewSort.dir : "asc"}
+                            onClick={() => toggleInterviewSort("status")}
+                            sx={sortLabelSx("status")}
                           >
-                            Role
+                            Status
                           </TableSortLabel>
                         </TableCell>
-                        <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
-                        <TableCell sx={{ fontWeight: 700 }}>Applied</TableCell>
+                        <TableCell
+                          sortDirection={interviewSort.field === "applied_at" ? interviewSort.dir : false}
+                          sx={{ fontWeight: 700 }}
+                        >
+                          <TableSortLabel
+                            active
+                            direction={interviewSort.field === "applied_at" ? interviewSort.dir : "asc"}
+                            onClick={() => toggleInterviewSort("applied_at")}
+                            sx={sortLabelSx("applied_at")}
+                          >
+                            Applied
+                          </TableSortLabel>
+                        </TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Recruiter Communications</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Job Description</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Your Resume</TableCell>
@@ -2883,26 +3036,36 @@ export default function Home() {
                               sx={{
                                 fontWeight: 600,
                                 whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
                                 position: "sticky",
                                 left: 0,
+                                width: companyColWidth,
+                                minWidth: companyColWidth,
+                                maxWidth: companyColWidth,
                                 zIndex: 2,
                                 backgroundColor: "var(--bg-surface, #fff)",
                                 boxShadow: "1px 0 0 var(--border)",
                               }}
                             >
-                              {pos?.company || "—"}
+                              {pos?.company || "\u2014"}
                             </TableCell>
                             <TableCell
                               sx={{
                                 whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
                                 position: "sticky",
-                                left: 140,
+                                left: companyColWidth,
+                                width: roleColWidth,
+                                minWidth: roleColWidth,
+                                maxWidth: roleColWidth,
                                 zIndex: 2,
                                 backgroundColor: "var(--bg-surface, #fff)",
                                 boxShadow: "1px 0 0 var(--border)",
                               }}
                             >
-                              {pos?.title || "—"}
+                              {pos?.title || "\u2014"}
                             </TableCell>
                             <TableCell>
                               <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0.75 }}>
@@ -3660,15 +3823,51 @@ export default function Home() {
       <Fab
         color="primary"
         variant="extended"
-        onClick={() => setChatOpen((v) => !v)}
+        onPointerDown={(e) => {
+          if (e.button !== 0) return;
+          fabDragStartRef.current = {
+            x: e.clientX,
+            y: e.clientY,
+            startRight: fabPos.right,
+            startBottom: fabPos.bottom,
+            moved: false,
+          };
+          e.currentTarget.setPointerCapture(e.pointerId);
+        }}
+        onPointerMove={(e) => {
+          const start = fabDragStartRef.current;
+          if (!start) return;
+          const dx = e.clientX - start.x;
+          const dy = e.clientY - start.y;
+          if (!start.moved && Math.hypot(dx, dy) < 4) return;
+          start.moved = true;
+          if (!fabDragging) setFabDragging(true);
+          // right/bottom increase as we move left/up from the corner.
+          const nextRight = Math.max(8, Math.min(window.innerWidth - 80, start.startRight - dx));
+          const nextBottom = Math.max(8, Math.min(window.innerHeight - 48, start.startBottom - dy));
+          setFabPos({ right: nextRight, bottom: nextBottom });
+        }}
+        onPointerUp={(e) => {
+          const start = fabDragStartRef.current;
+          fabDragStartRef.current = null;
+          if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+            e.currentTarget.releasePointerCapture(e.pointerId);
+          }
+          setFabDragging(false);
+          // Suppress click-toggle if the user actually dragged.
+          if (start?.moved) return;
+          setChatOpen((v) => !v);
+        }}
         sx={{
           position: "fixed",
-          right: { xs: 16, sm: 24 },
-          bottom: trackedJobs.length > 0 ? { xs: 84, sm: 88 } : { xs: 16, sm: 24 },
+          right: fabPos.right,
+          bottom: fabPos.bottom,
           zIndex: 1100,
           textTransform: "none",
           fontWeight: 700,
           letterSpacing: 0.1,
+          cursor: fabDragging ? "grabbing" : "grab",
+          touchAction: "none",
           boxShadow: "0 16px 32px rgba(25, 118, 210, 0.26)",
         }}
       >
@@ -3692,10 +3891,9 @@ export default function Home() {
           }}
           sx={{
             position: "fixed",
-            right: { xs: 16, sm: 24 },
-            bottom: trackedJobs.length > 0
-              ? { xs: 152, sm: 156 }
-              : { xs: 84, sm: 92 },
+            right: fabPos.right,
+            // Sit just above the FAB (~64px tall) with a small gap.
+            bottom: fabPos.bottom + 68,
             width: { xs: "calc(100vw - 32px)", sm: 380 },
             maxWidth: 420,
             height: { xs: "60vh", sm: 520 },
