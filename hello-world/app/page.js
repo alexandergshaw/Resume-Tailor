@@ -1691,9 +1691,6 @@ export default function Home() {
                       }}
                     />
                   </Box>
-                  <p className={styles.helperText}>
-                    Controls how strongly the AI tailors the resume to the posting.
-                  </p>
                 </div>
 
                 <div className={styles.fieldGroup}>
@@ -1723,13 +1720,6 @@ export default function Home() {
                     accept=".txt,.md,.markdown,.docx"
                     onChange={(event) => setContextFiles(Array.from(event.target.files || []))}
                   />
-                  <p className={styles.helperText}>
-                    {contextFiles.length > 0
-                      ? `${contextFiles.length} supporting file${
-                          contextFiles.length > 1 ? "s" : ""
-                        } selected`
-                      : "Optional: upload extra files to provide more context for Gemini."}
-                  </p>
                 </div>
             </AccordionDetails>
           </Accordion>
