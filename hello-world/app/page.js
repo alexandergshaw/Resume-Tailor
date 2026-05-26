@@ -266,6 +266,9 @@ export default function Home() {
   const [excludedCompanies, setExcludedCompanies] = useState([]);
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [maxYearsExp, setMaxYearsExp] = useState("any");
+  // Saved searches: each entry captures the current values of the search-tab
+  // controls so the user can restore them with one click.
+  const [savedSearches, setSavedSearches] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
   const [mainTab, setMainTab] = useState("applying");
   const [applicationData, setApplicationData] = useState([]);
@@ -560,6 +563,13 @@ export default function Home() {
       if (savedCategories) setSelectedCategories(JSON.parse(savedCategories));
       const yrs = localStorage.getItem("maxYearsExp");
       if (yrs) setMaxYearsExp(yrs);
+      const savedSearchesRaw = localStorage.getItem("savedSearches");
+      if (savedSearchesRaw) {
+        try {
+          const parsed = JSON.parse(savedSearchesRaw);
+          if (Array.isArray(parsed)) setSavedSearches(parsed);
+        } catch {}
+      }
       if (url) setUrlPosting(url);
       if (manual) setJobPosting(manual);
     } catch {}
@@ -579,6 +589,45 @@ export default function Home() {
   useEffect(() => { localStorage.setItem("excludedCompanies", JSON.stringify(excludedCompanies.map((c) => c.slug))); }, [excludedCompanies]);
   useEffect(() => { localStorage.setItem("selectedCategories", JSON.stringify(selectedCategories)); }, [selectedCategories]);
   useEffect(() => { localStorage.setItem("maxYearsExp", maxYearsExp); }, [maxYearsExp]);
+  useEffect(() => {
+    try { localStorage.setItem("savedSearches", JSON.stringify(savedSearches)); } catch {}
+  }, [savedSearches]);
+
+  // Saved-search helpers
+  function saveCurrentSearch() {
+    const defaultName = jobQuery.trim() || (selectedCategories[0] || "Untitled search");
+    const name = (typeof window !== "undefined" ? window.prompt("Name this saved search:", defaultName) : "")?.trim();
+    if (!name) return;
+    const entry = {
+      id: `ss-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name,
+      jobQuery,
+      maxYearsExp,
+      selectedCategories: [...selectedCategories],
+      selectedCompanies: selectedCompanies
+        .map((c) => (typeof c === "string" ? c : c?.slug))
+        .filter(Boolean),
+      excludedCompanies: excludedCompanies.map((c) => c.slug),
+    };
+    setSavedSearches((prev) => [entry, ...prev]);
+  }
+  function applySavedSearch(entry) {
+    if (!entry) return;
+    setJobQuery(typeof entry.jobQuery === "string" ? entry.jobQuery : "");
+    setMaxYearsExp(typeof entry.maxYearsExp === "string" ? entry.maxYearsExp : "any");
+    setSelectedCategories(Array.isArray(entry.selectedCategories) ? entry.selectedCategories : []);
+    const companies = Array.isArray(entry.selectedCompanies) ? entry.selectedCompanies : [];
+    setSelectedCompanies(
+      companies
+        .map((slug) => GREENHOUSE_COMPANIES.find((c) => c.slug === slug) || slug)
+        .filter(Boolean),
+    );
+    const excluded = Array.isArray(entry.excludedCompanies) ? entry.excludedCompanies : [];
+    setExcludedCompanies(GREENHOUSE_COMPANIES.filter((c) => excluded.includes(c.slug)));
+  }
+  function deleteSavedSearch(id) {
+    setSavedSearches((prev) => prev.filter((s) => s.id !== id));
+  }
 
   // Hydrate UI layout prefs (frozen-column widths + FAB position) once on mount.
   useEffect(() => {
@@ -896,21 +945,9 @@ export default function Home() {
   }
 
   // When categories change, drive the company multiselect.
-  // Skip the initial mount so we don't clobber the value just restored from localStorage.
-  const categoriesSyncMountedRef = useRef(false);
-  useEffect(() => {
-    if (!categoriesSyncMountedRef.current) {
-      categoriesSyncMountedRef.current = true;
-      return;
-    }
-    const matched =
-      selectedCategories.length === 0
-        ? []
-        : GREENHOUSE_COMPANIES.filter((c) =>
-            c.categories.some((cat) => selectedCategories.includes(cat))
-          );
-    setSelectedCompanies(matched);
-  }, [selectedCategories]);
+  // (Now handled inline in the Categories Autocomplete onChange so that
+  // restoring saved categories from localStorage on reload doesn't clobber
+  // the also-restored selectedCompanies.)
 
   useEffect(() => {
     if (!hasFetchedRef.current || !activeQueryRef.current) return;
@@ -3201,6 +3238,135 @@ export default function Home() {
         {activeSection === "search" ? (
           <section className={styles.tabPanel}>
             <form onSubmit={handleJobSearch} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <Box
+                sx={{
+                  display: "flex",
+                  gap: 1,
+                  overflowX: "auto",
+                  pb: 0.5,
+                  // Hide scrollbar visually but keep scroll
+                  scrollbarWidth: "thin",
+                  "&::-webkit-scrollbar": { height: 6 },
+                  "&::-webkit-scrollbar-thumb": { background: "#ccc", borderRadius: 3 },
+                }}
+              >
+                <Box
+                  role="button"
+                  tabIndex={0}
+                  onClick={saveCurrentSearch}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); saveCurrentSearch(); } }}
+                  sx={{
+                    flex: "0 0 auto",
+                    minWidth: 130,
+                    maxWidth: 180,
+                    px: 1.25,
+                    py: 1,
+                    border: "1px dashed #90a4ae",
+                    borderRadius: 1,
+                    bgcolor: "#f5f8fa",
+                    cursor: "pointer",
+                    display: "flex",
+                    flexDirection: "column",
+                    justifyContent: "center",
+                    alignItems: "center",
+                    color: "#37474f",
+                    fontSize: "0.75rem",
+                    lineHeight: 1.2,
+                    textAlign: "center",
+                    "&:hover": { bgcolor: "#eceff1" },
+                  }}
+                  title="Save current search controls"
+                >
+                  <Box sx={{ fontSize: "1rem", fontWeight: 600 }}>+ Save</Box>
+                  <Box sx={{ opacity: 0.7 }}>current search</Box>
+                </Box>
+                {savedSearches.map((entry) => {
+                  const chipSummaryParts = [];
+                  if (Array.isArray(entry.selectedCategories) && entry.selectedCategories.length > 0) {
+                    chipSummaryParts.push(`${entry.selectedCategories.length} cat`);
+                  }
+                  if (Array.isArray(entry.selectedCompanies) && entry.selectedCompanies.length > 0) {
+                    chipSummaryParts.push(`${entry.selectedCompanies.length} co`);
+                  }
+                  if (Array.isArray(entry.excludedCompanies) && entry.excludedCompanies.length > 0) {
+                    chipSummaryParts.push(`-${entry.excludedCompanies.length} ex`);
+                  }
+                  if (entry.maxYearsExp && entry.maxYearsExp !== "any") {
+                    chipSummaryParts.push(`≤${entry.maxYearsExp}y`);
+                  }
+                  const queryLabel = (entry.jobQuery || "").trim() || "—";
+                  return (
+                    <Box
+                      key={entry.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => applySavedSearch(entry)}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); applySavedSearch(entry); } }}
+                      sx={{
+                        flex: "0 0 auto",
+                        minWidth: 150,
+                        maxWidth: 220,
+                        px: 1.25,
+                        py: 0.75,
+                        border: "1px solid #cfd8dc",
+                        borderRadius: 1,
+                        bgcolor: "#fff",
+                        cursor: "pointer",
+                        position: "relative",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 0.25,
+                        fontSize: "0.75rem",
+                        "&:hover": { borderColor: "#1976d2", boxShadow: 1 },
+                      }}
+                      title={`Apply saved search: ${entry.name}`}
+                    >
+                      <Box
+                        sx={{
+                          fontWeight: 600,
+                          fontSize: "0.8rem",
+                          pr: 2,
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {entry.name}
+                      </Box>
+                      <Box
+                        sx={{
+                          color: "#546e7a",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {queryLabel}
+                      </Box>
+                      {chipSummaryParts.length > 0 && (
+                        <Box sx={{ color: "#78909c", fontSize: "0.7rem" }}>
+                          {chipSummaryParts.join(" · ")}
+                        </Box>
+                      )}
+                      <IconButton
+                        size="small"
+                        aria-label={`Delete saved search ${entry.name}`}
+                        onClick={(e) => { e.stopPropagation(); deleteSavedSearch(entry.id); }}
+                        sx={{
+                          position: "absolute",
+                          top: 2,
+                          right: 2,
+                          p: 0.25,
+                          color: "#90a4ae",
+                          "&:hover": { color: "#d32f2f", bgcolor: "transparent" },
+                        }}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      </IconButton>
+                    </Box>
+                  );
+                })}
+              </Box>
               <TextField
                 fullWidth
                 size="small"
@@ -3231,6 +3397,17 @@ export default function Home() {
                 value={selectedCategories}
                 onChange={(_, newValue) => {
                   setSelectedCategories(newValue);
+                  // Sync the company multiselect to match the chosen categories.
+                  // Done inline (not via a reactive effect) so restoring
+                  // `selectedCategories` from localStorage on reload doesn't
+                  // clobber the also-restored `selectedCompanies`.
+                  const matched =
+                    newValue.length === 0
+                      ? []
+                      : GREENHOUSE_COMPANIES.filter((c) =>
+                          c.categories.some((cat) => newValue.includes(cat))
+                        );
+                  setSelectedCompanies(matched);
                 }}
                 renderInput={(params) => (
                   <TextField
