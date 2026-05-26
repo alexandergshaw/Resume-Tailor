@@ -267,6 +267,7 @@ export default function Home() {
   const [toolbarCanScrollRight, setToolbarCanScrollRight] = useState(false);
   const [showIgnored, setShowIgnored] = useState(false);
   const [selectedCompanies, setSelectedCompanies] = useState([]);
+  const [excludedCompanies, setExcludedCompanies] = useState([]);
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [maxYearsExp, setMaxYearsExp] = useState("any");
   const [currentUser, setCurrentUser] = useState(null);
@@ -424,6 +425,11 @@ export default function Home() {
         const slugs = JSON.parse(companySlugs);
         setSelectedCompanies(GREENHOUSE_COMPANIES.filter((c) => slugs.includes(c.slug)));
       }
+      const excludedSlugs = localStorage.getItem("excludedCompanies");
+      if (excludedSlugs) {
+        const slugs = JSON.parse(excludedSlugs);
+        setExcludedCompanies(GREENHOUSE_COMPANIES.filter((c) => slugs.includes(c.slug)));
+      }
       const savedCategories = localStorage.getItem("selectedCategories");
       if (savedCategories) setSelectedCategories(JSON.parse(savedCategories));
       const yrs = localStorage.getItem("maxYearsExp");
@@ -435,6 +441,7 @@ export default function Home() {
 
   useEffect(() => { localStorage.setItem("jobQuery", jobQuery); }, [jobQuery]);
   useEffect(() => { localStorage.setItem("selectedCompanies", JSON.stringify(selectedCompanies.map((c) => c.slug))); }, [selectedCompanies]);
+  useEffect(() => { localStorage.setItem("excludedCompanies", JSON.stringify(excludedCompanies.map((c) => c.slug))); }, [excludedCompanies]);
   useEffect(() => { localStorage.setItem("selectedCategories", JSON.stringify(selectedCategories)); }, [selectedCategories]);
   useEffect(() => { localStorage.setItem("maxYearsExp", maxYearsExp); }, [maxYearsExp]);
 
@@ -1779,6 +1786,27 @@ export default function Home() {
                   })
                 }
               />
+              <Autocomplete
+                multiple
+                options={GREENHOUSE_COMPANIES}
+                getOptionLabel={(option) => option.name}
+                value={excludedCompanies}
+                onChange={(_, newValue) => setExcludedCompanies(newValue)}
+                isOptionEqualToValue={(option, value) => option.slug === value.slug}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    size="small"
+                    label="Exclude Companies"
+                    placeholder={excludedCompanies.length === 0 ? "Hide companies from results" : ""}
+                  />
+                )}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => (
+                    <Chip key={option.slug} label={option.name} size="small" {...getTagProps({ index })} />
+                  ))
+                }
+              />
               <Button
                 type="submit"
                 variant="contained"
@@ -1792,10 +1820,16 @@ export default function Home() {
             {jobSearchError ? <p className={styles.error}>{jobSearchError}</p> : null}
 
             {jobResults.length > 0 ? (() => {
+              const excludedNames = new Set(
+                excludedCompanies.map((c) => (typeof c === "string" ? c : c.name).toLowerCase()),
+              );
+              const companyFiltered = excludedNames.size > 0
+                ? jobResults.filter((j) => !excludedNames.has((j.company || "").toLowerCase()))
+                : jobResults;
               const yearsFiltered =
                 maxYearsExp === "any"
-                  ? jobResults
-                  : jobResults.filter((j) => {
+                  ? companyFiltered
+                  : companyFiltered.filter((j) => {
                       const minReq = extractMinYearsRequired(j.description);
                       if (minReq === null) return true;
                       return minReq <= parseInt(maxYearsExp, 10);
