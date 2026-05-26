@@ -479,10 +479,19 @@ export default function Home() {
       const url = localStorage.getItem("urlPosting");
       const manual = localStorage.getItem("jobPosting");
       if (q) setJobQuery(q);
-      const companySlugs = localStorage.getItem("selectedCompanies");
-      if (companySlugs) {
-        const slugs = JSON.parse(companySlugs);
-        setSelectedCompanies(GREENHOUSE_COMPANIES.filter((c) => slugs.includes(c.slug)));
+      const companyEntries = localStorage.getItem("selectedCompanies");
+      if (companyEntries) {
+        const entries = JSON.parse(companyEntries);
+        if (Array.isArray(entries) && entries.length > 0) {
+          const restored = entries
+            .map((entry) => {
+              if (typeof entry !== "string") return null;
+              const match = GREENHOUSE_COMPANIES.find((c) => c.slug === entry);
+              return match || entry; // fall back to freeform string
+            })
+            .filter(Boolean);
+          setSelectedCompanies(restored);
+        }
       }
       const excludedSlugs = localStorage.getItem("excludedCompanies");
       if (excludedSlugs) {
@@ -499,13 +508,28 @@ export default function Home() {
   }, []);
 
   useEffect(() => { localStorage.setItem("jobQuery", jobQuery); }, [jobQuery]);
-  useEffect(() => { localStorage.setItem("selectedCompanies", JSON.stringify(selectedCompanies.map((c) => c.slug))); }, [selectedCompanies]);
+  useEffect(() => {
+    localStorage.setItem(
+      "selectedCompanies",
+      JSON.stringify(
+        selectedCompanies
+          .map((c) => (typeof c === "string" ? c : c?.slug))
+          .filter(Boolean),
+      ),
+    );
+  }, [selectedCompanies]);
   useEffect(() => { localStorage.setItem("excludedCompanies", JSON.stringify(excludedCompanies.map((c) => c.slug))); }, [excludedCompanies]);
   useEffect(() => { localStorage.setItem("selectedCategories", JSON.stringify(selectedCategories)); }, [selectedCategories]);
   useEffect(() => { localStorage.setItem("maxYearsExp", maxYearsExp); }, [maxYearsExp]);
 
-  // When categories change, drive the company multiselect
+  // When categories change, drive the company multiselect.
+  // Skip the initial mount so we don't clobber the value just restored from localStorage.
+  const categoriesSyncMountedRef = useRef(false);
   useEffect(() => {
+    if (!categoriesSyncMountedRef.current) {
+      categoriesSyncMountedRef.current = true;
+      return;
+    }
     const matched =
       selectedCategories.length === 0
         ? []
