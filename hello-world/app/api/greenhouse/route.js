@@ -30,8 +30,16 @@ function stripHtml(html) {
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/&nbsp;/g, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<\/div>/gi, "\n\n")
+    .replace(/<\/section>/gi, "\n\n")
+    .replace(/<li>/gi, "\n• ")
+    .replace(/<\/li>/gi, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 

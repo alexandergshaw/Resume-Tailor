@@ -23,6 +23,7 @@ import TableCell from "@mui/material/TableCell";
 import TableContainer from "@mui/material/TableContainer";
 import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
+import TableSortLabel from "@mui/material/TableSortLabel";
 import { GREENHOUSE_COMPANIES, COMPANY_CATEGORIES } from "../lib/greenhouse/companies";
 import { createClient } from "../lib/supabase/client";
 import { upsertPosition } from "../lib/supabase/upsertPosition";
@@ -33,12 +34,67 @@ import { getInterviewStages, upsertInterviewStage } from "../lib/supabase/upsert
 const WORDPROCESSINGML_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
+const JOB_DESCRIPTION_HEADINGS = [
+  "About the Role",
+  "About You",
+  "About Us",
+  "What You'll Do",
+  "What You Will Do",
+  "What We're Looking For",
+  "What We Are Looking For",
+  "Responsibilities",
+  "Key Responsibilities",
+  "Requirements",
+  "Minimum Qualifications",
+  "Preferred Qualifications",
+  "Qualifications",
+  "Nice to Have",
+  "Must Have",
+  "Skills",
+  "Experience",
+  "Benefits",
+  "Compensation",
+  "Interview Process",
+  "Equal Opportunity",
+];
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeJobDescriptionText(text) {
+  if (!text) return "";
+
+  let normalized = text.replace(/\r\n/g, "\n").replace(/\u00a0/g, " ");
+
+  normalized = normalized.replace(/\s*[•·▪◦]\s*/g, "\n• ");
+
+  for (const heading of JOB_DESCRIPTION_HEADINGS) {
+    const pattern = new RegExp(`(^|\\s+)(${escapeRegExp(heading)})(:)?(?=\\s|$)`, "gi");
+    normalized = normalized.replace(pattern, (_match, prefix, title, colon) => {
+      const suffix = colon ? ":" : "";
+      return `${prefix.includes("\n") ? "" : "\n\n"}${title}${suffix}\n`;
+    });
+  }
+
+  normalized = normalized
+    .replace(/\n{3,}/g, "\n\n")
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return normalized;
+}
+
 // Renders plain-text content (job descriptions, resumes) with basic structure.
 function FormattedContent({ text, kind }) {
   if (!text) return null;
-  const blocks = text.split(/\n{2,}/);
+  const normalizedText = kind === "jd" ? normalizeJobDescriptionText(text) : text;
+  const blocks = normalizedText.split(/\n{2,}/);
   return (
-    <Box sx={{ fontSize: 13.5, lineHeight: 1.75, color: "inherit" }}>
+    <Box sx={{ fontSize: kind === "jd" ? 14 : 13.5, lineHeight: kind === "jd" ? 1.8 : 1.75, color: "inherit" }}>
       {blocks.map((block, i) => {
         const lines = block.split("\n").map((l) => l.trimEnd()).filter((l, idx, arr) => idx > 0 || l !== "");
         if (lines.length === 0) return null;
@@ -56,12 +112,13 @@ function FormattedContent({ text, kind }) {
                 key={i}
                 sx={{
                   fontWeight: 700,
-                  fontSize: kind === "resume" ? 14 : 13.5,
+                  fontSize: kind === "resume" ? 14 : 14.5,
                   mt: i > 0 ? 2.5 : 0,
-                  mb: 0.5,
-                  borderBottom: kind === "resume" ? "1px solid rgba(0,0,0,0.12)" : "none",
-                  pb: kind === "resume" ? 0.25 : 0,
-                  letterSpacing: 0.3,
+                  mb: kind === "jd" ? 1 : 0.5,
+                  borderBottom: kind === "resume" ? "1px solid rgba(0,0,0,0.12)" : kind === "jd" ? "1px solid rgba(25, 118, 210, 0.18)" : "none",
+                  pb: kind === "resume" ? 0.25 : kind === "jd" ? 0.35 : 0,
+                  letterSpacing: kind === "jd" ? 0.15 : 0.3,
+                  color: kind === "jd" ? "#163b66" : "inherit",
                 }}
               >
                 {line.endsWith(":") ? line.slice(0, -1) : line}
@@ -77,7 +134,7 @@ function FormattedContent({ text, kind }) {
             <Box
               key={i}
               component="ul"
-              sx={{ m: 0, mt: i > 0 ? 1 : 0, pl: 2.5, "& li": { mb: 0.4 } }}
+              sx={{ m: 0, mt: i > 0 ? 1 : 0, pl: 2.75, "& li": { mb: kind === "jd" ? 0.8 : 0.4 } }}
             >
               {lines.map((line, j) => {
                 const clean = line.replace(/^\s*[-•*–·]\s*/, "").trim();
@@ -90,7 +147,14 @@ function FormattedContent({ text, kind }) {
 
         // Regular paragraph / block
         return (
-          <Box key={i} sx={{ mt: i > 0 ? 1.5 : 0, whiteSpace: "pre-wrap" }}>
+          <Box
+            key={i}
+            sx={{
+              mt: i > 0 ? 1.5 : 0,
+              whiteSpace: "pre-wrap",
+              color: kind === "jd" ? "rgba(0, 0, 0, 0.82)" : "inherit",
+            }}
+          >
             {block.trim()}
           </Box>
         );
@@ -143,6 +207,10 @@ function formatDateTimeLocalInputValue(value) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+function normalizeInterviewValue(value) {
+  return (value || "").trim().toLowerCase();
+}
+
 export default function Home() {
   const [resumeFile, setResumeFile] = useState(null);
   const [coverLetterFile, setCoverLetterFile] = useState(null);
@@ -188,6 +256,8 @@ export default function Home() {
   const [applicationLoading, setApplicationLoading] = useState(false);
   const [applicationError, setApplicationError] = useState(null);
   const [applicationStages, setApplicationStages] = useState({});
+  const [interviewSearch, setInterviewSearch] = useState("");
+  const [interviewSort, setInterviewSort] = useState({ field: "applied_at", direction: "desc" });
   const [appDialog, setAppDialog] = useState({ open: false, rowIndex: null, kind: "jd" });
   const [stageDialog, setStageDialog] = useState(createStageDialogState());
   const [stageSaving, setStageSaving] = useState(false);
@@ -414,6 +484,15 @@ export default function Home() {
     setStageSaving(false);
   }
 
+  function handleInterviewSort(field) {
+    setInterviewSort((prev) => {
+      if (prev.field === field) {
+        return { field, direction: prev.direction === "asc" ? "desc" : "asc" };
+      }
+      return { field, direction: "asc" };
+    });
+  }
+
   useEffect(() => {
     if (mainTab !== "interviewing" || !currentUser) return;
     let cancelled = false;
@@ -491,6 +570,27 @@ export default function Home() {
     loadApplications();
     return () => { cancelled = true; };
   }, [mainTab, currentUser]);
+
+  const visibleApplicationData = [...applicationData]
+    .filter((app) => {
+      const query = normalizeInterviewValue(interviewSearch);
+      if (!query) return true;
+      const company = normalizeInterviewValue(app.positions?.company);
+      const role = normalizeInterviewValue(app.positions?.title);
+      return company.includes(query) || role.includes(query);
+    })
+    .sort((left, right) => {
+      const direction = interviewSort.direction === "asc" ? 1 : -1;
+      if (interviewSort.field === "company") {
+        return (left.positions?.company || "").localeCompare(right.positions?.company || "", undefined, { sensitivity: "base" }) * direction;
+      }
+      if (interviewSort.field === "role") {
+        return (left.positions?.title || "").localeCompare(right.positions?.title || "", undefined, { sensitivity: "base" }) * direction;
+      }
+      const leftTime = left.applied_at ? new Date(left.applied_at).getTime() : 0;
+      const rightTime = right.applied_at ? new Date(right.applied_at).getTime() : 0;
+      return (leftTime - rightTime) * direction;
+    });
 
   function extractMinYearsRequired(description) {
     if (!description) return null;
@@ -1700,22 +1800,50 @@ export default function Home() {
             ) : applicationData.length === 0 ? (
               <p style={{ color: "var(--text-secondary)" }}>No applications yet. Apply to jobs in the Applying tab.</p>
             ) : (
-              <TableContainer>
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell sx={{ fontWeight: 700 }}>Company</TableCell>
-                      <TableCell sx={{ fontWeight: 700 }}>Role</TableCell>
-                      <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
-                      <TableCell sx={{ fontWeight: 700 }}>Applied</TableCell>
-                      <TableCell sx={{ fontWeight: 700 }}>Job Description</TableCell>
-                      <TableCell sx={{ fontWeight: 700 }}>Your Resume</TableCell>
-                      <TableCell sx={{ fontWeight: 700 }}>Notes</TableCell>
-                      <TableCell sx={{ fontWeight: 700 }}>Links</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {applicationData.map((app, idx) => {
+              <>
+                <Box sx={{ mb: 2, maxWidth: 360 }}>
+                  <TextField
+                    label="Search company or role"
+                    value={interviewSearch}
+                    onChange={(e) => setInterviewSearch(e.target.value)}
+                    fullWidth
+                    size="small"
+                    placeholder="e.g. Stripe or frontend"
+                  />
+                </Box>
+                <TableContainer>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell sortDirection={interviewSort.field === "company" ? interviewSort.direction : false}>
+                          <TableSortLabel
+                            active={interviewSort.field === "company"}
+                            direction={interviewSort.field === "company" ? interviewSort.direction : "asc"}
+                            onClick={() => handleInterviewSort("company")}
+                          >
+                            Company
+                          </TableSortLabel>
+                        </TableCell>
+                        <TableCell sortDirection={interviewSort.field === "role" ? interviewSort.direction : false}>
+                          <TableSortLabel
+                            active={interviewSort.field === "role"}
+                            direction={interviewSort.field === "role" ? interviewSort.direction : "asc"}
+                            onClick={() => handleInterviewSort("role")}
+                          >
+                            Role
+                          </TableSortLabel>
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Applied</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Job Description</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Your Resume</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Notes</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Links</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                    {visibleApplicationData.map((app) => {
+                      const idx = applicationData.findIndex((candidate) => candidate.id === app.id);
                       const pos = app.positions;
                       const resume = app.generated_resumes;
                       const stages = applicationStages[app.id] || [];
@@ -1836,9 +1964,15 @@ export default function Home() {
                         </TableRow>
                       );
                     })}
-                  </TableBody>
-                </Table>
-              </TableContainer>
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+                {visibleApplicationData.length === 0 ? (
+                  <p style={{ color: "var(--text-secondary)", marginTop: 12 }}>
+                    No applications match that company or role.
+                  </p>
+                ) : null}
+              </>
             )}
 
             <Dialog
