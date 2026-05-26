@@ -17,6 +17,7 @@ import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
+import Fab from "@mui/material/Fab";
 import Table from "@mui/material/Table";
 import TableBody from "@mui/material/TableBody";
 import TableCell from "@mui/material/TableCell";
@@ -584,7 +585,7 @@ export default function Home() {
       const { data: appRows, error: appErr } = await supabase
         .from("applications")
         .select(`
-          id, status, applied_at, tracked_at, notes, application_url, resume_used_id,
+          id, status, applied_at, tracked_at, application_url, resume_used_id,
           positions ( external_id, title, company, description, url )
         `)
         .eq("user_id", currentUser.id)
@@ -1868,16 +1869,7 @@ export default function Home() {
               <p style={{ color: "var(--text-secondary)" }}>No applications yet. Apply to jobs in the Applying tab.</p>
             ) : (
               <>
-                <Box
-                  sx={{
-                    mb: 2.5,
-                    p: 1.25,
-                    border: "1px solid rgba(15, 23, 42, 0.08)",
-                    borderRadius: 3,
-                    background: "linear-gradient(180deg, rgba(248,250,252,0.95) 0%, rgba(255,255,255,1) 100%)",
-                    boxShadow: "0 6px 18px rgba(15, 23, 42, 0.05)",
-                  }}
-                >
+                <Box sx={{ mb: 2.5, maxWidth: 380 }}>
                   <TextField
                     label="Search company or role"
                     value={interviewSearch}
@@ -1885,12 +1877,6 @@ export default function Home() {
                     fullWidth
                     size="small"
                     placeholder="e.g. Stripe or frontend"
-                    sx={{
-                      "& .MuiOutlinedInput-root": {
-                        borderRadius: 2.5,
-                        backgroundColor: "#fff",
-                      },
-                    }}
                   />
                 </Box>
                 <TableContainer>
@@ -1904,7 +1890,6 @@ export default function Home() {
                         <TableCell sx={{ fontWeight: 700 }}>Recruiter Communications</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Job Description</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Your Resume</TableCell>
-                        <TableCell sx={{ fontWeight: 700 }}>Notes</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Links</TableCell>
                       </TableRow>
                     </TableHead>
@@ -1993,7 +1978,7 @@ export default function Home() {
                                 : "—"}
                             </TableCell>
                             <TableCell sx={{ whiteSpace: "nowrap" }}>
-                              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                              <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0.2 }}>
                                 <Button
                                   size="small"
                                   sx={{ minWidth: 0, p: 0, fontSize: 11 }}
@@ -2033,9 +2018,6 @@ export default function Home() {
                                   </Button>
                                 </Box>
                               ) : "—"}
-                            </TableCell>
-                            <TableCell sx={{ maxWidth: 160, fontSize: 12, color: "var(--text-secondary)" }}>
-                              {app.notes || "—"}
                             </TableCell>
                             <TableCell>
                               {(app.application_url || pos?.url) && (
@@ -2353,6 +2335,28 @@ export default function Home() {
           </section>
         )}
       </main>
+
+      <Fab
+        color="primary"
+        variant="extended"
+        onClick={() => {
+          setMainTab("applying");
+          setActiveSection("search");
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        }}
+        sx={{
+          position: "fixed",
+          right: { xs: 16, sm: 24 },
+          bottom: trackedJobs.length > 0 ? { xs: 84, sm: 88 } : { xs: 16, sm: 24 },
+          zIndex: 1100,
+          textTransform: "none",
+          fontWeight: 700,
+          letterSpacing: 0.1,
+          boxShadow: "0 16px 32px rgba(25, 118, 210, 0.26)",
+        }}
+      >
+        AI Help
+      </Fab>
 
       {trackedJobs.length > 0 ? (
         <div className={styles.floatingToolbar} onWheel={handleToolbarWheel}>
