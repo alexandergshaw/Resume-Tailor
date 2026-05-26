@@ -194,14 +194,6 @@ const AGGRESSIVENESS_MARKS = [
   { value: 5, label: "Strong" },
 ];
 
-const AGGRESSIVENESS_LABELS = {
-  1: "Light",
-  2: "Moderate",
-  3: "Balanced",
-  4: "Assertive",
-  5: "Strong",
-};
-
 function createStageDialogState(overrides = {}) {
   return {
     open: false,
@@ -1623,16 +1615,6 @@ export default function Home() {
                     <label htmlFor="aggressiveness" className={styles.label}>
                       Aggressiveness
                     </label>
-                    <Box
-                      component="span"
-                      sx={{
-                        fontSize: "0.85rem",
-                        color: "var(--text-secondary)",
-                        fontWeight: 500,
-                      }}
-                    >
-                      {AGGRESSIVENESS_LABELS[aggressiveness]}
-                    </Box>
                   </Box>
                   <Box sx={{ px: 1, pt: 0.25, pb: 1.5 }}>
                     <Slider
