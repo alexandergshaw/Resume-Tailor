@@ -325,6 +325,8 @@ export default function Home() {
   });
   const [addAppSaving, setAddAppSaving] = useState(false);
   const [addAppError, setAddAppError] = useState("");
+  const [addAppResumeFile, setAddAppResumeFile] = useState(null);
+  const [editAppResumeFile, setEditAppResumeFile] = useState(null);
   const [applicationsRefreshKey, setApplicationsRefreshKey] = useState(0);
 
   // Refs for targeted re-fetches when individual controls change
@@ -703,6 +705,7 @@ export default function Home() {
   function openEditApplicationDialog(app) {
     const pos = app.positions || {};
     setEditAppError("");
+    setEditAppResumeFile(null);
     setEditAppDialog({
       open: true,
       applicationId: app.id,
@@ -714,6 +717,62 @@ export default function Home() {
       applicationUrl: app.application_url || pos.url || "",
       description: pos.description || "",
     });
+  }
+
+  async function uploadAndLinkResumeForApplication(supabase, {
+    file,
+    userId,
+    applicationId,
+    positionId,
+  }) {
+    if (!file || !userId || !applicationId) return { error: null };
+    if (!isDocxResume(file) && !isTextResume(file)) {
+      return { error: "Resume must be a .docx or .txt file." };
+    }
+
+    const ext = isDocxResume(file) ? "docx" : "txt";
+    const storagePath = `${userId}/applications/${applicationId}.${ext}`;
+
+    const { error: uploadErr } = await supabase
+      .storage
+      .from("resumes")
+      .upload(storagePath, file, { upsert: true, contentType: file.type || undefined });
+    if (uploadErr) {
+      return { error: uploadErr.message || "Failed to upload resume." };
+    }
+
+    let contentLines = [];
+    try {
+      contentLines = await buildTemplateLinesForUpload(file);
+    } catch {
+      contentLines = [];
+    }
+    const content = (contentLines || []).join("\n").trim();
+    if (!content) {
+      return { error: "Could not extract text from the uploaded resume." };
+    }
+
+    const generatedResumeId = await saveGeneratedResume(supabase, {
+      userId,
+      positionId: positionId || null,
+      content,
+      contentLines,
+      sourceResumePath: storagePath,
+    });
+
+    if (!generatedResumeId) {
+      return { error: "Failed to save resume record." };
+    }
+
+    const { error: appErr } = await supabase
+      .from("applications")
+      .update({ resume_used_id: generatedResumeId })
+      .eq("id", applicationId);
+    if (appErr) {
+      return { error: appErr.message || "Failed to link resume to application." };
+    }
+
+    return { error: null };
   }
 
   async function handleSaveEditApplication() {
@@ -779,12 +838,29 @@ export default function Home() {
       ),
     );
 
+    if (editAppResumeFile && currentUser?.id) {
+      const { error: resumeErr } = await uploadAndLinkResumeForApplication(supabase, {
+        file: editAppResumeFile,
+        userId: currentUser.id,
+        applicationId: editAppDialog.applicationId,
+        positionId: editAppDialog.positionId,
+      });
+      if (resumeErr) {
+        setEditAppError(resumeErr);
+        setEditAppSaving(false);
+        return;
+      }
+      setApplicationsRefreshKey((k) => k + 1);
+    }
+
+    setEditAppResumeFile(null);
     setEditAppSaving(false);
     setEditAppDialog((prev) => ({ ...prev, open: false }));
   }
 
   function openAddApplicationDialog() {
     setAddAppError("");
+    setAddAppResumeFile(null);
     setAddAppDialog({
       open: true,
       company: "",
@@ -826,7 +902,7 @@ export default function Home() {
       return;
     }
 
-    const { error: appErr } = await supabase
+    const { data: insertedApp, error: appErr } = await supabase
       .from("applications")
       .insert({
         user_id: currentUser.id,
@@ -836,7 +912,9 @@ export default function Home() {
         applied_at: addAppDialog.appliedAt
           ? new Date(addAppDialog.appliedAt).toISOString()
           : new Date().toISOString(),
-      });
+      })
+      .select("id")
+      .single();
 
     if (appErr) {
       setAddAppError(appErr.message || "Failed to save application.");
@@ -844,6 +922,21 @@ export default function Home() {
       return;
     }
 
+    if (addAppResumeFile && insertedApp?.id) {
+      const { error: resumeErr } = await uploadAndLinkResumeForApplication(supabase, {
+        file: addAppResumeFile,
+        userId: currentUser.id,
+        applicationId: insertedApp.id,
+        positionId,
+      });
+      if (resumeErr) {
+        setAddAppError(resumeErr);
+        setAddAppSaving(false);
+        return;
+      }
+    }
+
+    setAddAppResumeFile(null);
     setAddAppSaving(false);
     setAddAppDialog((prev) => ({ ...prev, open: false }));
     setApplicationsRefreshKey((k) => k + 1);
@@ -3092,6 +3185,25 @@ export default function Home() {
                   minRows={6}
                   size="small"
                 />
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+                  <Box component="label" sx={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
+                    Resume used for this application (optional)
+                  </Box>
+                  <input
+                    type="file"
+                    accept=".docx,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+                    onChange={(e) => setEditAppResumeFile(e.target.files?.[0] || null)}
+                  />
+                  {editAppResumeFile ? (
+                    <Box sx={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                      New upload: {editAppResumeFile.name}
+                    </Box>
+                  ) : (
+                    <Box sx={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                      Upload a .docx (or .txt) to replace the resume associated with this row. Leave empty to keep the existing resume.
+                    </Box>
+                  )}
+                </Box>
                 {editAppError ? (
                   <p style={{ color: "var(--error, #d32f2f)", margin: 0 }}>{editAppError}</p>
                 ) : null}
@@ -3183,6 +3295,25 @@ export default function Home() {
                   minRows={6}
                   size="small"
                 />
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+                  <Box component="label" sx={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
+                    Resume used for this application (optional)
+                  </Box>
+                  <input
+                    type="file"
+                    accept=".docx,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+                    onChange={(e) => setAddAppResumeFile(e.target.files?.[0] || null)}
+                  />
+                  {addAppResumeFile ? (
+                    <Box sx={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                      Selected: {addAppResumeFile.name}
+                    </Box>
+                  ) : (
+                    <Box sx={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                      Optional. Upload a .docx (or .txt) of the resume you sent with this application.
+                    </Box>
+                  )}
+                </Box>
                 {addAppError ? (
                   <p style={{ color: "var(--error, #d32f2f)", margin: 0 }}>{addAppError}</p>
                 ) : null}
