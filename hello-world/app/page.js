@@ -613,17 +613,28 @@ export default function Home() {
   }
   function applySavedSearch(entry) {
     if (!entry) return;
-    setJobQuery(typeof entry.jobQuery === "string" ? entry.jobQuery : "");
-    setMaxYearsExp(typeof entry.maxYearsExp === "string" ? entry.maxYearsExp : "any");
-    setSelectedCategories(Array.isArray(entry.selectedCategories) ? entry.selectedCategories : []);
+    const nextJobQuery = typeof entry.jobQuery === "string" ? entry.jobQuery : "";
+    const nextMaxYears = typeof entry.maxYearsExp === "string" ? entry.maxYearsExp : "any";
+    const nextCategories = Array.isArray(entry.selectedCategories) ? entry.selectedCategories : [];
     const companies = Array.isArray(entry.selectedCompanies) ? entry.selectedCompanies : [];
-    setSelectedCompanies(
-      companies
-        .map((slug) => GREENHOUSE_COMPANIES.find((c) => c.slug === slug) || slug)
-        .filter(Boolean),
-    );
+    const nextSelectedCompanies = companies
+      .map((slug) => GREENHOUSE_COMPANIES.find((c) => c.slug === slug) || slug)
+      .filter(Boolean);
     const excluded = Array.isArray(entry.excludedCompanies) ? entry.excludedCompanies : [];
-    setExcludedCompanies(GREENHOUSE_COMPANIES.filter((c) => excluded.includes(c.slug)));
+    const nextExcludedCompanies = GREENHOUSE_COMPANIES.filter((c) => excluded.includes(c.slug));
+
+    setJobQuery(nextJobQuery);
+    setMaxYearsExp(nextMaxYears);
+    setSelectedCategories(nextCategories);
+    setSelectedCompanies(nextSelectedCompanies);
+    setExcludedCompanies(nextExcludedCompanies);
+
+    // Fire the search using the entry's values directly so we don't have to
+    // wait for React state batching to flush.
+    runJobSearch({
+      jobQuery: nextJobQuery,
+      selectedCompanies: nextSelectedCompanies,
+    });
   }
   function deleteSavedSearch(id) {
     setSavedSearches((prev) => prev.filter((s) => s.id !== id));
@@ -1833,22 +1844,29 @@ export default function Home() {
   }
 
   async function handleJobSearch(event) {
-    event.preventDefault();
-    if (!jobQuery.trim()) return;
+    if (event && typeof event.preventDefault === "function") event.preventDefault();
+    await runJobSearch({ jobQuery, selectedCompanies });
+  }
+
+  async function runJobSearch({ jobQuery: queryArg, selectedCompanies: companiesArg }) {
+    const query = (queryArg || "").trim();
+    if (!query) return;
+
+    const companies = Array.isArray(companiesArg) ? companiesArg : [];
 
     setIsSearching(true);
     setJobSearchError("");
     setJobResults([]);
     setTailoringMap({});
     hasFetchedRef.current = false;
-    activeQueryRef.current = jobQuery.trim();
+    activeQueryRef.current = query;
 
     try {
       // Support both known company slugs and custom company names
       let ghCompanyParam = "";
-      if (selectedCompanies.length > 0) {
-        const slugs = selectedCompanies.filter((c) => typeof c !== "string").map((c) => c.slug);
-        const names = selectedCompanies.filter((c) => typeof c === "string").map((c) => c);
+      if (companies.length > 0) {
+        const slugs = companies.filter((c) => typeof c !== "string").map((c) => c.slug);
+        const names = companies.filter((c) => typeof c === "string").map((c) => c);
         if (slugs.length > 0) {
           ghCompanyParam += `&companies=${slugs.join(",")}`;
         }
@@ -1857,7 +1875,7 @@ export default function Home() {
         }
       }
       const data = await fetch(
-        `/api/greenhouse?query=${encodeURIComponent(jobQuery.trim())}${ghCompanyParam}`
+        `/api/greenhouse?query=${encodeURIComponent(query)}${ghCompanyParam}`
       ).then((r) => r.json());
 
       const ghJobs = data.jobs || [];
