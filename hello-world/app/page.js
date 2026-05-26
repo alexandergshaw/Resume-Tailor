@@ -86,36 +86,49 @@ export default function Home() {
     localStorage.setItem("ignoredJobIds", JSON.stringify([...ignoredJobIds]));
   }, [ignoredJobIds]);
 
-  // Track auth state + load applied jobs
+  // Track auth state + load applied jobs + load stored files
   useEffect(() => {
     const supabase = createClient();
 
-    async function loadApplied(user) {
+    async function loadUserData(user) {
       if (user) {
         setCurrentUser(user);
-        const supabase = createClient();
-        const { data } = await supabase
+
+        // Load applied jobs
+        const { data: appliedData } = await supabase
           .from("applied_jobs")
           .select("job_id")
           .eq("user_id", user.id);
-        if (data) {
-          setAppliedJobIds(new Set(data.map((j) => j.job_id)));
-          return;
+        if (appliedData) {
+          setAppliedJobIds(new Set(appliedData.map((j) => j.job_id)));
+        }
+
+        // Load stored resume + cover letter from Storage
+        for (const [storageName, setter] of [
+          ["resume", setResumeFile],
+          ["cover-letter", setCoverLetterFile],
+        ]) {
+          const { data } = await supabase.storage
+            .from("resumes")
+            .download(`${user.id}/${storageName}`);
+          if (data) {
+            setter(new File([data], storageName === "resume" ? "resume.docx" : "cover-letter.docx", { type: data.type }));
+          }
         }
       } else {
         setCurrentUser(null);
+        // Fallback: localStorage for applied jobs
+        try {
+          const saved = localStorage.getItem("appliedJobIds");
+          if (saved) setAppliedJobIds(new Set(JSON.parse(saved)));
+        } catch {}
       }
-      // Fallback: localStorage
-      try {
-        const saved = localStorage.getItem("appliedJobIds");
-        if (saved) setAppliedJobIds(new Set(JSON.parse(saved)));
-      } catch {}
     }
 
-    supabase.auth.getSession().then(({ data: { session } }) => loadApplied(session?.user ?? null));
+    supabase.auth.getSession().then(({ data: { session } }) => loadUserData(session?.user ?? null));
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      loadApplied(session?.user ?? null);
+      loadUserData(session?.user ?? null);
     });
     return () => subscription.unsubscribe();
   }, []);
@@ -866,7 +879,16 @@ export default function Home() {
             type="file"
             className={styles.fileInput}
             accept=".txt,.md,.markdown,.docx"
-            onChange={(event) => setResumeFile(event.target.files?.[0] || null)}
+            onChange={async (event) => {
+              const file = event.target.files?.[0] || null;
+              setResumeFile(file);
+              if (file && currentUser) {
+                const supabase = createClient();
+                await supabase.storage
+                  .from("resumes")
+                  .upload(`${currentUser.id}/resume`, file, { upsert: true });
+              }
+            }}
           />
         </div>
 
@@ -880,7 +902,16 @@ export default function Home() {
             type="file"
             className={styles.fileInput}
             accept=".txt,.md,.markdown,.docx"
-            onChange={(event) => setCoverLetterFile(event.target.files?.[0] || null)}
+            onChange={async (event) => {
+              const file = event.target.files?.[0] || null;
+              setCoverLetterFile(file);
+              if (file && currentUser) {
+                const supabase = createClient();
+                await supabase.storage
+                  .from("resumes")
+                  .upload(`${currentUser.id}/cover-letter`, file, { upsert: true });
+              }
+            }}
           />
         </div>
 
