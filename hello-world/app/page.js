@@ -276,7 +276,9 @@ export default function Home() {
   const [chatInput, setChatInput] = useState("");
   const [chatSending, setChatSending] = useState(false);
   const [chatError, setChatError] = useState("");
+  const [chatPinnedContext, setChatPinnedContext] = useState(null);
   const chatScrollRef = useRef(null);
+  const chatInputRef = useRef(null);
   const [appDialog, setAppDialog] = useState({ open: false, rowIndex: null, kind: "jd" });
   const [stageDialog, setStageDialog] = useState(createStageDialogState());
   const [stageSaving, setStageSaving] = useState(false);
@@ -1360,6 +1362,90 @@ export default function Home() {
     el.scrollBy({ left: e.deltaY > 0 ? 120 : -120, behavior: "smooth" });
   }
 
+  function askAiAbout({ label, content, prompt = "" }) {
+    setChatPinnedContext({ label: label || "Context", content: content || "" });
+    setChatError("");
+    setChatInput(prompt);
+    setChatOpen(true);
+    setTimeout(() => {
+      const el = chatInputRef.current;
+      if (!el) return;
+      try {
+        el.focus();
+        const len = el.value?.length ?? 0;
+        if (typeof el.setSelectionRange === "function") {
+          el.setSelectionRange(len, len);
+        }
+      } catch {
+        /* noop */
+      }
+    }, 80);
+  }
+
+  function buildJobContextString(job) {
+    const lines = [];
+    if (job.title) lines.push(`Title: ${job.title}`);
+    if (job.company) lines.push(`Company: ${job.company}`);
+    if (job.location) lines.push(`Location: ${job.location}`);
+    if (job.isRemote) lines.push(`Remote: yes`);
+    if (job.employmentType) lines.push(`Employment Type: ${job.employmentType}`);
+    if (job.publisher) lines.push(`Publisher: ${job.publisher}`);
+    if (job.salaryMin || job.salaryMax) {
+      lines.push(`Salary: ${job.salaryMin || "?"} – ${job.salaryMax || "?"}`);
+    }
+    if (job.url) lines.push(`URL: ${job.url}`);
+    if (job.description) lines.push(`Description:\n${job.description}`);
+    return lines.join("\n");
+  }
+
+  function buildApplicationContextString(app) {
+    const pos = app.positions || {};
+    const resume = app.generated_resumes;
+    const stages = applicationStages[app.id] || [];
+    const lines = [];
+    if (pos.company) lines.push(`Company: ${pos.company}`);
+    if (pos.title) lines.push(`Role: ${pos.title}`);
+    if (app.status) lines.push(`Status: ${app.status}`);
+    if (app.applied_at) lines.push(`Applied: ${app.applied_at}`);
+    if (app.application_url || pos.url) lines.push(`URL: ${app.application_url || pos.url}`);
+    if (pos.description) lines.push(`Job Description:\n${pos.description}`);
+    if (resume?.content) lines.push(`Tailored Resume:\n${resume.content}`);
+    if (stages.length > 0) {
+      lines.push("Interview Stages:");
+      stages.forEach((s) => {
+        const bits = [];
+        if (s.stage_name) bits.push(s.stage_name);
+        else if (s.stage_type) bits.push(s.stage_type);
+        if (s.scheduled_at) bits.push(`@ ${s.scheduled_at}`);
+        if (s.outcome && s.outcome !== "pending") bits.push(`(${s.outcome})`);
+        if (Array.isArray(s.interviewer_names) && s.interviewer_names.length > 0) {
+          bits.push(`with ${s.interviewer_names.join(", ")}`);
+        }
+        if (s.notes) bits.push(`notes: ${s.notes}`);
+        lines.push(`  - ${bits.join(" ")}`);
+      });
+    }
+    return lines.join("\n");
+  }
+
+  function buildStageContextString(app, stage) {
+    const pos = app.positions || {};
+    const lines = [];
+    if (pos.company) lines.push(`Company: ${pos.company}`);
+    if (pos.title) lines.push(`Role: ${pos.title}`);
+    lines.push(`Stage: ${stage.stage_name || stage.stage_type || "Interview"}`);
+    if (stage.stage_type) lines.push(`Type: ${stage.stage_type}`);
+    if (stage.scheduled_at) lines.push(`Scheduled: ${stage.scheduled_at}`);
+    if (stage.duration_minutes) lines.push(`Duration: ${stage.duration_minutes} min`);
+    if (stage.outcome) lines.push(`Outcome: ${stage.outcome}`);
+    if (Array.isArray(stage.interviewer_names) && stage.interviewer_names.length > 0) {
+      lines.push(`Interviewers: ${stage.interviewer_names.join(", ")}`);
+    }
+    if (stage.notes) lines.push(`Notes: ${stage.notes}`);
+    if (pos.description) lines.push(`Job Description:\n${pos.description}`);
+    return lines.join("\n");
+  }
+
   async function sendChatMessage() {
     const text = chatInput.trim();
     if (!text || chatSending) return;
@@ -1410,6 +1496,9 @@ export default function Home() {
           messages: nextMessages,
           resumeText,
           applications: applicationsContext,
+          pinnedContext: chatPinnedContext
+            ? { label: chatPinnedContext.label, content: chatPinnedContext.content }
+            : null,
         }),
       });
       const payload = await response.json();
@@ -2291,6 +2380,17 @@ export default function Home() {
                                 </button>
                                 <button
                                   type="button"
+                                  className={`${styles.cardBtn} ${styles.cardBtnSecondary}`}
+                                  onClick={() => askAiAbout({
+                                    label: `Job: ${job.company || ""}${job.company && job.title ? " — " : ""}${job.title || ""}`.trim() || "Job posting",
+                                    content: buildJobContextString(job),
+                                  })}
+                                  title="Ask AI about this job"
+                                >
+                                  Ask AI
+                                </button>
+                                <button
+                                  type="button"
                                   className={`${styles.cardBtn} ${styles.cardBtnPrimary}`}
                                   disabled={!resumeFile || isTailoring || (isDone && !isDownloaded)}
                                   title={!resumeFile ? "Upload a resume to generate" : undefined}
@@ -2385,6 +2485,17 @@ export default function Home() {
                 >
                   {manualIsSubmitting ? "Generating..." : "Generate"}
                 </Button>
+                <Button
+                  variant="outlined"
+                  sx={{ ml: 1 }}
+                  disabled={!jobPosting.trim()}
+                  onClick={() => askAiAbout({
+                    label: "Pasted Job Description",
+                    content: `Pasted Job Description:\n${jobPosting}`,
+                  })}
+                >
+                  Ask AI
+                </Button>
               </Box>
             </form>
 
@@ -2421,6 +2532,17 @@ export default function Home() {
                   disabled={urlIsSubmitting}
                 >
                   {urlIsSubmitting ? "Generating..." : "Generate"}
+                </Button>
+                <Button
+                  variant="outlined"
+                  sx={{ ml: 1 }}
+                  disabled={!urlPosting.trim()}
+                  onClick={() => askAiAbout({
+                    label: `Job Posting URL: ${urlPosting.trim()}`,
+                    content: `Job Posting URL: ${urlPosting.trim()}`,
+                  })}
+                >
+                  Ask AI
                 </Button>
               </Box>
             </form>
@@ -2520,7 +2642,18 @@ export default function Home() {
                             <TableCell>
                               <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0.75 }}>
                                 <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
-                                  <Chip label={statusConfig.label} color={statusConfig.color} size="small" />
+                                  <Chip
+                                    label={statusConfig.label}
+                                    color={statusConfig.color}
+                                    size="small"
+                                    onClick={() => askAiAbout({
+                                      label: `${pos?.company || "Application"}${pos?.title ? ` — ${pos.title}` : ""} · ${statusConfig.label}`,
+                                      content: buildApplicationContextString(app),
+                                      prompt: `Based on the "${statusConfig.label}" status of my application to ${pos?.company || "this company"}${pos?.title ? ` for ${pos.title}` : ""}, `,
+                                    })}
+                                    sx={{ cursor: "pointer" }}
+                                    title="Ask AI about this status"
+                                  />
                                   <Button
                                     size="small"
                                     sx={{ minWidth: 0, p: 0, fontSize: 11 }}
@@ -2560,6 +2693,12 @@ export default function Home() {
                                               notes: stage.notes || "",
                                             }));
                                           }}
+                                          onDelete={() => askAiAbout({
+                                            label: `${pos?.company || "Application"} · ${stageLabel}`,
+                                            content: buildStageContextString(app, stage),
+                                            prompt: `Help me prepare for my "${stage.stage_name || stage.stage_type || "interview"}" at ${pos?.company || "this company"}: `,
+                                          })}
+                                          deleteIcon={<span style={{ fontSize: 11, padding: "0 4px", color: "var(--accent, #1976d2)" }} title="Ask AI">AI</span>}
                                         />
                                       );
                                     })}
@@ -2628,6 +2767,16 @@ export default function Home() {
                             </TableCell>
                             <TableCell sx={{ whiteSpace: "nowrap" }}>
                               <Box sx={{ display: "flex", gap: 0.5 }}>
+                                <Button
+                                  size="small"
+                                  sx={{ minWidth: 0, p: 0.25, fontSize: 11 }}
+                                  onClick={() => askAiAbout({
+                                    label: `${pos?.company || "Application"}${pos?.title ? ` — ${pos.title}` : ""}`,
+                                    content: buildApplicationContextString(app),
+                                  })}
+                                >
+                                  Ask AI
+                                </Button>
                                 <Button
                                   size="small"
                                   sx={{ minWidth: 0, p: 0.25, fontSize: 11 }}
@@ -3270,6 +3419,35 @@ export default function Home() {
             ) : null}
           </Box>
 
+          {chatPinnedContext ? (
+            <Box
+              sx={{
+                px: 1.5,
+                py: 0.75,
+                borderBottom: "1px solid var(--border)",
+                backgroundColor: "rgba(25, 118, 210, 0.06)",
+                display: "flex",
+                alignItems: "center",
+                gap: 1,
+              }}
+            >
+              <Box sx={{ fontSize: 11, fontWeight: 700, color: "var(--accent, #1976d2)", textTransform: "uppercase", letterSpacing: 0.4 }}>
+                Context
+              </Box>
+              <Box sx={{ flex: 1, fontSize: "0.85rem", color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {chatPinnedContext.label}
+              </Box>
+              <Button
+                size="small"
+                onClick={() => setChatPinnedContext(null)}
+                sx={{ minWidth: 0, p: 0.25, fontSize: 12, color: "var(--text-secondary)" }}
+                aria-label="Remove context"
+              >
+                ✕
+              </Button>
+            </Box>
+          ) : null}
+
           <Box
             ref={chatScrollRef}
             sx={{
@@ -3346,6 +3524,7 @@ export default function Home() {
               maxRows={4}
               placeholder="Message AI Help…"
               value={chatInput}
+              inputRef={chatInputRef}
               onChange={(e) => setChatInput(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {

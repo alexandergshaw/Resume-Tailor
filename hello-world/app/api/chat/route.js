@@ -19,8 +19,15 @@ function truncate(value, max) {
   return value.length > max ? `${value.slice(0, max)}…` : value;
 }
 
-function buildContextBlock(resumeText, applications) {
+function buildContextBlock(resumeText, applications, pinnedContext) {
   const parts = [];
+
+  if (pinnedContext && typeof pinnedContext.content === "string" && pinnedContext.content.trim()) {
+    const label = (typeof pinnedContext.label === "string" && pinnedContext.label.trim()) || "Pinned Context";
+    parts.push(
+      `--- PINNED CONTEXT (user just clicked "Ask AI" on this; treat as the primary subject of the question) ---\n[${label}]\n${truncate(pinnedContext.content.trim(), MAX_RESUME_CHARS)}`,
+    );
+  }
 
   if (typeof resumeText === "string" && resumeText.trim()) {
     parts.push(
@@ -71,6 +78,7 @@ export async function POST(request) {
     const messages = Array.isArray(body?.messages) ? body.messages : [];
     const resumeText = typeof body?.resumeText === "string" ? body.resumeText : "";
     const applications = Array.isArray(body?.applications) ? body.applications : [];
+    const pinnedContext = body?.pinnedContext && typeof body.pinnedContext === "object" ? body.pinnedContext : null;
 
     if (messages.length === 0) {
       return Response.json({ error: "No messages provided." }, { status: 400 });
@@ -86,7 +94,7 @@ export async function POST(request) {
         parts: [{ text: m.content }],
       }));
 
-    const contextBlock = buildContextBlock(resumeText, applications);
+    const contextBlock = buildContextBlock(resumeText, applications, pinnedContext);
     const systemInstruction = contextBlock
       ? `${SYSTEM_PROMPT}\n\nContext about this user (do not repeat verbatim; use to personalize answers):\n${contextBlock}`
       : SYSTEM_PROMPT;
