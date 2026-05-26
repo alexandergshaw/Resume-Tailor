@@ -2210,10 +2210,27 @@ export default function Home() {
   async function sendChatMessage() {
     const text = chatInput.trim();
     if (!text || chatSending) return;
-    const userMsg = { role: "user", content: text };
-    const nextMessages = [...chatMessages, userMsg];
-    setChatMessages(nextMessages);
     setChatInput("");
+    await runChatRequest(text, chatMessages);
+  }
+
+  // Resend a previously-sent user message. Truncates the conversation so that
+  // message becomes the most recent turn, then re-fires the request so the
+  // assistant produces a fresh reply.
+  async function resendUserMessage(index) {
+    if (chatSending) return;
+    const msg = chatMessages[index];
+    if (!msg || msg.role !== "user") return;
+    const baseMessages = chatMessages.slice(0, index);
+    await runChatRequest(msg.content, baseMessages);
+  }
+
+  async function runChatRequest(text, baseMessages) {
+    const trimmed = (text || "").trim();
+    if (!trimmed) return;
+    const userMsg = { role: "user", content: trimmed };
+    const nextMessages = [...(baseMessages || []), userMsg];
+    setChatMessages(nextMessages);
     setChatError("");
     setChatSending(true);
     try {
@@ -5187,6 +5204,34 @@ export default function Home() {
                         aria-label="Copy message"
                       >
                         {chatCopiedIndex === i ? "✓ Copied" : "⧉ Copy"}
+                      </Button>
+                    </Box>
+                  ) : null}
+                  {m.role === "user" ? (
+                    <Box sx={{ display: "flex", justifyContent: "flex-end", pr: 0.5 }}>
+                      <Button
+                        size="small"
+                        disabled={chatSending}
+                        onClick={() => resendUserMessage(i)}
+                        sx={{
+                          minWidth: 0,
+                          p: 0.25,
+                          fontSize: 11,
+                          textTransform: "none",
+                          color: "var(--text-secondary)",
+                          lineHeight: 1,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 0.5,
+                        }}
+                        title="Resend this message"
+                        aria-label="Resend this message"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="23 4 23 10 17 10" />
+                          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                        </svg>
+                        Resend
                       </Button>
                     </Box>
                   ) : null}
