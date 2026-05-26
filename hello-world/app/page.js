@@ -15,6 +15,7 @@ import Chip from "@mui/material/Chip";
 import { GREENHOUSE_COMPANIES, COMPANY_CATEGORIES } from "../lib/greenhouse/companies";
 import { createClient } from "../lib/supabase/client";
 import { upsertPosition } from "../lib/supabase/upsertPosition";
+import { upsertApplication, getPositionId } from "../lib/supabase/upsertApplication";
 
 const WORDPROCESSINGML_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -95,13 +96,14 @@ export default function Home() {
       if (user) {
         setCurrentUser(user);
 
-        // Load applied jobs
+        // Load applied jobs from applications table
         const { data: appliedData } = await supabase
-          .from("applied_jobs")
-          .select("job_id")
-          .eq("user_id", user.id);
+          .from("applications")
+          .select("positions(external_id)")
+          .eq("user_id", user.id)
+          .eq("status", "applied");
         if (appliedData) {
-          setAppliedJobIds(new Set(appliedData.map((j) => j.job_id)));
+          setAppliedJobIds(new Set(appliedData.map((a) => a.positions?.external_id).filter(Boolean)));
         }
 
         // Load stored resume + cover letter from Storage
@@ -592,25 +594,17 @@ export default function Home() {
     if (currentUser) {
       const supabase = createClient();
       if (isApplied) {
-        await supabase
-          .from("applied_jobs")
-          .delete()
-          .eq("user_id", currentUser.id)
-          .eq("job_id", jobId);
+        // Un-apply: revert application status to tracking
+        const positionId = await getPositionId(supabase, jobId);
+        if (positionId) {
+          await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "tracking" });
+        }
       } else {
+        // Apply: upsert position → upsert application as applied
         const positionId = typeof job !== "string" ? await upsertPosition(supabase, job) : null;
-        await supabase.from("applied_jobs").upsert(
-          {
-            user_id: currentUser.id,
-            job_id: jobId,
-            job_title: job.title,
-            company: job.company,
-            job_url: job.url,
-            job_description: job.description,
-            position_id: positionId,
-          },
-          { onConflict: "user_id,job_id" },
-        );
+        if (positionId) {
+          await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "applied" });
+        }
       }
     } else {
       // Not signed in — persist to localStorage
@@ -648,12 +642,28 @@ export default function Home() {
     });
     if (currentUser && typeof job === "object") {
       const supabase = createClient();
-      await upsertPosition(supabase, job);
+      const positionId = await upsertPosition(supabase, job);
+      if (positionId) {
+        await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "tracking" });
+      }
     }
   }
 
-  function handleUntrackJob(jobId) {
+  async function handleUntrackJob(jobId) {
     setTrackedJobs((prev) => prev.filter((j) => j.id !== jobId));
+    if (currentUser) {
+      const supabase = createClient();
+      const positionId = await getPositionId(supabase, jobId);
+      if (positionId) {
+        // Only delete if still in tracking state — leave applied rows intact
+        await supabase
+          .from("applications")
+          .delete()
+          .eq("user_id", currentUser.id)
+          .eq("position_id", positionId)
+          .eq("status", "tracking");
+      }
+    }
   }
 
   async function handleTailorJob(job) {
