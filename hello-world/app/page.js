@@ -75,6 +75,7 @@ export default function Home() {
   const [mainTab, setMainTab] = useState("applying");
   const [applicationData, setApplicationData] = useState([]);
   const [applicationLoading, setApplicationLoading] = useState(false);
+  const [applicationError, setApplicationError] = useState(null);
   const [appDialog, setAppDialog] = useState({ open: false, title: "", content: "" });
 
   // Refs for targeted re-fetches when individual controls change
@@ -251,19 +252,51 @@ export default function Home() {
     let cancelled = false;
     async function loadApplications() {
       setApplicationLoading(true);
+      setApplicationError(null);
       const supabase = createClient();
-      const { data } = await supabase
+
+      // Step 1: fetch applications + positions
+      const { data: appRows, error: appErr } = await supabase
         .from("applications")
         .select(`
-          id, status, applied_at, notes, application_url,
-          positions ( external_id, title, company, description, url ),
-          generated_resumes!resume_used_id ( content )
+          id, status, applied_at, tracked_at, notes, application_url, resume_used_id,
+          positions ( external_id, title, company, description, url )
         `)
         .eq("user_id", currentUser.id)
         .neq("status", "tracking")
-        .order("tracked_at", { ascending: false });
+        .order("applied_at", { ascending: false });
+
+      if (appErr) {
+        console.error("[loadApplications] applications query failed:", appErr);
+        if (!cancelled) {
+          setApplicationError(appErr.message);
+          setApplicationLoading(false);
+        }
+        return;
+      }
+
+      // Step 2: fetch resumes for rows that have one
+      const resumeIds = (appRows || []).map((r) => r.resume_used_id).filter(Boolean);
+      let resumeMap = {};
+      if (resumeIds.length > 0) {
+        const { data: resumeRows, error: resumeErr } = await supabase
+          .from("generated_resumes")
+          .select("id, content")
+          .in("id", resumeIds);
+        if (resumeErr) {
+          console.warn("[loadApplications] resume fetch failed (non-fatal):", resumeErr);
+        } else {
+          resumeMap = Object.fromEntries((resumeRows || []).map((r) => [r.id, r]));
+        }
+      }
+
+      const merged = (appRows || []).map((app) => ({
+        ...app,
+        generated_resumes: app.resume_used_id ? (resumeMap[app.resume_used_id] ?? null) : null,
+      }));
+
       if (!cancelled) {
-        setApplicationData(data || []);
+        setApplicationData(merged);
         setApplicationLoading(false);
       }
     }
@@ -1474,6 +1507,8 @@ export default function Home() {
               <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
                 <CircularProgress />
               </Box>
+            ) : applicationError ? (
+              <p style={{ color: "var(--error, #d32f2f)" }}>Error loading applications: {applicationError}</p>
             ) : applicationData.length === 0 ? (
               <p style={{ color: "var(--text-secondary)" }}>No applications yet. Apply to jobs in the Applying tab.</p>
             ) : (
