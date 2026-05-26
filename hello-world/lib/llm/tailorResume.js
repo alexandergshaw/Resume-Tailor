@@ -28,21 +28,21 @@ function getAggressivenessConfig(aggressiveness) {
   const configs = {
     1: {
       label: "Light",
-      rewriteBudget: "Rewrite at most ~20% of eligible lines. Leave the rest essentially identical to the source.",
+      rewriteBudget: "Rewrite at most ~20% of eligible lines, prioritizing the summary, top skills, and any project bullets clearly relevant to the posting. Leave the rest essentially identical to the source.",
       keywordPolicy: "Only insert a posting keyword when an existing line is already obviously about that topic. Never add a tool, technology, or skill that is not already implied by the source.",
       stylePolicy: "Preserve the source resume's exact wording, tone, and verb choices wherever possible.",
       summary: "Conservative — light keyword tuning only.",
     },
     2: {
       label: "Moderate",
-      rewriteBudget: "Rewrite roughly 30–45% of eligible lines, focused on the summary, top skills, and the 2–3 strongest experience bullets.",
+      rewriteBudget: "Rewrite roughly 30–45% of eligible lines, focused on the summary, top skills, the 2–3 strongest experience bullets, and any project bullets relevant to the posting.",
       keywordPolicy: "Surface posting terminology in lines where the source already supports the concept. Do not introduce tools or domains that aren't already present.",
       stylePolicy: "Lean toward the original phrasing; only restructure a sentence when it clearly improves fit.",
       summary: "Targeted rewrites that respect source phrasing.",
     },
     3: {
       label: "Balanced",
-      rewriteBudget: "Rewrite roughly 50–60% of eligible lines across the summary, skills, and experience bullets.",
+      rewriteBudget: "Rewrite roughly 50–60% of eligible lines across the summary, skills, experience bullets, and project bullets.",
       keywordPolicy: "Adopt the posting's exact terminology in relevant lines. You may surface adjacent skills the source supports, but do not invent tools or experiences.",
       stylePolicy: "Mix source fidelity with posting alignment. Restructure sentences when it produces a meaningfully stronger match.",
       summary: "Even balance between source fidelity and job alignment.",
@@ -56,7 +56,7 @@ function getAggressivenessConfig(aggressiveness) {
     },
     5: {
       label: "Strong",
-      rewriteBudget: "Rewrite every eligible line. Treat the source resume as raw material rather than text to preserve.",
+      rewriteBudget: "Rewrite every eligible line, including every project bullet. Treat the source resume as raw material rather than text to preserve.",
       keywordPolicy: "Saturate the resume with the posting's required and preferred keywords, tools, methodologies, buzzwords, and domain language. Every relevant line should reflect posting terminology. You must not fabricate employers, titles, dates, or credentials, but you should reframe real experience as aggressively as possible toward the posting.",
       stylePolicy: "Mirror the posting's voice, verbs, and structure throughout. Original phrasing is fully replaceable.",
       summary: "Maximum posting alignment.",
@@ -102,6 +102,7 @@ function buildTailorPrompt({
     "9) jobTitle must be the target role title from the posting, concise and clean (no company name, no location, no punctuation noise).",
     "10) Preserve contact identity lines (name, email, phone, LinkedIn, portfolio links) unless the line clearly is not contact info. The headline / professional-title line that typically sits directly under the candidate's name is NOT contact info — it IS in scope for rewriting, and you should rewrite it to match the target role from the posting whenever the source experience can plausibly support it.",
     "11) Do not fabricate employers, dates, degrees, certifications that are not supported by the source resume or provided context. You may update everything else as you see fit.",
+    "12) Project bullets are in scope for rewriting at every aggressiveness level. Reframe each project bullet to emphasize the methodologies, tools, outcomes, and domain language most relevant to the posting, while preserving the underlying project identity (what was built and the real tech stack used). Do not invent new projects, but you may foreground different aspects of an existing project to better match the posting.",
     "",
     `Aggressiveness directives for level ${aggressivenessConfig.level}/5 (${aggressivenessConfig.label}) — follow these strictly:`,
     `A) Rewrite budget: ${aggressivenessConfig.rewriteBudget}`,
