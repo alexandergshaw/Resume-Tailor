@@ -1564,6 +1564,42 @@ export default function Home() {
     return () => { cancelled = true; };
   }, [currentUser, applicationsRefreshKey]);
 
+  // Backfill chip statuses for tracked jobs from Supabase. Any tracked job
+  // whose position has a matching application with a saved generated_resumes
+  // row is treated as "done" so the floating toolbar chip is colored green
+  // after a reload even if the slim localStorage status wasn't written by
+  // the previous session.
+  useEffect(() => {
+    if (!Array.isArray(applicationData) || applicationData.length === 0) return;
+    if (!Array.isArray(trackedJobs) || trackedJobs.length === 0) return;
+    const externalIdToApp = new Map();
+    for (const app of applicationData) {
+      const ext = app?.positions?.external_id;
+      if (ext) externalIdToApp.set(String(ext), app);
+    }
+    setTailoringMap((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const job of trackedJobs) {
+        const existing = next[job.id];
+        if (existing && existing.status) continue;
+        const app = externalIdToApp.get(String(job.id));
+        if (!app) continue;
+        if (!app.generated_resumes?.content) continue;
+        next[job.id] = {
+          ...(existing || {}),
+          status: "done",
+          downloaded: true,
+          generatedJobTitle:
+            existing?.generatedJobTitle || app.positions?.title || job.title || "",
+          error: "",
+        };
+        changed = true;
+      }
+      return changed ? next : current;
+    });
+  }, [applicationData, trackedJobs]);
+
   const visibleApplicationData = [...applicationData]
     .filter((app) => {
       const query = normalizeInterviewValue(interviewSearch);
