@@ -1285,6 +1285,17 @@ export default function Home() {
     }
   }
 
+  function handleRegenerateSyntheticJob(job) {
+    if (!job?.id) return;
+    if (typeof job.id === "string" && job.id.startsWith("url-") && job.url) {
+      handleUrlSubmit(null, { overrideUrl: job.url, syntheticJobId: job.id });
+      return;
+    }
+    if (typeof job.id === "string" && job.id.startsWith("manual-") && job.description) {
+      handleManualSubmit(null, { overridePosting: job.description, syntheticJobId: job.id });
+    }
+  }
+
   async function handleTailorJob(job) {
     handleTrackJob(job);
     if (!resumeFile) {
@@ -1376,10 +1387,12 @@ export default function Home() {
     }
   }
 
-  async function handleUrlSubmit(event) {
-    event.preventDefault();
+  async function handleUrlSubmit(event, opts = {}) {
+    if (event && typeof event.preventDefault === "function") event.preventDefault();
 
-    if (!urlPosting.trim()) {
+    const sourceUrl = (opts.overrideUrl ?? urlPosting).trim();
+
+    if (!sourceUrl) {
       setUrlError("Please enter a job posting URL.");
       return;
     }
@@ -1396,8 +1409,8 @@ export default function Home() {
     setUrlHasCompleted(false);
     setUrlIsSubmitting(true);
 
-    const trimmedUrl = urlPosting.trim();
-    const syntheticJobId = `url-${trimmedUrl}`;
+    const trimmedUrl = sourceUrl;
+    const syntheticJobId = opts.syntheticJobId ?? `url-${trimmedUrl}`;
     setTrackedJobs((prev) =>
       prev.some((j) => j.id === syntheticJobId)
         ? prev
@@ -1407,7 +1420,7 @@ export default function Home() {
 
     try {
       const formData = new FormData();
-      formData.append("jobPostingUrl", urlPosting.trim());
+      formData.append("jobPostingUrl", trimmedUrl);
       formData.append("additionalContext", additionalContext);
       formData.append("aggressiveness", String(aggressiveness));
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
@@ -1505,10 +1518,12 @@ export default function Home() {
     setUrlIsDownloading(false);
   }
 
-  async function handleManualSubmit(event) {
-    event.preventDefault();
+  async function handleManualSubmit(event, opts = {}) {
+    if (event && typeof event.preventDefault === "function") event.preventDefault();
 
-    if (!jobPosting.trim()) {
+    const sourcePosting = opts.overridePosting ?? jobPosting;
+
+    if (!sourcePosting.trim()) {
       setManualError("Please provide a job posting.");
       return;
     }
@@ -1525,16 +1540,20 @@ export default function Home() {
     setManualHasCompleted(false);
     setManualIsSubmitting(true);
 
-    const syntheticJobId = `manual-${Date.now()}`;
-    setTrackedJobs((prev) => [
-      ...prev,
-      { id: syntheticJobId, title: "Generating from posting…", company: "", url: "" },
-    ]);
+    const syntheticJobId = opts.syntheticJobId ?? `manual-${Date.now()}`;
+    setTrackedJobs((prev) =>
+      prev.some((j) => j.id === syntheticJobId)
+        ? prev
+        : [
+            ...prev,
+            { id: syntheticJobId, title: "Generating from posting…", company: "", url: "", description: sourcePosting },
+          ],
+    );
     updateTailoringJob(syntheticJobId, { status: "tailoring" });
 
     try {
       const formData = new FormData();
-      formData.append("jobPosting", jobPosting);
+      formData.append("jobPosting", sourcePosting);
       formData.append("additionalContext", additionalContext);
       formData.append("aggressiveness", String(aggressiveness));
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
@@ -1570,7 +1589,7 @@ export default function Home() {
         title: nextJobTitle || "Untitled role",
         company: "",
         url: "",
-        description: jobPosting,
+        description: sourcePosting,
       };
       setTrackedJobs((prev) =>
         prev.map((j) => (j.id === syntheticJobId ? { ...j, title: syntheticJob.title } : j)),
@@ -3024,7 +3043,18 @@ export default function Home() {
               const status = tailoring.status;
               const fullJob = jobResults.find((j) => j.id === job.id);
               const isTailoringChip = status === "tailoring";
-              const canRegenerate = !!resumeFile && !!fullJob && !isTailoringChip;
+              const isSynthetic =
+                typeof job.id === "string" &&
+                (job.id.startsWith("url-") || job.id.startsWith("manual-"));
+              const canRegenerateSynthetic =
+                isSynthetic &&
+                !!resumeFile &&
+                !isTailoringChip &&
+                ((job.id.startsWith("url-") && !!job.url) ||
+                  (job.id.startsWith("manual-") && !!job.description));
+              const canRegenerate = isSynthetic
+                ? canRegenerateSynthetic
+                : !!resumeFile && !!fullJob && !isTailoringChip;
               return (
                 <div
                   key={job.id}
@@ -3045,7 +3075,8 @@ export default function Home() {
                     <button
                       type="button"
                       className={styles.toolbarChipBtn}
-                      title="Go to card"
+                      title={isSynthetic ? "Not available for generated postings" : "Go to card"}
+                      disabled={isSynthetic}
                       onClick={() => {
                         const card = document.getElementById(`job-card-${job.id}`);
                         if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -3067,16 +3098,29 @@ export default function Home() {
                     <button
                       type="button"
                       className={styles.toolbarChipBtn}
-                      title={canRegenerate ? "Regenerate" : !resumeFile ? "Upload a resume first" : "Regenerate"}
+                      title={
+                        canRegenerate
+                          ? "Regenerate"
+                          : !resumeFile
+                            ? "Upload a resume first"
+                            : "Regenerate"
+                      }
                       disabled={!canRegenerate}
-                      onClick={() => fullJob && handleTailorJob(fullJob)}
+                      onClick={() => {
+                        if (isSynthetic) {
+                          handleRegenerateSyntheticJob(job);
+                        } else if (fullJob) {
+                          handleTailorJob(fullJob);
+                        }
+                      }}
                     >
                       ↺
                     </button>
                     <button
                       type="button"
                       className={styles.toolbarChipBtn}
-                      title="Mark as applied"
+                      title={isSynthetic ? "Not available for generated postings" : "Mark as applied"}
+                      disabled={isSynthetic}
                       onClick={() => handleToggleApplied(job)}
                     >
                       ✓
@@ -3084,7 +3128,8 @@ export default function Home() {
                     <button
                       type="button"
                       className={styles.toolbarChipBtn}
-                      title="Ignore"
+                      title={isSynthetic ? "Not available for generated postings" : "Ignore"}
+                      disabled={isSynthetic}
                       onClick={() => { handleIgnoreJob(job.id); handleUntrackJob(job.id); }}
                     >
                       ⊗
