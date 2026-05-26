@@ -3,6 +3,9 @@
 import { useState, useEffect, useRef } from "react";
 import JSZip from "jszip";
 import styles from "./page.module.css";
+import Accordion from "@mui/material/Accordion";
+import AccordionDetails from "@mui/material/AccordionDetails";
+import AccordionSummary from "@mui/material/AccordionSummary";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import FormControl from "@mui/material/FormControl";
@@ -13,7 +16,6 @@ import TextField from "@mui/material/TextField";
 import Autocomplete from "@mui/material/Autocomplete";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
-import Collapse from "@mui/material/Collapse";
 import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
@@ -1505,41 +1507,71 @@ export default function Home() {
             </>
           )}
         </div>
-        <Box sx={{ mb: 3 }}>
-          <Button
-            type="button"
-            variant="outlined"
-            fullWidth
-            onClick={() => setContextPanelOpen((prev) => !prev)}
+        <Accordion
+          disableGutters
+          elevation={0}
+          expanded={contextPanelOpen}
+          onChange={(_event, expanded) => setContextPanelOpen(expanded)}
+          sx={{
+            mb: 3,
+            border: "1px solid rgba(15, 23, 42, 0.08)",
+            borderRadius: "14px !important",
+            overflow: "hidden",
+            backgroundColor: "rgba(255, 255, 255, 0.94)",
+            boxShadow: "0 8px 24px rgba(15, 23, 42, 0.05)",
+            "&::before": { display: "none" },
+          }}
+        >
+          <AccordionSummary
+            aria-controls="add-context-content"
+            id="add-context-header"
+            expandIcon={(
+              <Box
+                component="span"
+                sx={{
+                  fontSize: 18,
+                  lineHeight: 1,
+                  color: "text.secondary",
+                }}
+              >
+                ▾
+              </Box>
+            )}
             sx={{
-              justifyContent: "space-between",
-              textTransform: "none",
-              fontWeight: 700,
-              borderRadius: 2,
-              py: 1.1,
-              px: 1.75,
+              minHeight: 0,
+              px: 2,
+              py: 0.5,
+              "& .MuiAccordionSummary-content": {
+                my: 1,
+                fontWeight: 700,
+              },
             }}
           >
             <Box component="span">Add Context</Box>
-            <Box
-              component="span"
-              sx={{
-                fontSize: 18,
-                lineHeight: 1,
-                transform: contextPanelOpen ? "rotate(180deg)" : "rotate(0deg)",
-                transition: "transform 0.18s ease",
-              }}
-            >
-              ▾
-            </Box>
-          </Button>
-          <Collapse in={contextPanelOpen} timeout="auto">
-            <Box sx={{ pt: 2.25, display: "grid", gap: 2.25 }}>
+          </AccordionSummary>
+          <AccordionDetails sx={{ pt: 0, pb: 2.25, px: 2, display: "grid", gap: 2.25 }}>
               <div className={styles.fieldGroup}>
                 <label htmlFor="aggressiveness" className={styles.label}>
                   Aggressiveness
                 </label>
-                <Box sx={{ px: 1, pt: 1.25 }}>
+                <Box
+                  sx={{
+                    mt: 0.75,
+                    px: 1.5,
+                    py: 1.5,
+                    border: "1px solid rgba(15, 23, 42, 0.08)",
+                    borderRadius: 2.5,
+                    backgroundColor: "rgba(248, 250, 252, 0.85)",
+                  }}
+                >
+                  <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 1.25 }}>
+                    <Box sx={{ fontSize: 13, fontWeight: 700, color: "text.primary" }}>
+                      {AGGRESSIVENESS_LABELS[aggressiveness]}
+                    </Box>
+                    <Box sx={{ fontSize: 12, color: "text.secondary" }}>
+                      {aggressiveness} / 5
+                    </Box>
+                  </Box>
                   <Slider
                     id="aggressiveness"
                     min={1}
@@ -1547,8 +1579,50 @@ export default function Home() {
                     step={1}
                     marks={AGGRESSIVENESS_MARKS}
                     value={aggressiveness}
-                    valueLabelDisplay="auto"
+                    valueLabelDisplay="off"
                     onChange={(_event, value) => setAggressiveness(Array.isArray(value) ? value[0] : value)}
+                    sx={{
+                      color: "#1f6feb",
+                      px: 0.5,
+                      "& .MuiSlider-rail": {
+                        opacity: 1,
+                        backgroundColor: "rgba(15, 23, 42, 0.12)",
+                        height: 6,
+                      },
+                      "& .MuiSlider-track": {
+                        border: "none",
+                        height: 6,
+                      },
+                      "& .MuiSlider-thumb": {
+                        width: 18,
+                        height: 18,
+                        backgroundColor: "#fff",
+                        border: "3px solid currentColor",
+                        boxShadow: "0 3px 10px rgba(31, 111, 235, 0.18)",
+                        "&:hover, &.Mui-focusVisible": {
+                          boxShadow: "0 0 0 8px rgba(31, 111, 235, 0.12)",
+                        },
+                        "&.Mui-active": {
+                          boxShadow: "0 0 0 10px rgba(31, 111, 235, 0.16)",
+                        },
+                      },
+                      "& .MuiSlider-mark": {
+                        width: 8,
+                        height: 8,
+                        borderRadius: "999px",
+                        backgroundColor: "#fff",
+                        border: "2px solid currentColor",
+                        opacity: 1,
+                      },
+                      "& .MuiSlider-markActive": {
+                        backgroundColor: "currentColor",
+                      },
+                      "& .MuiSlider-markLabel": {
+                        fontSize: 11,
+                        color: "text.secondary",
+                        top: 32,
+                      },
+                    }}
                   />
                 </Box>
                 <p className={styles.helperText}>
@@ -1591,9 +1665,8 @@ export default function Home() {
                     : "Optional: upload extra files to provide more context for Gemini."}
                 </p>
               </div>
-            </Box>
-          </Collapse>
-        </Box>
+          </AccordionDetails>
+        </Accordion>
 
         <hr className={styles.sectionDivider} />
 
