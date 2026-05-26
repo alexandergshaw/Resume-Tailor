@@ -16,7 +16,8 @@ export async function GET() {
 
   try {
     const supabase = await createClient();
-    const { error } = await supabase.from("applied_jobs").select("id").limit(1);
+    // Ping auth service instead of a table (no RLS concerns)
+    const { error } = await supabase.auth.getSession();
     if (error) {
       checks.dbError = error.message;
     } else {
