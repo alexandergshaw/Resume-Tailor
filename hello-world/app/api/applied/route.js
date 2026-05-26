@@ -1,6 +1,15 @@
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
+
+function getAdminClient() {
+  return createAdminClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY,
+    { auth: { autoRefreshToken: false, persistSession: false } },
+  );
+}
 
 // GET /api/applied — fetch all applied jobs for the signed-in user
 export async function GET() {
@@ -11,7 +20,8 @@ export async function GET() {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { data, error } = await supabase
+  const admin = getAdminClient();
+  const { data, error } = await admin
     .from("applied_jobs")
     .select("*")
     .eq("user_id", user.id)
@@ -37,7 +47,8 @@ export async function POST(request) {
     return Response.json({ error: "jobId is required" }, { status: 400 });
   }
 
-  const { error } = await supabase.from("applied_jobs").upsert(
+  const admin = getAdminClient();
+  const { error } = await admin.from("applied_jobs").upsert(
     { user_id: user.id, job_id: jobId, job_title: jobTitle, company, job_url: jobUrl, job_description: jobDescription },
     { onConflict: "user_id,job_id" },
   );
@@ -62,7 +73,8 @@ export async function DELETE(request) {
     return Response.json({ error: "jobId is required" }, { status: 400 });
   }
 
-  const { error } = await supabase
+  const admin = getAdminClient();
+  const { error } = await admin
     .from("applied_jobs")
     .delete()
     .eq("user_id", user.id)
