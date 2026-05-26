@@ -57,9 +57,9 @@ function getAggressivenessConfig(aggressiveness) {
     5: {
       label: "Strong",
       rewriteBudget: "Rewrite every eligible line. Treat the source resume as raw material rather than text to preserve.",
-      keywordPolicy: "Saturate the resume with the posting's required and preferred keywords, tools, methodologies, and domain language. Every relevant line should reflect posting terminology. You must not fabricate employers, titles, dates, or credentials, but you should reframe real experience as aggressively as possible toward the posting.",
+      keywordPolicy: "Saturate the resume with the posting's required and preferred keywords, tools, methodologies, buzzwords, and domain language. Every relevant line should reflect posting terminology. You must not fabricate employers, titles, dates, or credentials, but you should reframe real experience as aggressively as possible toward the posting.",
       stylePolicy: "Mirror the posting's voice, verbs, and structure throughout. Original phrasing is fully replaceable.",
-      summary: "Maximum posting alignment short of fabrication.",
+      summary: "Maximum posting alignment.",
     },
   };
 
