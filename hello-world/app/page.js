@@ -271,6 +271,12 @@ export default function Home() {
   const [interviewSearch, setInterviewSearch] = useState("");
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
   const [aggressiveness, setAggressiveness] = useState(3);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatSending, setChatSending] = useState(false);
+  const [chatError, setChatError] = useState("");
+  const chatScrollRef = useRef(null);
   const [appDialog, setAppDialog] = useState({ open: false, rowIndex: null, kind: "jd" });
   const [stageDialog, setStageDialog] = useState(createStageDialogState());
   const [stageSaving, setStageSaving] = useState(false);
@@ -1099,6 +1105,37 @@ export default function Home() {
     e.preventDefault();
     el.scrollBy({ left: e.deltaY > 0 ? 120 : -120, behavior: "smooth" });
   }
+
+  async function sendChatMessage() {
+    const text = chatInput.trim();
+    if (!text || chatSending) return;
+    const userMsg = { role: "user", content: text };
+    const nextMessages = [...chatMessages, userMsg];
+    setChatMessages(nextMessages);
+    setChatInput("");
+    setChatError("");
+    setChatSending(true);
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: nextMessages }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Chat request failed.");
+      setChatMessages((prev) => [...prev, { role: "assistant", content: payload.reply || "" }]);
+    } catch (err) {
+      setChatError(err.message || "Chat request failed.");
+    } finally {
+      setChatSending(false);
+    }
+  }
+
+  useEffect(() => {
+    const el = chatScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [chatMessages, chatSending, chatOpen]);
 
   async function handleTrackJob(job) {
     setTrackedJobs((prev) => {
@@ -2569,11 +2606,7 @@ export default function Home() {
       <Fab
         color="primary"
         variant="extended"
-        onClick={() => {
-          setMainTab("applying");
-          setActiveSection("search");
-          window.scrollTo({ top: 0, behavior: "smooth" });
-        }}
+        onClick={() => setChatOpen((v) => !v)}
         sx={{
           position: "fixed",
           right: { xs: 16, sm: 24 },
@@ -2585,8 +2618,152 @@ export default function Home() {
           boxShadow: "0 16px 32px rgba(25, 118, 210, 0.26)",
         }}
       >
-        AI Help
+        {chatOpen ? "Close" : "AI Help"}
       </Fab>
+
+      {chatOpen ? (
+        <Box
+          sx={{
+            position: "fixed",
+            right: { xs: 16, sm: 24 },
+            bottom: trackedJobs.length > 0
+              ? { xs: 152, sm: 156 }
+              : { xs: 84, sm: 92 },
+            width: { xs: "calc(100vw - 32px)", sm: 380 },
+            maxWidth: 420,
+            height: { xs: "60vh", sm: 520 },
+            maxHeight: "70vh",
+            zIndex: 1100,
+            display: "flex",
+            flexDirection: "column",
+            backgroundColor: "var(--bg-surface)",
+            border: "1px solid var(--border-strong)",
+            borderRadius: 3,
+            boxShadow: "0 24px 48px rgba(15, 23, 42, 0.18)",
+            overflow: "hidden",
+          }}
+        >
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              px: 2,
+              py: 1.25,
+              borderBottom: "1px solid var(--border)",
+              backgroundColor: "var(--bg-soft, #fbfdff)",
+            }}
+          >
+            <Box sx={{ fontWeight: 700, fontSize: "0.95rem", color: "var(--text-primary)" }}>
+              AI Help
+            </Box>
+            {chatMessages.length > 0 ? (
+              <Button
+                size="small"
+                onClick={() => { setChatMessages([]); setChatError(""); }}
+                sx={{ textTransform: "none", fontSize: "0.8rem", color: "var(--text-secondary)" }}
+              >
+                Clear
+              </Button>
+            ) : null}
+          </Box>
+
+          <Box
+            ref={chatScrollRef}
+            sx={{
+              flex: 1,
+              overflowY: "auto",
+              px: 1.5,
+              py: 1.5,
+              display: "flex",
+              flexDirection: "column",
+              gap: 1,
+            }}
+          >
+            {chatMessages.length === 0 ? (
+              <Box sx={{ color: "var(--text-secondary)", fontSize: "0.9rem", lineHeight: 1.5, px: 0.5, pt: 0.5 }}>
+                Ask anything about your resume, this posting, or your job search.
+              </Box>
+            ) : (
+              chatMessages.map((m, i) => (
+                <Box
+                  key={i}
+                  sx={{
+                    alignSelf: m.role === "user" ? "flex-end" : "flex-start",
+                    maxWidth: "85%",
+                    px: 1.25,
+                    py: 0.875,
+                    borderRadius: 2.5,
+                    fontSize: "0.9rem",
+                    lineHeight: 1.5,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                    backgroundColor: m.role === "user" ? "var(--accent)" : "var(--bg-soft, #f3f6fb)",
+                    color: m.role === "user" ? "#f8fbff" : "var(--text-primary)",
+                    border: m.role === "user" ? "none" : "1px solid var(--border)",
+                  }}
+                >
+                  {m.content}
+                </Box>
+              ))
+            )}
+            {chatSending ? (
+              <Box
+                sx={{
+                  alignSelf: "flex-start",
+                  fontSize: "0.85rem",
+                  color: "var(--text-secondary)",
+                  fontStyle: "italic",
+                  px: 0.5,
+                }}
+              >
+                Thinking…
+              </Box>
+            ) : null}
+            {chatError ? (
+              <Box sx={{ alignSelf: "flex-start", color: "var(--danger, #d32f2f)", fontSize: "0.85rem", px: 0.5 }}>
+                {chatError}
+              </Box>
+            ) : null}
+          </Box>
+
+          <Box
+            sx={{
+              borderTop: "1px solid var(--border)",
+              p: 1,
+              display: "flex",
+              gap: 0.75,
+              alignItems: "flex-end",
+              backgroundColor: "var(--bg-surface)",
+            }}
+          >
+            <TextField
+              fullWidth
+              size="small"
+              multiline
+              maxRows={4}
+              placeholder="Message AI Help…"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  sendChatMessage();
+                }
+              }}
+              disabled={chatSending}
+            />
+            <Button
+              variant="contained"
+              onClick={sendChatMessage}
+              disabled={chatSending || !chatInput.trim()}
+              sx={{ textTransform: "none", minWidth: 0, px: 2 }}
+            >
+              Send
+            </Button>
+          </Box>
+        </Box>
+      ) : null}
 
       {trackedJobs.length > 0 ? (
         <div className={styles.floatingToolbar} onWheel={handleToolbarWheel}>
