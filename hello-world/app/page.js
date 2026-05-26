@@ -57,6 +57,7 @@ export default function Home() {
   const [selectedCompanies, setSelectedCompanies] = useState([]);
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [maxYearsExp, setMaxYearsExp] = useState("any");
+  const [currentUser, setCurrentUser] = useState(null);
 
   // Refs for targeted re-fetches when individual controls change
   const hasFetchedRef = useRef(false);
@@ -85,19 +86,21 @@ export default function Home() {
     localStorage.setItem("ignoredJobIds", JSON.stringify([...ignoredJobIds]));
   }, [ignoredJobIds]);
 
-  // Load applied jobs — from Supabase if signed in, localStorage if not
+  // Track auth state + load applied jobs
   useEffect(() => {
     const supabase = createClient();
 
-    async function loadApplied() {
-      const { data: { user } } = await supabase.auth.getUser();
+    async function loadApplied(user) {
       if (user) {
+        setCurrentUser(user);
         const res = await fetch("/api/applied");
         if (res.ok) {
           const { jobs } = await res.json();
           setAppliedJobIds(new Set(jobs.map((j) => j.job_id)));
           return;
         }
+      } else {
+        setCurrentUser(null);
       }
       // Fallback: localStorage
       try {
@@ -106,9 +109,11 @@ export default function Home() {
       } catch {}
     }
 
-    loadApplied();
+    supabase.auth.getSession().then(({ data: { session } }) => loadApplied(session?.user ?? null));
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => loadApplied());
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      loadApplied(session?.user ?? null);
+    });
     return () => subscription.unsubscribe();
   }, []);
 
@@ -549,11 +554,7 @@ export default function Home() {
       return next;
     });
 
-    // Persist to localStorage as fallback
-    const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-
-    if (user) {
+    if (currentUser) {
       if (isApplied) {
         await fetch("/api/applied", {
           method: "DELETE",
