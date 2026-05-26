@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import mammoth from "mammoth";
-import { generateTailoredResumeDraft } from "@/lib/llm/tailorResume";
+import {
+  generateTailoredResumeDraft,
+  generateTailoredCoverLetterDraft,
+} from "@/lib/llm/tailorResume";
 import { fetchUrlContent } from "@/lib/scrape/fetchUrlContent";
 
 export const runtime = "nodejs";
@@ -135,7 +138,11 @@ export async function POST(request) {
     const templateLines = parseTemplateLines(
       formData.get("templateLines")?.toString() || "",
     );
+    const coverLetterTemplateLines = parseTemplateLines(
+      formData.get("coverLetterTemplateLines")?.toString() || "",
+    );
     const resumeFile = formData.get("resume");
+    const coverLetterFile = formData.get("coverLetter");
 
     if (!jobPosting && !jobPostingUrl) {
       return NextResponse.json(
@@ -195,11 +202,42 @@ export async function POST(request) {
       contextDocuments,
     });
 
+    // Optionally generate a tailored cover letter using the uploaded template.
+    let coverLetterResultLines = [];
+    let coverLetterResult = "";
+    let coverLetterError = "";
+    if (
+      coverLetterFile instanceof File
+      && coverLetterTemplateLines.length > 0
+      && (isTextLikeFile(coverLetterFile) || isDocxFile(coverLetterFile))
+    ) {
+      try {
+        const coverDraft = await generateTailoredCoverLetterDraft({
+          jobPosting: effectiveJobPosting,
+          jobPostingUrl: effectiveJobPostingUrl,
+          companyName: scrapedCompany,
+          jobTitle: result.jobTitle || scrapedJobTitle,
+          resumeText,
+          templateLines: coverLetterTemplateLines,
+          additionalContext,
+          contextDocuments,
+        });
+        coverLetterResultLines = coverDraft.resultLines;
+        coverLetterResult = coverDraft.result;
+      } catch (err) {
+        console.error("Error generating tailored cover letter:", err);
+        coverLetterError = "Cover letter generation failed; the tailored resume is still available.";
+      }
+    }
+
     return NextResponse.json({
       ...result,
       jobTitle: result.jobTitle || scrapedJobTitle,
       jobDescription: scrapedDescription,
       company: scrapedCompany,
+      coverLetterResult,
+      coverLetterResultLines,
+      coverLetterError,
     });
   } catch (error) {
     console.error("Error generating tailored resume:", error);

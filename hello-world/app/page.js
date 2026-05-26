@@ -298,6 +298,12 @@ export default function Home() {
   const chatResizeStartRef = useRef(null);
   const chatPanelRef = useRef(null);
   const chatScrollRef = useRef(null);
+
+  // Personal references the user can keep handy and copy when an application
+  // asks for them. Stored locally only.
+  const [references, setReferences] = useState([]);
+  const [referencesOpen, setReferencesOpen] = useState(false);
+  const [referenceCopiedId, setReferenceCopiedId] = useState(null);
   const chatInputRef = useRef(null);
   const [appDialog, setAppDialog] = useState({ open: false, rowIndex: null, kind: "jd" });
   const [stageDialog, setStageDialog] = useState(createStageDialogState());
@@ -579,6 +585,36 @@ export default function Home() {
     localStorage.setItem("chatSize", JSON.stringify(chatSize));
   }, [chatSize]);
 
+  // Hydrate the stored personal references once on mount.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("applicationReferences");
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setReferences(
+          parsed
+            .filter((r) => r && typeof r === "object")
+            .map((r) => ({
+              id: typeof r.id === "string" && r.id ? r.id : `ref-${Math.random().toString(36).slice(2, 10)}`,
+              name: String(r.name || ""),
+              title: String(r.title || ""),
+              company: String(r.company || ""),
+              relationship: String(r.relationship || ""),
+              email: String(r.email || ""),
+              phone: String(r.phone || ""),
+              notes: String(r.notes || ""),
+            })),
+        );
+      }
+    } catch {}
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem("applicationReferences", JSON.stringify(references));
+    } catch {}
+  }, [references]);
+
   // Close the chat when clicking outside its panel (but not on the FAB itself).
   useEffect(() => {
     if (!chatOpen) return;
@@ -650,6 +686,55 @@ export default function Home() {
     window.addEventListener("pointerup", onUp);
     document.body.style.cursor = "nwse-resize";
     document.body.style.userSelect = "none";
+  }
+
+  // Personal references helpers.
+  function addReference() {
+    setReferences((prev) => [
+      ...prev,
+      {
+        id: `ref-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        name: "",
+        title: "",
+        company: "",
+        relationship: "",
+        email: "",
+        phone: "",
+        notes: "",
+      },
+    ]);
+    setReferencesOpen(true);
+  }
+  function updateReference(id, field, value) {
+    setReferences((prev) =>
+      prev.map((ref) => (ref.id === id ? { ...ref, [field]: value } : ref)),
+    );
+  }
+  function removeReference(id) {
+    setReferences((prev) => prev.filter((ref) => ref.id !== id));
+  }
+  function formatReferenceBlock(ref) {
+    if (!ref) return "";
+    const headerBits = [ref.name, ref.title].filter(Boolean).join(", ");
+    const orgLine = [ref.company, ref.relationship].filter(Boolean).join(" — ");
+    const lines = [];
+    if (headerBits) lines.push(headerBits);
+    if (orgLine) lines.push(orgLine);
+    if (ref.email) lines.push(`Email: ${ref.email}`);
+    if (ref.phone) lines.push(`Phone: ${ref.phone}`);
+    if (ref.notes) lines.push(ref.notes);
+    return lines.join("\n");
+  }
+  async function copyReferenceBlock(ref) {
+    const text = formatReferenceBlock(ref);
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setReferenceCopiedId(ref.id);
+      setTimeout(() => {
+        setReferenceCopiedId((current) => (current === ref.id ? null : current));
+      }, 1500);
+    } catch {}
   }
 
   // When categories change, drive the company multiselect.
@@ -2519,6 +2604,196 @@ export default function Home() {
                     onChange={(event) => setContextFiles(Array.from(event.target.files || []))}
                   />
                 </div>
+            </AccordionDetails>
+          </Accordion>
+        </div>
+
+        <div className={styles.fieldGroup}>
+          <label htmlFor="references-header" className={styles.label}>
+            References
+          </label>
+          <Accordion
+            disableGutters
+            elevation={0}
+            expanded={referencesOpen}
+            onChange={(_event, expanded) => setReferencesOpen(expanded)}
+            sx={{
+              border: "1px solid var(--border-strong)",
+              borderRadius: "12px !important",
+              overflow: "hidden",
+              backgroundColor: "var(--bg-surface)",
+              "&::before": { display: "none" },
+            }}
+          >
+            <AccordionSummary
+              aria-controls="references-content"
+              id="references-header"
+              expandIcon={(
+                <Box
+                  component="span"
+                  sx={{
+                    fontSize: "0.95rem",
+                    lineHeight: 1,
+                    color: "var(--text-secondary)",
+                  }}
+                >
+                  ▾
+                </Box>
+              )}
+              sx={{
+                minHeight: 0,
+                px: 1.75,
+                py: 0.25,
+                "& .MuiAccordionSummary-content": {
+                  my: 1,
+                  font: "inherit",
+                  fontSize: "0.9rem",
+                  color: "var(--text-secondary)",
+                  fontWeight: 400,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 1,
+                },
+              }}
+            >
+              <Box component="span">
+                {referencesOpen
+                  ? `Hide references${references.length ? ` (${references.length})` : ""}`
+                  : `Show references${references.length ? ` (${references.length})` : ""}`}
+              </Box>
+            </AccordionSummary>
+            <AccordionDetails
+              sx={{
+                pt: 1.5,
+                pb: 2,
+                px: 1.75,
+                display: "flex",
+                flexDirection: "column",
+                gap: 1.5,
+                borderTop: "1px solid var(--border)",
+              }}
+            >
+              {references.length === 0 ? (
+                <Box sx={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
+                  No references saved yet. Add one to keep their contact details ready to copy.
+                </Box>
+              ) : null}
+
+              {references.map((ref) => {
+                const headerLabel = ref.name?.trim()
+                  || ref.title?.trim()
+                  || ref.company?.trim()
+                  || "Untitled reference";
+                const copied = referenceCopiedId === ref.id;
+                return (
+                  <Box
+                    key={ref.id}
+                    sx={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 2,
+                      p: 1.5,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 1,
+                      backgroundColor: "var(--bg-soft, #fbfdff)",
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 1,
+                      }}
+                    >
+                      <Box sx={{ fontWeight: 600, fontSize: "0.9rem" }}>{headerLabel}</Box>
+                      <Box sx={{ display: "flex", gap: 0.75 }}>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={() => copyReferenceBlock(ref)}
+                          disabled={!formatReferenceBlock(ref)}
+                          sx={{ textTransform: "none", fontSize: "0.75rem", py: 0.25, minWidth: 0 }}
+                        >
+                          {copied ? "Copied!" : "Copy"}
+                        </Button>
+                        <Button
+                          size="small"
+                          color="error"
+                          onClick={() => removeReference(ref.id)}
+                          sx={{ textTransform: "none", fontSize: "0.75rem", py: 0.25, minWidth: 0 }}
+                        >
+                          Remove
+                        </Button>
+                      </Box>
+                    </Box>
+                    <Box
+                      sx={{
+                        display: "grid",
+                        gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
+                        gap: 1,
+                      }}
+                    >
+                      <TextField
+                        size="small"
+                        label="Name"
+                        value={ref.name}
+                        onChange={(e) => updateReference(ref.id, "name", e.target.value)}
+                      />
+                      <TextField
+                        size="small"
+                        label="Title"
+                        value={ref.title}
+                        onChange={(e) => updateReference(ref.id, "title", e.target.value)}
+                      />
+                      <TextField
+                        size="small"
+                        label="Company"
+                        value={ref.company}
+                        onChange={(e) => updateReference(ref.id, "company", e.target.value)}
+                      />
+                      <TextField
+                        size="small"
+                        label="Relationship"
+                        value={ref.relationship}
+                        onChange={(e) => updateReference(ref.id, "relationship", e.target.value)}
+                      />
+                      <TextField
+                        size="small"
+                        label="Email"
+                        value={ref.email}
+                        onChange={(e) => updateReference(ref.id, "email", e.target.value)}
+                      />
+                      <TextField
+                        size="small"
+                        label="Phone"
+                        value={ref.phone}
+                        onChange={(e) => updateReference(ref.id, "phone", e.target.value)}
+                      />
+                    </Box>
+                    <TextField
+                      size="small"
+                      label="Notes"
+                      value={ref.notes}
+                      onChange={(e) => updateReference(ref.id, "notes", e.target.value)}
+                      multiline
+                      minRows={2}
+                    />
+                  </Box>
+                );
+              })}
+
+              <Box>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={addReference}
+                  sx={{ textTransform: "none", fontSize: "0.8rem" }}
+                >
+                  + Add reference
+                </Button>
+              </Box>
             </AccordionDetails>
           </Accordion>
         </div>

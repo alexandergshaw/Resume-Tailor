@@ -242,3 +242,134 @@ export async function generateTailoredResumeDraft({
     jobTitle: parsedResult.jobTitle,
   };
 }
+
+function buildCoverLetterTemplateLinesBlock(templateLines) {
+  return templateLines
+    .map((line, index) => {
+      const text = line || "";
+      return `${index + 1}. [chars=${text.length}] ${text}`;
+    })
+    .join("\n");
+}
+
+function buildCoverLetterPrompt({
+  jobPosting,
+  jobPostingUrl,
+  companyName,
+  jobTitle,
+  resumeText,
+  templateLines,
+  additionalContext,
+  contextDocuments,
+}) {
+  const jobPostingBlock = jobPostingUrl
+    ? `Job posting URL: ${jobPostingUrl}\nFetch the full job description from this URL and use it to tailor the cover letter.`
+    : `Job posting:\n${jobPosting || "Not provided."}`;
+  const charBudget = templateLines.map((line) => (line || "").length);
+  const totalChars = charBudget.reduce((sum, n) => sum + n, 0);
+
+  return [
+    "You are an expert cover letter writer.",
+    "Rewrite the provided cover letter template so it is tailored to the target job, while strictly preserving the template's line structure, length, and rhythm.",
+    "",
+    "Hard constraints — these are non-negotiable:",
+    `1) Output exactly ${templateLines.length} lines, in the same slot order as the template.`,
+    "2) Treat blank template lines as blank in the output (used as paragraph breaks). Do not collapse or remove blank lines.",
+    "3) Each output line's character count must stay within ±10% of the corresponding template line's character count. Never exceed +15%.",
+    `4) Total character count must stay within ±5% of the template total (${totalChars} characters).`,
+    "5) Preserve the template's salutation, paragraph structure, sign-off, and overall sentence rhythm.",
+    "6) Do not introduce markdown, bullet points, headings, or extra blank lines that are not in the template.",
+    "7) Do not fabricate employers, titles, degrees, certifications, dates, or achievements that are not supported by the resume or provided context.",
+    "8) Replace generic placeholders (company name, role title, hiring manager) with the actual target where known; otherwise keep the template's wording.",
+    `9) Output JSON only in this exact shape: {\"resultLines\": [${templateLines
+      .map(() => "\"\"")
+      .join(", ")}]} — no other keys, no commentary, no markdown.`,
+    "",
+    `Target role: ${jobTitle || "Not provided."}`,
+    `Target company: ${companyName || "Not provided."}`,
+    "",
+    jobPostingBlock,
+    "",
+    `Additional context:\n${additionalContext || "None provided."}`,
+    "",
+    "Source resume (for factual grounding only — do not copy phrasing wholesale):",
+    resumeText || "Not provided.",
+    "",
+    "Supporting documents:",
+    buildContextDocumentsBlock(contextDocuments),
+    "",
+    "Cover letter template — preserve line count and character budgets:",
+    buildCoverLetterTemplateLinesBlock(templateLines),
+  ].join("\n");
+}
+
+function enforceCoverLetterLengths(resultLines, templateLines) {
+  return resultLines.map((rawLine, idx) => {
+    const template = templateLines[idx] || "";
+    const targetLen = template.length;
+    const line = String(rawLine || "");
+
+    // Preserve blank slots so paragraph breaks survive.
+    if (targetLen === 0) return "";
+
+    // Cap to +15% to enforce the hard upper bound from the prompt.
+    const maxLen = Math.max(targetLen + 5, Math.ceil(targetLen * 1.15));
+    if (line.length <= maxLen) return line;
+
+    // Truncate at the last word boundary before the cap to avoid mid-word cuts.
+    const truncated = line.slice(0, maxLen);
+    const lastSpace = truncated.lastIndexOf(" ");
+    return lastSpace > maxLen * 0.6 ? truncated.slice(0, lastSpace) : truncated;
+  });
+}
+
+export async function generateTailoredCoverLetterDraft({
+  jobPosting,
+  jobPostingUrl,
+  companyName,
+  jobTitle,
+  resumeText,
+  templateLines,
+  additionalContext,
+  contextDocuments,
+}) {
+  const normalizedTemplateLines = Array.isArray(templateLines)
+    ? templateLines.map((line) => (typeof line === "string" ? line : ""))
+    : [];
+
+  if (normalizedTemplateLines.length === 0) {
+    throw new Error("Cover letter template lines are required.");
+  }
+
+  const { geminiModel } = getServerEnv();
+  const client = getGeminiClient();
+  const prompt = buildCoverLetterPrompt({
+    jobPosting,
+    jobPostingUrl,
+    companyName,
+    jobTitle,
+    resumeText,
+    templateLines: normalizedTemplateLines,
+    additionalContext,
+    contextDocuments,
+  });
+
+  const response = await client.models.generateContent({
+    model: geminiModel,
+    contents: prompt,
+    ...(jobPostingUrl ? { tools: [{ urlContext: {} }] } : {}),
+  });
+
+  const output = response.text?.trim() || "";
+  if (!output) {
+    throw new Error("Gemini returned an empty cover letter response.");
+  }
+
+  const parsed = parseStructuredResult(output, normalizedTemplateLines.length);
+  const enforced = enforceCoverLetterLengths(parsed.resultLines, normalizedTemplateLines);
+
+  return {
+    result: enforced.join("\n").trim(),
+    resultLines: enforced,
+  };
+}
