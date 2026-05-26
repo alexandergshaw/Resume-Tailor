@@ -37,8 +37,9 @@ For local development, create a `.env.local` file in the project root or run `np
 | `GEMINI_MODEL` | No | Defaults to `gemini-2.5-flash` |
 | `KV_REST_API_URL` | Yes | Vercel Dashboard → Storage → your Redis database |
 | `KV_REST_API_TOKEN` | Yes | Vercel Dashboard → Storage → your Redis database |
-| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase Dashboard → Project Settings → API |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase Dashboard → Project Settings → API |
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase → Project Settings → API → **Project URL** (e.g. `https://xxxx.supabase.co` — no trailing path) |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase → Project Settings → API → **Publishable** key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Yes | Supabase → Project Settings → API → **Secret** key (never expose client-side) |
 
 The `KV_REST_API_URL` and `KV_REST_API_TOKEN` variables are injected automatically when you create a Redis database via **Vercel Storage** and connect it to this project.
 
@@ -61,14 +62,22 @@ create table applied_jobs (
 );
 alter table applied_jobs enable row level security;
 create policy "Users manage own rows" on applied_jobs
-  for all using (auth.uid() = user_id);
+  for all
+  using (auth.uid() = user_id)
+  with check (auth.uid() = user_id);
 ```
 
 3. Enable **Google OAuth** in Supabase → Authentication → Providers → Google.
-4. Add your redirect URL in Supabase → Authentication → URL Configuration:
-   - Local: `http://localhost:3000/auth/callback`
-   - Production: `https://your-domain.com/auth/callback`
-5. Copy the **Project URL** and **anon public key** from Supabase → Project Settings → API into your environment variables.
+   - You'll need a Google OAuth **Client ID** and **Client Secret** from [Google Cloud Console](https://console.cloud.google.com) → APIs & Services → Credentials → Create OAuth client → Web application.
+   - Add `https://<your-project-ref>.supabase.co/auth/v1/callback` as an **Authorized redirect URI** in Google Cloud Console.
+   - Paste the Client ID and Secret into Supabase → Authentication → Providers → Google.
+4. Set redirect URLs in Supabase → Authentication → **URL Configuration**:
+   - **Site URL**: your current environment's base URL (e.g. `https://your-preview.vercel.app`)
+   - **Redirect URLs**: add `<site-url>/auth/callback` for each environment
+   - ⚠️ If the redirect URL isn't in the allowlist, Supabase falls back to the Site URL — update both when switching environments.
+5. Copy the **Project URL**, **Publishable key**, and **Secret key** from Supabase → Project Settings → API into your Vercel environment variables.
+
+> **Note on environments:** Supabase doesn't have built-in env tiers. For production, create a separate Supabase project and scope each set of env vars to the appropriate Vercel environment (Preview vs Production).
 
 ## Getting Started
 
