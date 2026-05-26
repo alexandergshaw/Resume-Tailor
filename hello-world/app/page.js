@@ -279,6 +279,7 @@ export default function Home() {
   const [chatPinnedContext, setChatPinnedContext] = useState(null);
   const [chatAttachedFiles, setChatAttachedFiles] = useState([]);
   const [chatAttachError, setChatAttachError] = useState("");
+  const [chatCopiedIndex, setChatCopiedIndex] = useState(null);
   const [chatDragActive, setChatDragActive] = useState(false);
   const chatScrollRef = useRef(null);
   const chatInputRef = useRef(null);
@@ -1861,6 +1862,8 @@ export default function Home() {
       const nextResult = payload.result?.trim() || "No output returned from Gemini.";
       const nextResultLines = Array.isArray(payload.resultLines) ? payload.resultLines : [];
       const nextJobTitle = typeof payload.jobTitle === "string" ? payload.jobTitle.trim() : "";
+      const nextJobDescription = typeof payload.jobDescription === "string" ? payload.jobDescription.trim() : "";
+      const nextCompany = typeof payload.company === "string" ? payload.company.trim() : "";
       const nextCoverLetterResultLines = Array.isArray(payload.coverLetterResultLines)
         ? payload.coverLetterResultLines
         : [];
@@ -1875,12 +1878,16 @@ export default function Home() {
       const syntheticJob = {
         id: syntheticJobId,
         title: nextJobTitle || "Untitled role",
-        company: "",
+        company: nextCompany,
         url: trimmedUrl,
-        description: "",
+        description: nextJobDescription,
       };
       setTrackedJobs((prev) =>
-        prev.map((j) => (j.id === syntheticJobId ? { ...j, title: syntheticJob.title } : j)),
+        prev.map((j) =>
+          j.id === syntheticJobId
+            ? { ...j, title: syntheticJob.title, company: syntheticJob.company || j.company }
+            : j,
+        ),
       );
       updateTailoringJob(syntheticJobId, { status: "done" });
 
@@ -1906,6 +1913,7 @@ export default function Home() {
               .eq("position_id", positionId);
           }
         }
+        setApplicationsRefreshKey((k) => k + 1);
       }
 
       const dlError = await downloadDocxFiles({
@@ -3719,19 +3727,67 @@ export default function Home() {
                   sx={{
                     alignSelf: m.role === "user" ? "flex-end" : "flex-start",
                     maxWidth: "85%",
-                    px: 1.25,
-                    py: 0.875,
-                    borderRadius: 2.5,
-                    fontSize: "0.9rem",
-                    lineHeight: 1.5,
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                    backgroundColor: m.role === "user" ? "var(--accent)" : "var(--bg-soft, #f3f6fb)",
-                    color: m.role === "user" ? "#f8fbff" : "var(--text-primary)",
-                    border: m.role === "user" ? "none" : "1px solid var(--border)",
+                    position: "relative",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 0.25,
                   }}
                 >
-                  {m.content}
+                  <Box
+                    sx={{
+                      px: 1.25,
+                      py: 0.875,
+                      borderRadius: 2.5,
+                      fontSize: "0.9rem",
+                      lineHeight: 1.5,
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                      backgroundColor: m.role === "user" ? "var(--accent)" : "var(--bg-soft, #f3f6fb)",
+                      color: m.role === "user" ? "#f8fbff" : "var(--text-primary)",
+                      border: m.role === "user" ? "none" : "1px solid var(--border)",
+                    }}
+                  >
+                    {m.content}
+                  </Box>
+                  {m.role === "assistant" ? (
+                    <Box sx={{ display: "flex", justifyContent: "flex-start", pl: 0.5 }}>
+                      <Button
+                        size="small"
+                        onClick={async () => {
+                          try {
+                            if (navigator.clipboard?.writeText) {
+                              await navigator.clipboard.writeText(m.content || "");
+                            } else {
+                              const ta = document.createElement("textarea");
+                              ta.value = m.content || "";
+                              document.body.appendChild(ta);
+                              ta.select();
+                              document.execCommand("copy");
+                              document.body.removeChild(ta);
+                            }
+                            setChatCopiedIndex(i);
+                            setTimeout(() => {
+                              setChatCopiedIndex((prev) => (prev === i ? null : prev));
+                            }, 1500);
+                          } catch {
+                            /* noop */
+                          }
+                        }}
+                        sx={{
+                          minWidth: 0,
+                          p: 0.25,
+                          fontSize: 11,
+                          textTransform: "none",
+                          color: "var(--text-secondary)",
+                          lineHeight: 1,
+                        }}
+                        title="Copy message"
+                        aria-label="Copy message"
+                      >
+                        {chatCopiedIndex === i ? "✓ Copied" : "⧉ Copy"}
+                      </Button>
+                    </Box>
+                  ) : null}
                 </Box>
               ))
             )}
