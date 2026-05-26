@@ -16,6 +16,7 @@ import { GREENHOUSE_COMPANIES, COMPANY_CATEGORIES } from "../lib/greenhouse/comp
 import { createClient } from "../lib/supabase/client";
 import { upsertPosition } from "../lib/supabase/upsertPosition";
 import { upsertApplication, getPositionId } from "../lib/supabase/upsertApplication";
+import { saveGeneratedResume } from "../lib/supabase/saveGeneratedResume";
 
 const WORDPROCESSINGML_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -718,6 +719,27 @@ export default function Home() {
         error: "",
       });
 
+      // Persist the generated resume and link it to the application
+      if (currentUser) {
+        const supabase = createClient();
+        const positionId = await getPositionId(supabase, job.id);
+        const generatedResumeId = await saveGeneratedResume(supabase, {
+          userId: currentUser.id,
+          positionId,
+          content: result,
+          contentLines: resultLines,
+          sourceResumePath: `${currentUser.id}/resume`,
+          additionalContext: additionalContext || null,
+        });
+        if (generatedResumeId && positionId) {
+          await supabase
+            .from("applications")
+            .update({ resume_used_id: generatedResumeId })
+            .eq("user_id", currentUser.id)
+            .eq("position_id", positionId);
+        }
+      }
+
       const dlError = await downloadDocxFiles({
         jobTitle: generatedJobTitle || job.title,
         result,
@@ -787,6 +809,19 @@ export default function Home() {
       setUrlCoverLetterResultLines(nextCoverLetterResultLines);
       setUrlGeneratedJobTitle(nextJobTitle);
       setUrlHasCompleted(true);
+
+      // Persist the generated resume (no position linked for URL flow)
+      if (currentUser) {
+        const supabase = createClient();
+        await saveGeneratedResume(supabase, {
+          userId: currentUser.id,
+          positionId: null,
+          content: nextResult,
+          contentLines: nextResultLines,
+          sourceResumePath: `${currentUser.id}/resume`,
+          additionalContext: additionalContext || null,
+        });
+      }
 
       const dlError = await downloadDocxFiles({
         jobTitle: nextJobTitle,
@@ -866,6 +901,19 @@ export default function Home() {
       setManualCoverLetterResultLines(nextCoverLetterResultLines);
       setManualGeneratedJobTitle(nextJobTitle);
       setManualHasCompleted(true);
+
+      // Persist the generated resume (no position linked for manual flow)
+      if (currentUser) {
+        const supabase = createClient();
+        await saveGeneratedResume(supabase, {
+          userId: currentUser.id,
+          positionId: null,
+          content: nextResult,
+          contentLines: nextResultLines,
+          sourceResumePath: `${currentUser.id}/resume`,
+          additionalContext: additionalContext || null,
+        });
+      }
 
       const dlError = await downloadDocxFiles({
         jobTitle: nextJobTitle,
