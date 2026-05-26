@@ -890,6 +890,18 @@ export default function Home() {
               }
             }}
           />
+          {resumeFile && (
+            <>
+              <div style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 4 }}>
+                Last uploaded: {resumeFile.name}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
+                Unless you upload a different resume file, this will be used for all tailoring and downloads.
+              </div>
+            </>
+          )}
+                  
+        
         </div>
 
         <div className={styles.fieldGroup}>
