@@ -299,6 +299,19 @@ export default function Home() {
   });
   const [communicationSaving, setCommunicationSaving] = useState(false);
   const [communicationError, setCommunicationError] = useState("");
+  const [editAppDialog, setEditAppDialog] = useState({
+    open: false,
+    applicationId: null,
+    positionId: null,
+    company: "",
+    role: "",
+    status: "applied",
+    appliedAt: "",
+    applicationUrl: "",
+    description: "",
+  });
+  const [editAppSaving, setEditAppSaving] = useState(false);
+  const [editAppError, setEditAppError] = useState("");
 
   // Refs for targeted re-fetches when individual controls change
   const hasFetchedRef = useRef(false);
@@ -614,6 +627,110 @@ export default function Home() {
     }
   }
 
+  function openEditApplicationDialog(app) {
+    const pos = app.positions || {};
+    setEditAppError("");
+    setEditAppDialog({
+      open: true,
+      applicationId: app.id,
+      positionId: pos.id || null,
+      company: pos.company || "",
+      role: pos.title || "",
+      status: app.status || "applied",
+      appliedAt: app.applied_at ? new Date(app.applied_at).toISOString().slice(0, 10) : "",
+      applicationUrl: app.application_url || pos.url || "",
+      description: pos.description || "",
+    });
+  }
+
+  async function handleSaveEditApplication() {
+    if (!editAppDialog.applicationId) return;
+    setEditAppSaving(true);
+    setEditAppError("");
+
+    const supabase = createClient();
+
+    const appUpdates = {
+      status: editAppDialog.status,
+      application_url: editAppDialog.applicationUrl.trim() || null,
+      applied_at: editAppDialog.appliedAt ? new Date(editAppDialog.appliedAt).toISOString() : null,
+    };
+
+    const { error: appErr } = await supabase
+      .from("applications")
+      .update(appUpdates)
+      .eq("id", editAppDialog.applicationId);
+
+    if (appErr) {
+      setEditAppError(appErr.message || "Failed to save changes.");
+      setEditAppSaving(false);
+      return;
+    }
+
+    if (editAppDialog.positionId) {
+      const posUpdates = {
+        title: editAppDialog.role.trim() || null,
+        company: editAppDialog.company.trim() || null,
+        description: editAppDialog.description || null,
+      };
+      const { error: posErr } = await supabase
+        .from("positions")
+        .update(posUpdates)
+        .eq("id", editAppDialog.positionId);
+
+      if (posErr) {
+        setEditAppError(posErr.message || "Failed to save position changes.");
+        setEditAppSaving(false);
+        return;
+      }
+    }
+
+    setApplicationData((prev) =>
+      prev.map((a) =>
+        a.id === editAppDialog.applicationId
+          ? {
+              ...a,
+              status: appUpdates.status,
+              application_url: appUpdates.application_url,
+              applied_at: appUpdates.applied_at,
+              positions: a.positions
+                ? {
+                    ...a.positions,
+                    title: editAppDialog.role.trim() || a.positions.title,
+                    company: editAppDialog.company.trim() || a.positions.company,
+                    description: editAppDialog.description,
+                  }
+                : a.positions,
+            }
+          : a,
+      ),
+    );
+
+    setEditAppSaving(false);
+    setEditAppDialog((prev) => ({ ...prev, open: false }));
+  }
+
+  async function handleDeleteApplication(app) {
+    if (!app?.id) return;
+    const label = `${app.positions?.company || "this application"}${app.positions?.title ? ` — ${app.positions.title}` : ""}`;
+    if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return;
+
+    const supabase = createClient();
+    const { error } = await supabase.from("applications").delete().eq("id", app.id);
+    if (error) {
+      window.alert(error.message || "Failed to delete application.");
+      return;
+    }
+
+    setApplicationData((prev) => prev.filter((a) => a.id !== app.id));
+    setApplicationStages((prev) => {
+      if (!(app.id in prev)) return prev;
+      const next = { ...prev };
+      delete next[app.id];
+      return next;
+    });
+  }
+
   useEffect(() => {
     if (mainTab !== "interviewing" || !currentUser) return;
     let cancelled = false;
@@ -627,7 +744,7 @@ export default function Home() {
         .from("applications")
         .select(`
           id, status, applied_at, tracked_at, application_url, resume_used_id,
-          positions ( external_id, title, company, description, url )
+          positions ( id, external_id, title, company, description, url )
         `)
         .eq("user_id", currentUser.id)
         .neq("status", "tracking")
@@ -2170,6 +2287,7 @@ export default function Home() {
                         <TableCell sx={{ fontWeight: 700 }}>Job Description</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Your Resume</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Links</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Actions</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
@@ -2304,6 +2422,25 @@ export default function Home() {
                                   Posting ↗
                                 </Button>
                               )}
+                            </TableCell>
+                            <TableCell sx={{ whiteSpace: "nowrap" }}>
+                              <Box sx={{ display: "flex", gap: 0.5 }}>
+                                <Button
+                                  size="small"
+                                  sx={{ minWidth: 0, p: 0.25, fontSize: 11 }}
+                                  onClick={() => openEditApplicationDialog(app)}
+                                >
+                                  Edit
+                                </Button>
+                                <Button
+                                  size="small"
+                                  color="error"
+                                  sx={{ minWidth: 0, p: 0.25, fontSize: 11 }}
+                                  onClick={() => handleDeleteApplication(app)}
+                                >
+                                  Delete
+                                </Button>
+                              </Box>
                             </TableCell>
                           </TableRow>
                         );
@@ -2531,6 +2668,95 @@ export default function Home() {
                   onClick={handleSaveCommunication}
                 >
                   {communicationSaving ? "Saving..." : "Save Communication"}
+                </Button>
+              </DialogActions>
+            </Dialog>
+
+            <Dialog
+              open={editAppDialog.open}
+              onClose={() => {
+                if (editAppSaving) return;
+                setEditAppDialog((prev) => ({ ...prev, open: false }));
+              }}
+              maxWidth="sm"
+              fullWidth
+            >
+              <DialogTitle>Edit Application</DialogTitle>
+              <DialogContent dividers sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 2 }}>
+                <TextField
+                  label="Company"
+                  value={editAppDialog.company}
+                  onChange={(e) => setEditAppDialog((prev) => ({ ...prev, company: e.target.value }))}
+                  fullWidth
+                  size="small"
+                />
+                <TextField
+                  label="Role"
+                  value={editAppDialog.role}
+                  onChange={(e) => setEditAppDialog((prev) => ({ ...prev, role: e.target.value }))}
+                  fullWidth
+                  size="small"
+                />
+                <FormControl fullWidth size="small">
+                  <InputLabel id="edit-app-status-label">Status</InputLabel>
+                  <Select
+                    labelId="edit-app-status-label"
+                    label="Status"
+                    value={editAppDialog.status}
+                    onChange={(e) => setEditAppDialog((prev) => ({ ...prev, status: e.target.value }))}
+                  >
+                    <MenuItem value="applied">Applied</MenuItem>
+                    <MenuItem value="phone_screen">Phone Screen</MenuItem>
+                    <MenuItem value="interviewing">Interviewing</MenuItem>
+                    <MenuItem value="offer">Offer</MenuItem>
+                    <MenuItem value="accepted">Accepted</MenuItem>
+                    <MenuItem value="rejected">Rejected</MenuItem>
+                    <MenuItem value="withdrawn">Withdrawn</MenuItem>
+                  </Select>
+                </FormControl>
+                <TextField
+                  type="date"
+                  label="Applied"
+                  value={editAppDialog.appliedAt}
+                  onChange={(e) => setEditAppDialog((prev) => ({ ...prev, appliedAt: e.target.value }))}
+                  fullWidth
+                  size="small"
+                  slotProps={{ inputLabel: { shrink: true } }}
+                />
+                <TextField
+                  label="Application URL"
+                  value={editAppDialog.applicationUrl}
+                  onChange={(e) => setEditAppDialog((prev) => ({ ...prev, applicationUrl: e.target.value }))}
+                  fullWidth
+                  size="small"
+                  placeholder="https://..."
+                />
+                <TextField
+                  label="Job Description"
+                  value={editAppDialog.description}
+                  onChange={(e) => setEditAppDialog((prev) => ({ ...prev, description: e.target.value }))}
+                  fullWidth
+                  multiline
+                  minRows={6}
+                  size="small"
+                />
+                {editAppError ? (
+                  <p style={{ color: "var(--error, #d32f2f)", margin: 0 }}>{editAppError}</p>
+                ) : null}
+              </DialogContent>
+              <DialogActions>
+                <Button
+                  onClick={() => setEditAppDialog((prev) => ({ ...prev, open: false }))}
+                  disabled={editAppSaving}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="contained"
+                  onClick={handleSaveEditApplication}
+                  disabled={editAppSaving}
+                >
+                  {editAppSaving ? "Saving..." : "Save Changes"}
                 </Button>
               </DialogActions>
             </Dialog>
