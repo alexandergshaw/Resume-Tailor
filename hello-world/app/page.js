@@ -1514,166 +1514,154 @@ export default function Home() {
             </>
           )}
         </div>
-        <Accordion
-          disableGutters
-          elevation={0}
-          expanded={contextPanelOpen}
-          onChange={(_event, expanded) => setContextPanelOpen(expanded)}
-          sx={{
-            mb: 3,
-            border: "1px solid rgba(15, 23, 42, 0.08)",
-            borderRadius: "14px !important",
-            overflow: "hidden",
-            backgroundColor: "rgba(255, 255, 255, 0.94)",
-            boxShadow: "0 8px 24px rgba(15, 23, 42, 0.05)",
-            "&::before": { display: "none" },
-          }}
-        >
-          <AccordionSummary
-            aria-controls="add-context-content"
-            id="add-context-header"
-            expandIcon={(
-              <Box
-                component="span"
-                sx={{
-                  fontSize: 18,
-                  lineHeight: 1,
-                  color: "text.secondary",
-                }}
-              >
-                ▾
-              </Box>
-            )}
+        <div className={styles.fieldGroup}>
+          <label htmlFor="add-context-header" className={styles.label}>
+            Add Context
+          </label>
+          <Accordion
+            disableGutters
+            elevation={0}
+            expanded={contextPanelOpen}
+            onChange={(_event, expanded) => setContextPanelOpen(expanded)}
             sx={{
-              minHeight: 0,
-              px: 2,
-              py: 0.5,
-              "& .MuiAccordionSummary-content": {
-                my: 1,
-                fontWeight: 700,
-              },
+              border: "1px solid var(--border-strong)",
+              borderRadius: "12px !important",
+              overflow: "hidden",
+              backgroundColor: "var(--bg-surface)",
+              "&::before": { display: "none" },
             }}
           >
-            <Box component="span">Add Context</Box>
-          </AccordionSummary>
-          <AccordionDetails sx={{ pt: 0, pb: 2.25, px: 2, display: "grid", gap: 2.25 }}>
-              <div className={styles.fieldGroup}>
-                <label htmlFor="aggressiveness" className={styles.label}>
-                  Aggressiveness
-                </label>
+            <AccordionSummary
+              aria-controls="add-context-content"
+              id="add-context-header"
+              expandIcon={(
                 <Box
+                  component="span"
                   sx={{
-                    mt: 0.75,
-                    px: 1.5,
-                    py: 1.5,
-                    border: "1px solid rgba(15, 23, 42, 0.08)",
-                    borderRadius: 2.5,
-                    backgroundColor: "rgba(248, 250, 252, 0.85)",
+                    fontSize: 16,
+                    lineHeight: 1,
+                    color: "var(--text-secondary)",
                   }}
                 >
-                  <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 1.25 }}>
-                    <Box sx={{ fontSize: 13, fontWeight: 700, color: "text.primary" }}>
-                      {AGGRESSIVENESS_LABELS[aggressiveness]}
-                    </Box>
-                    <Box sx={{ fontSize: 12, color: "text.secondary" }}>
-                      {aggressiveness} / 5
-                    </Box>
-                  </Box>
-                  <Slider
-                    id="aggressiveness"
-                    min={1}
-                    max={5}
-                    step={1}
-                    marks={AGGRESSIVENESS_MARKS}
-                    value={aggressiveness}
-                    valueLabelDisplay="off"
-                    onChange={(_event, value) => setAggressiveness(Array.isArray(value) ? value[0] : value)}
-                    sx={{
-                      color: "#1f6feb",
-                      px: 0.5,
-                      "& .MuiSlider-rail": {
-                        opacity: 1,
-                        backgroundColor: "rgba(15, 23, 42, 0.12)",
-                        height: 6,
-                      },
-                      "& .MuiSlider-track": {
-                        border: "none",
-                        height: 6,
-                      },
-                      "& .MuiSlider-thumb": {
-                        width: 18,
-                        height: 18,
-                        backgroundColor: "#fff",
-                        border: "3px solid currentColor",
-                        boxShadow: "0 3px 10px rgba(31, 111, 235, 0.18)",
-                        "&:hover, &.Mui-focusVisible": {
-                          boxShadow: "0 0 0 8px rgba(31, 111, 235, 0.12)",
-                        },
-                        "&.Mui-active": {
-                          boxShadow: "0 0 0 10px rgba(31, 111, 235, 0.16)",
-                        },
-                      },
-                      "& .MuiSlider-mark": {
-                        width: 8,
-                        height: 8,
-                        borderRadius: "999px",
-                        backgroundColor: "#fff",
-                        border: "2px solid currentColor",
-                        opacity: 1,
-                      },
-                      "& .MuiSlider-markActive": {
-                        backgroundColor: "currentColor",
-                      },
-                      "& .MuiSlider-markLabel": {
-                        fontSize: 11,
-                        color: "text.secondary",
-                        top: 32,
-                      },
-                    }}
-                  />
+                  ▾
                 </Box>
-                <p className={styles.helperText}>
-                  This control dictates how strongly the AI will attempt to tailor the resume to the posting. Current setting: {AGGRESSIVENESS_LABELS[aggressiveness]}.
-                </p>
-              </div>
+              )}
+              sx={{
+                minHeight: 0,
+                px: 1.75,
+                py: 0.25,
+                "& .MuiAccordionSummary-content": {
+                  my: 1,
+                  fontSize: "0.9rem",
+                  color: "var(--text-secondary)",
+                  fontWeight: 500,
+                },
+              }}
+            >
+              <Box component="span">
+                {contextPanelOpen ? "Hide options" : "Show options"}
+              </Box>
+            </AccordionSummary>
+            <AccordionDetails sx={{ pt: 1, pb: 2, px: 1.75, display: "grid", gap: 2.5, borderTop: "1px solid var(--border)" }}>
+                <div className={styles.fieldGroup}>
+                  <label htmlFor="aggressiveness" className={styles.label}>
+                    Aggressiveness
+                  </label>
+                  <Box sx={{ px: 0.5, pt: 0.5 }}>
+                    <Slider
+                      id="aggressiveness"
+                      min={1}
+                      max={5}
+                      step={1}
+                      marks={AGGRESSIVENESS_MARKS}
+                      value={aggressiveness}
+                      valueLabelDisplay="off"
+                      onChange={(_event, value) => setAggressiveness(Array.isArray(value) ? value[0] : value)}
+                      sx={{
+                        color: "var(--accent)",
+                        height: 4,
+                        "& .MuiSlider-rail": {
+                          opacity: 1,
+                          backgroundColor: "var(--border-strong)",
+                          height: 4,
+                        },
+                        "& .MuiSlider-track": {
+                          border: "none",
+                          height: 4,
+                        },
+                        "& .MuiSlider-thumb": {
+                          width: 14,
+                          height: 14,
+                          backgroundColor: "var(--accent)",
+                          boxShadow: "none",
+                          "&:hover, &.Mui-focusVisible": {
+                            boxShadow: "0 0 0 6px rgba(13, 74, 143, 0.12)",
+                          },
+                          "&.Mui-active": {
+                            boxShadow: "0 0 0 8px rgba(13, 74, 143, 0.16)",
+                          },
+                        },
+                        "& .MuiSlider-mark": {
+                          width: 4,
+                          height: 4,
+                          borderRadius: "999px",
+                          backgroundColor: "var(--border-strong)",
+                          opacity: 1,
+                        },
+                        "& .MuiSlider-markActive": {
+                          backgroundColor: "var(--accent)",
+                        },
+                        "& .MuiSlider-markLabel": {
+                          fontSize: 11,
+                          color: "var(--text-secondary)",
+                          top: 22,
+                        },
+                      }}
+                    />
+                  </Box>
+                  <p className={styles.helperText}>
+                    Controls how strongly the AI will tailor the resume to the posting. Current: {AGGRESSIVENESS_LABELS[aggressiveness]}.
+                  </p>
+                </div>
 
-              <div className={styles.fieldGroup}>
-                <label htmlFor="additional-context" className={styles.label}>
-                  Additional Context
-                </label>
-                <textarea
-                  id="additional-context"
-                  name="additionalContext"
-                  className={`${styles.textarea} ${styles.contextTextarea}`}
-                  placeholder="Add extra direction for Gemini (priority skills, key achievements to emphasize, domain specifics, preferred wording, etc.)"
-                  value={additionalContext}
-                  onChange={(e) => setAdditionalContext(e.target.value)}
-                />
-              </div>
+                <div className={styles.fieldGroup}>
+                  <label htmlFor="additional-context" className={styles.label}>
+                    Additional Context
+                  </label>
+                  <textarea
+                    id="additional-context"
+                    name="additionalContext"
+                    className={`${styles.textarea} ${styles.contextTextarea}`}
+                    placeholder="Add extra direction for Gemini (priority skills, key achievements to emphasize, domain specifics, preferred wording, etc.)"
+                    value={additionalContext}
+                    onChange={(e) => setAdditionalContext(e.target.value)}
+                  />
+                </div>
 
-              <div className={styles.fieldGroup}>
-                <label htmlFor="context-files" className={styles.label}>
-                  Supporting Files
-                </label>
-                <input
-                  id="context-files"
-                  name="contextFiles"
-                  type="file"
-                  multiple
-                  className={styles.fileInput}
-                  accept=".txt,.md,.markdown,.docx"
-                  onChange={(event) => setContextFiles(Array.from(event.target.files || []))}
-                />
-                <p className={styles.helperText}>
-                  {contextFiles.length > 0
-                    ? `${contextFiles.length} supporting file${
-                        contextFiles.length > 1 ? "s" : ""
-                      } selected`
-                    : "Optional: upload extra files to provide more context for Gemini."}
-                </p>
-              </div>
-          </AccordionDetails>
-        </Accordion>
+                <div className={styles.fieldGroup}>
+                  <label htmlFor="context-files" className={styles.label}>
+                    Supporting Files
+                  </label>
+                  <input
+                    id="context-files"
+                    name="contextFiles"
+                    type="file"
+                    multiple
+                    className={styles.fileInput}
+                    accept=".txt,.md,.markdown,.docx"
+                    onChange={(event) => setContextFiles(Array.from(event.target.files || []))}
+                  />
+                  <p className={styles.helperText}>
+                    {contextFiles.length > 0
+                      ? `${contextFiles.length} supporting file${
+                          contextFiles.length > 1 ? "s" : ""
+                        } selected`
+                      : "Optional: upload extra files to provide more context for Gemini."}
+                  </p>
+                </div>
+            </AccordionDetails>
+          </Accordion>
+        </div>
 
         <hr className={styles.sectionDivider} />
 
