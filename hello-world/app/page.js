@@ -1284,17 +1284,45 @@ export default function Home() {
       setUrlGeneratedJobTitle(nextJobTitle);
       setUrlHasCompleted(true);
 
-      // Persist the generated resume (no position linked for URL flow)
+      // Synthesize a tracked job + applied application so URL-generated
+      // resumes show in the floating toolbar and the Interviewing tab.
+      const trimmedUrl = urlPosting.trim();
+      const syntheticJobId = `url-${trimmedUrl}`;
+      const syntheticJob = {
+        id: syntheticJobId,
+        title: nextJobTitle || "Untitled role",
+        company: "",
+        url: trimmedUrl,
+        description: "",
+      };
+      setTrackedJobs((prev) =>
+        prev.some((j) => j.id === syntheticJobId)
+          ? prev
+          : [...prev, { id: syntheticJobId, title: syntheticJob.title, company: syntheticJob.company, url: syntheticJob.url }],
+      );
+
+      // Persist the generated resume and link to an application
       if (currentUser) {
         const supabase = createClient();
-        await saveGeneratedResume(supabase, {
+        const positionId = await upsertPosition(supabase, syntheticJob);
+        const generatedResumeId = await saveGeneratedResume(supabase, {
           userId: currentUser.id,
-          positionId: null,
+          positionId,
           content: nextResult,
           contentLines: nextResultLines,
           sourceResumePath: `${currentUser.id}/resume`,
           additionalContext: additionalContext || null,
         });
+        if (positionId) {
+          await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "applied" });
+          if (generatedResumeId) {
+            await supabase
+              .from("applications")
+              .update({ resume_used_id: generatedResumeId })
+              .eq("user_id", currentUser.id)
+              .eq("position_id", positionId);
+          }
+        }
       }
 
       const dlError = await downloadDocxFiles({
@@ -1377,17 +1405,43 @@ export default function Home() {
       setManualGeneratedJobTitle(nextJobTitle);
       setManualHasCompleted(true);
 
-      // Persist the generated resume (no position linked for manual flow)
+      // Synthesize a tracked job + applied application so manually-pasted
+      // postings show in the floating toolbar and the Interviewing tab.
+      const syntheticJobId = `manual-${Date.now()}`;
+      const syntheticJob = {
+        id: syntheticJobId,
+        title: nextJobTitle || "Untitled role",
+        company: "",
+        url: "",
+        description: jobPosting,
+      };
+      setTrackedJobs((prev) => [
+        ...prev,
+        { id: syntheticJobId, title: syntheticJob.title, company: syntheticJob.company, url: syntheticJob.url },
+      ]);
+
+      // Persist the generated resume and link to an application
       if (currentUser) {
         const supabase = createClient();
-        await saveGeneratedResume(supabase, {
+        const positionId = await upsertPosition(supabase, syntheticJob);
+        const generatedResumeId = await saveGeneratedResume(supabase, {
           userId: currentUser.id,
-          positionId: null,
+          positionId,
           content: nextResult,
           contentLines: nextResultLines,
           sourceResumePath: `${currentUser.id}/resume`,
           additionalContext: additionalContext || null,
         });
+        if (positionId) {
+          await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "applied" });
+          if (generatedResumeId) {
+            await supabase
+              .from("applications")
+              .update({ resume_used_id: generatedResumeId })
+              .eq("user_id", currentUser.id)
+              .eq("position_id", positionId);
+          }
+        }
       }
 
       const dlError = await downloadDocxFiles({
@@ -1538,7 +1592,7 @@ export default function Home() {
                 <Box
                   component="span"
                   sx={{
-                    fontSize: 16,
+                    fontSize: "0.95rem",
                     lineHeight: 1,
                     color: "var(--text-secondary)",
                   }}
@@ -1552,9 +1606,10 @@ export default function Home() {
                 py: 0.25,
                 "& .MuiAccordionSummary-content": {
                   my: 1,
+                  font: "inherit",
                   fontSize: "0.9rem",
                   color: "var(--text-secondary)",
-                  fontWeight: 500,
+                  fontWeight: 400,
                 },
               }}
             >
@@ -1562,12 +1617,24 @@ export default function Home() {
                 {contextPanelOpen ? "Hide options" : "Show options"}
               </Box>
             </AccordionSummary>
-            <AccordionDetails sx={{ pt: 1, pb: 2, px: 1.75, display: "grid", gap: 2.5, borderTop: "1px solid var(--border)" }}>
+            <AccordionDetails sx={{ pt: 1.5, pb: 2, px: 1.75, display: "grid", gap: 2.25, borderTop: "1px solid var(--border)" }}>
                 <div className={styles.fieldGroup}>
-                  <label htmlFor="aggressiveness" className={styles.label}>
-                    Aggressiveness
-                  </label>
-                  <Box sx={{ px: 0.5, pt: 0.5 }}>
+                  <Box sx={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+                    <label htmlFor="aggressiveness" className={styles.label}>
+                      Aggressiveness
+                    </label>
+                    <Box
+                      component="span"
+                      sx={{
+                        fontSize: "0.85rem",
+                        color: "var(--text-secondary)",
+                        fontWeight: 500,
+                      }}
+                    >
+                      {AGGRESSIVENESS_LABELS[aggressiveness]}
+                    </Box>
+                  </Box>
+                  <Box sx={{ px: 1, pt: 0.25, pb: 1.5 }}>
                     <Slider
                       id="aggressiveness"
                       min={1}
@@ -1579,48 +1646,53 @@ export default function Home() {
                       onChange={(_event, value) => setAggressiveness(Array.isArray(value) ? value[0] : value)}
                       sx={{
                         color: "var(--accent)",
-                        height: 4,
+                        height: 3,
+                        padding: "10px 0",
                         "& .MuiSlider-rail": {
                           opacity: 1,
                           backgroundColor: "var(--border-strong)",
-                          height: 4,
+                          height: 3,
                         },
                         "& .MuiSlider-track": {
                           border: "none",
-                          height: 4,
+                          height: 3,
                         },
                         "& .MuiSlider-thumb": {
-                          width: 14,
-                          height: 14,
+                          width: 12,
+                          height: 12,
                           backgroundColor: "var(--accent)",
                           boxShadow: "none",
                           "&:hover, &.Mui-focusVisible": {
-                            boxShadow: "0 0 0 6px rgba(13, 74, 143, 0.12)",
+                            boxShadow: "0 0 0 6px rgba(13, 74, 143, 0.10)",
                           },
                           "&.Mui-active": {
-                            boxShadow: "0 0 0 8px rgba(13, 74, 143, 0.16)",
+                            boxShadow: "0 0 0 8px rgba(13, 74, 143, 0.14)",
                           },
                         },
                         "& .MuiSlider-mark": {
-                          width: 4,
-                          height: 4,
+                          width: 3,
+                          height: 3,
                           borderRadius: "999px",
                           backgroundColor: "var(--border-strong)",
                           opacity: 1,
                         },
                         "& .MuiSlider-markActive": {
                           backgroundColor: "var(--accent)",
+                          opacity: 0.6,
                         },
                         "& .MuiSlider-markLabel": {
-                          fontSize: 11,
+                          fontSize: "0.78rem",
                           color: "var(--text-secondary)",
-                          top: 22,
+                          top: 20,
+                        },
+                        "& .MuiSlider-markLabelActive": {
+                          color: "var(--text-primary)",
                         },
                       }}
                     />
                   </Box>
                   <p className={styles.helperText}>
-                    Controls how strongly the AI will tailor the resume to the posting. Current: {AGGRESSIVENESS_LABELS[aggressiveness]}.
+                    Controls how strongly the AI tailors the resume to the posting.
                   </p>
                 </div>
 
