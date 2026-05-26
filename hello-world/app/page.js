@@ -61,6 +61,7 @@ export default function Home() {
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [maxYearsExp, setMaxYearsExp] = useState("any");
   const [currentUser, setCurrentUser] = useState(null);
+  const [mainTab, setMainTab] = useState("applying");
 
   // Refs for targeted re-fetches when individual controls change
   const hasFetchedRef = useRef(false);
@@ -952,6 +953,26 @@ export default function Home() {
           resume to each posting.
         </p>
 
+        <div className={styles.mainTabs}>
+          <button
+            type="button"
+            className={mainTab === "applying" ? styles.mainTabActive : styles.mainTab}
+            onClick={() => setMainTab("applying")}
+          >
+            Applying
+          </button>
+          <button
+            type="button"
+            className={mainTab === "interviewing" ? styles.mainTabActive : styles.mainTab}
+            onClick={() => setMainTab("interviewing")}
+          >
+            Interviewing
+          </button>
+        </div>
+
+        {mainTab === "applying" && (
+          <>
+
         <div className={styles.fieldGroup}>
           <label htmlFor="resume" className={styles.label}>
             Resume
@@ -1400,6 +1421,15 @@ export default function Home() {
                 </Button>
               </section>
             ) : null}
+          </section>
+        )}
+
+          </>
+        )}
+
+        {mainTab === "interviewing" && (
+          <section className={styles.tabPanel}>
+            <p style={{ color: "var(--text-secondary)", marginTop: 8 }}>Interview tracking coming soon.</p>
           </section>
         )}
       </main>
