@@ -312,6 +312,18 @@ export default function Home() {
   });
   const [editAppSaving, setEditAppSaving] = useState(false);
   const [editAppError, setEditAppError] = useState("");
+  const [addAppDialog, setAddAppDialog] = useState({
+    open: false,
+    company: "",
+    role: "",
+    status: "applied",
+    appliedAt: "",
+    applicationUrl: "",
+    description: "",
+  });
+  const [addAppSaving, setAddAppSaving] = useState(false);
+  const [addAppError, setAddAppError] = useState("");
+  const [applicationsRefreshKey, setApplicationsRefreshKey] = useState(0);
 
   // Refs for targeted re-fetches when individual controls change
   const hasFetchedRef = useRef(false);
@@ -769,6 +781,72 @@ export default function Home() {
     setEditAppDialog((prev) => ({ ...prev, open: false }));
   }
 
+  function openAddApplicationDialog() {
+    setAddAppError("");
+    setAddAppDialog({
+      open: true,
+      company: "",
+      role: "",
+      status: "applied",
+      appliedAt: new Date().toISOString().slice(0, 10),
+      applicationUrl: "",
+      description: "",
+    });
+  }
+
+  async function handleSaveAddApplication() {
+    if (!currentUser) return;
+    const company = addAppDialog.company.trim();
+    const role = addAppDialog.role.trim();
+    if (!company || !role) {
+      setAddAppError("Company and Role are required.");
+      return;
+    }
+    setAddAppSaving(true);
+    setAddAppError("");
+    const supabase = createClient();
+
+    const externalId = `manual-${(typeof crypto !== "undefined" && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+
+    const positionId = await upsertPosition(supabase, {
+      id: externalId,
+      title: role,
+      company,
+      description: addAppDialog.description || null,
+      url: addAppDialog.applicationUrl.trim() || null,
+    });
+
+    if (!positionId) {
+      setAddAppError("Failed to save position.");
+      setAddAppSaving(false);
+      return;
+    }
+
+    const { error: appErr } = await supabase
+      .from("applications")
+      .insert({
+        user_id: currentUser.id,
+        position_id: positionId,
+        status: addAppDialog.status,
+        application_url: addAppDialog.applicationUrl.trim() || null,
+        applied_at: addAppDialog.appliedAt
+          ? new Date(addAppDialog.appliedAt).toISOString()
+          : new Date().toISOString(),
+      });
+
+    if (appErr) {
+      setAddAppError(appErr.message || "Failed to save application.");
+      setAddAppSaving(false);
+      return;
+    }
+
+    setAddAppSaving(false);
+    setAddAppDialog((prev) => ({ ...prev, open: false }));
+    setApplicationsRefreshKey((k) => k + 1);
+  }
+
   async function handleDeleteApplication(app) {
     if (!app?.id) return;
     const label = `${app.positions?.company || "this application"}${app.positions?.title ? ` — ${app.positions.title}` : ""}`;
@@ -791,7 +869,7 @@ export default function Home() {
   }
 
   useEffect(() => {
-    if (mainTab !== "interviewing" || !currentUser) return;
+    if (!currentUser) return;
     let cancelled = false;
     async function loadApplications() {
       setApplicationLoading(true);
@@ -866,7 +944,7 @@ export default function Home() {
     }
     loadApplications();
     return () => { cancelled = true; };
-  }, [mainTab, currentUser]);
+  }, [currentUser, applicationsRefreshKey]);
 
   const visibleApplicationData = [...applicationData]
     .filter((app) => {
@@ -1292,10 +1370,47 @@ export default function Home() {
     setChatError("");
     setChatSending(true);
     try {
+      let resumeText = "";
+      if (resumeFile) {
+        try {
+          const lines = await buildTemplateLinesForUpload(resumeFile);
+          resumeText = (lines || []).join("\n").trim();
+        } catch {
+          resumeText = "";
+        }
+      }
+
+      const applicationsContext = (applicationData || []).map((app) => {
+        const pos = app.positions || {};
+        const resume = app.generated_resumes;
+        const stages = applicationStages[app.id] || [];
+        return {
+          company: pos.company || null,
+          role: pos.title || null,
+          status: app.status || null,
+          appliedAt: app.applied_at || null,
+          applicationUrl: app.application_url || pos.url || null,
+          jobDescription: pos.description || null,
+          tailoredResume: resume?.content || null,
+          stages: stages.map((s) => ({
+            name: s.stage_name || null,
+            type: s.stage_type || null,
+            scheduledAt: s.scheduled_at || null,
+            outcome: s.outcome || null,
+            interviewers: s.interviewer_names || [],
+            notes: s.notes || null,
+          })),
+        };
+      });
+
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: nextMessages }),
+        body: JSON.stringify({
+          messages: nextMessages,
+          resumeText,
+          applications: applicationsContext,
+        }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Chat request failed.");
@@ -2340,18 +2455,28 @@ export default function Home() {
             ) : applicationError ? (
               <p style={{ color: "var(--error, #d32f2f)" }}>Error loading applications: {applicationError}</p>
             ) : applicationData.length === 0 ? (
-              <p style={{ color: "var(--text-secondary)" }}>No applications yet. Apply to jobs in the Applying tab.</p>
+              <>
+                <Box sx={{ mb: 2 }}>
+                  <Button variant="outlined" size="small" onClick={openAddApplicationDialog}>
+                    + Add Row
+                  </Button>
+                </Box>
+                <p style={{ color: "var(--text-secondary)" }}>No applications yet. Apply to jobs in the Applying tab, or add your own row.</p>
+              </>
             ) : (
               <>
-                <Box sx={{ mb: 2.5, maxWidth: 380 }}>
+                <Box sx={{ mb: 2.5, display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
                   <TextField
                     label="Search company or role"
                     value={interviewSearch}
                     onChange={(e) => setInterviewSearch(e.target.value)}
-                    fullWidth
                     size="small"
                     placeholder="e.g. Stripe or frontend"
+                    sx={{ maxWidth: 380, flex: 1, minWidth: 220 }}
                   />
+                  <Button variant="outlined" size="small" onClick={openAddApplicationDialog}>
+                    + Add Row
+                  </Button>
                 </Box>
                 <TableContainer>
                   <Table size="small">
@@ -2835,6 +2960,97 @@ export default function Home() {
                   disabled={editAppSaving}
                 >
                   {editAppSaving ? "Saving..." : "Save Changes"}
+                </Button>
+              </DialogActions>
+            </Dialog>
+
+            <Dialog
+              open={addAppDialog.open}
+              onClose={() => {
+                if (addAppSaving) return;
+                setAddAppDialog((prev) => ({ ...prev, open: false }));
+              }}
+              maxWidth="sm"
+              fullWidth
+            >
+              <DialogTitle>Add Application</DialogTitle>
+              <DialogContent dividers sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 2 }}>
+                <TextField
+                  label="Company"
+                  value={addAppDialog.company}
+                  onChange={(e) => setAddAppDialog((prev) => ({ ...prev, company: e.target.value }))}
+                  fullWidth
+                  size="small"
+                  required
+                />
+                <TextField
+                  label="Role"
+                  value={addAppDialog.role}
+                  onChange={(e) => setAddAppDialog((prev) => ({ ...prev, role: e.target.value }))}
+                  fullWidth
+                  size="small"
+                  required
+                />
+                <FormControl fullWidth size="small">
+                  <InputLabel id="add-app-status-label">Status</InputLabel>
+                  <Select
+                    labelId="add-app-status-label"
+                    label="Status"
+                    value={addAppDialog.status}
+                    onChange={(e) => setAddAppDialog((prev) => ({ ...prev, status: e.target.value }))}
+                  >
+                    <MenuItem value="applied">Applied</MenuItem>
+                    <MenuItem value="phone_screen">Phone Screen</MenuItem>
+                    <MenuItem value="interviewing">Interviewing</MenuItem>
+                    <MenuItem value="offer">Offer</MenuItem>
+                    <MenuItem value="accepted">Accepted</MenuItem>
+                    <MenuItem value="rejected">Rejected</MenuItem>
+                    <MenuItem value="withdrawn">Withdrawn</MenuItem>
+                  </Select>
+                </FormControl>
+                <TextField
+                  type="date"
+                  label="Applied"
+                  value={addAppDialog.appliedAt}
+                  onChange={(e) => setAddAppDialog((prev) => ({ ...prev, appliedAt: e.target.value }))}
+                  fullWidth
+                  size="small"
+                  slotProps={{ inputLabel: { shrink: true } }}
+                />
+                <TextField
+                  label="Application URL"
+                  value={addAppDialog.applicationUrl}
+                  onChange={(e) => setAddAppDialog((prev) => ({ ...prev, applicationUrl: e.target.value }))}
+                  fullWidth
+                  size="small"
+                  placeholder="https://..."
+                />
+                <TextField
+                  label="Job Description"
+                  value={addAppDialog.description}
+                  onChange={(e) => setAddAppDialog((prev) => ({ ...prev, description: e.target.value }))}
+                  fullWidth
+                  multiline
+                  minRows={6}
+                  size="small"
+                />
+                {addAppError ? (
+                  <p style={{ color: "var(--error, #d32f2f)", margin: 0 }}>{addAppError}</p>
+                ) : null}
+              </DialogContent>
+              <DialogActions>
+                <Button
+                  onClick={() => setAddAppDialog((prev) => ({ ...prev, open: false }))}
+                  disabled={addAppSaving}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="contained"
+                  onClick={handleSaveAddApplication}
+                  disabled={addAppSaving}
+                >
+                  {addAppSaving ? "Saving..." : "Add Application"}
                 </Button>
               </DialogActions>
             </Dialog>
