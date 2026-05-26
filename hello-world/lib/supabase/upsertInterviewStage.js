@@ -8,7 +8,6 @@
  * @param {string} params.stageName - Stage name (e.g., "Technical Round 1")
  * @param {string} params.stageType - phone_screen | technical | behavioral | system_design | hiring_manager | panel | offer_call | other
  * @param {Date|string} [params.scheduledAt] - When the interview is/was scheduled
- * @param {Date|string} [params.completedAt] - When the interview was completed
  * @param {number} [params.durationMinutes] - Duration in minutes
  * @param {string} [params.outcome] - pending | passed | failed | cancelled
  * @param {string[]} [params.interviewerNames] - Array of interviewer names
@@ -22,7 +21,6 @@ export async function upsertInterviewStage(supabase, {
   stageName,
   stageType,
   scheduledAt,
-  completedAt,
   durationMinutes,
   outcome,
   interviewerNames,
@@ -35,7 +33,6 @@ export async function upsertInterviewStage(supabase, {
       stage_name: stageName,
       stage_type: stageType,
       ...(scheduledAt && { scheduled_at: scheduledAt }),
-      ...(completedAt && { completed_at: completedAt }),
       ...(durationMinutes && { duration_minutes: durationMinutes }),
       ...(outcome && { outcome }),
       ...(interviewerNames && { interviewer_names: interviewerNames }),

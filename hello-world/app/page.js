@@ -127,7 +127,6 @@ function createStageDialogState(overrides = {}) {
     stageName: "",
     stageType: "phone_screen",
     scheduledAt: "",
-    completedAt: "",
     durationMinutes: "",
     outcome: "pending",
     interviewerNames: "",
@@ -395,7 +394,6 @@ export default function Home() {
       stageName: (stageDialog.stageName || STAGE_TYPE_LABELS[stageDialog.stageType] || "Interview Stage").trim(),
       stageType: stageDialog.stageType,
       scheduledAt: stageDialog.scheduledAt ? new Date(stageDialog.scheduledAt).toISOString() : undefined,
-      completedAt: stageDialog.completedAt ? new Date(stageDialog.completedAt).toISOString() : undefined,
       durationMinutes: stageDialog.durationMinutes ? parseInt(stageDialog.durationMinutes, 10) : undefined,
       outcome: stageDialog.outcome,
       interviewerNames: stageDialog.interviewerNames
@@ -469,7 +467,7 @@ export default function Home() {
       if (appIds.length > 0) {
         const { data: stageRows, error: stageErr } = await supabase
           .from("interview_stages")
-          .select("id, application_id, stage_name, stage_type, scheduled_at, completed_at, duration_minutes, outcome, interviewer_names, notes, created_at, updated_at")
+          .select("id, application_id, stage_name, stage_type, scheduled_at, duration_minutes, outcome, interviewer_names, notes, created_at, updated_at")
           .in("application_id", appIds)
           .order("scheduled_at", { ascending: false });
 
@@ -1775,7 +1773,6 @@ export default function Home() {
                                             stageName: stage.stage_name || "",
                                             stageType: stage.stage_type || "phone_screen",
                                             scheduledAt: formatDateTimeLocalInputValue(stage.scheduled_at),
-                                            completedAt: formatDateTimeLocalInputValue(stage.completed_at),
                                             durationMinutes: stage.duration_minutes ? String(stage.duration_minutes) : "",
                                             outcome: stage.outcome || "pending",
                                             interviewerNames: (stage.interviewer_names || []).join(", "),
@@ -1883,16 +1880,7 @@ export default function Home() {
                   onChange={(e) => setStageDialog((prev) => ({ ...prev, scheduledAt: e.target.value }))}
                   fullWidth
                   size="small"
-                  InputLabelProps={{ shrink: true }}
-                />
-                <TextField
-                  type="datetime-local"
-                  label="Completed"
-                  value={stageDialog.completedAt}
-                  onChange={(e) => setStageDialog((prev) => ({ ...prev, completedAt: e.target.value }))}
-                  fullWidth
-                  size="small"
-                  InputLabelProps={{ shrink: true }}
+                  slotProps={{ inputLabel: { shrink: true } }}
                 />
                 <TextField
                   type="number"
