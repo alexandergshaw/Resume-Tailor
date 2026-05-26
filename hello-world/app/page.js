@@ -23,13 +23,13 @@ import TableCell from "@mui/material/TableCell";
 import TableContainer from "@mui/material/TableContainer";
 import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
-import TableSortLabel from "@mui/material/TableSortLabel";
 import { GREENHOUSE_COMPANIES, COMPANY_CATEGORIES } from "../lib/greenhouse/companies";
 import { createClient } from "../lib/supabase/client";
 import { upsertPosition } from "../lib/supabase/upsertPosition";
 import { upsertApplication, getPositionId } from "../lib/supabase/upsertApplication";
 import { saveGeneratedResume } from "../lib/supabase/saveGeneratedResume";
 import { getInterviewStages, upsertInterviewStage } from "../lib/supabase/upsertInterviewStage";
+import { createRecruiterCommunication, listRecruiterCommunications } from "../lib/supabase/recruiterCommunications";
 
 const WORDPROCESSINGML_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -257,11 +257,28 @@ export default function Home() {
   const [applicationError, setApplicationError] = useState(null);
   const [applicationStages, setApplicationStages] = useState({});
   const [interviewSearch, setInterviewSearch] = useState("");
-  const [interviewSort, setInterviewSort] = useState({ field: "applied_at", direction: "desc" });
   const [appDialog, setAppDialog] = useState({ open: false, rowIndex: null, kind: "jd" });
   const [stageDialog, setStageDialog] = useState(createStageDialogState());
   const [stageSaving, setStageSaving] = useState(false);
   const [stageError, setStageError] = useState("");
+  const [communicationsDialog, setCommunicationsDialog] = useState({
+    open: false,
+    applicationId: null,
+    company: "",
+    role: "",
+    loading: false,
+    error: "",
+    items: [],
+  });
+  const [addCommunicationDialog, setAddCommunicationDialog] = useState({
+    open: false,
+    applicationId: null,
+    company: "",
+    role: "",
+    body: "",
+  });
+  const [communicationSaving, setCommunicationSaving] = useState(false);
+  const [communicationError, setCommunicationError] = useState("");
 
   // Refs for targeted re-fetches when individual controls change
   const hasFetchedRef = useRef(false);
@@ -484,13 +501,75 @@ export default function Home() {
     setStageSaving(false);
   }
 
-  function handleInterviewSort(field) {
-    setInterviewSort((prev) => {
-      if (prev.field === field) {
-        return { field, direction: prev.direction === "asc" ? "desc" : "asc" };
-      }
-      return { field, direction: "asc" };
+  async function openCommunicationsDialog(app) {
+    if (!currentUser) return;
+
+    setCommunicationsDialog({
+      open: true,
+      applicationId: app.id,
+      company: app.positions?.company || "",
+      role: app.positions?.title || "",
+      loading: true,
+      error: "",
+      items: [],
     });
+
+    const supabase = createClient();
+    const { data, error } = await listRecruiterCommunications(supabase, app.id);
+
+    setCommunicationsDialog((prev) => {
+      if (prev.applicationId !== app.id) return prev;
+      return {
+        ...prev,
+        loading: false,
+        error: error?.message || "",
+        items: data || [],
+      };
+    });
+  }
+
+  function openAddCommunicationDialog(app) {
+    setCommunicationError("");
+    setAddCommunicationDialog({
+      open: true,
+      applicationId: app.id,
+      company: app.positions?.company || "",
+      role: app.positions?.title || "",
+      body: "",
+    });
+  }
+
+  async function handleSaveCommunication() {
+    if (!currentUser || !addCommunicationDialog.applicationId || !addCommunicationDialog.body.trim()) return;
+
+    setCommunicationSaving(true);
+    setCommunicationError("");
+
+    const supabase = createClient();
+    const { error } = await createRecruiterCommunication(supabase, {
+      userId: currentUser.id,
+      applicationId: addCommunicationDialog.applicationId,
+      body: addCommunicationDialog.body.trim(),
+    });
+
+    if (error) {
+      setCommunicationError(error.message || "Unable to save recruiter communication.");
+      setCommunicationSaving(false);
+      return;
+    }
+
+    const applicationId = addCommunicationDialog.applicationId;
+    setAddCommunicationDialog({ open: false, applicationId: null, company: "", role: "", body: "" });
+    setCommunicationSaving(false);
+
+    if (communicationsDialog.open && communicationsDialog.applicationId === applicationId) {
+      const { data, error: reloadError } = await listRecruiterCommunications(supabase, applicationId);
+      setCommunicationsDialog((prev) => ({
+        ...prev,
+        error: reloadError?.message || "",
+        items: data || [],
+      }));
+    }
   }
 
   useEffect(() => {
@@ -578,18 +657,6 @@ export default function Home() {
       const company = normalizeInterviewValue(app.positions?.company);
       const role = normalizeInterviewValue(app.positions?.title);
       return company.includes(query) || role.includes(query);
-    })
-    .sort((left, right) => {
-      const direction = interviewSort.direction === "asc" ? 1 : -1;
-      if (interviewSort.field === "company") {
-        return (left.positions?.company || "").localeCompare(right.positions?.company || "", undefined, { sensitivity: "base" }) * direction;
-      }
-      if (interviewSort.field === "role") {
-        return (left.positions?.title || "").localeCompare(right.positions?.title || "", undefined, { sensitivity: "base" }) * direction;
-      }
-      const leftTime = left.applied_at ? new Date(left.applied_at).getTime() : 0;
-      const rightTime = right.applied_at ? new Date(right.applied_at).getTime() : 0;
-      return (leftTime - rightTime) * direction;
     });
 
   function extractMinYearsRequired(description) {
@@ -1801,68 +1868,40 @@ export default function Home() {
               <p style={{ color: "var(--text-secondary)" }}>No applications yet. Apply to jobs in the Applying tab.</p>
             ) : (
               <>
-                <Box sx={{ display: "flex", gap: 1.5, mb: 2, flexWrap: "wrap", alignItems: "flex-start" }}>
+                <Box
+                  sx={{
+                    mb: 2.5,
+                    p: 1.25,
+                    border: "1px solid rgba(15, 23, 42, 0.08)",
+                    borderRadius: 3,
+                    background: "linear-gradient(180deg, rgba(248,250,252,0.95) 0%, rgba(255,255,255,1) 100%)",
+                    boxShadow: "0 6px 18px rgba(15, 23, 42, 0.05)",
+                  }}
+                >
                   <TextField
                     label="Search company or role"
                     value={interviewSearch}
                     onChange={(e) => setInterviewSearch(e.target.value)}
-                    sx={{ minWidth: 280, flex: "1 1 320px" }}
+                    fullWidth
                     size="small"
                     placeholder="e.g. Stripe or frontend"
+                    sx={{
+                      "& .MuiOutlinedInput-root": {
+                        borderRadius: 2.5,
+                        backgroundColor: "#fff",
+                      },
+                    }}
                   />
-                  <FormControl size="small" sx={{ minWidth: 170 }}>
-                    <InputLabel id="interview-sort-field-label">Sort by</InputLabel>
-                    <Select
-                      labelId="interview-sort-field-label"
-                      value={interviewSort.field}
-                      label="Sort by"
-                      onChange={(e) => setInterviewSort((prev) => ({ ...prev, field: e.target.value }))}
-                    >
-                      <MenuItem value="company">Company</MenuItem>
-                      <MenuItem value="role">Role</MenuItem>
-                      <MenuItem value="applied_at">Applied date</MenuItem>
-                    </Select>
-                  </FormControl>
-                  <FormControl size="small" sx={{ minWidth: 160 }}>
-                    <InputLabel id="interview-sort-direction-label">Order</InputLabel>
-                    <Select
-                      labelId="interview-sort-direction-label"
-                      value={interviewSort.direction}
-                      label="Order"
-                      onChange={(e) => setInterviewSort((prev) => ({ ...prev, direction: e.target.value }))}
-                    >
-                      <MenuItem value="asc">Ascending</MenuItem>
-                      <MenuItem value="desc">Descending</MenuItem>
-                    </Select>
-                  </FormControl>
-                </Box>
-                <Box sx={{ mb: 1.5, fontSize: 12, color: "var(--text-secondary)" }}>
-                  Search filters both company and role. You can sort by company, role, or applied date.
                 </Box>
                 <TableContainer>
                   <Table size="small">
                     <TableHead>
                       <TableRow>
-                        <TableCell sortDirection={interviewSort.field === "company" ? interviewSort.direction : false}>
-                          <TableSortLabel
-                            active={interviewSort.field === "company"}
-                            direction={interviewSort.field === "company" ? interviewSort.direction : "asc"}
-                            onClick={() => handleInterviewSort("company")}
-                          >
-                            Company
-                          </TableSortLabel>
-                        </TableCell>
-                        <TableCell sortDirection={interviewSort.field === "role" ? interviewSort.direction : false}>
-                          <TableSortLabel
-                            active={interviewSort.field === "role"}
-                            direction={interviewSort.field === "role" ? interviewSort.direction : "asc"}
-                            onClick={() => handleInterviewSort("role")}
-                          >
-                            Role
-                          </TableSortLabel>
-                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Company</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Role</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Applied</TableCell>
+                        <TableCell sx={{ fontWeight: 700 }}>Recruiter Communications</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Job Description</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Your Resume</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Notes</TableCell>
@@ -1870,128 +1909,144 @@ export default function Home() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                    {visibleApplicationData.map((app) => {
-                      const idx = applicationData.findIndex((candidate) => candidate.id === app.id);
-                      const pos = app.positions;
-                      const resume = app.generated_resumes;
-                      const stages = applicationStages[app.id] || [];
-                      const statusConfig = {
-                        applied:       { label: "Applied",       color: "primary" },
-                        phone_screen:  { label: "Phone Screen",  color: "info" },
-                        interviewing:  { label: "Interviewing",  color: "warning" },
-                        offer:         { label: "Offer",         color: "secondary" },
-                        accepted:      { label: "Accepted",      color: "success" },
-                        rejected:      { label: "Rejected",      color: "error" },
-                        withdrawn:     { label: "Withdrawn",     color: "default" },
-                      }[app.status] || { label: app.status, color: "default" };
-                      return (
-                        <TableRow key={app.id} hover>
-                          <TableCell sx={{ fontWeight: 600, whiteSpace: "nowrap" }}>
-                            {pos?.company || "—"}
-                          </TableCell>
-                          <TableCell sx={{ whiteSpace: "nowrap" }}>
-                            {pos?.title || "—"}
-                          </TableCell>
-                          <TableCell>
-                            <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0.75 }}>
-                              <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
-                                <Chip label={statusConfig.label} color={statusConfig.color} size="small" />
+                      {visibleApplicationData.map((app) => {
+                        const idx = applicationData.findIndex((candidate) => candidate.id === app.id);
+                        const pos = app.positions;
+                        const resume = app.generated_resumes;
+                        const stages = applicationStages[app.id] || [];
+                        const statusConfig = {
+                          applied: { label: "Applied", color: "primary" },
+                          phone_screen: { label: "Phone Screen", color: "info" },
+                          interviewing: { label: "Interviewing", color: "warning" },
+                          offer: { label: "Offer", color: "secondary" },
+                          accepted: { label: "Accepted", color: "success" },
+                          rejected: { label: "Rejected", color: "error" },
+                          withdrawn: { label: "Withdrawn", color: "default" },
+                        }[app.status] || { label: app.status, color: "default" };
+
+                        return (
+                          <TableRow key={app.id} hover>
+                            <TableCell sx={{ fontWeight: 600, whiteSpace: "nowrap" }}>
+                              {pos?.company || "—"}
+                            </TableCell>
+                            <TableCell sx={{ whiteSpace: "nowrap" }}>
+                              {pos?.title || "—"}
+                            </TableCell>
+                            <TableCell>
+                              <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0.75 }}>
+                                <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
+                                  <Chip label={statusConfig.label} color={statusConfig.color} size="small" />
+                                  <Button
+                                    size="small"
+                                    sx={{ minWidth: 0, p: 0, fontSize: 11 }}
+                                    onClick={() => {
+                                      setStageError("");
+                                      setStageDialog(createStageDialogState({
+                                        open: true,
+                                        applicationId: app.id,
+                                      }));
+                                    }}
+                                  >
+                                    + Stage
+                                  </Button>
+                                </Box>
+                                {stages.length > 0 ? (
+                                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
+                                    {stages.slice(0, 2).map((stage) => {
+                                      const stageLabel = `${stage.stage_name || STAGE_TYPE_LABELS[stage.stage_type] || stage.stage_type}${stage.outcome && stage.outcome !== "pending" ? ` · ${stage.outcome}` : ""}`;
+                                      return (
+                                        <Chip
+                                          key={stage.id}
+                                          label={stageLabel}
+                                          size="small"
+                                          variant="outlined"
+                                          onClick={() => {
+                                            setStageError("");
+                                            setStageDialog(createStageDialogState({
+                                              open: true,
+                                              applicationId: app.id,
+                                              stageId: stage.id,
+                                              stageName: stage.stage_name || "",
+                                              stageType: stage.stage_type || "phone_screen",
+                                              scheduledAt: formatDateTimeLocalInputValue(stage.scheduled_at),
+                                              durationMinutes: stage.duration_minutes ? String(stage.duration_minutes) : "",
+                                              outcome: stage.outcome || "pending",
+                                              interviewerNames: (stage.interviewer_names || []).join(", "),
+                                              notes: stage.notes || "",
+                                            }));
+                                          }}
+                                        />
+                                      );
+                                    })}
+                                    {stages.length > 2 ? (
+                                      <Box component="span" sx={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                                        +{stages.length - 2} more
+                                      </Box>
+                                    ) : null}
+                                  </Box>
+                                ) : null}
+                              </Box>
+                            </TableCell>
+                            <TableCell sx={{ whiteSpace: "nowrap" }}>
+                              {app.applied_at
+                                ? new Date(app.applied_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+                                : "—"}
+                            </TableCell>
+                            <TableCell sx={{ whiteSpace: "nowrap" }}>
+                              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                                 <Button
                                   size="small"
                                   sx={{ minWidth: 0, p: 0, fontSize: 11 }}
-                                  onClick={() => {
-                                    setStageError("");
-                                    setStageDialog(createStageDialogState({
-                                      open: true,
-                                      applicationId: app.id,
-                                    }));
-                                  }}
+                                  onClick={() => openCommunicationsDialog(app)}
                                 >
-                                  + Stage
+                                  View
+                                </Button>
+                                <Button
+                                  size="small"
+                                  sx={{ minWidth: 0, p: 0, fontSize: 11 }}
+                                  onClick={() => openAddCommunicationDialog(app)}
+                                >
+                                  Add
                                 </Button>
                               </Box>
-                              {stages.length > 0 ? (
-                                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
-                                  {stages.slice(0, 2).map((stage) => {
-                                    const stageLabel = `${stage.stage_name || STAGE_TYPE_LABELS[stage.stage_type] || stage.stage_type}${stage.outcome && stage.outcome !== "pending" ? ` · ${stage.outcome}` : ""}`;
-                                    return (
-                                      <Chip
-                                        key={stage.id}
-                                        label={stageLabel}
-                                        size="small"
-                                        variant="outlined"
-                                        onClick={() => {
-                                          setStageError("");
-                                          setStageDialog(createStageDialogState({
-                                            open: true,
-                                            applicationId: app.id,
-                                            stageId: stage.id,
-                                            stageName: stage.stage_name || "",
-                                            stageType: stage.stage_type || "phone_screen",
-                                            scheduledAt: formatDateTimeLocalInputValue(stage.scheduled_at),
-                                            durationMinutes: stage.duration_minutes ? String(stage.duration_minutes) : "",
-                                            outcome: stage.outcome || "pending",
-                                            interviewerNames: (stage.interviewer_names || []).join(", "),
-                                            notes: stage.notes || "",
-                                          }));
-                                        }}
-                                      />
-                                    );
-                                  })}
-                                  {stages.length > 2 ? (
-                                    <Box component="span" sx={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                                      +{stages.length - 2} more
-                                    </Box>
-                                  ) : null}
+                            </TableCell>
+                            <TableCell sx={{ maxWidth: 220 }}>
+                              {pos?.description ? (
+                                <Box sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, flexDirection: "column" }}>
+                                  <span style={{ fontSize: 12, color: "var(--text-secondary)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                                    {pos.description}
+                                  </span>
+                                  <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }} onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "jd" })}>
+                                    View full
+                                  </Button>
                                 </Box>
-                              ) : null}
-                            </Box>
-                          </TableCell>
-                          <TableCell sx={{ whiteSpace: "nowrap" }}>
-                            {app.applied_at
-                              ? new Date(app.applied_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
-                              : "—"}
-                          </TableCell>
-                          <TableCell sx={{ maxWidth: 220 }}>
-                            {pos?.description ? (
-                              <Box sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, flexDirection: "column" }}>
-                                <span style={{ fontSize: 12, color: "var(--text-secondary)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                                  {pos.description}
-                                </span>
-                                <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }}
-                                  onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "jd" })}>
-                                  View full
+                              ) : "—"}
+                            </TableCell>
+                            <TableCell sx={{ maxWidth: 200 }}>
+                              {resume?.content ? (
+                                <Box sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, flexDirection: "column" }}>
+                                  <span style={{ fontSize: 12, color: "var(--text-secondary)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                                    {resume.content}
+                                  </span>
+                                  <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }} onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "resume" })}>
+                                    View full
+                                  </Button>
+                                </Box>
+                              ) : "—"}
+                            </TableCell>
+                            <TableCell sx={{ maxWidth: 160, fontSize: 12, color: "var(--text-secondary)" }}>
+                              {app.notes || "—"}
+                            </TableCell>
+                            <TableCell>
+                              {(app.application_url || pos?.url) && (
+                                <Button size="small" href={app.application_url || pos.url} target="_blank" rel="noopener noreferrer" sx={{ whiteSpace: "nowrap" }}>
+                                  Posting ↗
                                 </Button>
-                              </Box>
-                            ) : "—"}
-                          </TableCell>
-                          <TableCell sx={{ maxWidth: 200 }}>
-                            {resume?.content ? (
-                              <Box sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, flexDirection: "column" }}>
-                                <span style={{ fontSize: 12, color: "var(--text-secondary)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                                  {resume.content}
-                                </span>
-                                <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }}
-                                  onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "resume" })}>
-                                  View full
-                                </Button>
-                              </Box>
-                            ) : "—"}
-                          </TableCell>
-                          <TableCell sx={{ maxWidth: 160, fontSize: 12, color: "var(--text-secondary)" }}>
-                            {app.notes || "—"}
-                          </TableCell>
-                          <TableCell>
-                            {(app.application_url || pos?.url) && (
-                              <Button size="small" href={app.application_url || pos.url}
-                                target="_blank" rel="noopener noreferrer" sx={{ whiteSpace: "nowrap" }}>
-                                Posting ↗
-                              </Button>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </TableContainer>
@@ -2102,6 +2157,119 @@ export default function Home() {
                   disabled={stageSaving}
                 >
                   {stageSaving ? "Saving..." : "Save Stage"}
+                </Button>
+              </DialogActions>
+            </Dialog>
+
+            <Dialog
+              open={communicationsDialog.open}
+              onClose={() => setCommunicationsDialog({ open: false, applicationId: null, company: "", role: "", loading: false, error: "", items: [] })}
+              maxWidth="md"
+              fullWidth
+            >
+              <DialogTitle>
+                Recruiter Communications
+                {(communicationsDialog.company || communicationsDialog.role) ? ` — ${communicationsDialog.company || "Unknown Company"}${communicationsDialog.role ? ` / ${communicationsDialog.role}` : ""}` : ""}
+              </DialogTitle>
+              <DialogContent dividers sx={{ maxHeight: "70vh" }}>
+                {communicationsDialog.loading ? (
+                  <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
+                    <CircularProgress size={24} />
+                  </Box>
+                ) : communicationsDialog.error ? (
+                  <p style={{ color: "var(--error, #d32f2f)", margin: 0 }}>{communicationsDialog.error}</p>
+                ) : communicationsDialog.items.length === 0 ? (
+                  <p style={{ color: "var(--text-secondary)", margin: 0 }}>No recruiter communications logged yet.</p>
+                ) : (
+                  <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+                    {communicationsDialog.items.map((item) => (
+                      <Box
+                        key={item.id}
+                        sx={{
+                          p: 1.5,
+                          borderRadius: 2.5,
+                          border: "1px solid rgba(15, 23, 42, 0.08)",
+                          backgroundColor: "rgba(248, 250, 252, 0.8)",
+                        }}
+                      >
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap", mb: 1 }}>
+                          <Chip size="small" label={item.direction || "inbound"} variant="outlined" />
+                          <Chip size="small" label={item.type || "email"} variant="outlined" />
+                          <Box component="span" sx={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                            {item.communicated_at ? new Date(item.communicated_at).toLocaleString() : "Logged communication"}
+                          </Box>
+                        </Box>
+                        {item.subject ? (
+                          <Box sx={{ fontWeight: 700, mb: 0.75 }}>{item.subject}</Box>
+                        ) : null}
+                        {(item.sender_name || item.sender_email || item.sender_title) ? (
+                          <Box sx={{ mb: 0.75, fontSize: 12, color: "var(--text-secondary)" }}>
+                            {[item.sender_name, item.sender_title, item.sender_email].filter(Boolean).join(" · ")}
+                          </Box>
+                        ) : null}
+                        <Box sx={{ whiteSpace: "pre-wrap", lineHeight: 1.7, fontSize: 13.5 }}>
+                          {item.body || "—"}
+                        </Box>
+                      </Box>
+                    ))}
+                  </Box>
+                )}
+              </DialogContent>
+              <DialogActions>
+                <Button onClick={() => setCommunicationsDialog({ open: false, applicationId: null, company: "", role: "", loading: false, error: "", items: [] })}>
+                  Close
+                </Button>
+              </DialogActions>
+            </Dialog>
+
+            <Dialog
+              open={addCommunicationDialog.open}
+              onClose={() => {
+                setCommunicationError("");
+                setAddCommunicationDialog({ open: false, applicationId: null, company: "", role: "", body: "" });
+              }}
+              maxWidth="md"
+              fullWidth
+            >
+              <DialogTitle>
+                Add Recruiter Communication
+                {(addCommunicationDialog.company || addCommunicationDialog.role) ? ` — ${addCommunicationDialog.company || "Unknown Company"}${addCommunicationDialog.role ? ` / ${addCommunicationDialog.role}` : ""}` : ""}
+              </DialogTitle>
+              <DialogContent dividers sx={{ pt: 2 }}>
+                <TextField
+                  label="Paste communication"
+                  placeholder="Paste the recruiter email, LinkedIn message, or call notes here..."
+                  value={addCommunicationDialog.body}
+                  onChange={(e) => setAddCommunicationDialog((prev) => ({ ...prev, body: e.target.value }))}
+                  fullWidth
+                  multiline
+                  minRows={12}
+                  sx={{
+                    "& .MuiOutlinedInput-root": {
+                      alignItems: "flex-start",
+                      borderRadius: 2.5,
+                    },
+                  }}
+                />
+                {communicationError ? (
+                  <p style={{ color: "var(--error, #d32f2f)", margin: "12px 0 0" }}>{communicationError}</p>
+                ) : null}
+              </DialogContent>
+              <DialogActions>
+                <Button
+                  onClick={() => {
+                    setCommunicationError("");
+                    setAddCommunicationDialog({ open: false, applicationId: null, company: "", role: "", body: "" });
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="contained"
+                  disabled={communicationSaving || !addCommunicationDialog.body.trim()}
+                  onClick={handleSaveCommunication}
+                >
+                  {communicationSaving ? "Saving..." : "Save Communication"}
                 </Button>
               </DialogActions>
             </Dialog>
