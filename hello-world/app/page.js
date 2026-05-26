@@ -142,7 +142,7 @@ export default function Home() {
   const [applicationData, setApplicationData] = useState([]);
   const [applicationLoading, setApplicationLoading] = useState(false);
   const [applicationError, setApplicationError] = useState(null);
-  const [appDialog, setAppDialog] = useState({ open: false, title: "", content: "", kind: "jd" });
+  const [appDialog, setAppDialog] = useState({ open: false, rowIndex: null, kind: "jd" });
 
   // Refs for targeted re-fetches when individual controls change
   const hasFetchedRef = useRef(false);
@@ -1601,7 +1601,7 @@ export default function Home() {
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {applicationData.map((app) => {
+                    {applicationData.map((app, idx) => {
                       const pos = app.positions;
                       const resume = app.generated_resumes;
                       const statusConfig = {
@@ -1636,7 +1636,7 @@ export default function Home() {
                                   {pos.description}
                                 </span>
                                 <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }}
-                                  onClick={() => setAppDialog({ open: true, title: `${pos.company} — Job Description`, content: pos.description, kind: "jd" })}>
+                                  onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "jd" })}>
                                   View full
                                 </Button>
                               </Box>
@@ -1649,7 +1649,7 @@ export default function Home() {
                                   {resume.content}
                                 </span>
                                 <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }}
-                                  onClick={() => setAppDialog({ open: true, title: `Your Resume — ${pos?.title || "Role"}`, content: resume.content, kind: "resume" })}>
+                                  onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "resume" })}>
                                   View full
                                 </Button>
                               </Box>
@@ -1674,22 +1674,82 @@ export default function Home() {
               </TableContainer>
             )}
 
-            <Dialog
-              open={appDialog.open}
-              onClose={() => setAppDialog({ open: false, title: "", content: "", kind: "jd" })}
-              maxWidth="md"
-              fullWidth
-            >
-              <DialogTitle sx={{ fontWeight: 700 }}>{appDialog.title}</DialogTitle>
-              <DialogContent dividers sx={{ maxHeight: "70vh" }}>
-                <FormattedContent text={appDialog.content} kind={appDialog.kind} />
-              </DialogContent>
-              <DialogActions>
-                <Button onClick={() => setAppDialog({ open: false, title: "", content: "", kind: "jd" })}>
-                  Close
-                </Button>
-              </DialogActions>
-            </Dialog>
+            {(() => {
+              const dApp = appDialog.rowIndex != null ? applicationData[appDialog.rowIndex] : null;
+              const dPos = dApp?.positions;
+              const dResume = dApp?.generated_resumes;
+              const pages = [
+                dPos?.description ? "jd" : null,
+                dResume?.content ? "resume" : null,
+              ].filter(Boolean);
+              const pageIdx = pages.indexOf(appDialog.kind);
+              const dialogTitle = appDialog.kind === "jd"
+                ? `${dPos?.company || ""} — Job Description`
+                : `Your Resume — ${dPos?.title || "Role"}`;
+              const dialogContent = appDialog.kind === "jd"
+                ? (dPos?.description ?? "")
+                : (dResume?.content ?? "");
+              const navigate = (dir) => {
+                const next = pageIdx + dir;
+                if (next >= 0 && next < pages.length) {
+                  setAppDialog((prev) => ({ ...prev, kind: pages[next] }));
+                }
+              };
+              return (
+                <Dialog
+                  open={appDialog.open}
+                  onClose={() => setAppDialog({ open: false, rowIndex: null, kind: "jd" })}
+                  maxWidth="md"
+                  fullWidth
+                  PaperProps={{
+                    onKeyDown: (e) => {
+                      if (e.key === "ArrowRight") navigate(1);
+                      if (e.key === "ArrowLeft") navigate(-1);
+                    },
+                    tabIndex: -1,
+                  }}
+                >
+                  <DialogTitle sx={{ pb: 1 }}>
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                      <Button
+                        size="small"
+                        disabled={pageIdx <= 0}
+                        onClick={() => navigate(-1)}
+                        sx={{ minWidth: 36, px: 0.75, fontSize: 22, lineHeight: 1 }}
+                        aria-label="Previous"
+                      >
+                        ‹
+                      </Button>
+                      <Box sx={{ flex: 1, fontWeight: 700, fontSize: "1rem" }}>
+                        {dialogTitle}
+                        {pages.length > 1 && (
+                          <Box component="span" sx={{ ml: 1.5, fontSize: 12, fontWeight: 400, color: "text.secondary" }}>
+                            {pageIdx + 1} / {pages.length}
+                          </Box>
+                        )}
+                      </Box>
+                      <Button
+                        size="small"
+                        disabled={pageIdx >= pages.length - 1}
+                        onClick={() => navigate(1)}
+                        sx={{ minWidth: 36, px: 0.75, fontSize: 22, lineHeight: 1 }}
+                        aria-label="Next"
+                      >
+                        ›
+                      </Button>
+                    </Box>
+                  </DialogTitle>
+                  <DialogContent dividers sx={{ maxHeight: "70vh" }}>
+                    <FormattedContent text={dialogContent} kind={appDialog.kind} />
+                  </DialogContent>
+                  <DialogActions>
+                    <Button onClick={() => setAppDialog({ open: false, rowIndex: null, kind: "jd" })}>
+                      Close
+                    </Button>
+                  </DialogActions>
+                </Dialog>
+              );
+            })()}
           </section>
         )}
       </main>
