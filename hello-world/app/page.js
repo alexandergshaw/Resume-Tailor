@@ -3177,13 +3177,29 @@ export default function Home() {
                     <button
                       type="button"
                       className={styles.toolbarChipBtn}
-                      title={isSynthetic ? "Not available for generated postings" : "Go to card"}
-                      disabled={isSynthetic}
+                      title="Go to card"
                       onClick={() => {
-                        const card = document.getElementById(`job-card-${job.id}`);
-                        if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
-                        setHighlightedJobId(job.id);
-                        setTimeout(() => setHighlightedJobId(null), 3000);
+                        const isUrlJob =
+                          typeof job.id === "string" && job.id.startsWith("url-");
+                        const isManualJob =
+                          typeof job.id === "string" && job.id.startsWith("manual-");
+                        const targetSection = isUrlJob
+                          ? "url"
+                          : isManualJob
+                            ? "manual"
+                            : "search";
+                        setMainTab("applying");
+                        setActiveSection(targetSection);
+                        if (targetSection === "search") {
+                          setHighlightedJobId(job.id);
+                          setTimeout(() => setHighlightedJobId(null), 3000);
+                          setTimeout(() => {
+                            const card = document.getElementById(`job-card-${job.id}`);
+                            if (card) {
+                              card.scrollIntoView({ behavior: "smooth", block: "center" });
+                            }
+                          }, 50);
+                        }
                       }}
                     >
                       ↩
