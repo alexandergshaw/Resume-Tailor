@@ -2816,9 +2816,9 @@ export default function Home() {
               const dPos = dApp?.positions;
               const dResume = dApp?.generated_resumes;
               const pages = [
+                dApp?.id ? "communications" : null,
                 dPos?.description ? "jd" : null,
                 dResume?.content ? "resume" : null,
-                dApp?.id ? "communications" : null,
               ].filter(Boolean);
               const pageIdx = pages.indexOf(appDialog.kind);
               const commsLoadedForThisApp =
@@ -2834,13 +2834,12 @@ export default function Home() {
                           : ""
                       }`;
               const navigate = (dir) => {
-                const next = pageIdx + dir;
-                if (next >= 0 && next < pages.length) {
-                  const nextKind = pages[next];
-                  setAppDialog((prev) => ({ ...prev, kind: nextKind }));
-                  if (nextKind === "communications" && dApp && communicationsDialog.applicationId !== dApp.id) {
-                    loadCommunicationsForApp(dApp);
-                  }
+                if (pages.length === 0) return;
+                const next = (pageIdx + dir + pages.length) % pages.length;
+                const nextKind = pages[next];
+                setAppDialog((prev) => ({ ...prev, kind: nextKind }));
+                if (nextKind === "communications" && dApp && communicationsDialog.applicationId !== dApp.id) {
+                  loadCommunicationsForApp(dApp);
                 }
               };
               return (
@@ -2861,7 +2860,7 @@ export default function Home() {
                     <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                       <Button
                         size="small"
-                        disabled={pageIdx <= 0}
+                        disabled={pages.length <= 1}
                         onClick={() => navigate(-1)}
                         sx={{ minWidth: 36, px: 0.75, fontSize: 22, lineHeight: 1 }}
                         aria-label="Previous"
@@ -2878,7 +2877,7 @@ export default function Home() {
                       </Box>
                       <Button
                         size="small"
-                        disabled={pageIdx >= pages.length - 1}
+                        disabled={pages.length <= 1}
                         onClick={() => navigate(1)}
                         sx={{ minWidth: 36, px: 0.75, fontSize: 22, lineHeight: 1 }}
                         aria-label="Next"
