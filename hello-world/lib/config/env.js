@@ -1,4 +1,4 @@
-const REQUIRED_SERVER_KEYS = ["Gemini_LLM_API_Key", "RAPID_API_KEY"];
+const REQUIRED_SERVER_KEYS = ["Gemini_LLM_API_Key"];
 
 export function getServerEnv() {
   const missingKeys = REQUIRED_SERVER_KEYS.filter((key) => !process.env[key]);

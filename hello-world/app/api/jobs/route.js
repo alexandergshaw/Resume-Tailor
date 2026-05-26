@@ -8,6 +8,18 @@ const JSEARCH_HOST = "jsearch.p.rapidapi.com";
 const RESULTS_PER_PAGE = 12;
 const CACHE_TTL_SECONDS = 1800; // 30 minutes
 
+/**
+ * For "today" filters, clamp TTL to seconds remaining until midnight UTC so
+ * the cache never serves yesterday's results after the day rolls over.
+ */
+function effectiveTtl(datePosted) {
+  if (datePosted !== "today") return CACHE_TTL_SECONDS;
+  const now = new Date();
+  const midnight = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+  const secondsUntilMidnight = Math.floor((midnight - now) / 1000);
+  return Math.min(CACHE_TTL_SECONDS, secondsUntilMidnight);
+}
+
 function normalizeJob(raw) {
   const locationParts = [raw.job_city, raw.job_state, raw.job_country].filter(Boolean);
   return {
@@ -91,7 +103,7 @@ export async function GET(request) {
     jobs = jobs.filter((job) => job.salaryMin !== null || job.salaryMax !== null);
   }
 
-  await setCached(cacheKey, jobs, CACHE_TTL_SECONDS);
+  await setCached(cacheKey, jobs, effectiveTtl(datePosted));
 
   return Response.json({ jobs, fromCache: false });
 }

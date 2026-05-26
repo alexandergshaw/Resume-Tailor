@@ -1,6 +1,6 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
-## Gemini API Architecture
+## Architecture
 
 The app is wired to call Gemini from the server:
 
@@ -9,6 +9,21 @@ The app is wired to call Gemini from the server:
 - Gemini service in `lib/llm/tailorResume.js`
 - Gemini client in `lib/llm/geminiClient.js`
 - Server env helper in `lib/config/env.js`
+
+Job data flows through:
+
+- `app/api/greenhouse/route.js` — fetches jobs from the [Greenhouse API](https://boards-api.greenhouse.io) for tracked companies
+- `lib/greenhouse/companies.js` — master list of companies and categories
+- `lib/cache/jobCache.js` + `lib/cache/redisClient.js` — Redis caching (4-hour TTL per company)
+
+Auth and persistence:
+
+- `lib/supabase/client.js` — browser Supabase client
+- `lib/supabase/server.js` — server Supabase client (Next.js cookies)
+- `middleware.js` — refreshes Supabase auth sessions on every request
+- `app/api/applied/route.js` — GET / POST / DELETE for a user's applied jobs
+- `app/auth/callback/route.js` — OAuth code-exchange handler after Google sign-in
+- `app/components/AuthButton.js` — "Sign in with Google" / "Sign out" button in the header
 
 ### Environment Variables
 
@@ -20,11 +35,40 @@ For local development, create a `.env.local` file in the project root or run `np
 |---|---|---|
 | `Gemini_LLM_API_Key` | Yes | [Google AI Studio](https://aistudio.google.com/app/apikey) |
 | `GEMINI_MODEL` | No | Defaults to `gemini-2.5-flash` |
-| `RAPID_API_KEY` | Yes | [RapidAPI → JSearch by letscrape](https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch) — subscribe to the Basic (free) plan |
 | `KV_REST_API_URL` | Yes | Vercel Dashboard → Storage → your Redis database |
 | `KV_REST_API_TOKEN` | Yes | Vercel Dashboard → Storage → your Redis database |
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase Dashboard → Project Settings → API |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase Dashboard → Project Settings → API |
 
 The `KV_REST_API_URL` and `KV_REST_API_TOKEN` variables are injected automatically when you create a Redis database via **Vercel Storage** and connect it to this project.
+
+### Supabase Setup
+
+1. Create a project at [supabase.com](https://supabase.com).
+2. Run the following SQL in **SQL Editor** to create the applied jobs table:
+
+```sql
+create table applied_jobs (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users not null,
+  job_id text not null,
+  job_title text,
+  company text,
+  job_url text,
+  job_description text,
+  applied_at timestamptz default now(),
+  unique (user_id, job_id)
+);
+alter table applied_jobs enable row level security;
+create policy "Users manage own rows" on applied_jobs
+  for all using (auth.uid() = user_id);
+```
+
+3. Enable **Google OAuth** in Supabase → Authentication → Providers → Google.
+4. Add your redirect URL in Supabase → Authentication → URL Configuration:
+   - Local: `http://localhost:3000/auth/callback`
+   - Production: `https://your-domain.com/auth/callback`
+5. Copy the **Project URL** and **anon public key** from Supabase → Project Settings → API into your environment variables.
 
 ## Getting Started
 
