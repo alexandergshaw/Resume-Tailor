@@ -292,6 +292,11 @@ export default function Home() {
   const [chatAttachError, setChatAttachError] = useState("");
   const [chatCopiedIndex, setChatCopiedIndex] = useState(null);
   const [chatDragActive, setChatDragActive] = useState(false);
+  // Resizable chat panel: stored size in px. Default matches prior sm breakpoint values.
+  const [chatSize, setChatSize] = useState({ width: 380, height: 520 });
+  const [chatResizing, setChatResizing] = useState(false);
+  const chatResizeStartRef = useRef(null);
+  const chatPanelRef = useRef(null);
   const chatScrollRef = useRef(null);
   const chatInputRef = useRef(null);
   const [appDialog, setAppDialog] = useState({ open: false, rowIndex: null, kind: "jd" });
@@ -549,6 +554,16 @@ export default function Home() {
           setFabPos(parsed);
         }
       }
+      const cs = localStorage.getItem("chatSize");
+      if (cs) {
+        const parsed = JSON.parse(cs);
+        if (
+          parsed && typeof parsed.width === "number" && typeof parsed.height === "number"
+          && parsed.width >= 280 && parsed.height >= 320
+        ) {
+          setChatSize(parsed);
+        }
+      }
     } catch {}
   }, []);
   useEffect(() => {
@@ -560,6 +575,26 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("fabPos", JSON.stringify(fabPos));
   }, [fabPos]);
+  useEffect(() => {
+    localStorage.setItem("chatSize", JSON.stringify(chatSize));
+  }, [chatSize]);
+
+  // Close the chat when clicking outside its panel (but not on the FAB itself).
+  useEffect(() => {
+    if (!chatOpen) return;
+    function handlePointerDown(e) {
+      if (chatResizing) return;
+      const panel = chatPanelRef.current;
+      if (!panel) return;
+      if (panel.contains(e.target)) return;
+      // Don't close when the click is on the FAB — it has its own toggle.
+      const fabEl = e.target.closest?.(".MuiFab-root");
+      if (fabEl) return;
+      setChatOpen(false);
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [chatOpen, chatResizing]);
 
   // Drag handler shared by both frozen-column resize handles.
   function startColResize(which, event) {
@@ -582,6 +617,38 @@ export default function Home() {
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }
+
+  // Drag handler for resizing the chat panel from its top-left corner.
+  function startChatResize(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startW = chatSize.width;
+    const startH = chatSize.height;
+    setChatResizing(true);
+    function onMove(e) {
+      // Panel is anchored to the right/bottom, so grow it as the user drags up/left.
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      const maxW = Math.max(280, window.innerWidth - 32);
+      const maxH = Math.max(320, window.innerHeight - 32);
+      const nextW = Math.min(maxW, Math.max(280, startW - dx));
+      const nextH = Math.min(maxH, Math.max(320, startH - dy));
+      setChatSize({ width: nextW, height: nextH });
+    }
+    function onUp() {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      setChatResizing(false);
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    document.body.style.cursor = "nwse-resize";
     document.body.style.userSelect = "none";
   }
 
@@ -3876,6 +3943,7 @@ export default function Home() {
 
       {chatOpen ? (
         <Box
+          ref={chatPanelRef}
           onDragOver={(e) => { e.preventDefault(); setChatDragActive(true); }}
           onDragEnter={(e) => { e.preventDefault(); setChatDragActive(true); }}
           onDragLeave={(e) => {
@@ -3894,10 +3962,10 @@ export default function Home() {
             right: fabPos.right,
             // Sit just above the FAB (~64px tall) with a small gap.
             bottom: fabPos.bottom + 68,
-            width: { xs: "calc(100vw - 32px)", sm: 380 },
-            maxWidth: 420,
-            height: { xs: "60vh", sm: 520 },
-            maxHeight: "70vh",
+            width: chatSize.width,
+            height: chatSize.height,
+            maxWidth: "calc(100vw - 16px)",
+            maxHeight: "calc(100vh - 16px)",
             zIndex: 1100,
             display: "flex",
             flexDirection: "column",
@@ -3908,6 +3976,33 @@ export default function Home() {
             overflow: "hidden",
           }}
         >
+          {/* Top-left corner resize handle. */}
+          <Box
+            onPointerDown={startChatResize}
+            sx={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: 16,
+              height: 16,
+              cursor: "nwse-resize",
+              zIndex: 2,
+              touchAction: "none",
+              "&::before": {
+                content: '""',
+                position: "absolute",
+                top: 3,
+                left: 3,
+                width: 10,
+                height: 10,
+                borderTop: "2px solid var(--border-strong)",
+                borderLeft: "2px solid var(--border-strong)",
+                borderTopLeftRadius: 3,
+                opacity: 0.6,
+              },
+              "&:hover::before": { opacity: 1, borderColor: "var(--accent, #1976d2)" },
+            }}
+          />
           <Box
             sx={{
               display: "flex",
