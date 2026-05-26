@@ -32,6 +32,72 @@ import { saveGeneratedResume } from "../lib/supabase/saveGeneratedResume";
 const WORDPROCESSINGML_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
+// Renders plain-text content (job descriptions, resumes) with basic structure.
+function FormattedContent({ text, kind }) {
+  if (!text) return null;
+  const blocks = text.split(/\n{2,}/);
+  return (
+    <Box sx={{ fontSize: 13.5, lineHeight: 1.75, color: "inherit" }}>
+      {blocks.map((block, i) => {
+        const lines = block.split("\n").map((l) => l.trimEnd()).filter((l, idx, arr) => idx > 0 || l !== "");
+        if (lines.length === 0) return null;
+
+        // Single-line block that looks like a section heading
+        if (lines.length === 1) {
+          const line = lines[0].trim();
+          const isHeading =
+            line.length > 0 &&
+            line.length < 80 &&
+            (line === line.toUpperCase() || /^[A-Z][^a-z]{2,}$/.test(line) || line.endsWith(":"));
+          if (isHeading) {
+            return (
+              <Box
+                key={i}
+                sx={{
+                  fontWeight: 700,
+                  fontSize: kind === "resume" ? 14 : 13.5,
+                  mt: i > 0 ? 2.5 : 0,
+                  mb: 0.5,
+                  borderBottom: kind === "resume" ? "1px solid rgba(0,0,0,0.12)" : "none",
+                  pb: kind === "resume" ? 0.25 : 0,
+                  letterSpacing: 0.3,
+                }}
+              >
+                {line.endsWith(":") ? line.slice(0, -1) : line}
+              </Box>
+            );
+          }
+        }
+
+        // Block where majority of lines are bullet points
+        const bulletLines = lines.filter((l) => /^\s*[-•*–·]\s/.test(l));
+        if (bulletLines.length > 0 && bulletLines.length >= Math.ceil(lines.length * 0.5)) {
+          return (
+            <Box
+              key={i}
+              component="ul"
+              sx={{ m: 0, mt: i > 0 ? 1 : 0, pl: 2.5, "& li": { mb: 0.4 } }}
+            >
+              {lines.map((line, j) => {
+                const clean = line.replace(/^\s*[-•*–·]\s*/, "").trim();
+                if (!clean) return null;
+                return <li key={j}>{clean}</li>;
+              })}
+            </Box>
+          );
+        }
+
+        // Regular paragraph / block
+        return (
+          <Box key={i} sx={{ mt: i > 0 ? 1.5 : 0, whiteSpace: "pre-wrap" }}>
+            {block.trim()}
+          </Box>
+        );
+      })}
+    </Box>
+  );
+}
+
 export default function Home() {
   const [resumeFile, setResumeFile] = useState(null);
   const [coverLetterFile, setCoverLetterFile] = useState(null);
@@ -76,7 +142,7 @@ export default function Home() {
   const [applicationData, setApplicationData] = useState([]);
   const [applicationLoading, setApplicationLoading] = useState(false);
   const [applicationError, setApplicationError] = useState(null);
-  const [appDialog, setAppDialog] = useState({ open: false, title: "", content: "" });
+  const [appDialog, setAppDialog] = useState({ open: false, title: "", content: "", kind: "jd" });
 
   // Refs for targeted re-fetches when individual controls change
   const hasFetchedRef = useRef(false);
@@ -88,11 +154,19 @@ export default function Home() {
     if (saved === "search" || saved === "url" || saved === "manual") {
       setActiveSection(saved);
     }
+    const savedTab = localStorage.getItem("mainTab");
+    if (savedTab === "applying" || savedTab === "interviewing") {
+      setMainTab(savedTab);
+    }
   }, []);
 
   useEffect(() => {
     localStorage.setItem("activeSection", activeSection);
   }, [activeSection]);
+
+  useEffect(() => {
+    localStorage.setItem("mainTab", mainTab);
+  }, [mainTab]);
 
   useEffect(() => {
     try {
@@ -1562,7 +1636,7 @@ export default function Home() {
                                   {pos.description}
                                 </span>
                                 <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }}
-                                  onClick={() => setAppDialog({ open: true, title: `${pos.company} — Job Description`, content: pos.description })}>
+                                  onClick={() => setAppDialog({ open: true, title: `${pos.company} — Job Description`, content: pos.description, kind: "jd" })}>
                                   View full
                                 </Button>
                               </Box>
@@ -1575,7 +1649,7 @@ export default function Home() {
                                   {resume.content}
                                 </span>
                                 <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }}
-                                  onClick={() => setAppDialog({ open: true, title: `Your Resume — ${pos?.title || "Role"}`, content: resume.content })}>
+                                  onClick={() => setAppDialog({ open: true, title: `Your Resume — ${pos?.title || "Role"}`, content: resume.content, kind: "resume" })}>
                                   View full
                                 </Button>
                               </Box>
@@ -1602,18 +1676,16 @@ export default function Home() {
 
             <Dialog
               open={appDialog.open}
-              onClose={() => setAppDialog({ open: false, title: "", content: "" })}
+              onClose={() => setAppDialog({ open: false, title: "", content: "", kind: "jd" })}
               maxWidth="md"
               fullWidth
             >
-              <DialogTitle>{appDialog.title}</DialogTitle>
-              <DialogContent dividers>
-                <pre style={{ whiteSpace: "pre-wrap", fontSize: 13, fontFamily: "inherit", margin: 0, lineHeight: 1.6 }}>
-                  {appDialog.content}
-                </pre>
+              <DialogTitle sx={{ fontWeight: 700 }}>{appDialog.title}</DialogTitle>
+              <DialogContent dividers sx={{ maxHeight: "70vh" }}>
+                <FormattedContent text={appDialog.content} kind={appDialog.kind} />
               </DialogContent>
               <DialogActions>
-                <Button onClick={() => setAppDialog({ open: false, title: "", content: "" })}>
+                <Button onClick={() => setAppDialog({ open: false, title: "", content: "", kind: "jd" })}>
                   Close
                 </Button>
               </DialogActions>
