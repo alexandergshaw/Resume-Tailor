@@ -203,9 +203,18 @@ export default function Home() {
       activeQueryRef.current = jobQuery.trim();
       setIsSearching(true);
       setJobSearchError("");
-      const ghCompanyParam = selectedCompanies.length > 0
-        ? `&companies=${selectedCompanies.map((c) => c.slug).join(",")}`
-        : "";
+      // Support both known company slugs and custom company names
+      let ghCompanyParam = "";
+      if (selectedCompanies.length > 0) {
+        const slugs = selectedCompanies.filter((c) => typeof c !== "string").map((c) => c.slug);
+        const names = selectedCompanies.filter((c) => typeof c === "string").map((c) => c);
+        if (slugs.length > 0) {
+          ghCompanyParam += `&companies=${slugs.join(",")}`;
+        }
+        if (names.length > 0) {
+          ghCompanyParam += names.map((n) => `&companyName=${encodeURIComponent(n)}`).join("");
+        }
+      }
       fetch(`/api/greenhouse?query=${encodeURIComponent(jobQuery.trim())}${ghCompanyParam}`)
         .then((r) => r.json())
         .then((data) => { setJobResults(data.jobs || []); })
@@ -524,9 +533,18 @@ export default function Home() {
     activeQueryRef.current = jobQuery.trim();
 
     try {
-      const ghCompanyParam = selectedCompanies.length > 0
-        ? `&companies=${selectedCompanies.map((c) => c.slug).join(",")}`
-        : "";
+      // Support both known company slugs and custom company names
+      let ghCompanyParam = "";
+      if (selectedCompanies.length > 0) {
+        const slugs = selectedCompanies.filter((c) => typeof c !== "string").map((c) => c.slug);
+        const names = selectedCompanies.filter((c) => typeof c === "string").map((c) => c);
+        if (slugs.length > 0) {
+          ghCompanyParam += `&companies=${slugs.join(",")}`;
+        }
+        if (names.length > 0) {
+          ghCompanyParam += names.map((n) => `&companyName=${encodeURIComponent(n)}`).join("");
+        }
+      }
       const data = await fetch(
         `/api/greenhouse?query=${encodeURIComponent(jobQuery.trim())}${ghCompanyParam}`
       ).then((r) => r.json());
@@ -925,8 +943,17 @@ export default function Home() {
               }
             }}
           />
+          {coverLetterFile && (
+            <>
+              <div style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 4 }}>
+                Last uploaded: {coverLetterFile.name}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
+                Unless you upload a different cover letter file, this will be used for all tailoring and downloads.
+              </div>
+            </>
+          )}
         </div>
-
         <div className={styles.fieldGroup}>
           <label htmlFor="additional-context" className={styles.label}>
             Additional Context
@@ -1039,11 +1066,26 @@ export default function Home() {
               />
               <Autocomplete
                 multiple
+                freeSolo
                 options={GREENHOUSE_COMPANIES}
-                getOptionLabel={(option) => option.name}
+                getOptionLabel={(option) => typeof option === "string" ? option : option.name}
                 value={selectedCompanies}
-                onChange={(_, newValue) => setSelectedCompanies(newValue)}
-                isOptionEqualToValue={(option, value) => option.slug === value.slug}
+                onChange={(_, newValue) => {
+                  setSelectedCompanies(
+                    newValue.map((entry) => {
+                      if (typeof entry === "string") {
+                        // Try to match to a known company
+                        const match = GREENHOUSE_COMPANIES.find((c) => c.name.toLowerCase() === entry.toLowerCase());
+                        return match || entry;
+                      }
+                      return entry;
+                    })
+                  );
+                }}
+                isOptionEqualToValue={(option, value) => {
+                  if (typeof option === "string" || typeof value === "string") return option === value;
+                  return option.slug === value.slug;
+                }}
                 renderInput={(params) => (
                   <TextField
                     {...params}
@@ -1053,9 +1095,10 @@ export default function Home() {
                   />
                 )}
                 renderTags={(value, getTagProps) =>
-                  value.map((option, index) => (
-                    <Chip key={option.slug} label={option.name} size="small" {...getTagProps({ index })} />
-                  ))
+                  value.map((option, index) => {
+                    const label = typeof option === "string" ? option : option.name;
+                    return <Chip key={label} label={label} size="small" {...getTagProps({ index })} />;
+                  })
                 }
               />
               <Button
