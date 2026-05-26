@@ -28,6 +28,7 @@ import TableCell from "@mui/material/TableCell";
 import TableContainer from "@mui/material/TableContainer";
 import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
+import TableSortLabel from "@mui/material/TableSortLabel";
 import { GREENHOUSE_COMPANIES, COMPANY_CATEGORIES } from "../lib/greenhouse/companies";
 import { createClient } from "../lib/supabase/client";
 import { upsertPosition } from "../lib/supabase/upsertPosition";
@@ -269,6 +270,7 @@ export default function Home() {
   const [applicationError, setApplicationError] = useState(null);
   const [applicationStages, setApplicationStages] = useState({});
   const [interviewSearch, setInterviewSearch] = useState("");
+  const [interviewSort, setInterviewSort] = useState({ field: null, dir: "asc" });
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
   const [aggressiveness, setAggressiveness] = useState(3);
   const [chatOpen, setChatOpen] = useState(false);
@@ -1076,7 +1078,27 @@ export default function Home() {
       const company = normalizeInterviewValue(app.positions?.company);
       const role = normalizeInterviewValue(app.positions?.title);
       return company.includes(query) || role.includes(query);
+    })
+    .sort((a, b) => {
+      if (!interviewSort.field) return 0;
+      const key = interviewSort.field === "company" ? "company" : "title";
+      const av = (a.positions?.[key] || "").toString().toLowerCase();
+      const bv = (b.positions?.[key] || "").toString().toLowerCase();
+      // Empty values sort to the end regardless of direction.
+      if (!av && bv) return 1;
+      if (av && !bv) return -1;
+      if (!av && !bv) return 0;
+      const cmp = av.localeCompare(bv);
+      return interviewSort.dir === "asc" ? cmp : -cmp;
     });
+
+  function toggleInterviewSort(field) {
+    setInterviewSort((prev) => {
+      if (prev.field !== field) return { field, dir: "asc" };
+      if (prev.dir === "asc") return { field, dir: "desc" };
+      return { field: null, dir: "asc" }; // third click clears
+    });
+  }
 
   function extractMinYearsRequired(description) {
     if (!description) return null;
@@ -2793,6 +2815,7 @@ export default function Home() {
                     <TableHead>
                       <TableRow>
                         <TableCell
+                          sortDirection={interviewSort.field === "company" ? interviewSort.dir : false}
                           sx={{
                             fontWeight: 700,
                             position: "sticky",
@@ -2802,9 +2825,16 @@ export default function Home() {
                             boxShadow: "1px 0 0 var(--border)",
                           }}
                         >
-                          Company
+                          <TableSortLabel
+                            active={interviewSort.field === "company"}
+                            direction={interviewSort.field === "company" ? interviewSort.dir : "asc"}
+                            onClick={() => toggleInterviewSort("company")}
+                          >
+                            Company
+                          </TableSortLabel>
                         </TableCell>
                         <TableCell
+                          sortDirection={interviewSort.field === "title" ? interviewSort.dir : false}
                           sx={{
                             fontWeight: 700,
                             position: "sticky",
@@ -2814,7 +2844,13 @@ export default function Home() {
                             boxShadow: "1px 0 0 var(--border)",
                           }}
                         >
-                          Role
+                          <TableSortLabel
+                            active={interviewSort.field === "title"}
+                            direction={interviewSort.field === "title" ? interviewSort.dir : "asc"}
+                            onClick={() => toggleInterviewSort("title")}
+                          >
+                            Role
+                          </TableSortLabel>
                         </TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Applied</TableCell>
