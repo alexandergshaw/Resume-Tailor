@@ -9,6 +9,7 @@ const SYSTEM_PROMPT = [
   "When the user has uploaded a resume or has applications, use that context to give specific, personalized advice.",
   "Reference specific companies, roles, or resume bullets from the provided context when relevant.",
   "If the user pastes a URL in their message, the page contents are fetched server-side and provided to you under '--- FETCHED URLS ---'. Use that fetched text instead of saying you cannot open links.",
+  "The '--- PINNED CONTEXT ---' block is the user's currently-selected subject (typically a job posting they just clicked 'Ask AI' on). Treat any text after a 'Description:' header inside it as the authoritative job description and answer questions about that description directly. If the pinned context references a URL, the fetched page content for that URL appears under '--- FETCHED URLS ---' and should be treated as the job description as well. Never tell the user you do not have access to the job description when a pinned context or fetched URL is present — instead answer using whatever description text is provided, and only if the description text is literally empty say something like 'the posting did not include a description; here is what I can infer from the title/company'.",
 ].join(" ");
 
 const MAX_RESUME_CHARS = 12000;
@@ -147,6 +148,34 @@ export async function POST(request) {
           }),
         );
         fetchedUrls = results;
+      }
+    }
+
+    // If the pinned context lacks an actual job description but carries a URL
+    // (typical for Greenhouse postings whose `content` came back empty), fetch
+    // that URL server-side so the model still has the posting body. Skip URLs
+    // we already fetched from the user message.
+    if (
+      pinnedContext &&
+      typeof pinnedContext.content === "string" &&
+      pinnedContext.content.trim() &&
+      !/(^|\n)\s*Description:\s*\n[^\s]/i.test(pinnedContext.content)
+    ) {
+      const alreadyFetched = new Set(fetchedUrls.map((u) => u.url));
+      const remaining = Math.max(0, MAX_FETCHED_URLS - fetchedUrls.length);
+      if (remaining > 0) {
+        const pinnedUrls = extractUrls(pinnedContext.content, remaining).filter(
+          (u) => !alreadyFetched.has(u),
+        );
+        if (pinnedUrls.length > 0) {
+          const results = await Promise.all(
+            pinnedUrls.map(async (url) => {
+              const res = await fetchUrlContent(url, { maxChars: MAX_FETCHED_URL_CHARS });
+              return { url, ...res };
+            }),
+          );
+          fetchedUrls = [...fetchedUrls, ...results];
+        }
       }
     }
 
