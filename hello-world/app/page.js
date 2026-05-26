@@ -927,32 +927,33 @@ export default function Home() {
       }, 1200);
     } catch {}
   }
-  function copyAdornment(key, value) {
-    const copied = fieldCopyKey === key;
-    return {
-      endAdornment: (
-        <InputAdornment position="end">
-          <Tooltip title={copied ? "Copied" : "Copy"} arrow>
-            <span>
-              <IconButton
-                size="small"
-                edge="end"
-                disabled={!value}
-                onClick={() => copyFieldValue(key, value)}
-                aria-label={`Copy ${key}`}
-                sx={{ p: 0.25 }}
-              >
-                {copied ? (
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                ) : (
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                )}
-              </IconButton>
-            </span>
-          </Tooltip>
-        </InputAdornment>
-      ),
-    };
+  function renderCopyButton(keyId, value, options = {}) {
+    const copied = fieldCopyKey === keyId;
+    return (
+      <Tooltip title={copied ? "Copied" : "Copy"} arrow>
+        <span style={{ display: "inline-flex" }}>
+          <IconButton
+            size="small"
+            disabled={!value}
+            onClick={() => copyFieldValue(keyId, value)}
+            aria-label={`Copy ${keyId}`}
+            sx={{
+              p: 0.5,
+              alignSelf: options.alignTop ? "flex-start" : "center",
+              mt: options.alignTop ? "4px" : 0,
+              color: copied ? "#2e7d32" : "#546e7a",
+              "&:hover": { color: "#1976d2", bgcolor: "transparent" },
+            }}
+          >
+            {copied ? (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            )}
+          </IconButton>
+        </span>
+      </Tooltip>
+    );
   }
 
   // When categories change, drive the company multiselect.
