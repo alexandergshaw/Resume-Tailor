@@ -13,13 +13,15 @@ const MAX_RESUME_CHARS = 12000;
 const MAX_APPLICATIONS = 25;
 const MAX_JD_CHARS = 1500;
 const MAX_TAILORED_CHARS = 2000;
+const MAX_ATTACHED_FILES = 10;
+const MAX_ATTACHED_CHARS = 8000;
 
 function truncate(value, max) {
   if (typeof value !== "string") return "";
   return value.length > max ? `${value.slice(0, max)}…` : value;
 }
 
-function buildContextBlock(resumeText, applications, pinnedContext) {
+function buildContextBlock(resumeText, applications, pinnedContext, attachedFiles) {
   const parts = [];
 
   if (pinnedContext && typeof pinnedContext.content === "string" && pinnedContext.content.trim()) {
@@ -27,6 +29,19 @@ function buildContextBlock(resumeText, applications, pinnedContext) {
     parts.push(
       `--- PINNED CONTEXT (user just clicked "Ask AI" on this; treat as the primary subject of the question) ---\n[${label}]\n${truncate(pinnedContext.content.trim(), MAX_RESUME_CHARS)}`,
     );
+  }
+
+  if (Array.isArray(attachedFiles) && attachedFiles.length > 0) {
+    const limited = attachedFiles.slice(0, MAX_ATTACHED_FILES);
+    const rendered = limited
+      .filter((f) => f && typeof f.content === "string" && f.content.trim())
+      .map((f, idx) => {
+        const name = (typeof f.name === "string" && f.name.trim()) || `file-${idx + 1}`;
+        return `[${name}]\n${truncate(f.content.trim(), MAX_ATTACHED_CHARS)}`;
+      });
+    if (rendered.length > 0) {
+      parts.push(`--- USER-ATTACHED FILES (dropped into chat as context) ---\n${rendered.join("\n\n")}`);
+    }
   }
 
   if (typeof resumeText === "string" && resumeText.trim()) {
@@ -79,6 +94,7 @@ export async function POST(request) {
     const resumeText = typeof body?.resumeText === "string" ? body.resumeText : "";
     const applications = Array.isArray(body?.applications) ? body.applications : [];
     const pinnedContext = body?.pinnedContext && typeof body.pinnedContext === "object" ? body.pinnedContext : null;
+    const attachedFiles = Array.isArray(body?.attachedFiles) ? body.attachedFiles : [];
 
     if (messages.length === 0) {
       return Response.json({ error: "No messages provided." }, { status: 400 });
@@ -94,7 +110,7 @@ export async function POST(request) {
         parts: [{ text: m.content }],
       }));
 
-    const contextBlock = buildContextBlock(resumeText, applications, pinnedContext);
+    const contextBlock = buildContextBlock(resumeText, applications, pinnedContext, attachedFiles);
     const systemInstruction = contextBlock
       ? `${SYSTEM_PROMPT}\n\nContext about this user (do not repeat verbatim; use to personalize answers):\n${contextBlock}`
       : SYSTEM_PROMPT;

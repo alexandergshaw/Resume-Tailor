@@ -277,6 +277,9 @@ export default function Home() {
   const [chatSending, setChatSending] = useState(false);
   const [chatError, setChatError] = useState("");
   const [chatPinnedContext, setChatPinnedContext] = useState(null);
+  const [chatAttachedFiles, setChatAttachedFiles] = useState([]);
+  const [chatAttachError, setChatAttachError] = useState("");
+  const [chatDragActive, setChatDragActive] = useState(false);
   const chatScrollRef = useRef(null);
   const chatInputRef = useRef(null);
   const [appDialog, setAppDialog] = useState({ open: false, rowIndex: null, kind: "jd" });
@@ -1455,8 +1458,49 @@ export default function Home() {
     el.scrollBy({ left: e.deltaY > 0 ? 120 : -120, behavior: "smooth" });
   }
 
-  function askAiAbout({ label, content, prompt = "" }) {
-    setChatPinnedContext({ label: label || "Context", content: content || "" });
+  async function addChatAttachments(fileList) {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+    setChatAttachError("");
+    const accepted = [];
+    for (const file of files) {
+      if (!file) continue;
+      if (file.size > 5 * 1024 * 1024) {
+        setChatAttachError(`${file.name} is too large (max 5 MB).`);
+        continue;
+      }
+      try {
+        let content = "";
+        if (isDocxResume(file)) {
+          const lines = await buildTemplateLinesForUpload(file);
+          content = (lines || []).join("\n").trim();
+        } else if (
+          isTextResume(file) ||
+          /\.(txt|md|csv|json|log)$/i.test(file.name) ||
+          (file.type && file.type.startsWith("text/"))
+        ) {
+          content = (await file.text()).trim();
+        } else {
+          setChatAttachError(`${file.name}: unsupported file type. Use .docx, .txt, .md, .csv, .json.`);
+          continue;
+        }
+        if (!content) {
+          setChatAttachError(`${file.name}: no text could be extracted.`);
+          continue;
+        }
+        accepted.push({ name: file.name, content });
+      } catch (err) {
+        setChatAttachError(`${file.name}: ${err.message || "failed to read."}`);
+      }
+    }
+    if (accepted.length > 0) {
+      setChatAttachedFiles((prev) => [...prev, ...accepted]);
+      setChatOpen(true);
+    }
+  }
+
+  function askAiAbout({ label, content, prompt = "", sourceJobId = null }) {
+    setChatPinnedContext({ label: label || "Context", content: content || "", sourceJobId: sourceJobId || null });
     setChatError("");
     setChatInput(prompt);
     setChatOpen(true);
@@ -1592,6 +1636,7 @@ export default function Home() {
           pinnedContext: chatPinnedContext
             ? { label: chatPinnedContext.label, content: chatPinnedContext.content }
             : null,
+          attachedFiles: (chatAttachedFiles || []).map((f) => ({ name: f.name, content: f.content })),
         }),
       });
       const payload = await response.json();
@@ -1609,6 +1654,24 @@ export default function Home() {
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   }, [chatMessages, chatSending, chatOpen]);
+
+  useEffect(() => {
+    if (!chatPinnedContext?.sourceJobId) return;
+    const jobId = chatPinnedContext.sourceJobId;
+    const tailoring = tailoringMap[jobId];
+    if (!tailoring?.result) return;
+    const tailoredBlock = `\n\nTailored Resume:\n${tailoring.result}`;
+    if (chatPinnedContext.content?.includes(tailoredBlock)) return;
+    const jobFromResults = jobResults.find((j) => j.id === jobId);
+    const jobFromTracked = trackedJobs.find((j) => j.id === jobId);
+    const jobForContext = jobFromResults || jobFromTracked;
+    if (!jobForContext) return;
+    setChatPinnedContext((prev) =>
+      prev && prev.sourceJobId === jobId
+        ? { ...prev, content: `${buildJobContextString(jobForContext)}${tailoredBlock}` }
+        : prev,
+    );
+  }, [tailoringMap, chatPinnedContext, jobResults, trackedJobs]);
 
   async function handleTrackJob(job) {
     setTrackedJobs((prev) => {
@@ -2693,12 +2756,34 @@ export default function Home() {
                     + Add Row
                   </Button>
                 </Box>
-                <TableContainer>
-                  <Table size="small">
+                <TableContainer sx={{ maxHeight: "calc(100vh - 280px)" }}>
+                  <Table size="small" stickyHeader>
                     <TableHead>
                       <TableRow>
-                        <TableCell sx={{ fontWeight: 700 }}>Company</TableCell>
-                        <TableCell sx={{ fontWeight: 700 }}>Role</TableCell>
+                        <TableCell
+                          sx={{
+                            fontWeight: 700,
+                            position: "sticky",
+                            left: 0,
+                            zIndex: 4,
+                            backgroundColor: "var(--bg-surface, #fff)",
+                            boxShadow: "1px 0 0 var(--border)",
+                          }}
+                        >
+                          Company
+                        </TableCell>
+                        <TableCell
+                          sx={{
+                            fontWeight: 700,
+                            position: "sticky",
+                            left: 140,
+                            zIndex: 4,
+                            backgroundColor: "var(--bg-surface, #fff)",
+                            boxShadow: "1px 0 0 var(--border)",
+                          }}
+                        >
+                          Role
+                        </TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Applied</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Recruiter Communications</TableCell>
@@ -2726,10 +2811,29 @@ export default function Home() {
 
                         return (
                           <TableRow key={app.id} hover>
-                            <TableCell sx={{ fontWeight: 600, whiteSpace: "nowrap" }}>
+                            <TableCell
+                              sx={{
+                                fontWeight: 600,
+                                whiteSpace: "nowrap",
+                                position: "sticky",
+                                left: 0,
+                                zIndex: 2,
+                                backgroundColor: "var(--bg-surface, #fff)",
+                                boxShadow: "1px 0 0 var(--border)",
+                              }}
+                            >
                               {pos?.company || "—"}
                             </TableCell>
-                            <TableCell sx={{ whiteSpace: "nowrap" }}>
+                            <TableCell
+                              sx={{
+                                whiteSpace: "nowrap",
+                                position: "sticky",
+                                left: 140,
+                                zIndex: 2,
+                                backgroundColor: "var(--bg-surface, #fff)",
+                                boxShadow: "1px 0 0 var(--border)",
+                              }}
+                            >
                               {pos?.title || "—"}
                             </TableCell>
                             <TableCell>
@@ -3505,6 +3609,19 @@ export default function Home() {
 
       {chatOpen ? (
         <Box
+          onDragOver={(e) => { e.preventDefault(); setChatDragActive(true); }}
+          onDragEnter={(e) => { e.preventDefault(); setChatDragActive(true); }}
+          onDragLeave={(e) => {
+            if (e.currentTarget.contains(e.relatedTarget)) return;
+            setChatDragActive(false);
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            setChatDragActive(false);
+            if (e.dataTransfer?.files?.length) {
+              addChatAttachments(e.dataTransfer.files);
+            }
+          }}
           sx={{
             position: "fixed",
             right: { xs: 16, sm: 24 },
@@ -3519,7 +3636,7 @@ export default function Home() {
             display: "flex",
             flexDirection: "column",
             backgroundColor: "var(--bg-surface)",
-            border: "1px solid var(--border-strong)",
+            border: chatDragActive ? "2px dashed var(--accent, #1976d2)" : "1px solid var(--border-strong)",
             borderRadius: 3,
             boxShadow: "0 24px 48px rgba(15, 23, 42, 0.18)",
             overflow: "hidden",
@@ -3643,36 +3760,82 @@ export default function Home() {
               borderTop: "1px solid var(--border)",
               p: 1,
               display: "flex",
+              flexDirection: "column",
               gap: 0.75,
-              alignItems: "flex-end",
               backgroundColor: "var(--bg-surface)",
             }}
           >
-            <TextField
-              fullWidth
-              size="small"
-              multiline
-              maxRows={4}
-              placeholder="Message AI Help…"
-              value={chatInput}
-              inputRef={chatInputRef}
-              onChange={(e) => setChatInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  sendChatMessage();
-                }
-              }}
-              disabled={chatSending}
-            />
-            <Button
-              variant="contained"
-              onClick={sendChatMessage}
-              disabled={chatSending || !chatInput.trim()}
-              sx={{ textTransform: "none", minWidth: 0, px: 2 }}
-            >
-              Send
-            </Button>
+            {chatAttachedFiles.length > 0 ? (
+              <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+                {chatAttachedFiles.map((f, i) => (
+                  <Chip
+                    key={`${f.name}-${i}`}
+                    size="small"
+                    label={f.name}
+                    onDelete={() =>
+                      setChatAttachedFiles((prev) => prev.filter((_, idx) => idx !== i))
+                    }
+                    sx={{ maxWidth: 220 }}
+                  />
+                ))}
+              </Box>
+            ) : null}
+            {chatAttachError ? (
+              <Box sx={{ fontSize: 12, color: "var(--danger, #d32f2f)" }}>
+                {chatAttachError}
+              </Box>
+            ) : null}
+            {chatDragActive ? (
+              <Box sx={{ fontSize: 12, color: "var(--accent, #1976d2)", fontStyle: "italic" }}>
+                Drop files to attach as context…
+              </Box>
+            ) : null}
+            <Box sx={{ display: "flex", gap: 0.75, alignItems: "flex-end" }}>
+              <Button
+                component="label"
+                size="small"
+                variant="outlined"
+                sx={{ textTransform: "none", minWidth: 0, px: 1, fontSize: 12 }}
+                title="Attach files for context"
+              >
+                + File
+                <input
+                  type="file"
+                  hidden
+                  multiple
+                  accept=".docx,.txt,.md,.csv,.json,.log,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/*"
+                  onChange={(e) => {
+                    addChatAttachments(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
+              </Button>
+              <TextField
+                fullWidth
+                size="small"
+                multiline
+                maxRows={4}
+                placeholder="Message AI Help… (drop files anywhere here)"
+                value={chatInput}
+                inputRef={chatInputRef}
+                onChange={(e) => setChatInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    sendChatMessage();
+                  }
+                }}
+                disabled={chatSending}
+              />
+              <Button
+                variant="contained"
+                onClick={sendChatMessage}
+                disabled={chatSending || !chatInput.trim()}
+                sx={{ textTransform: "none", minWidth: 0, px: 2 }}
+              >
+                Send
+              </Button>
+            </Box>
           </Box>
         </Box>
       ) : null}
@@ -3727,6 +3890,23 @@ export default function Home() {
                     <span className={styles.toolbarChipBadge}>Generating…</span>
                   ) : null}
                   <div className={styles.toolbarChipActions}>
+                    <button
+                      type="button"
+                      className={styles.toolbarChipBtn}
+                      title="Ask AI about this job"
+                      onClick={() => {
+                        const jobForContext = fullJob || job;
+                        const tailoredContent = tailoring?.result ? `\n\nTailored Resume:\n${tailoring.result}` : "";
+                        askAiAbout({
+                          label: `${job.title || "Job"}${job.company ? ` · ${job.company}` : ""}`,
+                          content: `${buildJobContextString(jobForContext)}${tailoredContent}`,
+                          prompt: `Help me with the ${job.title || "this"} role${job.company ? ` at ${job.company}` : ""}: `,
+                          sourceJobId: job.id,
+                        });
+                      }}
+                    >
+                      AI
+                    </button>
                     <button
                       type="button"
                       className={styles.toolbarChipBtn}
