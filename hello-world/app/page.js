@@ -1279,6 +1279,15 @@ export default function Home() {
     setUrlHasCompleted(false);
     setUrlIsSubmitting(true);
 
+    const trimmedUrl = urlPosting.trim();
+    const syntheticJobId = `url-${trimmedUrl}`;
+    setTrackedJobs((prev) =>
+      prev.some((j) => j.id === syntheticJobId)
+        ? prev
+        : [...prev, { id: syntheticJobId, title: "Generating from URL…", company: "", url: trimmedUrl }],
+    );
+    updateTailoringJob(syntheticJobId, { status: "tailoring" });
+
     try {
       const formData = new FormData();
       formData.append("jobPostingUrl", urlPosting.trim());
@@ -1313,10 +1322,7 @@ export default function Home() {
       setUrlGeneratedJobTitle(nextJobTitle);
       setUrlHasCompleted(true);
 
-      // Synthesize a tracked job + applied application so URL-generated
-      // resumes show in the floating toolbar and the Interviewing tab.
-      const trimmedUrl = urlPosting.trim();
-      const syntheticJobId = `url-${trimmedUrl}`;
+      // Update the synthesized tracked job's title now that we have one.
       const syntheticJob = {
         id: syntheticJobId,
         title: nextJobTitle || "Untitled role",
@@ -1325,10 +1331,9 @@ export default function Home() {
         description: "",
       };
       setTrackedJobs((prev) =>
-        prev.some((j) => j.id === syntheticJobId)
-          ? prev
-          : [...prev, { id: syntheticJobId, title: syntheticJob.title, company: syntheticJob.company, url: syntheticJob.url }],
+        prev.map((j) => (j.id === syntheticJobId ? { ...j, title: syntheticJob.title } : j)),
       );
+      updateTailoringJob(syntheticJobId, { status: "done" });
 
       // Persist the generated resume and link to an application
       if (currentUser) {
@@ -1365,6 +1370,7 @@ export default function Home() {
     } catch (err) {
       setUrlError(err.message || "Unexpected error.");
       setUrlHasCompleted(true);
+      updateTailoringJob(syntheticJobId, { status: "error" });
     } finally {
       setUrlIsSubmitting(false);
     }
@@ -1402,6 +1408,13 @@ export default function Home() {
     setManualHasCompleted(false);
     setManualIsSubmitting(true);
 
+    const syntheticJobId = `manual-${Date.now()}`;
+    setTrackedJobs((prev) => [
+      ...prev,
+      { id: syntheticJobId, title: "Generating from posting…", company: "", url: "" },
+    ]);
+    updateTailoringJob(syntheticJobId, { status: "tailoring" });
+
     try {
       const formData = new FormData();
       formData.append("jobPosting", jobPosting);
@@ -1434,9 +1447,7 @@ export default function Home() {
       setManualGeneratedJobTitle(nextJobTitle);
       setManualHasCompleted(true);
 
-      // Synthesize a tracked job + applied application so manually-pasted
-      // postings show in the floating toolbar and the Interviewing tab.
-      const syntheticJobId = `manual-${Date.now()}`;
+      // Update the synthesized tracked job's title now that we have one.
       const syntheticJob = {
         id: syntheticJobId,
         title: nextJobTitle || "Untitled role",
@@ -1444,10 +1455,10 @@ export default function Home() {
         url: "",
         description: jobPosting,
       };
-      setTrackedJobs((prev) => [
-        ...prev,
-        { id: syntheticJobId, title: syntheticJob.title, company: syntheticJob.company, url: syntheticJob.url },
-      ]);
+      setTrackedJobs((prev) =>
+        prev.map((j) => (j.id === syntheticJobId ? { ...j, title: syntheticJob.title } : j)),
+      );
+      updateTailoringJob(syntheticJobId, { status: "done" });
 
       // Persist the generated resume and link to an application
       if (currentUser) {
@@ -1484,6 +1495,7 @@ export default function Home() {
     } catch (err) {
       setManualError(err.message || "Unexpected error.");
       setManualHasCompleted(true);
+      updateTailoringJob(syntheticJobId, { status: "error" });
     } finally {
       setManualIsSubmitting(false);
     }
