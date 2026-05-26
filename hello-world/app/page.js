@@ -13,7 +13,6 @@ import InputLabel from "@mui/material/InputLabel";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import TextField from "@mui/material/TextField";
-import InputAdornment from "@mui/material/InputAdornment";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import Autocomplete from "@mui/material/Autocomplete";
@@ -2954,58 +2953,79 @@ export default function Home() {
                         gap: 1,
                       }}
                     >
-                      <TextField
-                        size="small"
-                        label="Name"
-                        value={ref.name}
-                        onChange={(e) => updateReference(ref.id, "name", e.target.value)}
-                        InputProps={copyAdornment(`ref:${ref.id}:name`, ref.name)}
-                      />
-                      <TextField
-                        size="small"
-                        label="Title"
-                        value={ref.title}
-                        onChange={(e) => updateReference(ref.id, "title", e.target.value)}
-                        InputProps={copyAdornment(`ref:${ref.id}:title`, ref.title)}
-                      />
-                      <TextField
-                        size="small"
-                        label="Company"
-                        value={ref.company}
-                        onChange={(e) => updateReference(ref.id, "company", e.target.value)}
-                        InputProps={copyAdornment(`ref:${ref.id}:company`, ref.company)}
-                      />
-                      <TextField
-                        size="small"
-                        label="Relationship"
-                        value={ref.relationship}
-                        onChange={(e) => updateReference(ref.id, "relationship", e.target.value)}
-                        InputProps={copyAdornment(`ref:${ref.id}:relationship`, ref.relationship)}
-                      />
-                      <TextField
-                        size="small"
-                        label="Email"
-                        value={ref.email}
-                        onChange={(e) => updateReference(ref.id, "email", e.target.value)}
-                        InputProps={copyAdornment(`ref:${ref.id}:email`, ref.email)}
-                      />
-                      <TextField
-                        size="small"
-                        label="Phone"
-                        value={ref.phone}
-                        onChange={(e) => updateReference(ref.id, "phone", e.target.value)}
-                        InputProps={copyAdornment(`ref:${ref.id}:phone`, ref.phone)}
-                      />
+                      <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Name"
+                          value={ref.name}
+                          onChange={(e) => updateReference(ref.id, "name", e.target.value)}
+                        />
+                        {renderCopyButton(`ref:${ref.id}:name`, ref.name)}
+                      </Box>
+                      <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Title"
+                          value={ref.title}
+                          onChange={(e) => updateReference(ref.id, "title", e.target.value)}
+                        />
+                        {renderCopyButton(`ref:${ref.id}:title`, ref.title)}
+                      </Box>
+                      <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Company"
+                          value={ref.company}
+                          onChange={(e) => updateReference(ref.id, "company", e.target.value)}
+                        />
+                        {renderCopyButton(`ref:${ref.id}:company`, ref.company)}
+                      </Box>
+                      <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Relationship"
+                          value={ref.relationship}
+                          onChange={(e) => updateReference(ref.id, "relationship", e.target.value)}
+                        />
+                        {renderCopyButton(`ref:${ref.id}:relationship`, ref.relationship)}
+                      </Box>
+                      <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Email"
+                          value={ref.email}
+                          onChange={(e) => updateReference(ref.id, "email", e.target.value)}
+                        />
+                        {renderCopyButton(`ref:${ref.id}:email`, ref.email)}
+                      </Box>
+                      <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Phone"
+                          value={ref.phone}
+                          onChange={(e) => updateReference(ref.id, "phone", e.target.value)}
+                        />
+                        {renderCopyButton(`ref:${ref.id}:phone`, ref.phone)}
+                      </Box>
                     </Box>
-                    <TextField
-                      size="small"
-                      label="Notes"
-                      value={ref.notes}
-                      onChange={(e) => updateReference(ref.id, "notes", e.target.value)}
-                      multiline
-                      minRows={2}
-                      InputProps={copyAdornment(`ref:${ref.id}:notes`, ref.notes)}
-                    />
+                    <Box sx={{ display: "flex", gap: 0.5, alignItems: "flex-start" }}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Notes"
+                        value={ref.notes}
+                        onChange={(e) => updateReference(ref.id, "notes", e.target.value)}
+                        multiline
+                        minRows={2}
+                      />
+                      {renderCopyButton(`ref:${ref.id}:notes`, ref.notes, { alignTop: true })}
+                    </Box>
                   </Box>
                 );
               })}
@@ -3151,65 +3171,89 @@ export default function Home() {
                         gap: 1,
                       }}
                     >
-                      <TextField
-                        size="small"
-                        label="School"
-                        value={entry.school}
-                        onChange={(e) => updateEducationEntry(entry.id, "school", e.target.value)}
-                        InputProps={copyAdornment(`edu:${entry.id}:school`, entry.school)}
-                      />
-                      <TextField
-                        size="small"
-                        label="Degree"
-                        value={entry.degree}
-                        onChange={(e) => updateEducationEntry(entry.id, "degree", e.target.value)}
-                        InputProps={copyAdornment(`edu:${entry.id}:degree`, entry.degree)}
-                      />
-                      <TextField
-                        size="small"
-                        label="Field of study"
-                        value={entry.field}
-                        onChange={(e) => updateEducationEntry(entry.id, "field", e.target.value)}
-                        InputProps={copyAdornment(`edu:${entry.id}:field`, entry.field)}
-                      />
-                      <TextField
-                        size="small"
-                        label="Location"
-                        value={entry.location}
-                        onChange={(e) => updateEducationEntry(entry.id, "location", e.target.value)}
-                        InputProps={copyAdornment(`edu:${entry.id}:location`, entry.location)}
-                      />
-                      <TextField
-                        size="small"
-                        label="Start (e.g. Aug 2018)"
-                        value={entry.startDate}
-                        onChange={(e) => updateEducationEntry(entry.id, "startDate", e.target.value)}
-                        InputProps={copyAdornment(`edu:${entry.id}:startDate`, entry.startDate)}
-                      />
-                      <TextField
-                        size="small"
-                        label="End (e.g. May 2022)"
-                        value={entry.endDate}
-                        onChange={(e) => updateEducationEntry(entry.id, "endDate", e.target.value)}
-                        InputProps={copyAdornment(`edu:${entry.id}:endDate`, entry.endDate)}
-                      />
-                      <TextField
-                        size="small"
-                        label="GPA"
-                        value={entry.gpa}
-                        onChange={(e) => updateEducationEntry(entry.id, "gpa", e.target.value)}
-                        InputProps={copyAdornment(`edu:${entry.id}:gpa`, entry.gpa)}
-                      />
+                      <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="School"
+                          value={entry.school}
+                          onChange={(e) => updateEducationEntry(entry.id, "school", e.target.value)}
+                        />
+                        {renderCopyButton(`edu:${entry.id}:school`, entry.school)}
+                      </Box>
+                      <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Degree"
+                          value={entry.degree}
+                          onChange={(e) => updateEducationEntry(entry.id, "degree", e.target.value)}
+                        />
+                        {renderCopyButton(`edu:${entry.id}:degree`, entry.degree)}
+                      </Box>
+                      <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Field of study"
+                          value={entry.field}
+                          onChange={(e) => updateEducationEntry(entry.id, "field", e.target.value)}
+                        />
+                        {renderCopyButton(`edu:${entry.id}:field`, entry.field)}
+                      </Box>
+                      <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Location"
+                          value={entry.location}
+                          onChange={(e) => updateEducationEntry(entry.id, "location", e.target.value)}
+                        />
+                        {renderCopyButton(`edu:${entry.id}:location`, entry.location)}
+                      </Box>
+                      <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="Start (e.g. Aug 2018)"
+                          value={entry.startDate}
+                          onChange={(e) => updateEducationEntry(entry.id, "startDate", e.target.value)}
+                        />
+                        {renderCopyButton(`edu:${entry.id}:startDate`, entry.startDate)}
+                      </Box>
+                      <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="End (e.g. May 2022)"
+                          value={entry.endDate}
+                          onChange={(e) => updateEducationEntry(entry.id, "endDate", e.target.value)}
+                        />
+                        {renderCopyButton(`edu:${entry.id}:endDate`, entry.endDate)}
+                      </Box>
+                      <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
+                        <TextField
+                          fullWidth
+                          size="small"
+                          label="GPA"
+                          value={entry.gpa}
+                          onChange={(e) => updateEducationEntry(entry.id, "gpa", e.target.value)}
+                        />
+                        {renderCopyButton(`edu:${entry.id}:gpa`, entry.gpa)}
+                      </Box>
                     </Box>
-                    <TextField
-                      size="small"
-                      label="Notes (honors, coursework, activities)"
-                      value={entry.notes}
-                      onChange={(e) => updateEducationEntry(entry.id, "notes", e.target.value)}
-                      multiline
-                      minRows={2}
-                      InputProps={copyAdornment(`edu:${entry.id}:notes`, entry.notes)}
-                    />
+                    <Box sx={{ display: "flex", gap: 0.5, alignItems: "flex-start" }}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Notes (honors, coursework, activities)"
+                        value={entry.notes}
+                        onChange={(e) => updateEducationEntry(entry.id, "notes", e.target.value)}
+                        multiline
+                        minRows={2}
+                      />
+                      {renderCopyButton(`edu:${entry.id}:notes`, entry.notes, { alignTop: true })}
+                    </Box>
                   </Box>
                 );
               })}
