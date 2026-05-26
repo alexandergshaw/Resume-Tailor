@@ -14,6 +14,7 @@ import Autocomplete from "@mui/material/Autocomplete";
 import Chip from "@mui/material/Chip";
 import { GREENHOUSE_COMPANIES, COMPANY_CATEGORIES } from "../lib/greenhouse/companies";
 import { createClient } from "../lib/supabase/client";
+import { upsertPosition } from "../lib/supabase/upsertPosition";
 
 const WORDPROCESSINGML_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -579,6 +580,7 @@ export default function Home() {
           .eq("user_id", currentUser.id)
           .eq("job_id", jobId);
       } else {
+        const positionId = typeof job !== "string" ? await upsertPosition(supabase, job) : null;
         await supabase.from("applied_jobs").upsert(
           {
             user_id: currentUser.id,
@@ -587,6 +589,7 @@ export default function Home() {
             company: job.company,
             job_url: job.url,
             job_description: job.description,
+            position_id: positionId,
           },
           { onConflict: "user_id,job_id" },
         );
@@ -620,11 +623,15 @@ export default function Home() {
     el.scrollBy({ left: e.deltaY > 0 ? 120 : -120, behavior: "smooth" });
   }
 
-  function handleTrackJob(job) {
+  async function handleTrackJob(job) {
     setTrackedJobs((prev) => {
       if (prev.some((j) => j.id === job.id)) return prev;
       return [...prev, { id: job.id, title: job.title, company: job.company, url: job.url }];
     });
+    if (currentUser && typeof job === "object") {
+      const supabase = createClient();
+      await upsertPosition(supabase, job);
+    }
   }
 
   function handleUntrackJob(jobId) {
