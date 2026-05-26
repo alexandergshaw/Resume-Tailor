@@ -583,6 +583,37 @@ export default function Home() {
     });
   }
 
+  async function loadCommunicationsForApp(app) {
+    if (!currentUser || !app?.id) return;
+    setCommunicationsDialog((prev) => ({
+      ...prev,
+      applicationId: app.id,
+      company: app.positions?.company || "",
+      role: app.positions?.title || "",
+      loading: true,
+      error: "",
+      items: prev.applicationId === app.id ? prev.items : [],
+    }));
+
+    const supabase = createClient();
+    const { data, error } = await listRecruiterCommunications(supabase, app.id);
+
+    setCommunicationsDialog((prev) => {
+      if (prev.applicationId !== app.id) return prev;
+      return {
+        ...prev,
+        loading: false,
+        error: error?.message || "",
+        items: data || [],
+      };
+    });
+  }
+
+  function openCommsInAppDialog(app, rowIndex) {
+    setAppDialog({ open: true, rowIndex, kind: "communications" });
+    loadCommunicationsForApp(app);
+  }
+
   function openAddCommunicationDialog(app) {
     setCommunicationError("");
     setAddCommunicationDialog({
@@ -617,7 +648,7 @@ export default function Home() {
     setAddCommunicationDialog({ open: false, applicationId: null, company: "", role: "", body: "" });
     setCommunicationSaving(false);
 
-    if (communicationsDialog.open && communicationsDialog.applicationId === applicationId) {
+    if (communicationsDialog.applicationId === applicationId) {
       const { data, error: reloadError } = await listRecruiterCommunications(supabase, applicationId);
       setCommunicationsDialog((prev) => ({
         ...prev,
@@ -2398,7 +2429,7 @@ export default function Home() {
                                 <Button
                                   size="small"
                                   sx={{ minWidth: 0, p: 0, fontSize: 11 }}
-                                  onClick={() => openCommunicationsDialog(app)}
+                                  onClick={() => openCommsInAppDialog(app, idx)}
                                 >
                                   View
                                 </Button>
@@ -2787,18 +2818,29 @@ export default function Home() {
               const pages = [
                 dPos?.description ? "jd" : null,
                 dResume?.content ? "resume" : null,
+                dApp?.id ? "communications" : null,
               ].filter(Boolean);
               const pageIdx = pages.indexOf(appDialog.kind);
-              const dialogTitle = appDialog.kind === "jd"
-                ? `${dPos?.company || ""} — Job Description`
-                : `Your Resume — ${dPos?.title || "Role"}`;
-              const dialogContent = appDialog.kind === "jd"
-                ? (dPos?.description ?? "")
-                : (dResume?.content ?? "");
+              const commsLoadedForThisApp =
+                dApp && communicationsDialog.applicationId === dApp.id;
+              const dialogTitle =
+                appDialog.kind === "jd"
+                  ? `${dPos?.company || ""} — Job Description`
+                  : appDialog.kind === "resume"
+                    ? `Your Resume — ${dPos?.title || "Role"}`
+                    : `Recruiter Communications${
+                        dPos?.company || dPos?.title
+                          ? ` — ${dPos?.company || "Unknown Company"}${dPos?.title ? ` / ${dPos.title}` : ""}`
+                          : ""
+                      }`;
               const navigate = (dir) => {
                 const next = pageIdx + dir;
                 if (next >= 0 && next < pages.length) {
-                  setAppDialog((prev) => ({ ...prev, kind: pages[next] }));
+                  const nextKind = pages[next];
+                  setAppDialog((prev) => ({ ...prev, kind: nextKind }));
+                  if (nextKind === "communications" && dApp && communicationsDialog.applicationId !== dApp.id) {
+                    loadCommunicationsForApp(dApp);
+                  }
                 }
               };
               return (
@@ -2846,9 +2888,69 @@ export default function Home() {
                     </Box>
                   </DialogTitle>
                   <DialogContent dividers sx={{ maxHeight: "70vh" }}>
-                    <FormattedContent text={dialogContent} kind={appDialog.kind} />
+                    {appDialog.kind === "communications" ? (
+                      !commsLoadedForThisApp || communicationsDialog.loading ? (
+                        <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
+                          <CircularProgress size={24} />
+                        </Box>
+                      ) : communicationsDialog.error ? (
+                        <p style={{ color: "var(--error, #d32f2f)", margin: 0 }}>{communicationsDialog.error}</p>
+                      ) : communicationsDialog.items.length === 0 ? (
+                        <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5, alignItems: "flex-start" }}>
+                          <p style={{ color: "var(--text-secondary)", margin: 0 }}>No recruiter communications logged yet.</p>
+                          {dApp ? (
+                            <Button size="small" variant="outlined" onClick={() => openAddCommunicationDialog(dApp)}>
+                              Add Communication
+                            </Button>
+                          ) : null}
+                        </Box>
+                      ) : (
+                        <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+                          {communicationsDialog.items.map((item) => (
+                            <Box
+                              key={item.id}
+                              sx={{
+                                p: 1.5,
+                                borderRadius: 2.5,
+                                border: "1px solid rgba(15, 23, 42, 0.08)",
+                                backgroundColor: "rgba(248, 250, 252, 0.8)",
+                              }}
+                            >
+                              <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap", mb: 1 }}>
+                                <Chip size="small" label={item.direction || "inbound"} variant="outlined" />
+                                <Chip size="small" label={item.type || "email"} variant="outlined" />
+                                <Box component="span" sx={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                                  {item.communicated_at ? new Date(item.communicated_at).toLocaleString() : "Logged communication"}
+                                </Box>
+                              </Box>
+                              {item.subject ? (
+                                <Box sx={{ fontWeight: 700, mb: 0.75 }}>{item.subject}</Box>
+                              ) : null}
+                              {(item.sender_name || item.sender_email || item.sender_title) ? (
+                                <Box sx={{ mb: 0.75, fontSize: 12, color: "var(--text-secondary)" }}>
+                                  {[item.sender_name, item.sender_title, item.sender_email].filter(Boolean).join(" · ")}
+                                </Box>
+                              ) : null}
+                              <Box sx={{ whiteSpace: "pre-wrap", lineHeight: 1.7, fontSize: 13.5 }}>
+                                {item.body || "—"}
+                              </Box>
+                            </Box>
+                          ))}
+                        </Box>
+                      )
+                    ) : (
+                      <FormattedContent
+                        text={appDialog.kind === "jd" ? (dPos?.description ?? "") : (dResume?.content ?? "")}
+                        kind={appDialog.kind}
+                      />
+                    )}
                   </DialogContent>
                   <DialogActions>
+                    {appDialog.kind === "communications" && dApp ? (
+                      <Button onClick={() => openAddCommunicationDialog(dApp)}>
+                        Add
+                      </Button>
+                    ) : null}
                     <Button onClick={() => setAppDialog({ open: false, rowIndex: null, kind: "jd" })}>
                       Close
                     </Button>
