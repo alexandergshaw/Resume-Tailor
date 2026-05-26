@@ -268,6 +268,9 @@ export default function Home() {
   // Saved searches: each entry captures the current values of the search-tab
   // controls so the user can restore them with one click.
   const [savedSearches, setSavedSearches] = useState([]);
+  // The id of the saved search whose values currently populate the controls.
+  // Cleared as soon as the user modifies any of the search controls.
+  const [activeSavedSearchId, setActiveSavedSearchId] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [mainTab, setMainTab] = useState("applying");
   const [applicationData, setApplicationData] = useState([]);
@@ -627,6 +630,7 @@ export default function Home() {
     setSelectedCategories(nextCategories);
     setSelectedCompanies(nextSelectedCompanies);
     setExcludedCompanies(nextExcludedCompanies);
+    setActiveSavedSearchId(entry.id);
 
     // Fire the search using the entry's values directly so we don't have to
     // wait for React state batching to flush.
@@ -637,6 +641,7 @@ export default function Home() {
   }
   function deleteSavedSearch(id) {
     setSavedSearches((prev) => prev.filter((s) => s.id !== id));
+    setActiveSavedSearchId((current) => (current === id ? null : current));
   }
 
   // Hydrate UI layout prefs (frozen-column widths + FAB position) once on mount.
@@ -3358,6 +3363,7 @@ export default function Home() {
                     chipSummaryParts.push(`≤${entry.maxYearsExp}y`);
                   }
                   const queryLabel = (entry.jobQuery || "").trim() || "—";
+                  const isActive = activeSavedSearchId === entry.id;
                   return (
                     <Box
                       key={entry.id}
@@ -3371,16 +3377,18 @@ export default function Home() {
                         maxWidth: 220,
                         px: 1.25,
                         py: 0.75,
-                        border: "1px solid #cfd8dc",
+                        border: isActive ? "1px solid #1976d2" : "1px solid #cfd8dc",
                         borderRadius: 1,
-                        bgcolor: "#fff",
+                        bgcolor: isActive ? "#e3f2fd" : "#fff",
+                        boxShadow: isActive ? "0 0 0 2px rgba(25, 118, 210, 0.18)" : "none",
                         cursor: "pointer",
                         position: "relative",
                         display: "flex",
                         flexDirection: "column",
                         gap: 0.25,
                         fontSize: "0.75rem",
-                        "&:hover": { borderColor: "#1976d2", boxShadow: 1 },
+                        transition: "background-color 120ms ease, box-shadow 120ms ease, border-color 120ms ease",
+                        "&:hover": { borderColor: "#1976d2", boxShadow: isActive ? "0 0 0 2px rgba(25, 118, 210, 0.25)" : 1 },
                       }}
                       title={`Apply saved search: ${entry.name}`}
                     >
@@ -3435,14 +3443,14 @@ export default function Home() {
                 size="small"
                 label="Job title or keywords"
                 value={jobQuery}
-                onChange={(e) => setJobQuery(e.target.value)}
+                onChange={(e) => { setJobQuery(e.target.value); setActiveSavedSearchId(null); }}
               />
               <FormControl size="small" sx={{ minWidth: 150, alignSelf: "flex-start" }}>
                 <InputLabel>Experience</InputLabel>
                 <Select
                   label="Experience"
                   value={maxYearsExp}
-                  onChange={(e) => setMaxYearsExp(e.target.value)}
+                  onChange={(e) => { setMaxYearsExp(e.target.value); setActiveSavedSearchId(null); }}
                 >
                   <MenuItem value="any">Any experience</MenuItem>
                   <MenuItem value="0">Entry level (0 yrs)</MenuItem>
@@ -3460,6 +3468,7 @@ export default function Home() {
                 value={selectedCategories}
                 onChange={(_, newValue) => {
                   setSelectedCategories(newValue);
+                  setActiveSavedSearchId(null);
                   // Sync the company multiselect to match the chosen categories.
                   // Done inline (not via a reactive effect) so restoring
                   // `selectedCategories` from localStorage on reload doesn't
@@ -3493,6 +3502,7 @@ export default function Home() {
                 getOptionLabel={(option) => typeof option === "string" ? option : option.name}
                 value={selectedCompanies}
                 onChange={(_, newValue) => {
+                  setActiveSavedSearchId(null);
                   setSelectedCompanies(
                     newValue.map((entry) => {
                       if (typeof entry === "string") {
@@ -3528,7 +3538,7 @@ export default function Home() {
                 options={GREENHOUSE_COMPANIES}
                 getOptionLabel={(option) => option.name}
                 value={excludedCompanies}
-                onChange={(_, newValue) => setExcludedCompanies(newValue)}
+                onChange={(_, newValue) => { setExcludedCompanies(newValue); setActiveSavedSearchId(null); }}
                 isOptionEqualToValue={(option, value) => option.slug === value.slug}
                 renderInput={(params) => (
                   <TextField
