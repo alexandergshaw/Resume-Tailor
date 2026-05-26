@@ -919,6 +919,40 @@ export default function Home() {
     } catch {}
   }
 
+  // Combined-copy helpers: copy every reference / education entry as one block.
+  function formatAllReferences() {
+    return references
+      .map((ref) => formatReferenceBlock(ref))
+      .filter(Boolean)
+      .join("\n\n");
+  }
+  function formatAllEducation() {
+    return educationEntries
+      .map((entry) => formatEducationBlock(entry))
+      .filter(Boolean)
+      .join("\n\n");
+  }
+  const [allReferencesCopied, setAllReferencesCopied] = useState(false);
+  const [allEducationCopied, setAllEducationCopied] = useState(false);
+  async function copyAllReferences() {
+    const text = formatAllReferences();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setAllReferencesCopied(true);
+      setTimeout(() => setAllReferencesCopied(false), 1500);
+    } catch {}
+  }
+  async function copyAllEducation() {
+    const text = formatAllEducation();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setAllEducationCopied(true);
+      setTimeout(() => setAllEducationCopied(false), 1500);
+    } catch {}
+  }
+
   // Per-field copy helper for references / education TextFields.
   const [fieldCopyKey, setFieldCopyKey] = useState(null);
   async function copyFieldValue(key, value) {
@@ -2885,6 +2919,23 @@ export default function Home() {
                   ? `Hide references${references.length ? ` (${references.length})` : ""}`
                   : `Show references${references.length ? ` (${references.length})` : ""}`}
               </Box>
+              <Tooltip title={allReferencesCopied ? "Copied!" : "Copy all references"}>
+                <span onClick={(e) => { e.stopPropagation(); }} onFocus={(e) => e.stopPropagation()}>
+                  <IconButton
+                    size="small"
+                    disabled={!formatAllReferences()}
+                    onClick={(e) => { e.stopPropagation(); copyAllReferences(); }}
+                    sx={{ p: 0.5, color: allReferencesCopied ? "#2e7d32" : "var(--text-secondary)" }}
+                    aria-label="Copy all references"
+                  >
+                    {allReferencesCopied ? (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    )}
+                  </IconButton>
+                </span>
+              </Tooltip>
             </AccordionSummary>
             <AccordionDetails
               sx={{
@@ -3103,6 +3154,23 @@ export default function Home() {
                   ? `Hide education${educationEntries.length ? ` (${educationEntries.length})` : ""}`
                   : `Show education${educationEntries.length ? ` (${educationEntries.length})` : ""}`}
               </Box>
+              <Tooltip title={allEducationCopied ? "Copied!" : "Copy all education"}>
+                <span onClick={(e) => { e.stopPropagation(); }} onFocus={(e) => e.stopPropagation()}>
+                  <IconButton
+                    size="small"
+                    disabled={!formatAllEducation()}
+                    onClick={(e) => { e.stopPropagation(); copyAllEducation(); }}
+                    sx={{ p: 0.5, color: allEducationCopied ? "#2e7d32" : "var(--text-secondary)" }}
+                    aria-label="Copy all education"
+                  >
+                    {allEducationCopied ? (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    )}
+                  </IconButton>
+                </span>
+              </Tooltip>
             </AccordionSummary>
             <AccordionDetails
               sx={{
