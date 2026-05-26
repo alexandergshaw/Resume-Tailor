@@ -925,6 +925,14 @@ export default function Home() {
               }
             }}
           />
+          {coverLetterFile && (
+            <div style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 4 }}>
+              Last uploaded: {coverLetterFile.name}
+            </div>
+          )}
+          <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
+            Unless you upload a different cover letter file, this will be used for all tailoring and downloads.
+          </div>
         </div>
 
         <div className={styles.fieldGroup}>
