@@ -93,10 +93,13 @@ export default function Home() {
     async function loadApplied(user) {
       if (user) {
         setCurrentUser(user);
-        const res = await fetch("/api/applied");
-        if (res.ok) {
-          const { jobs } = await res.json();
-          setAppliedJobIds(new Set(jobs.map((j) => j.job_id)));
+        const supabase = createClient();
+        const { data } = await supabase
+          .from("applied_jobs")
+          .select("job_id")
+          .eq("user_id", user.id);
+        if (data) {
+          setAppliedJobIds(new Set(data.map((j) => j.job_id)));
           return;
         }
       } else {
@@ -555,24 +558,25 @@ export default function Home() {
     });
 
     if (currentUser) {
+      const supabase = createClient();
       if (isApplied) {
-        await fetch("/api/applied", {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ jobId }),
-        });
+        await supabase
+          .from("applied_jobs")
+          .delete()
+          .eq("user_id", currentUser.id)
+          .eq("job_id", jobId);
       } else {
-        await fetch("/api/applied", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            jobId,
-            jobTitle: job.title,
+        await supabase.from("applied_jobs").upsert(
+          {
+            user_id: currentUser.id,
+            job_id: jobId,
+            job_title: job.title,
             company: job.company,
-            jobUrl: job.url,
-            jobDescription: job.description,
-          }),
-        });
+            job_url: job.url,
+            job_description: job.description,
+          },
+          { onConflict: "user_id,job_id" },
+        );
       }
     } else {
       // Not signed in — persist to localStorage
