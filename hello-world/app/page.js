@@ -12,6 +12,17 @@ import Select from "@mui/material/Select";
 import TextField from "@mui/material/TextField";
 import Autocomplete from "@mui/material/Autocomplete";
 import Chip from "@mui/material/Chip";
+import CircularProgress from "@mui/material/CircularProgress";
+import Dialog from "@mui/material/Dialog";
+import DialogActions from "@mui/material/DialogActions";
+import DialogContent from "@mui/material/DialogContent";
+import DialogTitle from "@mui/material/DialogTitle";
+import Table from "@mui/material/Table";
+import TableBody from "@mui/material/TableBody";
+import TableCell from "@mui/material/TableCell";
+import TableContainer from "@mui/material/TableContainer";
+import TableHead from "@mui/material/TableHead";
+import TableRow from "@mui/material/TableRow";
 import { GREENHOUSE_COMPANIES, COMPANY_CATEGORIES } from "../lib/greenhouse/companies";
 import { createClient } from "../lib/supabase/client";
 import { upsertPosition } from "../lib/supabase/upsertPosition";
@@ -62,6 +73,9 @@ export default function Home() {
   const [maxYearsExp, setMaxYearsExp] = useState("any");
   const [currentUser, setCurrentUser] = useState(null);
   const [mainTab, setMainTab] = useState("applying");
+  const [applicationData, setApplicationData] = useState([]);
+  const [applicationLoading, setApplicationLoading] = useState(false);
+  const [appDialog, setAppDialog] = useState({ open: false, title: "", content: "" });
 
   // Refs for targeted re-fetches when individual controls change
   const hasFetchedRef = useRef(false);
@@ -231,6 +245,31 @@ export default function Home() {
 
   useEffect(() => { localStorage.setItem("urlPosting", urlPosting); }, [urlPosting]);
   useEffect(() => { localStorage.setItem("jobPosting", jobPosting); }, [jobPosting]);
+
+  useEffect(() => {
+    if (mainTab !== "interviewing" || !currentUser) return;
+    let cancelled = false;
+    async function loadApplications() {
+      setApplicationLoading(true);
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("applications")
+        .select(`
+          id, status, applied_at, notes, application_url,
+          positions ( external_id, title, company, description, url ),
+          generated_resumes!resume_used_id ( content )
+        `)
+        .eq("user_id", currentUser.id)
+        .neq("status", "tracking")
+        .order("tracked_at", { ascending: false });
+      if (!cancelled) {
+        setApplicationData(data || []);
+        setApplicationLoading(false);
+      }
+    }
+    loadApplications();
+    return () => { cancelled = true; };
+  }, [mainTab, currentUser]);
 
   function extractMinYearsRequired(description) {
     if (!description) return null;
@@ -1429,7 +1468,121 @@ export default function Home() {
 
         {mainTab === "interviewing" && (
           <section className={styles.tabPanel}>
-            <p style={{ color: "var(--text-secondary)", marginTop: 8 }}>Interview tracking coming soon.</p>
+            {!currentUser ? (
+              <p style={{ color: "var(--text-secondary)" }}>Sign in to see your applications.</p>
+            ) : applicationLoading ? (
+              <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
+                <CircularProgress />
+              </Box>
+            ) : applicationData.length === 0 ? (
+              <p style={{ color: "var(--text-secondary)" }}>No applications yet. Apply to jobs in the Applying tab.</p>
+            ) : (
+              <TableContainer>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ fontWeight: 700 }}>Company</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>Role</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>Status</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>Applied</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>Job Description</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>Your Resume</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>Notes</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>Links</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {applicationData.map((app) => {
+                      const pos = app.positions;
+                      const resume = app.generated_resumes;
+                      const statusConfig = {
+                        applied:       { label: "Applied",       color: "primary" },
+                        phone_screen:  { label: "Phone Screen",  color: "info" },
+                        interviewing:  { label: "Interviewing",  color: "warning" },
+                        offer:         { label: "Offer",         color: "secondary" },
+                        accepted:      { label: "Accepted",      color: "success" },
+                        rejected:      { label: "Rejected",      color: "error" },
+                        withdrawn:     { label: "Withdrawn",     color: "default" },
+                      }[app.status] || { label: app.status, color: "default" };
+                      return (
+                        <TableRow key={app.id} hover>
+                          <TableCell sx={{ fontWeight: 600, whiteSpace: "nowrap" }}>
+                            {pos?.company || "—"}
+                          </TableCell>
+                          <TableCell sx={{ whiteSpace: "nowrap" }}>
+                            {pos?.title || "—"}
+                          </TableCell>
+                          <TableCell>
+                            <Chip label={statusConfig.label} color={statusConfig.color} size="small" />
+                          </TableCell>
+                          <TableCell sx={{ whiteSpace: "nowrap" }}>
+                            {app.applied_at
+                              ? new Date(app.applied_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+                              : "—"}
+                          </TableCell>
+                          <TableCell sx={{ maxWidth: 220 }}>
+                            {pos?.description ? (
+                              <Box sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, flexDirection: "column" }}>
+                                <span style={{ fontSize: 12, color: "var(--text-secondary)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                                  {pos.description}
+                                </span>
+                                <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }}
+                                  onClick={() => setAppDialog({ open: true, title: `${pos.company} — Job Description`, content: pos.description })}>
+                                  View full
+                                </Button>
+                              </Box>
+                            ) : "—"}
+                          </TableCell>
+                          <TableCell sx={{ maxWidth: 200 }}>
+                            {resume?.content ? (
+                              <Box sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, flexDirection: "column" }}>
+                                <span style={{ fontSize: 12, color: "var(--text-secondary)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                                  {resume.content}
+                                </span>
+                                <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }}
+                                  onClick={() => setAppDialog({ open: true, title: `Your Resume — ${pos?.title || "Role"}`, content: resume.content })}>
+                                  View full
+                                </Button>
+                              </Box>
+                            ) : "—"}
+                          </TableCell>
+                          <TableCell sx={{ maxWidth: 160, fontSize: 12, color: "var(--text-secondary)" }}>
+                            {app.notes || "—"}
+                          </TableCell>
+                          <TableCell>
+                            {(app.application_url || pos?.url) && (
+                              <Button size="small" href={app.application_url || pos.url}
+                                target="_blank" rel="noopener noreferrer" sx={{ whiteSpace: "nowrap" }}>
+                                Posting ↗
+                              </Button>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+
+            <Dialog
+              open={appDialog.open}
+              onClose={() => setAppDialog({ open: false, title: "", content: "" })}
+              maxWidth="md"
+              fullWidth
+            >
+              <DialogTitle>{appDialog.title}</DialogTitle>
+              <DialogContent dividers>
+                <pre style={{ whiteSpace: "pre-wrap", fontSize: 13, fontFamily: "inherit", margin: 0, lineHeight: 1.6 }}>
+                  {appDialog.content}
+                </pre>
+              </DialogContent>
+              <DialogActions>
+                <Button onClick={() => setAppDialog({ open: false, title: "", content: "" })}>
+                  Close
+                </Button>
+              </DialogActions>
+            </Dialog>
           </section>
         )}
       </main>
