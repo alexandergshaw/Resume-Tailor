@@ -304,6 +304,11 @@ export default function Home() {
   const [references, setReferences] = useState([]);
   const [referencesOpen, setReferencesOpen] = useState(false);
   const [referenceCopiedId, setReferenceCopiedId] = useState(null);
+
+  // Education entries the user can store and copy into applications.
+  const [educationEntries, setEducationEntries] = useState([]);
+  const [educationOpen, setEducationOpen] = useState(false);
+  const [educationCopiedId, setEducationCopiedId] = useState(null);
   const chatInputRef = useRef(null);
   const [appDialog, setAppDialog] = useState({ open: false, rowIndex: null, kind: "jd" });
   const [stageDialog, setStageDialog] = useState(createStageDialogState());
@@ -615,6 +620,37 @@ export default function Home() {
     } catch {}
   }, [references]);
 
+  // Hydrate/save stored education entries.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("applicationEducation");
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setEducationEntries(
+          parsed
+            .filter((e) => e && typeof e === "object")
+            .map((e) => ({
+              id: typeof e.id === "string" && e.id ? e.id : `edu-${Math.random().toString(36).slice(2, 10)}`,
+              school: String(e.school || ""),
+              degree: String(e.degree || ""),
+              field: String(e.field || ""),
+              location: String(e.location || ""),
+              startDate: String(e.startDate || ""),
+              endDate: String(e.endDate || ""),
+              gpa: String(e.gpa || ""),
+              notes: String(e.notes || ""),
+            })),
+        );
+      }
+    } catch {}
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem("applicationEducation", JSON.stringify(educationEntries));
+    } catch {}
+  }, [educationEntries]);
+
   // Close the chat when clicking outside its panel (but not on the FAB itself).
   useEffect(() => {
     if (!chatOpen) return;
@@ -733,6 +769,57 @@ export default function Home() {
       setReferenceCopiedId(ref.id);
       setTimeout(() => {
         setReferenceCopiedId((current) => (current === ref.id ? null : current));
+      }, 1500);
+    } catch {}
+  }
+
+  // Education entry helpers.
+  function addEducationEntry() {
+    setEducationEntries((prev) => [
+      ...prev,
+      {
+        id: `edu-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        school: "",
+        degree: "",
+        field: "",
+        location: "",
+        startDate: "",
+        endDate: "",
+        gpa: "",
+        notes: "",
+      },
+    ]);
+    setEducationOpen(true);
+  }
+  function updateEducationEntry(id, field, value) {
+    setEducationEntries((prev) =>
+      prev.map((entry) => (entry.id === id ? { ...entry, [field]: value } : entry)),
+    );
+  }
+  function removeEducationEntry(id) {
+    setEducationEntries((prev) => prev.filter((entry) => entry.id !== id));
+  }
+  function formatEducationBlock(entry) {
+    if (!entry) return "";
+    const lines = [];
+    if (entry.school) lines.push(entry.school);
+    const degreeLine = [entry.degree, entry.field].filter(Boolean).join(", ");
+    if (degreeLine) lines.push(degreeLine);
+    const dateRange = [entry.startDate, entry.endDate].filter(Boolean).join(" – ");
+    const metaBits = [entry.location, dateRange].filter(Boolean).join(" • ");
+    if (metaBits) lines.push(metaBits);
+    if (entry.gpa) lines.push(`GPA: ${entry.gpa}`);
+    if (entry.notes) lines.push(entry.notes);
+    return lines.join("\n");
+  }
+  async function copyEducationBlock(entry) {
+    const text = formatEducationBlock(entry);
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setEducationCopiedId(entry.id);
+      setTimeout(() => {
+        setEducationCopiedId((current) => (current === entry.id ? null : current));
       }, 1500);
     } catch {}
   }
@@ -2792,6 +2879,202 @@ export default function Home() {
                   sx={{ textTransform: "none", fontSize: "0.8rem" }}
                 >
                   + Add reference
+                </Button>
+              </Box>
+            </AccordionDetails>
+          </Accordion>
+        </div>
+
+        <div className={styles.fieldGroup}>
+          <label htmlFor="education-header" className={styles.label}>
+            Education
+          </label>
+          <Accordion
+            disableGutters
+            elevation={0}
+            expanded={educationOpen}
+            onChange={(_event, expanded) => setEducationOpen(expanded)}
+            sx={{
+              border: "1px solid var(--border-strong)",
+              borderRadius: "12px !important",
+              overflow: "hidden",
+              backgroundColor: "var(--bg-surface)",
+              "&::before": { display: "none" },
+            }}
+          >
+            <AccordionSummary
+              aria-controls="education-content"
+              id="education-header"
+              expandIcon={(
+                <Box
+                  component="span"
+                  sx={{
+                    fontSize: "0.95rem",
+                    lineHeight: 1,
+                    color: "var(--text-secondary)",
+                  }}
+                >
+                  ▾
+                </Box>
+              )}
+              sx={{
+                minHeight: 0,
+                px: 1.75,
+                py: 0.25,
+                "& .MuiAccordionSummary-content": {
+                  my: 1,
+                  font: "inherit",
+                  fontSize: "0.9rem",
+                  color: "var(--text-secondary)",
+                  fontWeight: 400,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 1,
+                },
+              }}
+            >
+              <Box component="span">
+                {educationOpen
+                  ? `Hide education${educationEntries.length ? ` (${educationEntries.length})` : ""}`
+                  : `Show education${educationEntries.length ? ` (${educationEntries.length})` : ""}`}
+              </Box>
+            </AccordionSummary>
+            <AccordionDetails
+              sx={{
+                pt: 1.5,
+                pb: 2,
+                px: 1.75,
+                display: "flex",
+                flexDirection: "column",
+                gap: 1.5,
+                borderTop: "1px solid var(--border)",
+              }}
+            >
+              {educationEntries.length === 0 ? (
+                <Box sx={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
+                  No education entries saved yet. Add one to keep your school details ready to copy.
+                </Box>
+              ) : null}
+
+              {educationEntries.map((entry) => {
+                const headerLabel = entry.school?.trim()
+                  || entry.degree?.trim()
+                  || entry.field?.trim()
+                  || "Untitled school";
+                const copied = educationCopiedId === entry.id;
+                return (
+                  <Box
+                    key={entry.id}
+                    sx={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 2,
+                      p: 1.5,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 1,
+                      backgroundColor: "var(--bg-soft, #fbfdff)",
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 1,
+                      }}
+                    >
+                      <Box sx={{ fontWeight: 600, fontSize: "0.9rem" }}>{headerLabel}</Box>
+                      <Box sx={{ display: "flex", gap: 0.75 }}>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={() => copyEducationBlock(entry)}
+                          disabled={!formatEducationBlock(entry)}
+                          sx={{ textTransform: "none", fontSize: "0.75rem", py: 0.25, minWidth: 0 }}
+                        >
+                          {copied ? "Copied!" : "Copy"}
+                        </Button>
+                        <Button
+                          size="small"
+                          color="error"
+                          onClick={() => removeEducationEntry(entry.id)}
+                          sx={{ textTransform: "none", fontSize: "0.75rem", py: 0.25, minWidth: 0 }}
+                        >
+                          Remove
+                        </Button>
+                      </Box>
+                    </Box>
+                    <Box
+                      sx={{
+                        display: "grid",
+                        gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
+                        gap: 1,
+                      }}
+                    >
+                      <TextField
+                        size="small"
+                        label="School"
+                        value={entry.school}
+                        onChange={(e) => updateEducationEntry(entry.id, "school", e.target.value)}
+                      />
+                      <TextField
+                        size="small"
+                        label="Degree"
+                        value={entry.degree}
+                        onChange={(e) => updateEducationEntry(entry.id, "degree", e.target.value)}
+                      />
+                      <TextField
+                        size="small"
+                        label="Field of study"
+                        value={entry.field}
+                        onChange={(e) => updateEducationEntry(entry.id, "field", e.target.value)}
+                      />
+                      <TextField
+                        size="small"
+                        label="Location"
+                        value={entry.location}
+                        onChange={(e) => updateEducationEntry(entry.id, "location", e.target.value)}
+                      />
+                      <TextField
+                        size="small"
+                        label="Start (e.g. Aug 2018)"
+                        value={entry.startDate}
+                        onChange={(e) => updateEducationEntry(entry.id, "startDate", e.target.value)}
+                      />
+                      <TextField
+                        size="small"
+                        label="End (e.g. May 2022)"
+                        value={entry.endDate}
+                        onChange={(e) => updateEducationEntry(entry.id, "endDate", e.target.value)}
+                      />
+                      <TextField
+                        size="small"
+                        label="GPA"
+                        value={entry.gpa}
+                        onChange={(e) => updateEducationEntry(entry.id, "gpa", e.target.value)}
+                      />
+                    </Box>
+                    <TextField
+                      size="small"
+                      label="Notes (honors, coursework, activities)"
+                      value={entry.notes}
+                      onChange={(e) => updateEducationEntry(entry.id, "notes", e.target.value)}
+                      multiline
+                      minRows={2}
+                    />
+                  </Box>
+                );
+              })}
+
+              <Box>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={addEducationEntry}
+                  sx={{ textTransform: "none", fontSize: "0.8rem" }}
+                >
+                  + Add education
                 </Button>
               </Box>
             </AccordionDetails>
