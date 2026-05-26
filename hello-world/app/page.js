@@ -28,6 +28,7 @@ import { createClient } from "../lib/supabase/client";
 import { upsertPosition } from "../lib/supabase/upsertPosition";
 import { upsertApplication, getPositionId } from "../lib/supabase/upsertApplication";
 import { saveGeneratedResume } from "../lib/supabase/saveGeneratedResume";
+import { getInterviewStages, upsertInterviewStage } from "../lib/supabase/upsertInterviewStage";
 
 const WORDPROCESSINGML_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -98,6 +99,51 @@ function FormattedContent({ text, kind }) {
   );
 }
 
+const STAGE_TYPE_OPTIONS = [
+  ["phone_screen", "Phone Screen"],
+  ["technical", "Technical"],
+  ["behavioral", "Behavioral"],
+  ["system_design", "System Design"],
+  ["hiring_manager", "Hiring Manager"],
+  ["panel", "Panel"],
+  ["offer_call", "Offer Call"],
+  ["other", "Other"],
+];
+
+const STAGE_TYPE_LABELS = Object.fromEntries(STAGE_TYPE_OPTIONS);
+
+const STAGE_OUTCOME_OPTIONS = [
+  ["pending", "Pending"],
+  ["passed", "Passed"],
+  ["failed", "Failed"],
+  ["cancelled", "Cancelled"],
+];
+
+function createStageDialogState(overrides = {}) {
+  return {
+    open: false,
+    applicationId: null,
+    stageId: null,
+    stageName: "",
+    stageType: "phone_screen",
+    scheduledAt: "",
+    completedAt: "",
+    durationMinutes: "",
+    outcome: "pending",
+    interviewerNames: "",
+    notes: "",
+    ...overrides,
+  };
+}
+
+function formatDateTimeLocalInputValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (part) => String(part).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 export default function Home() {
   const [resumeFile, setResumeFile] = useState(null);
   const [coverLetterFile, setCoverLetterFile] = useState(null);
@@ -142,7 +188,11 @@ export default function Home() {
   const [applicationData, setApplicationData] = useState([]);
   const [applicationLoading, setApplicationLoading] = useState(false);
   const [applicationError, setApplicationError] = useState(null);
+  const [applicationStages, setApplicationStages] = useState({});
   const [appDialog, setAppDialog] = useState({ open: false, rowIndex: null, kind: "jd" });
+  const [stageDialog, setStageDialog] = useState(createStageDialogState());
+  const [stageSaving, setStageSaving] = useState(false);
+  const [stageError, setStageError] = useState("");
 
   // Refs for targeted re-fetches when individual controls change
   const hasFetchedRef = useRef(false);
@@ -321,6 +371,51 @@ export default function Home() {
   useEffect(() => { localStorage.setItem("urlPosting", urlPosting); }, [urlPosting]);
   useEffect(() => { localStorage.setItem("jobPosting", jobPosting); }, [jobPosting]);
 
+  async function loadStagesForApplication(applicationId) {
+    if (!applicationId) return;
+    const supabase = createClient();
+    const stages = await getInterviewStages(supabase, applicationId);
+    setApplicationStages((prev) => ({
+      ...prev,
+      [applicationId]: stages,
+    }));
+  }
+
+  async function handleSaveStage() {
+    if (!currentUser || !stageDialog.applicationId) return;
+
+    setStageSaving(true);
+    setStageError("");
+
+    const supabase = createClient();
+    const savedStageId = await upsertInterviewStage(supabase, {
+      userId: currentUser.id,
+      applicationId: stageDialog.applicationId,
+      stageId: stageDialog.stageId || undefined,
+      stageName: (stageDialog.stageName || STAGE_TYPE_LABELS[stageDialog.stageType] || "Interview Stage").trim(),
+      stageType: stageDialog.stageType,
+      scheduledAt: stageDialog.scheduledAt ? new Date(stageDialog.scheduledAt).toISOString() : undefined,
+      completedAt: stageDialog.completedAt ? new Date(stageDialog.completedAt).toISOString() : undefined,
+      durationMinutes: stageDialog.durationMinutes ? parseInt(stageDialog.durationMinutes, 10) : undefined,
+      outcome: stageDialog.outcome,
+      interviewerNames: stageDialog.interviewerNames
+        .split(",")
+        .map((name) => name.trim())
+        .filter(Boolean),
+      notes: stageDialog.notes.trim() || undefined,
+    });
+
+    if (!savedStageId) {
+      setStageError("Unable to save interview stage.");
+      setStageSaving(false);
+      return;
+    }
+
+    await loadStagesForApplication(stageDialog.applicationId);
+    setStageDialog(createStageDialogState());
+    setStageSaving(false);
+  }
+
   useEffect(() => {
     if (mainTab !== "interviewing" || !currentUser) return;
     let cancelled = false;
@@ -369,8 +464,29 @@ export default function Home() {
         generated_resumes: app.resume_used_id ? (resumeMap[app.resume_used_id] ?? null) : null,
       }));
 
+      const appIds = merged.map((app) => app.id).filter(Boolean);
+      let nextStageMap = {};
+      if (appIds.length > 0) {
+        const { data: stageRows, error: stageErr } = await supabase
+          .from("interview_stages")
+          .select("id, application_id, stage_name, stage_type, scheduled_at, completed_at, duration_minutes, outcome, interviewer_names, notes, created_at, updated_at")
+          .in("application_id", appIds)
+          .order("scheduled_at", { ascending: false });
+
+        if (stageErr) {
+          console.warn("[loadApplications] stage fetch failed (non-fatal):", stageErr);
+        } else {
+          nextStageMap = (stageRows || []).reduce((acc, stage) => {
+            if (!acc[stage.application_id]) acc[stage.application_id] = [];
+            acc[stage.application_id].push(stage);
+            return acc;
+          }, {});
+        }
+      }
+
       if (!cancelled) {
         setApplicationData(merged);
+        setApplicationStages(nextStageMap);
         setApplicationLoading(false);
       }
     }
@@ -1604,6 +1720,7 @@ export default function Home() {
                     {applicationData.map((app, idx) => {
                       const pos = app.positions;
                       const resume = app.generated_resumes;
+                      const stages = applicationStages[app.id] || [];
                       const statusConfig = {
                         applied:       { label: "Applied",       color: "primary" },
                         phone_screen:  { label: "Phone Screen",  color: "info" },
@@ -1622,7 +1739,60 @@ export default function Home() {
                             {pos?.title || "—"}
                           </TableCell>
                           <TableCell>
-                            <Chip label={statusConfig.label} color={statusConfig.color} size="small" />
+                            <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0.75 }}>
+                              <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
+                                <Chip label={statusConfig.label} color={statusConfig.color} size="small" />
+                                <Button
+                                  size="small"
+                                  sx={{ minWidth: 0, p: 0, fontSize: 11 }}
+                                  onClick={() => {
+                                    setStageError("");
+                                    setStageDialog(createStageDialogState({
+                                      open: true,
+                                      applicationId: app.id,
+                                    }));
+                                  }}
+                                >
+                                  + Stage
+                                </Button>
+                              </Box>
+                              {stages.length > 0 ? (
+                                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
+                                  {stages.slice(0, 2).map((stage) => {
+                                    const stageLabel = `${stage.stage_name || STAGE_TYPE_LABELS[stage.stage_type] || stage.stage_type}${stage.outcome && stage.outcome !== "pending" ? ` · ${stage.outcome}` : ""}`;
+                                    return (
+                                      <Chip
+                                        key={stage.id}
+                                        label={stageLabel}
+                                        size="small"
+                                        variant="outlined"
+                                        onClick={() => {
+                                          setStageError("");
+                                          setStageDialog(createStageDialogState({
+                                            open: true,
+                                            applicationId: app.id,
+                                            stageId: stage.id,
+                                            stageName: stage.stage_name || "",
+                                            stageType: stage.stage_type || "phone_screen",
+                                            scheduledAt: formatDateTimeLocalInputValue(stage.scheduled_at),
+                                            completedAt: formatDateTimeLocalInputValue(stage.completed_at),
+                                            durationMinutes: stage.duration_minutes ? String(stage.duration_minutes) : "",
+                                            outcome: stage.outcome || "pending",
+                                            interviewerNames: (stage.interviewer_names || []).join(", "),
+                                            notes: stage.notes || "",
+                                          }));
+                                        }}
+                                      />
+                                    );
+                                  })}
+                                  {stages.length > 2 ? (
+                                    <Box component="span" sx={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                                      +{stages.length - 2} more
+                                    </Box>
+                                  ) : null}
+                                </Box>
+                              ) : null}
+                            </Box>
                           </TableCell>
                           <TableCell sx={{ whiteSpace: "nowrap" }}>
                             {app.applied_at
@@ -1673,6 +1843,118 @@ export default function Home() {
                 </Table>
               </TableContainer>
             )}
+
+            <Dialog
+              open={stageDialog.open}
+              onClose={() => {
+                setStageError("");
+                setStageDialog(createStageDialogState());
+              }}
+              maxWidth="sm"
+              fullWidth
+            >
+              <DialogTitle>{stageDialog.stageId ? "Edit Interview Stage" : "Add Interview Stage"}</DialogTitle>
+              <DialogContent dividers sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 2 }}>
+                <TextField
+                  label="Stage Name"
+                  value={stageDialog.stageName}
+                  onChange={(e) => setStageDialog((prev) => ({ ...prev, stageName: e.target.value }))}
+                  fullWidth
+                  size="small"
+                  placeholder="e.g. Technical Round 1"
+                />
+                <FormControl fullWidth size="small">
+                  <InputLabel id="stage-type-label">Type</InputLabel>
+                  <Select
+                    labelId="stage-type-label"
+                    value={stageDialog.stageType}
+                    label="Type"
+                    onChange={(e) => setStageDialog((prev) => ({ ...prev, stageType: e.target.value }))}
+                  >
+                    {STAGE_TYPE_OPTIONS.map(([value, label]) => (
+                      <MenuItem key={value} value={value}>{label}</MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+                <TextField
+                  type="datetime-local"
+                  label="Scheduled"
+                  value={stageDialog.scheduledAt}
+                  onChange={(e) => setStageDialog((prev) => ({ ...prev, scheduledAt: e.target.value }))}
+                  fullWidth
+                  size="small"
+                  InputLabelProps={{ shrink: true }}
+                />
+                <TextField
+                  type="datetime-local"
+                  label="Completed"
+                  value={stageDialog.completedAt}
+                  onChange={(e) => setStageDialog((prev) => ({ ...prev, completedAt: e.target.value }))}
+                  fullWidth
+                  size="small"
+                  InputLabelProps={{ shrink: true }}
+                />
+                <TextField
+                  type="number"
+                  label="Duration (minutes)"
+                  value={stageDialog.durationMinutes}
+                  onChange={(e) => setStageDialog((prev) => ({ ...prev, durationMinutes: e.target.value }))}
+                  fullWidth
+                  size="small"
+                />
+                <FormControl fullWidth size="small">
+                  <InputLabel id="stage-outcome-label">Outcome</InputLabel>
+                  <Select
+                    labelId="stage-outcome-label"
+                    value={stageDialog.outcome}
+                    label="Outcome"
+                    onChange={(e) => setStageDialog((prev) => ({ ...prev, outcome: e.target.value }))}
+                  >
+                    {STAGE_OUTCOME_OPTIONS.map(([value, label]) => (
+                      <MenuItem key={value} value={value}>{label}</MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+                <TextField
+                  label="Interviewer Names"
+                  value={stageDialog.interviewerNames}
+                  onChange={(e) => setStageDialog((prev) => ({ ...prev, interviewerNames: e.target.value }))}
+                  fullWidth
+                  size="small"
+                  placeholder="Comma-separated names"
+                  helperText="Separate multiple names with commas"
+                />
+                <TextField
+                  label="Notes"
+                  value={stageDialog.notes}
+                  onChange={(e) => setStageDialog((prev) => ({ ...prev, notes: e.target.value }))}
+                  fullWidth
+                  multiline
+                  rows={4}
+                  size="small"
+                />
+                {stageError ? (
+                  <p style={{ color: "var(--error, #d32f2f)", margin: 0 }}>{stageError}</p>
+                ) : null}
+              </DialogContent>
+              <DialogActions>
+                <Button
+                  onClick={() => {
+                    setStageError("");
+                    setStageDialog(createStageDialogState());
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="contained"
+                  onClick={handleSaveStage}
+                  disabled={stageSaving}
+                >
+                  {stageSaving ? "Saving..." : "Save Stage"}
+                </Button>
+              </DialogActions>
+            </Dialog>
 
             {(() => {
               const dApp = appDialog.rowIndex != null ? applicationData[appDialog.rowIndex] : null;
