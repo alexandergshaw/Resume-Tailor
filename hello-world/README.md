@@ -70,6 +70,26 @@ create policy "Users manage own rows" on applied_jobs
 grant select, insert, update, delete on public.applied_jobs to authenticated;
 ```
 
+Then run this to set up the Storage bucket for resumes:
+
+```sql
+insert into storage.buckets (id, name, public)
+values ('resumes', 'resumes', false)
+on conflict do nothing;
+
+create policy "Users manage own files" on storage.objects
+  for all using (
+    bucket_id = 'resumes'
+    and auth.uid()::text = (storage.foldername(name))[1]
+  )
+  with check (
+    bucket_id = 'resumes'
+    and auth.uid()::text = (storage.foldername(name))[1]
+  );
+
+grant select, insert, update, delete on storage.objects to authenticated;
+```
+
 3. Enable **Google OAuth** in Supabase → Authentication → Providers → Google.
    - You'll need a Google OAuth **Client ID** and **Client Secret** from [Google Cloud Console](https://console.cloud.google.com) → APIs & Services → Credentials → Create OAuth client → Web application.
    - Add `https://<your-project-ref>.supabase.co/auth/v1/callback` as an **Authorized redirect URI** in Google Cloud Console.
