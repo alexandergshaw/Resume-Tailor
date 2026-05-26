@@ -65,6 +65,9 @@ create policy "Users manage own rows" on applied_jobs
   for all
   using (auth.uid() = user_id)
   with check (auth.uid() = user_id);
+
+-- Grant table-level access to signed-in users (required in addition to RLS)
+grant select, insert, update, delete on public.applied_jobs to authenticated;
 ```
 
 3. Enable **Google OAuth** in Supabase → Authentication → Providers → Google.
