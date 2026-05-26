@@ -1801,15 +1801,43 @@ export default function Home() {
               <p style={{ color: "var(--text-secondary)" }}>No applications yet. Apply to jobs in the Applying tab.</p>
             ) : (
               <>
-                <Box sx={{ mb: 2, maxWidth: 360 }}>
+                <Box sx={{ display: "flex", gap: 1.5, mb: 2, flexWrap: "wrap", alignItems: "flex-start" }}>
                   <TextField
                     label="Search company or role"
                     value={interviewSearch}
                     onChange={(e) => setInterviewSearch(e.target.value)}
-                    fullWidth
+                    sx={{ minWidth: 280, flex: "1 1 320px" }}
                     size="small"
                     placeholder="e.g. Stripe or frontend"
                   />
+                  <FormControl size="small" sx={{ minWidth: 170 }}>
+                    <InputLabel id="interview-sort-field-label">Sort by</InputLabel>
+                    <Select
+                      labelId="interview-sort-field-label"
+                      value={interviewSort.field}
+                      label="Sort by"
+                      onChange={(e) => setInterviewSort((prev) => ({ ...prev, field: e.target.value }))}
+                    >
+                      <MenuItem value="company">Company</MenuItem>
+                      <MenuItem value="role">Role</MenuItem>
+                      <MenuItem value="applied_at">Applied date</MenuItem>
+                    </Select>
+                  </FormControl>
+                  <FormControl size="small" sx={{ minWidth: 160 }}>
+                    <InputLabel id="interview-sort-direction-label">Order</InputLabel>
+                    <Select
+                      labelId="interview-sort-direction-label"
+                      value={interviewSort.direction}
+                      label="Order"
+                      onChange={(e) => setInterviewSort((prev) => ({ ...prev, direction: e.target.value }))}
+                    >
+                      <MenuItem value="asc">Ascending</MenuItem>
+                      <MenuItem value="desc">Descending</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Box>
+                <Box sx={{ mb: 1.5, fontSize: 12, color: "var(--text-secondary)" }}>
+                  Search filters both company and role. You can sort by company, role, or applied date.
                 </Box>
                 <TableContainer>
                   <Table size="small">
