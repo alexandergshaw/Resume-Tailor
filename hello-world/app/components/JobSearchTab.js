@@ -213,7 +213,6 @@ export default function JobSearchTab({
               deduped.push(v);
             }
             setJobKeywords(deduped);
-            setActiveSavedSearchId(null);
           }}
           renderInput={(params) => (
             <TextField
@@ -238,7 +237,7 @@ export default function JobSearchTab({
           <Select
             label="Experience"
             value={maxYearsExp}
-            onChange={(e) => { setMaxYearsExp(e.target.value); setActiveSavedSearchId(null); }}
+            onChange={(e) => { setMaxYearsExp(e.target.value); }}
           >
             <MenuItem value="any">Any experience</MenuItem>
             <MenuItem value="0">Entry level (0 yrs)</MenuItem>
@@ -256,7 +255,6 @@ export default function JobSearchTab({
           value={selectedCategories}
           onChange={(_, newValue) => {
             setSelectedCategories(newValue);
-            setActiveSavedSearchId(null);
             const matched =
               newValue.length === 0
                 ? []
@@ -286,7 +284,6 @@ export default function JobSearchTab({
           getOptionLabel={(option) => typeof option === "string" ? option : option.name}
           value={selectedCompanies}
           onChange={(_, newValue) => {
-            setActiveSavedSearchId(null);
             setSelectedCompanies(
               newValue.map((entry) => {
                 if (typeof entry === "string") {
@@ -321,7 +318,7 @@ export default function JobSearchTab({
           options={GREENHOUSE_COMPANIES}
           getOptionLabel={(option) => option.name}
           value={excludedCompanies}
-          onChange={(_, newValue) => { setExcludedCompanies(newValue); setActiveSavedSearchId(null); }}
+          onChange={(_, newValue) => { setExcludedCompanies(newValue); }}
           isOptionEqualToValue={(option, value) => option.slug === value.slug}
           renderInput={(params) => (
             <TextField
@@ -355,7 +352,6 @@ export default function JobSearchTab({
               deduped.push(v);
             }
             setExcludedTitleKeywords(deduped);
-            setActiveSavedSearchId(null);
           }}
           renderInput={(params) => (
             <TextField

@@ -988,6 +988,69 @@ export default function Home() {
     }
   }
 
+  // Compare a saved-search entry's stored filter values against the current
+  // control values. Used to show a "save" affordance on the active chip
+  // whenever the user has tweaked something since applying it.
+  const activeSavedSearchDirty = (() => {
+    if (!activeSavedSearchId) return false;
+    const entry = savedSearches.find((s) => s.id === activeSavedSearchId);
+    if (!entry) return false;
+    const norm = (a) =>
+      JSON.stringify(
+        [...(Array.isArray(a) ? a : [])]
+          .map((v) => String(v).trim().toLowerCase())
+          .filter(Boolean)
+          .sort(),
+      );
+    const currentCompanies = selectedCompanies
+      .map((c) => (typeof c === "string" ? c : c?.slug))
+      .filter(Boolean);
+    const currentExcludedCompanies = excludedCompanies.map((c) => c.slug);
+    if (norm(jobKeywords) !== norm(entry.jobKeywords)) return true;
+    if ((entry.maxYearsExp || "any") !== (maxYearsExp || "any")) return true;
+    if (norm(selectedCategories) !== norm(entry.selectedCategories)) return true;
+    if (norm(currentCompanies) !== norm(entry.selectedCompanies)) return true;
+    if (norm(currentExcludedCompanies) !== norm(entry.excludedCompanies)) return true;
+    if (norm(excludedTitleKeywords) !== norm(entry.excludedTitleKeywords)) return true;
+    return false;
+  })();
+
+  // Overwrite a saved search with the current control values. Updates local
+  // state immediately for snappy UX, then PUTs to the server for signed-in
+  // users.
+  async function updateSavedSearch(id) {
+    if (!id) return;
+    const payload = {
+      jobKeywords: [...jobKeywords],
+      maxYearsExp,
+      selectedCategories: [...selectedCategories],
+      selectedCompanies: selectedCompanies
+        .map((c) => (typeof c === "string" ? c : c?.slug))
+        .filter(Boolean),
+      excludedCompanies: excludedCompanies.map((c) => c.slug),
+      excludedTitleKeywords: [...excludedTitleKeywords],
+    };
+    setSavedSearches((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, ...payload } : s)),
+    );
+    // Drop any stale prewarmed results — they were fetched for the old query.
+    setPrewarmedResults((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    if (currentUser && typeof id === "string" && !id.startsWith("ss-")) {
+      try {
+        await fetch(`/api/saved-searches/${encodeURIComponent(id)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } catch {}
+    }
+  }
+
   // Toggle auto-tailor on/off for a saved search. Persists to the server when
   // the user is signed in; updates local state immediately for snappy UX.
   async function setSavedSearchAutoTailor(id, { autoTailorEnabled, autoTailorDailyCap } = {}) {
@@ -1015,6 +1078,17 @@ export default function Home() {
       });
     } catch {}
   }
+
+  // Auto-save: whenever an active saved search becomes dirty (the user tweaked
+  // a control), persist the new control values back to that saved search after
+  // a short debounce so reapplying the chip later restores the latest filters.
+  useEffect(() => {
+    if (!activeSavedSearchId || !activeSavedSearchDirty) return;
+    const id = activeSavedSearchId;
+    const handle = setTimeout(() => { updateSavedSearch(id); }, 600);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSavedSearchId, activeSavedSearchDirty]);
 
   // Notifications: load on sign-in and poll every 60s. Also refetch when the
   // tab regains focus so the bell stays in sync.
@@ -1414,7 +1488,9 @@ export default function Home() {
     // Search Jobs button doesn't flip into a loading state when we're not
     // actually hitting the endpoint.
     const PREWARM_MAX_AGE_MS = 3 * 60 * 60 * 1000;
-    const cached = activeSavedSearchId ? prewarmedResults[activeSavedSearchId] : null;
+    const cached = activeSavedSearchId && !activeSavedSearchDirty
+      ? prewarmedResults[activeSavedSearchId]
+      : null;
     if (
       cached &&
       Array.isArray(cached.jobs) &&
@@ -2245,7 +2321,9 @@ export default function Home() {
     // directly instead of hitting the Greenhouse API again — the live fetch
     // tends to race the prewarmer and clobber its results.
     const PREWARM_SEARCH_MAX_AGE_MS = 3 * 60 * 60 * 1000;
-    const cached = activeSavedSearchId ? prewarmedResults[activeSavedSearchId] : null;
+    const cached = activeSavedSearchId && !activeSavedSearchDirty
+      ? prewarmedResults[activeSavedSearchId]
+      : null;
     if (
       cached &&
       Array.isArray(cached.jobs) &&
