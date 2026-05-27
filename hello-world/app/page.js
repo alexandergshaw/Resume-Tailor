@@ -476,13 +476,12 @@ export default function Home() {
             referencesOpen,
             educationOpen,
             appliedSort: interviewSort,
-            excludedTitleKeywords,
           },
         }),
       }).catch(() => {});
     }, 400);
     return () => clearTimeout(handle);
-  }, [referencesOpen, educationOpen, interviewSort, excludedTitleKeywords, currentUser]);
+  }, [referencesOpen, educationOpen, interviewSort, currentUser]);
 
   // Track auth state + load applied jobs + load stored files
   useEffect(() => {
@@ -524,11 +523,6 @@ export default function Home() {
                 field: prefs.appliedSort.field || null,
                 dir: prefs.appliedSort.dir,
               });
-            }
-            if (Array.isArray(prefs.excludedTitleKeywords)) {
-              setExcludedTitleKeywords(
-                prefs.excludedTitleKeywords.filter((s) => typeof s === "string" && s.trim().length > 0),
-              );
             }
           }
         } catch {}
@@ -642,17 +636,6 @@ export default function Home() {
         const tokens = legacyQuery.trim().split(/\s+/).filter(Boolean);
         if (tokens.length > 0) setJobKeywords(tokens);
       }
-      const excludedKwRaw = localStorage.getItem("excludedTitleKeywords");
-      if (excludedKwRaw) {
-        try {
-          const parsed = JSON.parse(excludedKwRaw);
-          if (Array.isArray(parsed)) {
-            setExcludedTitleKeywords(
-              parsed.filter((s) => typeof s === "string" && s.trim().length > 0),
-            );
-          }
-        } catch {}
-      }
       const companyEntries = localStorage.getItem("selectedCompanies");
       if (companyEntries) {
         const entries = JSON.parse(companyEntries);
@@ -694,9 +677,6 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("jobKeywords", JSON.stringify(jobKeywords));
   }, [jobKeywords]);
-  useEffect(() => {
-    localStorage.setItem("excludedTitleKeywords", JSON.stringify(excludedTitleKeywords));
-  }, [excludedTitleKeywords]);
   useEffect(() => {
     localStorage.setItem(
       "selectedCompanies",
@@ -952,12 +932,16 @@ export default function Home() {
       .filter(Boolean);
     const excluded = Array.isArray(entry.excludedCompanies) ? entry.excludedCompanies : [];
     const nextExcludedCompanies = GREENHOUSE_COMPANIES.filter((c) => excluded.includes(c.slug));
+    const nextExcludedTitleKeywords = Array.isArray(entry.excludedTitleKeywords)
+      ? entry.excludedTitleKeywords.filter((s) => typeof s === "string" && s.trim().length > 0)
+      : [];
 
     setJobKeywords(nextJobKeywords);
     setMaxYearsExp(nextMaxYears);
     setSelectedCategories(nextCategories);
     setSelectedCompanies(nextSelectedCompanies);
     setExcludedCompanies(nextExcludedCompanies);
+    setExcludedTitleKeywords(nextExcludedTitleKeywords);
     setActiveSavedSearchId(entry.id);
 
     // If the pre-warmer already fetched results for this saved search and
@@ -4620,6 +4604,7 @@ export default function Home() {
                     deduped.push(v);
                   }
                   setExcludedTitleKeywords(deduped);
+                  setActiveSavedSearchId(null);
                 }}
                 renderInput={(params) => (
                   <TextField
