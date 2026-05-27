@@ -288,6 +288,11 @@ export default function Home() {
   // The id of the saved search whose values currently populate the controls.
   // Cleared as soon as the user modifies any of the search controls.
   const [activeSavedSearchId, setActiveSavedSearchId] = useState(null);
+  // Pre-warmed Greenhouse results for saved searches, keyed by saved-search id.
+  // Populated in the background after savedSearches loads, then consumed by
+  // applySavedSearch so clicking a chip shows results instantly.
+  // Shape: { [id]: { jobs: Job[], fetchedAt: number, error: string|null } }
+  const [prewarmedResults, setPrewarmedResults] = useState({});
   // Auto-tailored postings shown on the Auto Tailor tab. Populated lazily when the tab is opened.
   const [autoTailoredPostings, setAutoTailoredPostings] = useState([]);
   const [autoTailoredLoading, setAutoTailoredLoading] = useState(false);
@@ -775,6 +780,93 @@ export default function Home() {
     return () => { cancelled = true; };
   }, [currentUser]);
 
+  // How long a pre-warmed result counts as "fresh enough" to display without
+  // re-fetching, and how many parallel prewarm requests we'll fire at once.
+  const PREWARM_FRESH_MS = 5 * 60 * 1000;
+  const PREWARM_CONCURRENCY = 3;
+
+  // Build the /api/greenhouse search URL. Shared between the live search
+  // (`runJobSearch`) and the saved-search pre-warmer so they stay in sync.
+  function buildGreenhouseSearchUrl(query, companies) {
+    let params = "";
+    const list = Array.isArray(companies) ? companies : [];
+    if (list.length > 0) {
+      const slugs = list.filter((c) => typeof c !== "string").map((c) => c.slug);
+      const names = list.filter((c) => typeof c === "string");
+      if (slugs.length > 0) params += `&companies=${slugs.join(",")}`;
+      if (names.length > 0) params += names.map((n) => `&companyName=${encodeURIComponent(n)}`).join("");
+    }
+    return `/api/greenhouse?query=${encodeURIComponent(query)}${params}`;
+  }
+
+  // Pre-warm saved-search results in the background. Runs whenever the
+  // saved-search list (re)loads. Skips entries we already have fresh results
+  // for, and caps concurrency so we don't blast the upstream API.
+  useEffect(() => {
+    if (!Array.isArray(savedSearches) || savedSearches.length === 0) return;
+    const now = Date.now();
+    const targets = savedSearches.filter((entry) => {
+      const kws = Array.isArray(entry.jobKeywords)
+        ? entry.jobKeywords.filter((s) => typeof s === "string" && s.trim().length > 0)
+        : [];
+      if (kws.length === 0) return false;
+      const cached = prewarmedResults[entry.id];
+      if (cached && now - cached.fetchedAt < PREWARM_FRESH_MS) return false;
+      return true;
+    });
+    if (targets.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const queue = targets.slice();
+      const workers = new Array(Math.min(PREWARM_CONCURRENCY, queue.length))
+        .fill(null)
+        .map(async () => {
+          while (queue.length > 0 && !cancelled) {
+            const entry = queue.shift();
+            const kws = entry.jobKeywords.filter(
+              (s) => typeof s === "string" && s.trim().length > 0,
+            );
+            const query = kws.join(" ").trim();
+            if (!query) continue;
+            const companySlugs = Array.isArray(entry.selectedCompanies)
+              ? entry.selectedCompanies
+              : [];
+            const companyObjs = companySlugs
+              .map((slug) => GREENHOUSE_COMPANIES.find((c) => c.slug === slug) || slug)
+              .filter(Boolean);
+            try {
+              const data = await fetch(buildGreenhouseSearchUrl(query, companyObjs)).then(
+                (r) => r.json(),
+              );
+              if (cancelled) return;
+              const jobs = Array.isArray(data?.jobs) ? data.jobs : [];
+              setPrewarmedResults((prev) => ({
+                ...prev,
+                [entry.id]: {
+                  jobs,
+                  fetchedAt: Date.now(),
+                  error: jobs.length === 0 ? data?.error || null : null,
+                },
+              }));
+            } catch (err) {
+              if (cancelled) return;
+              setPrewarmedResults((prev) => ({
+                ...prev,
+                [entry.id]: {
+                  jobs: [],
+                  fetchedAt: Date.now(),
+                  error: err?.message || "fetch failed",
+                },
+              }));
+            }
+          }
+        });
+      await Promise.all(workers);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedSearches]);
+
   // Saved-search helpers
   async function saveCurrentSearch() {
     const defaultName = jobKeywords.join(" ").trim() || (selectedCategories[0] || "Untitled search");
@@ -853,6 +945,35 @@ export default function Home() {
     setSelectedCompanies(nextSelectedCompanies);
     setExcludedCompanies(nextExcludedCompanies);
     setActiveSavedSearchId(entry.id);
+
+    // If the pre-warmer already fetched results for this saved search and
+    // they're still fresh, render them instantly instead of round-tripping
+    // through runJobSearch (which would flash a loading state).
+    const cached = prewarmedResults[entry.id];
+    const query = nextJobKeywords.join(" ").trim();
+    if (
+      query &&
+      cached &&
+      Array.isArray(cached.jobs) &&
+      cached.jobs.length > 0 &&
+      Date.now() - cached.fetchedAt < PREWARM_FRESH_MS
+    ) {
+      setIsSearching(false);
+      setJobSearchError("");
+      setJobResults(cached.jobs);
+      // Clear stale tailoring entries (same hygiene as runJobSearch).
+      setTailoringMap((current) => {
+        const trackedIds = new Set(trackedJobs.map((j) => j.id));
+        const next = {};
+        for (const [jobId, e] of Object.entries(current || {})) {
+          if (trackedIds.has(jobId)) next[jobId] = e;
+        }
+        return next;
+      });
+      hasFetchedRef.current = true;
+      activeQueryRef.current = query;
+      return;
+    }
 
     // Fire the search using the entry's values directly so we don't have to
     // wait for React state batching to flush.
@@ -2460,21 +2581,7 @@ export default function Home() {
     activeQueryRef.current = query;
 
     try {
-      // Support both known company slugs and custom company names
-      let ghCompanyParam = "";
-      if (companies.length > 0) {
-        const slugs = companies.filter((c) => typeof c !== "string").map((c) => c.slug);
-        const names = companies.filter((c) => typeof c === "string").map((c) => c);
-        if (slugs.length > 0) {
-          ghCompanyParam += `&companies=${slugs.join(",")}`;
-        }
-        if (names.length > 0) {
-          ghCompanyParam += names.map((n) => `&companyName=${encodeURIComponent(n)}`).join("");
-        }
-      }
-      const data = await fetch(
-        `/api/greenhouse?query=${encodeURIComponent(query)}${ghCompanyParam}`
-      ).then((r) => r.json());
+      const data = await fetch(buildGreenhouseSearchUrl(query, companies)).then((r) => r.json());
 
       const ghJobs = data.jobs || [];
       if (ghJobs.length === 0) throw new Error(data.error || "No jobs found.");
