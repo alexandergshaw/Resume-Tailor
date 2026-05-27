@@ -642,6 +642,17 @@ export default function Home() {
         const tokens = legacyQuery.trim().split(/\s+/).filter(Boolean);
         if (tokens.length > 0) setJobKeywords(tokens);
       }
+      const excludedKwRaw = localStorage.getItem("excludedTitleKeywords");
+      if (excludedKwRaw) {
+        try {
+          const parsed = JSON.parse(excludedKwRaw);
+          if (Array.isArray(parsed)) {
+            setExcludedTitleKeywords(
+              parsed.filter((s) => typeof s === "string" && s.trim().length > 0),
+            );
+          }
+        } catch {}
+      }
       const companyEntries = localStorage.getItem("selectedCompanies");
       if (companyEntries) {
         const entries = JSON.parse(companyEntries);
@@ -683,6 +694,9 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("jobKeywords", JSON.stringify(jobKeywords));
   }, [jobKeywords]);
+  useEffect(() => {
+    localStorage.setItem("excludedTitleKeywords", JSON.stringify(excludedTitleKeywords));
+  }, [excludedTitleKeywords]);
   useEffect(() => {
     localStorage.setItem(
       "selectedCompanies",
