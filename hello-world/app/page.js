@@ -2054,14 +2054,22 @@ export default function Home() {
       .trim();
   }
 
-  function getDownloadFileNameForTitle(jobTitle) {
+  function getDownloadFileNameForTitle(jobTitle, company) {
     const cleanedTitle = sanitizeFileNamePart(jobTitle || "").slice(0, 90);
-    return `Resume - ${cleanedTitle || "Target Role"}.docx`;
+    const cleanedCompany = sanitizeFileNamePart(company || "").slice(0, 60);
+    const titlePart = cleanedTitle || "Target Role";
+    return cleanedCompany
+      ? `Resume - ${cleanedCompany} - ${titlePart}.docx`
+      : `Resume - ${titlePart}.docx`;
   }
 
-  function getDownloadCoverLetterFileNameForTitle(jobTitle) {
+  function getDownloadCoverLetterFileNameForTitle(jobTitle, company) {
     const cleanedTitle = sanitizeFileNamePart(jobTitle || "").slice(0, 90);
-    return `Cover Letter - ${cleanedTitle || "Target Role"}.docx`;
+    const cleanedCompany = sanitizeFileNamePart(company || "").slice(0, 60);
+    const titlePart = cleanedTitle || "Target Role";
+    return cleanedCompany
+      ? `Cover Letter - ${cleanedCompany} - ${titlePart}.docx`
+      : `Cover Letter - ${titlePart}.docx`;
   }
 
   function isDocxResume(file) {
@@ -2267,7 +2275,7 @@ export default function Home() {
     });
   }
 
-  async function downloadDocxFiles({ jobTitle, result, resultLines, coverLetterResultLines }) {
+  async function downloadDocxFiles({ jobTitle, company, result, resultLines, coverLetterResultLines }) {
     if (!result?.trim()) return "Nothing to download yet.";
     if (!isDocxResume(resumeFile)) return "Upload the source resume as .docx to download.";
 
@@ -2276,7 +2284,7 @@ export default function Home() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = getDownloadFileNameForTitle(jobTitle);
+      link.download = getDownloadFileNameForTitle(jobTitle, company);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -2296,7 +2304,7 @@ export default function Home() {
         const clUrl = URL.createObjectURL(clBlob);
         const clLink = document.createElement("a");
         clLink.href = clUrl;
-        clLink.download = getDownloadCoverLetterFileNameForTitle(jobTitle);
+        clLink.download = getDownloadCoverLetterFileNameForTitle(jobTitle, company);
         document.body.appendChild(clLink);
         clLink.click();
         clLink.remove();
@@ -2306,6 +2314,106 @@ export default function Home() {
     } catch (err) {
       return err.message || "Unable to download DOCX.";
     }
+  }
+
+  // Re-download a previously generated auto-tailored resume from Supabase by
+  // its application row. Pulls generated_resumes.content/content_lines for
+  // the linked resume_used_id and renders it through the user's uploaded
+  // resume template. Returns null on success, or an error message string.
+  async function downloadAutoTailoredResume(row) {
+    if (!row?.resume_used_id) return "No generated resume linked to this posting.";
+    if (!isDocxResume(resumeFile)) return "Upload your source resume as .docx first.";
+    try {
+      const supabase = createClient();
+      const { data: gen, error } = await supabase
+        .from("generated_resumes")
+        .select("content, content_lines")
+        .eq("id", row.resume_used_id)
+        .maybeSingle();
+      if (error) return error.message || "Unable to load generated resume.";
+      if (!gen) return "Generated resume not found.";
+      const lines = Array.isArray(gen.content_lines) ? gen.content_lines : [];
+      const text = typeof gen.content === "string" ? gen.content : lines.join("\n");
+      return await downloadDocxFiles({
+        jobTitle: row.positions?.title,
+        company: row.positions?.company,
+        result: text,
+        resultLines: lines,
+        coverLetterResultLines: [],
+      });
+    } catch (err) {
+      return err.message || "Unable to download.";
+    }
+  }
+
+  // "Apply" action for an auto-tailored row: download the tailored resume,
+  // open the posting in a new tab, and bump the application status from
+  // auto_tailored → applied so it moves out of the Auto Tailor tab and into
+  // the Interviewing tab.
+  async function applyAutoTailoredRow(row) {
+    const dlError = await downloadAutoTailoredResume(row);
+    if (dlError) {
+      setAutoTailoredError(dlError);
+      return;
+    }
+    setAutoTailoredError(null);
+    const url = row?.positions?.url;
+    if (url && typeof window !== "undefined") {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+    if (currentUser && row?.id) {
+      const supabase = createClient();
+      const { error: updErr } = await supabase
+        .from("applications")
+        .update({ status: "applied", applied_at: new Date().toISOString() })
+        .eq("id", row.id)
+        .eq("user_id", currentUser.id);
+      if (updErr) {
+        console.error("[applyAutoTailoredRow] status update failed:", updErr);
+      }
+      setApplicationsRefreshKey((k) => k + 1);
+    }
+  }
+
+  // Download the tailored resume for a tracked job (chip in the floating
+  // status bar). Prefers the in-memory tailoring result, otherwise falls back
+  // to the saved generated_resumes row attached to the application that was
+  // loaded for this position. Fire-and-forget: returns null on success or an
+  // error message string. Errors are logged but not surfaced (the chip's
+  // posting link should still open even if the download can't run).
+  async function downloadResumeForChipJob(job) {
+    if (!job) return "No job.";
+    if (!isDocxResume(resumeFile)) return "Upload your source resume as .docx first.";
+
+    const tailoring = tailoringMap[job.id] || {};
+    let text = typeof tailoring.result === "string" ? tailoring.result : "";
+    let lines = Array.isArray(tailoring.resultLines) ? tailoring.resultLines : [];
+    let coverLines = Array.isArray(tailoring.coverLetterResultLines)
+      ? tailoring.coverLetterResultLines
+      : [];
+    let jobTitle = tailoring.generatedJobTitle || job.title || "";
+    let company = job.company || "";
+
+    if (!text) {
+      // Fall back to the saved application row (post-reload case).
+      const app = (applicationData || []).find(
+        (a) => String(a?.positions?.external_id || "") === String(job.id),
+      );
+      const gen = app?.generated_resumes;
+      if (!gen?.content) return "No saved resume found for this posting.";
+      text = gen.content;
+      lines = Array.isArray(gen.content_lines) ? gen.content_lines : [];
+      jobTitle = jobTitle || app?.positions?.title || "";
+      company = company || app?.positions?.company || "";
+    }
+
+    return await downloadDocxFiles({
+      jobTitle,
+      company,
+      result: text,
+      resultLines: lines,
+      coverLetterResultLines: coverLines,
+    });
   }
 
   function updateTailoringJob(jobId, updater) {
@@ -2851,6 +2959,7 @@ export default function Home() {
 
       const dlError = await downloadDocxFiles({
         jobTitle: generatedJobTitle || job.title,
+        company: job.company,
         result,
         resultLines,
         coverLetterResultLines,
@@ -4714,6 +4823,7 @@ export default function Home() {
                             <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Company</Box>
                             <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Title</Box>
                             <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Posting</Box>
+                            <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Actions</Box>
                           </Box>
                         </Box>
                         <Box component="tbody">
@@ -4730,6 +4840,31 @@ export default function Home() {
                                   {pos.url ? (
                                     <a href={pos.url} target="_blank" rel="noopener noreferrer" style={{ color: "#1976d2" }}>View</a>
                                   ) : "—"}
+                                </Box>
+                                <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1", whiteSpace: "nowrap" }}>
+                                  <Button
+                                    size="small"
+                                    variant="contained"
+                                    onClick={() => applyAutoTailoredRow(row)}
+                                    disabled={!pos.url || !row.resume_used_id}
+                                    sx={{ mr: 0.75, textTransform: "none", py: 0.25, px: 1, fontSize: "0.75rem" }}
+                                    title="Download the tailored resume and open the posting in a new tab"
+                                  >
+                                    Apply
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    onClick={async () => {
+                                      const err = await downloadAutoTailoredResume(row);
+                                      if (err) setAutoTailoredError(err);
+                                    }}
+                                    disabled={!row.resume_used_id}
+                                    sx={{ textTransform: "none", py: 0.25, px: 1, fontSize: "0.75rem" }}
+                                    title="Download just the tailored resume"
+                                  >
+                                    Download
+                                  </Button>
                                 </Box>
                               </Box>
                             );
@@ -6433,7 +6568,17 @@ export default function Home() {
                       target="_blank"
                       rel="noopener noreferrer"
                       className={styles.toolbarChipBtn}
-                      title="View posting"
+                      title="View posting (also downloads tailored resume)"
+                      onClick={() => {
+                        // Fire-and-forget download so the new tab still opens
+                        // immediately. Re-downloads every time the chip link
+                        // is clicked, even if already downloaded earlier.
+                        downloadResumeForChipJob(job).then((err) => {
+                          if (err) {
+                            console.warn("[chip posting link] download skipped:", err);
+                          }
+                        });
+                      }}
                     >
                       ↗
                     </a>
