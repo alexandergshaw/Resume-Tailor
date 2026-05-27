@@ -3953,18 +3953,6 @@ export default function Home() {
             </form>
 
             {manualError ? <p className={styles.error}>{manualError}</p> : null}
-
-            {manualHasCompleted && manualResult ? (
-              <section className={styles.resultSection}>
-                <Button
-                  variant="outlined"
-                  onClick={handleManualDownload}
-                  disabled={manualIsDownloading}
-                >
-                  {manualIsDownloading ? "Preparing DOCX..." : "Download Resume"}
-                </Button>
-              </section>
-            ) : null}
           </section>
         ) : (
           <section className={styles.tabPanel}>
@@ -4001,18 +3989,6 @@ export default function Home() {
             </form>
 
             {urlError ? <p className={styles.error}>{urlError}</p> : null}
-
-            {urlHasCompleted && urlResult ? (
-              <section className={styles.resultSection}>
-                <Button
-                  variant="outlined"
-                  onClick={handleUrlDownload}
-                  disabled={urlIsDownloading}
-                >
-                  {urlIsDownloading ? "Preparing DOCX..." : "Download Resume"}
-                </Button>
-              </section>
-            ) : null}
           </section>
         )}
 
@@ -4613,6 +4589,14 @@ export default function Home() {
               maxWidth="sm"
               fullWidth
             >
+              <Box
+                component="form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (editAppSaving) return;
+                  handleSaveEditApplication();
+                }}
+              >
               <DialogTitle>Edit Application</DialogTitle>
               <DialogContent dividers sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 2 }}>
                 <TextField
@@ -4706,10 +4690,12 @@ export default function Home() {
                   variant="contained"
                   onClick={handleSaveEditApplication}
                   disabled={editAppSaving}
+                  type="submit"
                 >
                   {editAppSaving ? "Saving..." : "Save Changes"}
                 </Button>
               </DialogActions>
+              </Box>
             </Dialog>
 
             <Dialog
