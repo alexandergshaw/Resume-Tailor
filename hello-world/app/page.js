@@ -5382,34 +5382,50 @@ export default function Home() {
                                     <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }} onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "resume" })}>
                                       View full
                                     </Button>
-                                    <Button
-                                      size="small"
-                                      sx={{ p: 0, minWidth: 0, fontSize: 11 }}
-                                      disabled={!resumeFile || !isDocxResume(resumeFile)}
-                                      title={
-                                        !resumeFile
-                                          ? "Upload your source resume (.docx) to enable downloads."
-                                          : !isDocxResume(resumeFile)
-                                          ? "Source resume must be a .docx file to download."
-                                          : "Download tailored .docx"
-                                      }
-                                      onClick={async () => {
-                                        const lines = Array.isArray(resume.content_lines) && resume.content_lines.length > 0
-                                          ? resume.content_lines
-                                          : (resume.content || "").split("\n");
-                                        const err = await downloadDocxFiles({
-                                          jobTitle: pos?.title || "resume",
-                                          result: resume.content,
-                                          resultLines: lines,
-                                          coverLetterResultLines: [],
-                                        });
-                                        if (err) {
-                                          window.alert(err);
+                                    <Tooltip title="Download or drag to upload tailored DOCX">
+                                      <span
+                                        style={{ display: "inline-flex", alignItems: "center", cursor: (!resumeFile || !isDocxResume(resumeFile)) ? "not-allowed" : "pointer", opacity: (!resumeFile || !isDocxResume(resumeFile)) ? 0.5 : 1 }}
+                                        tabIndex={0}
+                                        role="button"
+                                        onClick={async (e) => {
+                                          if (!resumeFile || !isDocxResume(resumeFile)) return;
+                                          const lines = Array.isArray(resume.content_lines) && resume.content_lines.length > 0
+                                            ? resume.content_lines
+                                            : (resume.content || "").split("\n");
+                                          const err = await downloadDocxFiles({
+                                            jobTitle: pos?.title || "resume",
+                                            result: resume.content,
+                                            resultLines: lines,
+                                            coverLetterResultLines: [],
+                                          });
+                                          if (err) window.alert(err);
+                                        }}
+                                        draggable={!!resumeFile && isDocxResume(resumeFile)}
+                                        onDragStart={async (e) => {
+                                          if (!resumeFile || !isDocxResume(resumeFile)) return;
+                                          try {
+                                            const lines = Array.isArray(resume.content_lines) && resume.content_lines.length > 0
+                                              ? resume.content_lines
+                                              : (resume.content || "").split("\n");
+                                            const blob = await buildDocxFromUploadedTemplate(resumeFile, resume.content, lines);
+                                            const file = new File([blob], getDownloadFileNameForTitle(pos?.title, pos?.company), { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+                                            e.dataTransfer.clearData();
+                                            e.dataTransfer.effectAllowed = "copy";
+                                            e.dataTransfer.setData("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "");
+                                            e.dataTransfer.items.add(file);
+                                          } catch {}
+                                        }}
+                                        title={
+                                          !resumeFile
+                                            ? "Upload your source resume (.docx) to enable downloads."
+                                            : !isDocxResume(resumeFile)
+                                            ? "Source resume must be a .docx file to download."
+                                            : "Download or drag tailored .docx"
                                         }
-                                      }}
-                                    >
-                                      Download
-                                    </Button>
+                                      >
+                                        <DescriptionIcon fontSize="small" color="primary" />
+                                      </span>
+                                    </Tooltip>
                                   </Box>
                                 </Box>
                               ) : "—"}
