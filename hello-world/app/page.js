@@ -4159,7 +4159,20 @@ export default function Home() {
                         }[app.status] || { label: app.status, color: "default" };
 
                         return (
-                          <TableRow key={app.id} hover>
+                          <TableRow
+                            key={app.id}
+                            hover
+                            onClick={(e) => {
+                              // Ignore clicks that originated on an interactive
+                              // child (buttons, links, chips, inputs) so the
+                              // row-level handler doesn't hijack inline actions.
+                              if (e.target.closest("a, button, input, textarea, select, [role='button']")) {
+                                return;
+                              }
+                              openEditApplicationDialog(app);
+                            }}
+                            sx={{ cursor: "pointer" }}
+                          >
                             <TableCell
                               sx={{
                                 fontWeight: 600,
