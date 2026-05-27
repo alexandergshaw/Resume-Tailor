@@ -20,7 +20,7 @@ export async function logChatMessage(supabase, params) {
     const { userId, message } = params;
     if (!userId || typeof message !== "string" || !message.trim()) return;
 
-    await supabase.from("chat_message_logs").insert({
+    const { error } = await supabase.from("chat_message_logs").insert({
       user_id: userId,
       message: message.trim(),
       tab: params.tab || null,
@@ -31,7 +31,12 @@ export async function logChatMessage(supabase, params) {
         ? params.attachedFileCount
         : 0,
     });
-  } catch {
-    // Logging is best-effort; swallow all errors so we never break chat.
+    if (error) {
+      // Logging is best-effort, but surface the reason so missing rows are
+      // diagnosable (RLS rejection, missing table, bad column, etc.).
+      console.error("[logChatMessage] insert failed:", error.message || error);
+    }
+  } catch (err) {
+    console.error("[logChatMessage] unexpected error:", err);
   }
 }

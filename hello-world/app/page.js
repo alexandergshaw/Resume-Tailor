@@ -441,11 +441,17 @@ export default function Home() {
       fetch("/api/user-prefs", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prefs: { referencesOpen, educationOpen } }),
+        body: JSON.stringify({
+          prefs: {
+            referencesOpen,
+            educationOpen,
+            appliedSort: interviewSort,
+          },
+        }),
       }).catch(() => {});
     }, 400);
     return () => clearTimeout(handle);
-  }, [referencesOpen, educationOpen, currentUser]);
+  }, [referencesOpen, educationOpen, interviewSort, currentUser]);
 
   // Track auth state + load applied jobs + load stored files
   useEffect(() => {
@@ -477,6 +483,17 @@ export default function Home() {
             const prefs = json?.prefs && typeof json.prefs === "object" ? json.prefs : {};
             if (typeof prefs.referencesOpen === "boolean") setReferencesOpen(prefs.referencesOpen);
             if (typeof prefs.educationOpen === "boolean") setEducationOpen(prefs.educationOpen);
+            if (
+              prefs.appliedSort &&
+              typeof prefs.appliedSort === "object" &&
+              (prefs.appliedSort.field === null || typeof prefs.appliedSort.field === "string") &&
+              (prefs.appliedSort.dir === "asc" || prefs.appliedSort.dir === "desc")
+            ) {
+              setInterviewSort({
+                field: prefs.appliedSort.field || null,
+                dir: prefs.appliedSort.dir,
+              });
+            }
           }
         } catch {}
         uiPrefsLoadedRef.current = true;

@@ -127,7 +127,9 @@ export async function POST(request) {
     }
 
     // Best-effort: log the latest user-authored message along with the tab the
-    // user was on. Runs in parallel with the model call; failures are silent.
+    // user was on. Awaited so the insert actually flushes before the route
+    // returns (a dangling promise in a serverless handler can be killed
+    // before it commits); logChatMessage is non-throwing.
     try {
       const latestUserMessage = [...messages]
         .reverse()
@@ -136,8 +138,7 @@ export async function POST(request) {
         const supabase = await createSupabaseServerClient();
         const { data: { user } = {} } = await supabase.auth.getUser();
         if (user?.id) {
-          // Fire-and-forget; do not await so chat latency is unaffected.
-          logChatMessage(supabase, {
+          await logChatMessage(supabase, {
             userId: user.id,
             message: latestUserMessage.content,
             tab,
@@ -148,8 +149,9 @@ export async function POST(request) {
           });
         }
       }
-    } catch {
+    } catch (err) {
       // Never let logging break the chat endpoint.
+      console.error("[chat] failed to log user message:", err);
     }
 
     const { geminiModel } = getServerEnv();
