@@ -2219,6 +2219,34 @@ export default function Home() {
 
   async function handleJobSearch(event) {
     if (event && typeof event.preventDefault === "function") event.preventDefault();
+    // If the current form matches an active saved search and the pre-warmer
+    // already has results that are less than 3 hours old, render those
+    // directly instead of hitting the Greenhouse API again — the live fetch
+    // tends to race the prewarmer and clobber its results.
+    const PREWARM_SEARCH_MAX_AGE_MS = 3 * 60 * 60 * 1000;
+    const cached = activeSavedSearchId ? prewarmedResults[activeSavedSearchId] : null;
+    if (
+      cached &&
+      Array.isArray(cached.jobs) &&
+      cached.jobs.length > 0 &&
+      Date.now() - cached.fetchedAt < PREWARM_SEARCH_MAX_AGE_MS
+    ) {
+      const query = jobKeywords.join(" ").trim();
+      setIsSearching(false);
+      setJobSearchError("");
+      setJobResults(cached.jobs);
+      setTailoringMap((current) => {
+        const trackedIds = new Set(trackedJobs.map((j) => j.id));
+        const next = {};
+        for (const [jobId, entry] of Object.entries(current || {})) {
+          if (trackedIds.has(jobId)) next[jobId] = entry;
+        }
+        return next;
+      });
+      hasFetchedRef.current = true;
+      activeQueryRef.current = query;
+      return;
+    }
     await runJobSearch({ jobKeywords, selectedCompanies });
   }
 
