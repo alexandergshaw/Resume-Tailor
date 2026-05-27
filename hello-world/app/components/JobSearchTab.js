@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import TextField from "@mui/material/TextField";
@@ -35,6 +34,8 @@ export default function JobSearchTab({
   setExcludedCompanies,
   excludedTitleKeywords,
   setExcludedTitleKeywords,
+  hideAppliedJobs,
+  setHideAppliedJobs,
   GREENHOUSE_COMPANIES,
   COMPANY_CATEGORIES,
   isSearching,
@@ -57,7 +58,6 @@ export default function JobSearchTab({
   askAiAbout,
   buildJobContextString,
 }) {
-  const [hideApplied, setHideApplied] = useState(false);
   return (
     <section className={styles.tabPanel}>
       <form onSubmit={handleJobSearch} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
@@ -379,8 +379,8 @@ export default function JobSearchTab({
           control={
             <Switch
               size="small"
-              checked={hideApplied}
-              onChange={(e) => setHideApplied(e.target.checked)}
+              checked={hideAppliedJobs}
+              onChange={(e) => setHideAppliedJobs(e.target.checked)}
             />
           }
           label="Hide jobs I've applied to"
@@ -431,7 +431,7 @@ export default function JobSearchTab({
                 if (minReq === null) return true;
                 return minReq <= parseInt(maxYearsExp, 10);
               });
-        const appliedFiltered = hideApplied
+        const appliedFiltered = hideAppliedJobs
           ? yearsFiltered.filter((j) => !appliedJobIds.has(j.id))
           : yearsFiltered;
         const visibleJobs = appliedFiltered.filter((j) => !ignoredJobIds.has(j.id));

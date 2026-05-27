@@ -276,6 +276,7 @@ export default function Home() {
   const [excludedTitleKeywords, setExcludedTitleKeywords] = useState([]);
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [maxYearsExp, setMaxYearsExp] = useState("any");
+  const [hideAppliedJobs, setHideAppliedJobs] = useState(false);
   // Saved searches: each entry captures the current values of the search-tab
   // controls so the user can restore them with one click.
   const [savedSearches, setSavedSearches] = useState([]);
@@ -470,12 +471,13 @@ export default function Home() {
             referencesOpen,
             educationOpen,
             appliedSort: interviewSort,
+            hideAppliedJobs,
           },
         }),
       }).catch(() => {});
     }, 400);
     return () => clearTimeout(handle);
-  }, [referencesOpen, educationOpen, interviewSort, currentUser]);
+  }, [referencesOpen, educationOpen, interviewSort, hideAppliedJobs, currentUser]);
 
   // Track auth state + load applied jobs + load stored files
   useEffect(() => {
@@ -507,6 +509,7 @@ export default function Home() {
             const prefs = json?.prefs && typeof json.prefs === "object" ? json.prefs : {};
             if (typeof prefs.referencesOpen === "boolean") setReferencesOpen(prefs.referencesOpen);
             if (typeof prefs.educationOpen === "boolean") setEducationOpen(prefs.educationOpen);
+            if (typeof prefs.hideAppliedJobs === "boolean") setHideAppliedJobs(prefs.hideAppliedJobs);
             if (
               prefs.appliedSort &&
               typeof prefs.appliedSort === "object" &&
@@ -3169,6 +3172,8 @@ export default function Home() {
             setExcludedCompanies={setExcludedCompanies}
             excludedTitleKeywords={excludedTitleKeywords}
             setExcludedTitleKeywords={setExcludedTitleKeywords}
+            hideAppliedJobs={hideAppliedJobs}
+            setHideAppliedJobs={setHideAppliedJobs}
             GREENHOUSE_COMPANIES={GREENHOUSE_COMPANIES}
             COMPANY_CATEGORIES={COMPANY_CATEGORIES}
             isSearching={isSearching}
