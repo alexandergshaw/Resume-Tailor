@@ -1546,7 +1546,7 @@ export default function Home() {
       if (resumeIds.length > 0) {
         const { data: resumeRows, error: resumeErr } = await supabase
           .from("generated_resumes")
-          .select("id, content")
+          .select("id, content, content_lines")
           .in("id", resumeIds);
         if (resumeErr) {
           console.warn("[loadApplications] resume fetch failed (non-fatal):", resumeErr);
@@ -4416,9 +4416,39 @@ export default function Home() {
                                   <span style={{ fontSize: 12, color: "var(--text-secondary)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
                                     {resume.content}
                                   </span>
-                                  <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }} onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "resume" })}>
-                                    View full
-                                  </Button>
+                                  <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+                                    <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }} onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "resume" })}>
+                                      View full
+                                    </Button>
+                                    <Button
+                                      size="small"
+                                      sx={{ p: 0, minWidth: 0, fontSize: 11 }}
+                                      disabled={!resumeFile || !isDocxResume(resumeFile)}
+                                      title={
+                                        !resumeFile
+                                          ? "Upload your source resume (.docx) to enable downloads."
+                                          : !isDocxResume(resumeFile)
+                                          ? "Source resume must be a .docx file to download."
+                                          : "Download tailored .docx"
+                                      }
+                                      onClick={async () => {
+                                        const lines = Array.isArray(resume.content_lines) && resume.content_lines.length > 0
+                                          ? resume.content_lines
+                                          : (resume.content || "").split("\n");
+                                        const err = await downloadDocxFiles({
+                                          jobTitle: pos?.title || "resume",
+                                          result: resume.content,
+                                          resultLines: lines,
+                                          coverLetterResultLines: [],
+                                        });
+                                        if (err) {
+                                          window.alert(err);
+                                        }
+                                      }}
+                                    >
+                                      Download
+                                    </Button>
+                                  </Box>
                                 </Box>
                               ) : "—"}
                             </TableCell>
