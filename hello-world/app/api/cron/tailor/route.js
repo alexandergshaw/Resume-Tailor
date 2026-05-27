@@ -150,8 +150,10 @@ async function processSavedSearch({ admin, userId, savedSearch, resumeBuffer, re
       });
 
       // First upsert as "tracking" so we have an application row, then bump
-      // it to "tailored" and link the generated resume. This mirrors what
-      // handleTailorJob does in the UI.
+      // it to "auto_tailored" and link the generated resume. The auto_tailored
+      // status distinguishes cron-driven / batch tailoring from manual single
+      // tailoring (which uses "tailored"), and surfaces these rows on the
+      // dedicated Auto Tailor tab in the UI.
       const applicationId = await upsertApplication(admin, {
         userId,
         positionId,
@@ -161,14 +163,14 @@ async function processSavedSearch({ admin, userId, savedSearch, resumeBuffer, re
         const { error: updErr } = await admin
           .from("applications")
           .update({
-            status: "tailored",
+            status: "auto_tailored",
             resume_used_id: generatedResumeId || null,
           })
           .eq("id", applicationId)
           .eq("user_id", userId);
         if (updErr) {
           console.error(
-            `[cron] failed to mark application ${applicationId} tailored:`,
+            `[cron] failed to mark application ${applicationId} auto_tailored:`,
             updErr.message,
           );
         }

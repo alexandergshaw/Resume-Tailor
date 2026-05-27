@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import JSZip from "jszip";
 import styles from "./page.module.css";
 import Accordion from "@mui/material/Accordion";
@@ -1775,6 +1775,7 @@ export default function Home() {
         `)
         .eq("user_id", currentUser.id)
         .neq("status", "tracking")
+        .neq("status", "auto_tailored")
         .order("applied_at", { ascending: false });
 
       if (appErr) {
@@ -1837,26 +1838,29 @@ export default function Home() {
   }, [currentUser, applicationsRefreshKey]);
 
   // Load auto-tailored postings for the Auto Tailor sub-tab. These are
-  // generated_resumes rows whose additional_context was stamped by the cron
-  // job (the cron sets it to a string starting with "Auto-tailored by cron").
+  // applications whose status is "auto_tailored" — set either by the daily
+  // cron, or by the "Tailor all visible" batch flow in the Job Search tab.
+  // We also use this list to drive the unread-count badge on the sub-tab.
   useEffect(() => {
-    if (!currentUser) return;
-    if (mainTab !== "applying" || activeSection !== "autoTailor") return;
+    if (!currentUser) {
+      setAutoTailoredPostings([]);
+      return;
+    }
     let cancelled = false;
     async function loadAutoTailored() {
       setAutoTailoredLoading(true);
       setAutoTailoredError(null);
       const supabase = createClient();
       const { data, error } = await supabase
-        .from("generated_resumes")
+        .from("applications")
         .select(`
-          id, created_at, additional_context, position_id,
+          id, status, applied_at, tracked_at, resume_used_id,
           positions ( id, title, company, url )
         `)
         .eq("user_id", currentUser.id)
-        .like("additional_context", "Auto-tailored by cron%")
-        .order("created_at", { ascending: false })
-        .limit(200);
+        .eq("status", "auto_tailored")
+        .order("tracked_at", { ascending: false })
+        .limit(500);
       if (cancelled) return;
       if (error) {
         console.error("[loadAutoTailored] failed:", error);
@@ -1869,7 +1873,61 @@ export default function Home() {
     }
     loadAutoTailored();
     return () => { cancelled = true; };
-  }, [currentUser, mainTab, activeSection, applicationsRefreshKey]);
+  }, [currentUser, applicationsRefreshKey]);
+
+  // Track which auto-tailored application ids the user has already viewed.
+  // When the user opens the Auto Tailor tab we mark every currently-loaded
+  // auto-tailored row as seen so the badge clears.
+  const [autoTailorSeenVersion, setAutoTailorSeenVersion] = useState(0);
+  function getAutoTailorSeenSet() {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const raw = window.localStorage.getItem("autoTailorSeenIds");
+      const arr = raw ? JSON.parse(raw) : [];
+      return new Set(Array.isArray(arr) ? arr : []);
+    } catch {
+      return new Set();
+    }
+  }
+  function markAutoTailoredSeen(ids) {
+    if (typeof window === "undefined") return;
+    if (!Array.isArray(ids) || ids.length === 0) return;
+    try {
+      const seen = getAutoTailorSeenSet();
+      let changed = false;
+      for (const id of ids) {
+        if (id && !seen.has(id)) {
+          seen.add(id);
+          changed = true;
+        }
+      }
+      if (changed) {
+        window.localStorage.setItem(
+          "autoTailorSeenIds",
+          JSON.stringify(Array.from(seen)),
+        );
+        setAutoTailorSeenVersion((v) => v + 1);
+      }
+    } catch {
+      // ignore localStorage errors
+    }
+  }
+  const autoTailorUnreadCount = useMemo(() => {
+    if (!Array.isArray(autoTailoredPostings) || autoTailoredPostings.length === 0) return 0;
+    const seen = getAutoTailorSeenSet();
+    let count = 0;
+    for (const row of autoTailoredPostings) {
+      if (row?.id && !seen.has(row.id)) count++;
+    }
+    return count;
+  }, [autoTailoredPostings, autoTailorSeenVersion]);
+  // When the user opens the Auto Tailor tab, mark current rows as seen.
+  useEffect(() => {
+    if (mainTab !== "applying" || activeSection !== "autoTailor") return;
+    if (!Array.isArray(autoTailoredPostings) || autoTailoredPostings.length === 0) return;
+    markAutoTailoredSeen(autoTailoredPostings.map((r) => r.id).filter(Boolean));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mainTab, activeSection, autoTailoredPostings]);
 
   // Backfill chip statuses for tracked jobs from Supabase. Any tracked job
   // whose position has a matching application with a saved generated_resumes
@@ -2762,13 +2820,16 @@ export default function Home() {
             .eq("user_id", currentUser.id)
             .eq("position_id", positionId);
           if (linkErr) console.error("[handleTailorJob] link resume failed:", linkErr);
-          // Upgrade status tracking → tailored so it shows up on the
-          // Interviewing tab as a tailored-but-not-yet-applied row.
+          // Upgrade status tracking → tailored (or auto_tailored when this
+          // tailor was kicked off via "Tailor all visible" / batch flow). The
+          // auto_tailored status routes these rows to the dedicated Auto
+          // Tailor tab instead of the Interviewing tab.
           // Filter on status=tracking so we never downgrade rows that are
           // already applied/interviewing/offer/etc.
+          const targetStatus = opts.markAsAutoTailor ? "auto_tailored" : "tailored";
           const { error: statusErr } = await supabase
             .from("applications")
-            .update({ status: "tailored" })
+            .update({ status: targetStatus })
             .eq("user_id", currentUser.id)
             .eq("position_id", positionId)
             .eq("status", "tracking");
@@ -2855,7 +2916,7 @@ export default function Home() {
     if (chosen.length === 0) return;
     setBatchTailorState({ running: true, total: chosen.length, completed: 0 });
     try {
-      await runWithConcurrency(chosen, 3, (job) => handleTailorJob(job, { skipDownload }));
+      await runWithConcurrency(chosen, 3, (job) => handleTailorJob(job, { skipDownload, markAsAutoTailor: true }));
     } finally {
       setBatchTailorState((s) => ({ ...s, running: false }));
     }
@@ -3937,6 +3998,28 @@ export default function Home() {
             onClick={() => setActiveSection("autoTailor")}
           >
             Auto Tailor
+            {autoTailorUnreadCount > 0 && (
+              <Box
+                component="span"
+                sx={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  ml: 0.75,
+                  minWidth: 18,
+                  height: 18,
+                  px: 0.5,
+                  borderRadius: "9px",
+                  bgcolor: "#d32f2f",
+                  color: "#fff",
+                  fontSize: "0.7rem",
+                  fontWeight: 700,
+                  lineHeight: 1,
+                }}
+              >
+                {autoTailorUnreadCount > 99 ? "99+" : autoTailorUnreadCount}
+              </Box>
+            )}
           </button>
           <button
             type="button"
@@ -4635,7 +4718,8 @@ export default function Home() {
                         </Box>
                         <Box component="tbody">
                           {autoTailoredPostings.map((row) => {
-                            const dateLabel = row.created_at ? new Date(row.created_at).toLocaleString() : "—";
+                            const dateRaw = row.tracked_at || row.applied_at || null;
+                            const dateLabel = dateRaw ? new Date(dateRaw).toLocaleString() : "—";
                             const pos = row.positions || {};
                             return (
                               <Box component="tr" key={row.id} sx={{ "&:hover": { bgcolor: "#fafbfc" } }}>
