@@ -18,6 +18,7 @@ import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import Autocomplete from "@mui/material/Autocomplete";
 import Chip from "@mui/material/Chip";
+import DescriptionIcon from "@mui/icons-material/Description";
 import Badge from "@mui/material/Badge";
 import Menu from "@mui/material/Menu";
 import FormControlLabel from "@mui/material/FormControlLabel";
@@ -121,18 +122,51 @@ function FormattedContent({ text, kind }) {
             (line === line.toUpperCase() || /^[A-Z][^a-z]{2,}$/.test(line) || line.endsWith(":"));
           if (isHeading) {
             return (
-              <Box
-                key={i}
-                sx={{
-                  fontWeight: 700,
-                  fontSize: kind === "resume" ? 14 : 14.5,
-                  mt: i > 0 ? 2.5 : 0,
-                  mb: kind === "jd" ? 1 : 0.5,
-                  borderBottom: kind === "resume" ? "1px solid rgba(0,0,0,0.12)" : kind === "jd" ? "1px solid rgba(25, 118, 210, 0.18)" : "none",
-                  pb: kind === "resume" ? 0.25 : kind === "jd" ? 0.35 : 0,
-                  letterSpacing: kind === "jd" ? 0.15 : 0.3,
-                  color: kind === "jd" ? "#163b66" : "inherit",
-                }}
+                                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                                    <Chip
+                                      label={statusConfig.label}
+                                      color={statusConfig.color}
+                                      size="small"
+                                      onClick={() => askAiAbout({
+                                        label: `${pos?.company || "Application"}${pos?.title ? ` — ${pos.title}` : ""} · ${statusConfig.label}`,
+                                        content: buildApplicationContextString(app),
+                                        prompt: `Based on the \"${statusConfig.label}\" status of my application to ${pos?.company || "this company"}${pos?.title ? ` for ${pos.title}` : ""}, `,
+                                      })}
+                                      sx={{ cursor: "pointer" }}
+                                      title="Ask AI about this status"
+                                    />
+                                    {app?.generated_resumes?.content ? (
+                                      <Tooltip title="Drag to upload resume elsewhere">
+                                        <span
+                                          draggable
+                                          onDragStart={async (e) => {
+                                            // Create a DOCX Blob for drag-and-drop
+                                            try {
+                                              const supabase = createClient();
+                                              const { data: gen, error } = await supabase
+                                                .from("generated_resumes")
+                                                .select("content, content_lines")
+                                                .eq("id", app.resume_used_id)
+                                                .maybeSingle();
+                                              if (error || !gen) return;
+                                              const lines = Array.isArray(gen.content_lines) ? gen.content_lines : [];
+                                              const text = typeof gen.content === "string" ? gen.content : lines.join("\n");
+                                              // Use the same logic as downloadDocxFiles
+                                              const blob = await buildDocxFromUploadedTemplate(resumeFile, text, lines);
+                                              const file = new File([blob], getDownloadFileNameForTitle(pos?.title, pos?.company), { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+                                              e.dataTransfer.clearData();
+                                              e.dataTransfer.effectAllowed = "copy";
+                                              e.dataTransfer.setData("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "");
+                                              e.dataTransfer.items.add(file);
+                                            } catch {}
+                                          }}
+                                          style={{ display: "inline-flex", alignItems: "center", cursor: "grab", marginLeft: 4 }}
+                                        >
+                                          <DescriptionIcon fontSize="small" color="primary" />
+                                        </span>
+                                      </Tooltip>
+                                    ) : null}
+                                  </Box>
               >
                 {line.endsWith(":") ? line.slice(0, -1) : line}
               </Box>
@@ -4607,7 +4641,19 @@ export default function Home() {
                         return (
                           <div key={job.id} id={`job-card-${job.id}`} className={`${styles.jobCard}${isApplied ? ` ${styles.jobCardApplied}` : ""}${highlightedJobId === job.id ? ` ${styles.jobCardHighlighted}` : ""}`}>
                             <div>
-                              <p className={styles.jobCardTitle}>{job.title}</p>
+                              {job.url ? (
+                                <a
+                                  href={job.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className={styles.jobCardTitle}
+                                  style={{ textDecoration: "underline", color: "var(--accent, #1976d2)", cursor: "pointer" }}
+                                >
+                                  {job.title}
+                                </a>
+                              ) : (
+                                <p className={styles.jobCardTitle}>{job.title}</p>
+                              )}
                               <p className={styles.jobCardMeta}>
                                 {[job.company, job.location].filter(Boolean).join(" · ")}
                               </p>
