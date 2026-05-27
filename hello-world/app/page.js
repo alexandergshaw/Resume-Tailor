@@ -7,6 +7,13 @@ import JobDescriptionTab from "./components/JobDescriptionTab";
 import PostingUrlTab from "./components/PostingUrlTab";
 import AutoTailorTab from "./components/AutoTailorTab";
 import ApplyingControls from "./components/ApplyingControls";
+import StageDialog from "./components/StageDialog";
+import CommunicationsDialog from "./components/CommunicationsDialog";
+import AddCommunicationDialog from "./components/AddCommunicationDialog";
+import EditAppDialog from "./components/EditAppDialog";
+import AddAppDialog from "./components/AddAppDialog";
+import AppViewDialog from "./components/AppViewDialog";
+import BatchTailorDialog from "./components/BatchTailorDialog";
 import Accordion from "@mui/material/Accordion";
 import AccordionDetails from "@mui/material/AccordionDetails";
 import AccordionSummary from "@mui/material/AccordionSummary";
@@ -4673,711 +4680,71 @@ export default function Home() {
               </>
             )}
 
-            <Dialog
-              open={stageDialog.open}
-              onClose={() => {
-                setStageError("");
-                setStageDialog(createStageDialogState());
-              }}
-              maxWidth="sm"
-              fullWidth
-            >
-              <DialogTitle>{stageDialog.stageId ? "Edit Interview Stage" : "Add Interview Stage"}</DialogTitle>
-              <DialogContent dividers sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 2 }}>
-                <TextField
-                  label="Stage Name"
-                  value={stageDialog.stageName}
-                  onChange={(e) => setStageDialog((prev) => ({ ...prev, stageName: e.target.value }))}
-                  fullWidth
-                  size="small"
-                  placeholder="e.g. Technical Round 1"
-                />
-                <FormControl fullWidth size="small">
-                  <InputLabel id="stage-type-label">Type</InputLabel>
-                  <Select
-                    labelId="stage-type-label"
-                    value={stageDialog.stageType}
-                    label="Type"
-                    onChange={(e) => setStageDialog((prev) => ({ ...prev, stageType: e.target.value }))}
-                  >
-                    {STAGE_TYPE_OPTIONS.map(([value, label]) => (
-                      <MenuItem key={value} value={value}>{label}</MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-                <TextField
-                  type="datetime-local"
-                  label="Scheduled"
-                  value={stageDialog.scheduledAt}
-                  onChange={(e) => setStageDialog((prev) => ({ ...prev, scheduledAt: e.target.value }))}
-                  fullWidth
-                  size="small"
-                  slotProps={{ inputLabel: { shrink: true } }}
-                />
-                <TextField
-                  type="number"
-                  label="Duration (minutes)"
-                  value={stageDialog.durationMinutes}
-                  onChange={(e) => setStageDialog((prev) => ({ ...prev, durationMinutes: e.target.value }))}
-                  fullWidth
-                  size="small"
-                />
-                <FormControl fullWidth size="small">
-                  <InputLabel id="stage-outcome-label">Outcome</InputLabel>
-                  <Select
-                    labelId="stage-outcome-label"
-                    value={stageDialog.outcome}
-                    label="Outcome"
-                    onChange={(e) => setStageDialog((prev) => ({ ...prev, outcome: e.target.value }))}
-                  >
-                    {STAGE_OUTCOME_OPTIONS.map(([value, label]) => (
-                      <MenuItem key={value} value={value}>{label}</MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-                <TextField
-                  label="Interviewer Names"
-                  value={stageDialog.interviewerNames}
-                  onChange={(e) => setStageDialog((prev) => ({ ...prev, interviewerNames: e.target.value }))}
-                  fullWidth
-                  size="small"
-                  placeholder="Comma-separated names"
-                  helperText="Separate multiple names with commas"
-                />
-                <TextField
-                  label="Notes"
-                  value={stageDialog.notes}
-                  onChange={(e) => setStageDialog((prev) => ({ ...prev, notes: e.target.value }))}
-                  fullWidth
-                  multiline
-                  rows={4}
-                  size="small"
-                />
-                {stageError ? (
-                  <p style={{ color: "var(--error, #d32f2f)", margin: 0 }}>{stageError}</p>
-                ) : null}
-              </DialogContent>
-              <DialogActions>
-                <Button
-                  onClick={() => {
-                    setStageError("");
-                    setStageDialog(createStageDialogState());
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="contained"
-                  onClick={handleSaveStage}
-                  disabled={stageSaving}
-                >
-                  {stageSaving ? "Saving..." : "Save Stage"}
-                </Button>
-              </DialogActions>
-            </Dialog>
+            <StageDialog
+              stageDialog={stageDialog}
+              setStageDialog={setStageDialog}
+              stageError={stageError}
+              setStageError={setStageError}
+              stageSaving={stageSaving}
+              handleSaveStage={handleSaveStage}
+              createStageDialogState={createStageDialogState}
+              STAGE_TYPE_OPTIONS={STAGE_TYPE_OPTIONS}
+              STAGE_OUTCOME_OPTIONS={STAGE_OUTCOME_OPTIONS}
+            />
 
-            <Dialog
-              open={communicationsDialog.open}
-              onClose={() => setCommunicationsDialog({ open: false, applicationId: null, company: "", role: "", loading: false, error: "", items: [] })}
-              maxWidth="md"
-              fullWidth
-            >
-              <DialogTitle>
-                Recruiter Communications
-                {(communicationsDialog.company || communicationsDialog.role) ? ` — ${communicationsDialog.company || "Unknown Company"}${communicationsDialog.role ? ` / ${communicationsDialog.role}` : ""}` : ""}
-              </DialogTitle>
-              <DialogContent dividers sx={{ maxHeight: "70vh" }}>
-                {communicationsDialog.loading ? (
-                  <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
-                    <CircularProgress size={24} />
-                  </Box>
-                ) : communicationsDialog.error ? (
-                  <p style={{ color: "var(--error, #d32f2f)", margin: 0 }}>{communicationsDialog.error}</p>
-                ) : communicationsDialog.items.length === 0 ? (
-                  <p style={{ color: "var(--text-secondary)", margin: 0 }}>No recruiter communications logged yet.</p>
-                ) : (
-                  <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-                    {communicationsDialog.items.map((item) => (
-                      <Box
-                        key={item.id}
-                        sx={{
-                          p: 1.5,
-                          borderRadius: 2.5,
-                          border: "1px solid rgba(15, 23, 42, 0.08)",
-                          backgroundColor: "rgba(248, 250, 252, 0.8)",
-                        }}
-                      >
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap", mb: 1 }}>
-                          <Chip size="small" label={item.direction || "inbound"} variant="outlined" />
-                          <Chip size="small" label={item.type || "email"} variant="outlined" />
-                          <Box component="span" sx={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                            {item.communicated_at ? new Date(item.communicated_at).toLocaleString() : "Logged communication"}
-                          </Box>
-                        </Box>
-                        {item.subject ? (
-                          <Box sx={{ fontWeight: 700, mb: 0.75 }}>{item.subject}</Box>
-                        ) : null}
-                        {(item.sender_name || item.sender_email || item.sender_title) ? (
-                          <Box sx={{ mb: 0.75, fontSize: 12, color: "var(--text-secondary)" }}>
-                            {[item.sender_name, item.sender_title, item.sender_email].filter(Boolean).join(" · ")}
-                          </Box>
-                        ) : null}
-                        <Box sx={{ whiteSpace: "pre-wrap", lineHeight: 1.7, fontSize: 13.5 }}>
-                          {item.body || "—"}
-                        </Box>
-                      </Box>
-                    ))}
-                  </Box>
-                )}
-              </DialogContent>
-              <DialogActions>
-                <Button onClick={() => setCommunicationsDialog({ open: false, applicationId: null, company: "", role: "", loading: false, error: "", items: [] })}>
-                  Close
-                </Button>
-              </DialogActions>
-            </Dialog>
+            <CommunicationsDialog
+              communicationsDialog={communicationsDialog}
+              setCommunicationsDialog={setCommunicationsDialog}
+            />
 
-            <Dialog
-              open={addCommunicationDialog.open}
-              onClose={() => {
-                setCommunicationError("");
-                setAddCommunicationDialog({ open: false, applicationId: null, company: "", role: "", body: "" });
-              }}
-              maxWidth="md"
-              fullWidth
-            >
-              <DialogTitle>
-                Add Recruiter Communication
-                {(addCommunicationDialog.company || addCommunicationDialog.role) ? ` — ${addCommunicationDialog.company || "Unknown Company"}${addCommunicationDialog.role ? ` / ${addCommunicationDialog.role}` : ""}` : ""}
-              </DialogTitle>
-              <DialogContent dividers sx={{ pt: 2 }}>
-                <TextField
-                  label="Paste communication"
-                  placeholder="Paste the recruiter email, LinkedIn message, or call notes here..."
-                  value={addCommunicationDialog.body}
-                  onChange={(e) => setAddCommunicationDialog((prev) => ({ ...prev, body: e.target.value }))}
-                  fullWidth
-                  multiline
-                  minRows={12}
-                  sx={{
-                    "& .MuiOutlinedInput-root": {
-                      alignItems: "flex-start",
-                      borderRadius: 2.5,
-                    },
-                  }}
-                />
-                {communicationError ? (
-                  <p style={{ color: "var(--error, #d32f2f)", margin: "12px 0 0" }}>{communicationError}</p>
-                ) : null}
-              </DialogContent>
-              <DialogActions>
-                <Button
-                  onClick={() => {
-                    setCommunicationError("");
-                    setAddCommunicationDialog({ open: false, applicationId: null, company: "", role: "", body: "" });
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="contained"
-                  disabled={communicationSaving || !addCommunicationDialog.body.trim()}
-                  onClick={handleSaveCommunication}
-                >
-                  {communicationSaving ? "Saving..." : "Save Communication"}
-                </Button>
-              </DialogActions>
-            </Dialog>
+            <AddCommunicationDialog
+              addCommunicationDialog={addCommunicationDialog}
+              setAddCommunicationDialog={setAddCommunicationDialog}
+              communicationError={communicationError}
+              setCommunicationError={setCommunicationError}
+              communicationSaving={communicationSaving}
+              handleSaveCommunication={handleSaveCommunication}
+            />
 
-            <Dialog
-              open={editAppDialog.open}
-              onClose={() => {
-                if (editAppSaving) return;
-                setEditAppDialog((prev) => ({ ...prev, open: false }));
-              }}
-              maxWidth="sm"
-              fullWidth
-            >
-              <Box
-                component="form"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (editAppSaving) return;
-                  handleSaveEditApplication();
-                }}
-              >
-              <DialogTitle>Edit Application</DialogTitle>
-              <DialogContent dividers sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 2 }}>
-                <TextField
-                  label="Company"
-                  value={editAppDialog.company}
-                  onChange={(e) => setEditAppDialog((prev) => ({ ...prev, company: e.target.value }))}
-                  fullWidth
-                  size="small"
-                />
-                <TextField
-                  label="Role"
-                  value={editAppDialog.role}
-                  onChange={(e) => setEditAppDialog((prev) => ({ ...prev, role: e.target.value }))}
-                  fullWidth
-                  size="small"
-                />
-                <FormControl fullWidth size="small">
-                  <InputLabel id="edit-app-status-label">Status</InputLabel>
-                  <Select
-                    labelId="edit-app-status-label"
-                    label="Status"
-                    value={editAppDialog.status}
-                    onChange={(e) => setEditAppDialog((prev) => ({ ...prev, status: e.target.value }))}
-                  >
-                    <MenuItem value="tailored">Tailored</MenuItem>
-                    <MenuItem value="applied">Applied</MenuItem>
-                    <MenuItem value="phone_screen">Phone Screen</MenuItem>
-                    <MenuItem value="interviewing">Interviewing</MenuItem>
-                    <MenuItem value="offer">Offer</MenuItem>
-                    <MenuItem value="accepted">Accepted</MenuItem>
-                    <MenuItem value="rejected">Rejected</MenuItem>
-                    <MenuItem value="withdrawn">Withdrawn</MenuItem>
-                  </Select>
-                </FormControl>
-                <TextField
-                  type="date"
-                  label="Applied"
-                  value={editAppDialog.appliedAt}
-                  onChange={(e) => setEditAppDialog((prev) => ({ ...prev, appliedAt: e.target.value }))}
-                  fullWidth
-                  size="small"
-                  slotProps={{ inputLabel: { shrink: true } }}
-                />
-                <TextField
-                  label="Application URL"
-                  value={editAppDialog.applicationUrl}
-                  onChange={(e) => setEditAppDialog((prev) => ({ ...prev, applicationUrl: e.target.value }))}
-                  fullWidth
-                  size="small"
-                  placeholder="https://..."
-                />
-                <TextField
-                  label="Job Description"
-                  value={editAppDialog.description}
-                  onChange={(e) => setEditAppDialog((prev) => ({ ...prev, description: e.target.value }))}
-                  fullWidth
-                  multiline
-                  minRows={6}
-                  size="small"
-                />
-                <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
-                  <Box component="label" sx={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
-                    Resume used for this application (optional)
-                  </Box>
-                  <input
-                    type="file"
-                    accept=".docx,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
-                    onChange={(e) => setEditAppResumeFile(e.target.files?.[0] || null)}
-                  />
-                  {editAppResumeFile ? (
-                    <Box sx={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                      New upload: {editAppResumeFile.name}
-                    </Box>
-                  ) : (
-                    <Box sx={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                      Upload a .docx (or .txt) to replace the resume associated with this row. Leave empty to keep the existing resume.
-                    </Box>
-                  )}
-                </Box>
-                {editAppError ? (
-                  <p style={{ color: "var(--error, #d32f2f)", margin: 0 }}>{editAppError}</p>
-                ) : null}
-              </DialogContent>
-              <DialogActions>
-                <Button
-                  onClick={() => setEditAppDialog((prev) => ({ ...prev, open: false }))}
-                  disabled={editAppSaving}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="contained"
-                  onClick={handleSaveEditApplication}
-                  disabled={editAppSaving}
-                  type="submit"
-                >
-                  {editAppSaving ? "Saving..." : "Save Changes"}
-                </Button>
-              </DialogActions>
-              </Box>
-            </Dialog>
+            <EditAppDialog
+              editAppDialog={editAppDialog}
+              setEditAppDialog={setEditAppDialog}
+              editAppSaving={editAppSaving}
+              editAppError={editAppError}
+              editAppResumeFile={editAppResumeFile}
+              setEditAppResumeFile={setEditAppResumeFile}
+              handleSaveEditApplication={handleSaveEditApplication}
+            />
 
-            <Dialog
-              open={addAppDialog.open}
-              onClose={() => {
-                if (addAppSaving) return;
-                setAddAppDialog((prev) => ({ ...prev, open: false }));
-              }}
-              maxWidth="sm"
-              fullWidth
-            >
-              <DialogTitle>Add Application</DialogTitle>
-              <DialogContent dividers sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 2 }}>
-                <TextField
-                  label="Company"
-                  value={addAppDialog.company}
-                  onChange={(e) => setAddAppDialog((prev) => ({ ...prev, company: e.target.value }))}
-                  fullWidth
-                  size="small"
-                  required
-                />
-                <TextField
-                  label="Role"
-                  value={addAppDialog.role}
-                  onChange={(e) => setAddAppDialog((prev) => ({ ...prev, role: e.target.value }))}
-                  fullWidth
-                  size="small"
-                  required
-                />
-                <FormControl fullWidth size="small">
-                  <InputLabel id="add-app-status-label">Status</InputLabel>
-                  <Select
-                    labelId="add-app-status-label"
-                    label="Status"
-                    value={addAppDialog.status}
-                    onChange={(e) => setAddAppDialog((prev) => ({ ...prev, status: e.target.value }))}
-                  >
-                    <MenuItem value="tailored">Tailored</MenuItem>
-                    <MenuItem value="applied">Applied</MenuItem>
-                    <MenuItem value="phone_screen">Phone Screen</MenuItem>
-                    <MenuItem value="interviewing">Interviewing</MenuItem>
-                    <MenuItem value="offer">Offer</MenuItem>
-                    <MenuItem value="accepted">Accepted</MenuItem>
-                    <MenuItem value="rejected">Rejected</MenuItem>
-                    <MenuItem value="withdrawn">Withdrawn</MenuItem>
-                  </Select>
-                </FormControl>
-                <TextField
-                  type="date"
-                  label="Applied"
-                  value={addAppDialog.appliedAt}
-                  onChange={(e) => setAddAppDialog((prev) => ({ ...prev, appliedAt: e.target.value }))}
-                  fullWidth
-                  size="small"
-                  slotProps={{ inputLabel: { shrink: true } }}
-                />
-                <TextField
-                  label="Application URL"
-                  value={addAppDialog.applicationUrl}
-                  onChange={(e) => setAddAppDialog((prev) => ({ ...prev, applicationUrl: e.target.value }))}
-                  fullWidth
-                  size="small"
-                  placeholder="https://..."
-                />
-                <TextField
-                  label="Job Description"
-                  value={addAppDialog.description}
-                  onChange={(e) => setAddAppDialog((prev) => ({ ...prev, description: e.target.value }))}
-                  fullWidth
-                  multiline
-                  minRows={6}
-                  size="small"
-                />
-                <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
-                  <Box component="label" sx={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>
-                    Resume used for this application (optional)
-                  </Box>
-                  <input
-                    type="file"
-                    accept=".docx,.txt,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
-                    onChange={(e) => setAddAppResumeFile(e.target.files?.[0] || null)}
-                  />
-                  {addAppResumeFile ? (
-                    <Box sx={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                      Selected: {addAppResumeFile.name}
-                    </Box>
-                  ) : (
-                    <Box sx={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                      Optional. Upload a .docx (or .txt) of the resume you sent with this application.
-                    </Box>
-                  )}
-                </Box>
-                {addAppError ? (
-                  <p style={{ color: "var(--error, #d32f2f)", margin: 0 }}>{addAppError}</p>
-                ) : null}
-              </DialogContent>
-              <DialogActions>
-                <Button
-                  onClick={() => setAddAppDialog((prev) => ({ ...prev, open: false }))}
-                  disabled={addAppSaving}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  variant="contained"
-                  onClick={handleSaveAddApplication}
-                  disabled={addAppSaving}
-                >
-                  {addAppSaving ? "Saving..." : "Add Application"}
-                </Button>
-              </DialogActions>
-            </Dialog>
+            <AddAppDialog
+              addAppDialog={addAppDialog}
+              setAddAppDialog={setAddAppDialog}
+              addAppSaving={addAppSaving}
+              addAppError={addAppError}
+              addAppResumeFile={addAppResumeFile}
+              setAddAppResumeFile={setAddAppResumeFile}
+              handleSaveAddApplication={handleSaveAddApplication}
+            />
 
-            {(() => {
-              const dApp = appDialog.rowIndex != null ? applicationData[appDialog.rowIndex] : null;
-              const dPos = dApp?.positions;
-              const dResume = dApp?.generated_resumes;
-              const pages = [
-                dApp?.id ? "communications" : null,
-                dPos?.description ? "jd" : null,
-                dResume?.content ? "resume" : null,
-              ].filter(Boolean);
-              const pageIdx = pages.indexOf(appDialog.kind);
-              const commsLoadedForThisApp =
-                dApp && communicationsDialog.applicationId === dApp.id;
-              const dialogTitle =
-                appDialog.kind === "jd"
-                  ? `${dPos?.company || ""} — Job Description`
-                  : appDialog.kind === "resume"
-                    ? `Your Resume — ${dPos?.title || "Role"}`
-                    : `Recruiter Communications${
-                        dPos?.company || dPos?.title
-                          ? ` — ${dPos?.company || "Unknown Company"}${dPos?.title ? ` / ${dPos.title}` : ""}`
-                          : ""
-                      }`;
-              const navigate = (dir) => {
-                if (pages.length === 0) return;
-                const next = (pageIdx + dir + pages.length) % pages.length;
-                const nextKind = pages[next];
-                setAppDialog((prev) => ({ ...prev, kind: nextKind }));
-                if (nextKind === "communications" && dApp && communicationsDialog.applicationId !== dApp.id) {
-                  loadCommunicationsForApp(dApp);
-                }
-              };
-              return (
-                <Dialog
-                  open={appDialog.open}
-                  onClose={() => setAppDialog({ open: false, rowIndex: null, kind: "jd" })}
-                  maxWidth="md"
-                  fullWidth
-                  PaperProps={{
-                    onKeyDown: (e) => {
-                      if (e.key === "ArrowRight") navigate(1);
-                      if (e.key === "ArrowLeft") navigate(-1);
-                    },
-                    tabIndex: -1,
-                  }}
-                >
-                  <DialogTitle sx={{ pb: 1 }}>
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                      <Button
-                        size="small"
-                        disabled={pages.length <= 1}
-                        onClick={() => navigate(-1)}
-                        sx={{ minWidth: 36, px: 0.75, fontSize: 22, lineHeight: 1 }}
-                        aria-label="Previous"
-                      >
-                        ‹
-                      </Button>
-                      <Box sx={{ flex: 1, fontWeight: 700, fontSize: "1rem" }}>
-                        {dialogTitle}
-                        {pages.length > 1 && (
-                          <Box component="span" sx={{ ml: 1.5, fontSize: 12, fontWeight: 400, color: "text.secondary" }}>
-                            {pageIdx + 1} / {pages.length}
-                          </Box>
-                        )}
-                      </Box>
-                      <Button
-                        size="small"
-                        disabled={pages.length <= 1}
-                        onClick={() => navigate(1)}
-                        sx={{ minWidth: 36, px: 0.75, fontSize: 22, lineHeight: 1 }}
-                        aria-label="Next"
-                      >
-                        ›
-                      </Button>
-                    </Box>
-                  </DialogTitle>
-                  <DialogContent dividers sx={{ maxHeight: "70vh" }}>
-                    {appDialog.kind === "communications" ? (
-                      !commsLoadedForThisApp || communicationsDialog.loading ? (
-                        <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
-                          <CircularProgress size={24} />
-                        </Box>
-                      ) : communicationsDialog.error ? (
-                        <p style={{ color: "var(--error, #d32f2f)", margin: 0 }}>{communicationsDialog.error}</p>
-                      ) : communicationsDialog.items.length === 0 ? (
-                        <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5, alignItems: "flex-start" }}>
-                          <p style={{ color: "var(--text-secondary)", margin: 0 }}>No recruiter communications logged yet.</p>
-                          {dApp ? (
-                            <Button size="small" variant="outlined" onClick={() => openAddCommunicationDialog(dApp)}>
-                              Add Communication
-                            </Button>
-                          ) : null}
-                        </Box>
-                      ) : (
-                        <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-                          {communicationsDialog.items.map((item) => (
-                            <Box
-                              key={item.id}
-                              sx={{
-                                p: 1.5,
-                                borderRadius: 2.5,
-                                border: "1px solid rgba(15, 23, 42, 0.08)",
-                                backgroundColor: "rgba(248, 250, 252, 0.8)",
-                              }}
-                            >
-                              <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap", mb: 1 }}>
-                                <Chip size="small" label={item.direction || "inbound"} variant="outlined" />
-                                <Chip size="small" label={item.type || "email"} variant="outlined" />
-                                <Box component="span" sx={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                                  {item.communicated_at ? new Date(item.communicated_at).toLocaleString() : "Logged communication"}
-                                </Box>
-                              </Box>
-                              {item.subject ? (
-                                <Box sx={{ fontWeight: 700, mb: 0.75 }}>{item.subject}</Box>
-                              ) : null}
-                              {(item.sender_name || item.sender_email || item.sender_title) ? (
-                                <Box sx={{ mb: 0.75, fontSize: 12, color: "var(--text-secondary)" }}>
-                                  {[item.sender_name, item.sender_title, item.sender_email].filter(Boolean).join(" · ")}
-                                </Box>
-                              ) : null}
-                              <Box sx={{ whiteSpace: "pre-wrap", lineHeight: 1.7, fontSize: 13.5 }}>
-                                {item.body || "—"}
-                              </Box>
-                            </Box>
-                          ))}
-                        </Box>
-                      )
-                    ) : (
-                      <FormattedContent
-                        text={appDialog.kind === "jd" ? (dPos?.description ?? "") : (dResume?.content ?? "")}
-                        kind={appDialog.kind}
-                      />
-                    )}
-                  </DialogContent>
-                  <DialogActions>
-                    {appDialog.kind === "communications" && dApp ? (
-                      <Button onClick={() => openAddCommunicationDialog(dApp)}>
-                        Add
-                      </Button>
-                    ) : null}
-                    <Button onClick={() => setAppDialog({ open: false, rowIndex: null, kind: "jd" })}>
-                      Close
-                    </Button>
-                  </DialogActions>
-                </Dialog>
-              );
-            })()}
+            <AppViewDialog
+              appDialog={appDialog}
+              setAppDialog={setAppDialog}
+              applicationData={applicationData}
+              communicationsDialog={communicationsDialog}
+              loadCommunicationsForApp={loadCommunicationsForApp}
+              openAddCommunicationDialog={openAddCommunicationDialog}
+              FormattedContent={FormattedContent}
+            />
           </section>
         )}
 
         {/* Always-mounted dialogs (not gated by active main tab). */}
-        <Dialog
-          open={batchTailorDialog.open}
-          onClose={() => {
-            if (batchTailorState.running) return;
-            setBatchTailorDialog({ open: false, candidates: [], selectedIds: [] });
-          }}
-          maxWidth="sm"
-          fullWidth
-        >
-          <DialogTitle>
-            Tailor {batchTailorDialog.selectedIds.length} of {batchTailorDialog.candidates.length} job
-            {batchTailorDialog.candidates.length === 1 ? "" : "s"}?
-          </DialogTitle>
-          <DialogContent dividers>
-            <Box sx={{ fontSize: 13, color: "var(--text-secondary)", mb: 1 }}>
-              Each selected job will be tracked, run through the LLM, and the
-              tailored resume saved to your library. Choose whether to also
-              download the .docx files now.
-            </Box>
-            <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 0.5 }}>
-              <Button
-                size="small"
-                onClick={() => {
-                  setBatchTailorDialog((prev) => {
-                    const allSelected = prev.selectedIds.length === prev.candidates.length;
-                    return {
-                      ...prev,
-                      selectedIds: allSelected ? [] : prev.candidates.map((c) => c.id),
-                    };
-                  });
-                }}
-                disabled={batchTailorState.running || batchTailorDialog.candidates.length === 0}
-              >
-                {batchTailorDialog.selectedIds.length === batchTailorDialog.candidates.length
-                  ? "Deselect all"
-                  : "Select all"}
-              </Button>
-            </Box>
-            <Box
-              sx={{
-                maxHeight: 320,
-                overflowY: "auto",
-                border: "1px solid var(--border)",
-                borderRadius: 1,
-              }}
-            >
-              {batchTailorDialog.candidates.map((job) => {
-                const checked = batchTailorDialog.selectedIds.includes(job.id);
-                return (
-                  <Box
-                    key={job.id}
-                    component="label"
-                    sx={{
-                      display: "flex",
-                      alignItems: "flex-start",
-                      gap: 1,
-                      px: 1,
-                      py: 0.5,
-                      cursor: "pointer",
-                      borderBottom: "1px solid var(--border)",
-                      "&:last-of-type": { borderBottom: "none" },
-                    }}
-                  >
-                    <Checkbox
-                      size="small"
-                      checked={checked}
-                      disabled={batchTailorState.running}
-                      onChange={(e) => {
-                        const next = e.target.checked;
-                        setBatchTailorDialog((prev) => {
-                          const set = new Set(prev.selectedIds);
-                          if (next) set.add(job.id);
-                          else set.delete(job.id);
-                          return { ...prev, selectedIds: Array.from(set) };
-                        });
-                      }}
-                      sx={{ p: 0.5, mt: 0.25 }}
-                    />
-                    <Box sx={{ fontSize: 13, lineHeight: 1.3 }}>
-                      <strong>{job.company || "Unknown"}</strong>
-                      {job.title ? ` — ${job.title}` : ""}
-                    </Box>
-                  </Box>
-                );
-              })}
-            </Box>
-          </DialogContent>
-          <DialogActions>
-            <Button
-              onClick={() => setBatchTailorDialog({ open: false, candidates: [], selectedIds: [] })}
-              disabled={batchTailorState.running}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={() => startBatchTailor(true)}
-              disabled={batchTailorState.running || batchTailorDialog.selectedIds.length === 0}
-            >
-              Tailor only (no download)
-            </Button>
-            <Button
-              variant="contained"
-              onClick={() => startBatchTailor(false)}
-              disabled={batchTailorState.running || batchTailorDialog.selectedIds.length === 0}
-            >
-              Tailor &amp; download
-            </Button>
-          </DialogActions>
-        </Dialog>
+        <BatchTailorDialog
+          batchTailorDialog={batchTailorDialog}
+          setBatchTailorDialog={setBatchTailorDialog}
+          batchTailorState={batchTailorState}
+          startBatchTailor={startBatchTailor}
+        />
       </main>
 
       <Fab
