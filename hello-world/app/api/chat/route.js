@@ -8,6 +8,7 @@ const SYSTEM_PROMPT = [
   "You are a concise, friendly career assistant inside the Resume Tailor app.",
   "Help the user with resume writing, job search strategy, interview prep, and using this tool.",
   "Answer briefly. Use plain language. No markdown headings unless asked.",
+  "Never use bold or italic formatting (no **bold**, no __bold__, no *italic*, no _italic_). Write in plain prose only.",
   "When the user has uploaded a resume or has applications, use that context to give specific, personalized advice.",
   "Reference specific companies, roles, or resume bullets from the provided context when relevant.",
   "If the user pastes a URL in their message, the page contents are fetched server-side and provided to you under '--- FETCHED URLS ---'. Use that fetched text instead of saying you cannot open links.",
@@ -224,7 +225,11 @@ export async function POST(request) {
       },
     });
 
-    const reply = response.text?.trim() || "";
+    const rawReply = response.text?.trim() || "";
+    // Defensive: even with the system prompt forbidding bold/italic, the model
+    // occasionally emits markdown emphasis. Strip it server-side so the UI
+    // never renders or shows raw asterisks/underscores.
+    const reply = stripEmphasisMarkdown(rawReply);
 
     if (!reply) {
       return Response.json({ error: "Empty response from Gemini." }, { status: 502 });
@@ -234,4 +239,18 @@ export async function POST(request) {
   } catch (err) {
     return Response.json({ error: err?.message || "Chat request failed." }, { status: 500 });
   }
+}
+
+function stripEmphasisMarkdown(text) {
+  if (typeof text !== "string" || !text) return "";
+  return text
+    // ***bold italic*** / ___bold italic___
+    .replace(/\*\*\*(.+?)\*\*\*/gs, "$1")
+    .replace(/___(.+?)___/gs, "$1")
+    // **bold** / __bold__
+    .replace(/\*\*(.+?)\*\*/gs, "$1")
+    .replace(/__(.+?)__/gs, "$1")
+    // *italic* and _italic_ — only when wrapping non-space content
+    .replace(/(^|[^\w*])\*(?!\s)([^*\n]+?)(?<!\s)\*(?!\w)/g, "$1$2")
+    .replace(/(^|[^\w_])_(?!\s)([^_\n]+?)(?<!\s)_(?!\w)/g, "$1$2");
 }
