@@ -93,7 +93,7 @@ function buildTailorPrompt({
     "2) Keep line-break rhythm, indentation, and bullet style consistent with the original resume.",
     "3) Keep date/location formatting and overall positioning conventions consistent with the original resume.",
     "4) Rewrite each line slot in order without changing slot count.",
-    "5) Keep each rewritten line close in length to its source line to minimize layout shifts. Exception: the headline / professional-title line directly under the candidate's name may be made shorter than the source line if you judge that a shorter title aligns better with the posting — never make it longer than the source line.",
+    "5) Keep each rewritten line close in length to its source line to minimize layout shifts. Exception: the headline / professional-title line directly under the candidate's name, and project name / project title lines, may each be made shorter than their source line if you judge that the shorter version aligns better with the posting — never make any of them longer than the source line.",
     "6) Do not add explanatory notes, markdown, or extra keys.",
     `7) Output JSON only in this exact shape: {\"jobTitle\": \"\", \"resultLines\": [${templateLines
       .map(() => "\"\"")
