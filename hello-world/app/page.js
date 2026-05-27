@@ -231,7 +231,7 @@ export default function Home() {
   const [coverLetterFile, setCoverLetterFile] = useState(null);
   const [additionalContext, setAdditionalContext] = useState("");
   const [contextFiles, setContextFiles] = useState([]);
-  const [jobQuery, setJobQuery] = useState("");
+  const [jobKeywords, setJobKeywords] = useState([]);
   const [jobResults, setJobResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [jobSearchError, setJobSearchError] = useState("");
@@ -608,10 +608,22 @@ export default function Home() {
 
   useEffect(() => {
     try {
-      const q = localStorage.getItem("jobQuery");
+      const kwRaw = localStorage.getItem("jobKeywords");
+      const legacyQuery = localStorage.getItem("jobQuery");
       const url = localStorage.getItem("urlPosting");
       const manual = localStorage.getItem("jobPosting");
-      if (q) setJobQuery(q);
+      if (kwRaw) {
+        try {
+          const parsed = JSON.parse(kwRaw);
+          if (Array.isArray(parsed)) {
+            setJobKeywords(parsed.filter((s) => typeof s === "string" && s.trim().length > 0));
+          }
+        } catch {}
+      } else if (legacyQuery && legacyQuery.trim()) {
+        // Migrate old single-string query into chip array.
+        const tokens = legacyQuery.trim().split(/\s+/).filter(Boolean);
+        if (tokens.length > 0) setJobKeywords(tokens);
+      }
       const companyEntries = localStorage.getItem("selectedCompanies");
       if (companyEntries) {
         const entries = JSON.parse(companyEntries);
@@ -647,7 +659,9 @@ export default function Home() {
     } catch {}
   }, []);
 
-  useEffect(() => { localStorage.setItem("jobQuery", jobQuery); }, [jobQuery]);
+  useEffect(() => {
+    localStorage.setItem("jobKeywords", JSON.stringify(jobKeywords));
+  }, [jobKeywords]);
   useEffect(() => {
     localStorage.setItem(
       "selectedCompanies",
@@ -667,13 +681,13 @@ export default function Home() {
 
   // Saved-search helpers
   function saveCurrentSearch() {
-    const defaultName = jobQuery.trim() || (selectedCategories[0] || "Untitled search");
+    const defaultName = jobKeywords.join(" ").trim() || (selectedCategories[0] || "Untitled search");
     const name = (typeof window !== "undefined" ? window.prompt("Name this saved search:", defaultName) : "")?.trim();
     if (!name) return;
     const entry = {
       id: `ss-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       name,
-      jobQuery,
+      jobKeywords: [...jobKeywords],
       maxYearsExp,
       selectedCategories: [...selectedCategories],
       selectedCompanies: selectedCompanies
@@ -685,7 +699,12 @@ export default function Home() {
   }
   function applySavedSearch(entry) {
     if (!entry) return;
-    const nextJobQuery = typeof entry.jobQuery === "string" ? entry.jobQuery : "";
+    let nextJobKeywords = [];
+    if (Array.isArray(entry.jobKeywords)) {
+      nextJobKeywords = entry.jobKeywords.filter((s) => typeof s === "string" && s.trim().length > 0);
+    } else if (typeof entry.jobQuery === "string" && entry.jobQuery.trim()) {
+      nextJobKeywords = entry.jobQuery.trim().split(/\s+/).filter(Boolean);
+    }
     const nextMaxYears = typeof entry.maxYearsExp === "string" ? entry.maxYearsExp : "any";
     const nextCategories = Array.isArray(entry.selectedCategories) ? entry.selectedCategories : [];
     const companies = Array.isArray(entry.selectedCompanies) ? entry.selectedCompanies : [];
@@ -695,7 +714,7 @@ export default function Home() {
     const excluded = Array.isArray(entry.excludedCompanies) ? entry.excludedCompanies : [];
     const nextExcludedCompanies = GREENHOUSE_COMPANIES.filter((c) => excluded.includes(c.slug));
 
-    setJobQuery(nextJobQuery);
+    setJobKeywords(nextJobKeywords);
     setMaxYearsExp(nextMaxYears);
     setSelectedCategories(nextCategories);
     setSelectedCompanies(nextSelectedCompanies);
@@ -705,7 +724,7 @@ export default function Home() {
     // Fire the search using the entry's values directly so we don't have to
     // wait for React state batching to flush.
     runJobSearch({
-      jobQuery: nextJobQuery,
+      jobKeywords: nextJobKeywords,
       selectedCompanies: nextSelectedCompanies,
     });
   }
@@ -1085,9 +1104,11 @@ export default function Home() {
 
   // Re-run search (debounced) when the query text changes
   useEffect(() => {
-    if (!hasFetchedRef.current || !jobQuery.trim()) return;
+    if (!hasFetchedRef.current || jobKeywords.length === 0) return;
+    const joined = jobKeywords.join(" ").trim();
+    if (!joined) return;
     const timer = setTimeout(() => {
-      activeQueryRef.current = jobQuery.trim();
+      activeQueryRef.current = joined;
       setIsSearching(true);
       setJobSearchError("");
       // Support both known company slugs and custom company names
@@ -1102,14 +1123,14 @@ export default function Home() {
           ghCompanyParam += names.map((n) => `&companyName=${encodeURIComponent(n)}`).join("");
         }
       }
-      fetch(`/api/greenhouse?query=${encodeURIComponent(jobQuery.trim())}${ghCompanyParam}`)
+      fetch(`/api/greenhouse?query=${encodeURIComponent(joined)}${ghCompanyParam}`)
         .then((r) => r.json())
         .then((data) => { setJobResults(data.jobs || []); })
         .catch(() => {})
         .finally(() => setIsSearching(false));
     }, 500);
     return () => clearTimeout(timer);
-  }, [jobQuery]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [jobKeywords]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { localStorage.setItem("urlPosting", urlPosting); }, [urlPosting]);
   useEffect(() => { localStorage.setItem("jobPosting", jobPosting); }, [jobPosting]);
@@ -1990,11 +2011,14 @@ export default function Home() {
 
   async function handleJobSearch(event) {
     if (event && typeof event.preventDefault === "function") event.preventDefault();
-    await runJobSearch({ jobQuery, selectedCompanies });
+    await runJobSearch({ jobKeywords, selectedCompanies });
   }
 
-  async function runJobSearch({ jobQuery: queryArg, selectedCompanies: companiesArg }) {
-    const query = (queryArg || "").trim();
+  async function runJobSearch({ jobKeywords: keywordsArg, selectedCompanies: companiesArg }) {
+    const keywords = (Array.isArray(keywordsArg) ? keywordsArg : [])
+      .map((k) => (typeof k === "string" ? k.trim() : ""))
+      .filter(Boolean);
+    const query = keywords.join(" ").trim();
     if (!query) return;
 
     const companies = Array.isArray(companiesArg) ? companiesArg : [];
@@ -2466,6 +2490,16 @@ export default function Home() {
             .update({ resume_used_id: generatedResumeId })
             .eq("user_id", currentUser.id)
             .eq("position_id", positionId);
+          // Upgrade status tracking → tailored so it shows up on the
+          // Interviewing tab as a tailored-but-not-yet-applied row.
+          // Filter on status=tracking so we never downgrade rows that are
+          // already applied/interviewing/offer/etc.
+          await supabase
+            .from("applications")
+            .update({ status: "tailored" })
+            .eq("user_id", currentUser.id)
+            .eq("position_id", positionId)
+            .eq("status", "tracking");
         }
       }
 
@@ -3630,7 +3664,10 @@ export default function Home() {
                   if (entry.maxYearsExp && entry.maxYearsExp !== "any") {
                     chipSummaryParts.push(`≤${entry.maxYearsExp}y`);
                   }
-                  const queryLabel = (entry.jobQuery || "").trim() || "—";
+                  const queryLabel =
+                    (Array.isArray(entry.jobKeywords) && entry.jobKeywords.length > 0
+                      ? entry.jobKeywords.join(", ")
+                      : (entry.jobQuery || "").trim()) || "—";
                   const isActive = activeSavedSearchId === entry.id;
                   return (
                     <Box
@@ -3706,12 +3743,43 @@ export default function Home() {
                   );
                 })}
               </Box>
-              <TextField
-                fullWidth
-                size="small"
-                label="Job title or keywords"
-                value={jobQuery}
-                onChange={(e) => { setJobQuery(e.target.value); setActiveSavedSearchId(null); }}
+              <Autocomplete
+                multiple
+                freeSolo
+                options={[]}
+                value={jobKeywords}
+                onChange={(_, newValue) => {
+                  const cleaned = newValue
+                    .map((v) => (typeof v === "string" ? v.trim() : ""))
+                    .filter(Boolean);
+                  const seen = new Set();
+                  const deduped = [];
+                  for (const v of cleaned) {
+                    const key = v.toLowerCase();
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    deduped.push(v);
+                  }
+                  setJobKeywords(deduped);
+                  setActiveSavedSearchId(null);
+                }}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    size="small"
+                    label="Job title or keywords"
+                    placeholder={
+                      jobKeywords.length === 0
+                        ? "e.g. react, frontend, typescript (press Enter to add)"
+                        : ""
+                    }
+                  />
+                )}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => (
+                    <Chip key={option} label={option} size="small" {...getTagProps({ index })} />
+                  ))
+                }
               />
               <FormControl size="small" sx={{ minWidth: 150, alignSelf: "flex-start" }}>
                 <InputLabel>Experience</InputLabel>
@@ -3862,7 +3930,7 @@ export default function Home() {
               <Button
                 type="submit"
                 variant="contained"
-                disabled={isSearching || !jobQuery.trim()}
+                disabled={isSearching || jobKeywords.length === 0}
                 sx={{ whiteSpace: "nowrap", alignSelf: "flex-start" }}
               >
                 {isSearching ? "Searching..." : "Search Jobs"}
@@ -3878,15 +3946,24 @@ export default function Home() {
               const companyFiltered = excludedNames.size > 0
                 ? jobResults.filter((j) => !excludedNames.has((j.company || "").toLowerCase()))
                 : jobResults;
+              const requiredKeywordsLower = jobKeywords
+                .map((k) => k.trim().toLowerCase())
+                .filter(Boolean);
+              const keywordFiltered = requiredKeywordsLower.length > 0
+                ? companyFiltered.filter((j) => {
+                    const haystack = `${j.title || ""} ${j.description || ""}`.toLowerCase();
+                    return requiredKeywordsLower.every((kw) => haystack.includes(kw));
+                  })
+                : companyFiltered;
               const titleKeywordsLower = excludedTitleKeywords
                 .map((k) => k.trim().toLowerCase())
                 .filter(Boolean);
               const titleFiltered = titleKeywordsLower.length > 0
-                ? companyFiltered.filter((j) => {
+                ? keywordFiltered.filter((j) => {
                     const title = (j.title || "").toLowerCase();
                     return !titleKeywordsLower.some((kw) => title.includes(kw));
                   })
-                : companyFiltered;
+                : keywordFiltered;
               const yearsFiltered =
                 maxYearsExp === "any"
                   ? titleFiltered
@@ -4305,6 +4382,7 @@ export default function Home() {
                         const resume = app.generated_resumes;
                         const stages = applicationStages[app.id] || [];
                         const statusConfig = {
+                          tailored: { label: "Tailored", color: "default" },
                           applied: { label: "Applied", color: "primary" },
                           phone_screen: { label: "Phone Screen", color: "info" },
                           interviewing: { label: "Interviewing", color: "warning" },
@@ -4820,6 +4898,7 @@ export default function Home() {
                     value={editAppDialog.status}
                     onChange={(e) => setEditAppDialog((prev) => ({ ...prev, status: e.target.value }))}
                   >
+                    <MenuItem value="tailored">Tailored</MenuItem>
                     <MenuItem value="applied">Applied</MenuItem>
                     <MenuItem value="phone_screen">Phone Screen</MenuItem>
                     <MenuItem value="interviewing">Interviewing</MenuItem>
@@ -4932,6 +5011,7 @@ export default function Home() {
                     value={addAppDialog.status}
                     onChange={(e) => setAddAppDialog((prev) => ({ ...prev, status: e.target.value }))}
                   >
+                    <MenuItem value="tailored">Tailored</MenuItem>
                     <MenuItem value="applied">Applied</MenuItem>
                     <MenuItem value="phone_screen">Phone Screen</MenuItem>
                     <MenuItem value="interviewing">Interviewing</MenuItem>
