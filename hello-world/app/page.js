@@ -240,6 +240,10 @@ export default function Home() {
     total: 0,
     completed: 0,
   });
+  const [batchTailorDialog, setBatchTailorDialog] = useState({
+    open: false,
+    candidates: [],
+  });
   const [jobPosting, setJobPosting] = useState("");
   const [manualResult, setManualResult] = useState("");
   const [manualResultLines, setManualResultLines] = useState([]);
@@ -2380,7 +2384,8 @@ export default function Home() {
     }
   }
 
-  async function handleTailorJob(job) {
+  async function handleTailorJob(job, opts = {}) {
+    const { skipDownload = false } = opts;
     handleTrackJob(job);
     if (!resumeFile) {
       updateTailoringJob(job.id, { status: "error", error: "Upload a resume first." });
@@ -2455,6 +2460,13 @@ export default function Home() {
         }
       }
 
+      if (skipDownload) {
+        // Caller (e.g. batch tailoring in "no download" mode) doesn't want a
+        // file save prompt for every job. The result is still persisted and
+        // available via the per-job card download button.
+        return;
+      }
+
       const dlError = await downloadDocxFiles({
         jobTitle: generatedJobTitle || job.title,
         result,
@@ -2506,14 +2518,17 @@ export default function Home() {
       setJobSearchError("Nothing to tailor — every visible job is already tailored, in progress, or marked applied.");
       return;
     }
-    const confirmed = window.confirm(
-      `Tailor ${candidates.length} job${candidates.length === 1 ? "" : "s"} in the background? This will track each one, run the LLM, save the result, and download the .docx files.`,
-    );
-    if (!confirmed) return;
     setJobSearchError("");
+    setBatchTailorDialog({ open: true, candidates });
+  }
+
+  async function startBatchTailor(skipDownload) {
+    const candidates = batchTailorDialog.candidates;
+    setBatchTailorDialog({ open: false, candidates: [] });
+    if (!candidates || candidates.length === 0) return;
     setBatchTailorState({ running: true, total: candidates.length, completed: 0 });
     try {
-      await runWithConcurrency(candidates, 3, (job) => handleTailorJob(job));
+      await runWithConcurrency(candidates, 3, (job) => handleTailorJob(job, { skipDownload }));
     } finally {
       setBatchTailorState((s) => ({ ...s, running: false }));
     }
@@ -4669,6 +4684,67 @@ export default function Home() {
                   onClick={handleSaveCommunication}
                 >
                   {communicationSaving ? "Saving..." : "Save Communication"}
+                </Button>
+              </DialogActions>
+            </Dialog>
+
+            <Dialog
+              open={batchTailorDialog.open}
+              onClose={() => {
+                if (batchTailorState.running) return;
+                setBatchTailorDialog({ open: false, candidates: [] });
+              }}
+              maxWidth="sm"
+              fullWidth
+            >
+              <DialogTitle>
+                Tailor {batchTailorDialog.candidates.length} job
+                {batchTailorDialog.candidates.length === 1 ? "" : "s"}?
+              </DialogTitle>
+              <DialogContent dividers>
+                <Box sx={{ fontSize: 13, color: "var(--text-secondary)", mb: 1.5 }}>
+                  Each job will be tracked, run through the LLM, and the tailored
+                  resume saved to your library. Choose whether to also download
+                  the .docx files now.
+                </Box>
+                <Box
+                  component="ul"
+                  sx={{
+                    listStyle: "disc",
+                    pl: 3,
+                    m: 0,
+                    maxHeight: 280,
+                    overflowY: "auto",
+                    fontSize: 13,
+                  }}
+                >
+                  {batchTailorDialog.candidates.map((job) => (
+                    <li key={job.id} style={{ marginBottom: 4 }}>
+                      <strong>{job.company || "Unknown"}</strong>
+                      {job.title ? ` — ${job.title}` : ""}
+                    </li>
+                  ))}
+                </Box>
+              </DialogContent>
+              <DialogActions>
+                <Button
+                  onClick={() => setBatchTailorDialog({ open: false, candidates: [] })}
+                  disabled={batchTailorState.running}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => startBatchTailor(true)}
+                  disabled={batchTailorState.running}
+                >
+                  Tailor only (no download)
+                </Button>
+                <Button
+                  variant="contained"
+                  onClick={() => startBatchTailor(false)}
+                  disabled={batchTailorState.running}
+                >
+                  Tailor &amp; download
                 </Button>
               </DialogActions>
             </Dialog>
