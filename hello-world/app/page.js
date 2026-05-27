@@ -2602,7 +2602,13 @@ export default function Home() {
   function askAiAbout({ label, content, prompt = "", sourceJobId = null }) {
     setChatPinnedContext({ label: label || "Context", content: content || "", sourceJobId: sourceJobId || null });
     setChatError("");
-    setChatInput(prompt);
+    // Always prefix any button-triggered chat with a consistent
+    // "I need help with <origin>" opener so we (and the model) know where
+    // the conversation came from. The `prompt` argument is intentionally
+    // ignored — callers used to supply ad-hoc starters; this unifies them.
+    void prompt;
+    const origin = (label || "this").toString().trim() || "this";
+    setChatInput(`I need help with ${origin}: `);
     setChatOpen(true);
     setTimeout(() => {
       const el = chatInputRef.current;
