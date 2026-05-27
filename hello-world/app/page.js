@@ -2938,15 +2938,21 @@ export default function Home() {
           // tailor was kicked off via "Tailor all visible" / batch flow). The
           // auto_tailored status routes these rows to the dedicated Auto
           // Tailor tab instead of the Interviewing tab.
-          // Filter on status=tracking so we never downgrade rows that are
-          // already applied/interviewing/offer/etc.
+          // Filter on the set of "pre-applied" pipeline states so we never
+          // downgrade rows that are already applied / interviewing / offer /
+          // rejected, but DO promote rows that may already be "tailored" from
+          // a prior single-job tailor run into "auto_tailored" when this run
+          // came from a batch (markAsAutoTailor=true).
           const targetStatus = opts.markAsAutoTailor ? "auto_tailored" : "tailored";
+          const allowedPriorStatuses = opts.markAsAutoTailor
+            ? ["tracking", "tailored", "auto_tailored"]
+            : ["tracking"];
           const { error: statusErr } = await supabase
             .from("applications")
             .update({ status: targetStatus })
             .eq("user_id", currentUser.id)
             .eq("position_id", positionId)
-            .eq("status", "tracking");
+            .in("status", allowedPriorStatuses);
           if (statusErr) console.error("[handleTailorJob] status update failed:", statusErr);
           // Trigger the Interviewing tab to refetch so the new tailored row
           // (or its freshly attached resume) shows up immediately. During a
@@ -3034,6 +3040,16 @@ export default function Home() {
       await runWithConcurrency(chosen, 3, (job) => handleTailorJob(job, { skipDownload, markAsAutoTailor: true }));
     } finally {
       setBatchTailorState((s) => ({ ...s, running: false }));
+      // Force one more refresh after all jobs settle so the Auto Tailor tab
+      // picks up every row, even when per-job refresh triggers raced with
+      // the loader. When the user picked the no-download path, also drop
+      // them on the Auto Tailor tab so the results are immediately visible
+      // (they would otherwise have no downloaded files as a visual cue).
+      setApplicationsRefreshKey((k) => k + 1);
+      if (skipDownload) {
+        setMainTab("applying");
+        setActiveSection("autoTailor");
+      }
     }
   }
 
