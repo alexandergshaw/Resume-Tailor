@@ -40,6 +40,10 @@ For local development, create a `.env.local` file in the project root or run `np
 | `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase → Project Settings → API → **Project URL** (e.g. `https://xxxx.supabase.co` — no trailing path) |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase → Project Settings → API → **Publishable** key |
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | Supabase → Project Settings → API → **Secret** key (never expose client-side) |
+| `CRON_SECRET` | Yes (for cron) | Any long random string; sent as `Authorization: Bearer <secret>` to `/api/cron/tailor`. Set the same value in Vercel → Project → Settings → Cron Jobs so Vercel's daily invocation can authenticate. |
+| `RESEND_API_KEY` | Yes (for email) | [Resend Dashboard](https://resend.com/api-keys) |
+| `RESEND_FROM` | Yes (for email) | A verified sender, e.g. `Resume Tailor <noreply@yourdomain.com>` |
+| `APP_BASE_URL` | No | Used in digest emails for a "Open Resume Tailor" CTA, e.g. `https://your-app.vercel.app` |
 
 The `KV_REST_API_URL` and `KV_REST_API_TOKEN` variables are injected automatically when you create a Redis database via **Vercel Storage** and connect it to this project.
 
@@ -101,6 +105,17 @@ grant select, insert, update, delete on storage.objects to authenticated;
 5. Copy the **Project URL**, **Publishable key**, and **Secret key** from Supabase → Project Settings → API into your Vercel environment variables.
 
 > **Note on environments:** Supabase doesn't have built-in env tiers. For production, create a separate Supabase project and scope each set of env vars to the appropriate Vercel environment (Preview vs Production).
+
+### Auto-tailor cron + notifications
+
+The daily auto-tailor pipeline lives at `app/api/cron/tailor/route.js` and is scheduled in `vercel.json` (default: 13:00 UTC). It scans every saved search where the user has flipped **Auto-tailor daily** ON, tailors a resume for each new matching role (up to the per-search **Daily cap**), saves results to `generated_resumes`, marks applications as `tailored`, and writes a row to the new `notifications` table. If `RESEND_API_KEY` + `RESEND_FROM` are configured and the user hasn't disabled it, a digest email is also sent via Resend.
+
+To enable:
+
+1. Apply the migration in `db/migrations/001_saved_searches_and_notifications.sql` via Supabase SQL Editor.
+2. Set `CRON_SECRET`, `RESEND_API_KEY`, `RESEND_FROM`, and (optionally) `APP_BASE_URL` in your environment.
+3. Deploy to Vercel — `vercel.json` registers the cron job automatically. Vercel will call `/api/cron/tailor` once per day with the `Authorization: Bearer ${CRON_SECRET}` header.
+4. (Optional) To trigger a run manually: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://your-app.vercel.app/api/cron/tailor`.
 
 ## Getting Started
 

@@ -18,6 +18,10 @@ import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import Autocomplete from "@mui/material/Autocomplete";
 import Chip from "@mui/material/Chip";
+import Badge from "@mui/material/Badge";
+import Menu from "@mui/material/Menu";
+import FormControlLabel from "@mui/material/FormControlLabel";
+import Switch from "@mui/material/Switch";
 import CircularProgress from "@mui/material/CircularProgress";
 import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
@@ -283,6 +287,11 @@ export default function Home() {
   // The id of the saved search whose values currently populate the controls.
   // Cleared as soon as the user modifies any of the search controls.
   const [activeSavedSearchId, setActiveSavedSearchId] = useState(null);
+  // Notification + email-pref state (bell UI in header, Resend digest opt-in).
+  const [notifications, setNotifications] = useState([]);
+  const [notifUnreadCount, setNotifUnreadCount] = useState(0);
+  const [notifAnchorEl, setNotifAnchorEl] = useState(null);
+  const [notificationEmailsEnabled, setNotificationEmailsEnabled] = useState(true);
   const [currentUser, setCurrentUser] = useState(null);
   const [mainTab, setMainTab] = useState("applying");
   const [applicationData, setApplicationData] = useState([]);
@@ -459,12 +468,13 @@ export default function Home() {
             educationOpen,
             appliedSort: interviewSort,
             excludedTitleKeywords,
+            notificationEmailsEnabled,
           },
         }),
       }).catch(() => {});
     }, 400);
     return () => clearTimeout(handle);
-  }, [referencesOpen, educationOpen, interviewSort, excludedTitleKeywords, currentUser]);
+  }, [referencesOpen, educationOpen, interviewSort, excludedTitleKeywords, notificationEmailsEnabled, currentUser]);
 
   // Track auth state + load applied jobs + load stored files
   useEffect(() => {
@@ -511,6 +521,9 @@ export default function Home() {
               setExcludedTitleKeywords(
                 prefs.excludedTitleKeywords.filter((s) => typeof s === "string" && s.trim().length > 0),
               );
+            }
+            if (typeof prefs.notificationEmailsEnabled === "boolean") {
+              setNotificationEmailsEnabled(prefs.notificationEmailsEnabled);
             }
           }
         } catch {}
@@ -651,6 +664,9 @@ export default function Home() {
       if (savedSearchesRaw) {
         try {
           const parsed = JSON.parse(savedSearchesRaw);
+          // Only hydrate from localStorage for the brief moment before the
+          // server fetch (in the currentUser effect) overrides it. For
+          // anonymous users this is the permanent source.
           if (Array.isArray(parsed)) setSavedSearches(parsed);
         } catch {}
       }
@@ -676,11 +692,91 @@ export default function Home() {
   useEffect(() => { localStorage.setItem("selectedCategories", JSON.stringify(selectedCategories)); }, [selectedCategories]);
   useEffect(() => { localStorage.setItem("maxYearsExp", maxYearsExp); }, [maxYearsExp]);
   useEffect(() => {
+    // Only persist to localStorage when no user is signed in. For signed-in
+    // users the server (saved_searches table) is the source of truth.
+    if (currentUser) return;
     try { localStorage.setItem("savedSearches", JSON.stringify(savedSearches)); } catch {}
-  }, [savedSearches]);
+  }, [savedSearches, currentUser]);
+
+  // Map a saved_searches row from the API into the shape this UI uses.
+  function rowToSavedSearchEntry(row) {
+    return {
+      id: row.id,
+      name: row.name || "",
+      jobKeywords: Array.isArray(row.job_keywords) ? row.job_keywords : [],
+      maxYearsExp: row.max_years_exp || "any",
+      selectedCategories: Array.isArray(row.selected_categories) ? row.selected_categories : [],
+      selectedCompanies: Array.isArray(row.selected_companies) ? row.selected_companies : [],
+      excludedCompanies: Array.isArray(row.excluded_companies) ? row.excluded_companies : [],
+      excludedTitleKeywords: Array.isArray(row.excluded_title_keywords) ? row.excluded_title_keywords : [],
+      autoTailorEnabled: !!row.auto_tailor_enabled,
+      autoTailorDailyCap: Number.isFinite(row.auto_tailor_daily_cap) ? row.auto_tailor_daily_cap : 10,
+    };
+  }
+
+  // One-time hydration + migration: when a user signs in, pull their
+  // saved_searches from the API. If they have none on the server but local
+  // ones exist, migrate the local copies up to the server.
+  useEffect(() => {
+    if (!currentUser) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/saved-searches", { cache: "no-store" });
+        if (!res.ok) return;
+        const json = await res.json();
+        const server = Array.isArray(json?.searches) ? json.searches : [];
+        if (cancelled) return;
+        if (server.length > 0) {
+          setSavedSearches(server.map(rowToSavedSearchEntry));
+          return;
+        }
+        // No server entries — migrate from localStorage if present.
+        let local = [];
+        try {
+          const raw = localStorage.getItem("savedSearches");
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) local = parsed;
+          }
+        } catch {}
+        if (local.length === 0) return;
+        const created = [];
+        for (const entry of local) {
+          const body = {
+            name: entry.name || "Untitled search",
+            jobKeywords: Array.isArray(entry.jobKeywords)
+              ? entry.jobKeywords
+              : (typeof entry.jobQuery === "string" ? entry.jobQuery.split(/\s+/).filter(Boolean) : []),
+            maxYearsExp: entry.maxYearsExp || "any",
+            selectedCategories: entry.selectedCategories || [],
+            selectedCompanies: entry.selectedCompanies || [],
+            excludedCompanies: entry.excludedCompanies || [],
+            excludedTitleKeywords: entry.excludedTitleKeywords || [],
+          };
+          try {
+            const r = await fetch("/api/saved-searches", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+            });
+            if (r.ok) {
+              const j = await r.json();
+              if (j?.search) created.push(rowToSavedSearchEntry(j.search));
+            }
+          } catch {}
+        }
+        if (!cancelled && created.length > 0) {
+          setSavedSearches(created);
+          try { localStorage.removeItem("savedSearches"); } catch {}
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [currentUser]);
 
   // Saved-search helpers
-  function saveCurrentSearch() {
+  async function saveCurrentSearch() {
     const defaultName = jobKeywords.join(" ").trim() || (selectedCategories[0] || "Untitled search");
     const name = (typeof window !== "undefined" ? window.prompt("Name this saved search:", defaultName) : "")?.trim();
     if (!name) return;
@@ -694,7 +790,34 @@ export default function Home() {
         .map((c) => (typeof c === "string" ? c : c?.slug))
         .filter(Boolean),
       excludedCompanies: excludedCompanies.map((c) => c.slug),
+      excludedTitleKeywords: [...excludedTitleKeywords],
+      autoTailorEnabled: false,
+      autoTailorDailyCap: 10,
     };
+    if (currentUser) {
+      try {
+        const res = await fetch("/api/saved-searches", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: entry.name,
+            jobKeywords: entry.jobKeywords,
+            maxYearsExp: entry.maxYearsExp,
+            selectedCategories: entry.selectedCategories,
+            selectedCompanies: entry.selectedCompanies,
+            excludedCompanies: entry.excludedCompanies,
+            excludedTitleKeywords: entry.excludedTitleKeywords,
+          }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json?.search) {
+            setSavedSearches((prev) => [rowToSavedSearchEntry(json.search), ...prev]);
+            return;
+          }
+        }
+      } catch {}
+    }
     setSavedSearches((prev) => [entry, ...prev]);
   }
   function applySavedSearch(entry) {
@@ -731,6 +854,90 @@ export default function Home() {
   function deleteSavedSearch(id) {
     setSavedSearches((prev) => prev.filter((s) => s.id !== id));
     setActiveSavedSearchId((current) => (current === id ? null : current));
+    if (currentUser && typeof id === "string" && !id.startsWith("ss-")) {
+      // Server entries have UUID ids; local-only entries use the "ss-" prefix.
+      fetch(`/api/saved-searches/${encodeURIComponent(id)}`, { method: "DELETE" }).catch(() => {});
+    }
+  }
+
+  // Toggle auto-tailor on/off for a saved search. Persists to the server when
+  // the user is signed in; updates local state immediately for snappy UX.
+  async function setSavedSearchAutoTailor(id, { autoTailorEnabled, autoTailorDailyCap } = {}) {
+    setSavedSearches((prev) =>
+      prev.map((s) => {
+        if (s.id !== id) return s;
+        const next = { ...s };
+        if (typeof autoTailorEnabled === "boolean") next.autoTailorEnabled = autoTailorEnabled;
+        if (Number.isFinite(autoTailorDailyCap)) {
+          next.autoTailorDailyCap = Math.max(1, Math.min(100, autoTailorDailyCap));
+        }
+        return next;
+      }),
+    );
+    if (!currentUser || typeof id !== "string" || id.startsWith("ss-")) return;
+    try {
+      const body = {};
+      if (typeof autoTailorEnabled === "boolean") body.autoTailorEnabled = autoTailorEnabled;
+      if (Number.isFinite(autoTailorDailyCap)) body.autoTailorDailyCap = autoTailorDailyCap;
+      if (Object.keys(body).length === 0) return;
+      await fetch(`/api/saved-searches/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch {}
+  }
+
+  // Notifications: load on sign-in and poll every 60s. Also refetch when the
+  // tab regains focus so the bell stays in sync.
+  useEffect(() => {
+    if (!currentUser) {
+      setNotifications([]);
+      setNotifUnreadCount(0);
+      return;
+    }
+    let cancelled = false;
+    async function load() {
+      try {
+        const res = await fetch("/api/notifications?limit=30", { cache: "no-store" });
+        if (!res.ok) return;
+        const json = await res.json();
+        if (cancelled) return;
+        setNotifications(Array.isArray(json?.notifications) ? json.notifications : []);
+        setNotifUnreadCount(typeof json?.unreadCount === "number" ? json.unreadCount : 0);
+      } catch {}
+    }
+    load();
+    const interval = setInterval(load, 60_000);
+    const onFocus = () => load();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [currentUser]);
+
+  async function markAllNotificationsRead() {
+    if (notifUnreadCount === 0) return;
+    setNotifUnreadCount(0);
+    setNotifications((prev) =>
+      prev.map((n) => (n.read_at ? n : { ...n, read_at: new Date().toISOString() })),
+    );
+    try {
+      await fetch("/api/notifications", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allRead: true }),
+      });
+    } catch {}
+  }
+
+  function handleNotificationClick(notif) {
+    setNotifAnchorEl(null);
+    if (notif?.related_application_id || notif?.kind === "auto_tailor") {
+      setMainTab("interviewing");
+    }
   }
 
   // Hydrate UI layout prefs (frozen-column widths + FAB position) once on mount.
@@ -2864,11 +3071,86 @@ export default function Home() {
   return (
     <div className={styles.page}>
       <main className={styles.main}>
-        <h1 className={styles.title}>Resume Tailor</h1>
-        <p className={styles.subtitle}>
-          Upload a resume, search for remote jobs, and let Gemini tailor your
-          resume to each posting.
-        </p>
+        <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 2 }}>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <h1 className={styles.title}>Resume Tailor</h1>
+            <p className={styles.subtitle}>
+              Upload a resume, search for remote jobs, and let Gemini tailor your
+              resume to each posting.
+            </p>
+          </Box>
+          {currentUser && (
+            <Box sx={{ pt: 0.5, flexShrink: 0 }}>
+              <Tooltip title="Notifications">
+                <IconButton
+                  size="large"
+                  aria-label={`${notifUnreadCount} unread notifications`}
+                  onClick={(e) => {
+                    setNotifAnchorEl(e.currentTarget);
+                    // Mark as read when the menu is opened.
+                    setTimeout(() => { markAllNotificationsRead(); }, 0);
+                  }}
+                >
+                  <Badge badgeContent={notifUnreadCount} color="error" max={99}>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                      <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                    </svg>
+                  </Badge>
+                </IconButton>
+              </Tooltip>
+              <Menu
+                anchorEl={notifAnchorEl}
+                open={Boolean(notifAnchorEl)}
+                onClose={() => setNotifAnchorEl(null)}
+                slotProps={{ paper: { sx: { maxWidth: 380, width: 360 } } }}
+                anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+                transformOrigin={{ vertical: "top", horizontal: "right" }}
+              >
+                <Box sx={{ px: 2, py: 1, display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #eceff1" }}>
+                  <Box sx={{ fontWeight: 600 }}>Notifications</Box>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        size="small"
+                        checked={notificationEmailsEnabled}
+                        onChange={(e) => setNotificationEmailsEnabled(e.target.checked)}
+                      />
+                    }
+                    label={<Box sx={{ fontSize: "0.75rem" }}>Email digest</Box>}
+                    sx={{ m: 0 }}
+                  />
+                </Box>
+                {notifications.length === 0 ? (
+                  <Box sx={{ px: 2, py: 3, color: "#78909c", fontSize: "0.85rem", textAlign: "center" }}>
+                    No notifications yet.
+                  </Box>
+                ) : (
+                  notifications.map((n) => (
+                    <MenuItem
+                      key={n.id}
+                      onClick={() => handleNotificationClick(n)}
+                      sx={{ whiteSpace: "normal", alignItems: "flex-start", py: 1, gap: 1, borderBottom: "1px solid #f5f5f5" }}
+                    >
+                      <Box sx={{ width: 8, height: 8, mt: 0.75, borderRadius: "50%", bgcolor: n.read_at ? "transparent" : "#1976d2", flexShrink: 0 }} />
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Box sx={{ fontWeight: 600, fontSize: "0.85rem" }}>{n.title}</Box>
+                        {n.body && (
+                          <Box sx={{ color: "#546e7a", fontSize: "0.75rem", whiteSpace: "pre-line", mt: 0.25 }}>
+                            {n.body}
+                          </Box>
+                        )}
+                        <Box sx={{ color: "#90a4ae", fontSize: "0.7rem", mt: 0.5 }}>
+                          {new Date(n.created_at).toLocaleString()}
+                        </Box>
+                      </Box>
+                    </MenuItem>
+                  ))
+                )}
+              </Menu>
+            </Box>
+          )}
+        </Box>
 
         <div className={styles.mainTabs}>
           <button
@@ -2883,7 +3165,7 @@ export default function Home() {
             className={mainTab === "interviewing" ? styles.mainTabActive : styles.mainTab}
             onClick={() => setMainTab("interviewing")}
           >
-            Interviewing
+            Tracking
           </button>
         </div>
 
@@ -3727,6 +4009,41 @@ export default function Home() {
                       {chipSummaryParts.length > 0 && (
                         <Box sx={{ color: "#78909c", fontSize: "0.7rem" }}>
                           {chipSummaryParts.join(" · ")}
+                        </Box>
+                      )}
+                      {currentUser && typeof entry.id === "string" && !entry.id.startsWith("ss-") && (
+                        <Box
+                          onClick={(e) => e.stopPropagation()}
+                          sx={{ mt: 0.5, pt: 0.5, borderTop: "1px dashed #cfd8dc", display: "flex", flexDirection: "column", gap: 0.25 }}
+                        >
+                          <FormControlLabel
+                            control={
+                              <Switch
+                                size="small"
+                                checked={!!entry.autoTailorEnabled}
+                                onChange={(e) => setSavedSearchAutoTailor(entry.id, { autoTailorEnabled: e.target.checked })}
+                              />
+                            }
+                            label={<Box sx={{ fontSize: "0.7rem" }}>Auto-tailor daily</Box>}
+                            sx={{ m: 0 }}
+                          />
+                          {entry.autoTailorEnabled && (
+                            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, fontSize: "0.7rem", color: "#546e7a" }}>
+                              <span>Cap:</span>
+                              <TextField
+                                type="number"
+                                size="small"
+                                value={entry.autoTailorDailyCap ?? 10}
+                                onChange={(e) => {
+                                  const n = Number.parseInt(e.target.value, 10);
+                                  if (Number.isFinite(n)) setSavedSearchAutoTailor(entry.id, { autoTailorDailyCap: n });
+                                }}
+                                inputProps={{ min: 1, max: 100, style: { padding: "2px 4px", width: 44, fontSize: "0.7rem" } }}
+                                sx={{ "& .MuiOutlinedInput-root": { borderRadius: 1 } }}
+                              />
+                              <span>/ day</span>
+                            </Box>
+                          )}
                         </Box>
                       )}
                       <IconButton
