@@ -10,7 +10,7 @@ import Slider from "@mui/material/Slider";
 import TextField from "@mui/material/TextField";
 import Tooltip from "@mui/material/Tooltip";
 
-import { createClient } from "../../../lib/supabase/client";
+import { createClient } from "../../lib/supabase/client";
 import styles from "../page.module.css";
 
 const AGGRESSIVENESS_MARKS = [
