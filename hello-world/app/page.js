@@ -235,6 +235,11 @@ export default function Home() {
   const [isSearching, setIsSearching] = useState(false);
   const [jobSearchError, setJobSearchError] = useState("");
   const [tailoringMap, setTailoringMap] = useState({});
+  const [batchTailorState, setBatchTailorState] = useState({
+    running: false,
+    total: 0,
+    completed: 0,
+  });
   const [jobPosting, setJobPosting] = useState("");
   const [manualResult, setManualResult] = useState("");
   const [manualResultLines, setManualResultLines] = useState([]);
@@ -2467,6 +2472,53 @@ export default function Home() {
     }
   }
 
+  // Concurrency-limited batch runner: tailor every job in `jobs` in parallel,
+  // capped at `limit` simultaneous requests so we don't hammer Gemini.
+  async function runWithConcurrency(items, limit, worker) {
+    const queue = items.slice();
+    const runners = new Array(Math.min(limit, queue.length)).fill(null).map(async () => {
+      while (queue.length > 0) {
+        const next = queue.shift();
+        try {
+          await worker(next);
+        } catch {
+          // worker is responsible for surfacing its own errors via
+          // updateTailoringJob; swallow so one failure doesn't kill the batch.
+        }
+        setBatchTailorState((s) => ({ ...s, completed: s.completed + 1 }));
+      }
+    });
+    await Promise.all(runners);
+  }
+
+  async function handleTailorAllVisible(jobs) {
+    if (!resumeFile) {
+      setJobSearchError("Upload a resume first before batch tailoring.");
+      return;
+    }
+    const candidates = jobs.filter((job) => {
+      if (appliedJobIds.has(job.id)) return false;
+      const t = tailoringMap[job.id];
+      if (!t) return true;
+      return t.status !== "done" && t.status !== "tailoring";
+    });
+    if (candidates.length === 0) {
+      setJobSearchError("Nothing to tailor — every visible job is already tailored, in progress, or marked applied.");
+      return;
+    }
+    const confirmed = window.confirm(
+      `Tailor ${candidates.length} job${candidates.length === 1 ? "" : "s"} in the background? This will track each one, run the LLM, save the result, and download the .docx files.`,
+    );
+    if (!confirmed) return;
+    setJobSearchError("");
+    setBatchTailorState({ running: true, total: candidates.length, completed: 0 });
+    try {
+      await runWithConcurrency(candidates, 3, (job) => handleTailorJob(job));
+    } finally {
+      setBatchTailorState((s) => ({ ...s, running: false }));
+    }
+  }
+
   async function handleUrlSubmit(event, opts = {}) {
     if (event && typeof event.preventDefault === "function") event.preventDefault();
 
@@ -3771,6 +3823,34 @@ export default function Home() {
               const ignoredInResults = yearsFiltered.filter((j) => ignoredJobIds.has(j.id));
               return (
                 <>
+                  {visibleJobs.length > 0 ? (
+                    <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 1, mb: 1 }}>
+                      <Box sx={{ fontSize: 13, color: "var(--text-secondary)" }}>
+                        {batchTailorState.running
+                          ? `Tailoring ${batchTailorState.completed} / ${batchTailorState.total}…`
+                          : `${visibleJobs.length} job${visibleJobs.length === 1 ? "" : "s"} visible`}
+                      </Box>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        disabled={!resumeFile || batchTailorState.running}
+                        onClick={() => handleTailorAllVisible(visibleJobs)}
+                        sx={{ whiteSpace: "nowrap" }}
+                      >
+                        {batchTailorState.running
+                          ? `Tailoring ${batchTailorState.completed}/${batchTailorState.total}…`
+                          : (() => {
+                              const pending = visibleJobs.filter((j) => {
+                                if (appliedJobIds.has(j.id)) return false;
+                                const t = tailoringMap[j.id];
+                                if (!t) return true;
+                                return t.status !== "done" && t.status !== "tailoring";
+                              }).length;
+                              return `Tailor all visible (${pending})`;
+                            })()}
+                      </Button>
+                    </Box>
+                  ) : null}
                   {visibleJobs.length > 0 ? (
                     <div className={styles.jobGrid}>
                       {visibleJobs.map((job) => {
