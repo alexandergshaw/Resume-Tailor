@@ -2278,6 +2278,8 @@ export default function Home() {
             ? { label: chatPinnedContext.label, content: chatPinnedContext.content }
             : null,
           attachedFiles: (chatAttachedFiles || []).map((f) => ({ name: f.name, content: f.content })),
+          tab: mainTab,
+          section: activeSection,
         }),
       });
       const payload = await response.json();

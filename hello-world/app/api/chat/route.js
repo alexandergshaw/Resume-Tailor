@@ -1,6 +1,8 @@
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { extractUrls, fetchUrlContent } from "@/lib/scrape/fetchUrlContent";
+import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
+import { logChatMessage } from "@/lib/supabase/logChatMessage";
 
 const SYSTEM_PROMPT = [
   "You are a concise, friendly career assistant inside the Resume Tailor app.",
@@ -117,9 +119,37 @@ export async function POST(request) {
     const applications = Array.isArray(body?.applications) ? body.applications : [];
     const pinnedContext = body?.pinnedContext && typeof body.pinnedContext === "object" ? body.pinnedContext : null;
     const attachedFiles = Array.isArray(body?.attachedFiles) ? body.attachedFiles : [];
+    const tab = typeof body?.tab === "string" ? body.tab : null;
+    const section = typeof body?.section === "string" ? body.section : null;
 
     if (messages.length === 0) {
       return Response.json({ error: "No messages provided." }, { status: 400 });
+    }
+
+    // Best-effort: log the latest user-authored message along with the tab the
+    // user was on. Runs in parallel with the model call; failures are silent.
+    try {
+      const latestUserMessage = [...messages]
+        .reverse()
+        .find((m) => m && m.role !== "assistant" && typeof m.content === "string" && m.content.trim());
+      if (latestUserMessage) {
+        const supabase = await createSupabaseServerClient();
+        const { data: { user } = {} } = await supabase.auth.getUser();
+        if (user?.id) {
+          // Fire-and-forget; do not await so chat latency is unaffected.
+          logChatMessage(supabase, {
+            userId: user.id,
+            message: latestUserMessage.content,
+            tab,
+            section,
+            hasPinnedContext: !!(pinnedContext && typeof pinnedContext.content === "string" && pinnedContext.content.trim()),
+            pinnedLabel: pinnedContext && typeof pinnedContext.label === "string" ? pinnedContext.label : null,
+            attachedFileCount: Array.isArray(attachedFiles) ? attachedFiles.length : 0,
+          });
+        }
+      }
+    } catch {
+      // Never let logging break the chat endpoint.
     }
 
     const { geminiModel } = getServerEnv();
