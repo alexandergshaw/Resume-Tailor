@@ -135,10 +135,20 @@ export async function POST(request) {
       const latestUserMessage = [...messages]
         .reverse()
         .find((m) => m && m.role !== "assistant" && typeof m.content === "string" && m.content.trim());
-      if (latestUserMessage) {
+      if (!latestUserMessage) {
+        console.warn("[chat] no user-authored message found in payload; skipping log");
+      } else {
         const supabase = await createSupabaseServerClient();
-        const { data: { user } = {} } = await supabase.auth.getUser();
-        if (user?.id) {
+        const { data: { user } = {}, error: getUserErr } = await supabase.auth.getUser();
+        if (getUserErr) {
+          console.warn("[chat] supabase.auth.getUser error:", getUserErr.message || getUserErr);
+        }
+        if (!user?.id) {
+          console.warn(
+            "[chat] no authenticated user on server; chat_message_logs insert skipped (RLS requires auth.uid()). Sign in or check Supabase auth cookies.",
+          );
+        } else {
+          console.log("[chat] logging message for user", user.id, "tab=", tab, "section=", section);
           await logChatMessage(supabase, {
             userId: user.id,
             message: latestUserMessage.content,
