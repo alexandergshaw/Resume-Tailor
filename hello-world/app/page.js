@@ -287,6 +287,10 @@ export default function Home() {
   // The id of the saved search whose values currently populate the controls.
   // Cleared as soon as the user modifies any of the search controls.
   const [activeSavedSearchId, setActiveSavedSearchId] = useState(null);
+  // Auto-tailored postings shown on the Auto Tailor tab. Populated lazily when the tab is opened.
+  const [autoTailoredPostings, setAutoTailoredPostings] = useState([]);
+  const [autoTailoredLoading, setAutoTailoredLoading] = useState(false);
+  const [autoTailoredError, setAutoTailoredError] = useState(null);
   // In-app notification state (bell UI in header).
   const [notifications, setNotifications] = useState([]);
   const [notifUnreadCount, setNotifUnreadCount] = useState(0);
@@ -1832,6 +1836,41 @@ export default function Home() {
     return () => { cancelled = true; };
   }, [currentUser, applicationsRefreshKey]);
 
+  // Load auto-tailored postings for the Auto Tailor sub-tab. These are
+  // generated_resumes rows whose additional_context was stamped by the cron
+  // job (the cron sets it to a string starting with "Auto-tailored by cron").
+  useEffect(() => {
+    if (!currentUser) return;
+    if (mainTab !== "applying" || activeSection !== "autoTailor") return;
+    let cancelled = false;
+    async function loadAutoTailored() {
+      setAutoTailoredLoading(true);
+      setAutoTailoredError(null);
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("generated_resumes")
+        .select(`
+          id, created_at, additional_context, position_id,
+          positions ( id, title, company, url )
+        `)
+        .eq("user_id", currentUser.id)
+        .like("additional_context", "Auto-tailored by cron%")
+        .order("created_at", { ascending: false })
+        .limit(200);
+      if (cancelled) return;
+      if (error) {
+        console.error("[loadAutoTailored] failed:", error);
+        setAutoTailoredError(error.message);
+        setAutoTailoredPostings([]);
+      } else {
+        setAutoTailoredPostings(data || []);
+      }
+      setAutoTailoredLoading(false);
+    }
+    loadAutoTailored();
+    return () => { cancelled = true; };
+  }, [currentUser, mainTab, activeSection, applicationsRefreshKey]);
+
   // Backfill chip statuses for tracked jobs from Supabase. Any tracked job
   // whose position has a matching application with a saved generated_resumes
   // row is treated as "done" so the floating toolbar chip is colored green
@@ -2690,6 +2729,9 @@ export default function Home() {
         // Use upsertPosition (not just getPositionId) so a position row is
         // created on the fly if the user tailored a job they hadn't tracked.
         const positionId = await upsertPosition(supabase, job);
+        if (!positionId) {
+          console.error("[handleTailorJob] upsertPosition returned null for job", job?.id, job?.title);
+        }
         const generatedResumeId = await saveGeneratedResume(supabase, {
           userId: currentUser.id,
           positionId,
@@ -2698,31 +2740,39 @@ export default function Home() {
           sourceResumePath: `${currentUser.id}/resume`,
           additionalContext: additionalContext || null,
         });
+        if (!generatedResumeId) {
+          console.error("[handleTailorJob] saveGeneratedResume returned null", { userId: currentUser.id, positionId });
+        }
         if (generatedResumeId && positionId) {
           // Make sure an application row exists for this (user, position) so
           // the tailored job shows up in the Tracking tab even if the user
           // never clicked "Track" first.
-          await upsertApplication(supabase, {
+          const appId = await upsertApplication(supabase, {
             userId: currentUser.id,
             positionId,
             status: "tracking",
           });
+          if (!appId) {
+            console.error("[handleTailorJob] upsertApplication returned null", { userId: currentUser.id, positionId });
+          }
           // Always link the freshly generated resume.
-          await supabase
+          const { error: linkErr } = await supabase
             .from("applications")
             .update({ resume_used_id: generatedResumeId })
             .eq("user_id", currentUser.id)
             .eq("position_id", positionId);
+          if (linkErr) console.error("[handleTailorJob] link resume failed:", linkErr);
           // Upgrade status tracking → tailored so it shows up on the
           // Interviewing tab as a tailored-but-not-yet-applied row.
           // Filter on status=tracking so we never downgrade rows that are
           // already applied/interviewing/offer/etc.
-          await supabase
+          const { error: statusErr } = await supabase
             .from("applications")
             .update({ status: "tailored" })
             .eq("user_id", currentUser.id)
             .eq("position_id", positionId)
             .eq("status", "tracking");
+          if (statusErr) console.error("[handleTailorJob] status update failed:", statusErr);
           // Trigger the Interviewing tab to refetch so the new tailored row
           // (or its freshly attached resume) shows up immediately. During a
           // batch tailor this fires once per completed job so rows appear as
@@ -3883,6 +3933,13 @@ export default function Home() {
           </button>
           <button
             type="button"
+            className={activeSection === "autoTailor" ? styles.sectionTabActive : styles.sectionTab}
+            onClick={() => setActiveSection("autoTailor")}
+          >
+            Auto Tailor
+          </button>
+          <button
+            type="button"
             className={activeSection === "url" ? styles.sectionTabActive : styles.sectionTab}
             onClick={() => setActiveSection("url")}
           >
@@ -4014,41 +4071,6 @@ export default function Home() {
                       {chipSummaryParts.length > 0 && (
                         <Box sx={{ color: "#78909c", fontSize: "0.7rem" }}>
                           {chipSummaryParts.join(" · ")}
-                        </Box>
-                      )}
-                      {currentUser && typeof entry.id === "string" && !entry.id.startsWith("ss-") && (
-                        <Box
-                          onClick={(e) => e.stopPropagation()}
-                          sx={{ mt: 0.5, pt: 0.5, borderTop: "1px dashed #cfd8dc", display: "flex", flexDirection: "column", gap: 0.25 }}
-                        >
-                          <FormControlLabel
-                            control={
-                              <Switch
-                                size="small"
-                                checked={!!entry.autoTailorEnabled}
-                                onChange={(e) => setSavedSearchAutoTailor(entry.id, { autoTailorEnabled: e.target.checked })}
-                              />
-                            }
-                            label={<Box sx={{ fontSize: "0.7rem" }}>Auto-tailor daily</Box>}
-                            sx={{ m: 0 }}
-                          />
-                          {entry.autoTailorEnabled && (
-                            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, fontSize: "0.7rem", color: "#546e7a" }}>
-                              <span>Cap:</span>
-                              <TextField
-                                type="number"
-                                size="small"
-                                value={entry.autoTailorDailyCap ?? 10}
-                                onChange={(e) => {
-                                  const n = Number.parseInt(e.target.value, 10);
-                                  if (Number.isFinite(n)) setSavedSearchAutoTailor(entry.id, { autoTailorDailyCap: n });
-                                }}
-                                inputProps={{ min: 1, max: 100, style: { padding: "2px 4px", width: 44, fontSize: "0.7rem" } }}
-                                sx={{ "& .MuiOutlinedInput-root": { borderRadius: 1 } }}
-                              />
-                              <span>/ day</span>
-                            </Box>
-                          )}
                         </Box>
                       )}
                       <IconButton
@@ -4475,6 +4497,166 @@ export default function Home() {
                 </>
               );
             })() : null}
+          </section>
+        ) : activeSection === "autoTailor" ? (
+          <section className={styles.tabPanel}>
+            {!currentUser ? (
+              <p style={{ color: "var(--text-secondary)" }}>Sign in to manage auto-tailored saved searches.</p>
+            ) : (
+              <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                <Box>
+                  <Box sx={{ fontWeight: 600, fontSize: "0.95rem", mb: 0.5 }}>Saved searches</Box>
+                  <Box sx={{ color: "#546e7a", fontSize: "0.8rem", mb: 1.25 }}>
+                    Toggle auto-tailor on a saved search to have the daily cron tailor your resume to matching new postings.
+                  </Box>
+                  {savedSearches.length === 0 ? (
+                    <Box sx={{ color: "#78909c", fontSize: "0.85rem", fontStyle: "italic" }}>
+                      No saved searches yet. Save one from the Job Search tab to enable auto-tailoring.
+                    </Box>
+                  ) : (
+                    <Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 1.25 }}>
+                      {savedSearches.map((entry) => {
+                        const chipSummaryParts = [];
+                        if (Array.isArray(entry.selectedCategories) && entry.selectedCategories.length > 0) {
+                          chipSummaryParts.push(`${entry.selectedCategories.length} cat`);
+                        }
+                        if (Array.isArray(entry.selectedCompanies) && entry.selectedCompanies.length > 0) {
+                          chipSummaryParts.push(`${entry.selectedCompanies.length} co`);
+                        }
+                        if (Array.isArray(entry.excludedCompanies) && entry.excludedCompanies.length > 0) {
+                          chipSummaryParts.push(`-${entry.excludedCompanies.length} ex`);
+                        }
+                        if (entry.maxYearsExp && entry.maxYearsExp !== "any") {
+                          chipSummaryParts.push(`≤${entry.maxYearsExp}y`);
+                        }
+                        const queryLabel =
+                          (Array.isArray(entry.jobKeywords) && entry.jobKeywords.length > 0
+                            ? entry.jobKeywords.join(", ")
+                            : (entry.jobQuery || "").trim()) || "—";
+                        const isServerBacked = typeof entry.id === "string" && !entry.id.startsWith("ss-");
+                        return (
+                          <Box
+                            key={entry.id}
+                            sx={{
+                              p: 1.25,
+                              border: "1px solid #cfd8dc",
+                              borderRadius: 1,
+                              bgcolor: "#fff",
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 0.5,
+                              fontSize: "0.8rem",
+                              position: "relative",
+                            }}
+                          >
+                            <Box sx={{ fontWeight: 600, fontSize: "0.9rem", pr: 3 }}>{entry.name}</Box>
+                            <Box sx={{ color: "#546e7a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              {queryLabel}
+                            </Box>
+                            {chipSummaryParts.length > 0 && (
+                              <Box sx={{ color: "#78909c", fontSize: "0.7rem" }}>{chipSummaryParts.join(" · ")}</Box>
+                            )}
+                            {isServerBacked ? (
+                              <Box sx={{ mt: 0.5, pt: 0.75, borderTop: "1px dashed #cfd8dc", display: "flex", flexDirection: "column", gap: 0.5 }}>
+                                <FormControlLabel
+                                  control={
+                                    <Switch
+                                      size="small"
+                                      checked={!!entry.autoTailorEnabled}
+                                      onChange={(e) => setSavedSearchAutoTailor(entry.id, { autoTailorEnabled: e.target.checked })}
+                                    />
+                                  }
+                                  label={<Box sx={{ fontSize: "0.78rem" }}>Auto-tailor daily</Box>}
+                                  sx={{ m: 0 }}
+                                />
+                                {entry.autoTailorEnabled && (
+                                  <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, fontSize: "0.75rem", color: "#546e7a" }}>
+                                    <span>Daily cap:</span>
+                                    <TextField
+                                      type="number"
+                                      size="small"
+                                      value={entry.autoTailorDailyCap ?? 10}
+                                      onChange={(e) => {
+                                        const n = Number.parseInt(e.target.value, 10);
+                                        if (Number.isFinite(n)) setSavedSearchAutoTailor(entry.id, { autoTailorDailyCap: n });
+                                      }}
+                                      inputProps={{ min: 1, max: 100, style: { padding: "2px 4px", width: 52, fontSize: "0.75rem" } }}
+                                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 1 } }}
+                                    />
+                                    <span>per run</span>
+                                  </Box>
+                                )}
+                              </Box>
+                            ) : (
+                              <Box sx={{ mt: 0.5, pt: 0.75, borderTop: "1px dashed #cfd8dc", color: "#90a4ae", fontSize: "0.72rem", fontStyle: "italic" }}>
+                                Sign-in–only saved search (local). Re-save while signed in to enable auto-tailor.
+                              </Box>
+                            )}
+                            <IconButton
+                              size="small"
+                              aria-label={`Delete saved search ${entry.name}`}
+                              onClick={() => deleteSavedSearch(entry.id)}
+                              sx={{ position: "absolute", top: 2, right: 2, p: 0.25, color: "#90a4ae", "&:hover": { color: "#d32f2f", bgcolor: "transparent" } }}
+                            >
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                            </IconButton>
+                          </Box>
+                        );
+                      })}
+                    </Box>
+                  )}
+                </Box>
+
+                <Box>
+                  <Box sx={{ fontWeight: 600, fontSize: "0.95rem", mb: 0.5 }}>Auto-tailored postings</Box>
+                  <Box sx={{ color: "#546e7a", fontSize: "0.8rem", mb: 1.25 }}>
+                    Postings that were automatically tailored by the daily cron based on your enabled saved searches.
+                  </Box>
+                  {autoTailoredLoading ? (
+                    <Box sx={{ display: "flex", justifyContent: "center", py: 3 }}>
+                      <CircularProgress size={24} />
+                    </Box>
+                  ) : autoTailoredError ? (
+                    <p style={{ color: "var(--error, #d32f2f)" }}>Error: {autoTailoredError}</p>
+                  ) : autoTailoredPostings.length === 0 ? (
+                    <Box sx={{ color: "#78909c", fontSize: "0.85rem", fontStyle: "italic" }}>
+                      No auto-tailored postings yet. Enable auto-tailor on a saved search above and wait for the next cron run.
+                    </Box>
+                  ) : (
+                    <Box sx={{ overflowX: "auto", border: "1px solid #cfd8dc", borderRadius: 1 }}>
+                      <Box component="table" sx={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+                        <Box component="thead" sx={{ bgcolor: "#f5f7f8" }}>
+                          <Box component="tr">
+                            <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Date</Box>
+                            <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Company</Box>
+                            <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Title</Box>
+                            <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Posting</Box>
+                          </Box>
+                        </Box>
+                        <Box component="tbody">
+                          {autoTailoredPostings.map((row) => {
+                            const dateLabel = row.created_at ? new Date(row.created_at).toLocaleString() : "—";
+                            const pos = row.positions || {};
+                            return (
+                              <Box component="tr" key={row.id} sx={{ "&:hover": { bgcolor: "#fafbfc" } }}>
+                                <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1", whiteSpace: "nowrap" }}>{dateLabel}</Box>
+                                <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1" }}>{pos.company || "—"}</Box>
+                                <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1" }}>{pos.title || "—"}</Box>
+                                <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1" }}>
+                                  {pos.url ? (
+                                    <a href={pos.url} target="_blank" rel="noopener noreferrer" style={{ color: "#1976d2" }}>View</a>
+                                  ) : "—"}
+                                </Box>
+                              </Box>
+                            );
+                          })}
+                        </Box>
+                      </Box>
+                    </Box>
+                  )}
+                </Box>
+              </Box>
+            )}
           </section>
         ) : activeSection === "manual" ? (
           <section className={styles.tabPanel}>
