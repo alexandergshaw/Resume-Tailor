@@ -1406,6 +1406,22 @@ export default function Home() {
     if (!hasFetchedRef.current || jobKeywords.length === 0) return;
     const joined = jobKeywords.join(" ").trim();
     if (!joined) return;
+    // Respect a fresh prewarm cache (≤ 3 hours old) for the active saved
+    // search — render those results directly instead of refetching, so the
+    // Search Jobs button doesn't flip into a loading state when we're not
+    // actually hitting the endpoint.
+    const PREWARM_MAX_AGE_MS = 3 * 60 * 60 * 1000;
+    const cached = activeSavedSearchId ? prewarmedResults[activeSavedSearchId] : null;
+    if (
+      cached &&
+      Array.isArray(cached.jobs) &&
+      cached.jobs.length > 0 &&
+      Date.now() - cached.fetchedAt < PREWARM_MAX_AGE_MS
+    ) {
+      activeQueryRef.current = joined;
+      setJobResults(cached.jobs);
+      return;
+    }
     const timer = setTimeout(() => {
       activeQueryRef.current = joined;
       setIsSearching(true);
