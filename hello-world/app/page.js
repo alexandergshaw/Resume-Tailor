@@ -21,6 +21,8 @@ import {
   isDocxResume,
   isTextResume,
   buildTemplateLinesForUpload,
+  buildDocxFromUploadedTemplate,
+  getDownloadFileNameForTitle,
   createDocumentDownloaders,
 } from "../lib/document/docx";
 import Box from "@mui/material/Box";
