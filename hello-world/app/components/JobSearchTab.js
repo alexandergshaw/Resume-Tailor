@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import TextField from "@mui/material/TextField";
@@ -10,6 +11,8 @@ import MenuItem from "@mui/material/MenuItem";
 import IconButton from "@mui/material/IconButton";
 import Autocomplete from "@mui/material/Autocomplete";
 import Chip from "@mui/material/Chip";
+import FormControlLabel from "@mui/material/FormControlLabel";
+import Switch from "@mui/material/Switch";
 import styles from "../page.module.css";
 
 export default function JobSearchTab({
@@ -54,6 +57,7 @@ export default function JobSearchTab({
   askAiAbout,
   buildJobContextString,
 }) {
+  const [hideApplied, setHideApplied] = useState(false);
   return (
     <section className={styles.tabPanel}>
       <form onSubmit={handleJobSearch} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
@@ -371,6 +375,17 @@ export default function JobSearchTab({
             ))
           }
         />
+        <FormControlLabel
+          control={
+            <Switch
+              size="small"
+              checked={hideApplied}
+              onChange={(e) => setHideApplied(e.target.checked)}
+            />
+          }
+          label="Hide jobs I've applied to"
+          sx={{ alignSelf: "flex-start", m: 0 }}
+        />
         <Button
           type="submit"
           variant="contained"
@@ -416,8 +431,11 @@ export default function JobSearchTab({
                 if (minReq === null) return true;
                 return minReq <= parseInt(maxYearsExp, 10);
               });
-        const visibleJobs = yearsFiltered.filter((j) => !ignoredJobIds.has(j.id));
-        const ignoredInResults = yearsFiltered.filter((j) => ignoredJobIds.has(j.id));
+        const appliedFiltered = hideApplied
+          ? yearsFiltered.filter((j) => !appliedJobIds.has(j.id))
+          : yearsFiltered;
+        const visibleJobs = appliedFiltered.filter((j) => !ignoredJobIds.has(j.id));
+        const ignoredInResults = appliedFiltered.filter((j) => ignoredJobIds.has(j.id));
         return (
           <>
             {visibleJobs.length > 0 ? (
