@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import JSZip from "jszip";
 import styles from "./page.module.css";
+import JobDescriptionTab from "./components/JobDescriptionTab";
 import Accordion from "@mui/material/Accordion";
 import AccordionDetails from "@mui/material/AccordionDetails";
 import AccordionSummary from "@mui/material/AccordionSummary";
@@ -5046,43 +5047,14 @@ export default function Home() {
             )}
           </section>
         ) : activeSection === "manual" ? (
-          <section className={styles.tabPanel}>
-            <form className={styles.form} onSubmit={handleManualSubmit} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-              <TextField
-                id="job-posting"
-                name="jobPosting"
-                label="Job Posting"
-                multiline
-                rows={10}
-                fullWidth
-                placeholder="Paste the full job posting here..."
-                value={jobPosting}
-                onChange={(e) => setJobPosting(e.target.value)}
-              />
-              <Box>
-                <Button
-                  type="submit"
-                  variant="contained"
-                  disabled={manualIsSubmitting}
-                >
-                  {manualIsSubmitting ? "Generating..." : "Generate"}
-                </Button>
-                <Button
-                  variant="outlined"
-                  sx={{ ml: 1 }}
-                  disabled={!jobPosting.trim()}
-                  onClick={() => askAiAbout({
-                    label: "Pasted Job Description",
-                    content: `Pasted Job Description:\n${jobPosting}`,
-                  })}
-                >
-                  Ask AI
-                </Button>
-              </Box>
-            </form>
-
-            {manualError ? <p className={styles.error}>{manualError}</p> : null}
-          </section>
+          <JobDescriptionTab
+            jobPosting={jobPosting}
+            setJobPosting={setJobPosting}
+            manualIsSubmitting={manualIsSubmitting}
+            manualError={manualError}
+            handleManualSubmit={handleManualSubmit}
+            askAiAbout={askAiAbout}
+          />
         ) : (
           <section className={styles.tabPanel}>
             <form className={styles.form} onSubmit={handleUrlSubmit} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
