@@ -33,6 +33,24 @@ function sanitizeSort(value) {
   return null;
 }
 
+function sanitizeTitleKeywords(value) {
+  if (!Array.isArray(value)) return null;
+  const seen = new Set();
+  const out = [];
+  for (const entry of value) {
+    if (typeof entry !== "string") continue;
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    if (trimmed.length > 100) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+    if (out.length >= 50) break;
+  }
+  return out;
+}
+
 function sanitize(input) {
   if (!input || typeof input !== "object") return {};
   const out = {};
@@ -42,6 +60,9 @@ function sanitize(input) {
     } else if (key === "appliedSort") {
       const sort = sanitizeSort(input[key]);
       if (sort) out[key] = sort;
+    } else if (key === "excludedTitleKeywords") {
+      const list = sanitizeTitleKeywords(input[key]);
+      if (list) out[key] = list;
     }
   }
   return out;

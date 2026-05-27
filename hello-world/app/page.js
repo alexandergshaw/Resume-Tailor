@@ -274,6 +274,7 @@ export default function Home() {
   const [showIgnored, setShowIgnored] = useState(false);
   const [selectedCompanies, setSelectedCompanies] = useState([]);
   const [excludedCompanies, setExcludedCompanies] = useState([]);
+  const [excludedTitleKeywords, setExcludedTitleKeywords] = useState([]);
   const [selectedCategories, setSelectedCategories] = useState([]);
   const [maxYearsExp, setMaxYearsExp] = useState("any");
   // Saved searches: each entry captures the current values of the search-tab
@@ -457,12 +458,13 @@ export default function Home() {
             referencesOpen,
             educationOpen,
             appliedSort: interviewSort,
+            excludedTitleKeywords,
           },
         }),
       }).catch(() => {});
     }, 400);
     return () => clearTimeout(handle);
-  }, [referencesOpen, educationOpen, interviewSort, currentUser]);
+  }, [referencesOpen, educationOpen, interviewSort, excludedTitleKeywords, currentUser]);
 
   // Track auth state + load applied jobs + load stored files
   useEffect(() => {
@@ -504,6 +506,11 @@ export default function Home() {
                 field: prefs.appliedSort.field || null,
                 dir: prefs.appliedSort.dir,
               });
+            }
+            if (Array.isArray(prefs.excludedTitleKeywords)) {
+              setExcludedTitleKeywords(
+                prefs.excludedTitleKeywords.filter((s) => typeof s === "string" && s.trim().length > 0),
+              );
             }
           }
         } catch {}
@@ -3815,6 +3822,43 @@ export default function Home() {
                   ))
                 }
               />
+              <Autocomplete
+                multiple
+                freeSolo
+                options={[]}
+                value={excludedTitleKeywords}
+                onChange={(_, newValue) => {
+                  const cleaned = newValue
+                    .map((v) => (typeof v === "string" ? v.trim() : ""))
+                    .filter(Boolean);
+                  const seen = new Set();
+                  const deduped = [];
+                  for (const v of cleaned) {
+                    const key = v.toLowerCase();
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    deduped.push(v);
+                  }
+                  setExcludedTitleKeywords(deduped);
+                }}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    size="small"
+                    label="Exclude title keywords"
+                    placeholder={
+                      excludedTitleKeywords.length === 0
+                        ? "e.g. senior, manager, sales (press Enter to add)"
+                        : ""
+                    }
+                  />
+                )}
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => (
+                    <Chip key={option} label={option} size="small" {...getTagProps({ index })} />
+                  ))
+                }
+              />
               <Button
                 type="submit"
                 variant="contained"
@@ -3834,10 +3878,19 @@ export default function Home() {
               const companyFiltered = excludedNames.size > 0
                 ? jobResults.filter((j) => !excludedNames.has((j.company || "").toLowerCase()))
                 : jobResults;
+              const titleKeywordsLower = excludedTitleKeywords
+                .map((k) => k.trim().toLowerCase())
+                .filter(Boolean);
+              const titleFiltered = titleKeywordsLower.length > 0
+                ? companyFiltered.filter((j) => {
+                    const title = (j.title || "").toLowerCase();
+                    return !titleKeywordsLower.some((kw) => title.includes(kw));
+                  })
+                : companyFiltered;
               const yearsFiltered =
                 maxYearsExp === "any"
-                  ? companyFiltered
-                  : companyFiltered.filter((j) => {
+                  ? titleFiltered
+                  : titleFiltered.filter((j) => {
                       const minReq = extractMinYearsRequired(j.description);
                       if (minReq === null) return true;
                       return minReq <= parseInt(maxYearsExp, 10);
