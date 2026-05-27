@@ -2842,7 +2842,10 @@ export default function Home() {
 
   async function handleTailorJob(job, opts = {}) {
     const { skipDownload = false } = opts;
-    handleTrackJob(job);
+    // Await so its upsertApplication({status:'tracking'}) is guaranteed to
+    // land BEFORE the later status promotion below. Otherwise a fire-and-
+    // forget version can race in and overwrite auto_tailored back to tracking.
+    await handleTrackJob(job);
     if (!resumeFile) {
       updateTailoringJob(job.id, { status: "error", error: "Upload a resume first." });
       return;
@@ -2934,26 +2937,50 @@ export default function Home() {
             .eq("user_id", currentUser.id)
             .eq("position_id", positionId);
           if (linkErr) console.error("[handleTailorJob] link resume failed:", linkErr);
-          // Upgrade status tracking → tailored (or auto_tailored when this
-          // tailor was kicked off via "Tailor all visible" / batch flow). The
-          // auto_tailored status routes these rows to the dedicated Auto
-          // Tailor tab instead of the Interviewing tab.
-          // Filter on the set of "pre-applied" pipeline states so we never
-          // downgrade rows that are already applied / interviewing / offer /
-          // rejected, but DO promote rows that may already be "tailored" from
-          // a prior single-job tailor run into "auto_tailored" when this run
-          // came from a batch (markAsAutoTailor=true).
+          // Upgrade status → tailored (or auto_tailored when this run came
+          // from "Tailor all visible" / batch flow). The auto_tailored
+          // status routes these rows to the dedicated Auto Tailor tab
+          // instead of the Interviewing tab.
+          //
+          // We use a NOT-IN filter on the applied-and-later pipeline states
+          // (instead of a tighter IN filter on the pre-applied states) so
+          // that any unexpected/stale value — including NULL, or a status
+          // that wasn't anticipated — still gets promoted. We only refuse to
+          // downgrade rows that are already past the apply stage.
           const targetStatus = opts.markAsAutoTailor ? "auto_tailored" : "tailored";
-          const allowedPriorStatuses = opts.markAsAutoTailor
-            ? ["tracking", "tailored", "auto_tailored"]
-            : ["tracking"];
-          const { error: statusErr } = await supabase
+          const protectedStatuses = ["applied", "interviewing", "offer", "rejected", "withdrawn"];
+          console.log(
+            "[handleTailorJob] promoting status",
+            { jobId: job?.id, positionId, targetStatus, markAsAutoTailor: !!opts.markAsAutoTailor },
+          );
+          const { data: updatedRows, error: statusErr } = await supabase
             .from("applications")
             .update({ status: targetStatus })
             .eq("user_id", currentUser.id)
             .eq("position_id", positionId)
-            .in("status", allowedPriorStatuses);
-          if (statusErr) console.error("[handleTailorJob] status update failed:", statusErr);
+            .not("status", "in", `(${protectedStatuses.join(",")})`)
+            .select("id, status");
+          if (statusErr) {
+            console.error("[handleTailorJob] status update failed:", statusErr);
+          } else {
+            console.log(
+              "[handleTailorJob] status update result",
+              { jobId: job?.id, positionId, updatedRows },
+            );
+            // Read-back so we can see the row's final state even if 0 rows
+            // were touched by the update (e.g. due to RLS, constraint, or
+            // the row simply not existing).
+            const { data: verifyRow } = await supabase
+              .from("applications")
+              .select("id, status")
+              .eq("user_id", currentUser.id)
+              .eq("position_id", positionId)
+              .maybeSingle();
+            console.log(
+              "[handleTailorJob] post-update read-back",
+              { jobId: job?.id, positionId, verifyRow },
+            );
+          }
           // Trigger the Interviewing tab to refetch so the new tailored row
           // (or its freshly attached resume) shows up immediately. During a
           // batch tailor this fires once per completed job so rows appear as
