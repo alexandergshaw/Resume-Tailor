@@ -10,7 +10,11 @@ import getRedisClient from "@/lib/cache/redisClient";
 export const runtime = "nodejs";
 export const maxDuration = 300; // seconds, used by Vercel for long-running cron
 
-const ABSOLUTE_USER_CAP = 100; // hard ceiling per user per run
+// The cron fires four times a day (00:00 / 06:00 / 12:00 / 18:00 UTC). To
+// avoid blasting the LLM and keep results trickling in, each run tailors at
+// most one new resume per user across all of their saved searches.
+const MAX_TAILORS_PER_USER_PER_RUN = 1;
+const ABSOLUTE_USER_CAP = 100; // safety ceiling, never reached given the per-run cap above
 
 function matchesAllKeywords(job, keywordsLower) {
   if (keywordsLower.length === 0) return true;
@@ -95,17 +99,23 @@ async function loadResumeBuffer(admin, userId) {
   }
 }
 
-async function processSavedSearch({ admin, userId, savedSearch, resumeBuffer }) {
+async function processSavedSearch({ admin, userId, savedSearch, resumeBuffer, remaining }) {
+  if (remaining <= 0) {
+    return { scanned: 0, tailored: [], skipped: "per-run-cap-reached" };
+  }
   const keywordsLower = toLower(savedSearch.job_keywords);
   const excludedTitleLower = toLower(savedSearch.excluded_title_keywords);
   const excludedCompaniesLower = toLower(savedSearch.excluded_companies);
   const companySlugs = Array.isArray(savedSearch.selected_companies)
     ? savedSearch.selected_companies
     : [];
-  const cap = Math.min(
+  // The per-saved-search cap is still respected, but the per-run cap (above)
+  // takes precedence and is enforced via `remaining`.
+  const perSearchCap = Math.min(
     ABSOLUTE_USER_CAP,
     Math.max(1, savedSearch.auto_tailor_daily_cap || 10),
   );
+  const cap = Math.min(perSearchCap, remaining);
 
   if (keywordsLower.length === 0) {
     return { scanned: 0, tailored: [], skipped: "no-keywords" };
@@ -208,11 +218,14 @@ async function processUser({ admin, userId, savedSearches }) {
   let totalScanned = 0;
   const allTailored = [];
   for (const search of savedSearches) {
+    const remaining = MAX_TAILORS_PER_USER_PER_RUN - allTailored.length;
+    if (remaining <= 0) break;
     const result = await processSavedSearch({
       admin,
       userId,
       savedSearch: search,
       resumeBuffer,
+      remaining,
     });
     totalScanned += result.scanned || 0;
     if (Array.isArray(result.tailored)) allTailored.push(...result.tailored);
@@ -222,8 +235,7 @@ async function processUser({ admin, userId, savedSearches }) {
       .update({ last_run_at: new Date().toISOString() })
       .eq("id", search.id);
 
-    // Stop processing more searches once we've hit a global per-user ceiling.
-    if (allTailored.length >= ABSOLUTE_USER_CAP) break;
+    if (allTailored.length >= MAX_TAILORS_PER_USER_PER_RUN) break;
   }
 
   if (allTailored.length === 0) {

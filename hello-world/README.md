@@ -108,7 +108,7 @@ grant select, insert, update, delete on storage.objects to authenticated;
 
 ### Auto-tailor cron + notifications
 
-The daily auto-tailor pipeline lives at `app/api/cron/tailor/route.js` and is scheduled in `vercel.json` (default: 13:00 UTC). It scans every saved search where the user has flipped **Auto-tailor daily** ON, tailors a resume for each new matching role (up to the per-search **Daily cap**), saves results to `generated_resumes`, marks applications as `tailored`, and writes a row to the new `notifications` table. If `RESEND_API_KEY` + `RESEND_FROM` are configured and the user hasn't disabled it, a digest email is also sent via Resend.
+The daily auto-tailor pipeline lives at `app/api/cron/tailor/route.js` and is scheduled in `vercel.json` (default: 00:00 / 06:00 / 12:00 / 18:00 UTC). Each run tailors at most **one** new resume per user across all of their saved searches — so a user with auto-tailor enabled gets up to 4 new tailored resumes per day. The cron scans every saved search where the user has flipped **Auto-tailor daily** ON, picks the next matching role (respecting keyword/excluded filters and the per-search **Daily cap** as an upper bound), saves results to `generated_resumes`, marks the application as `tailored`, and writes a row to the `notifications` table. If `RESEND_API_KEY` + `RESEND_FROM` are configured and the user hasn't disabled it, a digest email is also sent via Resend.
 
 To enable:
 

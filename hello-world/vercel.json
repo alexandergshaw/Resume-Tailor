@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/tailor",
-      "schedule": "0 13 * * *"
+      "schedule": "0 0,6,12,18 * * *"
     }
   ]
 }
