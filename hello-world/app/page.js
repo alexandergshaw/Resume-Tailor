@@ -939,8 +939,10 @@ export default function Home() {
     setActiveSavedSearchId(entry.id);
 
     // If the pre-warmer already fetched results for this saved search and
-    // they're still fresh, render them instantly instead of round-tripping
-    // through runJobSearch (which would flash a loading state).
+    // they're still fresh (less than 3 hours old), render them instantly
+    // instead of round-tripping through runJobSearch (which would flash a
+    // loading state and race the prewarmer).
+    const APPLY_SAVED_MAX_AGE_MS = 3 * 60 * 60 * 1000;
     const cached = prewarmedResults[entry.id];
     const query = nextJobKeywords.join(" ").trim();
     if (
@@ -948,7 +950,7 @@ export default function Home() {
       cached &&
       Array.isArray(cached.jobs) &&
       cached.jobs.length > 0 &&
-      Date.now() - cached.fetchedAt < PREWARM_FRESH_MS
+      Date.now() - cached.fetchedAt < APPLY_SAVED_MAX_AGE_MS
     ) {
       setIsSearching(false);
       setJobSearchError("");
