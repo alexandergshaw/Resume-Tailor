@@ -1,3 +1,5 @@
+import { HIGHERED_GREENHOUSE_COMPANIES } from "./highered_colleges";
+
 export const GREENHOUSE_COMPANIES = [
   { slug: "acorns", name: "Acorns", categories: ["Fintech"] },
   { slug: "affirm", name: "Affirm", categories: ["Fintech"] },
@@ -347,6 +349,8 @@ export const GREENHOUSE_COMPANIES = [
   { slug: "tourradar", name: "TourRadar", categories: ["Travel & Hospitality"] },
   { slug: "outdoorsy", name: "Outdoorsy", categories: ["Travel & Hospitality"] },
   { slug: "turo", name: "Turo", categories: ["Travel & Hospitality"] },
+  // ...existing companies...
+  ...HIGHERED_GREENHOUSE_COMPANIES,
 ];
 
 export const COMPANY_CATEGORIES = [
