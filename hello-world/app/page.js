@@ -810,8 +810,18 @@ export default function Home() {
             setSavedSearches((prev) => [rowToSavedSearchEntry(json.search), ...prev]);
             return;
           }
+          console.error("[saveCurrentSearch] response missing 'search':", json);
+          window.alert("Saved search did not return expected data. Check console.");
+          return;
         }
-      } catch {}
+        let detail = "";
+        try { detail = (await res.json())?.error || ""; } catch {}
+        console.error("[saveCurrentSearch] POST failed", res.status, detail);
+        window.alert(`Could not save to server (HTTP ${res.status}${detail ? `: ${detail}` : ""}). Saved locally as a fallback.`);
+      } catch (err) {
+        console.error("[saveCurrentSearch] network error", err);
+        window.alert(`Network error saving search: ${err?.message || err}. Saved locally as a fallback.`);
+      }
     }
     setSavedSearches((prev) => [entry, ...prev]);
   }
@@ -2677,7 +2687,9 @@ export default function Home() {
       // Persist the generated resume and link it to the application
       if (currentUser) {
         const supabase = createClient();
-        const positionId = await getPositionId(supabase, job.id);
+        // Use upsertPosition (not just getPositionId) so a position row is
+        // created on the fly if the user tailored a job they hadn't tracked.
+        const positionId = await upsertPosition(supabase, job);
         const generatedResumeId = await saveGeneratedResume(supabase, {
           userId: currentUser.id,
           positionId,
@@ -2687,6 +2699,15 @@ export default function Home() {
           additionalContext: additionalContext || null,
         });
         if (generatedResumeId && positionId) {
+          // Make sure an application row exists for this (user, position) so
+          // the tailored job shows up in the Tracking tab even if the user
+          // never clicked "Track" first.
+          await upsertApplication(supabase, {
+            userId: currentUser.id,
+            positionId,
+            status: "tracking",
+          });
+          // Always link the freshly generated resume.
           await supabase
             .from("applications")
             .update({ resume_used_id: generatedResumeId })

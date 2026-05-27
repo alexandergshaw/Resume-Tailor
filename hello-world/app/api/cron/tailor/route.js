@@ -150,18 +150,32 @@ async function processSavedSearch({ admin, userId, savedSearch, resumeBuffer, re
       });
 
       // First upsert as "tracking" so we have an application row, then bump
-      // it to "tailored". This mirrors what handleTailorJob does in the UI.
+      // it to "tailored" and link the generated resume. This mirrors what
+      // handleTailorJob does in the UI.
       const applicationId = await upsertApplication(admin, {
         userId,
         positionId,
         status: "tracking",
       });
       if (applicationId) {
-        await admin
+        const { error: updErr } = await admin
           .from("applications")
-          .update({ status: "tailored" })
+          .update({
+            status: "tailored",
+            resume_used_id: generatedResumeId || null,
+          })
           .eq("id", applicationId)
           .eq("user_id", userId);
+        if (updErr) {
+          console.error(
+            `[cron] failed to mark application ${applicationId} tailored:`,
+            updErr.message,
+          );
+        }
+      } else {
+        console.error(
+          `[cron] upsertApplication returned null for user=${userId} position=${positionId}`,
+        );
       }
 
       tailored.push({
