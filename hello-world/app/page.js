@@ -2500,6 +2500,11 @@ export default function Home() {
             .eq("user_id", currentUser.id)
             .eq("position_id", positionId)
             .eq("status", "tracking");
+          // Trigger the Interviewing tab to refetch so the new tailored row
+          // (or its freshly attached resume) shows up immediately. During a
+          // batch tailor this fires once per completed job so rows appear as
+          // they're produced.
+          setApplicationsRefreshKey((k) => k + 1);
         }
       }
 
