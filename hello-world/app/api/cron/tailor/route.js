@@ -4,8 +4,6 @@ import { tailorResumeHeadless } from "@/lib/llm/tailorForUserHeadless";
 import { upsertPosition } from "@/lib/supabase/upsertPosition";
 import { upsertApplication } from "@/lib/supabase/upsertApplication";
 import { saveGeneratedResume } from "@/lib/supabase/saveGeneratedResume";
-import { sendTailoredDigestEmail } from "@/lib/email/sendTailoredNotification";
-import getRedisClient from "@/lib/cache/redisClient";
 
 export const runtime = "nodejs";
 export const maxDuration = 300; // seconds, used by Vercel for long-running cron
@@ -61,29 +59,6 @@ function isAuthorized(request) {
     return header === `Bearer ${secret}`;
   }
   return request.headers.get("x-vercel-cron") === "1";
-}
-
-async function getEmailPref(userId) {
-  const redis = getRedisClient();
-  if (!redis) return true; // default ON if no Redis configured
-  try {
-    const prefs = await redis.get(`user:${userId}:uiPrefs`);
-    if (!prefs || typeof prefs !== "object") return true;
-    if (prefs.notificationEmailsEnabled === false) return false;
-    return true;
-  } catch {
-    return true;
-  }
-}
-
-async function getUserEmail(admin, userId) {
-  try {
-    const { data, error } = await admin.auth.admin.getUserById(userId);
-    if (error) return null;
-    return data?.user?.email || null;
-  } catch {
-    return null;
-  }
 }
 
 async function loadResumeBuffer(admin, userId) {
@@ -258,22 +233,6 @@ async function processUser({ admin, userId, savedSearches }) {
     related_application_id: allTailored[0].applicationId || null,
     related_position_id: allTailored[0].positionId || null,
   });
-
-  // Optional email digest.
-  const emailsEnabled = await getEmailPref(userId);
-  if (emailsEnabled) {
-    const email = await getUserEmail(admin, userId);
-    if (email) {
-      await sendTailoredDigestEmail({
-        to: email,
-        tailoredItems: allTailored.map((t) => ({
-          title: t.title,
-          company: t.company,
-          url: t.url,
-        })),
-      });
-    }
-  }
 
   return { userId, scanned: totalScanned, tailored: allTailored };
 }

@@ -8,7 +8,6 @@ const TTL_SECONDS = 60 * 60 * 24 * 365; // 1 year
 const ALLOWED_BOOLEAN_KEYS = new Set([
   "referencesOpen",
   "educationOpen",
-  "notificationEmailsEnabled",
 ]);
 
 // Sort preference for the applications table on the Interviewing tab.

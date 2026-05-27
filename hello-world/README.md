@@ -40,10 +40,7 @@ For local development, create a `.env.local` file in the project root or run `np
 | `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase → Project Settings → API → **Project URL** (e.g. `https://xxxx.supabase.co` — no trailing path) |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase → Project Settings → API → **Publishable** key |
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | Supabase → Project Settings → API → **Secret** key (never expose client-side) |
-| `CRON_SECRET` | Yes (for cron) | Any long random string; sent as `Authorization: Bearer <secret>` to `/api/cron/tailor`. Set the same value in Vercel → Project → Settings → Cron Jobs so Vercel's daily invocation can authenticate. |
-| `RESEND_API_KEY` | Yes (for email) | [Resend Dashboard](https://resend.com/api-keys) |
-| `RESEND_FROM` | Yes (for email) | A verified sender, e.g. `Resume Tailor <noreply@yourdomain.com>` |
-| `APP_BASE_URL` | No | Used in digest emails for a "Open Resume Tailor" CTA, e.g. `https://your-app.vercel.app` |
+| `CRON_SECRET` | Yes (for cron) | Any long random string; sent as `Authorization: Bearer <secret>` to `/api/cron/tailor`. Set the same value in Vercel → Project → Settings → Cron Jobs so Vercel's scheduled invocations can authenticate. |
 
 The `KV_REST_API_URL` and `KV_REST_API_TOKEN` variables are injected automatically when you create a Redis database via **Vercel Storage** and connect it to this project.
 
@@ -108,12 +105,12 @@ grant select, insert, update, delete on storage.objects to authenticated;
 
 ### Auto-tailor cron + notifications
 
-The daily auto-tailor pipeline lives at `app/api/cron/tailor/route.js` and is scheduled in `vercel.json` (default: 00:00 / 06:00 / 12:00 / 18:00 UTC). Each run tailors at most **one** new resume per user across all of their saved searches — so a user with auto-tailor enabled gets up to 4 new tailored resumes per day. The cron scans every saved search where the user has flipped **Auto-tailor daily** ON, picks the next matching role (respecting keyword/excluded filters and the per-search **Daily cap** as an upper bound), saves results to `generated_resumes`, marks the application as `tailored`, and writes a row to the `notifications` table. If `RESEND_API_KEY` + `RESEND_FROM` are configured and the user hasn't disabled it, a digest email is also sent via Resend.
+The daily auto-tailor pipeline lives at `app/api/cron/tailor/route.js` and is scheduled in `vercel.json` (default: 00:00 / 06:00 / 12:00 / 18:00 UTC). Each run tailors at most **one** new resume per user across all of their saved searches — so a user with auto-tailor enabled gets up to 4 new tailored resumes per day. The cron scans every saved search where the user has flipped **Auto-tailor daily** ON, picks the next matching role (respecting keyword/excluded filters and the per-search **Daily cap** as an upper bound), saves results to `generated_resumes`, marks the application as `tailored`, and writes a row to the `notifications` table. The bell icon in the app surfaces these as in-app notifications.
 
 To enable:
 
 1. Apply the migration in `db/migrations/001_saved_searches_and_notifications.sql` via Supabase SQL Editor.
-2. Set `CRON_SECRET`, `RESEND_API_KEY`, `RESEND_FROM`, and (optionally) `APP_BASE_URL` in your environment.
+2. Set `CRON_SECRET` in your environment.
 3. Deploy to Vercel — `vercel.json` registers the cron job automatically. Vercel will call `/api/cron/tailor` once per day with the `Authorization: Bearer ${CRON_SECRET}` header.
 4. (Optional) To trigger a run manually: `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://your-app.vercel.app/api/cron/tailor`.
 

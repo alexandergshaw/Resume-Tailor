@@ -287,11 +287,10 @@ export default function Home() {
   // The id of the saved search whose values currently populate the controls.
   // Cleared as soon as the user modifies any of the search controls.
   const [activeSavedSearchId, setActiveSavedSearchId] = useState(null);
-  // Notification + email-pref state (bell UI in header, Resend digest opt-in).
+  // In-app notification state (bell UI in header).
   const [notifications, setNotifications] = useState([]);
   const [notifUnreadCount, setNotifUnreadCount] = useState(0);
   const [notifAnchorEl, setNotifAnchorEl] = useState(null);
-  const [notificationEmailsEnabled, setNotificationEmailsEnabled] = useState(true);
   const [currentUser, setCurrentUser] = useState(null);
   const [mainTab, setMainTab] = useState("applying");
   const [applicationData, setApplicationData] = useState([]);
@@ -468,13 +467,12 @@ export default function Home() {
             educationOpen,
             appliedSort: interviewSort,
             excludedTitleKeywords,
-            notificationEmailsEnabled,
           },
         }),
       }).catch(() => {});
     }, 400);
     return () => clearTimeout(handle);
-  }, [referencesOpen, educationOpen, interviewSort, excludedTitleKeywords, notificationEmailsEnabled, currentUser]);
+  }, [referencesOpen, educationOpen, interviewSort, excludedTitleKeywords, currentUser]);
 
   // Track auth state + load applied jobs + load stored files
   useEffect(() => {
@@ -521,9 +519,6 @@ export default function Home() {
               setExcludedTitleKeywords(
                 prefs.excludedTitleKeywords.filter((s) => typeof s === "string" && s.trim().length > 0),
               );
-            }
-            if (typeof prefs.notificationEmailsEnabled === "boolean") {
-              setNotificationEmailsEnabled(prefs.notificationEmailsEnabled);
             }
           }
         } catch {}
@@ -3109,17 +3104,6 @@ export default function Home() {
               >
                 <Box sx={{ px: 2, py: 1, display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #eceff1" }}>
                   <Box sx={{ fontWeight: 600 }}>Notifications</Box>
-                  <FormControlLabel
-                    control={
-                      <Switch
-                        size="small"
-                        checked={notificationEmailsEnabled}
-                        onChange={(e) => setNotificationEmailsEnabled(e.target.checked)}
-                      />
-                    }
-                    label={<Box sx={{ fontSize: "0.75rem" }}>Email digest</Box>}
-                    sx={{ m: 0 }}
-                  />
                 </Box>
                 {notifications.length === 0 ? (
                   <Box sx={{ px: 2, py: 3, color: "#78909c", fontSize: "0.85rem", textAlign: "center" }}>
