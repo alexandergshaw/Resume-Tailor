@@ -1,6 +1,7 @@
 import "./globals.css";
 import { Manrope, Source_Serif_4 } from "next/font/google";
 import AuthButton from "@/app/components/AuthButton";
+import GmailButton from "@/app/components/GmailButton";
 
 const manrope = Manrope({
   subsets: ["latin"],
@@ -30,7 +31,9 @@ export default function RootLayout({ children }) {
           padding: "10px 24px",
           borderBottom: "1px solid var(--border)",
           background: "var(--bg-surface)",
+          gap: "12px",
         }}>
+          <GmailButton />
           <AuthButton />
         </header>
         {children}
