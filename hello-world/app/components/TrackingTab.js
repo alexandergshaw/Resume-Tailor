@@ -371,12 +371,6 @@ export default function TrackingTab({
                             </Box>
                           ) : null}
                         </Box>
-                      </TableCell>
-                      <TableCell sx={{ whiteSpace: "nowrap" }}>
-                        {app.applied_at
-                          ? new Date(app.applied_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
-                          : "—"}
-                      </TableCell>
                       <TableCell sx={{ whiteSpace: "nowrap" }}>
                         <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0.2 }}>
                           <Button
