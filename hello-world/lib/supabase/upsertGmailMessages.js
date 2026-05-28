@@ -22,11 +22,15 @@ export async function upsertGmailMessages(userId, messages) {
     snippet: message.snippet || null,
   }));
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("gmail_messages")
-    .upsert(rows, { onConflict: "user_id,gmail_message_id", ignoreDuplicates: true });
+    .upsert(rows, { onConflict: "user_id,gmail_message_id", ignoreDuplicates: true })
+    .select("id");
 
   if (error) {
-    console.error("[upsertGmailMessages] failed:", error.message || error);
+    console.error("[upsertGmailMessages] failed:", error.message, error.details, error.hint);
+    throw error;
   }
+
+  console.log(`[upsertGmailMessages] inserted ${data?.length ?? 0} of ${rows.length} messages for user ${userId}`);
 }

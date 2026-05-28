@@ -45,6 +45,8 @@ export async function POST(request) {
   try {
     const messages = await fetchJobRelatedMessages(auth, companyNames, maxResults);
 
+    console.log(`[Gmail messages fetch] fetched ${messages.length} messages for user ${user.id}`);
+
     if (messages.length > 0) {
       await upsertGmailMessages(user.id, messages);
     }
