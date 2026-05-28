@@ -243,16 +243,6 @@ export default function TrackingTab({
                   const pos = app.positions;
                   const resume = app.generated_resumes;
                   const stages = applicationStages[app.id] || [];
-                  const statusConfig = {
-                    tailored: { label: "Tailored", color: "default" },
-                    applied: { label: "Applied", color: "primary" },
-                    phone_screen: { label: "Phone Screen", color: "info" },
-                    interviewing: { label: "Interviewing", color: "warning" },
-                    offer: { label: "Offer", color: "secondary" },
-                    accepted: { label: "Accepted", color: "success" },
-                    rejected: { label: "Rejected", color: "error" },
-                    withdrawn: { label: "Withdrawn", color: "default" },
-                  }[app.status] || { label: app.status, color: "default" };
 
                   return (
                     <TableRow
@@ -312,31 +302,7 @@ export default function TrackingTab({
                       <TableCell>
                         <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0.75 }}>
                           <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
-                            <Chip
-                              label={statusConfig.label}
-                              color={statusConfig.color}
-                              size="small"
-                              onClick={() => askAiAbout({
-                                label: `${pos?.company || "Application"}${pos?.title ? ` — ${pos.title}` : ""} · ${statusConfig.label}`,
-                                content: buildApplicationContextString(app),
-                                prompt: `Based on the "${statusConfig.label}" status of my application to ${pos?.company || "this company"}${pos?.title ? ` for ${pos.title}` : ""}, `,
-                              })}
-                              sx={{ cursor: "pointer" }}
-                              title="Ask AI about this status"
-                            />
-                            <Button
-                              size="small"
-                              sx={{ minWidth: 0, p: 0, fontSize: 11 }}
-                              onClick={() => {
-                                setStageError("");
-                                setStageDialog(createStageDialogState({
-                                  open: true,
-                                  applicationId: app.id,
-                                }));
-                              }}
-                            >
-                              + Stage
-                            </Button>
+                            
                           </Box>
                           {stages.length > 0 ? (
                             <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>

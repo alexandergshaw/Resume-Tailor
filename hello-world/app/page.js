@@ -3176,6 +3176,23 @@ export default function Home() {
                                     if (row) row.scrollIntoView({ behavior: "smooth", block: "center" });
                                   }, 120);
                                   setTimeout(() => setHighlightedAppId(null), 2500);
+                                  // If email is classified, pre-populate and open the stage dialog
+                                  if (classification === "interview") {
+                                    setTimeout(() => setStageDialog(createStageDialogState({
+                                      open: true,
+                                      applicationId: application.id,
+                                      stageType: "phone_screen",
+                                      outcome: "pending",
+                                    })), 150);
+                                  } else if (classification === "rejection") {
+                                    setTimeout(() => setStageDialog(createStageDialogState({
+                                      open: true,
+                                      applicationId: application.id,
+                                      stageType: "other",
+                                      stageName: "Rejected",
+                                      outcome: "failed",
+                                    })), 150);
+                                  }
                                 }}
                               >
                                 <OpenInNewIcon sx={{ fontSize: 14 }} />
