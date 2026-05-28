@@ -89,6 +89,7 @@ export default function TrackingTab({
   loadCommunicationsForApp,
   FormattedContent,
   highlightedAppId,
+  emailClassificationsByAppId = {},
 }) {
   return (
     <section className={styles.tabPanel}>
@@ -243,6 +244,13 @@ export default function TrackingTab({
                   const pos = app.positions;
                   const resume = app.generated_resumes;
                   const stages = applicationStages[app.id] || [];
+                  const emailClassification = emailClassificationsByAppId[app.id] ?? null;
+                  const EMAIL_CHIP_STYLES = {
+                    confirmation: { label: "Applied", color: "#1565c0", bg: "#e3f2fd" },
+                    interview:    { label: "Interview", color: "#2e7d32", bg: "#e8f5e9" },
+                    rejection:    { label: "Rejected", color: "#b71c1c", bg: "#ffebee" },
+                  };
+                  const emailChip = emailClassification ? EMAIL_CHIP_STYLES[emailClassification] : null;
 
                   return (
                     <TableRow
@@ -302,9 +310,25 @@ export default function TrackingTab({
                       <TableCell>
                         <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0.75 }}>
                           <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
-                            
+                            {emailChip && (
+                              <Box sx={{ fontSize: "0.72rem", fontWeight: 700, color: emailChip.color, bgcolor: emailChip.bg, px: 0.75, py: 0.25, borderRadius: 1, flexShrink: 0, letterSpacing: "0.03em" }}>
+                                {emailChip.label}
+                              </Box>
+                            )}
+                            <Button
+                              size="small"
+                              sx={{ minWidth: 0, p: 0, fontSize: 11 }}
+                              onClick={() => {
+                                setStageError("");
+                                setStageDialog(createStageDialogState({
+                                  open: true,
+                                  applicationId: app.id,
+                                }));
+                              }}
+                            >
+                              + Stage
+                            </Button>
                           </Box>
-                          {stages.length > 0 ? (
                             <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
                               {stages.slice(0, 2).map((stage) => {
                                 const stageLabel = `${stage.stage_name || STAGE_TYPE_LABELS[stage.stage_type] || stage.stage_type}${stage.outcome && stage.outcome !== "pending" ? ` · ${stage.outcome}` : ""}`;

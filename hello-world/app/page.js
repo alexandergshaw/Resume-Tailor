@@ -3540,6 +3540,19 @@ export default function Home() {
             loadCommunicationsForApp={loadCommunicationsForApp}
             FormattedContent={FormattedContent}
             highlightedAppId={highlightedAppId}
+            emailClassificationsByAppId={Object.fromEntries(
+              Object.entries(
+                gmailMessages.reduce((acc, { application, classification }) => {
+                  if (!application?.id || !classification) return acc;
+                  const priority = { rejection: 3, interview: 2, confirmation: 1 };
+                  const existing = acc[application.id];
+                  if (!existing || priority[classification] > priority[existing]) {
+                    acc[application.id] = classification;
+                  }
+                  return acc;
+                }, {})
+              )
+            )}
           />
         )}
 
