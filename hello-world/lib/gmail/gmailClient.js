@@ -98,34 +98,41 @@ export async function getAuthenticatedClient(userId, redirectUri) {
 }
 
 /**
- * Fetch Gmail messages whose subjects/bodies mention job-related keywords.
- * Returns an array of simplified message objects.
+ * Fetch Gmail messages that mention one of the user's tracked companies or
+ * job titles. If neither list is provided, returns an empty array — we don't
+ * want to scrape the user's entire inbox.
  *
  * @param {import('googleapis').Auth.OAuth2Client} auth
- * @param {string[]} companyNames - filter messages mentioning these companies
- * @param {number} [maxResults=50]
+ * @param {object} opts
+ * @param {string[]} [opts.companyNames=[]]
+ * @param {string[]} [opts.jobTitles=[]]
+ * @param {number}   [opts.maxResults=50]
  */
-export async function fetchJobRelatedMessages(auth, companyNames = [], maxResults = 50) {
-  const gmail = google.gmail({ version: "v1", auth });
+export async function fetchJobRelatedMessages(auth, opts = {}) {
+  const { companyNames = [], jobTitles = [], maxResults = 50 } = opts;
 
-  const baseQuery =
-    "subject:(application OR interview OR offer OR recruiter OR position OR opportunity OR hiring OR job)";
-
-  // Cap company query length to avoid Gmail query limits (~500 chars safe)
-  let companyQuery = "";
-  if (companyNames.length > 0) {
-    const parts = [];
-    let len = 0;
-    for (const c of companyNames) {
-      const part = `"${c}"`;
-      if (len + part.length > 400) break;
-      parts.push(part);
-      len += part.length + 4; // " OR "
-    }
-    companyQuery = parts.join(" OR ");
+  if (companyNames.length === 0 && jobTitles.length === 0) {
+    return [];
   }
 
-  const query = companyQuery ? `(${baseQuery}) OR (${companyQuery})` : baseQuery;
+  const gmail = google.gmail({ version: "v1", auth });
+
+  // Build a single OR'd list of quoted company names and job titles.
+  // Cap at ~450 chars total to stay safely under Gmail's query length limit.
+  const terms = [];
+  let len = 0;
+  for (const c of [...companyNames, ...jobTitles]) {
+    const trimmed = (c || "").trim();
+    if (!trimmed) continue;
+    const part = `"${trimmed}"`;
+    if (len + part.length > 450) break;
+    terms.push(part);
+    len += part.length + 4; // " OR "
+  }
+
+  if (terms.length === 0) return [];
+
+  const query = terms.join(" OR ");
 
   const listRes = await gmail.users.messages.list({
     userId: "me",

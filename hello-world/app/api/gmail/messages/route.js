@@ -29,7 +29,7 @@ export async function POST(request) {
     // body is optional
   }
 
-  const { companyNames = [], maxResults = 50 } = body;
+  const { maxResults = 50 } = body;
 
   const { origin } = new URL(request.url);
   const redirectUri = `${origin}/api/gmail/oauth2callback`;
@@ -42,8 +42,30 @@ export async function POST(request) {
     );
   }
 
+  // Pull the user's tracked companies + job titles from the DB so we only
+  // fetch Gmail messages that mention one of them.
+  const { data: appRows } = await supabase
+    .from("applications")
+    .select("positions(company, title)")
+    .eq("user_id", user.id);
+
+  const companyNames = [
+    ...new Set((appRows || []).map((r) => r.positions?.company).filter(Boolean)),
+  ];
+  const jobTitles = [
+    ...new Set((appRows || []).map((r) => r.positions?.title).filter(Boolean)),
+  ];
+
+  if (companyNames.length === 0 && jobTitles.length === 0) {
+    return NextResponse.json({ messages: [] });
+  }
+
   try {
-    const messages = await fetchJobRelatedMessages(auth, companyNames, maxResults);
+    const messages = await fetchJobRelatedMessages(auth, {
+      companyNames,
+      jobTitles,
+      maxResults,
+    });
 
     console.log(`[Gmail messages fetch] fetched ${messages.length} messages for user ${user.id}`);
 
