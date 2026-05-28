@@ -54,9 +54,6 @@ function tokenize(str) {
 // Phrases in the FROM that indicate bulk/automated mail (lower relevance)
 const MAILER_PATTERNS = [/\bnotifications?\b/, /\bmailer\b/, /\bbounce\b/, /\balerts?\b/];
 
-// no-reply senders are a strong positive — ATS systems (Greenhouse, Workday, Lever) always use them
-const NOREPLY_PATTERNS = [/\bno.?reply\b/, /\bdonot.?reply\b/];
-
 // High-confidence subject phrases that mean it's about this person's application
 const HIGH_SIGNAL_SUBJECTS = [
   "your application", "application received", "application update",
@@ -81,9 +78,6 @@ export function scoreMessageForApplication(message, application) {
   let score = 0;
 
   // --- Signals ---
-
-  // no-reply senders → ATS systems (Greenhouse, Workday, Lever) — strong positive
-  if (NOREPLY_PATTERNS.some((re) => re.test(fromNorm))) score += 5;
 
   // generic mailer/notification addresses (unsubscribe-style bulk mail)
   if (MAILER_PATTERNS.some((re) => re.test(fromNorm))) score -= 4;
