@@ -1994,7 +1994,7 @@ export default function Home() {
         .from("applications")
         .select(`
           id, status, applied_at, tracked_at, application_url, resume_used_id,
-          positions ( id, external_id, title, company, description, url )
+          positions ( id, external_id, title, company, description, url, posted_at )
         `)
         .eq("user_id", currentUser.id)
         .neq("status", "tracking")

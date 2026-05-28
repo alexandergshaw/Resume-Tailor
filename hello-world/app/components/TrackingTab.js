@@ -289,6 +289,11 @@ export default function TrackingTab({
                         }}
                       >
                         {pos?.company || "\u2014"}
+                        {pos?.posted_at && (
+                          <Box sx={{ fontSize: "0.68rem", color: "var(--text-secondary)", fontWeight: 400, mt: 0.25 }}>
+                            Posted {new Date(pos.posted_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                          </Box>
+                        )}
                       </TableCell>
                       <TableCell
                         sx={{
