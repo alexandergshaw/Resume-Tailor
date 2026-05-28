@@ -1160,7 +1160,8 @@ export default function Home() {
       if (res.ok) {
         const data = await res.json();
         const { matchMessagesToApplications } = await import("../lib/gmail/emailUtils");
-        const matched = matchMessagesToApplications(data.messages || [], applicationData);
+        // threshold=0: show all returned messages, just annotate with best-matching app
+        const matched = matchMessagesToApplications(data.messages || [], applicationData, 0);
         setGmailMessages(matched);
       }
     } catch {}
