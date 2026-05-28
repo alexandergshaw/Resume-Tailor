@@ -198,3 +198,74 @@ export function formatMessageDate(dateStr) {
     return dateStr;
   }
 }
+
+/**
+ * Classify a Gmail message into one of four categories:
+ *   "confirmation"  — application received / acknowledged
+ *   "rejection"     — application declined
+ *   "interview"     — interview invitation or scheduling request
+ *   null            — unable to classify
+ *
+ * Uses subject + snippet text only (no full body needed).
+ *
+ * @param {{ subject?: string, snippet?: string }} message
+ * @returns {"confirmation" | "rejection" | "interview" | null}
+ */
+
+// Ordered from most-specific to least-specific. First match wins.
+const CLASSIFICATION_RULES = [
+  {
+    type: "interview",
+    patterns: [
+      /interview\s+(invitation|request|scheduled|confirmed|reminder)/,
+      /invit(e|ing|ation)\s+.{0,40}\s*interview/,
+      /schedule\s+(an?\s+)?interview/,
+      /we\s+(would\s+like|want)\s+to\s+(meet|speak|chat|talk|connect)\s+with\s+you/,
+      /phone\s+(screen|call|interview)/,
+      /video\s+(call|interview|meeting)/,
+      /technical\s+(screen|assessment|interview)/,
+      /hiring\s+manager\s+interview/,
+      /next\s+(step|round|stage)\s*:\s*.{0,30}interview/,
+      /onsite\s+interview/,
+      /take.?home\s+(assessment|challenge|test)/,
+      /coding\s+(challenge|assessment|test)/,
+    ],
+  },
+  {
+    type: "rejection",
+    patterns: [
+      /we\s+(will\s+not|won'?t|are\s+not|aren'?t)\s+be?\s+(moving|proceeding|continuing)/,
+      /not\s+(selected|moving\s+forward|a\s+(good\s+)?fit|chosen|advancing)/,
+      /we\s+have\s+(decided|chosen)\s+to\s+(pursue|move\s+forward\s+with)\s+other\s+(candidates|applicants)/,
+      /regret\s+to\s+(inform|let\s+you\s+know|tell)/,
+      /unfortunately\s+.{0,60}\s*(not|no\s+longer)/,
+      /position\s+has\s+been\s+(filled|closed)/,
+      /we\s+(have\s+)?(closed|filled)\s+the\s+position/,
+      /after\s+careful\s+(consideration|review).{0,60}(not|other)/,
+      /wish\s+you\s+(the\s+best|luck|well)\s+in\s+your\s+(search|future)/,
+      /keep\s+your\s+(resume|profile)\s+on\s+file/,
+    ],
+  },
+  {
+    type: "confirmation",
+    patterns: [
+      /application\s+(received|submitted|confirmed|complete)/,
+      /we\s+(received|got)\s+your\s+application/,
+      /thank\s+you\s+for\s+(applying|your\s+application|submitting)/,
+      /successfully\s+(applied|submitted|received)/,
+      /your\s+application\s+(is|has\s+been)\s+(received|submitted|under\s+review|in\s+review)/,
+      /we\s+will\s+(review|be\s+in\s+touch|follow\s+up)/,
+    ],
+  },
+];
+
+export function classifyMessage(message) {
+  const { subject = "", snippet = "" } = message;
+  const text = normalize(`${subject} ${snippet}`);
+
+  for (const { type, patterns } of CLASSIFICATION_RULES) {
+    if (patterns.some((re) => re.test(text))) return type;
+  }
+
+  return null;
+}

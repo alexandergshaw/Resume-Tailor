@@ -1158,9 +1158,10 @@ export default function Home() {
       });
       if (!res.ok) return;
       const data = await res.json();
-      const { matchMessagesToApplications } = await import("../lib/gmail/emailUtils");
+      const { matchMessagesToApplications, classifyMessage } = await import("../lib/gmail/emailUtils");
       // threshold=5: requires at least a partial company name match (+10 max) or title overlap
-      const matched = matchMessagesToApplications(data.messages || [], applicationData, 5);
+      const matched = matchMessagesToApplications(data.messages || [], applicationData, 5)
+        .map((item) => ({ ...item, classification: classifyMessage(item.message) }));
       setGmailMessages(matched);
     } catch {}
   }
@@ -3138,13 +3139,27 @@ export default function Home() {
                 ) : gmailMessages.length === 0 ? (
                   <Box sx={{ px: 2, py: 3, color: "#78909c", fontSize: "0.85rem", textAlign: "center" }}>No matching job emails found.</Box>
                 ) : (
-                  gmailMessages.map(({ message, application, score: _score }) => (
+                  gmailMessages.map(({ message, application, score: _score, classification }) => {
+                    const chipStyles = {
+                      confirmation: { label: "Applied", color: "#1565c0", bg: "#e3f2fd" },
+                      interview:    { label: "Interview", color: "#2e7d32", bg: "#e8f5e9" },
+                      rejection:    { label: "Rejected", color: "#b71c1c", bg: "#ffebee" },
+                    };
+                    const chip = chipStyles[classification] ?? null;
+                    return (
                     <MenuItem
                       key={message.id}
                       sx={{ whiteSpace: "normal", alignItems: "flex-start", py: 1, gap: 1, borderBottom: "1px solid #f5f5f5" }}
                     >
                       <Box sx={{ flex: 1, minWidth: 0 }}>
-                        <Box sx={{ fontWeight: 600, fontSize: "0.85rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{message.subject || "(no subject)"}</Box>
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+                          <Box sx={{ fontWeight: 600, fontSize: "0.85rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>{message.subject || "(no subject)"}</Box>
+                          {chip && (
+                            <Box sx={{ fontSize: "0.68rem", fontWeight: 700, color: chip.color, bgcolor: chip.bg, px: 0.75, py: 0.2, borderRadius: 1, flexShrink: 0, letterSpacing: "0.03em" }}>
+                              {chip.label}
+                            </Box>
+                          )}
+                        </Box>
                         <Box sx={{ display: "flex", gap: 1, alignItems: "center", mt: 0.25 }}>
                           {application && (
                             <Box sx={{ fontSize: "0.72rem", fontWeight: 600, color: "#1976d2", bgcolor: "#e3f2fd", px: 0.75, py: 0.25, borderRadius: 1, flexShrink: 0 }}>
@@ -3158,7 +3173,8 @@ export default function Home() {
                         )}
                       </Box>
                     </MenuItem>
-                  ))
+                    );
+                  })
                 )}
               </Menu>
               <Tooltip title="Notifications">
