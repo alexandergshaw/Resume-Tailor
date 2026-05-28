@@ -17,6 +17,7 @@ import {
   buildStageContextString,
   createChatHandlers,
 } from "../lib/chat/chatbot";
+import { useGmailInbox } from "../lib/gmail/useGmailInbox";
 import {
   isDocxResume,
   isTextResume,
@@ -296,10 +297,18 @@ export default function Home() {
   const [notifications, setNotifications] = useState([]);
   const [notifUnreadCount, setNotifUnreadCount] = useState(0);
   const [notifAnchorEl, setNotifAnchorEl] = useState(null);
-  // Gmail inbox panel state.
-  const [gmailAnchorEl, setGmailAnchorEl] = useState(null);
-  const [gmailMessages, setGmailMessages] = useState([]);
-  const [gmailLoading, setGmailLoading] = useState(false);
+  // Gmail inbox panel — all state and handlers live in the hook.
+  const {
+    gmailAnchorEl,
+    setGmailAnchorEl,
+    gmailMessages,
+    gmailLoading,
+    gmailNextPageToken,
+    gmailLoadingMore,
+    handleOpenGmailMenu,
+    handleRefreshGmail,
+    handleLoadMoreGmail,
+  } = useGmailInbox(applicationData);
   const [currentUser, setCurrentUser] = useState(null);
   const [mainTab, setMainTab] = useState("applying");
   const [applicationData, setApplicationData] = useState([]);
@@ -1146,26 +1155,7 @@ export default function Home() {
     }
   }
 
-  async function handleOpenGmailMenu(e) {
-    setGmailAnchorEl(e.currentTarget);
-    if (gmailMessages.length > 0) return; // already loaded
-    setGmailLoading(true);
-    try {
-      const companyNames = [...new Set(applicationData.map((a) => a.company).filter(Boolean))];
-      const res = await fetch("/api/gmail/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ companyNames, maxResults: 30 }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const { matchMessagesToApplications } = await import("../lib/gmail/emailUtils");
-        const matched = matchMessagesToApplications(data.messages || [], applicationData);
-        setGmailMessages(matched);
-      }
-    } catch {}
-    setGmailLoading(false);
-  }
+
 
   // Hydrate UI layout prefs (frozen-column widths + FAB position) once on mount.
   useEffect(() => {
@@ -3103,7 +3093,7 @@ export default function Home() {
                   <Box sx={{ fontWeight: 600 }}>Job emails</Box>
                   <Box
                     component="button"
-                    onClick={() => { setGmailMessages([]); handleOpenGmailMenu({ currentTarget: gmailAnchorEl }); }}
+                    onClick={handleRefreshGmail}
                     sx={{ fontSize: "0.75rem", color: "#1976d2", background: "none", border: "none", cursor: "pointer", p: 0 }}
                   >
                     Refresh
@@ -3114,27 +3104,41 @@ export default function Home() {
                 ) : gmailMessages.length === 0 ? (
                   <Box sx={{ px: 2, py: 3, color: "#78909c", fontSize: "0.85rem", textAlign: "center" }}>No matching job emails found.</Box>
                 ) : (
-                  gmailMessages.map(({ message, application, score: _score }) => (
-                    <MenuItem
-                      key={message.id}
-                      sx={{ whiteSpace: "normal", alignItems: "flex-start", py: 1, gap: 1, borderBottom: "1px solid #f5f5f5" }}
-                    >
-                      <Box sx={{ flex: 1, minWidth: 0 }}>
-                        <Box sx={{ fontWeight: 600, fontSize: "0.85rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{message.subject || "(no subject)"}</Box>
-                        <Box sx={{ display: "flex", gap: 1, alignItems: "center", mt: 0.25 }}>
-                          {application && (
-                            <Box sx={{ fontSize: "0.72rem", fontWeight: 600, color: "#1976d2", bgcolor: "#e3f2fd", px: 0.75, py: 0.25, borderRadius: 1, flexShrink: 0 }}>
-                              {application.company}
-                            </Box>
+                  <>
+                    {gmailMessages.map(({ message, application, score: _score }) => (
+                      <MenuItem
+                        key={message.id}
+                        sx={{ whiteSpace: "normal", alignItems: "flex-start", py: 1, gap: 1, borderBottom: "1px solid #f5f5f5" }}
+                      >
+                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                          <Box sx={{ fontWeight: 600, fontSize: "0.85rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{message.subject || "(no subject)"}</Box>
+                          <Box sx={{ display: "flex", gap: 1, alignItems: "center", mt: 0.25 }}>
+                            {application && (
+                              <Box sx={{ fontSize: "0.72rem", fontWeight: 600, color: "#1976d2", bgcolor: "#e3f2fd", px: 0.75, py: 0.25, borderRadius: 1, flexShrink: 0 }}>
+                                {application.company}
+                              </Box>
+                            )}
+                            <Box sx={{ color: "#546e7a", fontSize: "0.75rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{message.from}</Box>
+                          </Box>
+                          {message.snippet && (
+                            <Box sx={{ color: "#78909c", fontSize: "0.73rem", mt: 0.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{message.snippet}</Box>
                           )}
-                          <Box sx={{ color: "#546e7a", fontSize: "0.75rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{message.from}</Box>
                         </Box>
-                        {message.snippet && (
-                          <Box sx={{ color: "#78909c", fontSize: "0.73rem", mt: 0.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{message.snippet}</Box>
-                        )}
+                      </MenuItem>
+                    ))}
+                    {gmailNextPageToken && (
+                      <Box sx={{ px: 2, py: 1.5, textAlign: "center", borderTop: "1px solid #f0f4f8" }}>
+                        <Box
+                          component="button"
+                          onClick={handleLoadMoreGmail}
+                          disabled={gmailLoadingMore}
+                          sx={{ fontSize: "0.8rem", color: "#1976d2", background: "none", border: "none", cursor: gmailLoadingMore ? "default" : "pointer", p: 0, opacity: gmailLoadingMore ? 0.5 : 1 }}
+                        >
+                          {gmailLoadingMore ? "Loading…" : "Load more"}
+                        </Box>
                       </Box>
-                    </MenuItem>
-                  ))
+                    )}
+                  </>
                 )}
               </Menu>
               <Tooltip title="Notifications">
