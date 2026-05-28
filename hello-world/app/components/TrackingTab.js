@@ -309,26 +309,7 @@ export default function TrackingTab({
                       </TableCell>
                       <TableCell>
                         <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0.75 }}>
-                          <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
-                            {emailChip && (
-                              <Box sx={{ fontSize: "0.72rem", fontWeight: 700, color: emailChip.color, bgcolor: emailChip.bg, px: 0.75, py: 0.25, borderRadius: 1, flexShrink: 0, letterSpacing: "0.03em" }}>
-                                {emailChip.label}
-                              </Box>
-                            )}
-                            <Button
-                              size="small"
-                              sx={{ minWidth: 0, p: 0, fontSize: 11 }}
-                              onClick={() => {
-                                setStageError("");
-                                setStageDialog(createStageDialogState({
-                                  open: true,
-                                  applicationId: app.id,
-                                }));
-                              }}
-                            >
-                              + Stage
-                            </Button>
-                          </Box>
+                          
                           {stages.length > 0 ? (
                             <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
                               {stages.slice(0, 2).map((stage) => {
