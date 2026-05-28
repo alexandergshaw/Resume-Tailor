@@ -240,8 +240,10 @@ const CLASSIFICATION_RULES = [
       /decided\s+not\s+to\s+(move\s+forward|proceed|continue)/,
       // "have decided to move forward with other candidates"
       /we\s+have\s+(decided|chosen)\s+to\s+(pursue|move\s+forward\s+with)\s+other\s+(candidates|applicants)/,
-      // "not moving forward" / "not selected" / "not a fit"
-      /not\s+(selected|moving\s+forward|a\s+(good\s+)?fit|chosen|advancing)/,
+      // "not moving forward" / "not selected" / "not a fit" / "not a match"
+      /not\s+(selected|moving\s+forward|a\s+(good\s+)?fit|a\s+match|chosen|advancing)/,
+      // "qualifications are not a match"
+      /qualifications\s+are\s+not\s+a\s+match/,
       // "regret to inform you"
       /regret\s+to\s+(inform|let\s+you\s+know|tell)/,
       // "unfortunately, we won't be moving" — dot-all match across punctuation
