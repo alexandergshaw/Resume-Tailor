@@ -15,5 +15,7 @@ export function getServerEnv() {
     kvRestApiUrl: process.env.KV_REST_API_URL || null,
     kvRestApiToken: process.env.KV_REST_API_TOKEN || null,
     rapidApiKey: process.env.RAPID_API_KEY,
+    googleClientId: process.env.GOOGLE_CLIENT_ID || null,
+    googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || null,
   };
 }
