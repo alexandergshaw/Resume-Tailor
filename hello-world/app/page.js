@@ -38,6 +38,7 @@ import Tooltip from "@mui/material/Tooltip";
 import Autocomplete from "@mui/material/Autocomplete";
 import Chip from "@mui/material/Chip";
 import DescriptionIcon from "@mui/icons-material/Description";
+import RefreshIcon from "@mui/icons-material/Refresh";
 import Badge from "@mui/material/Badge";
 import Menu from "@mui/material/Menu";
 import { GREENHOUSE_COMPANIES, COMPANY_CATEGORIES } from "../lib/greenhouse/companies";
@@ -1146,27 +1147,42 @@ export default function Home() {
     }
   }
 
+  // Fetch Gmail messages from the server and match them to applications.
+  // Used both by the icon click handler and by the periodic auto-refresh.
+  async function loadGmailMessages() {
+    try {
+      const res = await fetch("/api/gmail/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ maxResults: 200 }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const { matchMessagesToApplications } = await import("../lib/gmail/emailUtils");
+      // threshold=5: requires at least a partial company name match (+10 max) or title overlap
+      const matched = matchMessagesToApplications(data.messages || [], applicationData, 5);
+      setGmailMessages(matched);
+    } catch {}
+  }
+
   async function handleOpenGmailMenu(e) {
     setGmailAnchorEl(e.currentTarget);
     if (gmailMessages.length > 0) return; // already loaded
     setGmailLoading(true);
-    try {
-      const companyNames = [...new Set(applicationData.map((a) => a.company).filter(Boolean))];
-      const res = await fetch("/api/gmail/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ companyNames, maxResults: 200 }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const { matchMessagesToApplications } = await import("../lib/gmail/emailUtils");
-        // threshold=5: requires at least a partial company name match (+10 max) or title overlap
-        const matched = matchMessagesToApplications(data.messages || [], applicationData, 5);
-        setGmailMessages(matched);
-      }
-    } catch {}
+    await loadGmailMessages();
     setGmailLoading(false);
   }
+
+  // Background refresh: fetch Gmail once after the user's applications load,
+  // then every 30 minutes while the tab is open. Skipped when not signed in
+  // or when there are no applications to filter against.
+  useEffect(() => {
+    if (!currentUser || applicationData.length === 0) return;
+    loadGmailMessages();
+    const id = setInterval(loadGmailMessages, 60 * 1000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser, applicationData.length]);
 
   // Hydrate UI layout prefs (frozen-column widths + FAB position) once on mount.
   useEffect(() => {
@@ -3102,13 +3118,20 @@ export default function Home() {
               >
                 <Box sx={{ px: 2, py: 1, borderBottom: "1px solid #eceff1", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <Box sx={{ fontWeight: 600 }}>Job emails</Box>
-                  <Box
-                    component="button"
-                    onClick={() => { setGmailMessages([]); handleOpenGmailMenu({ currentTarget: gmailAnchorEl }); }}
-                    sx={{ fontSize: "0.75rem", color: "#1976d2", background: "none", border: "none", cursor: "pointer", p: 0 }}
-                  >
-                    Refresh
-                  </Box>
+                  <Tooltip title="Refresh">
+                    <IconButton
+                      size="small"
+                      onClick={async () => {
+                        setGmailLoading(true);
+                        await loadGmailMessages();
+                        setGmailLoading(false);
+                      }}
+                      disabled={gmailLoading}
+                      aria-label="Refresh job emails"
+                    >
+                      <RefreshIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
                 </Box>
                 {gmailLoading ? (
                   <Box sx={{ px: 2, py: 3, color: "#78909c", fontSize: "0.85rem", textAlign: "center" }}>Loading…</Box>
