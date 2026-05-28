@@ -70,10 +70,11 @@ const JOB_SIGNAL_WORDS = [
 ];
 
 export function scoreMessageForApplication(message, application) {
-  const { subject = "", from = "", snippet = "" } = message;
+  const { subject = "", from = "", snippet = "", body = "" } = message;
   const fromNorm = normalize(from);
   const subjectNorm = normalize(subject);
-  const searchableText = normalize(`${subject} ${from} ${snippet}`);
+  // Include body (first 2000 chars) alongside subject/from/snippet for company matching
+  const searchableText = normalize(`${subject} ${from} ${snippet} ${body.slice(0, 2000)}`);
 
   let score = 0;
 

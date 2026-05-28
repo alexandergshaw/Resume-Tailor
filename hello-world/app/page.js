@@ -39,6 +39,7 @@ import Autocomplete from "@mui/material/Autocomplete";
 import Chip from "@mui/material/Chip";
 import DescriptionIcon from "@mui/icons-material/Description";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import Badge from "@mui/material/Badge";
 import Menu from "@mui/material/Menu";
 import { GREENHOUSE_COMPANIES, COMPANY_CATEGORIES } from "../lib/greenhouse/companies";
@@ -301,6 +302,7 @@ export default function Home() {
   const [gmailAnchorEl, setGmailAnchorEl] = useState(null);
   const [gmailMessages, setGmailMessages] = useState([]);
   const [gmailLoading, setGmailLoading] = useState(false);
+  const [highlightedAppId, setHighlightedAppId] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [mainTab, setMainTab] = useState("applying");
   const [applicationData, setApplicationData] = useState([]);
@@ -3159,6 +3161,27 @@ export default function Home() {
                               {chip.label}
                             </Box>
                           )}
+                          {application && (
+                            <Tooltip title={`Go to ${application.company} row`}>
+                              <IconButton
+                                size="small"
+                                sx={{ flexShrink: 0, p: 0.25 }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setGmailAnchorEl(null);
+                                  setMainTab("interviewing");
+                                  setHighlightedAppId(application.id);
+                                  setTimeout(() => {
+                                    const row = document.querySelector(`[data-app-id="${application.id}"]`);
+                                    if (row) row.scrollIntoView({ behavior: "smooth", block: "center" });
+                                  }, 120);
+                                  setTimeout(() => setHighlightedAppId(null), 2500);
+                                }}
+                              >
+                                <OpenInNewIcon sx={{ fontSize: 14 }} />
+                              </IconButton>
+                            </Tooltip>
+                          )}
                         </Box>
                         <Box sx={{ display: "flex", gap: 1, alignItems: "center", mt: 0.25 }}>
                           {application && (
@@ -3499,6 +3522,7 @@ export default function Home() {
             appDialog={appDialog}
             loadCommunicationsForApp={loadCommunicationsForApp}
             FormattedContent={FormattedContent}
+            highlightedAppId={highlightedAppId}
           />
         )}
 

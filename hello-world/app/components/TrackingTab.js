@@ -88,6 +88,7 @@ export default function TrackingTab({
   appDialog,
   loadCommunicationsForApp,
   FormattedContent,
+  highlightedAppId,
 }) {
   return (
     <section className={styles.tabPanel}>
@@ -256,6 +257,7 @@ export default function TrackingTab({
                   return (
                     <TableRow
                       key={app.id}
+                      data-app-id={app.id}
                       hover
                       onClick={(e) => {
                         if (e.target.closest("a, button, input, textarea, select, [role='button']")) {
@@ -263,7 +265,14 @@ export default function TrackingTab({
                         }
                         openEditApplicationDialog(app);
                       }}
-                      sx={{ cursor: "pointer" }}
+                      sx={{
+                        cursor: "pointer",
+                        ...(highlightedAppId === app.id && {
+                          outline: "2px solid #1976d2",
+                          outlineOffset: "-2px",
+                          backgroundColor: "#e3f2fd !important",
+                        }),
+                      }}
                     >
                       <TableCell
                         sx={{
