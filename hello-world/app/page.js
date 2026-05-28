@@ -3162,7 +3162,7 @@ export default function Home() {
                             </Box>
                           )}
                           {application && (
-                            <Tooltip title={`Go to ${application.company} row`}>
+                            <Tooltip title={`Go to ${application.positions?.company ?? application.company} row`}>
                               <IconButton
                                 size="small"
                                 sx={{ flexShrink: 0, p: 0.25 }}
@@ -3186,7 +3186,7 @@ export default function Home() {
                         <Box sx={{ display: "flex", gap: 1, alignItems: "center", mt: 0.25 }}>
                           {application && (
                             <Box sx={{ fontSize: "0.72rem", fontWeight: 600, color: "#1976d2", bgcolor: "#e3f2fd", px: 0.75, py: 0.25, borderRadius: 1, flexShrink: 0 }}>
-                              {application.company}
+                              {application.positions?.company ?? application.company}
                             </Box>
                           )}
                           <Box sx={{ color: "#546e7a", fontSize: "0.75rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{message.from}</Box>

@@ -89,7 +89,7 @@ export function scoreMessageForApplication(message, application) {
   // --- Positive signals ---
 
   // Company name match in any part of the message
-  const company = normalize(application.company || "");
+  const company = normalize(application.positions?.company || application.company || "");
   if (company && company.length > 2) {
     const companyTokens = tokenize(company);
     const matched = companyTokens.filter((t) => searchableText.includes(t));
@@ -107,7 +107,7 @@ export function scoreMessageForApplication(message, application) {
   }
 
   // Job title token overlap with subject
-  const jobTitle = normalize(application.job_title || application.title || "");
+  const jobTitle = normalize(application.positions?.title || application.job_title || application.title || "");
   if (jobTitle) {
     const titleTokens = tokenize(jobTitle);
     const subjectTokens = tokenize(subjectNorm);
