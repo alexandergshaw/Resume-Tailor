@@ -108,14 +108,22 @@ export async function getAuthenticatedClient(userId, redirectUri) {
 export async function fetchJobRelatedMessages(auth, companyNames = [], maxResults = 50) {
   const gmail = google.gmail({ version: "v1", auth });
 
-  // Build a query covering common recruiter / job correspondence signals
-  const companyQuery =
-    companyNames.length > 0
-      ? companyNames.map((c) => `"${c}"`).join(" OR ")
-      : "";
-
   const baseQuery =
     "subject:(application OR interview OR offer OR recruiter OR position OR opportunity OR hiring OR job)";
+
+  // Cap company query length to avoid Gmail query limits (~500 chars safe)
+  let companyQuery = "";
+  if (companyNames.length > 0) {
+    const parts = [];
+    let len = 0;
+    for (const c of companyNames) {
+      const part = `"${c}"`;
+      if (len + part.length > 400) break;
+      parts.push(part);
+      len += part.length + 4; // " OR "
+    }
+    companyQuery = parts.join(" OR ");
+  }
 
   const query = companyQuery ? `(${baseQuery}) OR (${companyQuery})` : baseQuery;
 
@@ -127,29 +135,41 @@ export async function fetchJobRelatedMessages(auth, companyNames = [], maxResult
 
   const messages = listRes.data.messages || [];
 
-  const results = await Promise.all(
-    messages.map(async (msg) => {
-      const detail = await gmail.users.messages.get({
-        userId: "me",
-        id: msg.id,
-        format: "metadata",
-        metadataHeaders: ["Subject", "From", "Date"],
-      });
+  // Fetch details with concurrency cap (5 at a time) to avoid rate-limit 500s
+  const CONCURRENCY = 5;
+  const results = [];
+  for (let i = 0; i < messages.length; i += CONCURRENCY) {
+    const batch = messages.slice(i, i + CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map(async (msg) => {
+        try {
+          const detail = await gmail.users.messages.get({
+            userId: "me",
+            id: msg.id,
+            format: "metadata",
+            metadataHeaders: ["Subject", "From", "Date"],
+          });
 
-      const headers = detail.data.payload?.headers || [];
-      const get = (name) =>
-        headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value || "";
+          const headers = detail.data.payload?.headers || [];
+          const get = (name) =>
+            headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value || "";
 
-      return {
-        id: msg.id,
-        threadId: msg.threadId,
-        subject: get("Subject"),
-        from: get("From"),
-        date: get("Date"),
-        snippet: detail.data.snippet || "",
-      };
-    }),
-  );
+          return {
+            id: msg.id,
+            threadId: msg.threadId,
+            subject: get("Subject"),
+            from: get("From"),
+            date: get("Date"),
+            snippet: detail.data.snippet || "",
+          };
+        } catch {
+          // Skip messages that fail individually
+          return null;
+        }
+      }),
+    );
+    results.push(...batchResults.filter(Boolean));
+  }
 
   return results;
 }

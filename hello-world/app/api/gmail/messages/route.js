@@ -45,9 +45,9 @@ export async function POST(request) {
     const messages = await fetchJobRelatedMessages(auth, companyNames, maxResults);
     return NextResponse.json({ messages });
   } catch (err) {
-    console.error("Gmail messages fetch error:", err);
+    console.error("Gmail messages fetch error:", err?.message || err, err?.stack);
     return NextResponse.json(
-      { error: "Failed to fetch Gmail messages." },
+      { error: "Failed to fetch Gmail messages.", detail: err?.message },
       { status: 500 },
     );
   }
