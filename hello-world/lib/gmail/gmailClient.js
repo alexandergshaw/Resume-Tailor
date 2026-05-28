@@ -160,22 +160,40 @@ export async function fetchJobRelatedMessages(auth, opts = {}) {
           const get = (name) =>
             headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value || "";
 
-          // Recursively extract plain-text body from MIME tree (first match wins)
-          function extractPlainText(part) {
-            if (!part) return "";
+          // Recursively collect body parts from MIME tree.
+          // Prefers text/plain; falls back to text/html (tags stripped) if none found.
+          function collectPart(part, plain, html) {
+            if (!part) return;
             if (part.mimeType === "text/plain" && part.body?.data) {
-              return Buffer.from(part.body.data, "base64").toString("utf-8");
+              plain.push(Buffer.from(part.body.data, "base64").toString("utf-8"));
+            } else if (part.mimeType === "text/html" && part.body?.data) {
+              html.push(Buffer.from(part.body.data, "base64").toString("utf-8"));
             }
             if (part.parts) {
-              for (const child of part.parts) {
-                const text = extractPlainText(child);
-                if (text) return text;
-              }
+              for (const child of part.parts) collectPart(child, plain, html);
             }
-            return "";
           }
 
-          const bodyText = extractPlainText(detail.data.payload).slice(0, 2000);
+          const plainParts = [], htmlParts = [];
+          collectPart(detail.data.payload, plainParts, htmlParts);
+
+          let bodyText = "";
+          if (plainParts.length > 0) {
+            bodyText = plainParts.join(" ");
+          } else if (htmlParts.length > 0) {
+            // Strip HTML tags and decode common entities for plain-text matching
+            bodyText = htmlParts.join(" ")
+              .replace(/<[^>]+>/g, " ")
+              .replace(/&nbsp;/g, " ")
+              .replace(/&amp;/g, "&")
+              .replace(/&lt;/g, "<")
+              .replace(/&gt;/g, ">")
+              .replace(/&quot;/g, '"')
+              .replace(/&#39;/g, "'")
+              .replace(/\s+/g, " ")
+              .trim();
+          }
+          bodyText = bodyText.slice(0, 4000);
 
           return {
             id: msg.id,

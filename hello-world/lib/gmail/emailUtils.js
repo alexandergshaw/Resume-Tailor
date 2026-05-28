@@ -279,10 +279,16 @@ const CLASSIFICATION_RULES = [
 ];
 
 export function classifyMessage(message) {
-  const { subject = "", snippet = "", body = "" } = message;
-  // Lowercase only — do NOT normalize (stripping punctuation would destroy
-  // apostrophes in "won't", "aren't", etc. which the patterns rely on).
-  const text = `${subject} ${snippet} ${body.slice(0, 2000)}`.toLowerCase();
+  const { subject = "", body = "" } = message;
+  // Use subject + body (not snippet — snippet is truncated at ~200 chars and
+  // rejection phrases often appear later in the email body).
+  // Lowercase only — do NOT normalize; stripping punctuation destroys
+  // apostrophes in "won't", "aren't", etc. that the patterns rely on.
+  // Normalize curly/smart apostrophes (U+2018/U+2019) to straight (U+0027)
+  // so patterns like won'?t match regardless of email client encoding.
+  const text = `${subject} ${body.slice(0, 4000)}`
+    .toLowerCase()
+    .replace(/[\u2018\u2019]/g, "'");
 
   for (const { type, patterns } of CLASSIFICATION_RULES) {
     if (patterns.some((re) => re.test(text))) return type;
