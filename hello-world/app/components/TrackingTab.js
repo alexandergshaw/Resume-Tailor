@@ -329,6 +329,7 @@ export default function TrackingTab({
                               + Stage
                             </Button>
                           </Box>
+                          {stages.length > 0 ? (
                             <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
                               {stages.slice(0, 2).map((stage) => {
                                 const stageLabel = `${stage.stage_name || STAGE_TYPE_LABELS[stage.stage_type] || stage.stage_type}${stage.outcome && stage.outcome !== "pending" ? ` · ${stage.outcome}` : ""}`;
