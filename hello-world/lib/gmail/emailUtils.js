@@ -219,7 +219,8 @@ const CLASSIFICATION_RULES = [
     patterns: [
       /interview\s+(invitation|request|scheduled|confirmed|reminder)/,
       /invit(e|ing|ation)\s+.{0,40}\s*interview/,
-      /schedule\s+(an?\s+)?interview/,
+      // Require direct/present-tense scheduling intent — not "will reach out to schedule"
+      /(let'?s|please|i'?d\s+like\s+to|we'?d\s+like\s+to|want\s+to|ready\s+to)\s+schedule\s+(an?\s+)?interview/,
       /we\s+(would\s+like|want)\s+to\s+(meet|speak|chat|talk|connect)\s+with\s+you/,
       /phone\s+(screen|call|interview)/,
       /video\s+(call|interview|meeting)/,
