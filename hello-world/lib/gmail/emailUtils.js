@@ -206,9 +206,9 @@ export function formatMessageDate(dateStr) {
  *   "interview"     — interview invitation or scheduling request
  *   null            — unable to classify
  *
- * Uses subject + snippet text only (no full body needed).
+ * Searches subject, snippet, and body (first 2000 chars fetched by gmailClient).
  *
- * @param {{ subject?: string, snippet?: string }} message
+ * @param {{ subject?: string, snippet?: string, body?: string }} message
  * @returns {"confirmation" | "rejection" | "interview" | null}
  */
 
@@ -234,14 +234,25 @@ const CLASSIFICATION_RULES = [
   {
     type: "rejection",
     patterns: [
+      // "we won't be moving forward" / "will not be proceeding"
       /we\s+(will\s+not|won'?t|are\s+not|aren'?t)\s+be?\s+(moving|proceeding|continuing)/,
-      /not\s+(selected|moving\s+forward|a\s+(good\s+)?fit|chosen|advancing)/,
+      // "decided not to move forward" (Reddit style)
+      /decided\s+not\s+to\s+(move\s+forward|proceed|continue)/,
+      // "have decided to move forward with other candidates"
       /we\s+have\s+(decided|chosen)\s+to\s+(pursue|move\s+forward\s+with)\s+other\s+(candidates|applicants)/,
+      // "not moving forward" / "not selected" / "not a fit"
+      /not\s+(selected|moving\s+forward|a\s+(good\s+)?fit|chosen|advancing)/,
+      // "regret to inform you"
       /regret\s+to\s+(inform|let\s+you\s+know|tell)/,
-      /unfortunately\s+.{0,60}\s*(not|no\s+longer)/,
+      // "unfortunately, we won't be moving" — dot-all match across punctuation
+      /unfortunately[,.]?\s+we\s+(won'?t|will\s+not|are\s+not)/,
+      /unfortunately[\s\S]{0,80}(not\s+moving|won'?t\s+be|will\s+not\s+be)/,
+      // "position has been filled/closed"
       /position\s+has\s+been\s+(filled|closed)/,
       /we\s+(have\s+)?(closed|filled)\s+the\s+position/,
-      /after\s+careful\s+(consideration|review).{0,60}(not|other)/,
+      // "after careful consideration … not"
+      /after\s+careful(ly)?\s+(consideration|review|considering)[\s\S]{0,120}(not|other\s+candidates)/,
+      // "wish you the best in your search"
       /wish\s+you\s+(the\s+best|luck|well)\s+in\s+your\s+(search|future)/,
       /keep\s+your\s+(resume|profile)\s+on\s+file/,
     ],
@@ -255,13 +266,23 @@ const CLASSIFICATION_RULES = [
       /successfully\s+(applied|submitted|received)/,
       /your\s+application\s+(is|has\s+been)\s+(received|submitted|under\s+review|in\s+review)/,
       /we\s+will\s+(review|be\s+in\s+touch|follow\s+up)/,
+      // "the time you took to apply" (Pinterest-style acknowledgement)
+      /time\s+you\s+took\s+to\s+apply/,
+      // "we are (carefully) reviewing (each|your) application"
+      /we\s+are\s+(carefully\s+)?reviewing\s+(each|your)\s+application/,
+      // "appreciate your interest" paired with apply context
+      /appreciate\s+(the\s+time|your\s+interest).{0,60}appl(y|ied|ication)/,
+      // "thank you for your interest" + apply in same message (Pinterest outro)
+      /thank\s+you\s+for\s+your\s+interest.{0,200}appl(y|ied|ication)/s,
     ],
   },
 ];
 
 export function classifyMessage(message) {
-  const { subject = "", snippet = "" } = message;
-  const text = normalize(`${subject} ${snippet}`);
+  const { subject = "", snippet = "", body = "" } = message;
+  // Include up to 2000 chars of body so rejection/interview phrases buried past the
+  // snippet boundary are still reachable without the full email in memory.
+  const text = normalize(`${subject} ${snippet} ${body.slice(0, 2000)}`);
 
   for (const { type, patterns } of CLASSIFICATION_RULES) {
     if (patterns.some((re) => re.test(text))) return type;

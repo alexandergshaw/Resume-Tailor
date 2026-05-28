@@ -153,13 +153,29 @@ export async function fetchJobRelatedMessages(auth, opts = {}) {
           const detail = await gmail.users.messages.get({
             userId: "me",
             id: msg.id,
-            format: "metadata",
-            metadataHeaders: ["Subject", "From", "Date"],
+            format: "full",
           });
 
           const headers = detail.data.payload?.headers || [];
           const get = (name) =>
             headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value || "";
+
+          // Recursively extract plain-text body from MIME tree (first match wins)
+          function extractPlainText(part) {
+            if (!part) return "";
+            if (part.mimeType === "text/plain" && part.body?.data) {
+              return Buffer.from(part.body.data, "base64").toString("utf-8");
+            }
+            if (part.parts) {
+              for (const child of part.parts) {
+                const text = extractPlainText(child);
+                if (text) return text;
+              }
+            }
+            return "";
+          }
+
+          const bodyText = extractPlainText(detail.data.payload).slice(0, 2000);
 
           return {
             id: msg.id,
@@ -168,6 +184,7 @@ export async function fetchJobRelatedMessages(auth, opts = {}) {
             from: get("From"),
             date: get("Date"),
             snippet: detail.data.snippet || "",
+            body: bodyText,
           };
         } catch {
           // Skip messages that fail individually
