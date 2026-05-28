@@ -9,8 +9,6 @@ const GMAIL_SCOPES = [
 
 const TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 const REDIS_TOKEN_PREFIX = "gmail_tokens:";
-const INBOX_CACHE_TTL_SECONDS = 15 * 60; // 15 minutes
-const INBOX_CACHE_PREFIX = "gmail_inbox:";
 
 /**
  * Build an OAuth2 client from environment credentials.
@@ -44,20 +42,6 @@ export function getAuthUrl(redirectUri, state) {
 /** Redis key for a user's Gmail tokens */
 function tokenKey(userId) {
   return `${REDIS_TOKEN_PREFIX}${userId}`;
-}
-
-/** Redis key for a user's cached inbox results */
-function inboxCacheKey(userId) {
-  return `${INBOX_CACHE_PREFIX}${userId}`;
-}
-
-/** Delete the inbox cache for a user (called on force refresh). */
-export async function clearInboxCache(userId) {
-  const { kvRestApiUrl, kvRestApiToken } = getServerEnv();
-  if (!kvRestApiUrl || !kvRestApiToken) return;
-  await fetch(`${kvRestApiUrl}/del/${inboxCacheKey(userId)}`, {
-    headers: { Authorization: `Bearer ${kvRestApiToken}` },
-  });
 }
 
 /** Persist tokens for a user (access_token, refresh_token, expiry_date). */
@@ -114,96 +98,78 @@ export async function getAuthenticatedClient(userId, redirectUri) {
 }
 
 /**
- * Fetch Gmail messages related to job applications.
+ * Fetch Gmail messages whose subjects/bodies mention job-related keywords.
+ * Returns an array of simplified message objects.
  *
  * @param {import('googleapis').Auth.OAuth2Client} auth
- * @param {string[]} companyNames - tracked company names to use as primary filter
- * @param {object} [opts]
- * @param {number}  [opts.maxResults=25]  - max messages to return per page
- * @param {string}  [opts.pageToken]       - Gmail page token for cursor pagination
- * @param {string}  [opts.userId]          - user ID for Redis caching
- * @param {boolean} [opts.force=false]     - bypass Redis cache
- * @returns {Promise<{ messages: object[], nextPageToken: string|null }>}
+ * @param {string[]} companyNames - filter messages mentioning these companies
+ * @param {number} [maxResults=50]
  */
-export async function fetchJobRelatedMessages(auth, companyNames = [], opts = {}) {
-  const { maxResults = 25, pageToken = null, userId = null, force = false } = opts;
-
-  // Serve from Redis cache on first-page requests (not paginated, not forced)
-  if (userId && !force && !pageToken) {
-    const cached = await getCached(inboxCacheKey(userId));
-    if (cached) {
-      try {
-        return typeof cached === "string" ? JSON.parse(cached) : cached;
-      } catch { /* fall through to live fetch */ }
-    }
-  }
-
+export async function fetchJobRelatedMessages(auth, companyNames = [], maxResults = 50) {
   const gmail = google.gmail({ version: "v1", auth });
 
-  // Build query: company-first (tight) when we have tracked companies,
-  // falling back to broad job-signal subject search.
-  let query;
+  const baseQuery =
+    "subject:(application OR interview OR offer OR recruiter OR position OR opportunity OR hiring OR job)";
+
+  // Cap company query length to avoid Gmail query limits (~500 chars safe)
+  let companyQuery = "";
   if (companyNames.length > 0) {
-    // Build company filter, capped at ~400 chars to stay within Gmail query limits
-    const companyParts = [];
+    const parts = [];
     let len = 0;
     for (const c of companyNames) {
       const part = `"${c}"`;
       if (len + part.length > 400) break;
-      companyParts.push(part);
+      parts.push(part);
       len += part.length + 4; // " OR "
     }
-    // Require company mention AND at least one job-signal word (much tighter than OR)
-    query = `(${companyParts.join(" OR ")}) (application OR interview OR offer OR recruiter OR position OR opportunity OR hiring)`;
-  } else {
-    query = "subject:(application OR interview OR offer OR recruiter OR position OR opportunity OR hiring OR job)";
+    companyQuery = parts.join(" OR ");
   }
+
+  const query = companyQuery ? `(${baseQuery}) OR (${companyQuery})` : baseQuery;
 
   const listRes = await gmail.users.messages.list({
     userId: "me",
     q: query,
     maxResults,
-    ...(pageToken ? { pageToken } : {}),
   });
 
-  const stubs = listRes.data.messages || [];
-  const nextPageToken = listRes.data.nextPageToken || null;
+  const messages = listRes.data.messages || [];
 
-  // Fetch all message metadata in parallel — metadata-only requests are lightweight
-  const settled = await Promise.allSettled(
-    stubs.map((msg) =>
-      gmail.users.messages.get({
-        userId: "me",
-        id: msg.id,
-        format: "metadata",
-        metadataHeaders: ["Subject", "From", "Date"],
+  // Fetch details with concurrency cap (5 at a time) to avoid rate-limit 500s
+  const CONCURRENCY = 5;
+  const results = [];
+  for (let i = 0; i < messages.length; i += CONCURRENCY) {
+    const batch = messages.slice(i, i + CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map(async (msg) => {
+        try {
+          const detail = await gmail.users.messages.get({
+            userId: "me",
+            id: msg.id,
+            format: "metadata",
+            metadataHeaders: ["Subject", "From", "Date"],
+          });
+
+          const headers = detail.data.payload?.headers || [];
+          const get = (name) =>
+            headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value || "";
+
+          return {
+            id: msg.id,
+            threadId: msg.threadId,
+            subject: get("Subject"),
+            from: get("From"),
+            date: get("Date"),
+            snippet: detail.data.snippet || "",
+          };
+        } catch {
+          // Skip messages that fail individually
+          return null;
+        }
       }),
-    ),
-  );
-
-  const messages = settled
-    .map((r, i) => {
-      if (r.status === "rejected") return null;
-      const headers = r.value.data.payload?.headers || [];
-      const get = (name) =>
-        headers.find((h) => h.name.toLowerCase() === name.toLowerCase())?.value || "";
-      return {
-        id: stubs[i].id,
-        threadId: stubs[i].threadId,
-        subject: get("Subject"),
-        from: get("From"),
-        date: get("Date"),
-        snippet: r.value.data.snippet || "",
-      };
-    })
-    .filter(Boolean);
-
-  const result = { messages, nextPageToken };
-
-  // Cache first-page results per user (15 min TTL)
-  if (userId && !pageToken) {
-    await setCached(inboxCacheKey(userId), JSON.stringify(result), INBOX_CACHE_TTL_SECONDS);
+    );
+    results.push(...batchResults.filter(Boolean));
   }
 
-  return result;
+  return results;
 }

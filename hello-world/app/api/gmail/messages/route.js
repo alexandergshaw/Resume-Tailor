@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { getAuthenticatedClient, fetchJobRelatedMessages, clearInboxCache } from "@/lib/gmail/gmailClient";
+import { getAuthenticatedClient, fetchJobRelatedMessages } from "@/lib/gmail/gmailClient";
 
 /**
  * POST /api/gmail/messages
  *
  * Fetches job-related Gmail messages for the current user.
- * Body: { companyNames?: string[], maxResults?: number, pageToken?: string, force?: boolean }
+ * Body (optional): { companyNames: string[], maxResults: number }
  *
- * Response: { messages: Array<{ id, threadId, subject, from, date, snippet }>, nextPageToken: string|null }
+ * Response: { messages: Array<{ id, threadId, subject, from, date, snippet }> }
  */
 export async function POST(request) {
   const supabase = await createClient();
@@ -28,7 +28,7 @@ export async function POST(request) {
     // body is optional
   }
 
-  const { companyNames = [], maxResults = 25, pageToken = null, force = false } = body;
+  const { companyNames = [], maxResults = 50 } = body;
 
   const { origin } = new URL(request.url);
   const redirectUri = `${origin}/api/gmail/oauth2callback`;
@@ -41,19 +41,9 @@ export async function POST(request) {
     );
   }
 
-  // Bust Redis cache before fetching if forced
-  if (force) {
-    await clearInboxCache(user.id);
-  }
-
   try {
-    const result = await fetchJobRelatedMessages(auth, companyNames, {
-      maxResults,
-      pageToken,
-      userId: user.id,
-      force,
-    });
-    return NextResponse.json(result);
+    const messages = await fetchJobRelatedMessages(auth, companyNames, maxResults);
+    return NextResponse.json({ messages });
   } catch (err) {
     console.error("Gmail messages fetch error:", err?.message || err, err?.stack);
     return NextResponse.json(
