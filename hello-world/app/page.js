@@ -296,6 +296,10 @@ export default function Home() {
   const [notifications, setNotifications] = useState([]);
   const [notifUnreadCount, setNotifUnreadCount] = useState(0);
   const [notifAnchorEl, setNotifAnchorEl] = useState(null);
+  // Gmail inbox panel state.
+  const [gmailAnchorEl, setGmailAnchorEl] = useState(null);
+  const [gmailMessages, setGmailMessages] = useState([]);
+  const [gmailLoading, setGmailLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
   const [mainTab, setMainTab] = useState("applying");
   const [applicationData, setApplicationData] = useState([]);
@@ -1140,6 +1144,27 @@ export default function Home() {
     if (notif?.related_application_id || notif?.kind === "auto_tailor") {
       setMainTab("interviewing");
     }
+  }
+
+  async function handleOpenGmailMenu(e) {
+    setGmailAnchorEl(e.currentTarget);
+    if (gmailMessages.length > 0) return; // already loaded
+    setGmailLoading(true);
+    try {
+      const companyNames = [...new Set(applicationData.map((a) => a.company).filter(Boolean))];
+      const res = await fetch("/api/gmail/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ companyNames, maxResults: 30 }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const { matchMessagesToApplications } = await import("../lib/gmail/emailUtils");
+        const matched = matchMessagesToApplications(data.messages || [], applicationData);
+        setGmailMessages(matched);
+      }
+    } catch {}
+    setGmailLoading(false);
   }
 
   // Hydrate UI layout prefs (frozen-column widths + FAB position) once on mount.
@@ -3053,7 +3078,65 @@ export default function Home() {
             </p>
           </Box>
           {currentUser && (
-            <Box sx={{ pt: 0.5, flexShrink: 0 }}>
+            <Box sx={{ pt: 0.5, flexShrink: 0, display: "flex", alignItems: "center" }}>
+              <Tooltip title="Job emails">
+                <IconButton
+                  size="large"
+                  aria-label="Job-related emails"
+                  onClick={handleOpenGmailMenu}
+                >
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+                    <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path>
+                  </svg>
+                </IconButton>
+              </Tooltip>
+              <Menu
+                anchorEl={gmailAnchorEl}
+                open={Boolean(gmailAnchorEl)}
+                onClose={() => setGmailAnchorEl(null)}
+                slotProps={{ paper: { sx: { maxWidth: 420, width: 400 } } }}
+                anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+                transformOrigin={{ vertical: "top", horizontal: "right" }}
+              >
+                <Box sx={{ px: 2, py: 1, borderBottom: "1px solid #eceff1", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <Box sx={{ fontWeight: 600 }}>Job emails</Box>
+                  <Box
+                    component="button"
+                    onClick={() => { setGmailMessages([]); handleOpenGmailMenu({ currentTarget: gmailAnchorEl }); }}
+                    sx={{ fontSize: "0.75rem", color: "#1976d2", background: "none", border: "none", cursor: "pointer", p: 0 }}
+                  >
+                    Refresh
+                  </Box>
+                </Box>
+                {gmailLoading ? (
+                  <Box sx={{ px: 2, py: 3, color: "#78909c", fontSize: "0.85rem", textAlign: "center" }}>Loading…</Box>
+                ) : gmailMessages.length === 0 ? (
+                  <Box sx={{ px: 2, py: 3, color: "#78909c", fontSize: "0.85rem", textAlign: "center" }}>No matching job emails found.</Box>
+                ) : (
+                  gmailMessages.map(({ message, application, score: _score }) => (
+                    <MenuItem
+                      key={message.id}
+                      sx={{ whiteSpace: "normal", alignItems: "flex-start", py: 1, gap: 1, borderBottom: "1px solid #f5f5f5" }}
+                    >
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Box sx={{ fontWeight: 600, fontSize: "0.85rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{message.subject || "(no subject)"}</Box>
+                        <Box sx={{ display: "flex", gap: 1, alignItems: "center", mt: 0.25 }}>
+                          {application && (
+                            <Box sx={{ fontSize: "0.72rem", fontWeight: 600, color: "#1976d2", bgcolor: "#e3f2fd", px: 0.75, py: 0.25, borderRadius: 1, flexShrink: 0 }}>
+                              {application.company}
+                            </Box>
+                          )}
+                          <Box sx={{ color: "#546e7a", fontSize: "0.75rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{message.from}</Box>
+                        </Box>
+                        {message.snippet && (
+                          <Box sx={{ color: "#78909c", fontSize: "0.73rem", mt: 0.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{message.snippet}</Box>
+                        )}
+                      </Box>
+                    </MenuItem>
+                  ))
+                )}
+              </Menu>
               <Tooltip title="Notifications">
                 <IconButton
                   size="large"
