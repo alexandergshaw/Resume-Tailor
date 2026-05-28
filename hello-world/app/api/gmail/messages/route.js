@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getAuthenticatedClient, fetchJobRelatedMessages } from "@/lib/gmail/gmailClient";
-import { matchMessagesToApplications } from "@/lib/gmail/emailUtils";
 import { upsertGmailMessages } from "@/lib/supabase/upsertGmailMessages";
 
 /**
@@ -46,13 +45,8 @@ export async function POST(request) {
   try {
     const messages = await fetchJobRelatedMessages(auth, companyNames, maxResults);
 
-    // Persist matched messages to the DB (fire-and-forget, don't block response)
-    // We need applicationData from the client to score — accept it in the body.
-    if (messages.length > 0 && Array.isArray(body.applicationData)) {
-      const matched = matchMessagesToApplications(messages, body.applicationData, 0);
-      upsertGmailMessages(user.id, matched).catch((e) =>
-        console.error("[gmail/messages] upsert error:", e?.message),
-      );
+    if (messages.length > 0) {
+      await upsertGmailMessages(user.id, messages);
     }
 
     return NextResponse.json({ messages });

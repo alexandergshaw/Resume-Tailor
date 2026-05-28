@@ -1155,7 +1155,7 @@ export default function Home() {
       const res = await fetch("/api/gmail/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ companyNames, maxResults: 200, applicationData }),
+        body: JSON.stringify({ companyNames, maxResults: 200 }),
       });
       if (res.ok) {
         const data = await res.json();
