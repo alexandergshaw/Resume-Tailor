@@ -36,38 +36,78 @@ function tokenize(str) {
 /**
  * Score how well a Gmail message matches a single application.
  *
- * Scoring:
- *  - Company name match in subject/from/snippet: +10 (partial word match counts)
- *  - Job title word overlap with subject: +3 per matching token
- *  - Job-signal keywords in subject: +2 per hit
+ * Scoring (positive):
+ *  +10  Company name match in subject/from/snippet (proportional for multi-word names)
+ *  +5   Subject contains "your application" — strong personal signal
+ *  +4   Subject contains high-signal phrases (interview, offer, next steps, etc.)
+ *  +3   Per job-title token that appears in subject
+ *  +2   Any other job-signal word in subject
  *
- * Returns a numeric score (0 = no match).
+ * Scoring (negative — these reduce score and can make message drop below threshold):
+ *  -6   From address contains "no-reply", "noreply", or "donotreply" — bulk/automated
+ *  -4   From address contains "notifications", "mailer", "bounce", "alert"
+ *  -3   Subject starts with "re:" or "fwd:" (replies, not recruiter outreach)
+ *
+ * Returns a numeric score; messages below threshold in matchMessagesToApplications are dropped.
  */
+
+// Phrases in the FROM that indicate bulk/automated mail (lower relevance)
+const MAILER_PATTERNS = [/\bnotifications?\b/, /\bmailer\b/, /\bbounce\b/, /\balerts?\b/];
+
+// no-reply senders are a strong positive — ATS systems (Greenhouse, Workday, Lever) always use them
+const NOREPLY_PATTERNS = [/\bno.?reply\b/, /\bdonot.?reply\b/];
+
+// High-confidence subject phrases that mean it's about this person's application
+const HIGH_SIGNAL_SUBJECTS = [
+  "your application", "application received", "application update",
+  "application status", "we received your", "thank you for applying",
+  "thank you for your application", "interview invitation", "interview request",
+  "offer letter", "job offer", "next steps", "moving forward",
+];
+
 const JOB_SIGNAL_WORDS = [
   "application", "applied", "interview", "offer", "recruiter",
   "position", "opportunity", "hiring", "job", "role", "candidate",
   "screening", "assessment", "decision", "rejected", "moved forward",
-  "next steps", "background check", "onboarding",
+  "background check", "onboarding",
 ];
 
 export function scoreMessageForApplication(message, application) {
   const { subject = "", from = "", snippet = "" } = message;
-  const searchableText = normalize(`${subject} ${from} ${snippet}`);
+  const fromNorm = normalize(from);
   const subjectNorm = normalize(subject);
+  const searchableText = normalize(`${subject} ${from} ${snippet}`);
 
   let score = 0;
 
-  // Company match
+  // --- Signals ---
+
+  // no-reply senders → ATS systems (Greenhouse, Workday, Lever) — strong positive
+  if (NOREPLY_PATTERNS.some((re) => re.test(fromNorm))) score += 5;
+
+  // generic mailer/notification addresses (unsubscribe-style bulk mail)
+  if (MAILER_PATTERNS.some((re) => re.test(fromNorm))) score -= 4;
+
+  // Reply/forward threads are rarely new recruiter contact
+  if (/^\s*(re|fwd?)\s*:/.test(subjectNorm)) score -= 3;
+
+  // --- Positive signals ---
+
+  // Company name match in any part of the message
   const company = normalize(application.company || "");
   if (company && company.length > 2) {
-    // Check if any word of the company appears in the message
     const companyTokens = tokenize(company);
-    const matchedCompanyTokens = companyTokens.filter((t) =>
-      searchableText.includes(t),
-    );
-    if (matchedCompanyTokens.length > 0) {
-      // Partial match scores proportionally; full match scores full 10
-      score += 10 * (matchedCompanyTokens.length / companyTokens.length);
+    const matched = companyTokens.filter((t) => searchableText.includes(t));
+    if (matched.length > 0) {
+      score += 10 * (matched.length / companyTokens.length);
+    }
+  }
+
+  // "Your application" and similar high-confidence phrases in subject
+  for (const phrase of HIGH_SIGNAL_SUBJECTS) {
+    if (subjectNorm.includes(phrase)) {
+      score += 5;
+      break; // count once
     }
   }
 
@@ -81,11 +121,11 @@ export function scoreMessageForApplication(message, application) {
     }
   }
 
-  // Job signal words in subject
+  // Generic job-signal words in subject
   for (const signal of JOB_SIGNAL_WORDS) {
     if (subjectNorm.includes(signal)) {
       score += 2;
-      break; // only count once per message
+      break; // count once
     }
   }
 

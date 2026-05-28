@@ -1160,8 +1160,8 @@ export default function Home() {
       if (res.ok) {
         const data = await res.json();
         const { matchMessagesToApplications } = await import("../lib/gmail/emailUtils");
-        // threshold=0: show all returned messages, just annotate with best-matching app
-        const matched = matchMessagesToApplications(data.messages || [], applicationData, 0);
+        // threshold=5: requires at least a partial company name match (+10 max) or title overlap
+        const matched = matchMessagesToApplications(data.messages || [], applicationData, 5);
         setGmailMessages(matched);
       }
     } catch {}
