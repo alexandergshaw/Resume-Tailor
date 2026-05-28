@@ -280,9 +280,9 @@ const CLASSIFICATION_RULES = [
 
 export function classifyMessage(message) {
   const { subject = "", snippet = "", body = "" } = message;
-  // Include up to 2000 chars of body so rejection/interview phrases buried past the
-  // snippet boundary are still reachable without the full email in memory.
-  const text = normalize(`${subject} ${snippet} ${body.slice(0, 2000)}`);
+  // Lowercase only — do NOT normalize (stripping punctuation would destroy
+  // apostrophes in "won't", "aren't", etc. which the patterns rely on).
+  const text = `${subject} ${snippet} ${body.slice(0, 2000)}`.toLowerCase();
 
   for (const { type, patterns } of CLASSIFICATION_RULES) {
     if (patterns.some((re) => re.test(text))) return type;
