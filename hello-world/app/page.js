@@ -349,6 +349,11 @@ export default function Home() {
   const [educationEntries, setEducationEntries] = useState([]);
   const [educationOpen, setEducationOpen] = useState(false);
   const [educationCopiedId, setEducationCopiedId] = useState(null);
+
+  // Employment history entries (up to 4) the user can store and copy.
+  const [employmentEntries, setEmploymentEntries] = useState([]);
+  const [employmentOpen, setEmploymentOpen] = useState(false);
+  const [employmentCopiedId, setEmploymentCopiedId] = useState(null);
   const chatInputRef = useRef(null);
   const [appDialog, setAppDialog] = useState({ open: false, rowIndex: null, kind: "jd" });
   const [stageDialog, setStageDialog] = useState(createStageDialogState());
@@ -477,6 +482,7 @@ export default function Home() {
           prefs: {
             referencesOpen,
             educationOpen,
+            employmentOpen,
             appliedSort: interviewSort,
             hideAppliedJobs,
           },
@@ -484,7 +490,7 @@ export default function Home() {
       }).catch(() => {});
     }, 400);
     return () => clearTimeout(handle);
-  }, [referencesOpen, educationOpen, interviewSort, hideAppliedJobs, currentUser]);
+  }, [referencesOpen, educationOpen, employmentOpen, interviewSort, hideAppliedJobs, currentUser]);
 
   // Track auth state + load applied jobs + load stored files
   useEffect(() => {
@@ -516,6 +522,7 @@ export default function Home() {
             const prefs = json?.prefs && typeof json.prefs === "object" ? json.prefs : {};
             if (typeof prefs.referencesOpen === "boolean") setReferencesOpen(prefs.referencesOpen);
             if (typeof prefs.educationOpen === "boolean") setEducationOpen(prefs.educationOpen);
+            if (typeof prefs.employmentOpen === "boolean") setEmploymentOpen(prefs.employmentOpen);
             if (typeof prefs.hideAppliedJobs === "boolean") setHideAppliedJobs(prefs.hideAppliedJobs);
             if (
               prefs.appliedSort &&
@@ -1289,6 +1296,35 @@ export default function Home() {
     } catch {}
   }, [educationEntries]);
 
+  // Hydrate/save stored employment history entries (up to 4).
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("applicationEmployment");
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setEmploymentEntries(
+          parsed
+            .filter((e) => e && typeof e === "object")
+            .map((e) => ({
+              id: typeof e.id === "string" && e.id ? e.id : `emp-${Math.random().toString(36).slice(2, 10)}`,
+              company: String(e.company || ""),
+              title: String(e.title || ""),
+              location: String(e.location || ""),
+              startDate: String(e.startDate || ""),
+              endDate: String(e.endDate || ""),
+              notes: String(e.notes || ""),
+            })),
+        );
+      }
+    } catch {}
+  }, []);
+  useEffect(() => {
+    try {
+      localStorage.setItem("applicationEmployment", JSON.stringify(employmentEntries));
+    } catch {}
+  }, [employmentEntries]);
+
   // Close the chat when clicking outside its panel (but not on the FAB itself).
   useEffect(() => {
     if (!chatOpen) return;
@@ -1429,6 +1465,54 @@ export default function Home() {
     } catch {}
   }
 
+  // Employment history helpers (max 4 entries).
+  function addEmploymentEntry() {
+    if (employmentEntries.length >= 4) return;
+    setEmploymentEntries((prev) => [
+      ...prev,
+      {
+        id: `emp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        company: "",
+        title: "",
+        location: "",
+        startDate: "",
+        endDate: "",
+        notes: "",
+      },
+    ]);
+    setEmploymentOpen(true);
+  }
+  function updateEmploymentEntry(id, field, value) {
+    setEmploymentEntries((prev) =>
+      prev.map((entry) => (entry.id === id ? { ...entry, [field]: value } : entry)),
+    );
+  }
+  function removeEmploymentEntry(id) {
+    setEmploymentEntries((prev) => prev.filter((entry) => entry.id !== id));
+  }
+  function formatEmploymentBlock(entry) {
+    if (!entry) return "";
+    const lines = [];
+    const titleLine = [entry.title, entry.company].filter(Boolean).join(" at ");
+    if (titleLine) lines.push(titleLine);
+    const dateRange = [entry.startDate, entry.endDate].filter(Boolean).join(" – ");
+    const metaBits = [entry.location, dateRange].filter(Boolean).join(" • ");
+    if (metaBits) lines.push(metaBits);
+    if (entry.notes) lines.push(entry.notes);
+    return lines.join("\n");
+  }
+  async function copyEmploymentBlock(entry) {
+    const text = formatEmploymentBlock(entry);
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setEmploymentCopiedId(entry.id);
+      setTimeout(() => {
+        setEmploymentCopiedId((current) => (current === entry.id ? null : current));
+      }, 1500);
+    } catch {}
+  }
+
   // Combined-copy helpers: copy every reference / education entry as one block.
   function formatAllReferences() {
     return references
@@ -1442,8 +1526,15 @@ export default function Home() {
       .filter(Boolean)
       .join("\n\n");
   }
+  function formatAllEmployment() {
+    return employmentEntries
+      .map((entry) => formatEmploymentBlock(entry))
+      .filter(Boolean)
+      .join("\n\n");
+  }
   const [allReferencesCopied, setAllReferencesCopied] = useState(false);
   const [allEducationCopied, setAllEducationCopied] = useState(false);
+  const [allEmploymentCopied, setAllEmploymentCopied] = useState(false);
   async function copyAllReferences() {
     const text = formatAllReferences();
     if (!text) return;
@@ -1460,6 +1551,15 @@ export default function Home() {
       await navigator.clipboard.writeText(text);
       setAllEducationCopied(true);
       setTimeout(() => setAllEducationCopied(false), 1500);
+    } catch {}
+  }
+  async function copyAllEmployment() {
+    const text = formatAllEmployment();
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setAllEmploymentCopied(true);
+      setTimeout(() => setAllEmploymentCopied(false), 1500);
     } catch {}
   }
 
@@ -3334,6 +3434,18 @@ export default function Home() {
           copyAllEducation={copyAllEducation}
           formatAllEducation={formatAllEducation}
           allEducationCopied={allEducationCopied}
+          employmentOpen={employmentOpen}
+          setEmploymentOpen={setEmploymentOpen}
+          employmentEntries={employmentEntries}
+          addEmploymentEntry={addEmploymentEntry}
+          updateEmploymentEntry={updateEmploymentEntry}
+          removeEmploymentEntry={removeEmploymentEntry}
+          copyEmploymentBlock={copyEmploymentBlock}
+          formatEmploymentBlock={formatEmploymentBlock}
+          employmentCopiedId={employmentCopiedId}
+          copyAllEmployment={copyAllEmployment}
+          formatAllEmployment={formatAllEmployment}
+          allEmploymentCopied={allEmploymentCopied}
           renderCopyButton={renderCopyButton}
         />
 
