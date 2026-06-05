@@ -855,8 +855,7 @@ export default function ApplyingControls({
             ) : null}
 
             {employmentEntries.map((entry) => {
-              const headerLabel = entry.title?.trim()
-                || entry.company?.trim()
+              const headerLabel = entry.company?.trim()
                 || "Untitled position";
               const copied = employmentCopiedId === entry.id;
               return (
@@ -922,11 +921,11 @@ export default function ApplyingControls({
                       <TextField
                         fullWidth
                         size="small"
-                        label="Job Title"
-                        value={entry.title}
-                        onChange={(e) => updateEmploymentEntry(entry.id, "title", e.target.value)}
+                        label="Phone"
+                        value={entry.phone}
+                        onChange={(e) => updateEmploymentEntry(entry.id, "phone", e.target.value)}
                       />
-                      {renderCopyButton(`emp:${entry.id}:title`, entry.title)}
+                      {renderCopyButton(`emp:${entry.id}:phone`, entry.phone)}
                     </Box>
                     <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
                       <TextField

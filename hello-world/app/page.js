@@ -1309,7 +1309,7 @@ export default function Home() {
             .map((e) => ({
               id: typeof e.id === "string" && e.id ? e.id : `emp-${Math.random().toString(36).slice(2, 10)}`,
               company: String(e.company || ""),
-              title: String(e.title || ""),
+              phone: String(e.phone || ""),
               location: String(e.location || ""),
               startDate: String(e.startDate || ""),
               endDate: String(e.endDate || ""),
@@ -1473,7 +1473,7 @@ export default function Home() {
       {
         id: `emp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         company: "",
-        title: "",
+        phone: "",
         location: "",
         startDate: "",
         endDate: "",
@@ -1493,8 +1493,8 @@ export default function Home() {
   function formatEmploymentBlock(entry) {
     if (!entry) return "";
     const lines = [];
-    const titleLine = [entry.title, entry.company].filter(Boolean).join(" at ");
-    if (titleLine) lines.push(titleLine);
+    if (entry.company) lines.push(entry.company);
+    if (entry.phone) lines.push(`Phone: ${entry.phone}`);
     const dateRange = [entry.startDate, entry.endDate].filter(Boolean).join(" – ");
     const metaBits = [entry.location, dateRange].filter(Boolean).join(" • ");
     if (metaBits) lines.push(metaBits);
