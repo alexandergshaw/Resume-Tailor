@@ -56,6 +56,18 @@ export default function ApplyingControls({
   copyAllEducation,
   formatAllEducation,
   allEducationCopied,
+  employmentOpen,
+  setEmploymentOpen,
+  employmentEntries,
+  addEmploymentEntry,
+  updateEmploymentEntry,
+  removeEmploymentEntry,
+  copyEmploymentBlock,
+  formatEmploymentBlock,
+  employmentCopiedId,
+  copyAllEmployment,
+  formatAllEmployment,
+  allEmploymentCopied,
   renderCopyButton,
 }) {
   return (
@@ -747,6 +759,231 @@ export default function ApplyingControls({
                 sx={{ textTransform: "none", fontSize: "0.8rem" }}
               >
                 + Add education
+              </Button>
+            </Box>
+          </AccordionDetails>
+        </Accordion>
+      </div>
+
+      <div className={styles.fieldGroup}>
+        <label htmlFor="employment-header" className={styles.label}>
+          Employment History
+        </label>
+        <Accordion
+          disableGutters
+          elevation={0}
+          expanded={employmentOpen}
+          onChange={(_event, expanded) => setEmploymentOpen(expanded)}
+          sx={{
+            border: "1px solid var(--border-strong)",
+            borderRadius: "12px !important",
+            overflow: "hidden",
+            backgroundColor: "var(--bg-surface)",
+            "&::before": { display: "none" },
+          }}
+        >
+          <AccordionSummary
+            aria-controls="employment-content"
+            id="employment-header"
+            expandIcon={(
+              <Box
+                component="span"
+                sx={{
+                  fontSize: "0.95rem",
+                  lineHeight: 1,
+                  color: "var(--text-secondary)",
+                }}
+              >
+                ▾
+              </Box>
+            )}
+            sx={{
+              minHeight: 0,
+              px: 1.75,
+              py: 0.25,
+              "& .MuiAccordionSummary-content": {
+                my: 1,
+                font: "inherit",
+                fontSize: "0.9rem",
+                color: "var(--text-secondary)",
+                fontWeight: 400,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 1,
+              },
+            }}
+          >
+            <Box component="span">
+              {employmentOpen
+                ? `Hide employment${employmentEntries.length ? ` (${employmentEntries.length})` : ""}`
+                : `Show employment${employmentEntries.length ? ` (${employmentEntries.length})` : ""}`}
+            </Box>
+            <Tooltip title={allEmploymentCopied ? "Copied!" : "Copy all employment"}>
+              <span onClick={(e) => { e.stopPropagation(); }} onFocus={(e) => e.stopPropagation()}>
+                <IconButton
+                  size="small"
+                  disabled={!formatAllEmployment()}
+                  onClick={(e) => { e.stopPropagation(); copyAllEmployment(); }}
+                  sx={{ p: 0.5, color: allEmploymentCopied ? "#2e7d32" : "var(--text-secondary)" }}
+                  aria-label="Copy all employment"
+                >
+                  {allEmploymentCopied ? (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  ) : (
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  )}
+                </IconButton>
+              </span>
+            </Tooltip>
+          </AccordionSummary>
+          <AccordionDetails
+            sx={{
+              pt: 1.5,
+              pb: 2,
+              px: 1.75,
+              display: "flex",
+              flexDirection: "column",
+              gap: 1.5,
+              borderTop: "1px solid var(--border)",
+            }}
+          >
+            {employmentEntries.length === 0 ? (
+              <Box sx={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
+                No employment entries saved yet. Add up to 4 past employers to keep their details ready to copy.
+              </Box>
+            ) : null}
+
+            {employmentEntries.map((entry) => {
+              const headerLabel = entry.title?.trim()
+                || entry.company?.trim()
+                || "Untitled position";
+              const copied = employmentCopiedId === entry.id;
+              return (
+                <Box
+                  key={entry.id}
+                  sx={{
+                    border: "1px solid var(--border)",
+                    borderRadius: 2,
+                    p: 1.5,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 1,
+                    backgroundColor: "var(--bg-soft, #fbfdff)",
+                  }}
+                >
+                  <Box
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 1,
+                    }}
+                  >
+                    <Box sx={{ fontWeight: 600, fontSize: "0.9rem" }}>{headerLabel}</Box>
+                    <Box sx={{ display: "flex", gap: 0.75 }}>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => copyEmploymentBlock(entry)}
+                        disabled={!formatEmploymentBlock(entry)}
+                        sx={{ textTransform: "none", fontSize: "0.75rem", py: 0.25, minWidth: 0 }}
+                      >
+                        {copied ? "Copied!" : "Copy"}
+                      </Button>
+                      <Button
+                        size="small"
+                        color="error"
+                        onClick={() => removeEmploymentEntry(entry.id)}
+                        sx={{ textTransform: "none", fontSize: "0.75rem", py: 0.25, minWidth: 0 }}
+                      >
+                        Remove
+                      </Button>
+                    </Box>
+                  </Box>
+                  <Box
+                    sx={{
+                      display: "grid",
+                      gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
+                      gap: 1,
+                    }}
+                  >
+                    <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Company"
+                        value={entry.company}
+                        onChange={(e) => updateEmploymentEntry(entry.id, "company", e.target.value)}
+                      />
+                      {renderCopyButton(`emp:${entry.id}:company`, entry.company)}
+                    </Box>
+                    <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Job Title"
+                        value={entry.title}
+                        onChange={(e) => updateEmploymentEntry(entry.id, "title", e.target.value)}
+                      />
+                      {renderCopyButton(`emp:${entry.id}:title`, entry.title)}
+                    </Box>
+                    <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Location"
+                        value={entry.location}
+                        onChange={(e) => updateEmploymentEntry(entry.id, "location", e.target.value)}
+                      />
+                      {renderCopyButton(`emp:${entry.id}:location`, entry.location)}
+                    </Box>
+                    <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="Start (e.g. Jan 2020)"
+                        value={entry.startDate}
+                        onChange={(e) => updateEmploymentEntry(entry.id, "startDate", e.target.value)}
+                      />
+                      {renderCopyButton(`emp:${entry.id}:startDate`, entry.startDate)}
+                    </Box>
+                    <Box sx={{ display: "flex", gap: 0.5, alignItems: "center" }}>
+                      <TextField
+                        fullWidth
+                        size="small"
+                        label="End (e.g. Mar 2023 or Present)"
+                        value={entry.endDate}
+                        onChange={(e) => updateEmploymentEntry(entry.id, "endDate", e.target.value)}
+                      />
+                      {renderCopyButton(`emp:${entry.id}:endDate`, entry.endDate)}
+                    </Box>
+                  </Box>
+                  <Box sx={{ display: "flex", gap: 0.5, alignItems: "flex-start" }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Notes (responsibilities, achievements)"
+                      value={entry.notes}
+                      onChange={(e) => updateEmploymentEntry(entry.id, "notes", e.target.value)}
+                      multiline
+                      minRows={2}
+                    />
+                    {renderCopyButton(`emp:${entry.id}:notes`, entry.notes, { alignTop: true })}
+                  </Box>
+                </Box>
+              );
+            })}
+
+            <Box>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={addEmploymentEntry}
+                disabled={employmentEntries.length >= 4}
+                sx={{ textTransform: "none", fontSize: "0.8rem" }}
+              >
+                {employmentEntries.length >= 4 ? "Max 4 entries reached" : "+ Add employer"}
               </Button>
             </Box>
           </AccordionDetails>
