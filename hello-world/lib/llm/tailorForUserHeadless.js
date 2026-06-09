@@ -1,5 +1,8 @@
 import mammoth from "mammoth";
-import { generateTailoredResumeDraft } from "@/lib/llm/tailorResume";
+import {
+  generateTailoredResumeDraft,
+  generateTailoredCoverLetterDraft,
+} from "@/lib/llm/tailorResume";
 
 const MAX_RESUME_CHARS = 20000;
 
@@ -63,3 +66,77 @@ export async function tailorResumeHeadless({
     jobTitle: draft.jobTitle || jobTitleHint || "",
   };
 }
+
+/**
+ * Run the cover-letter tailoring pipeline for the cron job (no FormData, no
+ * HTTP). The cover-letter template bytes come from Supabase Storage
+ * (`${userId}/cover-letter` in the resumes bucket); the resume text is reused
+ * as supporting context. Returns null when no usable cover-letter template is
+ * available so callers can skip cover letters gracefully.
+ *
+ * @param {{
+ *   coverLetterBuffer: Buffer,
+ *   resumeBuffer?: Buffer,
+ *   jobPosting: string,
+ *   jobPostingUrl?: string,
+ *   companyName?: string,
+ *   jobTitle?: string,
+ *   additionalContext?: string,
+ * }} args
+ * @returns {Promise<{ result: string, resultLines: string[] }|null>}
+ */
+export async function tailorCoverLetterHeadless({
+  coverLetterBuffer,
+  resumeBuffer = null,
+  jobPosting,
+  jobPostingUrl = "",
+  companyName = "",
+  jobTitle = "",
+  additionalContext = "",
+}) {
+  if (!coverLetterBuffer || !Buffer.isBuffer(coverLetterBuffer)) return null;
+  if (!jobPosting || jobPosting.trim().length === 0) return null;
+
+  let templateText = "";
+  try {
+    const { value } = await mammoth.extractRawText({ buffer: coverLetterBuffer });
+    templateText = value || "";
+  } catch {
+    return null;
+  }
+
+  const templateLines = templateText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .slice(0, 200);
+
+  if (templateLines.length === 0) return null;
+
+  let resumeText = "";
+  if (resumeBuffer && Buffer.isBuffer(resumeBuffer)) {
+    try {
+      const { value } = await mammoth.extractRawText({ buffer: resumeBuffer });
+      resumeText = (value || "").slice(0, MAX_RESUME_CHARS);
+    } catch {
+      resumeText = "";
+    }
+  }
+
+  const draft = await generateTailoredCoverLetterDraft({
+    jobPosting,
+    jobPostingUrl,
+    companyName,
+    jobTitle,
+    resumeText,
+    templateLines,
+    additionalContext,
+    contextDocuments: [],
+  });
+
+  return {
+    result: draft.result,
+    resultLines: draft.resultLines,
+  };
+}
+

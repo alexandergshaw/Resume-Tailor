@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/tailor",
-      "schedule": "0 0,6,12,18 * * *"
+      "schedule": "*/15 * * * *"
     },
     {
       "path": "/api/cron/feed-ingest",

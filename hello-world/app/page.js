@@ -5,6 +5,7 @@ import styles from "./page.module.css";
 import JobDescriptionTab from "./components/JobDescriptionTab";
 import PostingUrlTab from "./components/PostingUrlTab";
 import AutoTailorTab from "./components/AutoTailorTab";
+import AutoApplyQueueTab from "./components/AutoApplyQueueTab";
 import ApplyingControls from "./components/ApplyingControls";
 import TrackingTab from "./components/TrackingTab";
 import LiveFeedTab from "./components/LiveFeedTab";
@@ -3602,6 +3603,13 @@ export default function Home() {
           </button>
           <button
             type="button"
+            className={activeSection === "autoApply" ? styles.sectionTabActive : styles.sectionTab}
+            onClick={() => setActiveSection("autoApply")}
+          >
+            Auto Apply
+          </button>
+          <button
+            type="button"
             className={activeSection === "url" ? styles.sectionTabActive : styles.sectionTab}
             onClick={() => setActiveSection("url")}
           >
@@ -3674,6 +3682,8 @@ export default function Home() {
             downloadAutoTailoredResume={downloadAutoTailoredResume}
             setAutoTailoredError={setAutoTailoredError}
           />
+        ) : activeSection === "autoApply" ? (
+          <AutoApplyQueueTab currentUser={currentUser} />
         ) : activeSection === "manual" ? (
           <JobDescriptionTab
             jobPosting={jobPosting}
