@@ -32,6 +32,7 @@ import Collapse from "@mui/material/Collapse";
 import styles from "../page.module.css";
 import JobFilterControls from "./JobFilterControls";
 import SavedSearchStrip from "./SavedSearchStrip";
+import AutoApplyQueueTab from "./AutoApplyQueueTab";
 
 const FILTERS_STORAGE_KEY = "feedFilters";
 const ADVANCED_STORAGE_KEY = "feedAdvancedFilters";
@@ -169,6 +170,10 @@ export default function LiveFeedTab({
   const [filters, setFilters] = useState(loadFilters);
   const [advanced, setAdvanced] = useState(loadAdvanced);
   const [advancedOpen, setAdvancedOpen] = useState(loadPanelOpen);
+  // Which view is active: the live feed list, or the auto-apply queue that the
+  // cron fills from these saved searches.
+  const [view, setView] = useState("feed"); // "feed" | "queue"
+  const [queueCount, setQueueCount] = useState(0);
   const [activeSavedSearchId, setActiveSavedSearchId] = useState(null);
   const [items, setItems] = useState([]);
   const [nextCursor, setNextCursor] = useState(null);
@@ -216,6 +221,30 @@ export default function LiveFeedTab({
       mountedRef.current = false;
     };
   }, []);
+
+  // Fetch the auto-apply queue count once so the toggle badge is accurate even
+  // before the user opens the queue view. AutoApplyQueueTab keeps it in sync
+  // afterwards via onCountChange.
+  useEffect(() => {
+    if (!currentUser) {
+      const handle = setTimeout(() => setQueueCount(0), 0);
+      return () => clearTimeout(handle);
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/auto-apply-queue", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setQueueCount(Array.isArray(data.items) ? data.items.length : 0);
+      } catch {
+        // ignore — badge simply stays at its last known value
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser]);
 
   // Persist filters whenever they change.
   useEffect(() => {
@@ -690,6 +719,44 @@ export default function LiveFeedTab({
           )}
         </Box>
 
+        {/* Feed vs. Auto-Apply Queue toggle */}
+        <Box
+          sx={{
+            display: "inline-flex",
+            borderRadius: 1.5,
+            border: "1px solid",
+            borderColor: "divider",
+            overflow: "hidden",
+          }}
+        >
+          <Button
+            size="small"
+            disableElevation
+            variant={view === "feed" ? "contained" : "text"}
+            color={view === "feed" ? "primary" : "inherit"}
+            onClick={() => setView("feed")}
+            sx={{ textTransform: "none", fontWeight: 600, borderRadius: 0, px: 1.75 }}
+          >
+            Feed
+          </Button>
+          <Button
+            size="small"
+            disableElevation
+            variant={view === "queue" ? "contained" : "text"}
+            color={view === "queue" ? "primary" : "inherit"}
+            onClick={() => setView("queue")}
+            sx={{ textTransform: "none", fontWeight: 600, borderRadius: 0, px: 1.75 }}
+          >
+            <Badge
+              badgeContent={queueCount}
+              color="secondary"
+              sx={{ "& .MuiBadge-badge": { right: -10, top: -2 } }}
+            >
+              Auto-Apply Queue
+            </Badge>
+          </Button>
+        </Box>
+
         <Badge
           badgeContent={activeFilterCount}
           color="primary"
@@ -890,6 +957,14 @@ export default function LiveFeedTab({
         </Paper>
       </Collapse>
 
+      {view === "queue" ? (
+        <AutoApplyQueueTab
+          currentUser={currentUser}
+          savedSearches={savedSearches}
+          onCountChange={setQueueCount}
+        />
+      ) : (
+        <>
       {!currentUser && (
         <Alert severity="info" sx={{ mb: 1 }}>
           Sign in to save postings, hide ones you don&apos;t want, and add jobs
@@ -1093,6 +1168,8 @@ export default function LiveFeedTab({
             </Box>
           )}
         </Box>
+      )}
+        </>
       )}
     </section>
   );

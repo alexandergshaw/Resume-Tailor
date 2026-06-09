@@ -34,7 +34,7 @@ function safeName(part, fallback) {
   return cleaned || fallback;
 }
 
-export default function AutoApplyQueueTab({ currentUser }) {
+export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onCountChange }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -55,13 +55,15 @@ export default function AutoApplyQueueTab({ currentUser }) {
         throw new Error(payload.error || `Request failed (${res.status})`);
       }
       const data = await res.json();
-      setItems(Array.isArray(data.items) ? data.items : []);
+      const next = Array.isArray(data.items) ? data.items : [];
+      setItems(next);
+      if (typeof onCountChange === "function") onCountChange(next.length);
     } catch (err) {
       setError(err.message || "Failed to load the auto-apply queue.");
     } finally {
       setLoading(false);
     }
-  }, [currentUser]);
+  }, [currentUser, onCountChange]);
 
   useEffect(() => {
     const handle = setTimeout(() => load(), 0);
@@ -70,6 +72,21 @@ export default function AutoApplyQueueTab({ currentUser }) {
 
   const resumeFor = (row) => row?.generated_resumes || null;
   const coverFor = (row) => row?.generated_cover_letters || null;
+
+  // Map auto_search_id -> saved search name so each queued job shows which
+  // saved search produced it.
+  const savedSearchNames = useMemo(() => {
+    const map = new Map();
+    for (const s of Array.isArray(savedSearches) ? savedSearches : []) {
+      if (s && s.id) map.set(s.id, s.name || "Saved search");
+    }
+    return map;
+  }, [savedSearches]);
+
+  const originName = useCallback(
+    (row) => (row?.auto_search_id ? savedSearchNames.get(row.auto_search_id) || "" : ""),
+    [savedSearchNames],
+  );
 
   const handleDownloadResume = useCallback((row) => {
     const pos = row?.positions || {};
@@ -109,14 +126,18 @@ export default function AutoApplyQueueTab({ currentUser }) {
           throw new Error(payload.error || `Request failed (${res.status})`);
         }
         // Remove the processed row locally and keep the walkthrough position.
-        setItems((prev) => prev.filter((it) => it.id !== row.id));
+        setItems((prev) => {
+          const remaining = prev.filter((it) => it.id !== row.id);
+          if (typeof onCountChange === "function") onCountChange(remaining.length);
+          return remaining;
+        });
       } catch (err) {
         setError(err.message || "Failed to update the queue item.");
       } finally {
         setBusyId(null);
       }
     },
-    [],
+    [onCountChange],
   );
 
   const handleApply = useCallback(
@@ -213,6 +234,9 @@ export default function AutoApplyQueueTab({ currentUser }) {
             {current.positions?.company || "—"}
             {current.positions?.location ? ` · ${current.positions.location}` : ""}
           </Typography>
+          {originName(current) && (
+            <Chip size="small" variant="outlined" label={`From: ${originName(current)}`} sx={{ mb: 0.5 }} />
+          )}
           <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", my: 1.5 }}>
             <Button
               size="small"
@@ -275,6 +299,7 @@ export default function AutoApplyQueueTab({ currentUser }) {
             <Box component="thead" sx={{ bgcolor: "#f5f7f8" }}>
               <Box component="tr">
                 <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Saved</Box>
+                <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>From</Box>
                 <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Company</Box>
                 <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Title</Box>
                 <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Docs</Box>
@@ -288,6 +313,7 @@ export default function AutoApplyQueueTab({ currentUser }) {
                 return (
                   <Box component="tr" key={row.id} sx={{ "&:hover": { bgcolor: "#fafbfc" } }}>
                     <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1", whiteSpace: "nowrap" }}>{dateLabel}</Box>
+                    <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1" }}>{originName(row) || "—"}</Box>
                     <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1" }}>{pos.company || "—"}</Box>
                     <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1" }}>{pos.title || "—"}</Box>
                     <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1", whiteSpace: "nowrap" }}>
