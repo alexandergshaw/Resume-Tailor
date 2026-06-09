@@ -7,6 +7,7 @@ import PostingUrlTab from "./components/PostingUrlTab";
 import AutoTailorTab from "./components/AutoTailorTab";
 import ApplyingControls from "./components/ApplyingControls";
 import TrackingTab from "./components/TrackingTab";
+import LiveFeedTab from "./components/LiveFeedTab";
 import ChatPanel from "./components/ChatPanel";
 import StatusBar from "./components/StatusBar";
 import JobSearchTab from "./components/JobSearchTab";
@@ -419,7 +420,7 @@ export default function Home() {
       setActiveSection(saved);
     }
     const savedTab = localStorage.getItem("mainTab");
-    if (savedTab === "applying" || savedTab === "interviewing") {
+    if (savedTab === "applying" || savedTab === "interviewing" || savedTab === "feed") {
       setMainTab(savedTab);
     }
     const savedContextPanel = localStorage.getItem("contextPanelOpen");
@@ -3490,6 +3491,13 @@ export default function Home() {
           >
             Tracking
           </button>
+          <button
+            type="button"
+            className={mainTab === "feed" ? styles.mainTabActive : styles.mainTab}
+            onClick={() => setMainTab("feed")}
+          >
+            Live Feed
+          </button>
         </div>
 
         {mainTab === "applying" && (
@@ -3771,6 +3779,8 @@ export default function Home() {
             )}
           />
         )}
+
+        {mainTab === "feed" && <LiveFeedTab currentUser={currentUser} />}
 
         {/* Always-mounted dialogs (not gated by active main tab). */}
         <BatchTailorDialog

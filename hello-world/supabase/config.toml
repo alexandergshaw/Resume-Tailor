@@ -1,0 +1,9 @@
+# Supabase CLI project config. The CLI reads this when running `supabase link`
+# and `supabase db push`. `project_id` is just a local label; the actual remote
+# project is selected at link time via `--project-ref` (stored as a GH secret).
+project_id = "resume-tailor"
+
+[db]
+# Postgres major version of your Supabase project (check Dashboard > Settings >
+# Infrastructure). 15 is the current default for new projects.
+major_version = 17
