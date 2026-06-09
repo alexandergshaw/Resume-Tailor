@@ -44,6 +44,8 @@ export default function ApplyingControls({
   copyAllReferences,
   formatAllReferences,
   allReferencesCopied,
+  downloadReferencesDocx,
+  referencesDownloadError,
   educationOpen,
   setEducationOpen,
   educationEntries,
@@ -68,6 +70,8 @@ export default function ApplyingControls({
   copyAllEmployment,
   formatAllEmployment,
   allEmploymentCopied,
+  downloadEmploymentDocx,
+  employmentDownloadError,
   renderCopyButton,
 }) {
   return (
@@ -339,23 +343,38 @@ export default function ApplyingControls({
                 ? `Hide references${references.length ? ` (${references.length})` : ""}`
                 : `Show references${references.length ? ` (${references.length})` : ""}`}
             </Box>
-            <Tooltip title={allReferencesCopied ? "Copied!" : "Copy all references"}>
-              <span onClick={(e) => { e.stopPropagation(); }} onFocus={(e) => e.stopPropagation()}>
-                <IconButton
-                  size="small"
-                  disabled={!formatAllReferences()}
-                  onClick={(e) => { e.stopPropagation(); copyAllReferences(); }}
-                  sx={{ p: 0.5, color: allReferencesCopied ? "#2e7d32" : "var(--text-secondary)" }}
-                  aria-label="Copy all references"
-                >
-                  {allReferencesCopied ? (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                  ) : (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                  )}
-                </IconButton>
-              </span>
-            </Tooltip>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+              <Tooltip title="Download references">
+                <span onClick={(e) => { e.stopPropagation(); }} onFocus={(e) => e.stopPropagation()}>
+                  <IconButton
+                    size="small"
+                    disabled={!formatAllReferences()}
+                    onClick={(e) => { e.stopPropagation(); downloadReferencesDocx(); }}
+                    sx={{ p: 0.5, color: "var(--text-secondary)" }}
+                    aria-label="Download references"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+                  </IconButton>
+                </span>
+              </Tooltip>
+              <Tooltip title={allReferencesCopied ? "Copied!" : "Copy all references"}>
+                <span onClick={(e) => { e.stopPropagation(); }} onFocus={(e) => e.stopPropagation()}>
+                  <IconButton
+                    size="small"
+                    disabled={!formatAllReferences()}
+                    onClick={(e) => { e.stopPropagation(); copyAllReferences(); }}
+                    sx={{ p: 0.5, color: allReferencesCopied ? "#2e7d32" : "var(--text-secondary)" }}
+                    aria-label="Copy all references"
+                  >
+                    {allReferencesCopied ? (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    )}
+                  </IconButton>
+                </span>
+              </Tooltip>
+            </Box>
           </AccordionSummary>
           <AccordionDetails
             sx={{
@@ -368,6 +387,12 @@ export default function ApplyingControls({
               borderTop: "1px solid var(--border)",
             }}
           >
+            {referencesDownloadError ? (
+              <Box sx={{ fontSize: "0.78rem", color: "var(--error, #d32f2f)" }}>
+                {referencesDownloadError}
+              </Box>
+            ) : null}
+
             {references.length === 0 ? (
               <Box sx={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
                 No references saved yet. Add one to keep their contact details ready to copy.
@@ -819,23 +844,38 @@ export default function ApplyingControls({
                 ? `Hide employment${employmentEntries.length ? ` (${employmentEntries.length})` : ""}`
                 : `Show employment${employmentEntries.length ? ` (${employmentEntries.length})` : ""}`}
             </Box>
-            <Tooltip title={allEmploymentCopied ? "Copied!" : "Copy all employment"}>
-              <span onClick={(e) => { e.stopPropagation(); }} onFocus={(e) => e.stopPropagation()}>
-                <IconButton
-                  size="small"
-                  disabled={!formatAllEmployment()}
-                  onClick={(e) => { e.stopPropagation(); copyAllEmployment(); }}
-                  sx={{ p: 0.5, color: allEmploymentCopied ? "#2e7d32" : "var(--text-secondary)" }}
-                  aria-label="Copy all employment"
-                >
-                  {allEmploymentCopied ? (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                  ) : (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                  )}
-                </IconButton>
-              </span>
-            </Tooltip>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+              <Tooltip title="Download employment history">
+                <span onClick={(e) => { e.stopPropagation(); }} onFocus={(e) => e.stopPropagation()}>
+                  <IconButton
+                    size="small"
+                    disabled={!formatAllEmployment()}
+                    onClick={(e) => { e.stopPropagation(); downloadEmploymentDocx(); }}
+                    sx={{ p: 0.5, color: "var(--text-secondary)" }}
+                    aria-label="Download employment history"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+                  </IconButton>
+                </span>
+              </Tooltip>
+              <Tooltip title={allEmploymentCopied ? "Copied!" : "Copy all employment"}>
+                <span onClick={(e) => { e.stopPropagation(); }} onFocus={(e) => e.stopPropagation()}>
+                  <IconButton
+                    size="small"
+                    disabled={!formatAllEmployment()}
+                    onClick={(e) => { e.stopPropagation(); copyAllEmployment(); }}
+                    sx={{ p: 0.5, color: allEmploymentCopied ? "#2e7d32" : "var(--text-secondary)" }}
+                    aria-label="Copy all employment"
+                  >
+                    {allEmploymentCopied ? (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    )}
+                  </IconButton>
+                </span>
+              </Tooltip>
+            </Box>
           </AccordionSummary>
           <AccordionDetails
             sx={{
@@ -848,6 +888,12 @@ export default function ApplyingControls({
               borderTop: "1px solid var(--border)",
             }}
           >
+            {employmentDownloadError ? (
+              <Box sx={{ fontSize: "0.78rem", color: "var(--error, #d32f2f)" }}>
+                {employmentDownloadError}
+              </Box>
+            ) : null}
+
             {employmentEntries.length === 0 ? (
               <Box sx={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
                 No employment entries saved yet. Add up to 4 past employers to keep their details ready to copy.

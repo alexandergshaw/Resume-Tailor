@@ -236,6 +236,114 @@ export async function buildDocxFromUploadedTemplate(file, generatedText, generat
   });
 }
 
+function escapeXml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function paragraphXml(text, options = {}) {
+  const value = String(text || "");
+  const spacing = options.spacingAfter ?? 120;
+  const justify = options.center ? "<w:jc w:val=\"center\"/>" : "";
+  const bold = options.bold ? "<w:b/>" : "";
+  const size = options.size ? `<w:sz w:val=\"${options.size}\"/>` : "";
+  const color = options.color ? `<w:color w:val=\"${options.color}\"/>` : "";
+  const runProps = `${bold}${size}${color}`;
+  const preserve = /^\s|\s$/.test(value) ? ' xml:space="preserve"' : "";
+
+  return `<w:p><w:pPr>${justify}<w:spacing w:after=\"${spacing}\"/></w:pPr><w:r>${runProps ? `<w:rPr>${runProps}</w:rPr>` : ""}<w:t${preserve}>${escapeXml(value)}</w:t></w:r></w:p>`;
+}
+
+function buildMinimalistDocumentXml(title, entries = []) {
+  const paragraphs = [
+    paragraphXml(title, { bold: true, size: 30, spacingAfter: 180 }),
+  ];
+
+  entries.forEach((entry, index) => {
+    if (entry.primaryLine) {
+      paragraphs.push(paragraphXml(entry.primaryLine, { bold: true, size: 24, spacingAfter: 40 }));
+    }
+    if (entry.secondaryLine) {
+      paragraphs.push(paragraphXml(entry.secondaryLine, { size: 21, color: "4A5568", spacingAfter: 80 }));
+    }
+    (entry.details || []).forEach((line) => {
+      if (line) paragraphs.push(paragraphXml(line, { size: 21, spacingAfter: 80 }));
+    });
+
+    if (index < entries.length - 1) {
+      paragraphs.push(paragraphXml("", { spacingAfter: 170 }));
+    }
+  });
+
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:w10="urn:schemas-microsoft-com:office:word" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" xmlns:wpi="http://schemas.microsoft.com/office/word/2010/wordprocessingInk" xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml" xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" mc:Ignorable="w14 wp14">
+  <w:body>
+    ${paragraphs.join("\n    ")}
+    <w:sectPr>
+      <w:pgSz w:w="12240" w:h="15840"/>
+      <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/>
+      <w:cols w:space="708"/>
+      <w:docGrid w:linePitch="360"/>
+    </w:sectPr>
+  </w:body>
+</w:document>`;
+}
+
+export async function buildMinimalistDocx(entries, title) {
+  const zip = new JSZip();
+
+  zip.file(
+    "[Content_Types].xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`,
+  );
+
+  zip.file(
+    "_rels/.rels",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`,
+  );
+
+  zip.file("word/document.xml", buildMinimalistDocumentXml(title, entries));
+
+  return zip.generateAsync({
+    type: "blob",
+    mimeType:
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  });
+}
+
+export async function downloadMinimalistDocx({ title, fileName, entries }) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return "Nothing to download yet.";
+  }
+
+  try {
+    const blob = await buildMinimalistDocx(entries, title);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    return null;
+  } catch (err) {
+    return err.message || "Unable to download DOCX.";
+  }
+}
+
 export function createDocumentDownloaders(deps) {
   const { resumeFile, coverLetterFile, tailoringMap, applicationData } = deps;
 

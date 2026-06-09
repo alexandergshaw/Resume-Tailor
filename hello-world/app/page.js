@@ -23,6 +23,7 @@ import {
   buildTemplateLinesForUpload,
   buildDocxFromUploadedTemplate,
   getDownloadFileNameForTitle,
+  downloadMinimalistDocx,
   createDocumentDownloaders,
 } from "../lib/document/docx";
 import Box from "@mui/material/Box";
@@ -1535,6 +1536,75 @@ export default function Home() {
   const [allReferencesCopied, setAllReferencesCopied] = useState(false);
   const [allEducationCopied, setAllEducationCopied] = useState(false);
   const [allEmploymentCopied, setAllEmploymentCopied] = useState(false);
+  const [referencesDownloadError, setReferencesDownloadError] = useState("");
+  const [employmentDownloadError, setEmploymentDownloadError] = useState("");
+
+  function getExportDateStamp() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  function buildReferenceDocEntries() {
+    return references
+      .map((ref) => {
+        const lines = formatReferenceBlock(ref)
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean);
+        if (lines.length === 0) return null;
+        const [primaryLine, secondaryLine, ...details] = lines;
+        return {
+          primaryLine,
+          secondaryLine: secondaryLine || "",
+          details,
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function buildEmploymentDocEntries() {
+    return employmentEntries
+      .map((entry) => {
+        const lines = formatEmploymentBlock(entry)
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean);
+        if (lines.length === 0) return null;
+        const [primaryLine, secondaryLine, ...details] = lines;
+        return {
+          primaryLine,
+          secondaryLine: secondaryLine || "",
+          details,
+        };
+      })
+      .filter(Boolean);
+  }
+
+  async function downloadReferencesDocx() {
+    setReferencesDownloadError("");
+    const err = await downloadMinimalistDocx({
+      title: "Professional References",
+      fileName: `References - ${getExportDateStamp()}.docx`,
+      entries: buildReferenceDocEntries(),
+    });
+    if (err) {
+      console.warn("[references export] failed:", err);
+      setReferencesDownloadError(err);
+    }
+  }
+
+  async function downloadEmploymentDocx() {
+    setEmploymentDownloadError("");
+    const err = await downloadMinimalistDocx({
+      title: "Employment History",
+      fileName: `Employment-History - ${getExportDateStamp()}.docx`,
+      entries: buildEmploymentDocEntries(),
+    });
+    if (err) {
+      console.warn("[employment export] failed:", err);
+      setEmploymentDownloadError(err);
+    }
+  }
+
   async function copyAllReferences() {
     const text = formatAllReferences();
     if (!text) return;
@@ -3422,6 +3492,8 @@ export default function Home() {
           copyAllReferences={copyAllReferences}
           formatAllReferences={formatAllReferences}
           allReferencesCopied={allReferencesCopied}
+          downloadReferencesDocx={downloadReferencesDocx}
+          referencesDownloadError={referencesDownloadError}
           educationOpen={educationOpen}
           setEducationOpen={setEducationOpen}
           educationEntries={educationEntries}
@@ -3446,6 +3518,8 @@ export default function Home() {
           copyAllEmployment={copyAllEmployment}
           formatAllEmployment={formatAllEmployment}
           allEmploymentCopied={allEmploymentCopied}
+          downloadEmploymentDocx={downloadEmploymentDocx}
+          employmentDownloadError={employmentDownloadError}
           renderCopyButton={renderCopyButton}
         />
 
