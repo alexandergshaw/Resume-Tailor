@@ -35,6 +35,7 @@ import SavedSearchStrip from "./SavedSearchStrip";
 
 const FILTERS_STORAGE_KEY = "feedFilters";
 const ADVANCED_STORAGE_KEY = "feedAdvancedFilters";
+const PANEL_OPEN_STORAGE_KEY = "feedFiltersPanelOpen";
 const AUTO_REFRESH_MS = 60000; // 60s, matches the cron cadence
 const STALE_THRESHOLD_MS = 5 * 60 * 1000; // warn if data is older than 5 minutes
 
@@ -102,6 +103,16 @@ function companyName(entry) {
   return typeof entry === "string" ? entry : entry.name || "";
 }
 
+// Remember whether the filter panel was left open between visits.
+function loadPanelOpen() {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(PANEL_OPEN_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
 function buildQueryString(active, cursor) {
   const params = new URLSearchParams();
   if (active.q) params.set("q", active.q);
@@ -157,7 +168,7 @@ export default function LiveFeedTab({
 }) {
   const [filters, setFilters] = useState(loadFilters);
   const [advanced, setAdvanced] = useState(loadAdvanced);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(loadPanelOpen);
   const [activeSavedSearchId, setActiveSavedSearchId] = useState(null);
   const [items, setItems] = useState([]);
   const [nextCursor, setNextCursor] = useState(null);
@@ -225,6 +236,16 @@ export default function LiveFeedTab({
       // ignore quota / serialization errors
     }
   }, [advanced]);
+
+  // Persist the filter panel's open/close state.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(PANEL_OPEN_STORAGE_KEY, String(advancedOpen));
+    } catch {
+      // ignore quota / serialization errors
+    }
+  }, [advancedOpen]);
 
   const loadPage = useCallback(async (active, { append } = {}) => {
     const seq = ++fetchSeqRef.current;
@@ -701,6 +722,25 @@ export default function LiveFeedTab({
             bgcolor: "background.paper",
           }}
         >
+          {/* Saved searches section */}
+          <Typography
+            variant="overline"
+            color="text.secondary"
+            sx={{ display: "block", letterSpacing: 0.6, mb: 1 }}
+          >
+            Saved searches
+          </Typography>
+          <SavedSearchStrip
+            savedSearches={savedSearches}
+            activeSavedSearchId={activeSavedSearchId}
+            saveCurrentSearch={saveCurrentSearch}
+            applySavedSearch={applySavedSearch}
+            deleteSavedSearch={deleteSavedSearch}
+            saveLabel="current feed search"
+          />
+
+          <Divider sx={{ my: 2 }} />
+
           {/* Active filter summary chips */}
           {activeFilterChips.length > 0 && (
             <Box sx={{ mb: 2 }}>
@@ -818,25 +858,6 @@ export default function LiveFeedTab({
               </Select>
             </FormControl>
           </Box>
-
-          <Divider sx={{ my: 2 }} />
-
-          {/* Saved searches section */}
-          <Typography
-            variant="overline"
-            color="text.secondary"
-            sx={{ display: "block", letterSpacing: 0.6, mb: 1 }}
-          >
-            Saved searches
-          </Typography>
-          <SavedSearchStrip
-            savedSearches={savedSearches}
-            activeSavedSearchId={activeSavedSearchId}
-            saveCurrentSearch={saveCurrentSearch}
-            applySavedSearch={applySavedSearch}
-            deleteSavedSearch={deleteSavedSearch}
-            saveLabel="current feed search"
-          />
 
           <Divider sx={{ my: 2 }} />
 
