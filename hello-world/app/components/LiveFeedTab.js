@@ -20,9 +20,16 @@ import BookmarkBorderIcon from "@mui/icons-material/BookmarkBorder";
 import BookmarkIcon from "@mui/icons-material/Bookmark";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 import AddTaskIcon from "@mui/icons-material/AddTask";
+import TuneIcon from "@mui/icons-material/Tune";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import Collapse from "@mui/material/Collapse";
 import styles from "../page.module.css";
+import JobFilterControls from "./JobFilterControls";
+import SavedSearchStrip from "./SavedSearchStrip";
 
 const FILTERS_STORAGE_KEY = "feedFilters";
+const ADVANCED_STORAGE_KEY = "feedAdvancedFilters";
 const AUTO_REFRESH_MS = 60000; // 60s, matches the cron cadence
 const STALE_THRESHOLD_MS = 5 * 60 * 1000; // warn if data is older than 5 minutes
 
@@ -33,6 +40,17 @@ const DEFAULT_FILTERS = {
   source: "",
   since: "",
   sort: "newest",
+};
+
+// Advanced filters ported from Job Search. Companies are stored as {slug,name}
+// objects (or freeform strings) to match the shared JobFilterControls shape.
+const DEFAULT_ADVANCED = {
+  jobKeywords: [],
+  maxYearsExp: "any",
+  selectedCategories: [],
+  selectedCompanies: [],
+  excludedCompanies: [],
+  excludedTitleKeywords: [],
 };
 
 function loadFilters() {
@@ -47,14 +65,50 @@ function loadFilters() {
   }
 }
 
-function buildQueryString(filters, cursor) {
+function loadAdvanced() {
+  if (typeof window === "undefined") return DEFAULT_ADVANCED;
+  try {
+    const raw = window.localStorage.getItem(ADVANCED_STORAGE_KEY);
+    if (!raw) return DEFAULT_ADVANCED;
+    const parsed = JSON.parse(raw);
+    return { ...DEFAULT_ADVANCED, ...parsed };
+  } catch {
+    return DEFAULT_ADVANCED;
+  }
+}
+
+// Resolve a company entry ({slug,name} | string) to its display name, which is
+// what feed_postings.company stores.
+function companyName(entry) {
+  if (!entry) return "";
+  return typeof entry === "string" ? entry : entry.name || "";
+}
+
+function buildQueryString(active, cursor) {
   const params = new URLSearchParams();
-  if (filters.q) params.set("q", filters.q);
-  if (filters.location) params.set("location", filters.location);
-  if (filters.remote) params.set("remote", filters.remote);
-  if (filters.source) params.set("source", filters.source);
-  if (filters.since) params.set("since", filters.since);
-  if (filters.sort) params.set("sort", filters.sort);
+  if (active.q) params.set("q", active.q);
+  if (active.location) params.set("location", active.location);
+  if (active.remote) params.set("remote", active.remote);
+  if (active.source) params.set("source", active.source);
+  if (active.since) params.set("since", active.since);
+  if (active.sort) params.set("sort", active.sort);
+
+  const keywords = (active.jobKeywords || []).filter(Boolean);
+  if (keywords.length > 0) params.set("keywords", keywords.join(","));
+
+  if (active.maxYearsExp && active.maxYearsExp !== "any") {
+    params.set("maxYears", active.maxYearsExp);
+  }
+
+  const companies = (active.selectedCompanies || []).map(companyName).filter(Boolean);
+  if (companies.length > 0) params.set("companies", companies.join(","));
+
+  const excludeCompanies = (active.excludedCompanies || []).map(companyName).filter(Boolean);
+  if (excludeCompanies.length > 0) params.set("excludeCompanies", excludeCompanies.join(","));
+
+  const excludeTitle = (active.excludedTitleKeywords || []).filter(Boolean);
+  if (excludeTitle.length > 0) params.set("excludeTitleKeywords", excludeTitle.join(","));
+
   if (cursor != null) params.set("cursor", String(cursor));
   return params.toString();
 }
@@ -75,8 +129,18 @@ function formatRelative(value, now) {
   return d.toLocaleDateString();
 }
 
-export default function LiveFeedTab({ currentUser }) {
+export default function LiveFeedTab({
+  currentUser,
+  savedSearches = [],
+  setSavedSearches,
+  deleteSavedSearch,
+  GREENHOUSE_COMPANIES = [],
+  COMPANY_CATEGORIES = [],
+}) {
   const [filters, setFilters] = useState(loadFilters);
+  const [advanced, setAdvanced] = useState(loadAdvanced);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [activeSavedSearchId, setActiveSavedSearchId] = useState(null);
   const [items, setItems] = useState([]);
   const [nextCursor, setNextCursor] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -90,10 +154,16 @@ export default function LiveFeedTab({ currentUser }) {
   // render stays pure (no Date.now() calls during render).
   const [nowTs, setNowTs] = useState(0);
 
+  // The combined filter object sent to the API (quick + advanced).
+  const activeFilters = useMemo(
+    () => ({ ...filters, ...advanced }),
+    [filters, advanced],
+  );
+
   // Guards against overlapping fetches and stale responses after unmount.
   const fetchSeqRef = useRef(0);
   const mountedRef = useRef(true);
-  const filtersRef = useRef(filters);
+  const filtersRef = useRef(activeFilters);
   // Keep a ref to the latest cursor so the auto-refresh closure stays stable.
   const nextCursorRef = useRef(null);
 
@@ -108,8 +178,8 @@ export default function LiveFeedTab({ currentUser }) {
   }, []);
 
   useEffect(() => {
-    filtersRef.current = filters;
-  }, [filters]);
+    filtersRef.current = activeFilters;
+  }, [activeFilters]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -128,7 +198,17 @@ export default function LiveFeedTab({ currentUser }) {
     }
   }, [filters]);
 
-  const loadPage = useCallback(async (activeFilters, { append } = {}) => {
+  // Persist advanced filters separately.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(ADVANCED_STORAGE_KEY, JSON.stringify(advanced));
+    } catch {
+      // ignore quota / serialization errors
+    }
+  }, [advanced]);
+
+  const loadPage = useCallback(async (active, { append } = {}) => {
     const seq = ++fetchSeqRef.current;
     const cursor = append ? nextCursorRef.current : null;
     if (append) setLoadingMore(true);
@@ -136,7 +216,7 @@ export default function LiveFeedTab({ currentUser }) {
     setError("");
 
     try {
-      const qs = buildQueryString(activeFilters, append ? cursor : null);
+      const qs = buildQueryString(active, append ? cursor : null);
       const res = await fetch(`/api/feed?${qs}`, { cache: "no-store" });
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
@@ -168,10 +248,10 @@ export default function LiveFeedTab({ currentUser }) {
   // Initial load + reload when filters change (debounced for text inputs).
   useEffect(() => {
     const handle = setTimeout(() => {
-      loadPage(filters, { append: false });
+      loadPage(activeFilters, { append: false });
     }, 300);
     return () => clearTimeout(handle);
-  }, [filters, loadPage]);
+  }, [activeFilters, loadPage]);
 
   // Auto-refresh the top of the feed on an interval without disturbing scroll.
   useEffect(() => {
@@ -271,6 +351,141 @@ export default function LiveFeedTab({ currentUser }) {
 
   const updateFilter = (key, value) =>
     setFilters((prev) => ({ ...prev, [key]: value }));
+
+  // Merge a patch into the advanced filters. Any manual edit clears the active
+  // saved-search highlight (mirrors Job Search behavior).
+  const updateAdvanced = useCallback((patch) => {
+    setAdvanced((prev) => ({ ...prev, ...patch }));
+    setActiveSavedSearchId(null);
+  }, []);
+
+  // Individual setters passed to the shared JobFilterControls.
+  const setJobKeywords = useCallback((v) => updateAdvanced({ jobKeywords: v }), [updateAdvanced]);
+  const setMaxYearsExp = useCallback((v) => updateAdvanced({ maxYearsExp: v }), [updateAdvanced]);
+  const setSelectedCategories = useCallback((v) => updateAdvanced({ selectedCategories: v }), [updateAdvanced]);
+  const setSelectedCompanies = useCallback((v) => updateAdvanced({ selectedCompanies: v }), [updateAdvanced]);
+  const setExcludedCompanies = useCallback((v) => updateAdvanced({ excludedCompanies: v }), [updateAdvanced]);
+  const setExcludedTitleKeywords = useCallback((v) => updateAdvanced({ excludedTitleKeywords: v }), [updateAdvanced]);
+
+  const clearAllFilters = useCallback(() => {
+    setFilters(DEFAULT_FILTERS);
+    setAdvanced(DEFAULT_ADVANCED);
+    setActiveSavedSearchId(null);
+  }, []);
+
+  // Map a saved_searches row/entry into the advanced control shape, resolving
+  // company slugs back into the {slug,name} objects the controls expect.
+  const applySavedSearch = useCallback(
+    (entry) => {
+      if (!entry) return;
+      const keywords = Array.isArray(entry.jobKeywords)
+        ? entry.jobKeywords.filter((s) => typeof s === "string" && s.trim())
+        : [];
+      const companies = (Array.isArray(entry.selectedCompanies) ? entry.selectedCompanies : [])
+        .map((slug) => GREENHOUSE_COMPANIES.find((c) => c.slug === slug) || slug)
+        .filter(Boolean);
+      const excludedCompanies = GREENHOUSE_COMPANIES.filter((c) =>
+        (Array.isArray(entry.excludedCompanies) ? entry.excludedCompanies : []).includes(c.slug),
+      );
+      setAdvanced({
+        jobKeywords: keywords,
+        maxYearsExp: typeof entry.maxYearsExp === "string" ? entry.maxYearsExp : "any",
+        selectedCategories: Array.isArray(entry.selectedCategories) ? entry.selectedCategories : [],
+        selectedCompanies: companies,
+        excludedCompanies,
+        excludedTitleKeywords: Array.isArray(entry.excludedTitleKeywords)
+          ? entry.excludedTitleKeywords.filter((s) => typeof s === "string" && s.trim())
+          : [],
+      });
+      setActiveSavedSearchId(entry.id);
+      setAdvancedOpen(true);
+    },
+    [GREENHOUSE_COMPANIES],
+  );
+
+  const saveCurrentSearch = useCallback(async () => {
+    if (typeof setSavedSearches !== "function") return;
+    const defaultName =
+      (advanced.jobKeywords || []).join(" ").trim() ||
+      (advanced.selectedCategories || [])[0] ||
+      "Untitled search";
+    const name =
+      typeof window !== "undefined"
+        ? window.prompt("Name this saved search:", defaultName)?.trim()
+        : "";
+    if (!name) return;
+
+    const payload = {
+      name,
+      jobKeywords: [...(advanced.jobKeywords || [])],
+      maxYearsExp: advanced.maxYearsExp || "any",
+      selectedCategories: [...(advanced.selectedCategories || [])],
+      selectedCompanies: (advanced.selectedCompanies || [])
+        .map((c) => (typeof c === "string" ? c : c?.slug))
+        .filter(Boolean),
+      excludedCompanies: (advanced.excludedCompanies || []).map((c) => c.slug).filter(Boolean),
+      excludedTitleKeywords: [...(advanced.excludedTitleKeywords || [])],
+    };
+
+    const mapRow = (row) => ({
+      id: row.id,
+      name: row.name || "",
+      jobKeywords: Array.isArray(row.job_keywords) ? row.job_keywords : [],
+      maxYearsExp: row.max_years_exp || "any",
+      selectedCategories: Array.isArray(row.selected_categories) ? row.selected_categories : [],
+      selectedCompanies: Array.isArray(row.selected_companies) ? row.selected_companies : [],
+      excludedCompanies: Array.isArray(row.excluded_companies) ? row.excluded_companies : [],
+      excludedTitleKeywords: Array.isArray(row.excluded_title_keywords) ? row.excluded_title_keywords : [],
+      autoTailorEnabled: !!row.auto_tailor_enabled,
+      autoTailorDailyCap: Number.isFinite(row.auto_tailor_daily_cap) ? row.auto_tailor_daily_cap : 10,
+    });
+
+    if (currentUser) {
+      try {
+        const res = await fetch("/api/saved-searches", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json?.search) {
+            const entry = mapRow(json.search);
+            setSavedSearches((prev) => [entry, ...prev]);
+            setActiveSavedSearchId(entry.id);
+            return;
+          }
+        }
+      } catch {
+        // fall through to local-only save
+      }
+    }
+
+    const localEntry = {
+      id: `ss-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      ...payload,
+      autoTailorEnabled: false,
+      autoTailorDailyCap: 10,
+    };
+    setSavedSearches((prev) => [localEntry, ...prev]);
+    setActiveSavedSearchId(localEntry.id);
+  }, [advanced, currentUser, setSavedSearches]);
+
+  // Count of active filters for the summary / toggle badge.
+  const activeFilterCount = useMemo(() => {
+    let n = 0;
+    if (advanced.jobKeywords?.length) n += 1;
+    if (advanced.maxYearsExp && advanced.maxYearsExp !== "any") n += 1;
+    if (advanced.selectedCategories?.length) n += 1;
+    if (advanced.selectedCompanies?.length) n += 1;
+    if (advanced.excludedCompanies?.length) n += 1;
+    if (advanced.excludedTitleKeywords?.length) n += 1;
+    if (filters.q) n += 1;
+    if (filters.location) n += 1;
+    if (filters.remote) n += 1;
+    if (filters.since) n += 1;
+    return n;
+  }, [advanced, filters]);
 
   const isStale = useMemo(() => {
     if (!lastUpdatedAt || !nowTs) return false;
@@ -379,7 +594,68 @@ export default function LiveFeedTab({ currentUser }) {
             <MenuItem value="company">Company A–Z</MenuItem>
           </Select>
         </FormControl>
+        <Button
+          size="small"
+          variant={activeFilterCount > 0 ? "contained" : "outlined"}
+          color={activeFilterCount > 0 ? "primary" : "inherit"}
+          startIcon={<TuneIcon />}
+          endIcon={advancedOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+          onClick={() => setAdvancedOpen((v) => !v)}
+        >
+          Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+        </Button>
       </Box>
+
+      {/* Collapsible advanced filters + saved searches (ported from Job Search) */}
+      <Collapse in={advancedOpen} unmountOnExit>
+        <Box
+          sx={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 1.5,
+            p: 1.5,
+            mb: 1.5,
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: 1,
+          }}
+        >
+          <SavedSearchStrip
+            savedSearches={savedSearches}
+            activeSavedSearchId={activeSavedSearchId}
+            saveCurrentSearch={saveCurrentSearch}
+            applySavedSearch={applySavedSearch}
+            deleteSavedSearch={deleteSavedSearch}
+            saveLabel="current feed search"
+          />
+          <JobFilterControls
+            jobKeywords={advanced.jobKeywords}
+            setJobKeywords={setJobKeywords}
+            maxYearsExp={advanced.maxYearsExp}
+            setMaxYearsExp={setMaxYearsExp}
+            selectedCategories={advanced.selectedCategories}
+            setSelectedCategories={setSelectedCategories}
+            selectedCompanies={advanced.selectedCompanies}
+            setSelectedCompanies={setSelectedCompanies}
+            excludedCompanies={advanced.excludedCompanies}
+            setExcludedCompanies={setExcludedCompanies}
+            excludedTitleKeywords={advanced.excludedTitleKeywords}
+            setExcludedTitleKeywords={setExcludedTitleKeywords}
+            GREENHOUSE_COMPANIES={GREENHOUSE_COMPANIES}
+            COMPANY_CATEGORIES={COMPANY_CATEGORIES}
+          />
+          <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+            <Button
+              size="small"
+              color="inherit"
+              onClick={clearAllFilters}
+              disabled={activeFilterCount === 0}
+            >
+              Clear all filters
+            </Button>
+          </Box>
+        </Box>
+      </Collapse>
 
       {!currentUser && (
         <Alert severity="info" sx={{ mb: 1 }}>
@@ -575,7 +851,7 @@ export default function LiveFeedTab({ currentUser }) {
             <Box sx={{ display: "flex", justifyContent: "center", py: 1.5 }}>
               <Button
                 variant="outlined"
-                onClick={() => loadPage(filters, { append: true })}
+                onClick={() => loadPage(activeFilters, { append: true })}
                 disabled={loadingMore}
                 startIcon={loadingMore ? <CircularProgress size={16} /> : null}
               >

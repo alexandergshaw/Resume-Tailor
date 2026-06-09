@@ -27,6 +27,31 @@ function sanitizeLike(value) {
   return String(value).replace(/[%_,()]/g, " ").trim().slice(0, 120);
 }
 
+// Parse a comma-separated list param into a sanitized, de-duplicated array.
+function parseList(value, { maxItems = 200, maxLen = 200 } = {}) {
+  if (!value) return [];
+  const seen = new Set();
+  const out = [];
+  for (const part of String(value).split(",")) {
+    const trimmed = part.trim().slice(0, maxLen);
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+    if (out.length >= maxItems) break;
+  }
+  return out;
+}
+
+// Escape a value for safe use inside a PostgREST `in.(...)` / `or` list.
+function escapeForInList(value) {
+  // Quote and escape embedded quotes/backslashes; strip commas/parens that
+  // would break the filter grammar.
+  const cleaned = String(value).replace(/[(),]/g, " ").replace(/"/g, '\\"');
+  return `"${cleaned}"`;
+}
+
 function parseSince(value) {
   if (!value) return null;
   // Accept a number of days (e.g. "7") or an ISO date string.
@@ -36,6 +61,12 @@ function parseSince(value) {
   }
   const t = Date.parse(value);
   return Number.isFinite(t) ? new Date(t).toISOString() : null;
+}
+
+function parseMaxYears(value) {
+  if (!value || value === "any") return null;
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) && n >= 0 && n <= 25 ? n : null;
 }
 
 export async function GET(request) {
@@ -57,6 +88,13 @@ export async function GET(request) {
   const offset = parseOffset(searchParams.get("cursor"));
   const includeHidden = searchParams.get("includeHidden") === "true";
 
+  // Advanced filters ported from Job Search.
+  const keywords = parseList(searchParams.get("keywords"), { maxItems: 25, maxLen: 100 });
+  const companies = parseList(searchParams.get("companies"), { maxItems: 200, maxLen: 200 });
+  const excludeCompanies = parseList(searchParams.get("excludeCompanies"), { maxItems: 200, maxLen: 200 });
+  const excludeTitleKeywords = parseList(searchParams.get("excludeTitleKeywords"), { maxItems: 50, maxLen: 100 });
+  const maxYears = parseMaxYears(searchParams.get("maxYears"));
+
   // Resolve the current user (optional — feed is readable when signed out).
   let userId = null;
   try {
@@ -70,7 +108,7 @@ export async function GET(request) {
   }
 
   // The postings page itself is user-independent, so it can be cached.
-  const cacheKey = `feed:page:v1:${JSON.stringify({
+  const cacheKey = `feed:page:v2:${JSON.stringify({
     q,
     location,
     remote,
@@ -79,6 +117,11 @@ export async function GET(request) {
     sort,
     limit,
     offset,
+    keywords,
+    companies,
+    excludeCompanies,
+    excludeTitleKeywords,
+    maxYears,
   })}`;
 
   let page = await getCached(cacheKey);
@@ -96,7 +139,7 @@ export async function GET(request) {
     let query = admin
       .from("feed_postings")
       .select(
-        "id, source, source_posting_id, title, company, location, remote_type, employment_type, salary_min, salary_max, description_snippet, url, tags, posted_at",
+        "id, source, source_posting_id, title, company, location, remote_type, employment_type, salary_min, salary_max, description_snippet, url, tags, posted_at, min_years_required",
       );
 
     if (q) {
@@ -106,6 +149,34 @@ export async function GET(request) {
     if (remote) query = query.eq("remote_type", remote);
     if (source) query = query.eq("source", source);
     if (since) query = query.gte("posted_at", since);
+
+    // Keyword chips: every keyword must appear in the title or snippet.
+    for (const kw of keywords) {
+      const safe = sanitizeLike(kw);
+      if (safe) {
+        query = query.or(`title.ilike.%${safe}%,description_snippet.ilike.%${safe}%`);
+      }
+    }
+
+    // Company include / exclude (feed stores the display name).
+    if (companies.length > 0) {
+      query = query.in("company", companies);
+    }
+    if (excludeCompanies.length > 0) {
+      const list = excludeCompanies.map(escapeForInList).join(",");
+      query = query.not("company", "in", `(${list})`);
+    }
+
+    // Exclude title keywords: title must not contain any of them.
+    for (const kw of excludeTitleKeywords) {
+      const safe = sanitizeLike(kw);
+      if (safe) query = query.not("title", "ilike", `%${safe}%`);
+    }
+
+    // Experience cap: keep postings at or under the cap, plus unknowns (null).
+    if (maxYears != null) {
+      query = query.or(`min_years_required.lte.${maxYears},min_years_required.is.null`);
+    }
 
     if (sort === "company") {
       query = query

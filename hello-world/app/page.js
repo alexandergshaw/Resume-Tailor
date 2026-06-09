@@ -3780,7 +3780,16 @@ export default function Home() {
           />
         )}
 
-        {mainTab === "feed" && <LiveFeedTab currentUser={currentUser} />}
+        {mainTab === "feed" && (
+          <LiveFeedTab
+            currentUser={currentUser}
+            savedSearches={savedSearches}
+            setSavedSearches={setSavedSearches}
+            deleteSavedSearch={deleteSavedSearch}
+            GREENHOUSE_COMPANIES={GREENHOUSE_COMPANIES}
+            COMPANY_CATEGORIES={COMPANY_CATEGORIES}
+          />
+        )}
 
         {/* Always-mounted dialogs (not gated by active main tab). */}
         <BatchTailorDialog

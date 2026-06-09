@@ -57,9 +57,36 @@ function remoteTypeFor(locationName) {
   return "onsite";
 }
 
+// Parse the minimum years of experience a posting requires. Mirrors the
+// client-side `extractMinYearsRequired` used by Job Search so the feed's
+// experience filter behaves consistently. Returns null when unknown.
+function extractMinYearsRequired(description) {
+  if (!description) return null;
+  const text = description.toLowerCase();
+  const patterns = [
+    /(\d+)\s*\+\s*years?/,
+    /(\d+)\s*or\s*more\s*years?/,
+    /at\s*least\s*(\d+)\s*years?/,
+    /minimum\s*(?:of\s*)?(\d+)\s*years?/,
+    /(\d+)\s*-\s*\d+\s*years?/,
+    /(\d+)\s*to\s*\d+\s*years?/,
+    /(\d+)\s*years?\s*(?:of\s*)?(?:professional\s*)?(?:experience|exp)/,
+  ];
+  const found = [];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) {
+      const yrs = parseInt(match[1], 10);
+      if (!Number.isNaN(yrs) && yrs <= 25) found.push(yrs);
+    }
+  }
+  return found.length > 0 ? Math.min(...found) : null;
+}
+
 function normalizeGreenhousePosting(raw, companyName) {
   const locationName = raw.location?.name || "";
   const sourcePostingId = `gh-${raw.id}`;
+  const fullDescription = stripHtml(raw.content || "");
   return {
     dedup_key: `greenhouse:${sourcePostingId}`,
     source: "greenhouse",
@@ -72,6 +99,7 @@ function normalizeGreenhousePosting(raw, companyName) {
     salary_min: null,
     salary_max: null,
     description_snippet: snippetFrom(raw.content || ""),
+    min_years_required: extractMinYearsRequired(`${raw.title || ""} ${fullDescription}`),
     url: raw.absolute_url || null,
     tags: Array.isArray(raw.departments)
       ? raw.departments.map((d) => d?.name).filter(Boolean).slice(0, 8)
@@ -84,7 +112,7 @@ function normalizeGreenhousePosting(raw, companyName) {
       location: locationName,
       url: raw.absolute_url || "",
       isRemote: remoteTypeFor(locationName) === "remote",
-      description: stripHtml(raw.content || ""),
+      description: fullDescription,
       postedAt: raw.updated_at || raw.created_at || null,
     },
   };
