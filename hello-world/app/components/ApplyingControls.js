@@ -58,6 +58,8 @@ export default function ApplyingControls({
   copyAllEducation,
   formatAllEducation,
   allEducationCopied,
+  downloadEducationDocx,
+  educationDownloadError,
   employmentOpen,
   setEmploymentOpen,
   employmentEntries,
@@ -599,23 +601,38 @@ export default function ApplyingControls({
                 ? `Hide education${educationEntries.length ? ` (${educationEntries.length})` : ""}`
                 : `Show education${educationEntries.length ? ` (${educationEntries.length})` : ""}`}
             </Box>
-            <Tooltip title={allEducationCopied ? "Copied!" : "Copy all education"}>
-              <span onClick={(e) => { e.stopPropagation(); }} onFocus={(e) => e.stopPropagation()}>
-                <IconButton
-                  size="small"
-                  disabled={!formatAllEducation()}
-                  onClick={(e) => { e.stopPropagation(); copyAllEducation(); }}
-                  sx={{ p: 0.5, color: allEducationCopied ? "#2e7d32" : "var(--text-secondary)" }}
-                  aria-label="Copy all education"
-                >
-                  {allEducationCopied ? (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                  ) : (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                  )}
-                </IconButton>
-              </span>
-            </Tooltip>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+              <Tooltip title="Download education">
+                <span onClick={(e) => { e.stopPropagation(); }} onFocus={(e) => e.stopPropagation()}>
+                  <IconButton
+                    size="small"
+                    disabled={!formatAllEducation()}
+                    onClick={(e) => { e.stopPropagation(); downloadEducationDocx(); }}
+                    sx={{ p: 0.5, color: "var(--text-secondary)" }}
+                    aria-label="Download education"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+                  </IconButton>
+                </span>
+              </Tooltip>
+              <Tooltip title={allEducationCopied ? "Copied!" : "Copy all education"}>
+                <span onClick={(e) => { e.stopPropagation(); }} onFocus={(e) => e.stopPropagation()}>
+                  <IconButton
+                    size="small"
+                    disabled={!formatAllEducation()}
+                    onClick={(e) => { e.stopPropagation(); copyAllEducation(); }}
+                    sx={{ p: 0.5, color: allEducationCopied ? "#2e7d32" : "var(--text-secondary)" }}
+                    aria-label="Copy all education"
+                  >
+                    {allEducationCopied ? (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    )}
+                  </IconButton>
+                </span>
+              </Tooltip>
+            </Box>
           </AccordionSummary>
           <AccordionDetails
             sx={{
@@ -628,6 +645,12 @@ export default function ApplyingControls({
               borderTop: "1px solid var(--border)",
             }}
           >
+            {educationDownloadError ? (
+              <Box sx={{ fontSize: "0.78rem", color: "var(--error, #d32f2f)" }}>
+                {educationDownloadError}
+              </Box>
+            ) : null}
+
             {educationEntries.length === 0 ? (
               <Box sx={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
                 No education entries saved yet. Add one to keep your school details ready to copy.

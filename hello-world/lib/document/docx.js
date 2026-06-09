@@ -252,26 +252,34 @@ function paragraphXml(text, options = {}) {
   const bold = options.bold ? "<w:b/>" : "";
   const size = options.size ? `<w:sz w:val=\"${options.size}\"/>` : "";
   const color = options.color ? `<w:color w:val=\"${options.color}\"/>` : "";
-  const runProps = `${bold}${size}${color}`;
+  const fonts = options.font
+    ? `<w:rFonts w:ascii=\"${options.font}\" w:hAnsi=\"${options.font}\" w:cs=\"${options.font}\"/>`
+    : "";
+  const runProps = `${fonts}${bold}${size}${color}`;
   const preserve = /^\s|\s$/.test(value) ? ' xml:space="preserve"' : "";
 
   return `<w:p><w:pPr>${justify}<w:spacing w:after=\"${spacing}\"/></w:pPr><w:r>${runProps ? `<w:rPr>${runProps}</w:rPr>` : ""}<w:t${preserve}>${escapeXml(value)}</w:t></w:r></w:p>`;
 }
 
-function buildMinimalistDocumentXml(title, entries = []) {
+function buildMinimalistDocumentXml(title, entries = [], options = {}) {
+  const subtitle = String(options.subtitle || "").trim();
   const paragraphs = [
-    paragraphXml(title, { bold: true, size: 30, spacingAfter: 180 }),
+    paragraphXml(title, { bold: true, size: 32, spacingAfter: 100, font: "Calibri" }),
   ];
+
+  if (subtitle) {
+    paragraphs.push(paragraphXml(subtitle, { size: 18, color: "6B7280", spacingAfter: 200, font: "Calibri" }));
+  }
 
   entries.forEach((entry, index) => {
     if (entry.primaryLine) {
-      paragraphs.push(paragraphXml(entry.primaryLine, { bold: true, size: 24, spacingAfter: 40 }));
+      paragraphs.push(paragraphXml(entry.primaryLine, { bold: true, size: 24, spacingAfter: 40, font: "Calibri" }));
     }
     if (entry.secondaryLine) {
-      paragraphs.push(paragraphXml(entry.secondaryLine, { size: 21, color: "4A5568", spacingAfter: 80 }));
+      paragraphs.push(paragraphXml(entry.secondaryLine, { size: 21, color: "4A5568", spacingAfter: 80, font: "Calibri" }));
     }
     (entry.details || []).forEach((line) => {
-      if (line) paragraphs.push(paragraphXml(line, { size: 21, spacingAfter: 80 }));
+      if (line) paragraphs.push(paragraphXml(line, { size: 21, spacingAfter: 80, font: "Calibri" }));
     });
 
     if (index < entries.length - 1) {
@@ -293,7 +301,7 @@ function buildMinimalistDocumentXml(title, entries = []) {
 </w:document>`;
 }
 
-export async function buildMinimalistDocx(entries, title) {
+export async function buildMinimalistDocx(entries, title, options = {}) {
   const zip = new JSZip();
 
   zip.file(
@@ -314,7 +322,7 @@ export async function buildMinimalistDocx(entries, title) {
 </Relationships>`,
   );
 
-  zip.file("word/document.xml", buildMinimalistDocumentXml(title, entries));
+  zip.file("word/document.xml", buildMinimalistDocumentXml(title, entries, options));
 
   return zip.generateAsync({
     type: "blob",
@@ -323,13 +331,13 @@ export async function buildMinimalistDocx(entries, title) {
   });
 }
 
-export async function downloadMinimalistDocx({ title, fileName, entries }) {
+export async function downloadMinimalistDocx({ title, fileName, entries, subtitle }) {
   if (!Array.isArray(entries) || entries.length === 0) {
     return "Nothing to download yet.";
   }
 
   try {
-    const blob = await buildMinimalistDocx(entries, title);
+    const blob = await buildMinimalistDocx(entries, title, { subtitle });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
