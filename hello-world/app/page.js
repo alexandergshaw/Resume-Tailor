@@ -1540,10 +1540,6 @@ export default function Home() {
   const [educationDownloadError, setEducationDownloadError] = useState("");
   const [employmentDownloadError, setEmploymentDownloadError] = useState("");
 
-  function getExportDateStamp() {
-    return new Date().toISOString().slice(0, 10);
-  }
-
   function buildReferenceDocEntries() {
     return references
       .map((ref) => {
@@ -1600,10 +1596,8 @@ export default function Home() {
 
   async function downloadReferencesDocx() {
     setReferencesDownloadError("");
-    const dateStamp = getExportDateStamp();
     const err = await downloadMinimalistDocx({
       title: "Professional References",
-      subtitle: `Exported ${dateStamp}`,
       fileName: "References.docx",
       entries: buildReferenceDocEntries(),
     });
@@ -1615,10 +1609,8 @@ export default function Home() {
 
   async function downloadEmploymentDocx() {
     setEmploymentDownloadError("");
-    const dateStamp = getExportDateStamp();
     const err = await downloadMinimalistDocx({
       title: "Employment History",
-      subtitle: `Exported ${dateStamp}`,
       fileName: "Employment-History.docx",
       entries: buildEmploymentDocEntries(),
     });
@@ -1630,10 +1622,8 @@ export default function Home() {
 
   async function downloadEducationDocx() {
     setEducationDownloadError("");
-    const dateStamp = getExportDateStamp();
     const err = await downloadMinimalistDocx({
       title: "Education",
-      subtitle: `Exported ${dateStamp}`,
       fileName: "Education.docx",
       entries: buildEducationDocEntries(),
     });
