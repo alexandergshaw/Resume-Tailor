@@ -14,6 +14,10 @@ import Chip from "@mui/material/Chip";
 import Skeleton from "@mui/material/Skeleton";
 import Alert from "@mui/material/Alert";
 import CircularProgress from "@mui/material/CircularProgress";
+import Typography from "@mui/material/Typography";
+import Badge from "@mui/material/Badge";
+import Divider from "@mui/material/Divider";
+import Paper from "@mui/material/Paper";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import BookmarkBorderIcon from "@mui/icons-material/BookmarkBorder";
@@ -23,6 +27,7 @@ import AddTaskIcon from "@mui/icons-material/AddTask";
 import TuneIcon from "@mui/icons-material/Tune";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import FilterAltOffIcon from "@mui/icons-material/FilterAltOff";
 import Collapse from "@mui/material/Collapse";
 import styles from "../page.module.css";
 import JobFilterControls from "./JobFilterControls";
@@ -51,6 +56,19 @@ const DEFAULT_ADVANCED = {
   selectedCompanies: [],
   excludedCompanies: [],
   excludedTitleKeywords: [],
+};
+
+// Human-readable labels for the quick-filter summary chips.
+const REMOTE_LABELS = {
+  remote: "Remote",
+  hybrid: "Hybrid",
+  onsite: "On-site",
+};
+const SINCE_LABELS = {
+  1: "Last 24h",
+  3: "Last 3 days",
+  7: "Last 7 days",
+  30: "Last 30 days",
 };
 
 function loadFilters() {
@@ -349,8 +367,10 @@ export default function LiveFeedTab({
     [currentUser],
   );
 
-  const updateFilter = (key, value) =>
-    setFilters((prev) => ({ ...prev, [key]: value }));
+  const updateFilter = useCallback(
+    (key, value) => setFilters((prev) => ({ ...prev, [key]: value })),
+    [],
+  );
 
   // Merge a patch into the advanced filters. Any manual edit clears the active
   // saved-search highlight (mirrors Job Search behavior).
@@ -487,6 +507,89 @@ export default function LiveFeedTab({
     return n;
   }, [advanced, filters]);
 
+  // Removable summary chips for each currently-applied filter.
+  const activeFilterChips = useMemo(() => {
+    const chips = [];
+    if (filters.q) {
+      chips.push({ key: "q", label: `“${filters.q}”`, onDelete: () => updateFilter("q", "") });
+    }
+    if (filters.location) {
+      chips.push({ key: "location", label: filters.location, onDelete: () => updateFilter("location", "") });
+    }
+    if (filters.remote) {
+      chips.push({
+        key: "remote",
+        label: REMOTE_LABELS[filters.remote] || filters.remote,
+        onDelete: () => updateFilter("remote", ""),
+      });
+    }
+    if (filters.since) {
+      chips.push({
+        key: "since",
+        label: SINCE_LABELS[filters.since] || `Since ${filters.since}d`,
+        onDelete: () => updateFilter("since", ""),
+      });
+    }
+    if (advanced.maxYearsExp && advanced.maxYearsExp !== "any") {
+      chips.push({
+        key: "maxYears",
+        label: `≤ ${advanced.maxYearsExp} yrs`,
+        onDelete: () => setMaxYearsExp("any"),
+      });
+    }
+    (advanced.jobKeywords || []).forEach((kw) => {
+      chips.push({
+        key: `kw:${kw}`,
+        label: kw,
+        onDelete: () => setJobKeywords((advanced.jobKeywords || []).filter((k) => k !== kw)),
+      });
+    });
+    (advanced.selectedCategories || []).forEach((cat) => {
+      chips.push({
+        key: `cat:${cat}`,
+        label: cat,
+        onDelete: () => setSelectedCategories((advanced.selectedCategories || []).filter((c) => c !== cat)),
+      });
+    });
+    (advanced.selectedCompanies || []).forEach((co) => {
+      const name = companyName(co);
+      chips.push({
+        key: `co:${name}`,
+        label: name,
+        onDelete: () =>
+          setSelectedCompanies((advanced.selectedCompanies || []).filter((c) => companyName(c) !== name)),
+      });
+    });
+    (advanced.excludedCompanies || []).forEach((co) => {
+      const name = companyName(co);
+      chips.push({
+        key: `exco:${name}`,
+        label: `Exclude: ${name}`,
+        onDelete: () =>
+          setExcludedCompanies((advanced.excludedCompanies || []).filter((c) => companyName(c) !== name)),
+      });
+    });
+    (advanced.excludedTitleKeywords || []).forEach((kw) => {
+      chips.push({
+        key: `exkw:${kw}`,
+        label: `Exclude: ${kw}`,
+        onDelete: () =>
+          setExcludedTitleKeywords((advanced.excludedTitleKeywords || []).filter((k) => k !== kw)),
+      });
+    });
+    return chips;
+  }, [
+    filters,
+    advanced,
+    updateFilter,
+    setMaxYearsExp,
+    setJobKeywords,
+    setSelectedCategories,
+    setSelectedCompanies,
+    setExcludedCompanies,
+    setExcludedTitleKeywords,
+  ]);
+
   const isStale = useMemo(() => {
     if (!lastUpdatedAt || !nowTs) return false;
     return nowTs - new Date(lastUpdatedAt).getTime() > STALE_THRESHOLD_MS;
@@ -499,14 +602,17 @@ export default function LiveFeedTab({
 
   return (
     <section className={styles.tabPanel}>
-      {/* Toolbar: status + filters + refresh */}
+      {/* Header band: status + filters toggle */}
       <Box
         sx={{
           display: "flex",
           flexWrap: "wrap",
           alignItems: "center",
           gap: 1.5,
-          mb: 1,
+          py: 1,
+          mb: 1.5,
+          borderBottom: "1px solid",
+          borderColor: "divider",
         }}
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, mr: "auto" }}>
@@ -522,11 +628,33 @@ export default function LiveFeedTab({
               </IconButton>
             </span>
           </Tooltip>
-          <Box sx={{ fontSize: "0.8rem", color: "text.secondary" }}>
+          {/* Freshness indicator dot */}
+          <Box
+            sx={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              flexShrink: 0,
+              bgcolor: !lastUpdatedAt
+                ? "grey.400"
+                : isStale
+                  ? "warning.main"
+                  : "success.main",
+              boxShadow: (theme) =>
+                !lastUpdatedAt
+                  ? "none"
+                  : `0 0 0 3px ${
+                      isStale
+                        ? "rgba(237, 108, 2, 0.16)"
+                        : "rgba(46, 125, 50, 0.16)"
+                    }`,
+            }}
+          />
+          <Typography variant="body2" color="text.secondary">
             {lastUpdatedAt
               ? `Updated ${lastUpdatedLabel}`
               : "Awaiting first ingest"}
-          </Box>
+          </Typography>
           {sourceHealth?.greenhouse?.failures > 0 && (
             <Tooltip
               title={`${sourceHealth.greenhouse.failures} source(s) failed on the last ingest`}
@@ -541,85 +669,166 @@ export default function LiveFeedTab({
           )}
         </Box>
 
-        <TextField
-          size="small"
-          label="Search title or company"
-          value={filters.q}
-          onChange={(e) => updateFilter("q", e.target.value)}
-          sx={{ minWidth: 220 }}
-        />
-        <TextField
-          size="small"
-          label="Location"
-          value={filters.location}
-          onChange={(e) => updateFilter("location", e.target.value)}
-          sx={{ minWidth: 150 }}
-        />
-        <FormControl size="small" sx={{ minWidth: 130 }}>
-          <InputLabel>Work type</InputLabel>
-          <Select
-            label="Work type"
-            value={filters.remote}
-            onChange={(e) => updateFilter("remote", e.target.value)}
-          >
-            <MenuItem value="">Any</MenuItem>
-            <MenuItem value="remote">Remote</MenuItem>
-            <MenuItem value="hybrid">Hybrid</MenuItem>
-            <MenuItem value="onsite">On-site</MenuItem>
-          </Select>
-        </FormControl>
-        <FormControl size="small" sx={{ minWidth: 130 }}>
-          <InputLabel>Posted</InputLabel>
-          <Select
-            label="Posted"
-            value={filters.since}
-            onChange={(e) => updateFilter("since", e.target.value)}
-          >
-            <MenuItem value="">Any time</MenuItem>
-            <MenuItem value="1">Last 24h</MenuItem>
-            <MenuItem value="3">Last 3 days</MenuItem>
-            <MenuItem value="7">Last 7 days</MenuItem>
-            <MenuItem value="30">Last 30 days</MenuItem>
-          </Select>
-        </FormControl>
-        <FormControl size="small" sx={{ minWidth: 140 }}>
-          <InputLabel>Sort</InputLabel>
-          <Select
-            label="Sort"
-            value={filters.sort}
-            onChange={(e) => updateFilter("sort", e.target.value)}
-          >
-            <MenuItem value="newest">Newest</MenuItem>
-            <MenuItem value="relevance">Relevance</MenuItem>
-            <MenuItem value="company">Company A–Z</MenuItem>
-          </Select>
-        </FormControl>
-        <Button
-          size="small"
-          variant={activeFilterCount > 0 ? "contained" : "outlined"}
-          color={activeFilterCount > 0 ? "primary" : "inherit"}
-          startIcon={<TuneIcon />}
-          endIcon={advancedOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-          onClick={() => setAdvancedOpen((v) => !v)}
+        <Badge
+          badgeContent={activeFilterCount}
+          color="primary"
+          overlap="rectangular"
+          sx={{ "& .MuiBadge-badge": { right: 4, top: 4 } }}
         >
-          Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
-        </Button>
+          <Button
+            size="small"
+            variant={advancedOpen || activeFilterCount > 0 ? "contained" : "outlined"}
+            color={activeFilterCount > 0 ? "primary" : "inherit"}
+            disableElevation
+            startIcon={<TuneIcon />}
+            endIcon={advancedOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+            onClick={() => setAdvancedOpen((v) => !v)}
+            sx={{ textTransform: "none", fontWeight: 600, px: 1.75 }}
+          >
+            Filters
+          </Button>
+        </Badge>
       </Box>
 
       {/* Collapsible advanced filters + saved searches (ported from Job Search) */}
       <Collapse in={advancedOpen} unmountOnExit>
-        <Box
+        <Paper
+          variant="outlined"
           sx={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 1.5,
-            p: 1.5,
-            mb: 1.5,
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 1,
+            p: { xs: 1.5, sm: 2 },
+            mb: 2,
+            borderRadius: 2,
+            bgcolor: "background.paper",
           }}
         >
+          {/* Active filter summary chips */}
+          {activeFilterChips.length > 0 && (
+            <Box sx={{ mb: 2 }}>
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 1,
+                  mb: 1,
+                }}
+              >
+                <Typography
+                  variant="overline"
+                  color="text.secondary"
+                  sx={{ letterSpacing: 0.6 }}
+                >
+                  Active filters
+                </Typography>
+                <Button
+                  size="small"
+                  color="inherit"
+                  startIcon={<FilterAltOffIcon fontSize="small" />}
+                  onClick={clearAllFilters}
+                  sx={{ textTransform: "none", color: "text.secondary" }}
+                >
+                  Clear all
+                </Button>
+              </Box>
+              <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75 }}>
+                {activeFilterChips.map((chip) => (
+                  <Chip
+                    key={chip.key}
+                    label={chip.label}
+                    size="small"
+                    variant="outlined"
+                    onDelete={chip.onDelete}
+                    sx={{ maxWidth: 240 }}
+                  />
+                ))}
+              </Box>
+            </Box>
+          )}
+
+          {/* Search section */}
+          <Typography
+            variant="overline"
+            color="text.secondary"
+            sx={{ display: "block", letterSpacing: 0.6, mb: 1 }}
+          >
+            Search
+          </Typography>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: {
+                xs: "1fr",
+                sm: "repeat(2, 1fr)",
+                md: "repeat(4, 1fr)",
+              },
+              gap: 1.5,
+            }}
+          >
+            <TextField
+              size="small"
+              fullWidth
+              label="Search title or company"
+              value={filters.q}
+              onChange={(e) => updateFilter("q", e.target.value)}
+            />
+            <TextField
+              size="small"
+              fullWidth
+              label="Location"
+              value={filters.location}
+              onChange={(e) => updateFilter("location", e.target.value)}
+            />
+            <FormControl size="small" fullWidth>
+              <InputLabel>Work type</InputLabel>
+              <Select
+                label="Work type"
+                value={filters.remote}
+                onChange={(e) => updateFilter("remote", e.target.value)}
+              >
+                <MenuItem value="">Any</MenuItem>
+                <MenuItem value="remote">Remote</MenuItem>
+                <MenuItem value="hybrid">Hybrid</MenuItem>
+                <MenuItem value="onsite">On-site</MenuItem>
+              </Select>
+            </FormControl>
+            <FormControl size="small" fullWidth>
+              <InputLabel>Posted</InputLabel>
+              <Select
+                label="Posted"
+                value={filters.since}
+                onChange={(e) => updateFilter("since", e.target.value)}
+              >
+                <MenuItem value="">Any time</MenuItem>
+                <MenuItem value="1">Last 24h</MenuItem>
+                <MenuItem value="3">Last 3 days</MenuItem>
+                <MenuItem value="7">Last 7 days</MenuItem>
+                <MenuItem value="30">Last 30 days</MenuItem>
+              </Select>
+            </FormControl>
+            <FormControl size="small" fullWidth>
+              <InputLabel>Sort</InputLabel>
+              <Select
+                label="Sort"
+                value={filters.sort}
+                onChange={(e) => updateFilter("sort", e.target.value)}
+              >
+                <MenuItem value="newest">Newest</MenuItem>
+                <MenuItem value="relevance">Relevance</MenuItem>
+                <MenuItem value="company">Company A–Z</MenuItem>
+              </Select>
+            </FormControl>
+          </Box>
+
+          <Divider sx={{ my: 2 }} />
+
+          {/* Saved searches section */}
+          <Typography
+            variant="overline"
+            color="text.secondary"
+            sx={{ display: "block", letterSpacing: 0.6, mb: 1 }}
+          >
+            Saved searches
+          </Typography>
           <SavedSearchStrip
             savedSearches={savedSearches}
             activeSavedSearchId={activeSavedSearchId}
@@ -628,33 +837,36 @@ export default function LiveFeedTab({
             deleteSavedSearch={deleteSavedSearch}
             saveLabel="current feed search"
           />
-          <JobFilterControls
-            jobKeywords={advanced.jobKeywords}
-            setJobKeywords={setJobKeywords}
-            maxYearsExp={advanced.maxYearsExp}
-            setMaxYearsExp={setMaxYearsExp}
-            selectedCategories={advanced.selectedCategories}
-            setSelectedCategories={setSelectedCategories}
-            selectedCompanies={advanced.selectedCompanies}
-            setSelectedCompanies={setSelectedCompanies}
-            excludedCompanies={advanced.excludedCompanies}
-            setExcludedCompanies={setExcludedCompanies}
-            excludedTitleKeywords={advanced.excludedTitleKeywords}
-            setExcludedTitleKeywords={setExcludedTitleKeywords}
-            GREENHOUSE_COMPANIES={GREENHOUSE_COMPANIES}
-            COMPANY_CATEGORIES={COMPANY_CATEGORIES}
-          />
-          <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
-            <Button
-              size="small"
-              color="inherit"
-              onClick={clearAllFilters}
-              disabled={activeFilterCount === 0}
-            >
-              Clear all filters
-            </Button>
+
+          <Divider sx={{ my: 2 }} />
+
+          {/* Refine section */}
+          <Typography
+            variant="overline"
+            color="text.secondary"
+            sx={{ display: "block", letterSpacing: 0.6, mb: 1 }}
+          >
+            Refine
+          </Typography>
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+            <JobFilterControls
+              jobKeywords={advanced.jobKeywords}
+              setJobKeywords={setJobKeywords}
+              maxYearsExp={advanced.maxYearsExp}
+              setMaxYearsExp={setMaxYearsExp}
+              selectedCategories={advanced.selectedCategories}
+              setSelectedCategories={setSelectedCategories}
+              selectedCompanies={advanced.selectedCompanies}
+              setSelectedCompanies={setSelectedCompanies}
+              excludedCompanies={advanced.excludedCompanies}
+              setExcludedCompanies={setExcludedCompanies}
+              excludedTitleKeywords={advanced.excludedTitleKeywords}
+              setExcludedTitleKeywords={setExcludedTitleKeywords}
+              GREENHOUSE_COMPANIES={GREENHOUSE_COMPANIES}
+              COMPANY_CATEGORIES={COMPANY_CATEGORIES}
+            />
           </Box>
-        </Box>
+        </Paper>
       </Collapse>
 
       {!currentUser && (
