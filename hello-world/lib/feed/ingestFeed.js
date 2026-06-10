@@ -1,5 +1,17 @@
 import getRedisClient from "@/lib/cache/redisClient";
 import { GREENHOUSE_COMPANIES } from "@/lib/greenhouse/companies";
+import {
+  stripHtml,
+  snippetFrom,
+  remoteTypeFor,
+  extractMinYearsRequired,
+} from "@/lib/feed/normalize";
+import { LEVER_COMPANIES } from "@/lib/lever/companies";
+import { fetchLeverPostings } from "@/lib/lever/fetchPostings";
+import { ASHBY_COMPANIES } from "@/lib/ashby/companies";
+import { fetchAshbyPostings } from "@/lib/ashby/fetchPostings";
+import { HIGHERED_RSS_FEEDS } from "@/lib/highered/feeds";
+import { fetchHigheredRssPostings } from "@/lib/highered/fetchPostings";
 
 // ---------------------------------------------------------------------------
 // Live Feed ingestion service.
@@ -23,65 +35,6 @@ const META_KEY = "feed:meta";
 // fast while the rotating cursor guarantees full coverage over several runs.
 const MAX_COMPANIES_PER_RUN = 25;
 const UPSERT_CHUNK_SIZE = 200;
-
-function stripHtml(html) {
-  if (!html) return "";
-  return html
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, " ")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|section|li)>/gi, "\n")
-    .replace(/<li>/gi, "• ")
-    .replace(/<[^>]+>/g, "")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n[ \t]+/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function snippetFrom(text, max = 400) {
-  const clean = stripHtml(text);
-  if (clean.length <= max) return clean;
-  return `${clean.slice(0, max).trimEnd()}…`;
-}
-
-function remoteTypeFor(locationName) {
-  const lower = (locationName || "").toLowerCase();
-  if (!lower) return "unknown";
-  if (lower.includes("remote")) return "remote";
-  if (lower.includes("hybrid")) return "hybrid";
-  return "onsite";
-}
-
-// Parse the minimum years of experience a posting requires. Mirrors the
-// client-side `extractMinYearsRequired` used by Job Search so the feed's
-// experience filter behaves consistently. Returns null when unknown.
-function extractMinYearsRequired(description) {
-  if (!description) return null;
-  const text = description.toLowerCase();
-  const patterns = [
-    /(\d+)\s*\+\s*years?/,
-    /(\d+)\s*or\s*more\s*years?/,
-    /at\s*least\s*(\d+)\s*years?/,
-    /minimum\s*(?:of\s*)?(\d+)\s*years?/,
-    /(\d+)\s*-\s*\d+\s*years?/,
-    /(\d+)\s*to\s*\d+\s*years?/,
-    /(\d+)\s*years?\s*(?:of\s*)?(?:professional\s*)?(?:experience|exp)/,
-  ];
-  const found = [];
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (match) {
-      const yrs = parseInt(match[1], 10);
-      if (!Number.isNaN(yrs) && yrs <= 25) found.push(yrs);
-    }
-  }
-  return found.length > 0 ? Math.min(...found) : null;
-}
 
 function normalizeGreenhousePosting(raw, companyName) {
   const locationName = raw.location?.name || "";
@@ -277,6 +230,45 @@ export async function ingestFeed(admin) {
       }
     }
 
+    // Additional sources beyond Greenhouse. These lists are small (university
+    // OPMs, edtech boards, higher-ed adjunct/faculty RSS feeds), so we pull the
+    // full set every run rather than rotating — well within the serverless
+    // budget — and isolate failures per source the same way.
+    async function runSource(key, tasks) {
+      const settled = await Promise.all(tasks);
+      let srcFetched = 0;
+      const srcFailures = [];
+      for (const r of settled) {
+        if (r.ok) {
+          srcFetched += r.postings.length;
+          collected.push(...r.postings);
+        } else {
+          srcFailures.push({ source: r.label, error: r.error });
+        }
+      }
+      attempted += settled.length;
+      fetched += srcFetched;
+      return {
+        key,
+        attempted: settled.length,
+        fetched: srcFetched,
+        failures: srcFailures,
+      };
+    }
+
+    const leverHealth = await runSource(
+      "lever",
+      LEVER_COMPANIES.map(({ slug, name }) => fetchLeverPostings(slug, name)),
+    );
+    const ashbyHealth = await runSource(
+      "ashby",
+      ASHBY_COMPANIES.map(({ slug, name }) => fetchAshbyPostings(slug, name)),
+    );
+    const higheredHealth = await runSource(
+      "highered_rss",
+      HIGHERED_RSS_FEEDS.map((feed) => fetchHigheredRssPostings(feed)),
+    );
+
     const deduped = dedupeByKey(collected);
     const upserted = await upsertPostings(admin, deduped);
 
@@ -295,9 +287,35 @@ export async function ingestFeed(admin) {
       totalCompanies: total,
       sourceHealth: {
         greenhouse: {
-          lastSuccessAt: failures.length < attempted ? finishedAt : null,
+          lastSuccessAt: failures.length < results.length ? finishedAt : null,
           failures: failures.length,
           sampleErrors: failures.slice(0, 5),
+        },
+        lever: {
+          lastSuccessAt:
+            leverHealth.failures.length < leverHealth.attempted ? finishedAt : null,
+          attempted: leverHealth.attempted,
+          fetched: leverHealth.fetched,
+          failures: leverHealth.failures.length,
+          sampleErrors: leverHealth.failures.slice(0, 5),
+        },
+        ashby: {
+          lastSuccessAt:
+            ashbyHealth.failures.length < ashbyHealth.attempted ? finishedAt : null,
+          attempted: ashbyHealth.attempted,
+          fetched: ashbyHealth.fetched,
+          failures: ashbyHealth.failures.length,
+          sampleErrors: ashbyHealth.failures.slice(0, 5),
+        },
+        highered_rss: {
+          lastSuccessAt:
+            higheredHealth.failures.length < higheredHealth.attempted
+              ? finishedAt
+              : null,
+          attempted: higheredHealth.attempted,
+          fetched: higheredHealth.fetched,
+          failures: higheredHealth.failures.length,
+          sampleErrors: higheredHealth.failures.slice(0, 5),
         },
       },
     };
