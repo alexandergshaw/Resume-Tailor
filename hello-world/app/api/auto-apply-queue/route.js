@@ -7,9 +7,9 @@ export const runtime = "nodejs";
 // "auto_queued", joined with their position and the generated resume / cover
 // letter content. Relations are fetched as separate queries (rather than
 // PostgREST embedded joins) so a missing/undetected foreign key can't 500 the
-// whole endpoint. The generated docs are read with the admin client — still
-// scoped to the authenticated user's id — so any RLS/grant gap on the older
-// generated_resumes table can't hide the tailored documents.
+// whole endpoint. The generated docs are read with the admin client by their
+// ids (which already belong to this user's application rows) so any RLS/grant
+// gap or NULL user_id on the older generated_resumes table can't hide them.
 export async function GET() {
   const supabase = await createClient();
   const {
@@ -57,14 +57,12 @@ export async function GET() {
       ? admin
           .from("generated_resumes")
           .select("id, content, content_lines")
-          .eq("user_id", user.id)
           .in("id", resumeIds)
       : Promise.resolve({ data: [] }),
     coverIds.length
       ? admin
           .from("generated_cover_letters")
           .select("id, content, content_lines")
-          .eq("user_id", user.id)
           .in("id", coverIds)
       : Promise.resolve({ data: [] }),
   ]);
