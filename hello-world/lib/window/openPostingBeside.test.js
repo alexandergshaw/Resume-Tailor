@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   openPostingBeside,
+  openBlankBeside,
+  navigateBeside,
   isOpenBesideEnabled,
   setOpenBesideEnabled,
 } from "./openPostingBeside.js";
@@ -107,5 +109,35 @@ describe("openPostingBeside", () => {
       "noopener,noreferrer",
     );
     expect(window.moveTo).not.toHaveBeenCalled();
+  });
+});
+
+describe("openBlankBeside / navigateBeside", () => {
+  it("opens a positioned blank popup without a url", () => {
+    const popup = openBlankBeside();
+    expect(window.open).toHaveBeenCalledWith(
+      "about:blank",
+      "_blank",
+      "popup=1,width=800,height=900,left=800,top=0",
+    );
+    expect(popup).toBe(global.__popup);
+  });
+
+  it("returns null from openBlankBeside when the preference is disabled", () => {
+    setOpenBesideEnabled(false);
+    expect(openBlankBeside()).toBeNull();
+    expect(window.open).not.toHaveBeenCalled();
+  });
+
+  it("navigateBeside points an open popup at the url and focuses it", () => {
+    const popup = { closed: false, focus: vi.fn(), location: { href: "" } };
+    expect(navigateBeside(popup, "https://example.com/job")).toBe(true);
+    expect(popup.location.href).toBe("https://example.com/job");
+    expect(popup.focus).toHaveBeenCalled();
+  });
+
+  it("navigateBeside returns false for a missing or closed popup", () => {
+    expect(navigateBeside(null, "https://example.com/job")).toBe(false);
+    expect(navigateBeside({ closed: true }, "https://example.com/job")).toBe(false);
   });
 });

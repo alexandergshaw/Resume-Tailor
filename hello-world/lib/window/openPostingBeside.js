@@ -55,6 +55,40 @@ export function openPostingBeside(url, { forceNewTab = false } = {}) {
     return window.open(url, "_blank", "noopener,noreferrer");
   }
 
+  return openBesideInternal(url);
+}
+
+// Open a positioned, blank right-half popup synchronously and return it without
+// navigating. Use this when the caller must `await` something (a download, a
+// clipboard write) before it knows the final URL: Chrome only grants popup
+// placement when window.open runs inside the click gesture, before any await.
+// Open the blank window first, do the async work, then call navigateBeside().
+// Returns null when blocked or when the user opted out (caller should fall back).
+export function openBlankBeside() {
+  if (typeof window === "undefined") return null;
+  if (!isOpenBesideEnabled()) return null;
+  return openBesideInternal("about:blank");
+}
+
+// Point a previously-opened blank popup (from openBlankBeside) at the real URL.
+export function navigateBeside(popup, url) {
+  if (!popup || popup.closed || !url) return false;
+  try {
+    popup.location.href = url;
+  } catch {
+    return false;
+  }
+  try {
+    popup.focus();
+  } catch {
+    // focus may be denied; not critical
+  }
+  return true;
+}
+
+// Shared implementation: dock the app left, open `target` in a right-half popup,
+// and force its placement. Returns the popup or null if blocked.
+function openBesideInternal(target) {
   const { availLeft, availTop, availWidth, availHeight } = readScreenGeometry();
   const halfWidth = Math.floor(availWidth / 2);
   const rightLeft = availLeft + halfWidth;
@@ -83,10 +117,10 @@ export function openPostingBeside(url, { forceNewTab = false } = {}) {
     `top=${availTop}`,
   ].join(",");
 
-  // Use a unique window name each call. Reusing a fixed name makes browsers
-  // ignore the new position/size features and just re-navigate the existing
-  // window in place (a common reason the popup doesn't move to the right).
-  const popup = window.open(url, "_blank", features);
+  // Use "_blank" (not a fixed name). Reusing a fixed name makes browsers ignore
+  // the new position/size features and re-navigate the existing window in place
+  // (a common reason the popup doesn't move to the right).
+  const popup = window.open(target, "_blank", features);
 
   // Popup blocked: signal failure so the caller can fall back to a new tab.
   if (!popup || popup.closed) return null;
@@ -113,3 +147,4 @@ export function openPostingBeside(url, { forceNewTab = false } = {}) {
   }
   return popup;
 }
+

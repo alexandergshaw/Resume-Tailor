@@ -25,7 +25,7 @@ import {
   downloadMinimalistDocx,
   createDocumentDownloaders,
 } from "../lib/document/docx";
-import { openPostingBeside } from "../lib/window/openPostingBeside";
+import { openPostingBeside, openBlankBeside, navigateBeside } from "../lib/window/openPostingBeside";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import TextField from "@mui/material/TextField";
@@ -2522,16 +2522,25 @@ export default function Home() {
   // auto_tailored → applied so it moves out of the Auto Tailor tab and into
   // the Interviewing tab.
   async function applyAutoTailoredRow(row) {
+    const url = row?.positions?.url;
+    // Open a positioned blank popup synchronously, before the awaited download,
+    // so Chrome grants popup-window placement (it downgrades to a tab if
+    // window.open runs after an await). We navigate it once the download is done.
+    const presetPopup =
+      url && typeof window !== "undefined" ? openBlankBeside() : null;
     const dlError = await downloadAutoTailoredResume(row);
     if (dlError) {
       setAutoTailoredError(dlError);
+      if (presetPopup && !presetPopup.closed) presetPopup.close();
       return;
     }
     setAutoTailoredError(null);
-    const url = row?.positions?.url;
     if (url && typeof window !== "undefined") {
-      const opened = openPostingBeside(url);
-      if (!opened) window.open(url, "_blank", "noopener,noreferrer");
+      const navigated = navigateBeside(presetPopup, url);
+      if (!navigated) {
+        const opened = openPostingBeside(url);
+        if (!opened) window.open(url, "_blank", "noopener,noreferrer");
+      }
     }
     if (currentUser && row?.id) {
       const supabase = createClient();

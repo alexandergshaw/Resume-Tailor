@@ -431,6 +431,13 @@ export default function LiveFeedTab({
         return;
       }
       const bookmarklet = buildBookmarklet(autofillProfile);
+      // Open the posting synchronously within the click gesture FIRST. Chrome
+      // only grants popup-window placement (separate right-half window) when
+      // window.open runs before any await; otherwise it downgrades to a tab.
+      if (typeof window !== "undefined") {
+        const opened = openPostingBeside(posting.url);
+        if (!opened) window.open(posting.url, "_blank", "noopener,noreferrer");
+      }
       let copied = false;
       try {
         if (navigator?.clipboard?.writeText) {
@@ -438,11 +445,7 @@ export default function LiveFeedTab({
           copied = true;
         }
       } catch {
-        // clipboard may be blocked; fall back to just opening the posting
-      }
-      if (typeof window !== "undefined") {
-        const opened = openPostingBeside(posting.url);
-        if (!opened) window.open(posting.url, "_blank", "noopener,noreferrer");
+        // clipboard may be blocked; the posting is already open
       }
       setSnackbar(
         copied
