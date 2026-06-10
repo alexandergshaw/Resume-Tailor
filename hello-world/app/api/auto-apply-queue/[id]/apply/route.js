@@ -53,17 +53,12 @@ export async function POST(request, { params }) {
     return Response.json({ error: updErr.message }, { status: 500 });
   }
 
-  // Fetch the next queued item to advance to.
+  // Fetch the next queued item id to advance to (the client reloads full
+  // details from /api/auto-apply-queue, so plain columns are enough here and
+  // avoid relying on PostgREST relationship detection).
   const { data: next } = await supabase
     .from("applications")
-    .select(
-      `
-        id, status, auto_saved_at, resume_used_id, cover_letter_id, auto_search_id,
-        positions ( id, title, company, location, url ),
-        generated_resumes:resume_used_id ( id, content, content_lines ),
-        generated_cover_letters:cover_letter_id ( id, content, content_lines )
-      `,
-    )
+    .select("id, status, auto_saved_at, position_id, resume_used_id, cover_letter_id, auto_search_id")
     .eq("user_id", user.id)
     .eq("status", "auto_queued")
     .order("auto_saved_at", { ascending: false })
