@@ -75,10 +75,14 @@ export async function tailorAndQueueOne({
   sourceLabel = "the Live Feed",
 }) {
   const job = postingToJob(posting);
-  if (!job.id) return null;
+  if (!job.id) {
+    throw new Error("Posting is missing a stable id (source_posting_id / raw_data.id).");
+  }
 
   const positionId = await upsertPosition(admin, job);
-  if (!positionId) return null;
+  if (!positionId) {
+    throw new Error("Could not save the position (upsertPosition failed).");
+  }
 
   // Resume (required).
   const resumeDraft = await tailorResumeHeadless({
@@ -86,7 +90,9 @@ export async function tailorAndQueueOne({
     jobPosting: job.description || job.title || "",
     jobTitleHint: job.title || "",
   });
-  if (!resumeDraft?.result) return null;
+  if (!resumeDraft?.result) {
+    throw new Error("Resume tailoring returned no content.");
+  }
 
   const generatedResumeId = await saveGeneratedResume(admin, {
     userId,
@@ -130,7 +136,9 @@ export async function tailorAndQueueOne({
     positionId,
     status: "tracking",
   });
-  if (!applicationId) return null;
+  if (!applicationId) {
+    throw new Error("Could not create the application row (upsertApplication failed).");
+  }
 
   const { error: updErr } = await admin
     .from("applications")

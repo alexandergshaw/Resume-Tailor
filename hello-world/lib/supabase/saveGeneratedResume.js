@@ -38,9 +38,13 @@ export async function saveGeneratedResume(supabase, {
       .select("id")
       .single();
 
-    if (error) return null;
+    if (error) {
+      console.error("[saveGeneratedResume] insert failed:", error.message);
+      return null;
+    }
     return data?.id ?? null;
-  } catch {
+  } catch (err) {
+    console.error("[saveGeneratedResume] threw:", err?.message || err);
     return null;
   }
 }

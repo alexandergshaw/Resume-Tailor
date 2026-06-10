@@ -34,9 +34,13 @@ export async function upsertPosition(supabase, job) {
       .select("id")
       .single();
 
-    if (error) return null;
+    if (error) {
+      console.error("[upsertPosition] insert failed:", error.message);
+      return null;
+    }
     return data?.id ?? null;
-  } catch {
+  } catch (err) {
+    console.error("[upsertPosition] threw:", err?.message || err);
     return null;
   }
 }

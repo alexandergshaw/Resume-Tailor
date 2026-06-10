@@ -31,9 +31,13 @@ export async function upsertApplication(supabase, { userId, positionId, status }
       .select("id")
       .single();
 
-    if (error) return null;
+    if (error) {
+      console.error("[upsertApplication] upsert failed:", error.message);
+      return null;
+    }
     return data?.id ?? null;
-  } catch {
+  } catch (err) {
+    console.error("[upsertApplication] threw:", err?.message || err);
     return null;
   }
 }
