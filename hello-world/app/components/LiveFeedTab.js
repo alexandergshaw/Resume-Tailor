@@ -22,16 +22,18 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 import DescriptionIcon from "@mui/icons-material/Description";
-import RocketLaunchIcon from "@mui/icons-material/RocketLaunch";
 import TuneIcon from "@mui/icons-material/Tune";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import FilterAltOffIcon from "@mui/icons-material/FilterAltOff";
 import Collapse from "@mui/material/Collapse";
+import Snackbar from "@mui/material/Snackbar";
 import styles from "../page.module.css";
 import JobFilterControls from "./JobFilterControls";
 import SavedSearchStrip from "./SavedSearchStrip";
 import AutoApplyQueueTab from "./AutoApplyQueueTab";
+import AutofillProfileDialog from "./AutofillProfileDialog";
+import { buildBookmarklet, profileHasValues } from "@/lib/autofill/buildBookmarklet";
 
 const FILTERS_STORAGE_KEY = "feedFilters";
 const ADVANCED_STORAGE_KEY = "feedAdvancedFilters";
@@ -185,6 +187,10 @@ export default function LiveFeedTab({
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
   const [sourceHealth, setSourceHealth] = useState(null);
   const [busyIds, setBusyIds] = useState({});
+  // Autofill profile (used by the per-card "Auto Fill" bookmarklet) and its editor.
+  const [autofillProfile, setAutofillProfile] = useState({});
+  const [autofillDialogOpen, setAutofillDialogOpen] = useState(false);
+  const [snackbar, setSnackbar] = useState("");
   // Ticking "now" used for relative-time labels and staleness, kept in state so
   // render stays pure (no Date.now() calls during render).
   const [nowTs, setNowTs] = useState(0);
@@ -240,6 +246,29 @@ export default function LiveFeedTab({
         if (!cancelled) setQueueCount(Array.isArray(data.items) ? data.items.length : 0);
       } catch {
         // ignore — badge simply stays at its last known value
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser]);
+
+  // Load the saved autofill profile once signed in so the per-card "Auto Fill"
+  // bookmarklet has values to inject.
+  useEffect(() => {
+    if (!currentUser) {
+      const handle = setTimeout(() => setAutofillProfile({}), 0);
+      return () => clearTimeout(handle);
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/user-profile", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setAutofillProfile(data.profile && typeof data.profile === "object" ? data.profile : {});
+      } catch {
+        // ignore — Auto Fill will prompt the user to fill their profile
       }
     })();
     return () => {
@@ -390,38 +419,36 @@ export default function LiveFeedTab({
     [onTailor],
   );
 
-  // Kick off the full cron tailoring pipeline for a single posting: tailor a
-  // resume + cover letter and park it in the auto-apply queue.
-  const handleAutoApply = useCallback(
+  // Open the posting and copy an autofill bookmarklet (built from the user's
+  // saved profile) to the clipboard. Browsers block scripting a third-party
+  // page from here, so the user runs the bookmarklet on the posting itself.
+  const handleAutoFill = useCallback(
     async (posting) => {
-      if (!currentUser) return;
-      setBusy(posting.id, true);
-      setError("");
-      try {
-        const res = await fetch("/api/auto-apply-queue/tailor", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ postingId: posting.id }),
-        });
-        const payload = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(payload.error || `Request failed (${res.status})`);
-        }
-        setItems((prev) =>
-          prev.map((p) =>
-            p.id === posting.id ? { ...p, autoQueued: true, saved: true } : p,
-          ),
-        );
-        if (!payload.alreadyQueued) {
-          setQueueCount((c) => c + 1);
-        }
-      } catch (err) {
-        setError(err.message || "Failed to auto-apply for this posting.");
-      } finally {
-        if (mountedRef.current) setBusy(posting.id, false);
+      if (!posting?.url) return;
+      if (!profileHasValues(autofillProfile)) {
+        setAutofillDialogOpen(true);
+        return;
       }
+      const bookmarklet = buildBookmarklet(autofillProfile);
+      let copied = false;
+      try {
+        if (navigator?.clipboard?.writeText) {
+          await navigator.clipboard.writeText(bookmarklet);
+          copied = true;
+        }
+      } catch {
+        // clipboard may be blocked; fall back to just opening the posting
+      }
+      if (typeof window !== "undefined") {
+        window.open(posting.url, "_blank", "noopener,noreferrer");
+      }
+      setSnackbar(
+        copied
+          ? "Posting opened. Autofill bookmarklet copied — run it on the posting page (or use your saved Auto Fill bookmark)."
+          : "Posting opened. Use your saved Auto Fill bookmark on the posting page.",
+      );
     },
-    [currentUser],
+    [autofillProfile],
   );
 
   const updateFilter = useCallback(
@@ -783,6 +810,21 @@ export default function LiveFeedTab({
             Filters
           </Button>
         </Badge>
+
+        {currentUser && (
+          <Tooltip title="Edit the profile used by Auto Fill and get your bookmarklet">
+            <Button
+              size="small"
+              variant="outlined"
+              color="inherit"
+              disableElevation
+              onClick={() => setAutofillDialogOpen(true)}
+              sx={{ textTransform: "none", fontWeight: 600, px: 1.75 }}
+            >
+              Autofill profile
+            </Button>
+          </Tooltip>
+        )}
       </Box>
 
       {/* Collapsible advanced filters + saved searches (ported from Job Search) */}
@@ -1140,26 +1182,17 @@ export default function LiveFeedTab({
                       </IconButton>
                     </span>
                   </Tooltip>
-                  <Tooltip
-                    title={
-                      posting.autoQueued
-                        ? "Queued for auto-apply"
-                        : "Auto-apply (tailor résumé + cover letter & queue)"
-                    }
-                  >
+                  <Tooltip title="Open the posting and copy the autofill bookmarklet">
                     <span>
-                      <IconButton
+                      <Button
                         size="small"
-                        disabled={!currentUser || busy || posting.autoQueued}
-                        onClick={() => handleAutoApply(posting)}
-                        color={posting.autoQueued ? "success" : "secondary"}
+                        variant="outlined"
+                        disabled={!currentUser || busy || !posting.url}
+                        onClick={() => handleAutoFill(posting)}
+                        sx={{ textTransform: "none", minWidth: 0, px: 1, py: 0.25, fontSize: "0.72rem" }}
                       >
-                        {busy ? (
-                          <CircularProgress size={18} />
-                        ) : (
-                          <RocketLaunchIcon fontSize="small" />
-                        )}
-                      </IconButton>
+                        Auto Fill
+                      </Button>
                     </span>
                   </Tooltip>
                   <Tooltip title="Hide">
@@ -1194,6 +1227,20 @@ export default function LiveFeedTab({
       )}
         </>
       )}
+
+      <AutofillProfileDialog
+        open={autofillDialogOpen}
+        onClose={() => setAutofillDialogOpen(false)}
+        profile={autofillProfile}
+        onSaved={setAutofillProfile}
+      />
+      <Snackbar
+        open={!!snackbar}
+        autoHideDuration={6000}
+        onClose={() => setSnackbar("")}
+        message={snackbar}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      />
     </section>
   );
 }
