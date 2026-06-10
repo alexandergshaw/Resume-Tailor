@@ -24,6 +24,7 @@ import BookmarkBorderIcon from "@mui/icons-material/BookmarkBorder";
 import BookmarkIcon from "@mui/icons-material/Bookmark";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 import AddTaskIcon from "@mui/icons-material/AddTask";
+import RocketLaunchIcon from "@mui/icons-material/RocketLaunch";
 import TuneIcon from "@mui/icons-material/Tune";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
@@ -410,6 +411,40 @@ export default function LiveFeedTab({
             ),
           );
         }
+      } finally {
+        if (mountedRef.current) setBusy(posting.id, false);
+      }
+    },
+    [currentUser],
+  );
+
+  // Kick off the full cron tailoring pipeline for a single posting: tailor a
+  // resume + cover letter and park it in the auto-apply queue.
+  const handleAutoApply = useCallback(
+    async (posting) => {
+      if (!currentUser) return;
+      setBusy(posting.id, true);
+      setError("");
+      try {
+        const res = await fetch("/api/auto-apply-queue/tailor", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ postingId: posting.id }),
+        });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(payload.error || `Request failed (${res.status})`);
+        }
+        setItems((prev) =>
+          prev.map((p) =>
+            p.id === posting.id ? { ...p, autoQueued: true, saved: true } : p,
+          ),
+        );
+        if (!payload.alreadyQueued) {
+          setQueueCount((c) => c + 1);
+        }
+      } catch (err) {
+        setError(err.message || "Failed to auto-apply for this posting.");
       } finally {
         if (mountedRef.current) setBusy(posting.id, false);
       }
@@ -1136,6 +1171,28 @@ export default function LiveFeedTab({
                         color={posting.added ? "success" : "default"}
                       >
                         <AddTaskIcon fontSize="small" />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                  <Tooltip
+                    title={
+                      posting.autoQueued
+                        ? "Queued for auto-apply"
+                        : "Auto-apply (tailor résumé + cover letter & queue)"
+                    }
+                  >
+                    <span>
+                      <IconButton
+                        size="small"
+                        disabled={!currentUser || busy || posting.autoQueued}
+                        onClick={() => handleAutoApply(posting)}
+                        color={posting.autoQueued ? "success" : "secondary"}
+                      >
+                        {busy ? (
+                          <CircularProgress size={18} />
+                        ) : (
+                          <RocketLaunchIcon fontSize="small" />
+                        )}
                       </IconButton>
                     </span>
                   </Tooltip>

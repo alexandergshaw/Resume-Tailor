@@ -1,14 +1,13 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { tailorResumeHeadless, tailorCoverLetterHeadless } from "@/lib/llm/tailorForUserHeadless";
-import { upsertPosition } from "@/lib/supabase/upsertPosition";
-import { upsertApplication } from "@/lib/supabase/upsertApplication";
-import { saveGeneratedResume } from "@/lib/supabase/saveGeneratedResume";
-import { saveGeneratedCoverLetter } from "@/lib/supabase/saveGeneratedCoverLetter";
 import {
   selectQueueCandidates,
-  postingToJob,
   postingExternalId,
 } from "@/lib/feed/selectQueueCandidates";
+import {
+  loadStorageBuffer,
+  loadAlreadyTrackedExternalIds,
+  tailorAndQueueOne,
+} from "@/lib/feed/tailorAndQueue";
 
 export const runtime = "nodejs";
 export const maxDuration = 300; // seconds, used by Vercel for long-running cron
@@ -40,17 +39,6 @@ function isAuthorized(request) {
   return request.headers.get("x-vercel-cron") === "1";
 }
 
-async function loadStorageBuffer(admin, path) {
-  try {
-    const { data, error } = await admin.storage.from("resumes").download(path);
-    if (error || !data) return null;
-    const arr = await data.arrayBuffer();
-    return Buffer.from(arr);
-  } catch {
-    return null;
-  }
-}
-
 // Pull the most recent feed postings. Returns an array of feed_postings rows.
 async function loadFeedPostings(admin, savedSearch) {
   const { data, error } = await admin
@@ -66,129 +54,6 @@ async function loadFeedPostings(admin, savedSearch) {
     return [];
   }
   return data || [];
-}
-
-// External ids already in the user's pipeline (any status) — so we never queue
-// or tailor the same posting twice.
-async function loadAlreadyTrackedExternalIds(admin, userId, externalIds) {
-  const ids = [...new Set(externalIds.filter(Boolean))];
-  if (ids.length === 0) return new Set();
-  const { data } = await admin
-    .from("positions")
-    .select("external_id, applications!inner(user_id)")
-    .in("external_id", ids)
-    .eq("applications.user_id", userId);
-  return new Set((data || []).map((r) => r.external_id).filter(Boolean));
-}
-
-// Mark the source feed posting as "saved" for this user so it also surfaces in
-// the Live Feed's saved view.
-async function markFeedSaved(admin, userId, postingId) {
-  if (!postingId) return;
-  try {
-    await admin
-      .from("feed_user_state")
-      .upsert(
-        { user_id: userId, posting_id: postingId, saved: true },
-        { onConflict: "user_id,posting_id" },
-      );
-  } catch (err) {
-    console.error(`[cron] markFeedSaved failed for posting ${postingId}:`, err?.message || err);
-  }
-}
-
-async function tailorAndQueueOne({
-  admin,
-  userId,
-  savedSearch,
-  posting,
-  resumeBuffer,
-  coverLetterBuffer,
-}) {
-  const job = postingToJob(posting);
-  if (!job.id) return null;
-
-  const positionId = await upsertPosition(admin, job);
-  if (!positionId) return null;
-
-  // Resume (required).
-  const resumeDraft = await tailorResumeHeadless({
-    resumeBuffer,
-    jobPosting: job.description || job.title || "",
-    jobTitleHint: job.title || "",
-  });
-  if (!resumeDraft?.result) return null;
-
-  const generatedResumeId = await saveGeneratedResume(admin, {
-    userId,
-    positionId,
-    content: resumeDraft.result,
-    contentLines: resumeDraft.resultLines,
-    sourceResumePath: `${userId}/resume`,
-    additionalContext: `Auto-queued by cron from saved search "${savedSearch.name}".`,
-  });
-
-  // Cover letter (best-effort; only when the user has a template uploaded).
-  let coverLetterId = null;
-  if (coverLetterBuffer) {
-    try {
-      const coverDraft = await tailorCoverLetterHeadless({
-        coverLetterBuffer,
-        resumeBuffer,
-        jobPosting: job.description || job.title || "",
-        jobPostingUrl: job.url || "",
-        companyName: job.company || "",
-        jobTitle: resumeDraft.jobTitle || job.title || "",
-      });
-      if (coverDraft?.result) {
-        coverLetterId = await saveGeneratedCoverLetter(admin, {
-          userId,
-          positionId,
-          content: coverDraft.result,
-          contentLines: coverDraft.resultLines,
-          sourceResumePath: `${userId}/cover-letter`,
-          additionalContext: `Auto-queued by cron from saved search "${savedSearch.name}".`,
-        });
-      }
-    } catch (err) {
-      console.error(`[cron] cover letter failed for user=${userId} job=${job.id}:`, err?.message || err);
-    }
-  }
-
-  // Park in the queue: upsert the application then attach queue metadata.
-  const applicationId = await upsertApplication(admin, {
-    userId,
-    positionId,
-    status: "tracking",
-  });
-  if (!applicationId) return null;
-
-  const { error: updErr } = await admin
-    .from("applications")
-    .update({
-      status: "auto_queued",
-      resume_used_id: generatedResumeId || null,
-      cover_letter_id: coverLetterId || null,
-      auto_search_id: savedSearch.id || null,
-      auto_saved_at: new Date().toISOString(),
-    })
-    .eq("id", applicationId)
-    .eq("user_id", userId);
-  if (updErr) {
-    console.error(`[cron] failed to queue application ${applicationId}:`, updErr.message);
-  }
-
-  await markFeedSaved(admin, userId, posting.id);
-
-  return {
-    applicationId,
-    positionId,
-    generatedResumeId,
-    coverLetterId,
-    title: job.title,
-    company: job.company,
-    url: job.url,
-  };
 }
 
 async function processUser({ admin, userId, savedSearches }) {
@@ -229,6 +94,8 @@ async function processUser({ admin, userId, savedSearches }) {
           posting,
           resumeBuffer,
           coverLetterBuffer,
+          savedSearchId: savedSearch.id,
+          sourceLabel: `saved search "${savedSearch.name}"`,
         });
         if (result) queued.push(result);
       } catch (err) {
