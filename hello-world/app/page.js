@@ -3490,17 +3490,17 @@ export default function Home() {
           </button>
           <button
             type="button"
+            className={mainTab === "feed" ? styles.mainTabActive : styles.mainTab}
+            onClick={() => setMainTab("feed")}
+          >
+            Auto Applying
+          </button>
+          <button
+            type="button"
             className={mainTab === "interviewing" ? styles.mainTabActive : styles.mainTab}
             onClick={() => setMainTab("interviewing")}
           >
             Tracking
-          </button>
-          <button
-            type="button"
-            className={mainTab === "feed" ? styles.mainTabActive : styles.mainTab}
-            onClick={() => setMainTab("feed")}
-          >
-            Live Feed
           </button>
         </div>
 
