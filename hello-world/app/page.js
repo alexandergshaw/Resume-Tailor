@@ -418,7 +418,7 @@ export default function Home() {
       setActiveSection(saved);
     }
     const savedTab = localStorage.getItem("mainTab");
-    if (savedTab === "applying" || savedTab === "interviewing" || savedTab === "feed") {
+    if (savedTab === "applying" || savedTab === "manualApplying" || savedTab === "interviewing" || savedTab === "feed") {
       setMainTab(savedTab);
     }
     const savedContextPanel = localStorage.getItem("contextPanelOpen");
@@ -3479,7 +3479,14 @@ export default function Home() {
             className={mainTab === "applying" ? styles.mainTabActive : styles.mainTab}
             onClick={() => setMainTab("applying")}
           >
-            Applying
+            Materials
+          </button>
+          <button
+            type="button"
+            className={mainTab === "manualApplying" ? styles.mainTabActive : styles.mainTab}
+            onClick={() => setMainTab("manualApplying")}
+          >
+            Manual Applying
           </button>
           <button
             type="button"
@@ -3558,8 +3565,11 @@ export default function Home() {
           renderCopyButton={renderCopyButton}
         />
 
-        <hr className={styles.sectionDivider} />
+          </>
+        )}
 
+        {mainTab === "manualApplying" && (
+          <>
         <div className={styles.sectionTabs}>
           <button
             type="button"
