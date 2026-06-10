@@ -57,6 +57,7 @@ export function openPostingBeside(url, { forceNewTab = false } = {}) {
 
   const { availLeft, availTop, availWidth, availHeight } = readScreenGeometry();
   const halfWidth = Math.floor(availWidth / 2);
+  const rightLeft = availLeft + halfWidth;
 
   // Dock the current app window to the left half. Frequently blocked — ignore
   // failures and carry on so the posting still opens.
@@ -69,21 +70,36 @@ export function openPostingBeside(url, { forceNewTab = false } = {}) {
 
   // Note: we deliberately omit "noopener" from the features. With "noopener",
   // window.open returns null, which would prevent us from detecting a blocked
-  // popup, reusing/focusing the window, and docking it. To still guard against
-  // reverse tab-nabbing we null out the popup's `opener` after opening.
+  // popup, repositioning, and focusing it. To still guard against reverse
+  // tab-nabbing we null out the popup's `opener` after opening.
+  //
+  // We also include "popup=1" so browsers open a separate window (not a tab) —
+  // position/size features are only honored for popups, not tabs.
   const features = [
+    "popup=1",
     `width=${halfWidth}`,
     `height=${availHeight}`,
-    `left=${availLeft + halfWidth}`,
+    `left=${rightLeft}`,
     `top=${availTop}`,
   ].join(",");
 
-  // Reuse a stable window name so repeated opens replace the existing popup
-  // instead of stacking new windows.
-  const popup = window.open(url, "postingWindow", features);
+  // Use a unique window name each call. Reusing a fixed name makes browsers
+  // ignore the new position/size features and just re-navigate the existing
+  // window in place (a common reason the popup doesn't move to the right).
+  const popup = window.open(url, "_blank", features);
 
   // Popup blocked: signal failure so the caller can fall back to a new tab.
   if (!popup || popup.closed) return null;
+
+  // Belt-and-suspenders: many browsers ignore the left/top open features but
+  // honor moveTo/resizeTo on a script-opened popup. Force the right-half
+  // placement explicitly.
+  try {
+    popup.resizeTo(halfWidth, availHeight);
+    popup.moveTo(rightLeft, availTop);
+  } catch {
+    // positioning may be denied; the open features above still apply
+  }
 
   try {
     popup.opener = null; // mitigate reverse tab-nabbing

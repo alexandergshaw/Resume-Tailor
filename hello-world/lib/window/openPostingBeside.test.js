@@ -16,7 +16,7 @@ function makeStore() {
 }
 
 beforeEach(() => {
-  const popup = { closed: false, opener: {}, focus: vi.fn() };
+  const popup = { closed: false, opener: {}, focus: vi.fn(), moveTo: vi.fn(), resizeTo: vi.fn() };
   global.window = {
     localStorage: makeStore(),
     screen: { availLeft: 0, availTop: 0, availWidth: 1600, availHeight: 900 },
@@ -53,10 +53,12 @@ describe("openPostingBeside", () => {
     expect(window.resizeTo).toHaveBeenCalledWith(800, 900);
     expect(window.open).toHaveBeenCalledWith(
       "https://example.com/job",
-      "postingWindow",
-      "width=800,height=900,left=800,top=0",
+      "_blank",
+      "popup=1,width=800,height=900,left=800,top=0",
     );
     expect(result).toBe(global.__popup);
+    expect(global.__popup.resizeTo).toHaveBeenCalledWith(800, 900);
+    expect(global.__popup.moveTo).toHaveBeenCalledWith(800, 0);
     expect(global.__popup.focus).toHaveBeenCalled();
     expect(global.__popup.opener).toBeNull();
   });
@@ -66,9 +68,10 @@ describe("openPostingBeside", () => {
     openPostingBeside("https://example.com/job");
     expect(window.open).toHaveBeenCalledWith(
       "https://example.com/job",
-      "postingWindow",
-      "width=640,height=720,left=2560,top=24",
+      "_blank",
+      "popup=1,width=640,height=720,left=2560,top=24",
     );
+    expect(global.__popup.moveTo).toHaveBeenCalledWith(2560, 24);
   });
 
   it("continues opening even if moveTo/resizeTo throw", () => {
