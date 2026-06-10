@@ -11,6 +11,7 @@ import Typography from "@mui/material/Typography";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import DescriptionIcon from "@mui/icons-material/Description";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 
 import styles from "../page.module.css";
 
@@ -156,6 +157,37 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
 
   // Move to the next item in the walkthrough without changing the queue.
   const goNext = useCallback(() => setWalkIndex((i) => i + 1), []);
+
+  // Remove a posting from the queue entirely. This hard-deletes the application
+  // row, so clicking the rocket again in the Live Feed re-tailors and re-queues
+  // the same posting.
+  const handleRemove = useCallback(
+    async (row) => {
+      if (!row?.id) return;
+      if (typeof window !== "undefined" && !window.confirm("Remove this posting from the queue?")) {
+        return;
+      }
+      setBusyId(row.id);
+      setError("");
+      try {
+        const res = await fetch(`/api/auto-apply-queue/${row.id}`, { method: "DELETE" });
+        const payload = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(payload.error || `Request failed (${res.status})`);
+        }
+        setItems((prev) => {
+          const next = prev.filter((it) => it.id !== row.id);
+          if (typeof onCountChange === "function") onCountChange(next.length);
+          return next;
+        });
+      } catch (err) {
+        setError(err.message || "Failed to remove the queue item.");
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [onCountChange],
+  );
 
   // Walkthrough: items stay in the queue, so advance by index. Exit when we run
   // past the end (or the queue empties).
@@ -310,6 +342,19 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
             >
               Skip
             </Button>
+            <Box sx={{ flex: 1 }} />
+            <Button
+              variant="text"
+              color="error"
+              startIcon={<DeleteOutlineIcon />}
+              onClick={async () => {
+                await handleRemove(current);
+              }}
+              disabled={busyId === current.id}
+              sx={{ textTransform: "none" }}
+            >
+              Remove
+            </Button>
           </Box>
           <Typography sx={{ color: "#90a4ae", fontSize: "0.72rem", mt: 1 }}>
             Jobs stay in the queue until you change their status in the Tracking tab.
@@ -352,6 +397,15 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
                         sx={{ textTransform: "none", py: 0.25, px: 1, fontSize: "0.75rem" }}
                       >
                         {row.auto_apply_opened_at ? "Re-open" : "Apply"}
+                      </Button>
+                      <Button
+                        size="small"
+                        color="error"
+                        onClick={() => handleRemove(row)}
+                        disabled={busyId === row.id}
+                        sx={{ textTransform: "none", py: 0.25, px: 1, fontSize: "0.75rem", minWidth: 0, ml: 0.5 }}
+                      >
+                        Remove
                       </Button>
                     </Box>
                   </Box>
