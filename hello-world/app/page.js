@@ -25,6 +25,7 @@ import {
   downloadMinimalistDocx,
   createDocumentDownloaders,
 } from "../lib/document/docx";
+import { openPostingBeside } from "../lib/window/openPostingBeside";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import TextField from "@mui/material/TextField";
@@ -2529,7 +2530,8 @@ export default function Home() {
     setAutoTailoredError(null);
     const url = row?.positions?.url;
     if (url && typeof window !== "undefined") {
-      window.open(url, "_blank", "noopener,noreferrer");
+      const opened = openPostingBeside(url);
+      if (!opened) window.open(url, "_blank", "noopener,noreferrer");
     }
     if (currentUser && row?.id) {
       const supabase = createClient();

@@ -14,6 +14,7 @@ import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
 
 import styles from "../page.module.css";
+import { openPostingBeside } from "@/lib/window/openPostingBeside";
 
 // Turn generated content (string or line array) into a downloadable text file.
 function downloadText(filename, lines, fallback) {
@@ -148,7 +149,8 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
       handleDownloadResume(row);
       if (coverFor(row)) handleDownloadCover(row);
       if (url && typeof window !== "undefined") {
-        window.open(url, "_blank", "noopener,noreferrer");
+        const opened = openPostingBeside(url);
+        if (!opened) window.open(url, "_blank", "noopener,noreferrer");
       }
       await markOpened(row);
     },

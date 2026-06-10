@@ -34,6 +34,7 @@ import SavedSearchStrip from "./SavedSearchStrip";
 import AutoApplyQueueTab from "./AutoApplyQueueTab";
 import AutofillProfileDialog from "./AutofillProfileDialog";
 import { buildBookmarklet, profileHasValues } from "@/lib/autofill/buildBookmarklet";
+import { openPostingBeside } from "@/lib/window/openPostingBeside";
 
 const FILTERS_STORAGE_KEY = "feedFilters";
 const ADVANCED_STORAGE_KEY = "feedAdvancedFilters";
@@ -440,7 +441,8 @@ export default function LiveFeedTab({
         // clipboard may be blocked; fall back to just opening the posting
       }
       if (typeof window !== "undefined") {
-        window.open(posting.url, "_blank", "noopener,noreferrer");
+        const opened = openPostingBeside(posting.url);
+        if (!opened) window.open(posting.url, "_blank", "noopener,noreferrer");
       }
       setSnackbar(
         copied
