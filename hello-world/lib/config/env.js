@@ -17,5 +17,7 @@ export function getServerEnv() {
     rapidApiKey: process.env.RAPID_API_KEY,
     googleClientId: process.env.GOOGLE_CLIENT_ID || null,
     googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || null,
+    resendApiKey: process.env.RESEND_API_KEY || null,
+    emailFrom: process.env.EMAIL_FROM || null,
   };
 }

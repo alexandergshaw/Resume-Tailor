@@ -8,6 +8,12 @@ import {
   loadAlreadyTrackedExternalIds,
   tailorAndQueueOne,
 } from "@/lib/feed/tailorAndQueue";
+import {
+  selectEmailableJobs,
+  groupJobsByRecipient,
+  buildNewJobsEmail,
+} from "@/lib/email/newJobsEmail";
+import { sendEmail } from "@/lib/email/sendEmail";
 
 export const runtime = "nodejs";
 export const maxDuration = 300; // seconds, used by Vercel for long-running cron
@@ -97,7 +103,14 @@ async function processUser({ admin, userId, savedSearches }) {
           savedSearchId: savedSearch.id,
           sourceLabel: `saved search "${savedSearch.name}"`,
         });
-        if (result) queued.push(result);
+        if (result)
+          queued.push({
+            ...result,
+            savedSearchId: savedSearch.id,
+            savedSearchName: savedSearch.name,
+            emailOnNewJobs: !!savedSearch.email_on_new_jobs,
+            notifyEmail: savedSearch.notify_email || null,
+          });
       } catch (err) {
         console.error(`[cron] queue failed for user=${userId} posting=${posting?.id}:`, err?.message || err);
       }
@@ -134,7 +147,44 @@ async function processUser({ admin, userId, savedSearches }) {
     console.error(`[cron] notification insert failed for user=${userId}:`, err?.message || err);
   }
 
+  // Best-effort email alert for searches that opted in. Never let an email
+  // failure break the queueing pipeline.
+  try {
+    await emailNewJobs({ admin, userId, queued });
+  } catch (err) {
+    console.error(`[cron] new-jobs email step failed for user=${userId}:`, err?.message || err);
+  }
+
   return { userId, scanned: totalScanned, queued };
+}
+
+// Email a summary of newly-queued jobs to each recipient that opted in. The
+// destination is the saved search's `notify_email` override, or the user's
+// account email when unset.
+async function emailNewJobs({ admin, userId, queued }) {
+  const emailable = selectEmailableJobs(queued);
+  if (emailable.length === 0) return;
+
+  let fallbackEmail = null;
+  try {
+    const { data } = await admin.auth.admin.getUserById(userId);
+    fallbackEmail = data?.user?.email || null;
+  } catch (err) {
+    console.error(`[cron] could not resolve account email for user=${userId}:`, err?.message || err);
+  }
+
+  const groups = groupJobsByRecipient(emailable, fallbackEmail);
+  for (const [to, jobs] of groups.entries()) {
+    try {
+      const { subject, html, text } = buildNewJobsEmail(jobs);
+      const result = await sendEmail({ to, subject, html, text });
+      if (result?.skipped) {
+        console.warn(`[cron] new-jobs email skipped for user=${userId}: ${result.reason}`);
+      }
+    } catch (err) {
+      console.error(`[cron] new-jobs email failed for user=${userId} to=${to}:`, err?.message || err);
+    }
+  }
 }
 
 export async function POST(request) {

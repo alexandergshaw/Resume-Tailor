@@ -29,6 +29,14 @@ function sanitizeCap(value) {
   return Math.max(MIN_DAILY_CAP, Math.min(MAX_DAILY_CAP, n));
 }
 
+function sanitizeEmail(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().slice(0, 320);
+  if (!trimmed) return null;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return null;
+  return trimmed;
+}
+
 function sanitizePartial(body) {
   if (!body || typeof body !== "object") return {};
   const out = {};
@@ -57,6 +65,12 @@ function sanitizePartial(body) {
   }
   if ("autoTailorDailyCap" in body || "auto_tailor_daily_cap" in body) {
     out.auto_tailor_daily_cap = sanitizeCap(body.autoTailorDailyCap ?? body.auto_tailor_daily_cap);
+  }
+  if ("emailOnNewJobs" in body || "email_on_new_jobs" in body) {
+    out.email_on_new_jobs = !!(body.emailOnNewJobs ?? body.email_on_new_jobs);
+  }
+  if ("notifyEmail" in body || "notify_email" in body) {
+    out.notify_email = sanitizeEmail(body.notifyEmail ?? body.notify_email);
   }
   return out;
 }

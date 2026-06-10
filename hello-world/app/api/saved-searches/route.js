@@ -29,6 +29,14 @@ function sanitizeCap(value) {
   return Math.max(MIN_DAILY_CAP, Math.min(MAX_DAILY_CAP, n));
 }
 
+function sanitizeEmail(value) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().slice(0, 320);
+  if (!trimmed) return null;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return null;
+  return trimmed;
+}
+
 function sanitizeIncoming(body) {
   if (!body || typeof body !== "object") return null;
   const name = typeof body.name === "string" ? body.name.trim().slice(0, 200) : "";
@@ -48,6 +56,8 @@ function sanitizeIncoming(body) {
     excluded_title_keywords: sanitizeStringArray(body.excludedTitleKeywords ?? body.excluded_title_keywords, { maxItems: 50, maxLen: 100 }),
     auto_tailor_enabled: !!(body.autoTailorEnabled ?? body.auto_tailor_enabled),
     auto_tailor_daily_cap: sanitizeCap(body.autoTailorDailyCap ?? body.auto_tailor_daily_cap),
+    email_on_new_jobs: !!(body.emailOnNewJobs ?? body.email_on_new_jobs),
+    notify_email: sanitizeEmail(body.notifyEmail ?? body.notify_email),
   };
 }
 
