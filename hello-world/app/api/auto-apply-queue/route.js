@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 
@@ -6,7 +7,9 @@ export const runtime = "nodejs";
 // "auto_queued", joined with their position and the generated resume / cover
 // letter content. Relations are fetched as separate queries (rather than
 // PostgREST embedded joins) so a missing/undetected foreign key can't 500 the
-// whole endpoint.
+// whole endpoint. The generated docs are read with the admin client — still
+// scoped to the authenticated user's id — so any RLS/grant gap on the older
+// generated_resumes table can't hide the tailored documents.
 export async function GET() {
   const supabase = await createClient();
   const {
@@ -35,6 +38,13 @@ export async function GET() {
     return Response.json({ items: [] });
   }
 
+  let admin;
+  try {
+    admin = createAdminClient();
+  } catch {
+    admin = supabase; // fall back to the user client if no service role key
+  }
+
   const positionIds = [...new Set(rows.map((r) => r.position_id).filter(Boolean))];
   const resumeIds = [...new Set(rows.map((r) => r.resume_used_id).filter(Boolean))];
   const coverIds = [...new Set(rows.map((r) => r.cover_letter_id).filter(Boolean))];
@@ -44,10 +54,18 @@ export async function GET() {
       ? supabase.from("positions").select("id, title, company, location, url").in("id", positionIds)
       : Promise.resolve({ data: [] }),
     resumeIds.length
-      ? supabase.from("generated_resumes").select("id, content, content_lines").in("id", resumeIds)
+      ? admin
+          .from("generated_resumes")
+          .select("id, content, content_lines")
+          .eq("user_id", user.id)
+          .in("id", resumeIds)
       : Promise.resolve({ data: [] }),
     coverIds.length
-      ? supabase.from("generated_cover_letters").select("id, content, content_lines").in("id", coverIds)
+      ? admin
+          .from("generated_cover_letters")
+          .select("id, content, content_lines")
+          .eq("user_id", user.id)
+          .in("id", coverIds)
       : Promise.resolve({ data: [] }),
   ]);
 
