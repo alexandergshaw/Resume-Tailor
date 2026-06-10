@@ -67,11 +67,16 @@ export async function POST(request) {
     );
   }
 
-  // Don't create duplicates — if this posting is already in the user's
-  // pipeline, report it as already queued.
+  // Don't create duplicates — if this posting is already queued or already
+  // applied, report it as such. A row left at an earlier status (e.g.
+  // "tracking" from a half-finished run) is intentionally NOT treated as a
+  // duplicate so re-running recovers it into the queue.
   const externalId = postingExternalId(posting);
   if (externalId) {
-    const tracked = await loadAlreadyTrackedExternalIds(admin, user.id, [externalId]);
+    const tracked = await loadAlreadyTrackedExternalIds(admin, user.id, [externalId], [
+      "auto_queued",
+      "applied",
+    ]);
     if (tracked.has(externalId)) {
       return Response.json(
         { ok: true, alreadyQueued: true, message: "This job is already in your pipeline." },

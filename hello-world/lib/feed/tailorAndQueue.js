@@ -96,14 +96,18 @@ export async function loadStorageBuffer(admin, path) {
 
 // External ids already in the user's pipeline (any status) — so we never queue
 // or tailor the same posting twice.
-export async function loadAlreadyTrackedExternalIds(admin, userId, externalIds) {
+export async function loadAlreadyTrackedExternalIds(admin, userId, externalIds, statuses = null) {
   const ids = [...new Set((externalIds || []).filter(Boolean))];
   if (ids.length === 0) return new Set();
-  const { data } = await admin
+  let query = admin
     .from("positions")
-    .select("external_id, applications!inner(user_id)")
+    .select("external_id, applications!inner(user_id, status)")
     .in("external_id", ids)
     .eq("applications.user_id", userId);
+  if (Array.isArray(statuses) && statuses.length > 0) {
+    query = query.in("applications.status", statuses);
+  }
+  const { data } = await query;
   return new Set((data || []).map((r) => r.external_id).filter(Boolean));
 }
 
