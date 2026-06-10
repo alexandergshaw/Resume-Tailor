@@ -20,10 +20,8 @@ import Divider from "@mui/material/Divider";
 import Paper from "@mui/material/Paper";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
-import BookmarkBorderIcon from "@mui/icons-material/BookmarkBorder";
-import BookmarkIcon from "@mui/icons-material/Bookmark";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
-import AddTaskIcon from "@mui/icons-material/AddTask";
+import DescriptionIcon from "@mui/icons-material/Description";
 import RocketLaunchIcon from "@mui/icons-material/RocketLaunch";
 import TuneIcon from "@mui/icons-material/Tune";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
@@ -167,6 +165,8 @@ export default function LiveFeedTab({
   deleteSavedSearch,
   GREENHOUSE_COMPANIES = [],
   COMPANY_CATEGORIES = [],
+  onTailor,
+  canTailor = false,
 }) {
   const [filters, setFilters] = useState(loadFilters);
   const [advanced, setAdvanced] = useState(loadAdvanced);
@@ -357,28 +357,6 @@ export default function LiveFeedTab({
     return res.ok;
   }, []);
 
-  const handleToggleSave = useCallback(
-    async (posting) => {
-      if (!currentUser) return;
-      const next = !posting.saved;
-      setBusy(posting.id, true);
-      // Optimistic update.
-      setItems((prev) =>
-        prev.map((p) => (p.id === posting.id ? { ...p, saved: next } : p)),
-      );
-      const ok = await postState(posting.id, next ? "save" : "unsave");
-      if (!ok) {
-        setItems((prev) =>
-          prev.map((p) =>
-            p.id === posting.id ? { ...p, saved: !next } : p,
-          ),
-        );
-      }
-      if (mountedRef.current) setBusy(posting.id, false);
-    },
-    [currentUser, postState],
-  );
-
   const handleHide = useCallback(
     async (posting) => {
       if (!currentUser) return;
@@ -394,28 +372,22 @@ export default function LiveFeedTab({
     [currentUser, postState, loadPage],
   );
 
-  const handleAddToApplying = useCallback(
+  // Tailor a résumé + cover letter for a single posting using the same flow as
+  // the Posting URL / Job Description tabs. Progress is reflected in the shared
+  // StatusBar via the parent's onTailor handler.
+  const handleTailorPosting = useCallback(
     async (posting) => {
-      if (!currentUser) return;
+      if (typeof onTailor !== "function") return;
       setBusy(posting.id, true);
+      setError("");
       try {
-        const res = await fetch("/api/feed/apply", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ postingId: posting.id }),
-        });
-        if (res.ok) {
-          setItems((prev) =>
-            prev.map((p) =>
-              p.id === posting.id ? { ...p, added: true } : p,
-            ),
-          );
-        }
+        const tailorError = await onTailor(posting);
+        if (tailorError) setError(tailorError);
       } finally {
         if (mountedRef.current) setBusy(posting.id, false);
       }
     },
-    [currentUser],
+    [onTailor],
   );
 
   // Kick off the full cron tailoring pipeline for a single posting: tailor a
@@ -1146,31 +1118,25 @@ export default function LiveFeedTab({
                       </IconButton>
                     </Tooltip>
                   )}
-                  <Tooltip title={posting.saved ? "Unsave" : "Save"}>
+                  <Tooltip
+                    title={
+                      canTailor
+                        ? "Tailor Resume and Cover Letter"
+                        : "Upload a resume first to tailor"
+                    }
+                  >
                     <span>
                       <IconButton
                         size="small"
-                        disabled={!currentUser || busy}
-                        onClick={() => handleToggleSave(posting)}
-                        color={posting.saved ? "primary" : "default"}
+                        disabled={!currentUser || !canTailor || busy}
+                        onClick={() => handleTailorPosting(posting)}
+                        color="primary"
                       >
-                        {posting.saved ? (
-                          <BookmarkIcon fontSize="small" />
+                        {busy ? (
+                          <CircularProgress size={18} />
                         ) : (
-                          <BookmarkBorderIcon fontSize="small" />
+                          <DescriptionIcon fontSize="small" />
                         )}
-                      </IconButton>
-                    </span>
-                  </Tooltip>
-                  <Tooltip title={posting.added ? "Added to Applying" : "Add to Applying"}>
-                    <span>
-                      <IconButton
-                        size="small"
-                        disabled={!currentUser || busy || posting.added}
-                        onClick={() => handleAddToApplying(posting)}
-                        color={posting.added ? "success" : "default"}
-                      >
-                        <AddTaskIcon fontSize="small" />
                       </IconButton>
                     </span>
                   </Tooltip>

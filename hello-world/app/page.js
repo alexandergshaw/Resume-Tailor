@@ -3282,6 +3282,125 @@ export default function Home() {
     setManualIsDownloading(false);
   }
 
+  // Tailor a résumé + cover letter for a Live Feed posting. Mirrors
+  // handleUrlSubmit/handleManualSubmit so the shared StatusBar chip and the
+  // tailoring pipeline behave identically. Prefers the posting URL; falls back
+  // to the posting description text when no URL is available. Returns an error
+  // message string on failure (or null on success) so the caller can surface it.
+  async function handleTailorFeedPosting(posting) {
+    if (!posting) return "Missing posting.";
+    if (!resumeFile) return "Please upload a resume file first.";
+
+    const postingUrl = (posting.url || "").trim();
+    const postingText = (posting.description || posting.description_snippet || "").trim();
+    if (!postingUrl && !postingText) {
+      return "This posting has no URL or description to tailor against.";
+    }
+
+    const syntheticJobId = `feed-${posting.id}`;
+    setTrackedJobs((prev) =>
+      prev.some((j) => j.id === syntheticJobId)
+        ? prev
+        : [
+            ...prev,
+            {
+              id: syntheticJobId,
+              title: posting.title || "Tailoring posting…",
+              company: posting.company || "",
+              url: postingUrl,
+              description: postingText,
+            },
+          ],
+    );
+    updateTailoringJob(syntheticJobId, { status: "tailoring" });
+
+    try {
+      const formData = new FormData();
+      if (postingUrl) formData.append("jobPostingUrl", postingUrl);
+      else formData.append("jobPosting", postingText);
+      formData.append("additionalContext", additionalContext);
+      formData.append("aggressiveness", String(aggressiveness));
+      const templateLines = await buildTemplateLinesForUpload(resumeFile);
+      formData.append("templateLines", JSON.stringify(templateLines));
+      contextFiles.forEach((file) => formData.append("contextFiles", file));
+      formData.append("resume", resumeFile);
+
+      if (coverLetterFile) {
+        const coverLetterTemplateLines = await buildTemplateLinesForUpload(coverLetterFile);
+        formData.append("coverLetterTemplateLines", JSON.stringify(coverLetterTemplateLines));
+        formData.append("coverLetter", coverLetterFile);
+      }
+
+      const response = await fetch("/api/tailor", { method: "POST", body: formData });
+      const payload = await response.json();
+
+      if (!response.ok) throw new Error(payload.error || "Failed to generate a response.");
+
+      const nextResult = payload.result?.trim() || "No output returned from Gemini.";
+      const nextResultLines = Array.isArray(payload.resultLines) ? payload.resultLines : [];
+      const nextJobTitle = typeof payload.jobTitle === "string" ? payload.jobTitle.trim() : "";
+      const nextJobDescription = typeof payload.jobDescription === "string" ? payload.jobDescription.trim() : "";
+      const nextCompany = typeof payload.company === "string" ? payload.company.trim() : "";
+      const nextCoverLetterResultLines = Array.isArray(payload.coverLetterResultLines)
+        ? payload.coverLetterResultLines
+        : [];
+      const nextCoverLetterError = typeof payload.coverLetterError === "string" ? payload.coverLetterError : "";
+
+      const syntheticJob = {
+        id: syntheticJobId,
+        title: nextJobTitle || posting.title || "Untitled role",
+        company: nextCompany || posting.company || "",
+        url: postingUrl,
+        description: nextJobDescription || postingText,
+      };
+      setTrackedJobs((prev) =>
+        prev.map((j) =>
+          j.id === syntheticJobId
+            ? { ...j, title: syntheticJob.title, company: syntheticJob.company || j.company }
+            : j,
+        ),
+      );
+      updateTailoringJob(syntheticJobId, { status: "done" });
+
+      // Persist the generated resume and link to an application.
+      if (currentUser) {
+        const supabase = createClient();
+        const positionId = await upsertPosition(supabase, syntheticJob);
+        const generatedResumeId = await saveGeneratedResume(supabase, {
+          userId: currentUser.id,
+          positionId,
+          content: nextResult,
+          contentLines: nextResultLines,
+          sourceResumePath: `${currentUser.id}/resume`,
+          additionalContext: additionalContext || null,
+        });
+        if (positionId) {
+          await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "applied" });
+          if (generatedResumeId) {
+            await supabase
+              .from("applications")
+              .update({ resume_used_id: generatedResumeId })
+              .eq("user_id", currentUser.id)
+              .eq("position_id", positionId);
+          }
+        }
+        setApplicationsRefreshKey((k) => k + 1);
+      }
+
+      const dlError = await downloadDocxFiles({
+        jobTitle: nextJobTitle,
+        result: nextResult,
+        resultLines: nextResultLines,
+        coverLetterResultLines: nextCoverLetterResultLines,
+      });
+
+      return dlError || null;
+    } catch (err) {
+      updateTailoringJob(syntheticJobId, { status: "error" });
+      return err.message || "Unexpected error.";
+    }
+  }
+
   return (
     <div className={styles.page}>
       <main className={styles.main}>
@@ -3701,6 +3820,8 @@ export default function Home() {
             deleteSavedSearch={deleteSavedSearch}
             GREENHOUSE_COMPANIES={GREENHOUSE_COMPANIES}
             COMPANY_CATEGORIES={COMPANY_CATEGORIES}
+            onTailor={handleTailorFeedPosting}
+            canTailor={!!resumeFile}
           />
         )}
 
