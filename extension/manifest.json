@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Resume Tailor Autofill",
+  "version": "1.0.0",
+  "description": "Fill job-application forms on any posting page using your saved Resume Tailor profile.",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": [
+    "http://localhost:3000/*"
+  ],
+  "action": {
+    "default_title": "Resume Tailor Autofill",
+    "default_popup": "popup/popup.html"
+  }
+}

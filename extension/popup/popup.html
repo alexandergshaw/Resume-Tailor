@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="popup.css" />
+    <title>Resume Tailor Autofill</title>
+  </head>
+  <body>
+    <header class="hdr">
+      <h1>Resume Tailor Autofill</h1>
+    </header>
+
+    <main>
+      <div id="status" class="status" hidden></div>
+
+      <form id="profile-form" class="grid"></form>
+
+      <div class="row">
+        <button id="sync-btn" type="button" class="btn btn-ghost">Sync from Resume Tailor</button>
+        <span id="synced-at" class="muted"></span>
+      </div>
+
+      <div class="actions">
+        <button id="save-btn" type="button" class="btn">Save</button>
+        <button id="fill-btn" type="button" class="btn btn-primary">Fill this page</button>
+      </div>
+    </main>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
