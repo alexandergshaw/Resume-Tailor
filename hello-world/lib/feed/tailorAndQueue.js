@@ -1,5 +1,4 @@
 import { tailorResumeHeadless, tailorCoverLetterHeadless } from "@/lib/llm/tailorForUserHeadless";
-import { upsertPosition } from "@/lib/supabase/upsertPosition";
 import { upsertApplication } from "@/lib/supabase/upsertApplication";
 import { saveGeneratedResume } from "@/lib/supabase/saveGeneratedResume";
 import { saveGeneratedCoverLetter } from "@/lib/supabase/saveGeneratedCoverLetter";
@@ -9,6 +8,79 @@ import { postingToJob } from "@/lib/feed/selectQueueCandidates";
 // (bulk, every saved-search match) and the single-posting API route
 // (manual "Auto-apply" button on a Live Feed card). Keeping this in one place
 // guarantees identical behaviour across both entry points.
+
+// Map a normalized job into a positions row.
+function jobToPositionRow(job) {
+  return {
+    external_id: String(job.id),
+    source: String(job.id).startsWith("gh-") ? "greenhouse" : "jsearch",
+    title: job.title ?? null,
+    company: job.company ?? null,
+    location: job.location ?? null,
+    is_remote: job.isRemote ?? null,
+    employment_type: job.employmentType ?? null,
+    description: job.description ?? null,
+    url: job.url ?? null,
+    salary_min: job.salaryMin ?? null,
+    salary_max: job.salaryMax ?? null,
+    posted_at: job.postedAt ?? null,
+    raw_data: job,
+  };
+}
+
+// Upsert a position and return its id. Unlike the shared upsertPosition helper
+// (which swallows errors), this surfaces the underlying Postgres error so the
+// caller can report it. Falls back to select-then-insert if the ON CONFLICT
+// target constraint is missing.
+async function upsertPositionOrThrow(admin, job) {
+  const row = jobToPositionRow(job);
+
+  const { data, error } = await admin
+    .from("positions")
+    .upsert(row, { onConflict: "external_id" })
+    .select("id")
+    .single();
+
+  if (!error) return data?.id ?? null;
+
+  // If there's no unique constraint on external_id, ON CONFLICT can't be used.
+  // Fall back to a manual select-then-insert/update.
+  const noConstraint =
+    /no unique|exclusion constraint|on conflict/i.test(error.message || "");
+  if (!noConstraint) {
+    throw new Error(`Could not save the position: ${error.message}`);
+  }
+
+  const { data: existing, error: selErr } = await admin
+    .from("positions")
+    .select("id")
+    .eq("external_id", row.external_id)
+    .maybeSingle();
+  if (selErr) {
+    throw new Error(`Could not look up the position: ${selErr.message}`);
+  }
+
+  if (existing?.id) {
+    const { error: updErr } = await admin
+      .from("positions")
+      .update(row)
+      .eq("id", existing.id);
+    if (updErr) {
+      throw new Error(`Could not update the position: ${updErr.message}`);
+    }
+    return existing.id;
+  }
+
+  const { data: inserted, error: insErr } = await admin
+    .from("positions")
+    .insert(row)
+    .select("id")
+    .single();
+  if (insErr) {
+    throw new Error(`Could not insert the position: ${insErr.message}`);
+  }
+  return inserted?.id ?? null;
+}
 
 // Download a file from the "resumes" storage bucket as a Buffer, or null.
 export async function loadStorageBuffer(admin, path) {
@@ -79,9 +151,9 @@ export async function tailorAndQueueOne({
     throw new Error("Posting is missing a stable id (source_posting_id / raw_data.id).");
   }
 
-  const positionId = await upsertPosition(admin, job);
+  const positionId = await upsertPositionOrThrow(admin, job);
   if (!positionId) {
-    throw new Error("Could not save the position (upsertPosition failed).");
+    throw new Error("Could not save the position (no id returned).");
   }
 
   // Resume (required).
