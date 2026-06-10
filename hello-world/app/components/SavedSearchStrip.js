@@ -75,6 +75,7 @@ export default function SavedSearchStrip({
             ? entry.jobKeywords.join(", ")
             : (entry.jobQuery || "").trim()) || "—";
         const isActive = activeSavedSearchId === entry.id;
+        const unviewedCount = Number.isFinite(entry.unviewedCount) ? entry.unviewedCount : 0;
         return (
           <Box
             key={entry.id}
@@ -103,6 +104,31 @@ export default function SavedSearchStrip({
             }}
             title={`Apply saved search: ${entry.name}`}
           >
+            {unviewedCount > 0 && (
+              <Box
+                aria-label={`${unviewedCount} new postings`}
+                title={`${unviewedCount} new posting${unviewedCount === 1 ? "" : "s"} since you last opened this search`}
+                sx={{
+                  position: "absolute",
+                  top: -6,
+                  left: -6,
+                  minWidth: 18,
+                  height: 18,
+                  px: 0.5,
+                  borderRadius: 9,
+                  bgcolor: "#d32f2f",
+                  color: "#fff",
+                  fontSize: "0.65rem",
+                  fontWeight: 700,
+                  lineHeight: "18px",
+                  textAlign: "center",
+                  boxShadow: "0 0 0 2px #fff",
+                  pointerEvents: "none",
+                }}
+              >
+                {unviewedCount > 99 ? "99+" : unviewedCount}
+              </Box>
+            )}
             <Box
               sx={{
                 fontWeight: 600,

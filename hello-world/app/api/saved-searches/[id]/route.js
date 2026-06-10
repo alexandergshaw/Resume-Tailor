@@ -72,6 +72,10 @@ function sanitizePartial(body) {
   if ("notifyEmail" in body || "notify_email" in body) {
     out.notify_email = sanitizeEmail(body.notifyEmail ?? body.notify_email);
   }
+  // Marking a search as viewed clears its unviewed-postings bubble.
+  if (body.markViewed === true) {
+    out.last_viewed_at = new Date().toISOString();
+  }
   return out;
 }
 

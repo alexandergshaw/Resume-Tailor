@@ -182,6 +182,9 @@ export default function LiveFeedTab({
   const [view, setView] = useState("feed"); // "feed" | "queue"
   const [queueCount, setQueueCount] = useState(0);
   const [activeSavedSearchId, setActiveSavedSearchId] = useState(null);
+  // Per-saved-search count of postings ingested since the search was last
+  // opened, keyed by saved-search id. Drives the notification bubbles.
+  const [unviewedCounts, setUnviewedCounts] = useState({});
   const [items, setItems] = useState([]);
   const [nextCursor, setNextCursor] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -511,8 +514,61 @@ export default function LiveFeedTab({
       });
       setActiveSavedSearchId(entry.id);
       setAdvancedOpen(true);
+      // Opening a saved search clears its "new postings" bubble.
+      if (entry.id) {
+        setUnviewedCounts((prev) =>
+          prev[entry.id] ? { ...prev, [entry.id]: 0 } : prev,
+        );
+        // Persist the view timestamp for server-backed searches (UUID ids).
+        if (currentUser && typeof entry.id === "string" && !entry.id.startsWith("ss-")) {
+          fetch(`/api/saved-searches/${encodeURIComponent(entry.id)}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ markViewed: true }),
+          }).catch(() => {});
+        }
+      }
     },
-    [GREENHOUSE_COMPANIES],
+    [GREENHOUSE_COMPANIES, currentUser],
+  );
+
+  // Fetch the count of new, unviewed postings for each saved search so the
+  // strip can show notification bubbles. Re-runs when the set of saved-search
+  // ids changes (e.g. after creating or deleting one).
+  const savedSearchIdsKey = savedSearches.map((s) => s.id).join(",");
+  useEffect(() => {
+    if (!currentUser || savedSearches.length === 0) {
+      setUnviewedCounts({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/saved-searches/unviewed-counts", {
+          cache: "no-store",
+        });
+        if (!res.ok || cancelled) return;
+        const json = await res.json();
+        if (cancelled) return;
+        setUnviewedCounts(json?.counts && typeof json.counts === "object" ? json.counts : {});
+      } catch {
+        // Bubbles are best-effort; ignore fetch failures.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser, savedSearchIdsKey]);
+
+  // Merge the unviewed counts into the entries handed to the strip.
+  const savedSearchesWithCounts = useMemo(
+    () =>
+      savedSearches.map((entry) => ({
+        ...entry,
+        unviewedCount: unviewedCounts[entry.id] || 0,
+      })),
+    [savedSearches, unviewedCounts],
   );
 
   const saveCurrentSearch = useCallback(async () => {
@@ -859,7 +915,7 @@ export default function LiveFeedTab({
             Saved searches
           </Typography>
           <SavedSearchStrip
-            savedSearches={savedSearches}
+            savedSearches={savedSearchesWithCounts}
             activeSavedSearchId={activeSavedSearchId}
             saveCurrentSearch={saveCurrentSearch}
             applySavedSearch={applySavedSearch}
