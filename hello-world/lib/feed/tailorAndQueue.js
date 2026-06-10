@@ -225,6 +225,7 @@ export async function tailorAndQueueOne({
     .eq("user_id", userId);
   if (updErr) {
     console.error(`[tailorAndQueue] failed to queue application ${applicationId}:`, updErr.message);
+    throw new Error(`Could not move the application into the queue: ${updErr.message}`);
   }
 
   await markFeedSaved(admin, userId, posting.id);
