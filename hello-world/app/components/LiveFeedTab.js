@@ -18,6 +18,8 @@ import Typography from "@mui/material/Typography";
 import Badge from "@mui/material/Badge";
 import Divider from "@mui/material/Divider";
 import Paper from "@mui/material/Paper";
+import FormControlLabel from "@mui/material/FormControlLabel";
+import Switch from "@mui/material/Switch";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
@@ -165,6 +167,7 @@ export default function LiveFeedTab({
   currentUser,
   savedSearches = [],
   setSavedSearches,
+  setSavedSearchAutoTailor,
   deleteSavedSearch,
   GREENHOUSE_COMPANIES = [],
   COMPANY_CATEGORIES = [],
@@ -863,6 +866,94 @@ export default function LiveFeedTab({
             deleteSavedSearch={deleteSavedSearch}
             saveLabel="current feed search"
           />
+
+          {currentUser && typeof setSavedSearchAutoTailor === "function" && savedSearches.length > 0 && (
+            <Box sx={{ mt: 1.5 }}>
+              <Typography
+                variant="overline"
+                color="text.secondary"
+                sx={{ display: "block", letterSpacing: 0.6, mb: 0.5 }}
+              >
+                Email alerts
+              </Typography>
+              <Typography sx={{ color: "text.secondary", fontSize: "0.78rem", mb: 1 }}>
+                Get an email whenever a saved search matches a newly fetched posting.
+              </Typography>
+              <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
+                {savedSearches.map((entry) => {
+                  const isServerBacked =
+                    typeof entry.id === "string" && !entry.id.startsWith("ss-");
+                  return (
+                    <Box
+                      key={entry.id}
+                      sx={{
+                        p: 1,
+                        border: "1px solid",
+                        borderColor: "divider",
+                        borderRadius: 1,
+                        bgcolor: "background.paper",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 0.5,
+                      }}
+                    >
+                      <Box sx={{ fontWeight: 600, fontSize: "0.82rem" }}>{entry.name}</Box>
+                      {isServerBacked ? (
+                        <>
+                          <FormControlLabel
+                            control={
+                              <Switch
+                                size="small"
+                                checked={!!entry.emailOnNewJobs}
+                                onChange={(e) =>
+                                  setSavedSearchAutoTailor(entry.id, {
+                                    emailOnNewJobs: e.target.checked,
+                                  })
+                                }
+                              />
+                            }
+                            label={<Box sx={{ fontSize: "0.78rem" }}>Email me new jobs</Box>}
+                            sx={{ m: 0 }}
+                          />
+                          {entry.emailOnNewJobs && (
+                            <TextField
+                              type="email"
+                              size="small"
+                              placeholder="Account email (default)"
+                              value={entry.notifyEmail ?? ""}
+                              onChange={(e) =>
+                                setSavedSearchAutoTailor(entry.id, {
+                                  notifyEmail: e.target.value,
+                                  persist: false,
+                                })
+                              }
+                              onBlur={(e) =>
+                                setSavedSearchAutoTailor(entry.id, {
+                                  notifyEmail: e.target.value.trim(),
+                                })
+                              }
+                              inputProps={{ style: { padding: "4px 6px", fontSize: "0.75rem" } }}
+                              sx={{ "& .MuiOutlinedInput-root": { borderRadius: 1 } }}
+                            />
+                          )}
+                        </>
+                      ) : (
+                        <Box
+                          sx={{
+                            color: "text.disabled",
+                            fontSize: "0.72rem",
+                            fontStyle: "italic",
+                          }}
+                        >
+                          Sign-in–only saved search (local). Re-save while signed in to enable email alerts.
+                        </Box>
+                      )}
+                    </Box>
+                  );
+                })}
+              </Box>
+            </Box>
+          )}
 
           <Divider sx={{ my: 2 }} />
 

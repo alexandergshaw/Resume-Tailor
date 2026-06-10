@@ -3837,6 +3837,7 @@ export default function Home() {
             currentUser={currentUser}
             savedSearches={savedSearches}
             setSavedSearches={setSavedSearches}
+            setSavedSearchAutoTailor={setSavedSearchAutoTailor}
             deleteSavedSearch={deleteSavedSearch}
             GREENHOUSE_COMPANIES={GREENHOUSE_COMPANIES}
             COMPANY_CATEGORIES={COMPANY_CATEGORIES}

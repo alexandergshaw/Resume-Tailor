@@ -13,6 +13,11 @@ import {
   groupJobsByRecipient,
   buildNewJobsEmail,
 } from "@/lib/email/newJobsEmail";
+import {
+  selectEmailOnlyJobs,
+  loadAlreadyNotifiedExternalIds,
+  recordNotifiedExternalIds,
+} from "@/lib/feed/emailOnlyMatches";
 import { sendEmail } from "@/lib/email/sendEmail";
 
 export const runtime = "nodejs";
@@ -63,99 +68,121 @@ async function loadFeedPostings(admin, savedSearch) {
 }
 
 async function processUser({ admin, userId, savedSearches }) {
-  const resumeBuffer = await loadStorageBuffer(admin, `${userId}/resume`);
-  if (!resumeBuffer) {
-    return { userId, skipped: "no-resume", scanned: 0, queued: [] };
-  }
-  const coverLetterBuffer = await loadStorageBuffer(admin, `${userId}/cover-letter`);
+  // A saved search can opt into auto-tailoring, email-only alerts, or both.
+  // Auto-tailor requires a resume and runs the (expensive) LLM pipeline;
+  // email-only just matches new postings and emails about them.
+  const autoSearches = savedSearches.filter((s) => s.auto_tailor_enabled);
+  const emailOnlySearches = savedSearches.filter(
+    (s) => s.email_on_new_jobs && !s.auto_tailor_enabled,
+  );
 
   let totalScanned = 0;
   const queued = [];
 
-  for (const savedSearch of savedSearches) {
-    const remaining = MAX_TAILORS_PER_USER_PER_RUN - queued.length;
-    if (remaining <= 0) break;
+  if (autoSearches.length > 0) {
+    const resumeBuffer = await loadStorageBuffer(admin, `${userId}/resume`);
+    if (resumeBuffer) {
+      const coverLetterBuffer = await loadStorageBuffer(admin, `${userId}/cover-letter`);
 
-    const postings = await loadFeedPostings(admin, savedSearch);
-    totalScanned += postings.length;
+      for (const savedSearch of autoSearches) {
+        const remaining = MAX_TAILORS_PER_USER_PER_RUN - queued.length;
+        if (remaining <= 0) break;
 
-    const externalIds = postings.map(postingExternalId).filter(Boolean);
-    const alreadyTracked = await loadAlreadyTrackedExternalIds(admin, userId, externalIds);
+        const postings = await loadFeedPostings(admin, savedSearch);
+        totalScanned += postings.length;
 
-    const perSearchCap = Math.min(
-      ABSOLUTE_USER_CAP,
-      Math.max(1, savedSearch.auto_tailor_daily_cap || 10),
-    );
-    const cap = Math.min(perSearchCap, remaining);
+        const externalIds = postings.map(postingExternalId).filter(Boolean);
+        const alreadyTracked = await loadAlreadyTrackedExternalIds(admin, userId, externalIds);
 
-    const candidates = selectQueueCandidates(postings, savedSearch, alreadyTracked, cap);
+        const perSearchCap = Math.min(
+          ABSOLUTE_USER_CAP,
+          Math.max(1, savedSearch.auto_tailor_daily_cap || 10),
+        );
+        const cap = Math.min(perSearchCap, remaining);
 
-    for (const posting of candidates) {
-      if (queued.length >= MAX_TAILORS_PER_USER_PER_RUN) break;
-      try {
-        const result = await tailorAndQueueOne({
-          admin,
-          userId,
-          savedSearch,
-          posting,
-          resumeBuffer,
-          coverLetterBuffer,
-          savedSearchId: savedSearch.id,
-          sourceLabel: `saved search "${savedSearch.name}"`,
-        });
-        if (result)
-          queued.push({
-            ...result,
-            savedSearchId: savedSearch.id,
-            savedSearchName: savedSearch.name,
-            emailOnNewJobs: !!savedSearch.email_on_new_jobs,
-            notifyEmail: savedSearch.notify_email || null,
-          });
-      } catch (err) {
-        console.error(`[cron] queue failed for user=${userId} posting=${posting?.id}:`, err?.message || err);
+        const candidates = selectQueueCandidates(postings, savedSearch, alreadyTracked, cap);
+
+        for (const posting of candidates) {
+          if (queued.length >= MAX_TAILORS_PER_USER_PER_RUN) break;
+          try {
+            const result = await tailorAndQueueOne({
+              admin,
+              userId,
+              savedSearch,
+              posting,
+              resumeBuffer,
+              coverLetterBuffer,
+              savedSearchId: savedSearch.id,
+              sourceLabel: `saved search "${savedSearch.name}"`,
+            });
+            if (result)
+              queued.push({
+                ...result,
+                savedSearchId: savedSearch.id,
+                savedSearchName: savedSearch.name,
+                emailOnNewJobs: !!savedSearch.email_on_new_jobs,
+                notifyEmail: savedSearch.notify_email || null,
+              });
+          } catch (err) {
+            console.error(`[cron] queue failed for user=${userId} posting=${posting?.id}:`, err?.message || err);
+          }
+        }
+
+        await admin
+          .from("saved_searches")
+          .update({ last_run_at: new Date().toISOString() })
+          .eq("id", savedSearch.id);
       }
     }
-
-    await admin
-      .from("saved_searches")
-      .update({ last_run_at: new Date().toISOString() })
-      .eq("id", savedSearch.id);
   }
 
-  if (queued.length === 0) {
-    return { userId, scanned: totalScanned, queued: [] };
+  if (queued.length > 0) {
+    // One notification per run summarizing the newly queued jobs.
+    const titlePart =
+      queued.length === 1
+        ? `New job ready to auto-apply: ${queued[0].title}`
+        : `${queued.length} new jobs ready to auto-apply`;
+    const bodyPart = queued
+      .map((t) => `• ${t.title}${t.company ? ` — ${t.company}` : ""}`)
+      .join("\n");
+    try {
+      await admin.from("notifications").insert({
+        user_id: userId,
+        kind: "auto_tailor",
+        title: titlePart,
+        body: bodyPart,
+        related_application_id: queued[0].applicationId || null,
+        related_position_id: queued[0].positionId || null,
+      });
+    } catch (err) {
+      console.error(`[cron] notification insert failed for user=${userId}:`, err?.message || err);
+    }
+
+    // Best-effort email alert for queued jobs whose search opted in. Never let
+    // an email failure break the queueing pipeline.
+    try {
+      await emailNewJobs({ admin, userId, queued });
+    } catch (err) {
+      console.error(`[cron] new-jobs email step failed for user=${userId}:`, err?.message || err);
+    }
   }
 
-  // One notification per run summarizing the newly queued jobs.
-  const titlePart =
-    queued.length === 1
-      ? `New job ready to auto-apply: ${queued[0].title}`
-      : `${queued.length} new jobs ready to auto-apply`;
-  const bodyPart = queued
-    .map((t) => `• ${t.title}${t.company ? ` — ${t.company}` : ""}`)
-    .join("\n");
-  try {
-    await admin.from("notifications").insert({
-      user_id: userId,
-      kind: "auto_tailor",
-      title: titlePart,
-      body: bodyPart,
-      related_application_id: queued[0].applicationId || null,
-      related_position_id: queued[0].positionId || null,
-    });
-  } catch (err) {
-    console.error(`[cron] notification insert failed for user=${userId}:`, err?.message || err);
+  // Email-only alerts: searches that want emails without auto-tailoring. Runs
+  // independently of the resume/queue pipeline so it works even with no resume.
+  let emailedOnly = 0;
+  if (emailOnlySearches.length > 0) {
+    try {
+      emailedOnly = await emailOnlyNewJobs({
+        admin,
+        userId,
+        savedSearches: emailOnlySearches,
+      });
+    } catch (err) {
+      console.error(`[cron] email-only step failed for user=${userId}:`, err?.message || err);
+    }
   }
 
-  // Best-effort email alert for searches that opted in. Never let an email
-  // failure break the queueing pipeline.
-  try {
-    await emailNewJobs({ admin, userId, queued });
-  } catch (err) {
-    console.error(`[cron] new-jobs email step failed for user=${userId}:`, err?.message || err);
-  }
-
-  return { userId, scanned: totalScanned, queued };
+  return { userId, scanned: totalScanned, queued, emailedOnly };
 }
 
 // Email a summary of newly-queued jobs to each recipient that opted in. The
@@ -187,6 +214,61 @@ async function emailNewJobs({ admin, userId, queued }) {
   }
 }
 
+// Email a user about newly-fetched postings matching their email-enabled saved
+// searches, without tailoring or queueing anything. Idempotent: postings are
+// recorded in `email_notified_postings` once delivered so they're never emailed
+// twice. Returns the number of postings emailed about.
+async function emailOnlyNewJobs({ admin, userId, savedSearches }) {
+  if (!Array.isArray(savedSearches) || savedSearches.length === 0) return 0;
+
+  const postings = await loadFeedPostings(admin, null);
+  if (postings.length === 0) return 0;
+
+  const externalIds = postings.map(postingExternalId).filter(Boolean);
+  const alreadyNotified = await loadAlreadyNotifiedExternalIds(admin, userId, externalIds);
+
+  const { jobs, externalIds: matchedIds } = selectEmailOnlyJobs(
+    postings,
+    savedSearches,
+    alreadyNotified,
+    FEED_SCAN_LIMIT,
+  );
+  if (jobs.length === 0) return 0;
+
+  let fallbackEmail = null;
+  try {
+    const { data } = await admin.auth.admin.getUserById(userId);
+    fallbackEmail = data?.user?.email || null;
+  } catch (err) {
+    console.error(`[cron] could not resolve account email for user=${userId}:`, err?.message || err);
+  }
+
+  const groups = groupJobsByRecipient(selectEmailableJobs(jobs), fallbackEmail);
+  let anySent = false;
+  for (const [to, list] of groups.entries()) {
+    try {
+      const { subject, html, text } = buildNewJobsEmail(list);
+      const result = await sendEmail({ to, subject, html, text });
+      if (result?.skipped) {
+        console.warn(`[cron] email-only alert skipped for user=${userId}: ${result.reason}`);
+      } else {
+        anySent = true;
+      }
+    } catch (err) {
+      console.error(`[cron] email-only alert failed for user=${userId} to=${to}:`, err?.message || err);
+    }
+  }
+
+  // Only mark postings notified once we've actually delivered at least one
+  // email, so a missing API key (sends skipped) doesn't silently drop alerts —
+  // they'll be retried on the next run once email is configured.
+  if (anySent) {
+    await recordNotifiedExternalIds(admin, userId, matchedIds);
+  }
+  return anySent ? jobs.length : 0;
+}
+
+
 export async function POST(request) {
   if (!isAuthorized(request)) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
@@ -202,11 +284,13 @@ export async function POST(request) {
     );
   }
 
-  // Pull every enabled saved search across all users.
+  // Pull every saved search that wants work this run: auto-tailor OR email
+  // alerts. The two features are independent, so email-only searches (no
+  // auto-tailor) still need to be processed.
   const { data: searches, error: searchErr } = await admin
     .from("saved_searches")
     .select("*")
-    .eq("auto_tailor_enabled", true);
+    .or("auto_tailor_enabled.eq.true,email_on_new_jobs.eq.true");
   if (searchErr) {
     return Response.json({ error: searchErr.message }, { status: 500 });
   }
@@ -233,6 +317,10 @@ export async function POST(request) {
     users: results.length,
     totalQueued: results.reduce(
       (acc, r) => acc + (Array.isArray(r.queued) ? r.queued.length : 0),
+      0,
+    ),
+    totalEmailedOnly: results.reduce(
+      (acc, r) => acc + (Number.isFinite(r.emailedOnly) ? r.emailedOnly : 0),
       0,
     ),
     results,
