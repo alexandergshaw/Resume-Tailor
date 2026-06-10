@@ -4,13 +4,11 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import styles from "./page.module.css";
 import JobDescriptionTab from "./components/JobDescriptionTab";
 import PostingUrlTab from "./components/PostingUrlTab";
-import AutoTailorTab from "./components/AutoTailorTab";
 import ApplyingControls from "./components/ApplyingControls";
 import TrackingTab from "./components/TrackingTab";
 import LiveFeedTab from "./components/LiveFeedTab";
 import ChatPanel from "./components/ChatPanel";
 import StatusBar from "./components/StatusBar";
-import JobSearchTab from "./components/JobSearchTab";
 import BatchTailorDialog from "./components/BatchTailorDialog";
 import {
   buildJobContextString,
@@ -267,7 +265,7 @@ export default function Home() {
   const [urlError, setUrlError] = useState("");
   const [urlHasCompleted, setUrlHasCompleted] = useState(false);
   const [urlIsDownloading, setUrlIsDownloading] = useState(false);
-  const [activeSection, setActiveSection] = useState("search");
+  const [activeSection, setActiveSection] = useState("url");
   const [ignoredJobIds, setIgnoredJobIds] = useState(new Set());
   const [appliedJobIds, setAppliedJobIds] = useState(new Set());
   const [trackedJobs, setTrackedJobs] = useState([]);
@@ -416,7 +414,7 @@ export default function Home() {
 
   useEffect(() => {
     const saved = localStorage.getItem("activeSection");
-    if (saved === "search" || saved === "url" || saved === "manual") {
+    if (saved === "url" || saved === "manual") {
       setActiveSection(saved);
     }
     const savedTab = localStorage.getItem("mainTab");
@@ -3007,7 +3005,6 @@ export default function Home() {
       setApplicationsRefreshKey((k) => k + 1);
       if (skipDownload) {
         setMainTab("applying");
-        setActiveSection("autoTailor");
       }
     }
   }
@@ -3566,42 +3563,6 @@ export default function Home() {
         <div className={styles.sectionTabs}>
           <button
             type="button"
-            className={activeSection === "search" ? styles.sectionTabActive : styles.sectionTab}
-            onClick={() => setActiveSection("search")}
-          >
-            Job Search
-          </button>
-          <button
-            type="button"
-            className={activeSection === "autoTailor" ? styles.sectionTabActive : styles.sectionTab}
-            onClick={() => setActiveSection("autoTailor")}
-          >
-            Auto Tailor
-            {autoTailorUnreadCount > 0 && (
-              <Box
-                component="span"
-                sx={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  ml: 0.75,
-                  minWidth: 18,
-                  height: 18,
-                  px: 0.5,
-                  borderRadius: "9px",
-                  bgcolor: "#d32f2f",
-                  color: "#fff",
-                  fontSize: "0.7rem",
-                  fontWeight: 700,
-                  lineHeight: 1,
-                }}
-              >
-                {autoTailorUnreadCount > 99 ? "99+" : autoTailorUnreadCount}
-              </Box>
-            )}
-          </button>
-          <button
-            type="button"
             className={activeSection === "url" ? styles.sectionTabActive : styles.sectionTab}
             onClick={() => setActiveSection("url")}
           >
@@ -3616,65 +3577,7 @@ export default function Home() {
           </button>
         </div>
 
-        {activeSection === "search" ? (
-          <JobSearchTab
-            handleJobSearch={handleJobSearch}
-            saveCurrentSearch={saveCurrentSearch}
-            savedSearches={savedSearches}
-            activeSavedSearchId={activeSavedSearchId}
-            setActiveSavedSearchId={setActiveSavedSearchId}
-            applySavedSearch={applySavedSearch}
-            deleteSavedSearch={deleteSavedSearch}
-            jobKeywords={jobKeywords}
-            setJobKeywords={setJobKeywords}
-            maxYearsExp={maxYearsExp}
-            setMaxYearsExp={setMaxYearsExp}
-            selectedCategories={selectedCategories}
-            setSelectedCategories={setSelectedCategories}
-            selectedCompanies={selectedCompanies}
-            setSelectedCompanies={setSelectedCompanies}
-            excludedCompanies={excludedCompanies}
-            setExcludedCompanies={setExcludedCompanies}
-            excludedTitleKeywords={excludedTitleKeywords}
-            setExcludedTitleKeywords={setExcludedTitleKeywords}
-            hideAppliedJobs={hideAppliedJobs}
-            setHideAppliedJobs={setHideAppliedJobs}
-            GREENHOUSE_COMPANIES={GREENHOUSE_COMPANIES}
-            COMPANY_CATEGORIES={COMPANY_CATEGORIES}
-            isSearching={isSearching}
-            jobSearchError={jobSearchError}
-            jobResults={jobResults}
-            batchTailorState={batchTailorState}
-            resumeFile={resumeFile}
-            handleTailorAllVisible={handleTailorAllVisible}
-            appliedJobIds={appliedJobIds}
-            tailoringMap={tailoringMap}
-            highlightedJobId={highlightedJobId}
-            showIgnored={showIgnored}
-            setShowIgnored={setShowIgnored}
-            ignoredJobIds={ignoredJobIds}
-            extractMinYearsRequired={extractMinYearsRequired}
-            handleToggleApplied={handleToggleApplied}
-            handleIgnoreJob={handleIgnoreJob}
-            handleRestoreJob={handleRestoreJob}
-            handleTailorJob={handleTailorJob}
-            askAiAbout={askAiAbout}
-            buildJobContextString={buildJobContextString}
-          />
-        ) : activeSection === "autoTailor" ? (
-          <AutoTailorTab
-            currentUser={currentUser}
-            savedSearches={savedSearches}
-            setSavedSearchAutoTailor={setSavedSearchAutoTailor}
-            deleteSavedSearch={deleteSavedSearch}
-            autoTailoredLoading={autoTailoredLoading}
-            autoTailoredError={autoTailoredError}
-            autoTailoredPostings={autoTailoredPostings}
-            applyAutoTailoredRow={applyAutoTailoredRow}
-            downloadAutoTailoredResume={downloadAutoTailoredResume}
-            setAutoTailoredError={setAutoTailoredError}
-          />
-        ) : activeSection === "manual" ? (
+        {activeSection === "manual" ? (
           <JobDescriptionTab
             jobPosting={jobPosting}
             setJobPosting={setJobPosting}
