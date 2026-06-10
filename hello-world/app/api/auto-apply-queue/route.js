@@ -19,7 +19,7 @@ export async function GET() {
   const { data: apps, error } = await supabase
     .from("applications")
     .select(
-      "id, status, auto_saved_at, applied_at, position_id, resume_used_id, cover_letter_id, auto_search_id",
+      "id, status, auto_saved_at, applied_at, auto_apply_opened_at, position_id, resume_used_id, cover_letter_id, auto_search_id",
     )
     .eq("user_id", user.id)
     .eq("status", "auto_queued")
@@ -60,6 +60,7 @@ export async function GET() {
     status: r.status,
     auto_saved_at: r.auto_saved_at,
     applied_at: r.applied_at,
+    auto_apply_opened_at: r.auto_apply_opened_at,
     resume_used_id: r.resume_used_id,
     cover_letter_id: r.cover_letter_id,
     auto_search_id: r.auto_search_id,

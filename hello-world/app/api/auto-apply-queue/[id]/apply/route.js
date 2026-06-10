@@ -2,11 +2,12 @@ import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
-// Advance one item in the auto-apply queue.
-//   body { action: "apply" }  -> mark applied (status "applied", applied_at now)
-//   body { action: "skip"  }  -> dismiss to "tracking" (stays in pipeline, out of queue)
-// Returns the updated row id and the next queued item (if any) so the UI can
-// walk the list one job at a time.
+// Advance one item in the auto-apply queue. Queued postings stay at status
+// "auto_queued" until the user manually changes their status elsewhere (the
+// Tracking / Edit UI), so neither action ejects a row from the queue.
+//   body { action: "apply" } -> record auto_apply_opened_at (status unchanged)
+//   body { action: "skip"  } -> no-op on the DB (client-side dismissal only)
+// Returns the updated row id so the UI can reflect the "opened" state.
 export async function POST(request, { params }) {
   const { id } = await params;
   const supabase = await createClient();
@@ -39,31 +40,22 @@ export async function POST(request, { params }) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
 
-  const update =
-    action === "apply"
-      ? { status: "applied", applied_at: new Date().toISOString() }
-      : { status: "tracking" };
+  // "skip" leaves the row untouched; it stays in the queue.
+  if (action === "skip") {
+    return Response.json({ ok: true, id, action, openedAt: null });
+  }
 
+  // "apply": record that the user opened/worked this posting, but keep the row
+  // at status "auto_queued" so it remains in the queue.
+  const openedAt = new Date().toISOString();
   const { error: updErr } = await supabase
     .from("applications")
-    .update(update)
+    .update({ auto_apply_opened_at: openedAt })
     .eq("id", id)
     .eq("user_id", user.id);
   if (updErr) {
     return Response.json({ error: updErr.message }, { status: 500 });
   }
 
-  // Fetch the next queued item id to advance to (the client reloads full
-  // details from /api/auto-apply-queue, so plain columns are enough here and
-  // avoid relying on PostgREST relationship detection).
-  const { data: next } = await supabase
-    .from("applications")
-    .select("id, status, auto_saved_at, position_id, resume_used_id, cover_letter_id, auto_search_id")
-    .eq("user_id", user.id)
-    .eq("status", "auto_queued")
-    .order("auto_saved_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  return Response.json({ ok: true, id, action, next: next || null });
+  return Response.json({ ok: true, id, action, openedAt });
 }

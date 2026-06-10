@@ -110,61 +110,64 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
     );
   }, []);
 
-  const advance = useCallback(
-    async (row, action) => {
-      if (!row?.id) return;
-      setBusyId(row.id);
-      setError("");
-      try {
-        const res = await fetch(`/api/auto-apply-queue/${row.id}/apply`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action }),
-        });
-        if (!res.ok) {
-          const payload = await res.json().catch(() => ({}));
-          throw new Error(payload.error || `Request failed (${res.status})`);
-        }
-        // Remove the processed row locally and keep the walkthrough position.
-        setItems((prev) => {
-          const remaining = prev.filter((it) => it.id !== row.id);
-          if (typeof onCountChange === "function") onCountChange(remaining.length);
-          return remaining;
-        });
-      } catch (err) {
-        setError(err.message || "Failed to update the queue item.");
-      } finally {
-        setBusyId(null);
+  // Record that the user opened/worked a queued posting. The row stays at
+  // status "auto_queued" (it only leaves the queue when the user manually
+  // changes its status elsewhere), so we just mark auto_apply_opened_at locally.
+  const markOpened = useCallback(async (row) => {
+    if (!row?.id) return;
+    setBusyId(row.id);
+    setError("");
+    try {
+      const res = await fetch(`/api/auto-apply-queue/${row.id}/apply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "apply" }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload.error || `Request failed (${res.status})`);
       }
-    },
-    [onCountChange],
-  );
+      const openedAt = payload.openedAt || new Date().toISOString();
+      setItems((prev) =>
+        prev.map((it) =>
+          it.id === row.id ? { ...it, auto_apply_opened_at: openedAt } : it,
+        ),
+      );
+    } catch (err) {
+      setError(err.message || "Failed to update the queue item.");
+    } finally {
+      setBusyId(null);
+    }
+  }, []);
 
   const handleApply = useCallback(
     async (row) => {
       const url = row?.positions?.url;
-      // Download tailored docs and open the posting, then mark applied.
+      // Download tailored docs and open the posting, then record the open.
       handleDownloadResume(row);
       if (coverFor(row)) handleDownloadCover(row);
       if (url && typeof window !== "undefined") {
         window.open(url, "_blank", "noopener,noreferrer");
       }
-      await advance(row, "apply");
+      await markOpened(row);
     },
-    [advance, handleDownloadResume, handleDownloadCover],
+    [markOpened, handleDownloadResume, handleDownloadCover],
   );
 
-  const handleSkip = useCallback((row) => advance(row, "skip"), [advance]);
+  // Move to the next item in the walkthrough without changing the queue.
+  const goNext = useCallback(() => setWalkIndex((i) => i + 1), []);
 
-  // Walkthrough: clamp the index as the list shrinks.
+  // Walkthrough: items stay in the queue, so advance by index. Exit when we run
+  // past the end (or the queue empties).
   const walking = walkIndex >= 0;
-  const current = walking ? items[Math.min(walkIndex, items.length - 1)] : null;
+  const current = walking && walkIndex < items.length ? items[walkIndex] : null;
 
   useEffect(() => {
-    if (!(walking && items.length === 0)) return undefined;
+    if (!walking) return undefined;
+    if (items.length > 0 && walkIndex < items.length) return undefined;
     const handle = setTimeout(() => setWalkIndex(-1), 0);
     return () => clearTimeout(handle);
-  }, [walking, items.length]);
+  }, [walking, walkIndex, items.length]);
 
   const progressLabel = useMemo(() => {
     if (!walking || items.length === 0) return "";
@@ -237,6 +240,15 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
           {originName(current) && (
             <Chip size="small" variant="outlined" label={`From: ${originName(current)}`} sx={{ mb: 0.5 }} />
           )}
+          {current.auto_apply_opened_at && (
+            <Chip
+              size="small"
+              color="success"
+              variant="outlined"
+              label={`Opened ${new Date(current.auto_apply_opened_at).toLocaleString()}`}
+              sx={{ mb: 0.5, ml: originName(current) ? 0.5 : 0 }}
+            />
+          )}
           <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", my: 1.5 }}>
             <Button
               size="small"
@@ -276,22 +288,32 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
           <Box sx={{ display: "flex", gap: 1 }}>
             <Button
               variant="contained"
-              onClick={() => handleApply(current)}
+              onClick={async () => {
+                await handleApply(current);
+                goNext();
+              }}
               disabled={busyId === current.id || !current.positions?.url}
               sx={{ textTransform: "none" }}
             >
-              {busyId === current.id ? "Applying…" : "Apply & next"}
+              {busyId === current.id
+                ? "Opening…"
+                : current.auto_apply_opened_at
+                  ? "Re-open & next"
+                  : "Apply & next"}
             </Button>
             <Button
               variant="text"
               color="inherit"
-              onClick={() => handleSkip(current)}
+              onClick={goNext}
               disabled={busyId === current.id}
               sx={{ textTransform: "none" }}
             >
               Skip
             </Button>
           </Box>
+          <Typography sx={{ color: "#90a4ae", fontSize: "0.72rem", mt: 1 }}>
+            Jobs stay in the queue until you change their status in the Tracking tab.
+          </Typography>
         </Paper>
       ) : (
         <Box sx={{ overflowX: "auto", border: "1px solid #cfd8dc", borderRadius: 1 }}>
@@ -323,21 +345,13 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
                     <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1", whiteSpace: "nowrap" }}>
                       <Button
                         size="small"
-                        variant="contained"
+                        variant={row.auto_apply_opened_at ? "outlined" : "contained"}
+                        color={row.auto_apply_opened_at ? "success" : "primary"}
                         onClick={() => handleApply(row)}
                         disabled={busyId === row.id || !pos.url}
-                        sx={{ mr: 0.75, textTransform: "none", py: 0.25, px: 1, fontSize: "0.75rem" }}
-                      >
-                        Apply
-                      </Button>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        onClick={() => handleSkip(row)}
-                        disabled={busyId === row.id}
                         sx={{ textTransform: "none", py: 0.25, px: 1, fontSize: "0.75rem" }}
                       >
-                        Skip
+                        {row.auto_apply_opened_at ? "Re-open" : "Apply"}
                       </Button>
                     </Box>
                   </Box>
