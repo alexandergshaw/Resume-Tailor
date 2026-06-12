@@ -36,6 +36,12 @@ const META_KEY = "feed:meta";
 const MAX_COMPANIES_PER_RUN = 25;
 const UPSERT_CHUNK_SIZE = 200;
 
+// Retention window: postings older than this (by posting date, falling back to
+// ingestion date) are pruned at the end of each run so `feed_postings` never
+// grows without bound. Expressed in hours; override with FEED_RETENTION_HOURS.
+// Default 36h = 1.5 days.
+const RETENTION_HOURS = Number.parseInt(process.env.FEED_RETENTION_HOURS, 10) || 36;
+
 function normalizeGreenhousePosting(raw, companyName) {
   const locationName = raw.location?.name || "";
   const sourcePostingId = `gh-${raw.id}`;
@@ -58,16 +64,9 @@ function normalizeGreenhousePosting(raw, companyName) {
       ? raw.departments.map((d) => d?.name).filter(Boolean).slice(0, 8)
       : [],
     posted_at: raw.updated_at || raw.created_at || null,
-    raw_data: {
-      id: sourcePostingId,
-      title: raw.title || "",
-      company: companyName || "",
-      location: locationName,
-      url: raw.absolute_url || "",
-      isRemote: remoteTypeFor(locationName) === "remote",
-      description: fullDescription,
-      postedAt: raw.updated_at || raw.created_at || null,
-    },
+    // Only the full description is kept here — every other field duplicates a
+    // normalized column, so storing them would just bloat the row.
+    raw_data: { description: fullDescription },
   };
 }
 
@@ -116,6 +115,26 @@ async function upsertPostings(admin, postings) {
     inserted += count ?? chunk.length;
   }
   return inserted;
+}
+
+// Delete postings older than the retention window. Uses a SQL function so the
+// cutoff is computed over coalesce(posted_at, ingested_at) atomically — a
+// filter PostgREST can't express directly. Never throws: a prune failure must
+// not abort (or fail) an otherwise successful ingest run.
+async function prunePostings(admin) {
+  try {
+    const { data, error } = await admin.rpc("prune_feed_postings", {
+      retention_hours: RETENTION_HOURS,
+    });
+    if (error) {
+      console.error("[feed-ingest] prune failed:", error.message);
+      return 0;
+    }
+    return typeof data === "number" ? data : 0;
+  } catch (err) {
+    console.error("[feed-ingest] prune failed:", String(err?.message || err));
+    return 0;
+  }
 }
 
 /**
@@ -271,6 +290,7 @@ export async function ingestFeed(admin) {
 
     const deduped = dedupeByKey(collected);
     const upserted = await upsertPostings(admin, deduped);
+    const pruned = await prunePostings(admin);
 
     const nextCursor = (start + window.length) % Math.max(total, 1);
     await writeCursor(redis, nextCursor);
@@ -282,6 +302,7 @@ export async function ingestFeed(admin) {
       companiesAttempted: attempted,
       itemsFetched: fetched,
       itemsUpserted: upserted,
+      itemsPruned: pruned,
       windowStart: start,
       nextCursor,
       totalCompanies: total,
@@ -322,7 +343,7 @@ export async function ingestFeed(admin) {
     await writeMeta(redis, meta);
 
     console.log(
-      `[feed-ingest] attempted=${attempted} fetched=${fetched} upserted=${upserted} failures=${failures.length} window=${start}-${nextCursor}`,
+      `[feed-ingest] attempted=${attempted} fetched=${fetched} upserted=${upserted} pruned=${pruned} failures=${failures.length} window=${start}-${nextCursor}`,
     );
 
     return { ok: true, ...meta };

@@ -42,16 +42,9 @@ function normalizeAshbyPosting(raw, companyName) {
     url,
     tags: tags.slice(0, 8),
     posted_at: raw.publishedAt || null,
-    raw_data: {
-      id: sourcePostingId,
-      title: raw.title || "",
-      company: companyName || "",
-      location,
-      url: url || "",
-      isRemote: remoteType === "remote",
-      description: fullDescription,
-      postedAt: raw.publishedAt || null,
-    },
+    // Only the full description is kept here — every other field duplicates a
+    // normalized column, so storing them would just bloat the row.
+    raw_data: { description: fullDescription },
   };
 }
 

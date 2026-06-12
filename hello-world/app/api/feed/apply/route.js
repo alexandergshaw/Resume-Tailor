@@ -36,7 +36,7 @@ export async function POST(request) {
   const { data: posting, error: postingErr } = await supabase
     .from("feed_postings")
     .select(
-      "id, source_posting_id, title, company, location, remote_type, employment_type, salary_min, salary_max, description_snippet, url, raw_data",
+      "id, source_posting_id, title, company, location, remote_type, employment_type, salary_min, salary_max, description_snippet, url, posted_at, raw_data",
     )
     .eq("id", postingId)
     .maybeSingle();
@@ -58,7 +58,7 @@ export async function POST(request) {
     url: posting.url || raw.url || "",
     salaryMin: posting.salary_min ?? null,
     salaryMax: posting.salary_max ?? null,
-    postedAt: raw.postedAt || null,
+    postedAt: posting.posted_at || raw.postedAt || null,
   };
 
   if (!job.id) {

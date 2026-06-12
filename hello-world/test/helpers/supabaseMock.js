@@ -68,6 +68,15 @@ export function makeSupabase(tables = {}, opts = {}) {
   const client = {
     calls,
     from: vi.fn((table) => builderFor(table)),
+    rpc: vi.fn(async (fn, args) => {
+      (calls.rpc || (calls.rpc = [])).push([fn, args]);
+      const spec = (opts.rpc || {})[fn];
+      if (spec instanceof Error) return { data: null, error: spec };
+      if (spec && typeof spec === "object" && ("data" in spec || "error" in spec)) {
+        return { data: spec.data ?? null, error: spec.error ?? null };
+      }
+      return { data: spec ?? null, error: null };
+    }),
     auth: {
       getUser: vi.fn(async () => ({ data: { user: opts.user ?? null } })),
     },

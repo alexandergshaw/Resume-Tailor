@@ -117,6 +117,11 @@ describe("postingToJob", () => {
       url: "https://example.com/job/1",
     });
   });
+  it("falls back to description_snippet when raw_data is absent", () => {
+    const job = postingToJob(posting({ raw_data: null }));
+    expect(job.id).toBe("gh-1");
+    expect(job.description).toBe("Build great things with React and Node.");
+  });
 });
 
 describe("selectQueueCandidates", () => {

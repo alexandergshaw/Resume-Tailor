@@ -57,16 +57,9 @@ function normalizeLeverPosting(raw, companyName) {
     url,
     tags: tags.slice(0, 8),
     posted_at: postedAt,
-    raw_data: {
-      id: sourcePostingId,
-      title: raw.text || "",
-      company: companyName || "",
-      location,
-      url: url || "",
-      isRemote: remoteTypeForLever(raw) === "remote",
-      description: fullDescription,
-      postedAt,
-    },
+    // Only the full description is kept here — every other field duplicates a
+    // normalized column, so storing them would just bloat the row.
+    raw_data: { description: fullDescription },
   };
 }
 

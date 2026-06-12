@@ -97,16 +97,9 @@ function normalizeRssItem(itemXml, feedLabel) {
     url: url || null,
     tags: feedLabel ? [feedLabel] : [],
     posted_at: Number.isNaN(Date.parse(postedAt)) ? null : postedAt,
-    raw_data: {
-      id: sourcePostingId,
-      title: title || "",
-      company: company || "",
-      location,
-      url: url || "",
-      isRemote: remoteTypeFor(location) === "remote",
-      description,
-      postedAt,
-    },
+    // Only the full description is kept here — every other field duplicates a
+    // normalized column, so storing them would just bloat the row.
+    raw_data: { description },
   };
 }
 
