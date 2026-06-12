@@ -57,7 +57,26 @@ export async function GET() {
     return Response.json({ error: feedErr.message }, { status: 500 });
   }
 
-  const all = Array.isArray(postings) ? postings : [];
+  let all = Array.isArray(postings) ? postings : [];
+
+  // Only count postings that actually appear in the feed UI: drop any the user
+  // has hidden, since those never render in the list.
+  if (all.length > 0) {
+    const { data: states } = await supabase
+      .from("feed_user_state")
+      .select("posting_id, hidden")
+      .eq("user_id", user.id)
+      .eq("hidden", true)
+      .in(
+        "posting_id",
+        all.map((p) => p.id),
+      );
+    const hiddenIds = new Set((states || []).map((s) => s.posting_id));
+    if (hiddenIds.size > 0) {
+      all = all.filter((p) => !hiddenIds.has(p.id));
+    }
+  }
+
   const counts = {};
   for (const search of searches) {
     const cutoff = search.last_viewed_at ? Date.parse(search.last_viewed_at) : NaN;
