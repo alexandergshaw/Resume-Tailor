@@ -15,6 +15,12 @@ export async function GET() {
     supabaseServiceKeyPrefix: process.env.SUPABASE_SERVICE_ROLE_KEY
       ? process.env.SUPABASE_SERVICE_ROLE_KEY.slice(0, 20) + "..."
       : null,
+    // Email alerts ("email me when new jobs appear") are sent via Resend from
+    // the tailor cron. When these are missing, sends are silently skipped, so
+    // surface them here to make "no emails" easy to diagnose.
+    resendApiKey: !!process.env.RESEND_API_KEY,
+    emailFrom: process.env.EMAIL_FROM || null,
+    cronSecret: !!process.env.CRON_SECRET,
     authReachable: false,
     authError: null,
     adminDbReachable: false,
