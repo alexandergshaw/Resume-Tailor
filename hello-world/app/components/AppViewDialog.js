@@ -8,6 +8,7 @@ import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
+import { useIsMobile } from "../hooks/useResponsive";
 
 export default function AppViewDialog({
   appDialog,
@@ -18,6 +19,7 @@ export default function AppViewDialog({
   openAddCommunicationDialog,
   FormattedContent,
 }) {
+  const isMobile = useIsMobile();
   const dApp = appDialog.rowIndex != null ? applicationData[appDialog.rowIndex] : null;
   const dPos = dApp?.positions;
   const dResume = dApp?.generated_resumes;
@@ -54,6 +56,7 @@ export default function AppViewDialog({
       onClose={() => setAppDialog({ open: false, rowIndex: null, kind: "jd" })}
       maxWidth="md"
       fullWidth
+      fullScreen={isMobile}
       PaperProps={{
         onKeyDown: (e) => {
           if (e.key === "ArrowRight") navigate(1);

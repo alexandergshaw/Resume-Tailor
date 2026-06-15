@@ -3472,7 +3472,7 @@ export default function Home() {
                 anchorEl={gmailAnchorEl}
                 open={Boolean(gmailAnchorEl)}
                 onClose={() => setGmailAnchorEl(null)}
-                slotProps={{ paper: { sx: { maxWidth: 420, width: 400 } } }}
+                slotProps={{ paper: { sx: { maxWidth: 420, width: { xs: "calc(100vw - 24px)", sm: 400 } } } }}
                 anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
                 transformOrigin={{ vertical: "top", horizontal: "right" }}
               >
@@ -3596,7 +3596,7 @@ export default function Home() {
                 anchorEl={notifAnchorEl}
                 open={Boolean(notifAnchorEl)}
                 onClose={() => setNotifAnchorEl(null)}
-                slotProps={{ paper: { sx: { maxWidth: 380, width: 360 } } }}
+                slotProps={{ paper: { sx: { maxWidth: 380, width: { xs: "calc(100vw - 24px)", sm: 360 } } } }}
                 anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
                 transformOrigin={{ vertical: "top", horizontal: "right" }}
               >

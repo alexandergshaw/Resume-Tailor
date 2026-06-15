@@ -6,6 +6,7 @@ import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
 import TextField from "@mui/material/TextField";
+import { useIsMobile } from "../hooks/useResponsive";
 
 export default function AddCommunicationDialog({
   addCommunicationDialog,
@@ -15,6 +16,7 @@ export default function AddCommunicationDialog({
   communicationSaving,
   handleSaveCommunication,
 }) {
+  const isMobile = useIsMobile();
   const close = () => {
     setCommunicationError("");
     setAddCommunicationDialog({ open: false, applicationId: null, company: "", role: "", body: "" });
@@ -26,6 +28,7 @@ export default function AddCommunicationDialog({
       onClose={close}
       maxWidth="md"
       fullWidth
+      fullScreen={isMobile}
     >
       <DialogTitle>
         Add Recruiter Communication

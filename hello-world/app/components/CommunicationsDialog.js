@@ -8,11 +8,13 @@ import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
+import { useIsMobile } from "../hooks/useResponsive";
 
 export default function CommunicationsDialog({
   communicationsDialog,
   setCommunicationsDialog,
 }) {
+  const isMobile = useIsMobile();
   const close = () =>
     setCommunicationsDialog({
       open: false,
@@ -30,6 +32,7 @@ export default function CommunicationsDialog({
       onClose={close}
       maxWidth="md"
       fullWidth
+      fullScreen={isMobile}
     >
       <DialogTitle>
         Recruiter Communications

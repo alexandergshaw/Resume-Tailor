@@ -10,6 +10,7 @@ import InputLabel from "@mui/material/InputLabel";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import TextField from "@mui/material/TextField";
+import { useIsMobile } from "../hooks/useResponsive";
 
 export default function StageDialog({
   stageDialog,
@@ -22,6 +23,7 @@ export default function StageDialog({
   STAGE_TYPE_OPTIONS,
   STAGE_OUTCOME_OPTIONS,
 }) {
+  const isMobile = useIsMobile();
   return (
     <Dialog
       open={stageDialog.open}
@@ -31,6 +33,7 @@ export default function StageDialog({
       }}
       maxWidth="sm"
       fullWidth
+      fullScreen={isMobile}
     >
       <DialogTitle>{stageDialog.stageId ? "Edit Interview Stage" : "Add Interview Stage"}</DialogTitle>
       <DialogContent dividers sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 2 }}>

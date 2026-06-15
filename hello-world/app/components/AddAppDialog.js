@@ -11,6 +11,7 @@ import InputLabel from "@mui/material/InputLabel";
 import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import TextField from "@mui/material/TextField";
+import { useIsMobile } from "../hooks/useResponsive";
 
 export default function AddAppDialog({
   addAppDialog,
@@ -21,6 +22,7 @@ export default function AddAppDialog({
   setAddAppResumeFile,
   handleSaveAddApplication,
 }) {
+  const isMobile = useIsMobile();
   return (
     <Dialog
       open={addAppDialog.open}
@@ -30,6 +32,7 @@ export default function AddAppDialog({
       }}
       maxWidth="sm"
       fullWidth
+      fullScreen={isMobile}
     >
       <DialogTitle>Add Application</DialogTitle>
       <DialogContent dividers sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 2 }}>

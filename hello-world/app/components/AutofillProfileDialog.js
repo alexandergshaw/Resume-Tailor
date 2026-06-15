@@ -11,6 +11,7 @@ import DialogTitle from "@mui/material/DialogTitle";
 import Link from "@mui/material/Link";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
+import { useIsMobile } from "../hooks/useResponsive";
 
 import { AUTOFILL_FIELDS, buildBookmarklet, profileHasValues } from "@/lib/autofill/buildBookmarklet";
 
@@ -24,6 +25,7 @@ const EMPTY_PROFILE = AUTOFILL_FIELDS.reduce((acc, f) => {
 // bookmarks bar is a one-time setup; clicking "Auto Fill" on a card opens the
 // posting and copies the same bookmarklet to the clipboard for quick use.
 export default function AutofillProfileDialog({ open, onClose, profile, onSaved }) {
+  const isMobile = useIsMobile();
   const [draft, setDraft] = useState(EMPTY_PROFILE);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -67,7 +69,7 @@ export default function AutofillProfileDialog({ open, onClose, profile, onSaved 
   };
 
   return (
-    <Dialog open={open} onClose={() => (saving ? null : onClose())} maxWidth="sm" fullWidth>
+    <Dialog open={open} onClose={() => (saving ? null : onClose())} maxWidth="sm" fullWidth fullScreen={isMobile}>
       <DialogTitle>Autofill profile</DialogTitle>
       <DialogContent dividers sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 2 }}>
         <Typography variant="body2" color="text.secondary">
@@ -78,7 +80,7 @@ export default function AutofillProfileDialog({ open, onClose, profile, onSaved 
 
         {error && <Alert severity="error" onClose={() => setError("")}>{error}</Alert>}
 
-        <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1.5 }}>
+        <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 1.5 }}>
           {AUTOFILL_FIELDS.map((f) => (
             <TextField
               key={f.key}

@@ -7,6 +7,7 @@ import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
+import { useIsMobile } from "../hooks/useResponsive";
 
 export default function BatchTailorDialog({
   batchTailorDialog,
@@ -14,6 +15,7 @@ export default function BatchTailorDialog({
   batchTailorState,
   startBatchTailor,
 }) {
+  const isMobile = useIsMobile();
   return (
     <Dialog
       open={batchTailorDialog.open}
@@ -23,6 +25,7 @@ export default function BatchTailorDialog({
       }}
       maxWidth="sm"
       fullWidth
+      fullScreen={isMobile}
     >
       <DialogTitle>
         Tailor {batchTailorDialog.selectedIds.length} of {batchTailorDialog.candidates.length} job
