@@ -15,6 +15,7 @@ import TableHead from "@mui/material/TableHead";
 import TableSortLabel from "@mui/material/TableSortLabel";
 import DescriptionIcon from "@mui/icons-material/Description";
 import styles from "../page.module.css";
+import { useIsTablet } from "../hooks/useResponsive";
 import StageDialog from "./StageDialog";
 import CommunicationsDialog from "./CommunicationsDialog";
 import AddCommunicationDialog from "./AddCommunicationDialog";
@@ -91,6 +92,9 @@ export default function TrackingTab({
   highlightedAppId,
   emailClassificationsByAppId = {},
 }) {
+  // Below the `md` breakpoint the dense data table is unusable, so the rows are
+  // rendered as stacked cards instead (set in Phase 3 of the responsive work).
+  const isCompact = useIsTablet();
   return (
     <section className={styles.tabPanel}>
       {!currentUser ? (
@@ -125,6 +129,139 @@ export default function TrackingTab({
               + Add Row
             </Button>
           </Box>
+          {isCompact ? (
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+              {visibleApplicationData.map((app) => {
+                const idx = applicationData.findIndex((candidate) => candidate.id === app.id);
+                const pos = app.positions;
+                const resume = app.generated_resumes;
+                const stages = applicationStages[app.id] || [];
+                const emailClassification = emailClassificationsByAppId[app.id] ?? null;
+                const EMAIL_CHIP_STYLES = {
+                  confirmation: { label: "Applied", color: "#1565c0", bg: "#e3f2fd" },
+                  interview:    { label: "Interview", color: "#2e7d32", bg: "#e8f5e9" },
+                  rejection:    { label: "Rejected", color: "#b71c1c", bg: "#ffebee" },
+                };
+                const emailChip = emailClassification ? EMAIL_CHIP_STYLES[emailClassification] : null;
+                const canDownloadResume = !!resume?.content && !!resumeFile && isDocxResume(resumeFile);
+                return (
+                  <Box
+                    key={app.id}
+                    data-app-id={app.id}
+                    sx={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 2,
+                      p: 1.75,
+                      backgroundColor: "var(--bg-surface, #fff)",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 1.25,
+                      ...(highlightedAppId === app.id && {
+                        outline: "2px solid #1976d2",
+                        outlineOffset: "-2px",
+                        backgroundColor: "#e3f2fd",
+                      }),
+                    }}
+                  >
+                    <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 1 }}>
+                      <Box sx={{ minWidth: 0 }}>
+                        <Box sx={{ fontWeight: 700, fontSize: "1rem", lineHeight: 1.25 }}>{pos?.company || "—"}</Box>
+                        <Box sx={{ color: "var(--text-secondary)", fontSize: "0.9rem", mt: 0.25 }}>{pos?.title || "—"}</Box>
+                        {pos?.posted_at && (
+                          <Box sx={{ fontSize: "0.7rem", color: "var(--text-secondary)", mt: 0.25 }}>
+                            Posted {new Date(pos.posted_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+                          </Box>
+                        )}
+                      </Box>
+                      {emailChip && (
+                        <Box sx={{ fontSize: "0.72rem", fontWeight: 700, color: emailChip.color, bgcolor: emailChip.bg, px: 0.75, py: 0.25, borderRadius: 1, flexShrink: 0, letterSpacing: "0.03em" }}>
+                          {emailChip.label}
+                        </Box>
+                      )}
+                    </Box>
+
+                    <Box sx={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
+                      Applied: {app.applied_at ? new Date(app.applied_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                    </Box>
+
+                    {stages.length > 0 && (
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
+                        {stages.map((stage) => {
+                          const stageLabel = `${stage.stage_name || STAGE_TYPE_LABELS[stage.stage_type] || stage.stage_type}${stage.outcome && stage.outcome !== "pending" ? ` · ${stage.outcome}` : ""}`;
+                          return (
+                            <Chip
+                              key={stage.id}
+                              label={stageLabel}
+                              size="small"
+                              variant="outlined"
+                              onClick={() => {
+                                setStageError("");
+                                setStageDialog(createStageDialogState({
+                                  open: true,
+                                  applicationId: app.id,
+                                  stageId: stage.id,
+                                  stageName: stage.stage_name || "",
+                                  stageType: stage.stage_type || "phone_screen",
+                                  scheduledAt: formatDateTimeLocalInputValue(stage.scheduled_at),
+                                  durationMinutes: stage.duration_minutes ? String(stage.duration_minutes) : "",
+                                  outcome: stage.outcome || "pending",
+                                  interviewerNames: (stage.interviewer_names || []).join(", "),
+                                  notes: stage.notes || "",
+                                }));
+                              }}
+                            />
+                          );
+                        })}
+                      </Box>
+                    )}
+
+                    <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
+                      {pos?.description && (
+                        <Button size="small" variant="outlined" onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "jd" })}>JD</Button>
+                      )}
+                      {resume?.content && (
+                        <Button size="small" variant="outlined" onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "resume" })}>Resume</Button>
+                      )}
+                      {canDownloadResume && (
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          startIcon={<DescriptionIcon fontSize="small" />}
+                          onClick={async () => {
+                            const lines = Array.isArray(resume.content_lines) && resume.content_lines.length > 0
+                              ? resume.content_lines
+                              : (resume.content || "").split("\n");
+                            const err = await downloadDocxFiles({ jobTitle: pos?.title || "resume", result: resume.content, resultLines: lines, coverLetterResultLines: [] });
+                            if (err) window.alert(err);
+                          }}
+                        >
+                          Download
+                        </Button>
+                      )}
+                      <Button size="small" variant="outlined" onClick={() => openCommsInAppDialog(app, idx)}>Comms</Button>
+                      {(app.application_url || pos?.url) && (
+                        <Button size="small" variant="outlined" href={app.application_url || pos.url} target="_blank" rel="noopener noreferrer">Posting ↗</Button>
+                      )}
+                    </Box>
+
+                    <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap", borderTop: "1px solid var(--border)", pt: 1 }}>
+                      <Button
+                        size="small"
+                        onClick={() => askAiAbout({
+                          label: `${pos?.company || "Application"}${pos?.title ? ` — ${pos.title}` : ""}`,
+                          content: buildApplicationContextString(app),
+                        })}
+                      >
+                        Ask AI
+                      </Button>
+                      <Button size="small" onClick={() => openEditApplicationDialog(app)}>Edit</Button>
+                      <Button size="small" color="error" onClick={() => handleDeleteApplication(app)}>Delete</Button>
+                    </Box>
+                  </Box>
+                );
+              })}
+            </Box>
+          ) : (
           <TableContainer sx={{ maxHeight: "calc(100vh - 280px)" }}>
             <Table size="small" stickyHeader>
               <TableHead>
@@ -499,6 +636,7 @@ export default function TrackingTab({
               </TableBody>
             </Table>
           </TableContainer>
+          )}
           {visibleApplicationData.length === 0 ? (
             <p style={{ color: "var(--text-secondary)", marginTop: 12 }}>
               No applications match that company or role.

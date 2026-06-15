@@ -818,6 +818,11 @@
     font-size: 0.88rem;
   }
 
+  .floatingToolbar {
+    padding: 8px 12px;
+    gap: 8px;
+  }
+
   .textarea {
     min-height: 260px;
   }

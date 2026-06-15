@@ -4,6 +4,7 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import TextField from "@mui/material/TextField";
+import { useIsMobile } from "../hooks/useResponsive";
 
 export default function ChatPanel({
   chatPanelRef,
@@ -32,6 +33,9 @@ export default function ChatPanel({
   setChatInput,
   sendChatMessage,
 }) {
+  // On phones the resizable floating panel becomes a near-full-width bottom
+  // sheet (and the pixel-drag resize handle is hidden) for usable chatting.
+  const isMobile = useIsMobile();
   return (
     <Box
       ref={chatPanelRef}
@@ -50,12 +54,14 @@ export default function ChatPanel({
       }}
       sx={{
         position: "fixed",
-        right: fabPos.right,
         // Sit just above the FAB (~64px tall) with a small gap.
         bottom: fabPos.bottom + 68,
-        width: chatSize.width,
-        height: chatSize.height,
-        maxWidth: "calc(100vw - 16px)",
+        // Phones: span the viewport width (minus small gutters) as a bottom
+        // sheet. Larger screens: floating panel anchored to the FAB, sized by
+        // the user-draggable chatSize.
+        ...(isMobile
+          ? { left: 8, right: 8, width: "auto", maxWidth: "none", height: "min(70vh, 600px)" }
+          : { right: fabPos.right, width: chatSize.width, height: chatSize.height, maxWidth: "calc(100vw - 16px)" }),
         maxHeight: "calc(100vh - 16px)",
         zIndex: 1100,
         display: "flex",
@@ -67,33 +73,35 @@ export default function ChatPanel({
         overflow: "hidden",
       }}
     >
-      {/* Top-left corner resize handle. */}
-      <Box
-        onPointerDown={startChatResize}
-        sx={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          width: 16,
-          height: 16,
-          cursor: "nwse-resize",
-          zIndex: 2,
-          touchAction: "none",
-          "&::before": {
-            content: '""',
+      {/* Top-left corner resize handle (desktop only). */}
+      {!isMobile && (
+        <Box
+          onPointerDown={startChatResize}
+          sx={{
             position: "absolute",
-            top: 3,
-            left: 3,
-            width: 10,
-            height: 10,
-            borderTop: "2px solid var(--border-strong)",
-            borderLeft: "2px solid var(--border-strong)",
-            borderTopLeftRadius: 3,
-            opacity: 0.6,
-          },
-          "&:hover::before": { opacity: 1, borderColor: "var(--accent, #1976d2)" },
-        }}
-      />
+            top: 0,
+            left: 0,
+            width: 16,
+            height: 16,
+            cursor: "nwse-resize",
+            zIndex: 2,
+            touchAction: "none",
+            "&::before": {
+              content: '""',
+              position: "absolute",
+              top: 3,
+              left: 3,
+              width: 10,
+              height: 10,
+              borderTop: "2px solid var(--border-strong)",
+              borderLeft: "2px solid var(--border-strong)",
+              borderTopLeftRadius: 3,
+              opacity: 0.6,
+            },
+            "&:hover::before": { opacity: 1, borderColor: "var(--accent, #1976d2)" },
+          }}
+        />
+      )}
       <Box
         sx={{
           display: "flex",

@@ -1217,7 +1217,14 @@ export default function Home() {
         if (
           parsed && typeof parsed.right === "number" && typeof parsed.bottom === "number"
         ) {
-          setFabPos(parsed);
+          // Clamp to the current viewport so a position saved on a larger
+          // screen can't strand the FAB off-screen on a small one.
+          const maxRight = Math.max(8, window.innerWidth - 80);
+          const maxBottom = Math.max(8, window.innerHeight - 48);
+          setFabPos({
+            right: Math.min(Math.max(8, parsed.right), maxRight),
+            bottom: Math.min(Math.max(8, parsed.bottom), maxBottom),
+          });
         }
       }
       const cs = localStorage.getItem("chatSize");
@@ -1241,6 +1248,21 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("fabPos", JSON.stringify(fabPos));
   }, [fabPos]);
+  // Keep the floating FAB inside the viewport when the window resizes (e.g.
+  // rotating a phone or shrinking the window) so it never drifts off-screen.
+  useEffect(() => {
+    function clampFab() {
+      setFabPos((prev) => {
+        const maxRight = Math.max(8, window.innerWidth - 80);
+        const maxBottom = Math.max(8, window.innerHeight - 48);
+        const right = Math.min(Math.max(8, prev.right), maxRight);
+        const bottom = Math.min(Math.max(8, prev.bottom), maxBottom);
+        return right === prev.right && bottom === prev.bottom ? prev : { right, bottom };
+      });
+    }
+    window.addEventListener("resize", clampFab);
+    return () => window.removeEventListener("resize", clampFab);
+  }, []);
   useEffect(() => {
     localStorage.setItem("chatSize", JSON.stringify(chatSize));
   }, [chatSize]);
