@@ -215,10 +215,12 @@
   transition: transform 0.15s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
 
-.button:hover:not(:disabled) {
-  background: linear-gradient(180deg, #11539d 0%, var(--accent-hover) 100%);
-  box-shadow: 0 10px 20px -12px rgba(17, 60, 110, 0.7);
-  transform: translateY(-1px);
+@media (hover: hover) {
+  .button:hover:not(:disabled) {
+    background: linear-gradient(180deg, #11539d 0%, var(--accent-hover) 100%);
+    box-shadow: 0 10px 20px -12px rgba(17, 60, 110, 0.7);
+    transform: translateY(-1px);
+  }
 }
 
 .button:disabled {
@@ -240,10 +242,12 @@
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
 }
 
-.secondaryButton:hover:not(:disabled) {
-  border-color: var(--accent);
-  box-shadow: 0 8px 16px -12px rgba(17, 60, 110, 0.55);
-  transform: translateY(-1px);
+@media (hover: hover) {
+  .secondaryButton:hover:not(:disabled) {
+    border-color: var(--accent);
+    box-shadow: 0 8px 16px -12px rgba(17, 60, 110, 0.55);
+    transform: translateY(-1px);
+  }
 }
 
 .secondaryButton:disabled {
@@ -425,9 +429,11 @@
   transition: box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
-.jobCard:hover {
-  border-color: var(--border-strong);
-  box-shadow: 0 4px 16px -8px rgba(17, 60, 110, 0.18);
+@media (hover: hover) {
+  .jobCard:hover {
+    border-color: var(--border-strong);
+    box-shadow: 0 4px 16px -8px rgba(17, 60, 110, 0.18);
+  }
 }
 
 .jobCardTitle {
