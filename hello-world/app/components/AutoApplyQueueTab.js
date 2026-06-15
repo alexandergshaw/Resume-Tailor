@@ -319,7 +319,7 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
             )}
           </Box>
           <Divider sx={{ my: 1.5 }} />
-          <Box sx={{ display: "flex", gap: 1 }}>
+          <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
             <Button
               variant="contained"
               onClick={async () => {
