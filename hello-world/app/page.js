@@ -24,7 +24,9 @@ import {
   getDownloadFileNameForTitle,
   downloadMinimalistDocx,
   createDocumentDownloaders,
+  extractResumeTextLines,
 } from "../lib/document/docx";
+import { parseEmploymentHistory } from "../lib/resume/parseEmployment";
 import { openPostingBeside, openBlankBeside, navigateBeside } from "../lib/window/openPostingBeside";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -355,6 +357,8 @@ export default function Home() {
   const [employmentEntries, setEmploymentEntries] = useState([]);
   const [employmentOpen, setEmploymentOpen] = useState(false);
   const [employmentCopiedId, setEmploymentCopiedId] = useState(null);
+  // Status of the "import from résumé" action on the Employment History section.
+  const [employmentImport, setEmploymentImport] = useState({ loading: false, error: "", message: "" });
   const chatInputRef = useRef(null);
   const [appDialog, setAppDialog] = useState({ open: false, rowIndex: null, kind: "jd" });
   const [stageDialog, setStageDialog] = useState(createStageDialogState());
@@ -1543,6 +1547,64 @@ export default function Home() {
         setEmploymentCopiedId((current) => (current === entry.id ? null : current));
       }, 1500);
     } catch {}
+  }
+
+  // Parse an uploaded résumé (.docx/.txt) entirely on the client — no LLM — and
+  // append the detected positions to the Employment History list (capped at 4).
+  // Existing non-empty entries are preserved; parsed entries fill the remaining
+  // slots. The fields stay editable so the user can fix any heuristic misses.
+  async function importEmploymentFromResume(file) {
+    if (!file) return;
+    if (!isDocxResume(file) && !isTextResume(file)) {
+      setEmploymentImport({ loading: false, error: "Upload a .docx or .txt résumé.", message: "" });
+      return;
+    }
+    setEmploymentImport({ loading: true, error: "", message: "" });
+    try {
+      const lines = await extractResumeTextLines(file);
+      const parsed = parseEmploymentHistory(lines);
+      if (parsed.length === 0) {
+        setEmploymentImport({
+          loading: false,
+          error: "",
+          message: "Couldn't detect any employment history. Add entries manually below.",
+        });
+        return;
+      }
+      let added = 0;
+      setEmploymentEntries((prev) => {
+        const existing = prev.filter(
+          (e) => e.company || e.title || e.location || e.startDate || e.endDate || e.notes,
+        );
+        const room = Math.max(0, 4 - existing.length);
+        const additions = parsed.slice(0, room).map((entry) => ({
+          id: `emp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          company: entry.company || "",
+          title: entry.title || "",
+          location: entry.location || "",
+          startDate: entry.startDate || "",
+          endDate: entry.endDate || "",
+          notes: entry.notes || "",
+        }));
+        added = additions.length;
+        return [...existing, ...additions];
+      });
+      setEmploymentOpen(true);
+      setEmploymentImport({
+        loading: false,
+        error: "",
+        message:
+          added > 0
+            ? `Imported ${added} position${added === 1 ? "" : "s"}. Review and edit as needed.`
+            : "Your 4 employment slots are already full.",
+      });
+    } catch (err) {
+      setEmploymentImport({
+        loading: false,
+        error: `Couldn't read that résumé: ${err?.message || "unknown error"}`,
+        message: "",
+      });
+    }
   }
 
   // Combined-copy helpers: copy every reference / education entry as one block.
@@ -3723,6 +3785,8 @@ export default function Home() {
           allEmploymentCopied={allEmploymentCopied}
           downloadEmploymentDocx={downloadEmploymentDocx}
           employmentDownloadError={employmentDownloadError}
+          importEmploymentFromResume={importEmploymentFromResume}
+          employmentImport={employmentImport}
           renderCopyButton={renderCopyButton}
         />
 

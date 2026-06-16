@@ -85,7 +85,7 @@ export function fitLinesToTemplate(lines, targetCount) {
   }
 
   const head = lines.slice(0, targetCount - 1);
-  const tail = lines.slice(targetCount - 1).join(" ").replace(/\s+/g, " ").trim();
+  const tail = lines.slice(targetCount - 1).join(" ").trim();
   return [...head, tail];
 }
 
@@ -125,6 +125,36 @@ export async function buildTemplateLinesForUpload(file) {
   }
 
   return [];
+}
+
+// Extract every non-empty text line from a résumé for parsing (not editing).
+// Unlike extractTemplateLinesFromDocx (which only reads top-level paragraphs so
+// it can rewrite them), this walks *all* paragraphs in document order —
+// including those nested inside tables — so table-based résumé layouts are not
+// dropped. Returns a flat array of trimmed, non-empty lines.
+export async function extractResumeTextLines(file) {
+  if (isTextResume(file)) {
+    const text = await file.text();
+    return normalizeResultLines(text)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  }
+
+  if (!isDocxResume(file)) return [];
+
+  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+  const xmlContent = await zip.file("word/document.xml")?.async("string");
+  if (!xmlContent) return [];
+
+  const xmlDoc = new DOMParser().parseFromString(xmlContent, "application/xml");
+  const paragraphs = xmlDoc.getElementsByTagNameNS(WORDPROCESSINGML_NS, "p");
+
+  const lines = [];
+  for (const paragraph of Array.from(paragraphs)) {
+    const text = getParagraphPlainText(paragraph).trim();
+    if (text) lines.push(text);
+  }
+  return lines;
 }
 
 export function setParagraphText(paragraphNode, value, xmlDoc) {

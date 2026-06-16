@@ -74,6 +74,8 @@ export default function ApplyingControls({
   allEmploymentCopied,
   downloadEmploymentDocx,
   employmentDownloadError,
+  importEmploymentFromResume,
+  employmentImport,
   renderCopyButton,
 }) {
   return (
@@ -914,6 +916,53 @@ export default function ApplyingControls({
               borderTop: "1px solid var(--border)",
             }}
           >
+            <Box
+              sx={{
+                border: "1px dashed var(--border-strong)",
+                borderRadius: 2,
+                p: 1.5,
+                display: "flex",
+                flexDirection: "column",
+                gap: 0.75,
+                backgroundColor: "var(--bg-soft, #fbfdff)",
+              }}
+            >
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+                <Button
+                  component="label"
+                  size="small"
+                  variant="outlined"
+                  disabled={employmentImport?.loading}
+                  sx={{ textTransform: "none", fontSize: "0.8rem" }}
+                >
+                  {employmentImport?.loading ? "Reading resume…" : "Upload resume to auto-fill"}
+                  <input
+                    type="file"
+                    hidden
+                    accept=".docx,.txt,.md,.markdown"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (file && importEmploymentFromResume) importEmploymentFromResume(file);
+                    }}
+                  />
+                </Button>
+                <Box sx={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
+                  Pulls positions from a .docx or .txt resume — no AI, all on your device.
+                </Box>
+              </Box>
+              {employmentImport?.error ? (
+                <Box sx={{ fontSize: "0.78rem", color: "var(--error, #d32f2f)" }}>
+                  {employmentImport.error}
+                </Box>
+              ) : null}
+              {employmentImport?.message ? (
+                <Box sx={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>
+                  {employmentImport.message}
+                </Box>
+              ) : null}
+            </Box>
+
             {employmentDownloadError ? (
               <Box sx={{ fontSize: "0.78rem", color: "var(--error, #d32f2f)" }}>
                 {employmentDownloadError}
