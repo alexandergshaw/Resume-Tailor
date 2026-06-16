@@ -311,6 +311,7 @@ export default function ApplyingControls({
           <AccordionSummary
             aria-controls="references-content"
             id="references-header"
+            slotProps={{ root: { component: "div" } }}
             expandIcon={(
               <Box
                 component="span"
@@ -567,6 +568,7 @@ export default function ApplyingControls({
           <AccordionSummary
             aria-controls="education-content"
             id="education-header"
+            slotProps={{ root: { component: "div" } }}
             expandIcon={(
               <Box
                 component="span"
@@ -833,6 +835,7 @@ export default function ApplyingControls({
           <AccordionSummary
             aria-controls="employment-content"
             id="employment-header"
+            slotProps={{ root: { component: "div" } }}
             expandIcon={(
               <Box
                 component="span"
