@@ -948,7 +948,7 @@ export default function ApplyingControls({
                   />
                 </Button>
                 <Box sx={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-                  Pulls positions from a .docx or .txt resume — no AI, all on your device.
+                  Uses AI to pull positions from a .docx or .txt resume.
                 </Box>
               </Box>
               {employmentImport?.error ? (

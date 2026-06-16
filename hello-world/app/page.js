@@ -1549,10 +1549,12 @@ export default function Home() {
     } catch {}
   }
 
-  // Parse an uploaded résumé (.docx/.txt) entirely on the client — no LLM — and
-  // append the detected positions to the Employment History list (capped at 4).
-  // Existing non-empty entries are preserved; parsed entries fill the remaining
-  // slots. The fields stay editable so the user can fix any heuristic misses.
+  // Extract employment history from an uploaded résumé (.docx/.txt) using AI and
+  // append the detected positions to the list (capped at 4). The file is parsed
+  // to text on-device, then sent to /api/extract-employment (Gemini). If that
+  // route is unavailable, we fall back to the on-device heuristic parser so the
+  // feature still works. Existing non-empty entries are preserved; fields stay
+  // editable so the user can fix any misses.
   async function importEmploymentFromResume(file) {
     if (!file) return;
     if (!isDocxResume(file) && !isTextResume(file)) {
@@ -1562,8 +1564,31 @@ export default function Home() {
     setEmploymentImport({ loading: true, error: "", message: "" });
     try {
       const lines = await extractResumeTextLines(file);
-      const parsed = parseEmploymentHistory(lines);
-      if (parsed.length === 0) {
+      const resumeText = lines.join("\n");
+
+      let positions = [];
+      let usedAi = false;
+      try {
+        const res = await fetch("/api/extract-employment", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ resumeText }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (Array.isArray(json?.positions)) {
+            positions = json.positions;
+            usedAi = true;
+          }
+        }
+      } catch {
+        // Network/route error — fall through to the offline parser.
+      }
+      if (!usedAi) {
+        positions = parseEmploymentHistory(lines);
+      }
+
+      if (positions.length === 0) {
         setEmploymentImport({
           loading: false,
           error: "",
@@ -1571,31 +1596,29 @@ export default function Home() {
         });
         return;
       }
-      let added = 0;
-      setEmploymentEntries((prev) => {
-        const existing = prev.filter(
-          (e) => e.company || e.title || e.location || e.startDate || e.endDate || e.notes,
-        );
-        const room = Math.max(0, 4 - existing.length);
-        const additions = parsed.slice(0, room).map((entry) => ({
-          id: `emp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          company: entry.company || "",
-          title: entry.title || "",
-          location: entry.location || "",
-          startDate: entry.startDate || "",
-          endDate: entry.endDate || "",
-          notes: entry.notes || "",
-        }));
-        added = additions.length;
-        return [...existing, ...additions];
-      });
+      const existing = employmentEntries.filter(
+        (e) => e.company || e.title || e.location || e.startDate || e.endDate || e.notes,
+      );
+      const room = Math.max(0, 4 - existing.length);
+      const additions = positions.slice(0, room).map((entry) => ({
+        id: `emp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        company: entry.company || "",
+        title: entry.title || "",
+        location: entry.location || "",
+        startDate: entry.startDate || "",
+        endDate: entry.endDate || "",
+        notes: entry.notes || "",
+      }));
+      const added = additions.length;
+      setEmploymentEntries([...existing, ...additions]);
       setEmploymentOpen(true);
+      const suffix = usedAi ? "" : " (offline parser — AI unavailable)";
       setEmploymentImport({
         loading: false,
         error: "",
         message:
           added > 0
-            ? `Imported ${added} position${added === 1 ? "" : "s"}. Review and edit as needed.`
+            ? `Imported ${added} position${added === 1 ? "" : "s"}${suffix}. Review and edit as needed.`
             : "Your 4 employment slots are already full.",
       });
     } catch (err) {
