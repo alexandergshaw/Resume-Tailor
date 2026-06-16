@@ -6,6 +6,7 @@ import {
   remoteTypeFor,
   extractMinYearsRequired,
 } from "@/lib/feed/normalize";
+import { parseSalary } from "@/lib/feed/salary";
 import { LEVER_COMPANIES } from "@/lib/lever/companies";
 import { fetchLeverPostings } from "@/lib/lever/fetchPostings";
 import { ASHBY_COMPANIES } from "@/lib/ashby/companies";
@@ -46,6 +47,7 @@ function normalizeGreenhousePosting(raw, companyName) {
   const locationName = raw.location?.name || "";
   const sourcePostingId = `gh-${raw.id}`;
   const fullDescription = stripHtml(raw.content || "");
+  const salary = parseSalary(`${raw.title || ""} ${fullDescription}`);
   return {
     dedup_key: `greenhouse:${sourcePostingId}`,
     source: "greenhouse",
@@ -55,8 +57,8 @@ function normalizeGreenhousePosting(raw, companyName) {
     location: locationName || null,
     remote_type: remoteTypeFor(locationName),
     employment_type: null,
-    salary_min: null,
-    salary_max: null,
+    salary_min: salary.min,
+    salary_max: salary.max,
     description_snippet: snippetFrom(raw.content || ""),
     min_years_required: extractMinYearsRequired(`${raw.title || ""} ${fullDescription}`),
     url: raw.absolute_url || null,

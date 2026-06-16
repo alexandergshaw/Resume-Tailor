@@ -37,6 +37,7 @@ import AutoApplyQueueTab from "./AutoApplyQueueTab";
 import AutofillProfileDialog from "./AutofillProfileDialog";
 import { buildBookmarklet, profileHasValues } from "@/lib/autofill/buildBookmarklet";
 import { openPostingBeside } from "@/lib/window/openPostingBeside";
+import { parseSalary, formatSalary } from "@/lib/feed/salary";
 
 const FILTERS_STORAGE_KEY = "feedFilters";
 const ADVANCED_STORAGE_KEY = "feedAdvancedFilters";
@@ -1219,6 +1220,16 @@ export default function LiveFeedTab({
         <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
           {items.map((posting) => {
             const busy = !!busyIds[posting.id];
+            // Prefer the salary columns populated during ingestion; for any
+            // posting still missing them, fall back to parsing the snippet.
+            let salaryMin = posting.salary_min;
+            let salaryMax = posting.salary_max;
+            if (salaryMin == null && salaryMax == null) {
+              const parsed = parseSalary(posting.description_snippet || "");
+              salaryMin = parsed.min;
+              salaryMax = parsed.max;
+            }
+            const salaryLabel = formatSalary(salaryMin, salaryMax);
             return (
               <Box
                 key={posting.id}
@@ -1266,6 +1277,18 @@ export default function LiveFeedTab({
                       alignItems: "center",
                     }}
                   >
+                    {salaryLabel && (
+                      <Chip
+                        size="small"
+                        label={salaryLabel}
+                        sx={{
+                          fontWeight: 700,
+                          bgcolor: "#e8f5e9",
+                          color: "#2e7d32",
+                          border: "1px solid #a5d6a7",
+                        }}
+                      />
+                    )}
                     {posting.location && (
                       <Chip size="small" label={posting.location} variant="outlined" />
                     )}

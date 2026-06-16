@@ -20,6 +20,7 @@ import {
   remoteTypeFor,
   extractMinYearsRequired,
 } from "@/lib/feed/normalize";
+import { parseSalary } from "@/lib/feed/salary";
 
 /** Pull the inner text of the first <tag>…</tag>, handling CDATA + entities. */
 function tagText(itemXml, tag) {
@@ -80,6 +81,7 @@ function normalizeRssItem(itemXml, feedLabel) {
   const sourcePostingId = `ihe-${jobId || hashString(url || rawTitle)}`;
   const location = locationFromDescription(description);
   const postedAt = pubDate ? new Date(pubDate).toISOString() : null;
+  const salary = parseSalary(`${title} ${description}`);
 
   return {
     dedup_key: `highered:${sourcePostingId}`,
@@ -90,8 +92,8 @@ function normalizeRssItem(itemXml, feedLabel) {
     location: location || null,
     remote_type: remoteTypeFor(location),
     employment_type: null,
-    salary_min: null,
-    salary_max: null,
+    salary_min: salary.min,
+    salary_max: salary.max,
     description_snippet: snippetFrom(description),
     min_years_required: extractMinYearsRequired(`${title} ${description}`),
     url: url || null,

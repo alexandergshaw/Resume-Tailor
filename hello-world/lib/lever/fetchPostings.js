@@ -14,6 +14,7 @@ import {
   remoteTypeFor,
   extractMinYearsRequired,
 } from "@/lib/feed/normalize";
+import { salaryFromLever, resolvePostingSalary } from "@/lib/feed/salary";
 
 function remoteTypeForLever(raw) {
   const wp = (raw.workplaceType || "").toLowerCase();
@@ -38,6 +39,7 @@ function normalizeLeverPosting(raw, companyName) {
   const postedAt = Number.isFinite(raw.createdAt)
     ? new Date(raw.createdAt).toISOString()
     : null;
+  const salary = resolvePostingSalary(salaryFromLever(raw), fullDescription);
 
   return {
     dedup_key: `lever:${sourcePostingId}`,
@@ -48,8 +50,8 @@ function normalizeLeverPosting(raw, companyName) {
     location: location || null,
     remote_type: remoteTypeForLever(raw),
     employment_type: raw.categories?.commitment || null,
-    salary_min: null,
-    salary_max: null,
+    salary_min: salary.min,
+    salary_max: salary.max,
     description_snippet: snippetFrom(fullDescription),
     min_years_required: extractMinYearsRequired(
       `${raw.text || ""} ${fullDescription}`,

@@ -13,6 +13,7 @@ import {
   remoteTypeFor,
   extractMinYearsRequired,
 } from "@/lib/feed/normalize";
+import { salaryFromAshby, resolvePostingSalary } from "@/lib/feed/salary";
 
 function normalizeAshbyPosting(raw, companyName) {
   const sourcePostingId = `ashby-${raw.id}`;
@@ -23,6 +24,7 @@ function normalizeAshbyPosting(raw, companyName) {
   const url = raw.jobUrl || raw.applyUrl || null;
   const remoteType = raw.isRemote ? "remote" : remoteTypeFor(location);
   const tags = [raw.department, raw.team, raw.employmentType].filter(Boolean);
+  const salary = resolvePostingSalary(salaryFromAshby(raw), fullDescription);
 
   return {
     dedup_key: `ashby:${sourcePostingId}`,
@@ -33,8 +35,8 @@ function normalizeAshbyPosting(raw, companyName) {
     location: location || null,
     remote_type: remoteType,
     employment_type: raw.employmentType || null,
-    salary_min: null,
-    salary_max: null,
+    salary_min: salary.min,
+    salary_max: salary.max,
     description_snippet: snippetFrom(fullDescription),
     min_years_required: extractMinYearsRequired(
       `${raw.title || ""} ${fullDescription}`,
