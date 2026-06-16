@@ -1599,27 +1599,39 @@ export default function Home() {
       const existing = employmentEntries.filter(
         (e) => e.company || e.title || e.location || e.startDate || e.endDate || e.notes,
       );
+      // Skip positions that already exist (by company + title) so re-uploading
+      // the same résumé doesn't stack duplicate entries.
+      const dedupeKey = (e) =>
+        `${(e.company || "").trim().toLowerCase()}|${(e.title || "").trim().toLowerCase()}`;
+      const existingKeys = new Set(existing.map(dedupeKey));
       const room = Math.max(0, 4 - existing.length);
-      const additions = positions.slice(0, room).map((entry) => ({
-        id: `emp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        company: entry.company || "",
-        title: entry.title || "",
-        location: entry.location || "",
-        startDate: entry.startDate || "",
-        endDate: entry.endDate || "",
-        notes: entry.notes || "",
-      }));
+      const additions = positions
+        .filter((p) => !existingKeys.has(dedupeKey(p)))
+        .slice(0, room)
+        .map((entry) => ({
+          id: `emp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          company: entry.company || "",
+          title: entry.title || "",
+          location: entry.location || "",
+          startDate: entry.startDate || "",
+          endDate: entry.endDate || "",
+          notes: entry.notes || "",
+        }));
       const added = additions.length;
       setEmploymentEntries([...existing, ...additions]);
       setEmploymentOpen(true);
       const suffix = usedAi ? "" : " (offline parser — AI unavailable)";
+      const noRoomMessage =
+        existing.length >= 4
+          ? "Your 4 employment slots are already full."
+          : "Those positions are already in your list.";
       setEmploymentImport({
         loading: false,
         error: "",
         message:
           added > 0
             ? `Imported ${added} position${added === 1 ? "" : "s"}${suffix}. Review and edit as needed.`
-            : "Your 4 employment slots are already full.",
+            : noRoomMessage,
       });
     } catch (err) {
       setEmploymentImport({
