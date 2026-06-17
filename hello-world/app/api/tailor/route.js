@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import mammoth from "mammoth";
-import {
-  generateTailoredResumeDraft,
-  generateTailoredCoverLetterDraft,
-} from "@/lib/llm/tailorResume";
+import { getEngine, resolveEngineName } from "@/lib/llm/engines";
+import { getServerEnv } from "@/lib/config/env";
 import { fetchUrlContent } from "@/lib/scrape/fetchUrlContent";
 
 export const runtime = "nodejs";
@@ -144,6 +142,15 @@ export async function POST(request) {
     const resumeFile = formData.get("resume");
     const coverLetterFile = formData.get("coverLetter");
 
+    // Select the document-generation engine: per-request override falls back to
+    // the server default (RESUME_ENGINE). Unknown names degrade to "gemini".
+    const { resumeEngine: defaultEngine } = getServerEnv();
+    const engineName = resolveEngineName(
+      formData.get("engine")?.toString() || "",
+      defaultEngine,
+    );
+    const engine = getEngine(engineName);
+
     if (!jobPosting && !jobPostingUrl) {
       return NextResponse.json(
         { error: "jobPosting or jobPostingUrl is required." },
@@ -191,7 +198,7 @@ export async function POST(request) {
       }
     }
 
-    const result = await generateTailoredResumeDraft({
+    const result = await engine.tailorResume({
       jobPosting: effectiveJobPosting,
       jobPostingUrl: effectiveJobPostingUrl,
       resumeText,
@@ -214,10 +221,10 @@ export async function POST(request) {
       coverLetterError = "Cover letter must be .txt, .md, or .docx.";
     } else {
       try {
-        const coverDraft = await generateTailoredCoverLetterDraft({
+        const coverDraft = await engine.tailorCoverLetter({
           jobPosting: effectiveJobPosting,
           jobPostingUrl: effectiveJobPostingUrl,
-          companyName: scrapedCompany,
+          companyName: scrapedCompany || result.companyName,
           jobTitle: result.jobTitle || scrapedJobTitle,
           resumeText,
           templateLines: coverLetterTemplateLines,
@@ -234,6 +241,7 @@ export async function POST(request) {
 
     return NextResponse.json({
       ...result,
+      engine: result.engine || engineName,
       jobTitle: result.jobTitle || scrapedJobTitle,
       jobDescription: scrapedDescription,
       company: scrapedCompany || result.companyName || "",
