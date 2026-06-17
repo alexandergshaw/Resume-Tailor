@@ -417,6 +417,7 @@ export function createDocumentDownloaders(deps) {
     coverLetterResultLines,
     docxB64,
     coverLetterDocxB64,
+    docxPath,
   }) {
     // External engine returns finished documents — serve them directly rather
     // than re-filling the user's template.
@@ -435,6 +436,20 @@ export function createDocumentDownloaders(deps) {
         return null;
       } catch (err) {
         return err.message || "Unable to download DOCX.";
+      }
+    }
+
+    // A previously persisted external document (post-reload) lives in Storage.
+    if (docxPath) {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase.storage.from("resumes").download(docxPath);
+        if (!error && data) {
+          triggerBlobDownload(data, getDownloadFileNameForTitle(jobTitle, company));
+          return null;
+        }
+      } catch {
+        // Fall through to the template-fill path below.
       }
     }
 
@@ -489,7 +504,7 @@ export function createDocumentDownloaders(deps) {
       const supabase = createClient();
       const { data: gen, error } = await supabase
         .from("generated_resumes")
-        .select("content, content_lines")
+        .select("content, content_lines, docx_path")
         .eq("id", row.resume_used_id)
         .maybeSingle();
       if (error) return error.message || "Unable to load generated resume.";
@@ -502,6 +517,7 @@ export function createDocumentDownloaders(deps) {
         result: text,
         resultLines: lines,
         coverLetterResultLines: [],
+        docxPath: gen.docx_path || "",
       });
     } catch (err) {
       return err.message || "Unable to download.";
@@ -524,15 +540,14 @@ export function createDocumentDownloaders(deps) {
     const coverLetterDocxB64 =
       !tailoring.edited && typeof tailoring.coverLetterDocxB64 === "string" ? tailoring.coverLetterDocxB64 : "";
 
-    if (!docxB64 && !isDocxResume(resumeFile)) return "Upload your source resume as .docx first.";
-
     let text = typeof tailoring.result === "string" ? tailoring.result : "";
     let lines = Array.isArray(tailoring.resultLines) ? tailoring.resultLines : [];
-    let coverLines = Array.isArray(tailoring.coverLetterResultLines)
+    const coverLines = Array.isArray(tailoring.coverLetterResultLines)
       ? tailoring.coverLetterResultLines
       : [];
     let jobTitle = tailoring.generatedJobTitle || job.title || "";
     let company = job.company || "";
+    let docxPath = "";
 
     if (!docxB64 && !text) {
       // Fall back to the saved application row (post-reload case).
@@ -545,6 +560,12 @@ export function createDocumentDownloaders(deps) {
       lines = Array.isArray(gen.content_lines) ? gen.content_lines : [];
       jobTitle = jobTitle || app?.positions?.title || "";
       company = company || app?.positions?.company || "";
+      if (!tailoring.edited && gen.docx_path) docxPath = gen.docx_path;
+    }
+
+    // Need a finished doc (in-session, or persisted) or a .docx source resume.
+    if (!docxB64 && !docxPath && !isDocxResume(resumeFile)) {
+      return "Upload your source resume as .docx first.";
     }
 
     return await downloadDocxFiles({
@@ -555,6 +576,7 @@ export function createDocumentDownloaders(deps) {
       coverLetterResultLines: coverLines,
       docxB64,
       coverLetterDocxB64,
+      docxPath,
     });
   }
 

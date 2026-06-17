@@ -2373,7 +2373,7 @@ export default function Home() {
       if (resumeIds.length > 0) {
         const { data: resumeRows, error: resumeErr } = await supabase
           .from("generated_resumes")
-          .select("id, content, content_lines")
+          .select("id, content, content_lines, docx_path")
           .in("id", resumeIds);
         if (resumeErr) {
           console.warn("[loadApplications] resume fetch failed (non-fatal):", resumeErr);
@@ -3082,6 +3082,7 @@ export default function Home() {
           contentLines: resultLines,
           sourceResumePath: `${currentUser.id}/resume`,
           additionalContext: additionalContext || null,
+          docxB64,
         });
         if (!generatedResumeId) {
           console.error("[handleTailorJob] saveGeneratedResume returned null", { userId: currentUser.id, positionId });
@@ -3363,6 +3364,7 @@ export default function Home() {
           contentLines: nextResultLines,
           sourceResumePath: `${currentUser.id}/resume`,
           additionalContext: additionalContext || null,
+          docxB64: nextDocxB64,
         });
         if (positionId) {
           await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "applied" });
@@ -3525,6 +3527,7 @@ export default function Home() {
           contentLines: nextResultLines,
           sourceResumePath: `${currentUser.id}/resume`,
           additionalContext: additionalContext || null,
+          docxB64: nextDocxB64,
         });
         if (positionId) {
           await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "applied" });
@@ -3637,6 +3640,9 @@ export default function Home() {
         ? payload.coverLetterResultLines
         : [];
       const nextCoverLetterError = typeof payload.coverLetterError === "string" ? payload.coverLetterError : "";
+      const nextEngine = typeof payload.engine === "string" ? payload.engine : "";
+      const nextDocxB64 = typeof payload.docxB64 === "string" ? payload.docxB64 : "";
+      const nextCoverLetterDocxB64 = typeof payload.coverLetterDocxB64 === "string" ? payload.coverLetterDocxB64 : "";
 
       const syntheticJob = {
         id: syntheticJobId,
@@ -3652,7 +3658,17 @@ export default function Home() {
             : j,
         ),
       );
-      updateTailoringJob(syntheticJobId, { status: "done" });
+      updateTailoringJob(syntheticJobId, {
+        status: "done",
+        result: nextResult,
+        resultLines: nextResultLines,
+        generatedJobTitle: nextJobTitle,
+        coverLetterResultLines: nextCoverLetterResultLines,
+        engine: nextEngine,
+        docxB64: nextDocxB64,
+        coverLetterDocxB64: nextCoverLetterDocxB64,
+        edited: false,
+      });
 
       // Persist the generated resume and link to an application.
       if (currentUser) {
@@ -3665,6 +3681,7 @@ export default function Home() {
           contentLines: nextResultLines,
           sourceResumePath: `${currentUser.id}/resume`,
           additionalContext: additionalContext || null,
+          docxB64: nextDocxB64,
         });
         if (positionId) {
           await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "applied" });
@@ -3681,9 +3698,12 @@ export default function Home() {
 
       const dlError = await downloadDocxFiles({
         jobTitle: nextJobTitle,
+        company: nextCompany,
         result: nextResult,
         resultLines: nextResultLines,
         coverLetterResultLines: nextCoverLetterResultLines,
+        docxB64: nextDocxB64,
+        coverLetterDocxB64: nextCoverLetterDocxB64,
       });
 
       return dlError || null;

@@ -177,6 +177,7 @@ export async function tailorAndQueueOne({
     contentLines: resumeDraft.resultLines,
     sourceResumePath: `${userId}/resume`,
     additionalContext: `Auto-queued from ${sourceLabel}.`,
+    docxB64: resumeDraft.docxB64 || "",
   });
 
   // Cover letter (best-effort; only when the user has a template uploaded).
