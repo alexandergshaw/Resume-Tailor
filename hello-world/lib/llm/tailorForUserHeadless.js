@@ -1,10 +1,25 @@
 import mammoth from "mammoth";
-import {
-  generateTailoredResumeDraft,
-  generateTailoredCoverLetterDraft,
-} from "@/lib/llm/tailorResume";
+import { getEngine, resolveEngineName } from "@/lib/llm/engines";
 
 const MAX_RESUME_CHARS = 20000;
+
+// The cron/auto-apply path has no per-request override, so it follows the
+// server default engine (RESUME_ENGINE). If "external" is selected but not
+// configured, fall back to Gemini so background tailoring never stalls.
+function selectedEngine() {
+  return getEngine(resolveEngineName(process.env.RESUME_ENGINE));
+}
+
+async function runWithFallback(engine, method, args) {
+  try {
+    return await engine[method](args);
+  } catch (err) {
+    if (engine.name === "external" && err?.code === "ENGINE_NOT_CONFIGURED") {
+      return getEngine("gemini")[method](args);
+    }
+    throw err;
+  }
+}
 
 /**
  * Run the resume tailoring pipeline for the cron job (no FormData, no HTTP).
@@ -49,7 +64,7 @@ export async function tailorResumeHeadless({
     .filter((line) => line.length > 0)
     .slice(0, 600);
 
-  const draft = await generateTailoredResumeDraft({
+  const draft = await runWithFallback(selectedEngine(), "tailorResume", {
     jobPosting,
     jobPostingUrl: "",
     resumeText,
@@ -64,6 +79,7 @@ export async function tailorResumeHeadless({
     result: draft.result,
     resultLines: draft.resultLines,
     jobTitle: draft.jobTitle || jobTitleHint || "",
+    docxB64: typeof draft.docxB64 === "string" ? draft.docxB64 : "",
   };
 }
 
@@ -123,7 +139,7 @@ export async function tailorCoverLetterHeadless({
     }
   }
 
-  const draft = await generateTailoredCoverLetterDraft({
+  const draft = await runWithFallback(selectedEngine(), "tailorCoverLetter", {
     jobPosting,
     jobPostingUrl,
     companyName,
@@ -137,6 +153,7 @@ export async function tailorCoverLetterHeadless({
   return {
     result: draft.result,
     resultLines: draft.resultLines,
+    docxB64: typeof draft.docxB64 === "string" ? draft.docxB64 : "",
   };
 }
 
