@@ -236,7 +236,7 @@ export async function POST(request) {
       ...result,
       jobTitle: result.jobTitle || scrapedJobTitle,
       jobDescription: scrapedDescription,
-      company: scrapedCompany,
+      company: scrapedCompany || result.companyName || "",
       coverLetterResult,
       coverLetterResultLines,
       coverLetterError,

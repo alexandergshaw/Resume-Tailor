@@ -29,6 +29,7 @@ export default function StatusBar({
   handleToggleApplied,
   handleIgnoreJob,
   handleUntrackJob,
+  openResumePreview,
 }) {
   if (trackedJobs.length === 0) return null;
 
@@ -82,13 +83,27 @@ export default function StatusBar({
                 <span className={styles.toolbarChipBadge}>Generating…</span>
               ) : null}
               <div className={styles.toolbarChipActions}>
-                {status === "done" && isDocxResume(resumeFile) ? (
+                {status === "done" && tailoring.result ? (
                   <span
-                    draggable
+                    role="button"
+                    tabIndex={0}
+                    draggable={isDocxResume(resumeFile)}
                     className={styles.toolbarChipBtn}
-                    title="Drag tailored resume to upload"
-                    style={{ cursor: "grab", display: "inline-flex", alignItems: "center" }}
+                    title={
+                      isDocxResume(resumeFile)
+                        ? "Preview / edit resume · drag to upload"
+                        : "Preview / edit resume"
+                    }
+                    style={{ cursor: "pointer", display: "inline-flex", alignItems: "center" }}
+                    onClick={() => openResumePreview?.(job)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        openResumePreview?.(job);
+                      }
+                    }}
                     onDragStart={async (e) => {
+                      if (!isDocxResume(resumeFile)) return;
                       try {
                         const t = tailoringMap[job.id] || {};
                         const text = typeof t.result === "string" ? t.result : "";

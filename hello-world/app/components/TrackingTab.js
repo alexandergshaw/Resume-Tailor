@@ -231,7 +231,7 @@ export default function TrackingTab({
                             const lines = Array.isArray(resume.content_lines) && resume.content_lines.length > 0
                               ? resume.content_lines
                               : (resume.content || "").split("\n");
-                            const err = await downloadDocxFiles({ jobTitle: pos?.title || "resume", result: resume.content, resultLines: lines, coverLetterResultLines: [] });
+                            const err = await downloadDocxFiles({ jobTitle: pos?.title || "resume", company: pos?.company, result: resume.content, resultLines: lines, coverLetterResultLines: [] });
                             if (err) window.alert(err);
                           }}
                         >
@@ -558,6 +558,7 @@ export default function TrackingTab({
                                       : (resume.content || "").split("\n");
                                     const err = await downloadDocxFiles({
                                       jobTitle: pos?.title || "resume",
+                                      company: pos?.company,
                                       result: resume.content,
                                       resultLines: lines,
                                       coverLetterResultLines: [],

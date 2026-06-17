@@ -10,6 +10,7 @@ import LiveFeedTab from "./components/LiveFeedTab";
 import ChatPanel from "./components/ChatPanel";
 import StatusBar from "./components/StatusBar";
 import BatchTailorDialog from "./components/BatchTailorDialog";
+import ResumePreviewDialog from "./components/ResumePreviewDialog";
 import {
   buildJobContextString,
   buildApplicationContextString as buildApplicationContextStringBase,
@@ -240,6 +241,17 @@ export default function Home() {
   const [isSearching, setIsSearching] = useState(false);
   const [jobSearchError, setJobSearchError] = useState("");
   const [tailoringMap, setTailoringMap] = useState({});
+  // Preview/edit modal for a tracked posting's tailored resume (opened from the
+  // status-bar chips). `jobId` keys into tailoringMap for the current text.
+  const [resumePreview, setResumePreview] = useState({
+    open: false,
+    jobId: null,
+    title: "",
+    company: "",
+    busy: false,
+    notice: "",
+    error: "",
+  });
   const [batchTailorState, setBatchTailorState] = useState({
     running: false,
     total: 0,
@@ -255,6 +267,7 @@ export default function Home() {
   const [manualResultLines, setManualResultLines] = useState([]);
   const [manualCoverLetterResultLines, setManualCoverLetterResultLines] = useState([]);
   const [manualGeneratedJobTitle, setManualGeneratedJobTitle] = useState("");
+  const [manualGeneratedCompany, setManualGeneratedCompany] = useState("");
   const [manualIsSubmitting, setManualIsSubmitting] = useState(false);
   const [manualError, setManualError] = useState("");
   const [manualHasCompleted, setManualHasCompleted] = useState(false);
@@ -264,6 +277,7 @@ export default function Home() {
   const [urlResultLines, setUrlResultLines] = useState([]);
   const [urlCoverLetterResultLines, setUrlCoverLetterResultLines] = useState([]);
   const [urlGeneratedJobTitle, setUrlGeneratedJobTitle] = useState("");
+  const [urlGeneratedCompany, setUrlGeneratedCompany] = useState("");
   const [urlIsSubmitting, setUrlIsSubmitting] = useState(false);
   const [urlError, setUrlError] = useState("");
   const [urlHasCompleted, setUrlHasCompleted] = useState(false);
@@ -2645,6 +2659,57 @@ export default function Home() {
     applicationData,
   });
 
+  // ── Resume preview/edit modal (opened from the status-bar chips) ──────────
+  function openResumePreview(job) {
+    if (!job) return;
+    const t = tailoringMap[job.id] || {};
+    setResumePreview({
+      open: true,
+      jobId: job.id,
+      title: t.generatedJobTitle || job.title || "",
+      company: job.company || "",
+      busy: false,
+      notice: "",
+      error: "",
+    });
+  }
+  function closeResumePreview() {
+    setResumePreview((prev) => ({ ...prev, open: false }));
+  }
+  // Save edits back to the tailoring entry so this becomes the resume the
+  // posting's chip uses for download / drag / posting-link this session.
+  function saveResumePreview(text) {
+    const jobId = resumePreview.jobId;
+    if (!jobId) return;
+    const lines = String(text || "").split("\n");
+    setTailoringMap((current) => ({
+      ...current,
+      [jobId]: {
+        ...(current[jobId] || {}),
+        status: current[jobId]?.status || "done",
+        result: text,
+        resultLines: lines,
+      },
+    }));
+    setResumePreview((prev) => ({
+      ...prev,
+      notice: "Saved — this is now the resume for this posting.",
+      error: "",
+    }));
+  }
+  async function downloadResumePreview(text) {
+    const lines = String(text || "").split("\n");
+    setResumePreview((prev) => ({ ...prev, busy: true, error: "", notice: "" }));
+    const err = await downloadDocxFiles({
+      jobTitle: resumePreview.title,
+      company: resumePreview.company,
+      result: text,
+      resultLines: lines,
+      coverLetterResultLines: [],
+    });
+    setResumePreview((prev) => ({ ...prev, busy: false, error: err || "" }));
+  }
+
   // "Apply" action for an auto-tailored row: download the tailored resume,
   // open the posting in a new tab, and bump the application status from
   // auto_tailored → applied so it moves out of the Auto Tailor tab and into
@@ -3215,6 +3280,7 @@ export default function Home() {
       setUrlCoverLetterResultLines(nextCoverLetterResultLines);
       if (nextCoverLetterError) setUrlError(nextCoverLetterError);
       setUrlGeneratedJobTitle(nextJobTitle);
+      setUrlGeneratedCompany(nextCompany);
       setUrlHasCompleted(true);
 
       // Update the synthesized tracked job's title now that we have one.
@@ -3261,6 +3327,7 @@ export default function Home() {
 
       const dlError = await downloadDocxFiles({
         jobTitle: nextJobTitle,
+        company: nextCompany,
         result: nextResult,
         resultLines: nextResultLines,
         coverLetterResultLines: nextCoverLetterResultLines,
@@ -3280,6 +3347,7 @@ export default function Home() {
     setUrlIsDownloading(true);
     const dlError = await downloadDocxFiles({
       jobTitle: urlGeneratedJobTitle,
+      company: urlGeneratedCompany,
       result: urlResult,
       resultLines: urlResultLines,
       coverLetterResultLines: urlCoverLetterResultLines,
@@ -3345,6 +3413,7 @@ export default function Home() {
       const nextResult = payload.result?.trim() || "No output returned from Gemini.";
       const nextResultLines = Array.isArray(payload.resultLines) ? payload.resultLines : [];
       const nextJobTitle = typeof payload.jobTitle === "string" ? payload.jobTitle.trim() : "";
+      const nextCompany = typeof payload.company === "string" ? payload.company.trim() : "";
       const nextCoverLetterResultLines = Array.isArray(payload.coverLetterResultLines) ? payload.coverLetterResultLines : [];
       const nextCoverLetterError = typeof payload.coverLetterError === "string" ? payload.coverLetterError : "";
 
@@ -3353,18 +3422,23 @@ export default function Home() {
       setManualCoverLetterResultLines(nextCoverLetterResultLines);
       if (nextCoverLetterError) setManualError(nextCoverLetterError);
       setManualGeneratedJobTitle(nextJobTitle);
+      setManualGeneratedCompany(nextCompany);
       setManualHasCompleted(true);
 
-      // Update the synthesized tracked job's title now that we have one.
+      // Update the synthesized tracked job's title/company now that we have them.
       const syntheticJob = {
         id: syntheticJobId,
         title: nextJobTitle || "Untitled role",
-        company: "",
+        company: nextCompany,
         url: "",
         description: sourcePosting,
       };
       setTrackedJobs((prev) =>
-        prev.map((j) => (j.id === syntheticJobId ? { ...j, title: syntheticJob.title } : j)),
+        prev.map((j) =>
+          j.id === syntheticJobId
+            ? { ...j, title: syntheticJob.title, company: syntheticJob.company || j.company }
+            : j,
+        ),
       );
       updateTailoringJob(syntheticJobId, { status: "done" });
 
@@ -3394,6 +3468,7 @@ export default function Home() {
 
       const dlError = await downloadDocxFiles({
         jobTitle: nextJobTitle,
+        company: nextCompany,
         result: nextResult,
         resultLines: nextResultLines,
         coverLetterResultLines: nextCoverLetterResultLines,
@@ -3413,6 +3488,7 @@ export default function Home() {
     setManualIsDownloading(true);
     const dlError = await downloadDocxFiles({
       jobTitle: manualGeneratedJobTitle,
+      company: manualGeneratedCompany,
       result: manualResult,
       resultLines: manualResultLines,
       coverLetterResultLines: manualCoverLetterResultLines,
@@ -4086,6 +4162,22 @@ export default function Home() {
         handleToggleApplied={handleToggleApplied}
         handleIgnoreJob={handleIgnoreJob}
         handleUntrackJob={handleUntrackJob}
+        openResumePreview={openResumePreview}
+      />
+
+      <ResumePreviewDialog
+        open={resumePreview.open}
+        jobTitle={resumePreview.title}
+        company={resumePreview.company}
+        initialValue={tailoringMap[resumePreview.jobId]?.result || ""}
+        onClose={closeResumePreview}
+        onSave={saveResumePreview}
+        onDownload={downloadResumePreview}
+        downloadDisabled={!isDocxResume(resumeFile)}
+        downloadHint="Upload your source resume as .docx to download."
+        busy={resumePreview.busy}
+        notice={resumePreview.notice}
+        error={resumePreview.error}
       />
     </div>
   );

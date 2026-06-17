@@ -95,11 +95,12 @@ function buildTailorPrompt({
     "4) Rewrite each line slot in order without changing slot count.",
     "5) Keep each rewritten line close in length to its source line to minimize layout shifts. Exception: the headline / professional-title line directly under the candidate's name, project name / project title lines, and skills-section category labels may each be made shorter than their source line if you judge that the shorter version aligns better with the posting — never make any of them longer than the source line.",
     "6) Do not add explanatory notes, markdown, or extra keys.",
-    `7) Output JSON only in this exact shape: {\"jobTitle\": \"\", \"resultLines\": [${templateLines
+    `7) Output JSON only in this exact shape: {\"jobTitle\": \"\", \"companyName\": \"\", \"resultLines\": [${templateLines
       .map(() => "\"\"")
       .join(", ")}]}`,
     `8) resultLines must contain exactly ${templateLines.length} strings.`,
     "9) jobTitle must be the target role title from the posting, concise and clean (no company name, no location, no punctuation noise).",
+    "9b) companyName must be the hiring company's name from the posting, concise and clean (no legal suffixes like Inc/LLC unless part of the common name, no location). Use an empty string only if the posting truly does not name a company.",
     "10) Preserve contact identity lines (name, email, phone, LinkedIn, portfolio links) unless the line clearly is not contact info. The headline / professional-title line that typically sits directly under the candidate's name is NOT contact info — it IS in scope for rewriting, and you should rewrite it to match the target role from the posting whenever the source experience can plausibly support it.",
     "11) Do not fabricate employers, dates, degrees, certifications that are not supported by the source resume or provided context. You may update everything else as you see fit.",
     "12) Project bullets are in scope for rewriting at every aggressiveness level. Reframe each project bullet to emphasize the methodologies, tools, outcomes, and domain language most relevant to the posting, while preserving the underlying project identity (what was built and the real tech stack used). Do not invent new projects, but you may foreground different aspects of an existing project to better match the posting.",
@@ -152,6 +153,7 @@ function parseStructuredResult(rawText, targetCount) {
     return {
       resultLines: new Array(targetCount).fill(""),
       jobTitle: "",
+      companyName: "",
     };
   }
 
@@ -168,6 +170,7 @@ function parseStructuredResult(rawText, targetCount) {
           targetCount,
         ),
         jobTitle: typeof parsed.jobTitle === "string" ? parsed.jobTitle.trim() : "",
+        companyName: typeof parsed.companyName === "string" ? parsed.companyName.trim() : "",
       };
     } catch {
       // Fall through to line-based parsing.
@@ -190,6 +193,7 @@ function parseStructuredResult(rawText, targetCount) {
   return {
     resultLines: fitLinesToCount(lineEntries, targetCount),
     jobTitle: "",
+    companyName: "",
   };
 }
 
@@ -243,6 +247,7 @@ export async function generateTailoredResumeDraft({
     result,
     resultLines,
     jobTitle: parsedResult.jobTitle,
+    companyName: parsedResult.companyName,
   };
 }
 
