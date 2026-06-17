@@ -19,8 +19,13 @@ describe("resolveEngineName", () => {
   });
 
   it("falls back to gemini when neither request nor default is registered", () => {
-    expect(resolveEngineName("external", "external")).toBe("gemini");
+    expect(resolveEngineName("bogus", "also-bogus")).toBe("gemini");
     expect(resolveEngineName(undefined, undefined)).toBe("gemini");
+  });
+
+  it("resolves the registered external engine", () => {
+    expect(resolveEngineName("external")).toBe("external");
+    expect(getEngine("external").name).toBe("external");
   });
 });
 

@@ -1,11 +1,12 @@
 import { geminiEngine } from "@/lib/llm/engines/geminiEngine";
+import { externalEngine } from "@/lib/llm/engines/externalEngine";
 
 // Registry of document-generation engines. Each engine implements
 // `tailorResume(options)` and `tailorCoverLetter(options)` returning the
 // normalized shape the /api/tailor route assembles its response from.
-// The external Resume Tailor API engine is registered in a later phase.
 const ENGINES = {
   [geminiEngine.name]: geminiEngine,
+  [externalEngine.name]: externalEngine,
 };
 
 export function registerEngine(engine) {

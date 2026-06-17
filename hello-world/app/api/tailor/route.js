@@ -198,7 +198,7 @@ export async function POST(request) {
       }
     }
 
-    const result = await engine.tailorResume({
+    const resumeArgs = {
       jobPosting: effectiveJobPosting,
       jobPostingUrl: effectiveJobPostingUrl,
       resumeText,
@@ -207,12 +207,31 @@ export async function POST(request) {
       additionalContext,
       aggressiveness,
       contextDocuments,
-    });
+    };
+
+    // Run the selected engine. If "external" is chosen but not configured, fall
+    // back to Gemini and surface a warning rather than failing the request.
+    let activeEngine = engine;
+    let result;
+    const engineWarnings = [];
+    try {
+      result = await activeEngine.tailorResume(resumeArgs);
+    } catch (err) {
+      if (engineName === "external" && err?.code === "ENGINE_NOT_CONFIGURED") {
+        activeEngine = getEngine("gemini");
+        result = await activeEngine.tailorResume(resumeArgs);
+        result.engine = "gemini";
+        engineWarnings.push("Resume Tailor API is not configured; generated with Gemini instead.");
+      } else {
+        throw err;
+      }
+    }
 
     // Optionally generate a tailored cover letter using the uploaded template.
     let coverLetterResultLines = [];
     let coverLetterResult = "";
     let coverLetterError = "";
+    let coverLetterDocxB64 = "";
     if (!(coverLetterFile instanceof File)) {
       // No cover letter file uploaded — that's fine, just skip silently.
     } else if (coverLetterTemplateLines.length === 0) {
@@ -221,7 +240,7 @@ export async function POST(request) {
       coverLetterError = "Cover letter must be .txt, .md, or .docx.";
     } else {
       try {
-        const coverDraft = await engine.tailorCoverLetter({
+        const coverDraft = await activeEngine.tailorCoverLetter({
           jobPosting: effectiveJobPosting,
           jobPostingUrl: effectiveJobPostingUrl,
           companyName: scrapedCompany || result.companyName,
@@ -233,15 +252,23 @@ export async function POST(request) {
         });
         coverLetterResultLines = coverDraft.resultLines;
         coverLetterResult = coverDraft.result;
+        coverLetterDocxB64 = typeof coverDraft.docxB64 === "string" ? coverDraft.docxB64 : "";
       } catch (err) {
         console.error("Error generating tailored cover letter:", err);
         coverLetterError = `Cover letter generation failed: ${err.message || "unknown error"}`;
       }
     }
 
+    const warnings = [...engineWarnings, ...(Array.isArray(result.warnings) ? result.warnings : [])];
+
     return NextResponse.json({
       ...result,
       engine: result.engine || engineName,
+      docxB64: typeof result.docxB64 === "string" ? result.docxB64 : "",
+      coverLetterDocxB64,
+      report: result.report || null,
+      warnings,
+      degraded: !!result.degraded,
       jobTitle: result.jobTitle || scrapedJobTitle,
       jobDescription: scrapedDescription,
       company: scrapedCompany || result.companyName || "",

@@ -268,6 +268,9 @@ export default function Home() {
   const [manualCoverLetterResultLines, setManualCoverLetterResultLines] = useState([]);
   const [manualGeneratedJobTitle, setManualGeneratedJobTitle] = useState("");
   const [manualGeneratedCompany, setManualGeneratedCompany] = useState("");
+  // Finished docs returned by the external engine (base64) for the manual tab.
+  const [manualGeneratedDocxB64, setManualGeneratedDocxB64] = useState("");
+  const [manualGeneratedCoverLetterDocxB64, setManualGeneratedCoverLetterDocxB64] = useState("");
   const [manualIsSubmitting, setManualIsSubmitting] = useState(false);
   const [manualError, setManualError] = useState("");
   const [manualHasCompleted, setManualHasCompleted] = useState(false);
@@ -278,6 +281,9 @@ export default function Home() {
   const [urlCoverLetterResultLines, setUrlCoverLetterResultLines] = useState([]);
   const [urlGeneratedJobTitle, setUrlGeneratedJobTitle] = useState("");
   const [urlGeneratedCompany, setUrlGeneratedCompany] = useState("");
+  // Finished docs returned by the external engine (base64) for the URL tab.
+  const [urlGeneratedDocxB64, setUrlGeneratedDocxB64] = useState("");
+  const [urlGeneratedCoverLetterDocxB64, setUrlGeneratedCoverLetterDocxB64] = useState("");
   const [urlIsSubmitting, setUrlIsSubmitting] = useState(false);
   const [urlError, setUrlError] = useState("");
   const [urlHasCompleted, setUrlHasCompleted] = useState(false);
@@ -339,6 +345,9 @@ export default function Home() {
   const fabDragStartRef = useRef(null);
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
   const [aggressiveness, setAggressiveness] = useState(3);
+  // Document-generation engine: "gemini" (LLM line-rewrite) or "external"
+  // (Resume Tailor API). Sent with every tailor request; persisted locally.
+  const [tailorEngine, setTailorEngine] = useState("gemini");
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
@@ -448,6 +457,10 @@ export default function Home() {
     if (!Number.isNaN(savedAggressiveness) && savedAggressiveness >= 1 && savedAggressiveness <= 5) {
       setAggressiveness(savedAggressiveness);
     }
+    const savedEngine = localStorage.getItem("tailorEngine");
+    if (savedEngine === "gemini" || savedEngine === "external") {
+      setTailorEngine(savedEngine);
+    }
   }, []);
 
   useEffect(() => {
@@ -465,6 +478,10 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("aggressiveness", String(aggressiveness));
   }, [aggressiveness]);
+
+  useEffect(() => {
+    localStorage.setItem("tailorEngine", tailorEngine);
+  }, [tailorEngine]);
 
   useEffect(() => {
     try {
@@ -2682,6 +2699,8 @@ export default function Home() {
     const jobId = resumePreview.jobId;
     if (!jobId) return;
     const lines = String(text || "").split("\n");
+    // Mark edited so downloads rebuild from the edited text rather than serving
+    // the external engine's original finished doc.
     setTailoringMap((current) => ({
       ...current,
       [jobId]: {
@@ -2689,6 +2708,7 @@ export default function Home() {
         status: current[jobId]?.status || "done",
         result: text,
         resultLines: lines,
+        edited: true,
       },
     }));
     setResumePreview((prev) => ({
@@ -2700,12 +2720,18 @@ export default function Home() {
   async function downloadResumePreview(text) {
     const lines = String(text || "").split("\n");
     setResumePreview((prev) => ({ ...prev, busy: true, error: "", notice: "" }));
+    // Serve the external engine's finished doc only when the text is unchanged
+    // and unedited; otherwise render the (edited) text via the template path.
+    const entry = tailoringMap[resumePreview.jobId] || {};
+    const unchanged = text === (entry.result || "");
+    const docxB64 = !entry.edited && unchanged && typeof entry.docxB64 === "string" ? entry.docxB64 : "";
     const err = await downloadDocxFiles({
       jobTitle: resumePreview.title,
       company: resumePreview.company,
       result: text,
       resultLines: lines,
       coverLetterResultLines: [],
+      docxB64,
     });
     setResumePreview((prev) => ({ ...prev, busy: false, error: err || "" }));
   }
@@ -2999,6 +3025,7 @@ export default function Home() {
       formData.append("jobPosting", job.description);
       formData.append("additionalContext", additionalContext);
       formData.append("aggressiveness", String(aggressiveness));
+      formData.append("engine", tailorEngine);
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
       contextFiles.forEach((file) => formData.append("contextFiles", file));
@@ -3022,6 +3049,9 @@ export default function Home() {
         ? payload.coverLetterResultLines
         : [];
       const coverLetterError = typeof payload.coverLetterError === "string" ? payload.coverLetterError : "";
+      const engineUsed = typeof payload.engine === "string" ? payload.engine : "";
+      const docxB64 = typeof payload.docxB64 === "string" ? payload.docxB64 : "";
+      const coverLetterDocxB64 = typeof payload.coverLetterDocxB64 === "string" ? payload.coverLetterDocxB64 : "";
 
       updateTailoringJob(job.id, {
         status: "done",
@@ -3029,6 +3059,10 @@ export default function Home() {
         resultLines,
         generatedJobTitle,
         coverLetterResultLines,
+        engine: engineUsed,
+        docxB64,
+        coverLetterDocxB64,
+        edited: false,
         error: coverLetterError || "",
       });
 
@@ -3136,6 +3170,8 @@ export default function Home() {
         result,
         resultLines,
         coverLetterResultLines,
+        docxB64,
+        coverLetterDocxB64,
       });
 
       if (dlError) {
@@ -3249,6 +3285,7 @@ export default function Home() {
       formData.append("jobPostingUrl", trimmedUrl);
       formData.append("additionalContext", additionalContext);
       formData.append("aggressiveness", String(aggressiveness));
+      formData.append("engine", tailorEngine);
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
       contextFiles.forEach((file) => formData.append("contextFiles", file));
@@ -3274,6 +3311,9 @@ export default function Home() {
         ? payload.coverLetterResultLines
         : [];
       const nextCoverLetterError = typeof payload.coverLetterError === "string" ? payload.coverLetterError : "";
+      const nextEngine = typeof payload.engine === "string" ? payload.engine : "";
+      const nextDocxB64 = typeof payload.docxB64 === "string" ? payload.docxB64 : "";
+      const nextCoverLetterDocxB64 = typeof payload.coverLetterDocxB64 === "string" ? payload.coverLetterDocxB64 : "";
 
       setUrlResult(nextResult);
       setUrlResultLines(nextResultLines);
@@ -3281,6 +3321,8 @@ export default function Home() {
       if (nextCoverLetterError) setUrlError(nextCoverLetterError);
       setUrlGeneratedJobTitle(nextJobTitle);
       setUrlGeneratedCompany(nextCompany);
+      setUrlGeneratedDocxB64(nextDocxB64);
+      setUrlGeneratedCoverLetterDocxB64(nextCoverLetterDocxB64);
       setUrlHasCompleted(true);
 
       // Update the synthesized tracked job's title now that we have one.
@@ -3298,7 +3340,17 @@ export default function Home() {
             : j,
         ),
       );
-      updateTailoringJob(syntheticJobId, { status: "done" });
+      updateTailoringJob(syntheticJobId, {
+        status: "done",
+        result: nextResult,
+        resultLines: nextResultLines,
+        generatedJobTitle: nextJobTitle,
+        coverLetterResultLines: nextCoverLetterResultLines,
+        engine: nextEngine,
+        docxB64: nextDocxB64,
+        coverLetterDocxB64: nextCoverLetterDocxB64,
+        edited: false,
+      });
 
       // Persist the generated resume and link to an application
       if (currentUser) {
@@ -3331,6 +3383,8 @@ export default function Home() {
         result: nextResult,
         resultLines: nextResultLines,
         coverLetterResultLines: nextCoverLetterResultLines,
+        docxB64: nextDocxB64,
+        coverLetterDocxB64: nextCoverLetterDocxB64,
       });
 
       if (dlError) setUrlError(dlError);
@@ -3351,6 +3405,8 @@ export default function Home() {
       result: urlResult,
       resultLines: urlResultLines,
       coverLetterResultLines: urlCoverLetterResultLines,
+      docxB64: urlGeneratedDocxB64,
+      coverLetterDocxB64: urlGeneratedCoverLetterDocxB64,
     });
     if (dlError) setUrlError(dlError);
     setUrlIsDownloading(false);
@@ -3394,6 +3450,7 @@ export default function Home() {
       formData.append("jobPosting", sourcePosting);
       formData.append("additionalContext", additionalContext);
       formData.append("aggressiveness", String(aggressiveness));
+      formData.append("engine", tailorEngine);
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
       contextFiles.forEach((file) => formData.append("contextFiles", file));
@@ -3416,6 +3473,9 @@ export default function Home() {
       const nextCompany = typeof payload.company === "string" ? payload.company.trim() : "";
       const nextCoverLetterResultLines = Array.isArray(payload.coverLetterResultLines) ? payload.coverLetterResultLines : [];
       const nextCoverLetterError = typeof payload.coverLetterError === "string" ? payload.coverLetterError : "";
+      const nextEngine = typeof payload.engine === "string" ? payload.engine : "";
+      const nextDocxB64 = typeof payload.docxB64 === "string" ? payload.docxB64 : "";
+      const nextCoverLetterDocxB64 = typeof payload.coverLetterDocxB64 === "string" ? payload.coverLetterDocxB64 : "";
 
       setManualResult(nextResult);
       setManualResultLines(nextResultLines);
@@ -3423,6 +3483,8 @@ export default function Home() {
       if (nextCoverLetterError) setManualError(nextCoverLetterError);
       setManualGeneratedJobTitle(nextJobTitle);
       setManualGeneratedCompany(nextCompany);
+      setManualGeneratedDocxB64(nextDocxB64);
+      setManualGeneratedCoverLetterDocxB64(nextCoverLetterDocxB64);
       setManualHasCompleted(true);
 
       // Update the synthesized tracked job's title/company now that we have them.
@@ -3440,7 +3502,17 @@ export default function Home() {
             : j,
         ),
       );
-      updateTailoringJob(syntheticJobId, { status: "done" });
+      updateTailoringJob(syntheticJobId, {
+        status: "done",
+        result: nextResult,
+        resultLines: nextResultLines,
+        generatedJobTitle: nextJobTitle,
+        coverLetterResultLines: nextCoverLetterResultLines,
+        engine: nextEngine,
+        docxB64: nextDocxB64,
+        coverLetterDocxB64: nextCoverLetterDocxB64,
+        edited: false,
+      });
 
       // Persist the generated resume and link to an application
       if (currentUser) {
@@ -3472,6 +3544,8 @@ export default function Home() {
         result: nextResult,
         resultLines: nextResultLines,
         coverLetterResultLines: nextCoverLetterResultLines,
+        docxB64: nextDocxB64,
+        coverLetterDocxB64: nextCoverLetterDocxB64,
       });
 
       if (dlError) setManualError(dlError);
@@ -3492,6 +3566,8 @@ export default function Home() {
       result: manualResult,
       resultLines: manualResultLines,
       coverLetterResultLines: manualCoverLetterResultLines,
+      docxB64: manualGeneratedDocxB64,
+      coverLetterDocxB64: manualGeneratedCoverLetterDocxB64,
     });
     if (dlError) setManualError(dlError);
     setManualIsDownloading(false);
@@ -3535,6 +3611,7 @@ export default function Home() {
       else formData.append("jobPosting", postingText);
       formData.append("additionalContext", additionalContext);
       formData.append("aggressiveness", String(aggressiveness));
+      formData.append("engine", tailorEngine);
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
       contextFiles.forEach((file) => formData.append("contextFiles", file));
@@ -3851,6 +3928,8 @@ export default function Home() {
           setContextPanelOpen={setContextPanelOpen}
           aggressiveness={aggressiveness}
           setAggressiveness={setAggressiveness}
+          tailorEngine={tailorEngine}
+          setTailorEngine={setTailorEngine}
           additionalContext={additionalContext}
           setAdditionalContext={setAdditionalContext}
           setContextFiles={setContextFiles}

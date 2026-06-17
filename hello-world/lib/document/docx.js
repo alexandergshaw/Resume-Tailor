@@ -8,6 +8,30 @@ import { createClient } from "../supabase/client";
 export const WORDPROCESSINGML_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 
+const DOCX_MIME =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+// Decode a base64 .docx (e.g. one the external Resume Tailor API returns) into a
+// Blob for download.
+export function base64ToDocxBlob(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: DOCX_MIME });
+}
+
+// Trigger a browser download for a Blob under the given file name.
+export function triggerBlobDownload(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export function sanitizeFileNamePart(value) {
   return value
     .replace(/[\\/:*?"<>|]/g, "")
@@ -391,7 +415,29 @@ export function createDocumentDownloaders(deps) {
     result,
     resultLines,
     coverLetterResultLines,
+    docxB64,
+    coverLetterDocxB64,
   }) {
+    // External engine returns finished documents — serve them directly rather
+    // than re-filling the user's template.
+    if (docxB64) {
+      try {
+        triggerBlobDownload(
+          base64ToDocxBlob(docxB64),
+          getDownloadFileNameForTitle(jobTitle, company),
+        );
+        if (coverLetterDocxB64) {
+          triggerBlobDownload(
+            base64ToDocxBlob(coverLetterDocxB64),
+            getDownloadCoverLetterFileNameForTitle(jobTitle, company),
+          );
+        }
+        return null;
+      } catch (err) {
+        return err.message || "Unable to download DOCX.";
+      }
+    }
+
     if (!result?.trim()) return "Nothing to download yet.";
     if (!isDocxResume(resumeFile)) return "Upload the source resume as .docx to download.";
 
@@ -470,9 +516,16 @@ export function createDocumentDownloaders(deps) {
   // posting link should still open even if the download can't run).
   async function downloadResumeForChipJob(job) {
     if (!job) return "No job.";
-    if (!isDocxResume(resumeFile)) return "Upload your source resume as .docx first.";
 
     const tailoring = tailoringMap[job.id] || {};
+    // External engine: an unedited finished doc can be served directly without
+    // a .docx source resume. Edited resumes fall through to template fill.
+    const docxB64 = !tailoring.edited && typeof tailoring.docxB64 === "string" ? tailoring.docxB64 : "";
+    const coverLetterDocxB64 =
+      !tailoring.edited && typeof tailoring.coverLetterDocxB64 === "string" ? tailoring.coverLetterDocxB64 : "";
+
+    if (!docxB64 && !isDocxResume(resumeFile)) return "Upload your source resume as .docx first.";
+
     let text = typeof tailoring.result === "string" ? tailoring.result : "";
     let lines = Array.isArray(tailoring.resultLines) ? tailoring.resultLines : [];
     let coverLines = Array.isArray(tailoring.coverLetterResultLines)
@@ -481,7 +534,7 @@ export function createDocumentDownloaders(deps) {
     let jobTitle = tailoring.generatedJobTitle || job.title || "";
     let company = job.company || "";
 
-    if (!text) {
+    if (!docxB64 && !text) {
       // Fall back to the saved application row (post-reload case).
       const app = (applicationData || []).find(
         (a) => String(a?.positions?.external_id || "") === String(job.id),
@@ -500,6 +553,8 @@ export function createDocumentDownloaders(deps) {
       result: text,
       resultLines: lines,
       coverLetterResultLines: coverLines,
+      docxB64,
+      coverLetterDocxB64,
     });
   }
 

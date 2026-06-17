@@ -8,6 +8,8 @@ import Button from "@mui/material/Button";
 import IconButton from "@mui/material/IconButton";
 import Slider from "@mui/material/Slider";
 import TextField from "@mui/material/TextField";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Tooltip from "@mui/material/Tooltip";
 
 import { createClient } from "../../lib/supabase/client";
@@ -29,6 +31,8 @@ export default function ApplyingControls({
   setContextPanelOpen,
   aggressiveness,
   setAggressiveness,
+  tailorEngine,
+  setTailorEngine,
   additionalContext,
   setAdditionalContext,
   setContextFiles,
@@ -196,6 +200,32 @@ export default function ApplyingControls({
             </Box>
           </AccordionSummary>
           <AccordionDetails sx={{ pt: 1.5, pb: 2, px: 1.75, display: "grid", gap: 2.25, borderTop: "1px solid var(--border)" }}>
+            <div className={styles.fieldGroup}>
+              <Box sx={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
+                <span className={styles.label}>Generation engine</span>
+              </Box>
+              <ToggleButtonGroup
+                size="small"
+                exclusive
+                value={tailorEngine || "gemini"}
+                onChange={(_event, value) => {
+                  if (value) setTailorEngine(value);
+                }}
+                sx={{ alignSelf: "flex-start" }}
+              >
+                <ToggleButton value="gemini" sx={{ textTransform: "none", px: 1.5 }}>
+                  Gemini (AI)
+                </ToggleButton>
+                <ToggleButton value="external" sx={{ textTransform: "none", px: 1.5 }}>
+                  Resume Tailor API
+                </ToggleButton>
+              </ToggleButtonGroup>
+              <Box sx={{ fontSize: "0.75rem", color: "var(--text-secondary)", mt: 0.5 }}>
+                {tailorEngine === "external"
+                  ? "Uses the Resume Tailor API's own template; returns a finished .docx."
+                  : "Rewrites your uploaded resume's lines with Gemini."}
+              </Box>
+            </div>
             <div className={styles.fieldGroup}>
               <Box sx={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
                 <label htmlFor="aggressiveness" className={styles.label}>
