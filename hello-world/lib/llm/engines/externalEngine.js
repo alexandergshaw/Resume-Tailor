@@ -96,12 +96,32 @@ export const externalEngine = {
     return !!getConfig().url;
   },
 
-  async tailorResume({ jobPosting }) {
+  // Fetch every placeholder slot with a proposed value so a client can build a
+  // review/override UI, then call tailorResume with edited `values`.
+  async getProposals({ jobPosting }) {
     const { workflow } = getConfig();
     const posting = String(jobPosting || "").trim();
     if (!posting) throw new Error("A job posting is required for the Resume Tailor API.");
 
-    const data = await callApi("/api/v1/resume", { posting, workflow });
+    const data = await callApi("/api/v1/proposals", { posting, workflow });
+    return {
+      slots: Array.isArray(data?.slots) ? data.slots : [],
+      keywords: data?.keywords || null,
+      warnings: Array.isArray(data?.warnings) ? data.warnings : [],
+      degraded: !!data?.meta?.degraded,
+    };
+  },
+
+  async tailorResume({ jobPosting, values }) {
+    const { workflow } = getConfig();
+    const posting = String(jobPosting || "").trim();
+    if (!posting) throw new Error("A job posting is required for the Resume Tailor API.");
+
+    const body = { posting, workflow };
+    if (values && typeof values === "object" && Object.keys(values).length > 0) {
+      body.values = values;
+    }
+    const data = await callApi("/api/v1/resume", body);
     const docxB64 = typeof data?.docx_b64 === "string" ? data.docx_b64 : "";
     const { result, resultLines } = await extractDocxText(docxB64);
     const { warnings, degraded } = reportMeta(data?.report);

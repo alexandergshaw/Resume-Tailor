@@ -81,6 +81,50 @@ describe("externalEngine.tailorResume", () => {
   });
 });
 
+describe("externalEngine.getProposals", () => {
+  it("returns slots and meta", async () => {
+    process.env.RESUME_TAILOR_API_URL = "https://api.example.com";
+    mockFetch(200, {
+      slots: [{ key: "A::0", name: "A", value: "x" }],
+      keywords: { technology: [] },
+      warnings: ["w"],
+      meta: { degraded: false },
+    });
+    const out = await externalEngine.getProposals({ jobPosting: "x" });
+    expect(out.slots).toHaveLength(1);
+    expect(out.warnings).toEqual(["w"]);
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://api.example.com/api/v1/proposals",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("throws when not configured", async () => {
+    await expect(externalEngine.getProposals({ jobPosting: "x" })).rejects.toMatchObject({
+      code: "ENGINE_NOT_CONFIGURED",
+    });
+  });
+});
+
+describe("externalEngine.tailorResume values", () => {
+  it("includes slot values in the request body when provided", async () => {
+    process.env.RESUME_TAILOR_API_URL = "https://api.example.com";
+    mockFetch(200, { docx_b64: "", report: {} });
+    await externalEngine.tailorResume({ jobPosting: "x", values: { "A::0": "edited" } });
+    const [, opts] = global.fetch.mock.calls[0];
+    const body = JSON.parse(opts.body);
+    expect(body.values).toEqual({ "A::0": "edited" });
+  });
+
+  it("omits values when empty", async () => {
+    process.env.RESUME_TAILOR_API_URL = "https://api.example.com";
+    mockFetch(200, { docx_b64: "", report: {} });
+    await externalEngine.tailorResume({ jobPosting: "x", values: {} });
+    const [, opts] = global.fetch.mock.calls[0];
+    expect(JSON.parse(opts.body).values).toBeUndefined();
+  });
+});
+
 describe("externalEngine.isConfigured", () => {
   it("reflects the presence of the API URL", () => {
     expect(externalEngine.isConfigured()).toBe(false);

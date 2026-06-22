@@ -104,6 +104,17 @@ function parseAggressiveness(rawAggressiveness) {
   return Math.min(MAX_AGGRESSIVENESS, Math.max(MIN_AGGRESSIVENESS, parsed));
 }
 
+// Parse a JSON object field (e.g. external-engine slot `values`) defensively.
+function parseJsonObject(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw.toString());
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function parseTemplateLines(rawTemplateLines) {
   if (!rawTemplateLines) {
     return [];
@@ -141,6 +152,8 @@ export async function POST(request) {
     );
     const resumeFile = formData.get("resume");
     const coverLetterFile = formData.get("coverLetter");
+    // Optional external-engine slot overrides (from the review-then-generate UI).
+    const values = parseJsonObject(formData.get("values"));
 
     // Select the document-generation engine: per-request override falls back to
     // the server default (RESUME_ENGINE). Unknown names degrade to "gemini".
@@ -207,6 +220,7 @@ export async function POST(request) {
       additionalContext,
       aggressiveness,
       contextDocuments,
+      values,
     };
 
     // Run the selected engine. If "external" is chosen but not configured, fall

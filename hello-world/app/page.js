@@ -11,6 +11,7 @@ import ChatPanel from "./components/ChatPanel";
 import StatusBar from "./components/StatusBar";
 import BatchTailorDialog from "./components/BatchTailorDialog";
 import ResumePreviewDialog from "./components/ResumePreviewDialog";
+import SlotReviewDialog from "./components/SlotReviewDialog";
 import {
   buildJobContextString,
   buildApplicationContextString as buildApplicationContextStringBase,
@@ -348,6 +349,9 @@ export default function Home() {
   // Document-generation engine: "gemini" (LLM line-rewrite) or "external"
   // (Resume Tailor API). Sent with every tailor request; persisted locally.
   const [tailorEngine, setTailorEngine] = useState("gemini");
+  // External-engine "review fields" flow: fetched proposal slots the user can
+  // edit before generating the document with those `values`.
+  const [slotReview, setSlotReview] = useState({ open: false, loading: false, error: "", slots: [] });
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
@@ -3414,6 +3418,46 @@ export default function Home() {
     setUrlIsDownloading(false);
   }
 
+  // Fetch the external engine's proposed slots for the current posting so the
+  // user can review/override them before generating (review-then-generate).
+  async function openSlotReview(postingText) {
+    const posting = String(postingText || "").trim();
+    if (!posting) {
+      setManualError("Please provide a job posting first.");
+      return;
+    }
+    setSlotReview({ open: true, loading: true, error: "", slots: [] });
+    try {
+      const res = await fetch("/api/tailor/proposals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ posting }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setSlotReview((prev) => ({ ...prev, loading: false, error: json?.error || "Could not load fields." }));
+        return;
+      }
+      setSlotReview((prev) => ({
+        ...prev,
+        loading: false,
+        slots: Array.isArray(json?.slots) ? json.slots : [],
+      }));
+    } catch (err) {
+      setSlotReview((prev) => ({ ...prev, loading: false, error: err?.message || "Could not load fields." }));
+    }
+  }
+
+  function closeSlotReview() {
+    setSlotReview((prev) => ({ ...prev, open: false }));
+  }
+
+  // Generate the document with the reviewed slot values via the manual pipeline.
+  function generateWithReviewedValues(values) {
+    setSlotReview((prev) => ({ ...prev, open: false }));
+    handleManualSubmit(null, { values });
+  }
+
   async function handleManualSubmit(event, opts = {}) {
     if (event && typeof event.preventDefault === "function") event.preventDefault();
 
@@ -3453,6 +3497,9 @@ export default function Home() {
       formData.append("additionalContext", additionalContext);
       formData.append("aggressiveness", String(aggressiveness));
       formData.append("engine", tailorEngine);
+      if (opts.values && typeof opts.values === "object") {
+        formData.append("values", JSON.stringify(opts.values));
+      }
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
       contextFiles.forEach((file) => formData.append("contextFiles", file));
@@ -4030,6 +4077,8 @@ export default function Home() {
             manualError={manualError}
             handleManualSubmit={handleManualSubmit}
             askAiAbout={askAiAbout}
+            tailorEngine={tailorEngine}
+            onReviewFields={() => openSlotReview(jobPosting)}
           />
         ) : (
           <PostingUrlTab
@@ -4277,6 +4326,16 @@ export default function Home() {
         busy={resumePreview.busy}
         notice={resumePreview.notice}
         error={resumePreview.error}
+      />
+
+      <SlotReviewDialog
+        open={slotReview.open}
+        loading={slotReview.loading}
+        error={slotReview.error}
+        slots={slotReview.slots}
+        onClose={closeSlotReview}
+        onGenerate={generateWithReviewedValues}
+        busy={manualIsSubmitting}
       />
     </div>
   );

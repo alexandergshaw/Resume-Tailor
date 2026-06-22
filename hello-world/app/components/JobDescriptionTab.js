@@ -13,6 +13,8 @@ export default function JobDescriptionTab({
   manualError,
   handleManualSubmit,
   askAiAbout,
+  tailorEngine,
+  onReviewFields,
 }) {
   return (
     <section className={styles.tabPanel}>
@@ -49,6 +51,16 @@ export default function JobDescriptionTab({
           >
             Ask AI
           </Button>
+          {tailorEngine === "external" && onReviewFields ? (
+            <Button
+              variant="outlined"
+              sx={{ ml: 1 }}
+              disabled={!jobPosting.trim() || manualIsSubmitting}
+              onClick={onReviewFields}
+            >
+              Review &amp; edit fields
+            </Button>
+          ) : null}
         </Box>
       </form>
 
