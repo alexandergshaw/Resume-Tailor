@@ -3,6 +3,7 @@
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
+import Avatar from "@mui/material/Avatar";
 import TextField from "@mui/material/TextField";
 import { useIsMobile } from "../hooks/useResponsive";
 
@@ -308,6 +309,7 @@ export default function ChatPanel({
                 key={`${f.name}-${i}`}
                 size="small"
                 label={f.name}
+                avatar={f.previewUrl ? <Avatar src={f.previewUrl} alt="" variant="rounded" /> : undefined}
                 onDelete={() =>
                   setChatAttachedFiles((prev) => prev.filter((_, idx) => idx !== i))
                 }
@@ -339,7 +341,7 @@ export default function ChatPanel({
               type="file"
               hidden
               multiple
-              accept=".docx,.txt,.md,.csv,.json,.log,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/*"
+              accept="image/*,.pdf,application/pdf,.docx,.txt,.md,.csv,.json,.log,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/*"
               onChange={(e) => {
                 addChatAttachments(e.target.files);
                 e.target.value = "";

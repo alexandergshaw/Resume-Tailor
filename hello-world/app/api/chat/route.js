@@ -175,6 +175,29 @@ export async function POST(request) {
         parts: [{ text: m.content }],
       }));
 
+    // Attach images/PDFs as native multimodal parts on the most recent user
+    // turn so the model can actually see them (text attachments stay in the
+    // context block below).
+    const inlineParts = attachedFiles
+      .filter(
+        (f) =>
+          f &&
+          typeof f.dataB64 === "string" &&
+          f.dataB64 &&
+          typeof f.mimeType === "string" &&
+          (f.mimeType.startsWith("image/") || f.mimeType === "application/pdf"),
+      )
+      .slice(0, MAX_ATTACHED_FILES)
+      .map((f) => ({ inlineData: { mimeType: f.mimeType, data: f.dataB64 } }));
+    if (inlineParts.length > 0) {
+      for (let i = contents.length - 1; i >= 0; i -= 1) {
+        if (contents[i].role === "user") {
+          contents[i].parts.push(...inlineParts);
+          break;
+        }
+      }
+    }
+
     // Auto-fetch any URLs in the most recent user message so the model can
     // reason about external content (job postings, articles, etc.).
     let fetchedUrls = [];

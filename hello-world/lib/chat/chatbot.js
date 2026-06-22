@@ -101,6 +101,21 @@ export function createChatHandlers(deps) {
     buildTemplateLinesForUpload,
   } = deps;
 
+  // Read a File as raw base64 (no data: prefix) for sending images/PDFs to the
+  // model as inline data.
+  function readFileAsBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || "");
+        const comma = result.indexOf(",");
+        resolve(comma >= 0 ? result.slice(comma + 1) : result);
+      };
+      reader.onerror = () => reject(reader.error || new Error("failed to read."));
+      reader.readAsDataURL(file);
+    });
+  }
+
   async function addChatAttachments(fileList) {
     const files = Array.from(fileList || []);
     if (files.length === 0) return;
@@ -112,26 +127,41 @@ export function createChatHandlers(deps) {
         setChatAttachError(`${file.name} is too large (max 5 MB).`);
         continue;
       }
+      const lowerName = (file.name || "").toLowerCase();
+      const type = file.type || "";
+      const isImage = type.startsWith("image/") || /\.(png|jpe?g|webp|gif|heic|heif)$/i.test(lowerName);
+      const isPdf = type === "application/pdf" || lowerName.endsWith(".pdf");
       try {
-        let content = "";
         if (isDocxResume(file)) {
           const lines = await buildTemplateLinesForUpload(file);
-          content = (lines || []).join("\n").trim();
+          const content = (lines || []).join("\n").trim();
+          if (!content) { setChatAttachError(`${file.name}: no text could be extracted.`); continue; }
+          accepted.push({ name: file.name, kind: "text", content });
         } else if (
           isTextResume(file) ||
-          /\.(txt|md|csv|json|log)$/i.test(file.name) ||
-          (file.type && file.type.startsWith("text/"))
+          /\.(txt|md|csv|json|log)$/i.test(lowerName) ||
+          (type && type.startsWith("text/"))
         ) {
-          content = (await file.text()).trim();
+          const content = (await file.text()).trim();
+          if (!content) { setChatAttachError(`${file.name}: no text could be extracted.`); continue; }
+          accepted.push({ name: file.name, kind: "text", content });
+        } else if (isImage || isPdf) {
+          const dataB64 = await readFileAsBase64(file);
+          if (!dataB64) { setChatAttachError(`${file.name}: could not read file.`); continue; }
+          const mimeType = type || (isPdf ? "application/pdf" : "image/png");
+          accepted.push({
+            name: file.name,
+            kind: "binary",
+            mimeType,
+            dataB64,
+            previewUrl: isImage ? URL.createObjectURL(file) : null,
+          });
         } else {
-          setChatAttachError(`${file.name}: unsupported file type. Use .docx, .txt, .md, .csv, .json.`);
+          setChatAttachError(
+            `${file.name}: unsupported type. Use text, .docx, images, or PDF.`,
+          );
           continue;
         }
-        if (!content) {
-          setChatAttachError(`${file.name}: no text could be extracted.`);
-          continue;
-        }
-        accepted.push({ name: file.name, content });
       } catch (err) {
         setChatAttachError(`${file.name}: ${err.message || "failed to read."}`);
       }
@@ -220,7 +250,11 @@ export function createChatHandlers(deps) {
           pinnedContext: chatPinnedContext
             ? { label: chatPinnedContext.label, content: chatPinnedContext.content }
             : null,
-          attachedFiles: (chatAttachedFiles || []).map((f) => ({ name: f.name, content: f.content })),
+          attachedFiles: (chatAttachedFiles || []).map((f) =>
+            f.kind === "binary"
+              ? { name: f.name, mimeType: f.mimeType, dataB64: f.dataB64 }
+              : { name: f.name, content: f.content },
+          ),
           tab: mainTab,
           section: activeSection,
         }),
