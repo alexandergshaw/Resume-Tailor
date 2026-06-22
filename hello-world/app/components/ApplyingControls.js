@@ -93,6 +93,7 @@ export default function ApplyingControls({
   uploadMaterials,
   downloadMaterialFile,
   removeMaterialFile,
+  askAiAboutMaterial,
   currentUserPresent,
   renderCopyButton,
 }) {
@@ -1215,7 +1216,17 @@ export default function ApplyingControls({
                     <Box sx={{ fontSize: "0.7rem", color: "var(--text-secondary)" }}>{formatBytes(item.size)}</Box>
                   ) : null}
                 </Box>
-                <Box sx={{ display: "flex", gap: 0.5, flexShrink: 0 }}>
+                <Box sx={{ display: "flex", gap: 0.5, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                  {askAiAboutMaterial ? (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={() => askAiAboutMaterial(item)}
+                      sx={{ textTransform: "none", fontSize: "0.72rem", minWidth: 0 }}
+                    >
+                      Ask AI
+                    </Button>
+                  ) : null}
                   <Button
                     size="small"
                     variant="outlined"

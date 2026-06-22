@@ -1770,6 +1770,30 @@ export default function Home() {
     setMaterials((prev) => prev.filter((m) => m.name !== item.name));
   }
 
+  // Open the chat with a supplementary material attached as context. For remote
+  // files we fetch the bytes from Storage first; the chat attachment pipeline
+  // then text-extracts or inlines (image/PDF) the file.
+  async function askAiAboutMaterial(item) {
+    if (!item) return;
+    setMaterialsError("");
+    setChatOpen(true);
+    try {
+      let file = item.source === "local" && item.file ? item.file : null;
+      if (!file && currentUser) {
+        const supabase = createClient();
+        const { blob, error } = await downloadMaterialBlob(supabase, currentUser.id, item.name);
+        if (error || !blob) {
+          setMaterialsError(error || "Could not load that file.");
+          return;
+        }
+        file = new File([blob], item.name, { type: blob.type || undefined });
+      }
+      if (file) await addChatAttachments([file]);
+    } catch (err) {
+      setMaterialsError(err?.message || "Could not attach that file.");
+    }
+  }
+
   // Combined-copy helpers: copy every reference / education entry as one block.
   function formatAllReferences() {
     return references
@@ -4161,6 +4185,7 @@ export default function Home() {
           uploadMaterials={uploadMaterials}
           downloadMaterialFile={downloadMaterialFile}
           removeMaterialFile={removeMaterialFile}
+          askAiAboutMaterial={askAiAboutMaterial}
           currentUserPresent={!!currentUser}
           renderCopyButton={renderCopyButton}
         />
