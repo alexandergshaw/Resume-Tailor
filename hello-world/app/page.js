@@ -27,8 +27,15 @@ import {
   downloadMinimalistDocx,
   createDocumentDownloaders,
   extractResumeTextLines,
+  triggerBlobDownload,
 } from "../lib/document/docx";
 import { parseEmploymentHistory } from "../lib/resume/parseEmployment";
+import {
+  listMaterials,
+  uploadMaterial,
+  downloadMaterialBlob,
+  removeMaterial,
+} from "../lib/supabase/materials";
 import { openPostingBeside, openBlankBeside, navigateBeside } from "../lib/window/openPostingBeside";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -386,6 +393,13 @@ export default function Home() {
   const [employmentCopiedId, setEmploymentCopiedId] = useState(null);
   // Status of the "import from résumé" action on the Employment History section.
   const [employmentImport, setEmploymentImport] = useState({ loading: false, error: "", message: "" });
+
+  // Supplementary materials locker (transcripts etc.). Each item:
+  // { name, size, source: "remote"|"local", file? }. Persisted to Supabase for
+  // signed-in users; in-memory for the session otherwise. Download-only.
+  const [materials, setMaterials] = useState([]);
+  const [materialsBusy, setMaterialsBusy] = useState(false);
+  const [materialsError, setMaterialsError] = useState("");
   const chatInputRef = useRef(null);
   const [appDialog, setAppDialog] = useState({ open: false, rowIndex: null, kind: "jd" });
   const [stageDialog, setStageDialog] = useState(createStageDialogState());
@@ -1675,6 +1689,85 @@ export default function Home() {
         message: "",
       });
     }
+  }
+
+  // ── Supplementary materials locker ────────────────────────────────────────
+  // Load the user's stored materials on sign-in.
+  useEffect(() => {
+    if (!currentUser) return undefined;
+    let cancelled = false;
+    (async () => {
+      const supabase = createClient();
+      const list = await listMaterials(supabase, currentUser.id);
+      if (!cancelled) setMaterials(list.map((m) => ({ ...m, source: "remote" })));
+    })();
+    return () => { cancelled = true; };
+  }, [currentUser]);
+
+  async function uploadMaterials(fileList) {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+    setMaterialsError("");
+
+    // Signed-out: keep files in memory for the session only.
+    if (!currentUser) {
+      const additions = files.map((file) => ({
+        name: file.name,
+        size: file.size,
+        source: "local",
+        file,
+      }));
+      setMaterials((prev) => [...prev, ...additions]);
+      return;
+    }
+
+    setMaterialsBusy(true);
+    const supabase = createClient();
+    for (const file of files) {
+      if (file.size > 25 * 1024 * 1024) {
+        setMaterialsError(`${file.name} is too large (max 25 MB).`);
+        continue;
+      }
+      const { error } = await uploadMaterial(supabase, currentUser.id, file);
+      if (error) setMaterialsError(`${file.name}: ${error}`);
+    }
+    const list = await listMaterials(supabase, currentUser.id);
+    setMaterials(list.map((m) => ({ ...m, source: "remote" })));
+    setMaterialsBusy(false);
+  }
+
+  async function downloadMaterialFile(item) {
+    if (!item) return;
+    setMaterialsError("");
+    if (item.source === "local" && item.file) {
+      triggerBlobDownload(item.file, item.name);
+      return;
+    }
+    if (!currentUser) return;
+    const supabase = createClient();
+    const { blob, error } = await downloadMaterialBlob(supabase, currentUser.id, item.name);
+    if (error) {
+      setMaterialsError(error);
+      return;
+    }
+    triggerBlobDownload(blob, item.name);
+  }
+
+  async function removeMaterialFile(item) {
+    if (!item) return;
+    setMaterialsError("");
+    if (item.source === "local") {
+      setMaterials((prev) => prev.filter((m) => m !== item));
+      return;
+    }
+    if (!currentUser) return;
+    const supabase = createClient();
+    const { error } = await removeMaterial(supabase, currentUser.id, item.name);
+    if (error) {
+      setMaterialsError(error);
+      return;
+    }
+    setMaterials((prev) => prev.filter((m) => m.name !== item.name));
   }
 
   // Combined-copy helpers: copy every reference / education entry as one block.
@@ -4044,6 +4137,13 @@ export default function Home() {
           employmentDownloadError={employmentDownloadError}
           importEmploymentFromResume={importEmploymentFromResume}
           employmentImport={employmentImport}
+          materials={materials}
+          materialsBusy={materialsBusy}
+          materialsError={materialsError}
+          uploadMaterials={uploadMaterials}
+          downloadMaterialFile={downloadMaterialFile}
+          removeMaterialFile={removeMaterialFile}
+          currentUserPresent={!!currentUser}
           renderCopyButton={renderCopyButton}
         />
 

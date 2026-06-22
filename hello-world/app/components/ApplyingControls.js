@@ -21,6 +21,13 @@ const AGGRESSIVENESS_MARKS = [
   { value: 5, label: "Strong" },
 ];
 
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function ApplyingControls({
   currentUser,
   resumeFile,
@@ -80,6 +87,13 @@ export default function ApplyingControls({
   employmentDownloadError,
   importEmploymentFromResume,
   employmentImport,
+  materials = [],
+  materialsBusy,
+  materialsError,
+  uploadMaterials,
+  downloadMaterialFile,
+  removeMaterialFile,
+  currentUserPresent,
   renderCopyButton,
 }) {
   return (
@@ -1139,6 +1153,92 @@ export default function ApplyingControls({
             </Box>
           </AccordionDetails>
         </Accordion>
+      </div>
+
+      <div className={styles.fieldGroup}>
+        <span className={styles.label}>Supplementary materials</span>
+        <Box sx={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
+          Upload transcripts, certificates, writing samples, etc. to keep them handy.
+          {currentUserPresent
+            ? " Saved to your account."
+            : " Sign in to save these — for now they're kept only until you reload."}
+        </Box>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+          <Button
+            component="label"
+            size="small"
+            variant="outlined"
+            disabled={materialsBusy}
+            sx={{ textTransform: "none", fontSize: "0.8rem" }}
+          >
+            {materialsBusy ? "Uploading…" : "Upload files"}
+            <input
+              type="file"
+              hidden
+              multiple
+              onChange={(e) => {
+                const files = Array.from(e.target.files || []);
+                e.target.value = "";
+                if (files.length && uploadMaterials) uploadMaterials(files);
+              }}
+            />
+          </Button>
+          <Box sx={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
+            {materials.length} file{materials.length === 1 ? "" : "s"}
+          </Box>
+        </Box>
+        {materialsError ? (
+          <Box sx={{ fontSize: "0.78rem", color: "var(--error, #d32f2f)" }}>{materialsError}</Box>
+        ) : null}
+        {materials.length > 0 ? (
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
+            {materials.map((item, idx) => (
+              <Box
+                key={`${item.name}-${idx}`}
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 1,
+                  border: "1px solid var(--border)",
+                  borderRadius: 1.5,
+                  px: 1.25,
+                  py: 0.75,
+                  backgroundColor: "var(--bg-soft, #fbfdff)",
+                }}
+              >
+                <Box sx={{ minWidth: 0 }}>
+                  <Box sx={{ fontSize: "0.85rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {item.name}
+                  </Box>
+                  {Number.isFinite(item.size) ? (
+                    <Box sx={{ fontSize: "0.7rem", color: "var(--text-secondary)" }}>{formatBytes(item.size)}</Box>
+                  ) : null}
+                </Box>
+                <Box sx={{ display: "flex", gap: 0.5, flexShrink: 0 }}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => downloadMaterialFile(item)}
+                    sx={{ textTransform: "none", fontSize: "0.72rem", minWidth: 0 }}
+                  >
+                    Download
+                  </Button>
+                  <Button
+                    size="small"
+                    color="error"
+                    onClick={() => removeMaterialFile(item)}
+                    sx={{ textTransform: "none", fontSize: "0.72rem", minWidth: 0 }}
+                  >
+                    Remove
+                  </Button>
+                </Box>
+              </Box>
+            ))}
+          </Box>
+        ) : (
+          <Box sx={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>No files uploaded yet.</Box>
+        )}
       </div>
     </>
   );
