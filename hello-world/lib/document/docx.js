@@ -453,6 +453,35 @@ export function createDocumentDownloaders(deps) {
       }
     }
 
+    // Cover-letter-only (a scoped cover-letter regenerate): no résumé content,
+    // but a finished or templated cover letter to serve.
+    if (
+      !result?.trim() &&
+      (coverLetterDocxB64 ||
+        (Array.isArray(coverLetterResultLines) && coverLetterResultLines.length > 0))
+    ) {
+      try {
+        if (coverLetterDocxB64) {
+          triggerBlobDownload(
+            base64ToDocxBlob(coverLetterDocxB64),
+            getDownloadCoverLetterFileNameForTitle(jobTitle, company),
+          );
+        } else if (isDocxResume(coverLetterFile)) {
+          const clBlob = await buildDocxFromUploadedTemplate(
+            coverLetterFile,
+            coverLetterResultLines.join("\n"),
+            coverLetterResultLines,
+          );
+          triggerBlobDownload(clBlob, getDownloadCoverLetterFileNameForTitle(jobTitle, company));
+        } else {
+          return "Upload your cover letter template (.docx) to download it.";
+        }
+        return null;
+      } catch (err) {
+        return err.message || "Unable to download DOCX.";
+      }
+    }
+
     if (!result?.trim()) return "Nothing to download yet.";
     if (!isDocxResume(resumeFile)) return "Upload the source resume as .docx to download.";
 

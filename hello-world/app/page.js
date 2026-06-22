@@ -3086,19 +3086,34 @@ export default function Home() {
     }
   }
 
-  function handleRegenerateSyntheticJob(job) {
+  function handleRegenerateSyntheticJob(job, scope = "both") {
     if (!job?.id) return;
     if (typeof job.id === "string" && job.id.startsWith("url-") && job.url) {
-      handleUrlSubmit(null, { overrideUrl: job.url, syntheticJobId: job.id });
+      handleUrlSubmit(null, { overrideUrl: job.url, syntheticJobId: job.id, scope });
       return;
     }
     if (typeof job.id === "string" && job.id.startsWith("manual-") && job.description) {
-      handleManualSubmit(null, { overridePosting: job.description, syntheticJobId: job.id });
+      handleManualSubmit(null, { overridePosting: job.description, syntheticJobId: job.id, scope });
+    }
+  }
+
+  // Regenerate from a status-bar chip, scoped to the résumé, cover letter, or
+  // both. Dispatches to the synthetic (url/manual) or search handler.
+  function onRegenerateChipJob(job, scope = "both") {
+    if (!job?.id) return;
+    const isSynthetic =
+      typeof job.id === "string" && (job.id.startsWith("url-") || job.id.startsWith("manual-"));
+    if (isSynthetic) {
+      handleRegenerateSyntheticJob(job, scope);
+    } else {
+      handleTailorJob(job, { scope });
     }
   }
 
   async function handleTailorJob(job, opts = {}) {
-    const { skipDownload = false } = opts;
+    const { skipDownload = false, scope = "both" } = opts;
+    const applyResume = scope !== "cover";
+    const applyCover = scope !== "resume";
     // Await so its upsertApplication({status:'tracking'}) is guaranteed to
     // land BEFORE the later status promotion below. Otherwise a fire-and-
     // forget version can race in and overwrite auto_tailored back to tracking.
@@ -3152,15 +3167,12 @@ export default function Home() {
 
       updateTailoringJob(job.id, {
         status: "done",
-        result,
-        resultLines,
         generatedJobTitle,
-        coverLetterResultLines,
         engine: engineUsed,
-        docxB64,
-        coverLetterDocxB64,
         edited: false,
         error: coverLetterError || "",
+        ...(applyResume ? { result, resultLines, docxB64 } : {}),
+        ...(applyCover ? { coverLetterResultLines, coverLetterDocxB64 } : {}),
       });
 
       // Persist the generated resume and link it to the application
@@ -3172,16 +3184,18 @@ export default function Home() {
         if (!positionId) {
           console.error("[handleTailorJob] upsertPosition returned null for job", job?.id, job?.title);
         }
-        const generatedResumeId = await saveGeneratedResume(supabase, {
-          userId: currentUser.id,
-          positionId,
-          content: result,
-          contentLines: resultLines,
-          sourceResumePath: `${currentUser.id}/resume`,
-          additionalContext: additionalContext || null,
-          docxB64,
-        });
-        if (!generatedResumeId) {
+        const generatedResumeId = applyResume
+          ? await saveGeneratedResume(supabase, {
+              userId: currentUser.id,
+              positionId,
+              content: result,
+              contentLines: resultLines,
+              sourceResumePath: `${currentUser.id}/resume`,
+              additionalContext: additionalContext || null,
+              docxB64,
+            })
+          : null;
+        if (applyResume && !generatedResumeId) {
           console.error("[handleTailorJob] saveGeneratedResume returned null", { userId: currentUser.id, positionId });
         }
         if (generatedResumeId && positionId) {
@@ -3265,11 +3279,11 @@ export default function Home() {
       const dlError = await downloadDocxFiles({
         jobTitle: generatedJobTitle || job.title,
         company: job.company,
-        result,
-        resultLines,
-        coverLetterResultLines,
-        docxB64,
-        coverLetterDocxB64,
+        result: applyResume ? result : "",
+        resultLines: applyResume ? resultLines : [],
+        coverLetterResultLines: applyCover ? coverLetterResultLines : [],
+        docxB64: applyResume ? docxB64 : "",
+        coverLetterDocxB64: applyCover ? coverLetterDocxB64 : "",
       });
 
       if (dlError) {
@@ -3350,6 +3364,9 @@ export default function Home() {
   async function handleUrlSubmit(event, opts = {}) {
     if (event && typeof event.preventDefault === "function") event.preventDefault();
 
+    const scope = opts.scope || "both";
+    const applyResume = scope !== "cover";
+    const applyCover = scope !== "resume";
     const sourceUrl = (opts.overrideUrl ?? urlPosting).trim();
 
     if (!sourceUrl) {
@@ -3440,29 +3457,28 @@ export default function Home() {
       );
       updateTailoringJob(syntheticJobId, {
         status: "done",
-        result: nextResult,
-        resultLines: nextResultLines,
         generatedJobTitle: nextJobTitle,
-        coverLetterResultLines: nextCoverLetterResultLines,
         engine: nextEngine,
-        docxB64: nextDocxB64,
-        coverLetterDocxB64: nextCoverLetterDocxB64,
         edited: false,
+        ...(applyResume ? { result: nextResult, resultLines: nextResultLines, docxB64: nextDocxB64 } : {}),
+        ...(applyCover ? { coverLetterResultLines: nextCoverLetterResultLines, coverLetterDocxB64: nextCoverLetterDocxB64 } : {}),
       });
 
       // Persist the generated resume and link to an application
       if (currentUser) {
         const supabase = createClient();
         const positionId = await upsertPosition(supabase, syntheticJob);
-        const generatedResumeId = await saveGeneratedResume(supabase, {
-          userId: currentUser.id,
-          positionId,
-          content: nextResult,
-          contentLines: nextResultLines,
-          sourceResumePath: `${currentUser.id}/resume`,
-          additionalContext: additionalContext || null,
-          docxB64: nextDocxB64,
-        });
+        const generatedResumeId = applyResume
+          ? await saveGeneratedResume(supabase, {
+              userId: currentUser.id,
+              positionId,
+              content: nextResult,
+              contentLines: nextResultLines,
+              sourceResumePath: `${currentUser.id}/resume`,
+              additionalContext: additionalContext || null,
+              docxB64: nextDocxB64,
+            })
+          : null;
         if (positionId) {
           await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "applied" });
           if (generatedResumeId) {
@@ -3479,11 +3495,11 @@ export default function Home() {
       const dlError = await downloadDocxFiles({
         jobTitle: nextJobTitle,
         company: nextCompany,
-        result: nextResult,
-        resultLines: nextResultLines,
-        coverLetterResultLines: nextCoverLetterResultLines,
-        docxB64: nextDocxB64,
-        coverLetterDocxB64: nextCoverLetterDocxB64,
+        result: applyResume ? nextResult : "",
+        resultLines: applyResume ? nextResultLines : [],
+        coverLetterResultLines: applyCover ? nextCoverLetterResultLines : [],
+        docxB64: applyResume ? nextDocxB64 : "",
+        coverLetterDocxB64: applyCover ? nextCoverLetterDocxB64 : "",
       });
 
       if (dlError) setUrlError(dlError);
@@ -3554,6 +3570,9 @@ export default function Home() {
   async function handleManualSubmit(event, opts = {}) {
     if (event && typeof event.preventDefault === "function") event.preventDefault();
 
+    const scope = opts.scope || "both";
+    const applyResume = scope !== "cover";
+    const applyCover = scope !== "resume";
     const sourcePosting = opts.overridePosting ?? jobPosting;
 
     if (!sourcePosting.trim()) {
@@ -3646,29 +3665,28 @@ export default function Home() {
       );
       updateTailoringJob(syntheticJobId, {
         status: "done",
-        result: nextResult,
-        resultLines: nextResultLines,
         generatedJobTitle: nextJobTitle,
-        coverLetterResultLines: nextCoverLetterResultLines,
         engine: nextEngine,
-        docxB64: nextDocxB64,
-        coverLetterDocxB64: nextCoverLetterDocxB64,
         edited: false,
+        ...(applyResume ? { result: nextResult, resultLines: nextResultLines, docxB64: nextDocxB64 } : {}),
+        ...(applyCover ? { coverLetterResultLines: nextCoverLetterResultLines, coverLetterDocxB64: nextCoverLetterDocxB64 } : {}),
       });
 
       // Persist the generated resume and link to an application
       if (currentUser) {
         const supabase = createClient();
         const positionId = await upsertPosition(supabase, syntheticJob);
-        const generatedResumeId = await saveGeneratedResume(supabase, {
-          userId: currentUser.id,
-          positionId,
-          content: nextResult,
-          contentLines: nextResultLines,
-          sourceResumePath: `${currentUser.id}/resume`,
-          additionalContext: additionalContext || null,
-          docxB64: nextDocxB64,
-        });
+        const generatedResumeId = applyResume
+          ? await saveGeneratedResume(supabase, {
+              userId: currentUser.id,
+              positionId,
+              content: nextResult,
+              contentLines: nextResultLines,
+              sourceResumePath: `${currentUser.id}/resume`,
+              additionalContext: additionalContext || null,
+              docxB64: nextDocxB64,
+            })
+          : null;
         if (positionId) {
           await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "applied" });
           if (generatedResumeId) {
@@ -3684,11 +3702,11 @@ export default function Home() {
       const dlError = await downloadDocxFiles({
         jobTitle: nextJobTitle,
         company: nextCompany,
-        result: nextResult,
-        resultLines: nextResultLines,
-        coverLetterResultLines: nextCoverLetterResultLines,
-        docxB64: nextDocxB64,
-        coverLetterDocxB64: nextCoverLetterDocxB64,
+        result: applyResume ? nextResult : "",
+        resultLines: applyResume ? nextResultLines : [],
+        coverLetterResultLines: applyCover ? nextCoverLetterResultLines : [],
+        docxB64: applyResume ? nextDocxB64 : "",
+        coverLetterDocxB64: applyCover ? nextCoverLetterDocxB64 : "",
       });
 
       if (dlError) setManualError(dlError);
@@ -4405,8 +4423,7 @@ export default function Home() {
         setActiveSection={setActiveSection}
         setHighlightedJobId={setHighlightedJobId}
         downloadResumeForChipJob={downloadResumeForChipJob}
-        handleRegenerateSyntheticJob={handleRegenerateSyntheticJob}
-        handleTailorJob={handleTailorJob}
+        onRegenerate={onRegenerateChipJob}
         handleToggleApplied={handleToggleApplied}
         handleIgnoreJob={handleIgnoreJob}
         handleUntrackJob={handleUntrackJob}
