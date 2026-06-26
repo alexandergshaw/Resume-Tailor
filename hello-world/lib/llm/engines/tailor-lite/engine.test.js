@@ -23,7 +23,8 @@ describe("embeddedEngine.getProposals", () => {
 
     const byKey = Object.fromEntries(data.slots.map((s) => [s.key, s]));
     expect(byKey["FULL_NAME::0"].strategy).toBe("profile");
-    expect(byKey["SKILLS_LINE::0"].strategy).toBe("skills");
+    expect(byKey["CORE_COMPETENCIES::0"].strategy).toBe("competencies");
+    expect(byKey["CORE_COMPETENCIES::0"].value.length).toBeGreaterThan(0);
     expect(data.keywords.technology.some((t) => t.canonical === "Python")).toBe(true);
   });
 
@@ -40,6 +41,9 @@ describe("embeddedEngine.tailorResume", () => {
     expect(res.resultLines.length).toBeGreaterThan(0);
     expect(Array.isArray(res.report.unfilled)).toBe(true);
     expect(res.report.meta).toEqual({ renderer: "local", workflow: "legacy" });
+    // Looks like a finished résumé: real identity, no leaked placeholders.
+    expect(res.result).toContain("Alex Shaw");
+    expect(res.result).not.toContain("{{");
   });
 
   it("leaves a placeholder visible when overridden with an empty value", async () => {
@@ -82,10 +86,9 @@ describe("embeddedEngine.tailorCoverLetter", () => {
     const text = res.result;
     expect(text).toContain("Staff Engineer");
     expect(text).toContain("Initech");
-    expect(text).toContain("Alex Morgan"); // FULL_NAME from profile.json
-    // Seeded slots are always filled — no raw placeholder leaks through.
-    expect(text).not.toContain("{{TARGET_ROLE}}");
-    expect(text).not.toContain("{{TARGET_ORGANIZATION}}");
+    expect(text).toContain("Alex Shaw"); // FULL_NAME from profile.json
+    // Seeded/keyword slots are always filled — no raw placeholder leaks through.
+    expect(text).not.toContain("{{");
     expect(res.report.meta.document).toBe("cover_letter");
   });
 

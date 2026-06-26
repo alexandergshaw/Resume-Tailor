@@ -1,0 +1,24 @@
+{
+  "_comment": "User-editable. The owner's own skills, used by the {{CORE_COMPETENCIES}} slot: the engine surfaces the subset of these that the posting actually asks for (matched against extracted keyword canonicals), ordered by relevance. It never invents skills you don't have. `fallback` is shown verbatim when the posting overlaps none of them, so the line always fills.",
+  "canonicals": [
+    "JavaScript",
+    "TypeScript",
+    "React",
+    "PostgreSQL",
+    "SQL",
+    "REST",
+    "Agile",
+    "Git",
+    "GitHub",
+    "Jira",
+    "Java",
+    "Python",
+    "C++",
+    "HTML",
+    "CSS",
+    "Microservices",
+    "Data Engineering",
+    "Healthcare"
+  ],
+  "fallback": "JavaScript, TypeScript, React, SQL, REST APIs, PostgreSQL, Agile development"
+}

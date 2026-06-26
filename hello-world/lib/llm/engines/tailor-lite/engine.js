@@ -18,10 +18,11 @@ import { extractKeywords } from "./keywords.js";
 import { mapSlots } from "./strategy.js";
 import profile from "./data/profile.json";
 import library from "./data/content_library.json";
+import candidateSkills from "./data/candidate_skills.json";
 
 export const ENGINE_VERSION = "tailor-lite-0.1.0";
 
-const DATA = { profile, library };
+const DATA = { profile, library, candidateSkills };
 
 // Scan a template, extract keywords, and map each placeholder to a strategy +
 // proposed value. Shared by getProposals and the render path.
@@ -136,9 +137,14 @@ export const embeddedEngine = {
   async tailorCoverLetter({ jobPosting, jobTitle, companyName, values }) {
     const posting = String(jobPosting || "").trim();
     const overrides = values && typeof values === "object" ? values : {};
+    // Seed the role/org from the posting, and provide neutral fallbacks for the
+    // keyword-join slots so an unmatched category never leaves a raw {{...}}.
     const seedByName = {
       TARGET_ROLE: String(jobTitle || "").trim() || "the role",
       TARGET_ORGANIZATION: String(companyName || "").trim() || "your organization",
+      JOB_RELEVANT_TECHNOLOGIES: "modern web and enterprise technologies",
+      LEADERSHIP_CAPABILITIES: "technical leadership and cross-functional collaboration",
+      DELIVERY_PRACTICES: "Agile delivery",
     };
     const { docxB64, resultLines, reportSlots, unfilled, keywords } = await render(
       await getCoverLetterTemplateBuffer(),

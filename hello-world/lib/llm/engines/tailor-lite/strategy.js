@@ -135,6 +135,31 @@ function libraryMatch(name, library, ctx, used) {
   };
 }
 
+// CORE_COMPETENCIES: surface the owner's OWN skills that the posting asks for,
+// ranked by the posting's keyword score. Never invents a skill — only the
+// intersection of the candidate's skill set with the extracted keywords. Falls
+// back to a fixed list so the slot always fills (no leaked braces).
+function coreCompetencies(keywords, candidateSkills) {
+  const owned = new Set((candidateSkills?.canonicals || []).map((s) => s.toLowerCase()));
+  const ranked = [];
+  for (const category of Object.keys(keywords)) {
+    for (const item of keywords[category]) ranked.push(item);
+  }
+  ranked.sort((a, b) => b.score - a.score || a.canonical.localeCompare(b.canonical));
+
+  const picked = [];
+  const seen = new Set();
+  for (const item of ranked) {
+    const low = item.canonical.toLowerCase();
+    if (owned.has(low) && !seen.has(low)) {
+      seen.add(low);
+      picked.push(item.canonical);
+    }
+    if (picked.length >= 10) break;
+  }
+  return picked.length ? picked.join(", ") : String(candidateSkills?.fallback || "");
+}
+
 // Map one slot (name + occurrence) to { strategy, value, note, candidates }.
 function mapOne(slot, keywords, data, state) {
   const { name, occurrence } = slot;
@@ -145,6 +170,16 @@ function mapOne(slot, keywords, data, state) {
       strategy: "profile",
       value: String(data.profile.values[name] ?? ""),
       note: "From profile",
+      candidates: [],
+    };
+  }
+
+  // 1b) CORE_COMPETENCIES: owner's own skills that match the posting.
+  if (name === "CORE_COMPETENCIES") {
+    return {
+      strategy: "competencies",
+      value: coreCompetencies(keywords, data.candidateSkills),
+      note: "Your skills matching this posting",
       candidates: [],
     };
   }
