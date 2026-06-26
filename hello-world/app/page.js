@@ -3908,7 +3908,31 @@ export default function Home() {
             </p>
           </Box>
           {currentUser && (
-            <Box sx={{ pt: 0.5, flexShrink: 0, display: "flex", alignItems: "center" }}>
+            <Box sx={{ pt: 0.5, flexShrink: 0, display: "flex", alignItems: "center", gap: 0.5 }}>
+              <Tooltip
+                title={
+                  tailorEngine === "external"
+                    ? "Resume Tailor API — returns a finished .docx from the service's template."
+                    : tailorEngine === "embedded"
+                      ? "Embedded — deterministic in-app engine. No AI, no network."
+                      : "Gemini — AI rewrites your uploaded resume's lines."
+                }
+              >
+                <FormControl size="small" sx={{ minWidth: 150 }}>
+                  <InputLabel id="engine-select-label">Engine</InputLabel>
+                  <Select
+                    labelId="engine-select-label"
+                    id="engine-select"
+                    label="Engine"
+                    value={tailorEngine}
+                    onChange={(event) => setTailorEngine(event.target.value)}
+                  >
+                    <MenuItem value="gemini">Gemini (AI)</MenuItem>
+                    <MenuItem value="external">Resume Tailor API</MenuItem>
+                    <MenuItem value="embedded">Embedded (no AI)</MenuItem>
+                  </Select>
+                </FormControl>
+              </Tooltip>
               <Tooltip title="Job emails">
                 <IconButton
                   size="large"
@@ -4131,8 +4155,6 @@ export default function Home() {
           setContextPanelOpen={setContextPanelOpen}
           aggressiveness={aggressiveness}
           setAggressiveness={setAggressiveness}
-          tailorEngine={tailorEngine}
-          setTailorEngine={setTailorEngine}
           additionalContext={additionalContext}
           setAdditionalContext={setAdditionalContext}
           setContextFiles={setContextFiles}
