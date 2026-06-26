@@ -1,5 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { embeddedEngine } from "./engine.js";
+
+const jsonResponse = (obj, status = 200) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: async () => obj,
+});
 
 const POSTING = [
   "Senior Backend Engineer",
@@ -79,5 +85,58 @@ describe("embeddedEngine.tailorCoverLetter", () => {
     const a = await embeddedEngine.tailorCoverLetter(args);
     const b = await embeddedEngine.tailorCoverLetter(args);
     expect(a.docxB64).toBe(b.docxB64);
+  });
+});
+
+describe("embeddedEngine composed workflow", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("uses Parser keywords and surfaces Researcher advisory, but keeps it out of the résumé", async () => {
+    vi.stubEnv("RESUME_TAILOR_WORKFLOW", "composed");
+    vi.stubEnv("PARSER_API_URL", "https://parser.example");
+    vi.stubEnv("RESEARCHER_API_URL", "https://researcher.example");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        if (String(url).includes("parser")) {
+          return jsonResponse({
+            results: {
+              technologies: [{ display: "PostgreSQL" }, { display: "REST APIs" }],
+              keywords: [{ display: "healthcare data exchange", score: 0.9 }],
+              field: { top: "Healthcare", ranked: [{ display: "Healthcare" }] },
+            },
+          });
+        }
+        return jsonResponse({
+          company: { profile: { industry: "Insurance" } },
+          overviews: [{ text: "An insurer.", source: "wikipedia" }],
+          news: [],
+        });
+      }),
+    );
+
+    const res = await embeddedEngine.tailorResume({ jobPosting: POSTING });
+    expect(res.report.workflow).toBe("composed");
+    expect(res.degraded).toBe(false);
+    expect(res.report.advisory.overviews).toHaveLength(1);
+    // Advisory research never enters the document.
+    expect(res.result).not.toContain("An insurer.");
+    expect(res.result).not.toContain("Insurance");
+    expect(res.result).not.toContain("{{");
+  });
+
+  it("falls back to local extraction (degraded) when the Parser fails", async () => {
+    vi.stubEnv("RESUME_TAILOR_WORKFLOW", "composed");
+    vi.stubEnv("PARSER_API_URL", "https://parser.example");
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({}, 500)));
+
+    const res = await embeddedEngine.tailorResume({ jobPosting: POSTING });
+    expect(res.degraded).toBe(true);
+    expect(res.warnings.length).toBeGreaterThan(0);
+    expect(res.result).toContain("Alex Shaw"); // résumé still generated
+    expect(res.result).not.toContain("{{");
   });
 });

@@ -73,6 +73,15 @@ export function canonicalize(term) {
   return getAliasMap().get(lower)?.canonical || null;
 }
 
+// The résumé-specific category for a term, or null if unknown. Used by the
+// composed (Parser) path to type Parser terms locally — the Parser supplies
+// display casing, but the technology/tool/methodology/soft_skill/domain split is
+// resume-specific and stays here.
+export function categorize(term) {
+  const lower = String(term).toLowerCase().replace(/[-/]/g, " ").trim();
+  return getAliasMap().get(lower)?.category || null;
+}
+
 const HEADER_RE = /(requirement|qualification|must have|skills)/i;
 const BULLET_RE = /^([-*•·]|\d+[.)])\s+/;
 const MAX_NGRAM = 4;

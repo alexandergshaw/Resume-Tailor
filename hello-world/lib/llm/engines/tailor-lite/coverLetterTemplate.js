@@ -23,6 +23,11 @@ const PARAGRAPHS = [
   { text: "" },
   {
     text:
+      "I am especially drawn to {{ORGANIZATION_CONTEXT}}, and I would bring a focus on {{ROLE_FOCUS}}.",
+  },
+  { text: "" },
+  {
+    text:
       "I would welcome the opportunity to discuss how my background in {{SPECIALIZATION}} can support {{TARGET_ORGANIZATION}}'s goals. Thank you for your time and consideration.",
   },
   { text: "" },

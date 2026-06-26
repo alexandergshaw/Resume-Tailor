@@ -1,9 +1,17 @@
-// The embedded, deterministic (no-LLM, no-network) résumé + cover-letter engine.
-// Implements the same in-process interface as geminiEngine / externalEngine
-// ({ name, isConfigured, getProposals, tailorResume, tailorCoverLetter }) so the
-// existing engine registry can swap it in behind RESUME_ENGINE=embedded with no
-// other app changes. It mirrors the external Resume Tailor API's data shapes
-// (slots, keywords, report, docx_b64) so the UI stays backend-agnostic.
+// The embedded, deterministic résumé + cover-letter engine. Implements the same
+// in-process interface as geminiEngine / externalEngine so the registry can swap
+// it in behind RESUME_ENGINE=embedded.
+//
+// Two workflows (RESUME_TAILOR_WORKFLOW): "legacy" (default) is fully local — no
+// network, byte-deterministic. "composed" swaps ONLY Step 2 (keyword extraction)
+// for the external Parser and adds the Researcher, mapping both back into the
+// same local Keyword model / fill core — so strict adherence is preserved:
+//   - Parser keywords map to {canonical,category,score}; fill core is unchanged.
+//   - Researcher is quarantined: ADVISORY ONLY for résumés (report.advisory,
+//     never the .docx, so the document is byte-identical research-on/off), and
+//     STRUCTURED FACTS only for cover letters (ORGANIZATION_CONTEXT / ROLE_FOCUS).
+// Every external call falls back to the local path (flagging `degraded`), so the
+// deterministic core is never blocked by a downstream outage.
 
 import { getDefaultTemplateBuffer } from "./defaultTemplate.js";
 import { getCoverLetterTemplateBuffer } from "./coverLetterTemplate.js";
@@ -16,6 +24,8 @@ import {
 } from "./docxModel.js";
 import { extractKeywords } from "./keywords.js";
 import { mapSlots } from "./strategy.js";
+import { fetchParserKeywords } from "./parser.js";
+import { fetchResearch } from "./researcher.js";
 import profile from "./data/profile.json";
 import library from "./data/content_library.json";
 import skillGroups from "./data/skill_groups.json";
@@ -24,33 +34,79 @@ export const ENGINE_VERSION = "tailor-lite-0.1.0";
 
 const DATA = { profile, library, skillGroups };
 
-// Scan a template, extract keywords, and map each placeholder to a strategy +
-// proposed value. Shared by getProposals and the render path.
+function getWorkflow() {
+  return (process.env.RESUME_TAILOR_WORKFLOW || "legacy").trim().toLowerCase();
+}
+
+// Keywords for the posting. Legacy: local taxonomy extraction. Composed: the
+// Parser, mapped to the local Keyword model — falling back to local (degraded)
+// if the Parser is unconfigured or unreachable.
+async function resolveKeywords(posting) {
+  if (getWorkflow() !== "composed") {
+    return { keywords: extractKeywords(posting), emphases: [], degraded: false, warnings: [] };
+  }
+  try {
+    const parsed = await fetchParserKeywords(posting);
+    if (parsed) return { keywords: parsed.keywords, emphases: parsed.emphases, degraded: false, warnings: [] };
+    return {
+      keywords: extractKeywords(posting),
+      emphases: [],
+      degraded: true,
+      warnings: ["Parser not configured; used local keyword extraction."],
+    };
+  } catch (err) {
+    return {
+      keywords: extractKeywords(posting),
+      emphases: [],
+      degraded: true,
+      warnings: [`Parser unavailable (${err?.message || "error"}); used local keyword extraction.`],
+    };
+  }
+}
+
+// Researcher overview/news for the résumé — ADVISORY ONLY, never inserted.
+async function resolveAdvisory({ posting, emphases, company }) {
+  if (getWorkflow() !== "composed") return null;
+  try {
+    const research = await fetchResearch({ posting, emphases, company });
+    return research ? research.advisory : null;
+  } catch {
+    return null;
+  }
+}
+
+// Researcher structured facts for the cover letter (industry / essential skills).
+async function resolveCoverFacts({ posting, company }) {
+  if (getWorkflow() !== "composed") return {};
+  try {
+    const research = await fetchResearch({ posting, company });
+    return research ? research.facts : {};
+  } catch {
+    return {};
+  }
+}
+
+// Scan a template, resolve keywords (legacy/composed), map placeholders.
 async function buildProposal(buffer, posting) {
   const doc = await loadDocx(buffer);
   const rawSlots = scanPlaceholders(doc);
-  const keywords = extractKeywords(posting);
-  const slots = mapSlots(rawSlots, keywords, DATA);
-  return { doc, slots, keywords };
+  const kw = await resolveKeywords(posting);
+  const slots = mapSlots(rawSlots, kw.keywords, DATA);
+  return { doc, slots, keywords: kw.keywords, emphases: kw.emphases, degraded: kw.degraded, warnings: kw.warnings };
 }
 
-// Resolve final values and fill a template. `overrides` map slot keys
-// (NAME::occurrence) to text; `seedByName` provides a per-name fallback used
-// when a slot is otherwise empty (e.g. TARGET_ROLE from the job title). An empty
-// final value leaves the {{placeholder}} visible and counts as unfilled.
+// Resolve final values and fill a template. `overrides` map slot keys to text;
+// `seedByName` provides a per-name fallback used when a slot is otherwise empty.
+// An empty final value leaves the {{placeholder}} visible (counts as unfilled).
 async function render(buffer, posting, { overrides = {}, seedByName = {} } = {}) {
-  const { doc, slots, keywords } = await buildProposal(buffer, posting);
-
+  const proposal = await buildProposal(buffer, posting);
   const finalValues = {};
   const unfilled = [];
-  const reportSlots = slots.map((slot) => {
+  const reportSlots = proposal.slots.map((slot) => {
     const overridden = Object.prototype.hasOwnProperty.call(overrides, slot.key);
     let value = overridden ? String(overrides[slot.key] ?? "") : slot.value;
     let source = overridden ? "overridden" : slot.value ? "proposed" : "unfilled";
-    if (
-      value.trim().length === 0 &&
-      Object.prototype.hasOwnProperty.call(seedByName, slot.name)
-    ) {
+    if (value.trim().length === 0 && Object.prototype.hasOwnProperty.call(seedByName, slot.name)) {
       value = String(seedByName[slot.name] ?? "");
       if (value.trim().length > 0) source = "proposed";
     }
@@ -59,109 +115,119 @@ async function render(buffer, posting, { overrides = {}, seedByName = {} } = {})
     return { ...slot, final_value: value, source };
   });
 
-  fillDocx(doc, finalValues);
+  fillDocx(proposal.doc, finalValues);
   return {
-    docxB64: await serializeDocx(doc),
-    resultLines: documentLines(doc),
+    docxB64: await serializeDocx(proposal.doc),
+    resultLines: documentLines(proposal.doc),
     reportSlots,
     unfilled,
-    keywords,
+    keywords: proposal.keywords,
+    emphases: proposal.emphases,
+    degraded: proposal.degraded,
+    warnings: proposal.warnings,
   };
 }
 
-function buildReport(reportSlots, unfilled, keywords, extraMeta = {}) {
-  return {
+function buildReport({ workflow, reportSlots, unfilled, keywords, advisory, extraMeta = {} }) {
+  const report = {
     engine_version: ENGINE_VERSION,
-    workflow: "legacy",
+    workflow,
     slots: reportSlots,
     unfilled,
     keywords,
-    meta: { renderer: "local", workflow: "legacy", ...extraMeta },
+    meta: { renderer: "local", workflow, ...extraMeta },
   };
+  if (advisory) report.advisory = advisory;
+  return report;
 }
 
 export const embeddedEngine = {
   name: "embedded",
 
-  // Always available — there is nothing to configure.
   isConfigured() {
     return true;
   },
 
-  // Review data: every résumé placeholder slot with a proposed value, plus
-  // keywords.
   async getProposals({ jobPosting }) {
     const posting = String(jobPosting || "").trim();
     if (!posting) throw new Error("A job posting is required for the embedded engine.");
-    const { slots, keywords } = await buildProposal(await getDefaultTemplateBuffer(), posting);
-    return {
+    const { slots, keywords, emphases, degraded, warnings } = await buildProposal(
+      await getDefaultTemplateBuffer(),
+      posting,
+    );
+    const advisory = await resolveAdvisory({ posting, emphases, company: "" });
+    const out = {
       engine_version: ENGINE_VERSION,
-      workflow: "legacy",
+      workflow: getWorkflow(),
       slots,
       keywords,
-      warnings: [],
-      degraded: false,
+      warnings,
+      degraded,
     };
+    if (advisory) out.advisory = advisory;
+    return out;
   },
 
-  // Tailored résumé .docx (base64) plus a report. `values` overrides slots by
-  // key; an empty value leaves the {{placeholder}} visible (counts as unfilled).
   async tailorResume({ jobPosting, values }) {
     const posting = String(jobPosting || "").trim();
     if (!posting) throw new Error("A job posting is required for the embedded engine.");
     const overrides = values && typeof values === "object" ? values : {};
-    const { docxB64, resultLines, reportSlots, unfilled, keywords } = await render(
-      await getDefaultTemplateBuffer(),
-      posting,
-      { overrides },
-    );
+    const r = await render(await getDefaultTemplateBuffer(), posting, { overrides });
+    // Advisory research is excluded from the document — report only.
+    const advisory = await resolveAdvisory({ posting, emphases: r.emphases, company: "" });
 
     return {
       engine: "embedded",
-      result: resultLines.join("\n"),
-      resultLines,
+      result: r.resultLines.join("\n"),
+      resultLines: r.resultLines,
       jobTitle: "",
       companyName: "",
-      docxB64,
-      report: buildReport(reportSlots, unfilled, keywords),
-      warnings: [],
-      degraded: false,
+      docxB64: r.docxB64,
+      report: buildReport({
+        workflow: getWorkflow(),
+        reportSlots: r.reportSlots,
+        unfilled: r.unfilled,
+        keywords: r.keywords,
+        advisory,
+      }),
+      warnings: r.warnings,
+      degraded: r.degraded,
     };
   },
 
-  // Tailored cover-letter .docx (base64) plus a report. Fills the bundled
-  // cover-letter template from the profile + posting keywords; the target role
-  // and organization are seeded from the job title / company (with neutral
-  // fallbacks so the letter never shows a raw placeholder). `values` overrides
-  // any slot by key.
   async tailorCoverLetter({ jobPosting, jobTitle, companyName, values }) {
     const posting = String(jobPosting || "").trim();
     const overrides = values && typeof values === "object" ? values : {};
-    // Seed the role/org from the posting, and provide neutral fallbacks for the
-    // keyword-join slots so an unmatched category never leaves a raw {{...}}.
+    // Composed: structured facts from the Researcher; otherwise neutral fallbacks
+    // so a slot never shows raw braces.
+    const facts = await resolveCoverFacts({ posting, company: companyName });
     const seedByName = {
       TARGET_ROLE: String(jobTitle || "").trim() || "the role",
       TARGET_ORGANIZATION: String(companyName || "").trim() || "your organization",
+      ORGANIZATION_CONTEXT: facts.ORGANIZATION_CONTEXT || "your organization's work",
+      ROLE_FOCUS: facts.ROLE_FOCUS || "the priorities in your posting",
       JOB_RELEVANT_TECHNOLOGIES: "modern web and enterprise technologies",
       LEADERSHIP_CAPABILITIES: "technical leadership and cross-functional collaboration",
       DELIVERY_PRACTICES: "Agile delivery",
     };
-    const { docxB64, resultLines, reportSlots, unfilled, keywords } = await render(
-      await getCoverLetterTemplateBuffer(),
-      posting,
-      { overrides, seedByName },
-    );
+    const r = await render(await getCoverLetterTemplateBuffer(), posting, { overrides, seedByName });
 
     return {
       engine: "embedded",
-      result: resultLines.join("\n"),
-      resultLines,
+      result: r.resultLines.join("\n"),
+      resultLines: r.resultLines,
       jobTitle: String(jobTitle || ""),
       companyName: String(companyName || ""),
-      docxB64,
-      report: buildReport(reportSlots, unfilled, keywords, { document: "cover_letter" }),
-      warnings: [],
-      degraded: false,
+      docxB64: r.docxB64,
+      report: buildReport({
+        workflow: getWorkflow(),
+        reportSlots: r.reportSlots,
+        unfilled: r.unfilled,
+        keywords: r.keywords,
+        extraMeta: { document: "cover_letter" },
+      }),
+      warnings: r.warnings,
+      degraded: r.degraded,
     };
   },
 };
