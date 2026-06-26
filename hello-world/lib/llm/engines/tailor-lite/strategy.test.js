@@ -25,13 +25,22 @@ const data = {
       { id: "c", slots: ["MEASURABLE_IMPACT"], text: "50% faster", tags: ["performance"] },
     ],
   },
+  skillGroups: {
+    groups: [
+      { heading: "Cloud", categories: ["tool_platform"], keywords: ["AWS", "Docker"] },
+      { heading: "Languages", categories: ["technology"], keywords: ["JavaScript", "Python", "Go", "Rust"] },
+    ],
+  },
 };
 
 const slots = [
   { key: "FULL_NAME::0", name: "FULL_NAME", occurrence: 0 },
   { key: "JOB_RELEVANT_TECHNOLOGIES::0", name: "JOB_RELEVANT_TECHNOLOGIES", occurrence: 0 },
   { key: "TECHNICAL_CAPABILITIES::0", name: "TECHNICAL_CAPABILITIES", occurrence: 0 },
+  { key: "SKILLS_HEADING::0", name: "SKILLS_HEADING", occurrence: 0 },
   { key: "SKILLS_LINE::0", name: "SKILLS_LINE", occurrence: 0 },
+  { key: "SKILLS_HEADING::1", name: "SKILLS_HEADING", occurrence: 1 },
+  { key: "SKILLS_LINE::1", name: "SKILLS_LINE", occurrence: 1 },
   { key: "ACTION_RESULT::0", name: "ACTION_RESULT", occurrence: 0 },
   { key: "ACTION_RESULT::1", name: "ACTION_RESULT", occurrence: 1 },
   { key: "WIDGET_FROBNICATOR::0", name: "WIDGET_FROBNICATOR", occurrence: 0 },
@@ -45,6 +54,7 @@ describe("mapSlots", () => {
     expect(byKey["FULL_NAME::0"].strategy).toBe("profile");
     expect(byKey["FULL_NAME::0"].value).toBe("Ada");
     expect(byKey["JOB_RELEVANT_TECHNOLOGIES::0"].strategy).toBe("keywords");
+    expect(byKey["SKILLS_HEADING::0"].strategy).toBe("skills_header");
     expect(byKey["SKILLS_LINE::0"].strategy).toBe("skills");
     expect(byKey["ACTION_RESULT::0"].strategy).toBe("library");
     expect(byKey["WIDGET_FROBNICATOR::0"].strategy).toBe("manual");
@@ -63,7 +73,11 @@ describe("mapSlots", () => {
     expect(byKey["ACTION_RESULT::1"].value).toBeTruthy();
   });
 
-  it("fills the skills line from the occurrence's category (technology first)", () => {
-    expect(byKey["SKILLS_LINE::0"].value).toBe("JavaScript, Python, Go");
+  it("ranks skill groups by posting hit and orders matched skills first", () => {
+    // Languages (42) outranks Cloud (28); Rust is unmatched so it trails.
+    expect(byKey["SKILLS_HEADING::0"].value).toBe("Languages");
+    expect(byKey["SKILLS_LINE::0"].value).toBe("JavaScript, Python, Go, Rust");
+    expect(byKey["SKILLS_HEADING::1"].value).toBe("Cloud");
+    expect(byKey["SKILLS_LINE::1"].value).toBe("AWS, Docker");
   });
 });

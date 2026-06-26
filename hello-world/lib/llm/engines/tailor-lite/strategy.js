@@ -8,7 +8,7 @@
 // Everything is deterministic: shared keyword pools advance with explicit order,
 // library entries are used at most once, and every sort has a tiebreaker.
 
-import { tokenize } from "./keywords.js";
+import { tokenize, canonicalize } from "./keywords.js";
 
 // Capability lines: name -> { categories to draw from, how many to join }.
 const KEYWORD_JOIN = {
@@ -23,14 +23,6 @@ const KEYWORD_JOIN = {
 };
 
 const COURSE_TOPICS_RE = /^COURSE_TOPICS(?:_(\d+))?$/;
-const SKILLS_LINE_CATEGORY_ORDER = [
-  "technology",
-  "tool_platform",
-  "methodology",
-  "soft_skill",
-  "domain",
-];
-const SKILLS_LINE_TOP_N = 8;
 // Names that read as accomplishment slots even when no library entry lists them.
 const ACCOMPLISHMENT_RE =
   /^(ACTION|SOLUTION|MEASURABLE|SCOPE|PROJECT|ACCOMPLISHMENT|IMPACT|RESULT|OUTCOME|DELIVERABLE)/;
@@ -40,15 +32,48 @@ function buildContext(keywords) {
   // Token-level weights for library cosine scoring.
   const jobWeights = new Map();
   const jobCanonical = new Set();
+  // Posting score by canonical (for skill-group ranking) and by category (fallback).
+  const postingScore = new Map();
+  const categoryScore = new Map();
   for (const category of Object.keys(keywords)) {
     for (const { canonical, score } of keywords[category]) {
       jobCanonical.add(canonical.toLowerCase());
+      postingScore.set(canonical.toLowerCase(), score);
+      categoryScore.set(category, (categoryScore.get(category) || 0) + score);
       for (const token of tokenize(canonical)) {
         jobWeights.set(token, Math.max(jobWeights.get(token) || 0, score));
       }
     }
   }
-  return { jobWeights, jobCanonical };
+  return { jobWeights, jobCanonical, postingScore, categoryScore };
+}
+
+// SKILLS_DISTRIBUTE: rank the skill groups by how hard the posting hits each,
+// and within each group order its skills so posting-matched ones lead. Returns
+// a ranked array of { heading, row } — every skill is kept verbatim (nothing is
+// dropped or invented), so each row's text is identical in length to the
+// original, just reordered. Deterministic: ties break on original file order.
+function rankSkillGroups(groups, ctx) {
+  const ranked = groups.map((group, index) => {
+    const claimed = new Map();
+    const matchedKeywords = new Set();
+    for (const keyword of group.keywords || []) {
+      const canon = (canonicalize(keyword) || keyword).toLowerCase();
+      const score = ctx.postingScore.get(canon) ?? ctx.postingScore.get(keyword.toLowerCase());
+      if (score != null) {
+        claimed.set(canon, score);
+        matchedKeywords.add(keyword);
+      }
+    }
+    let score = [...claimed.values()].reduce((sum, s) => sum + s, 0);
+    for (const cat of group.categories || []) score += ctx.categoryScore.get(cat) || 0;
+
+    const matched = (group.keywords || []).filter((k) => matchedKeywords.has(k));
+    const rest = (group.keywords || []).filter((k) => !matchedKeywords.has(k));
+    return { index, heading: group.heading, row: [...matched, ...rest].join(", "), score };
+  });
+  ranked.sort((a, b) => b.score - a.score || a.index - b.index);
+  return ranked;
 }
 
 // Consume up to k keywords from the given categories (merged, ranked), skipping
@@ -170,15 +195,15 @@ function mapOne(slot, keywords, data, state) {
     };
   }
 
-  // 3) SKILLS_LINE (repeated skills line, one category per occurrence)
+  // 3) SKILLS_DISTRIBUTE: the skills section's repeated heading + row slots,
+  // filled by the posting-ranked skill groups (occurrence i = rank i).
+  if (name === "SKILLS_HEADING") {
+    const group = state.skills[occurrence];
+    return { strategy: "skills_header", value: group?.heading || "", note: "Skill group heading", candidates: [] };
+  }
   if (name === "SKILLS_LINE") {
-    const cat = SKILLS_LINE_CATEGORY_ORDER[occurrence % SKILLS_LINE_CATEGORY_ORDER.length];
-    return {
-      strategy: "skills",
-      value: topN(keywords, cat, SKILLS_LINE_TOP_N),
-      note: `Skills line — ${cat}`,
-      candidates: [],
-    };
+    const group = state.skills[occurrence];
+    return { strategy: "skills", value: group?.row || "", note: "Skill group (posting-ranked)", candidates: [] };
   }
 
   // 4) LIBRARY_MATCH (accomplishment slots)
@@ -193,6 +218,12 @@ function mapOne(slot, keywords, data, state) {
 // document order so shared keyword pools and the library no-repeat behave
 // deterministically.
 export function mapSlots(slots, keywords, data) {
-  const state = { consumed: new Set(), used: new Set(), ctx: buildContext(keywords) };
+  const ctx = buildContext(keywords);
+  const state = {
+    consumed: new Set(),
+    used: new Set(),
+    ctx,
+    skills: rankSkillGroups(data.skillGroups?.groups || [], ctx),
+  };
   return slots.map((slot) => ({ ...slot, ...mapOne(slot, keywords, data, state) }));
 }

@@ -15,10 +15,12 @@ const POSTING = [
 ].join("\n");
 
 describe("embeddedEngine.getProposals", () => {
-  it("returns keywords and an empty slot list (the résumé has no placeholders)", async () => {
+  it("returns the templatized skills slots plus keywords", async () => {
     const data = await embeddedEngine.getProposals({ jobPosting: POSTING });
-    expect(Array.isArray(data.slots)).toBe(true);
-    expect(data.slots.length).toBe(0);
+    const byKey = Object.fromEntries(data.slots.map((s) => [s.key, s]));
+    expect(byKey["SKILLS_HEADING::0"].strategy).toBe("skills_header");
+    expect(byKey["SKILLS_LINE::0"].strategy).toBe("skills");
+    expect(byKey["SKILLS_LINE::0"].value.length).toBeGreaterThan(0);
     expect(data.keywords.technology.some((t) => t.canonical === "Python")).toBe(true);
   });
 
@@ -28,17 +30,17 @@ describe("embeddedEngine.getProposals", () => {
 });
 
 describe("embeddedEngine.tailorResume", () => {
-  it("returns the owner's résumé verbatim as a base64 .docx", async () => {
+  it("fills the skills slots, keeps all content, and leaks no placeholders", async () => {
     const res = await embeddedEngine.tailorResume({ jobPosting: POSTING });
     expect(typeof res.docxB64).toBe("string");
     expect(res.docxB64.length).toBeGreaterThan(200);
-    expect(res.resultLines.length).toBeGreaterThan(0);
     expect(res.report.meta).toEqual({ renderer: "local", workflow: "legacy" });
-    // Faithful copy: real identity, nothing injected, nothing left unfilled.
     expect(res.result).toContain("Alex Shaw");
-    expect(res.result).not.toContain("Most relevant to this role");
     expect(res.result).not.toContain("{{");
     expect(res.report.unfilled).toEqual([]);
+    // All five skill groups are still present (reordered, never dropped).
+    expect(res.result).toContain("Healthcare Interoperability & Enterprise Integration");
+    expect(res.result).toContain("Collaboration & Enterprise Tools");
   });
 
   it("is deterministic: identical input yields byte-identical output", async () => {

@@ -52,7 +52,11 @@ function getAliasMap() {
   const map = new Map();
   for (const entry of taxonomy.entries || []) {
     const meta = { canonical: entry.canonical, category: entry.category };
-    const keys = [entry.canonical, ...(entry.aliases || [])];
+    // match_canonical:false (default true) means only the aliases match, not the
+    // canonical itself — used for short/ambiguous words like "Go", "R", "C".
+    const keys = entry.match_canonical === false
+      ? [...(entry.aliases || [])]
+      : [entry.canonical, ...(entry.aliases || [])];
     for (const key of keys) {
       const lower = String(key).toLowerCase().replace(/[-/]/g, " ").trim();
       if (lower && !map.has(lower)) map.set(lower, meta);
@@ -60,6 +64,13 @@ function getAliasMap() {
   }
   aliasMapCache = map;
   return map;
+}
+
+// Resolve a free-text term to its taxonomy canonical (or null if unknown).
+// Tokenized the same way as keyword matching so "rest apis" -> "REST", etc.
+export function canonicalize(term) {
+  const lower = String(term).toLowerCase().replace(/[-/]/g, " ").trim();
+  return getAliasMap().get(lower)?.canonical || null;
 }
 
 const HEADER_RE = /(requirement|qualification|must have|skills)/i;

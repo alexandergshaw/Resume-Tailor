@@ -1,0 +1,83 @@
+{
+  "_comment": "User-editable. Drives SKILLS_DISTRIBUTE: the five skill blocks are reordered so the group most relevant to the posting leads, and the skills within each row are reordered so posting-matched ones come first. `keywords` are your exact display strings (kept verbatim — nothing is dropped or invented); `categories` is fallback membership used only for ranking. File order is the deterministic tie-break, so the default (no posting signal) order matches the résumé.",
+  "groups": [
+    {
+      "heading": "Healthcare Interoperability & Enterprise Integration",
+      "categories": ["domain"],
+      "keywords": [
+        "Healthcare Interoperability (HL7, FHIR, CCD/C-CDA)",
+        "Healthcare Data Mapping",
+        "Payer Workflows",
+        "API-Based Architectures",
+        "Enterprise Integration Patterns",
+        "Systems Integration",
+        "Data Transformation",
+        "REST APIs",
+        "Backend Integration Workflows",
+        "Enterprise Application Modernization",
+        "Healthcare Data Exchange"
+      ]
+    },
+    {
+      "heading": "Application Development & Software Engineering",
+      "categories": ["technology", "tool_platform"],
+      "keywords": [
+        "JavaScript",
+        "TypeScript",
+        "React",
+        "SQL Server",
+        "PostgreSQL",
+        "REST APIs",
+        "Web Application Development",
+        "Backend Services",
+        "Application Architecture",
+        "Database Development",
+        "Software Development Lifecycle (SDLC)",
+        "Agile Development"
+      ]
+    },
+    {
+      "heading": "Data Engineering & Enterprise Platforms",
+      "categories": ["technology", "domain"],
+      "keywords": [
+        "SQL",
+        "Data Engineering",
+        "Operational Reporting",
+        "API Integrations",
+        "Workflow Automation",
+        "Enterprise Dashboards",
+        "Distributed Systems",
+        "Data Transformation Pipelines",
+        "Enterprise Software Platforms"
+      ]
+    },
+    {
+      "heading": "Leadership & Cross-Functional Collaboration",
+      "categories": ["soft_skill", "methodology"],
+      "keywords": [
+        "Technical Leadership",
+        "Code Reviews",
+        "Requirements Gathering",
+        "Stakeholder Communication",
+        "Agile Project Management",
+        "Cross-Functional Collaboration",
+        "Technical Documentation",
+        "Troubleshooting",
+        "Deployment Coordination",
+        "Mentorship"
+      ]
+    },
+    {
+      "heading": "Collaboration & Enterprise Tools",
+      "categories": ["tool_platform"],
+      "keywords": [
+        "Git",
+        "GitHub",
+        "Jira",
+        "Microsoft Teams",
+        "Zoom",
+        "Google Workspace"
+      ]
+    }
+  ]
+}

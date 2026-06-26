@@ -18,10 +18,11 @@ import { extractKeywords } from "./keywords.js";
 import { mapSlots } from "./strategy.js";
 import profile from "./data/profile.json";
 import library from "./data/content_library.json";
+import skillGroups from "./data/skill_groups.json";
 
 export const ENGINE_VERSION = "tailor-lite-0.1.0";
 
-const DATA = { profile, library };
+const DATA = { profile, library, skillGroups };
 
 // Scan a template, extract keywords, and map each placeholder to a strategy +
 // proposed value. Shared by getProposals and the render path.
