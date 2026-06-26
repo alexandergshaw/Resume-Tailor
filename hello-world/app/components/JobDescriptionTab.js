@@ -51,7 +51,7 @@ export default function JobDescriptionTab({
           >
             Ask AI
           </Button>
-          {(tailorEngine === "external" || tailorEngine === "embedded") && onReviewFields ? (
+          {tailorEngine === "external" && onReviewFields ? (
             <Button
               variant="outlined"
               sx={{ ml: 1 }}

@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { embeddedEngine } from "./engine.js";
-import { loadDocx, scanPlaceholders } from "./docxModel.js";
 
 const POSTING = [
   "Senior Backend Engineer",
@@ -16,14 +15,10 @@ const POSTING = [
 ].join("\n");
 
 describe("embeddedEngine.getProposals", () => {
-  it("returns slots with strategies and keywords", async () => {
+  it("returns keywords and an empty slot list (the résumé has no placeholders)", async () => {
     const data = await embeddedEngine.getProposals({ jobPosting: POSTING });
     expect(Array.isArray(data.slots)).toBe(true);
-    expect(data.slots.length).toBeGreaterThan(0);
-
-    const byKey = Object.fromEntries(data.slots.map((s) => [s.key, s]));
-    expect(byKey["CORE_COMPETENCIES::0"].strategy).toBe("competencies");
-    expect(byKey["CORE_COMPETENCIES::0"].value.length).toBeGreaterThan(0);
+    expect(data.slots.length).toBe(0);
     expect(data.keywords.technology.some((t) => t.canonical === "Python")).toBe(true);
   });
 
@@ -33,38 +28,17 @@ describe("embeddedEngine.getProposals", () => {
 });
 
 describe("embeddedEngine.tailorResume", () => {
-  it("returns a base64 .docx plus a report with unfilled keys", async () => {
+  it("returns the owner's résumé verbatim as a base64 .docx", async () => {
     const res = await embeddedEngine.tailorResume({ jobPosting: POSTING });
     expect(typeof res.docxB64).toBe("string");
     expect(res.docxB64.length).toBeGreaterThan(200);
     expect(res.resultLines.length).toBeGreaterThan(0);
-    expect(Array.isArray(res.report.unfilled)).toBe(true);
     expect(res.report.meta).toEqual({ renderer: "local", workflow: "legacy" });
-    // Looks like a finished résumé: real identity, no leaked placeholders.
+    // Faithful copy: real identity, nothing injected, nothing left unfilled.
     expect(res.result).toContain("Alex Shaw");
+    expect(res.result).not.toContain("Most relevant to this role");
     expect(res.result).not.toContain("{{");
-  });
-
-  it("leaves a placeholder visible when overridden with an empty value", async () => {
-    const res = await embeddedEngine.tailorResume({
-      jobPosting: POSTING,
-      values: { "CORE_COMPETENCIES::0": "" },
-    });
-    expect(res.report.unfilled).toContain("CORE_COMPETENCIES::0");
-
-    const doc = await loadDocx(Buffer.from(res.docxB64, "base64"));
-    expect(scanPlaceholders(doc).map((s) => s.key)).toContain("CORE_COMPETENCIES::0");
-  });
-
-  it("applies an override value to the document", async () => {
-    const res = await embeddedEngine.tailorResume({
-      jobPosting: POSTING,
-      values: { "CORE_COMPETENCIES::0": "Kubernetes, GraphQL" },
-    });
-    expect(res.resultLines.some((l) => l.includes("Kubernetes, GraphQL"))).toBe(true);
-    const slot = res.report.slots.find((s) => s.key === "CORE_COMPETENCIES::0");
-    expect(slot.source).toBe("overridden");
-    expect(slot.final_value).toBe("Kubernetes, GraphQL");
+    expect(res.report.unfilled).toEqual([]);
   });
 
   it("is deterministic: identical input yields byte-identical output", async () => {
