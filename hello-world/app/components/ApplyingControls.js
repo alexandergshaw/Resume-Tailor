@@ -234,11 +234,16 @@ export default function ApplyingControls({
                 <ToggleButton value="external" sx={{ textTransform: "none", px: 1.5 }}>
                   Resume Tailor API
                 </ToggleButton>
+                <ToggleButton value="embedded" sx={{ textTransform: "none", px: 1.5 }}>
+                  Embedded (no AI)
+                </ToggleButton>
               </ToggleButtonGroup>
               <Box sx={{ fontSize: "0.75rem", color: "var(--text-secondary)", mt: 0.5 }}>
                 {tailorEngine === "external"
                   ? "Uses the Resume Tailor API's own template; returns a finished .docx."
-                  : "Rewrites your uploaded resume's lines with Gemini."}
+                  : tailorEngine === "embedded"
+                    ? "Deterministic in-app engine: fills a built-in template from a keyword/profile/library match — no AI, no network."
+                    : "Rewrites your uploaded resume's lines with Gemini."}
               </Box>
             </div>
             <div className={styles.fieldGroup}>

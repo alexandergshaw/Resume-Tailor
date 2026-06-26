@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
-import { externalEngine } from "@/lib/llm/engines/externalEngine";
+import { getEngine, resolveEngineName } from "@/lib/llm/engines";
+import { getServerEnv } from "@/lib/config/env";
 
 export const runtime = "nodejs";
 
 const MAX_POSTING_CHARS = 20000;
 
-// Proxy the external Resume Tailor API's /proposals endpoint so a client can
-// review/override each placeholder slot, then generate with edited `values`.
-// Only meaningful for the external engine; the API key stays server-side.
+// Fetch the proposed placeholder slots for a posting so a client can
+// review/override each one, then generate with edited `values`. Routes to the
+// selected engine (per-request `engine`, falling back to the server default).
+// Only the "external" and "embedded" engines implement proposals; engines
+// without it (e.g. Gemini) return 400.
 export async function POST(request) {
   let body;
   try {
@@ -22,8 +25,25 @@ export async function POST(request) {
     return NextResponse.json({ error: "posting is required." }, { status: 400 });
   }
 
+  let defaultEngine = "gemini";
   try {
-    const data = await externalEngine.getProposals({ jobPosting: posting });
+    defaultEngine = getServerEnv().resumeEngine;
+  } catch {
+    // Missing server env (e.g. no Gemini key) shouldn't block the embedded
+    // engine; fall back to the requested engine / "gemini".
+  }
+  const engineName = resolveEngineName(body?.engine, defaultEngine);
+  const engine = getEngine(engineName);
+
+  if (typeof engine.getProposals !== "function") {
+    return NextResponse.json(
+      { error: `The "${engineName}" engine does not support field review.` },
+      { status: 400 },
+    );
+  }
+
+  try {
+    const data = await engine.getProposals({ jobPosting: posting });
     return NextResponse.json(data);
   } catch (err) {
     const status = err?.code === "ENGINE_NOT_CONFIGURED" ? 503 : 502;

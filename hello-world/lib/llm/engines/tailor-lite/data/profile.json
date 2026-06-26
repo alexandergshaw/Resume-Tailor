@@ -1,0 +1,24 @@
+{
+  "_comment": "User-editable. Keys are normalized placeholder names (UPPER_SNAKE_CASE). A placeholder whose name appears here is filled with the matching value via the 'profile' strategy; missing keys fall through to other strategies or MANUAL.",
+  "values": {
+    "FULL_NAME": "Alex Morgan",
+    "CURRENT_EMPLOYER": "Northwind Labs",
+    "RANK": "Senior",
+    "TOP_RANK": "Principal",
+    "MEDIUM_RANK": "Senior",
+    "LOW_RANK": "Mid-level",
+    "YEARS_OF_EXPERIENCE": "8",
+    "PRIMARY_FUNCTION": "Software Engineer",
+    "FUNCTION": "Engineering",
+    "SPECIALIZATION": "Backend & cloud infrastructure",
+    "TEAM_SIZE": "10",
+    "BUDGET_SCALE": "$3M",
+    "LEADERSHIP_SCOPE": "cross-functional teams of up to 12",
+    "ORG_SCALE": "a 200-person engineering organization",
+    "TECHNICAL_SKILLS_HEADER": "Technical Skills",
+    "TOOLS_HEADER": "Tools & Platforms",
+    "METHODOLOGIES_HEADER": "Delivery Practices",
+    "LEADERSHIP_HEADER": "Leadership",
+    "DOMAINS_HEADER": "Domains"
+  }
+}

@@ -20,7 +20,8 @@ export function getServerEnv() {
     resendApiKey: process.env.RESEND_API_KEY || null,
     emailFrom: process.env.EMAIL_FROM || null,
     // Document-generation engine selection. Default keeps the existing Gemini
-    // pipeline; "external" routes to the standalone Resume Tailor API.
+    // pipeline; "external" routes to the standalone Resume Tailor API;
+    // "embedded" uses the in-process, deterministic (no-LLM) tailor-lite engine.
     resumeEngine: (process.env.RESUME_ENGINE || "gemini").trim().toLowerCase(),
     resumeTailorApiUrl: process.env.RESUME_TAILOR_API_URL || null,
     resumeTailorApiKey: process.env.RESUME_TAILOR_API_KEY || null,

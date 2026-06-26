@@ -353,8 +353,9 @@ export default function Home() {
   const fabDragStartRef = useRef(null);
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
   const [aggressiveness, setAggressiveness] = useState(3);
-  // Document-generation engine: "gemini" (LLM line-rewrite) or "external"
-  // (Resume Tailor API). Sent with every tailor request; persisted locally.
+  // Document-generation engine: "gemini" (LLM line-rewrite), "external" (Resume
+  // Tailor API), or "embedded" (in-process deterministic engine). Sent with
+  // every tailor request; persisted locally.
   const [tailorEngine, setTailorEngine] = useState("gemini");
   // External-engine "review fields" flow: fetched proposal slots the user can
   // edit before generating the document with those `values`.
@@ -476,7 +477,7 @@ export default function Home() {
       setAggressiveness(savedAggressiveness);
     }
     const savedEngine = localStorage.getItem("tailorEngine");
-    if (savedEngine === "gemini" || savedEngine === "external") {
+    if (savedEngine === "gemini" || savedEngine === "external" || savedEngine === "embedded") {
       setTailorEngine(savedEngine);
     }
   }, []);
@@ -3564,7 +3565,7 @@ export default function Home() {
       const res = await fetch("/api/tailor/proposals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ posting }),
+        body: JSON.stringify({ posting, engine: tailorEngine }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {

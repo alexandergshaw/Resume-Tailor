@@ -1,0 +1,17 @@
+{
+  "_comment": "User-editable. Each entry can fill one of the accomplishment slots listed in `slots`. The engine picks the entry whose tags/text best match the posting's keywords, uses each entry at most once, and surfaces the rest as `candidates`.",
+  "entries": [
+    { "id": "lib-001", "slots": ["MEASURABLE_IMPACT"], "text": "a 70% reduction in deployment time", "tags": ["CI/CD", "DevOps", "automation"] },
+    { "id": "lib-002", "slots": ["MEASURABLE_IMPACT"], "text": "a 40% improvement in API p95 latency", "tags": ["performance", "backend", "API"] },
+    { "id": "lib-003", "slots": ["MEASURABLE_IMPACT"], "text": "99.99% uptime across customer-facing services", "tags": ["reliability", "SRE", "observability"] },
+    { "id": "lib-004", "slots": ["SOLUTION_DELIVERED"], "text": "a self-service internal platform that cut onboarding from weeks to hours", "tags": ["platform", "developer experience", "Kubernetes"] },
+    { "id": "lib-005", "slots": ["SOLUTION_DELIVERED"], "text": "an event-driven notification service adopted by 12 teams", "tags": ["event-driven", "messaging", "AWS"] },
+    { "id": "lib-006", "slots": ["ACTION_RESULT"], "text": "Led the migration of a monolith to microservices, tripling release cadence", "tags": ["microservices", "architecture", "AWS"] },
+    { "id": "lib-007", "slots": ["ACTION_RESULT"], "text": "Built a real-time data pipeline processing two billion events per day", "tags": ["data engineering", "Kafka", "streaming"] },
+    { "id": "lib-008", "slots": ["ACTION_RESULT"], "text": "Mentored six engineers and established the team's code-review standards", "tags": ["leadership", "mentoring", "quality"] },
+    { "id": "lib-009", "slots": ["SCOPE_OF_OWNERSHIP"], "text": "end-to-end ownership of the billing and payments domain", "tags": ["payments", "domain", "backend"] },
+    { "id": "lib-010", "slots": ["SCOPE_OF_OWNERSHIP"], "text": "the company's CI/CD and developer-tooling roadmap", "tags": ["CI/CD", "tooling", "developer experience"] },
+    { "id": "lib-011", "slots": ["PROJECT_TYPE"], "text": "a cloud cost-optimization initiative", "tags": ["FinOps", "AWS", "cost"] },
+    { "id": "lib-012", "slots": ["PROJECT_TYPE"], "text": "a zero-downtime database migration", "tags": ["databases", "PostgreSQL", "reliability"] }
+  ]
+}

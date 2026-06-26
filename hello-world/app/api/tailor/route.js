@@ -157,7 +157,14 @@ export async function POST(request) {
 
     // Select the document-generation engine: per-request override falls back to
     // the server default (RESUME_ENGINE). Unknown names degrade to "gemini".
-    const { resumeEngine: defaultEngine } = getServerEnv();
+    // Read the default resiliently so the no-LLM "embedded" engine still works
+    // when the Gemini key (required only by the Gemini engine) is absent.
+    let defaultEngine = "gemini";
+    try {
+      defaultEngine = getServerEnv().resumeEngine;
+    } catch {
+      defaultEngine = (process.env.RESUME_ENGINE || "gemini").trim().toLowerCase();
+    }
     const engineName = resolveEngineName(
       formData.get("engine")?.toString() || "",
       defaultEngine,
