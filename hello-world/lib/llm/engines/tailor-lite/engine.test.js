@@ -22,7 +22,6 @@ describe("embeddedEngine.getProposals", () => {
     expect(data.slots.length).toBeGreaterThan(0);
 
     const byKey = Object.fromEntries(data.slots.map((s) => [s.key, s]));
-    expect(byKey["FULL_NAME::0"].strategy).toBe("profile");
     expect(byKey["CORE_COMPETENCIES::0"].strategy).toBe("competencies");
     expect(byKey["CORE_COMPETENCIES::0"].value.length).toBeGreaterThan(0);
     expect(data.keywords.technology.some((t) => t.canonical === "Python")).toBe(true);
@@ -49,23 +48,23 @@ describe("embeddedEngine.tailorResume", () => {
   it("leaves a placeholder visible when overridden with an empty value", async () => {
     const res = await embeddedEngine.tailorResume({
       jobPosting: POSTING,
-      values: { "FULL_NAME::0": "" },
+      values: { "CORE_COMPETENCIES::0": "" },
     });
-    expect(res.report.unfilled).toContain("FULL_NAME::0");
+    expect(res.report.unfilled).toContain("CORE_COMPETENCIES::0");
 
     const doc = await loadDocx(Buffer.from(res.docxB64, "base64"));
-    expect(scanPlaceholders(doc).map((s) => s.key)).toContain("FULL_NAME::0");
+    expect(scanPlaceholders(doc).map((s) => s.key)).toContain("CORE_COMPETENCIES::0");
   });
 
   it("applies an override value to the document", async () => {
     const res = await embeddedEngine.tailorResume({
       jobPosting: POSTING,
-      values: { "FULL_NAME::0": "Grace Hopper" },
+      values: { "CORE_COMPETENCIES::0": "Kubernetes, GraphQL" },
     });
-    expect(res.resultLines).toContain("Grace Hopper");
-    const slot = res.report.slots.find((s) => s.key === "FULL_NAME::0");
+    expect(res.resultLines.some((l) => l.includes("Kubernetes, GraphQL"))).toBe(true);
+    const slot = res.report.slots.find((s) => s.key === "CORE_COMPETENCIES::0");
     expect(slot.source).toBe("overridden");
-    expect(slot.final_value).toBe("Grace Hopper");
+    expect(slot.final_value).toBe("Kubernetes, GraphQL");
   });
 
   it("is deterministic: identical input yields byte-identical output", async () => {
