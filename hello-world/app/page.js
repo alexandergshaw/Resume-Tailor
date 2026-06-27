@@ -10,7 +10,7 @@ import LiveFeedTab from "./components/LiveFeedTab";
 import ChatPanel from "./components/ChatPanel";
 import StatusBar from "./components/StatusBar";
 import BatchTailorDialog from "./components/BatchTailorDialog";
-import ResumePreviewDialog from "./components/ResumePreviewDialog";
+import DocumentPreviewDialog from "./components/DocumentPreviewDialog";
 import SlotReviewDialog from "./components/SlotReviewDialog";
 import {
   buildJobContextString,
@@ -28,7 +28,9 @@ import {
   createDocumentDownloaders,
   extractResumeTextLines,
   triggerBlobDownload,
+  base64ToDocxBlob,
 } from "../lib/document/docx";
+import { parseDocxToModel, linesToModel } from "../lib/document/docxPreview";
 import { parseEmploymentHistory } from "../lib/resume/parseEmployment";
 import {
   listMaterials,
@@ -249,13 +251,15 @@ export default function Home() {
   const [isSearching, setIsSearching] = useState(false);
   const [jobSearchError, setJobSearchError] = useState("");
   const [tailoringMap, setTailoringMap] = useState({});
-  // Preview/edit modal for a tracked posting's tailored resume (opened from the
-  // status-bar chips). `jobId` keys into tailoringMap for the current text.
+  // Preview/edit modal for a tracked posting's tailored resume + cover letter
+  // (opened from the status-bar chips). `jobId` keys into tailoringMap for the
+  // current text; `tab` is the document to open on ("resume" | "cover").
   const [resumePreview, setResumePreview] = useState({
     open: false,
     jobId: null,
     title: "",
     company: "",
+    tab: "resume",
     busy: false,
     notice: "",
     error: "",
@@ -2799,14 +2803,24 @@ export default function Home() {
   });
 
   // ── Resume preview/edit modal (opened from the status-bar chips) ──────────
-  function openResumePreview(job) {
+  // Does the tailoring entry have content for a given scope?
+  function previewScopeAvailable(entry, scope) {
+    if (!entry) return false;
+    if (scope === "cover") {
+      return Array.isArray(entry.coverLetterResultLines) && entry.coverLetterResultLines.length > 0;
+    }
+    return typeof entry.result === "string" && entry.result.trim().length > 0;
+  }
+  function openResumePreview(job, opts = {}) {
     if (!job) return;
     const t = tailoringMap[job.id] || {};
+    const wantsCover = opts.tab === "cover" && previewScopeAvailable(t, "cover");
     setResumePreview({
       open: true,
       jobId: job.id,
       title: t.generatedJobTitle || job.title || "",
       company: job.company || "",
+      tab: wantsCover ? "cover" : "resume",
       busy: false,
       notice: "",
       error: "",
@@ -2815,46 +2829,97 @@ export default function Home() {
   function closeResumePreview() {
     setResumePreview((prev) => ({ ...prev, open: false }));
   }
-  // Save edits back to the tailoring entry so this becomes the resume the
-  // posting's chip uses for download / drag / posting-link this session.
-  function saveResumePreview(text) {
+  // The faithful .docx blob for a scope: serve the engine's finished doc when
+  // unedited, otherwise rebuild from the (edited) text through the user's
+  // template so formatting is preserved.
+  async function buildPreviewBlob(scope) {
+    const entry = tailoringMap[resumePreview.jobId] || {};
+    if (scope === "cover") {
+      const lines = Array.isArray(entry.coverLetterResultLines) ? entry.coverLetterResultLines : [];
+      if (!entry.edited && typeof entry.coverLetterDocxB64 === "string" && entry.coverLetterDocxB64) {
+        return base64ToDocxBlob(entry.coverLetterDocxB64);
+      }
+      if (isDocxResume(coverLetterFile)) {
+        return buildDocxFromUploadedTemplate(coverLetterFile, lines.join("\n"), lines);
+      }
+      return null; // plain-text fallback handled by the loader
+    }
+    const lines = Array.isArray(entry.resultLines) ? entry.resultLines : [];
+    if (!entry.edited && typeof entry.docxB64 === "string" && entry.docxB64) {
+      return base64ToDocxBlob(entry.docxB64);
+    }
+    if (isDocxResume(resumeFile)) {
+      return buildDocxFromUploadedTemplate(resumeFile, entry.result || "", lines);
+    }
+    return null;
+  }
+  // Parse the active document into a render model for the preview dialog. Falls
+  // back to a plain-text model when there is no .docx template to mirror.
+  async function loadPreviewModel(scope) {
+    const entry = tailoringMap[resumePreview.jobId] || {};
+    const blob = await buildPreviewBlob(scope);
+    if (blob) return parseDocxToModel(await blob.arrayBuffer());
+    const lines =
+      scope === "cover"
+        ? entry.coverLetterResultLines || []
+        : entry.resultLines || String(entry.result || "").split("\n");
+    return linesToModel(lines);
+  }
+  // The text + line payload currently stored for a scope (seed for the editor).
+  function previewScopeText(entry, scope) {
+    if (scope === "cover") {
+      const lines = Array.isArray(entry?.coverLetterResultLines) ? entry.coverLetterResultLines : [];
+      return lines.join("\n");
+    }
+    return entry?.result || "";
+  }
+  // Save edits back to the tailoring entry so this becomes the document the
+  // posting's chip uses for download / drag this session.
+  function saveDocumentPreview(scope, payload) {
     const jobId = resumePreview.jobId;
     if (!jobId) return;
-    const lines = String(text || "").split("\n");
-    // Mark edited so downloads rebuild from the edited text rather than serving
-    // the external engine's original finished doc.
-    setTailoringMap((current) => ({
-      ...current,
-      [jobId]: {
-        ...(current[jobId] || {}),
-        status: current[jobId]?.status || "done",
-        result: text,
-        resultLines: lines,
-        edited: true,
-      },
-    }));
+    const text = typeof payload === "string" ? payload : payload?.text || "";
+    const html = typeof payload === "object" ? payload?.html : undefined;
+    const lines = text.split("\n");
+    setTailoringMap((current) => {
+      const entry = current[jobId] || {};
+      const next =
+        scope === "cover"
+          ? { ...entry, coverLetterResultLines: lines, coverLetterPreviewHtml: html, edited: true }
+          : { ...entry, result: text, resultLines: lines, resumePreviewHtml: html, edited: true };
+      return { ...current, [jobId]: { ...next, status: entry.status || "done" } };
+    });
     setResumePreview((prev) => ({
       ...prev,
-      notice: "Saved — this is now the resume for this posting.",
+      notice: `Saved — this is now the ${scope === "cover" ? "cover letter" : "resume"} for this posting.`,
       error: "",
     }));
   }
-  async function downloadResumePreview(text) {
-    const lines = String(text || "").split("\n");
+  async function downloadDocumentPreview(scope, payload) {
+    const text = typeof payload === "string" ? payload : payload?.text || "";
+    const lines = text.split("\n");
     setResumePreview((prev) => ({ ...prev, busy: true, error: "", notice: "" }));
-    // Serve the external engine's finished doc only when the text is unchanged
-    // and unedited; otherwise render the (edited) text via the template path.
     const entry = tailoringMap[resumePreview.jobId] || {};
-    const unchanged = text === (entry.result || "");
-    const docxB64 = !entry.edited && unchanged && typeof entry.docxB64 === "string" ? entry.docxB64 : "";
-    const err = await downloadDocxFiles({
+    const unchanged = text === previewScopeText(entry, scope);
+    const serveFinished = !entry.edited && unchanged;
+    const args = {
       jobTitle: resumePreview.title,
       company: resumePreview.company,
-      result: text,
-      resultLines: lines,
+      result: "",
+      resultLines: [],
       coverLetterResultLines: [],
-      docxB64,
-    });
+      docxB64: "",
+      coverLetterDocxB64: "",
+    };
+    if (scope === "cover") {
+      args.coverLetterResultLines = lines;
+      if (serveFinished && typeof entry.coverLetterDocxB64 === "string") args.coverLetterDocxB64 = entry.coverLetterDocxB64;
+    } else {
+      args.result = text;
+      args.resultLines = lines;
+      if (serveFinished && typeof entry.docxB64 === "string") args.docxB64 = entry.docxB64;
+    }
+    const err = await downloadDocxFiles(args);
     setResumePreview((prev) => ({ ...prev, busy: false, error: err || "" }));
   }
 
@@ -4478,16 +4543,27 @@ export default function Home() {
         openResumePreview={openResumePreview}
       />
 
-      <ResumePreviewDialog
+      <DocumentPreviewDialog
         open={resumePreview.open}
         jobTitle={resumePreview.title}
         company={resumePreview.company}
-        initialValue={tailoringMap[resumePreview.jobId]?.result || ""}
+        initialTab={resumePreview.tab}
+        scopes={{
+          resume: {
+            available: previewScopeAvailable(tailoringMap[resumePreview.jobId], "resume"),
+            text: tailoringMap[resumePreview.jobId]?.result || "",
+            html: tailoringMap[resumePreview.jobId]?.resumePreviewHtml,
+          },
+          cover: {
+            available: previewScopeAvailable(tailoringMap[resumePreview.jobId], "cover"),
+            text: (tailoringMap[resumePreview.jobId]?.coverLetterResultLines || []).join("\n"),
+            html: tailoringMap[resumePreview.jobId]?.coverLetterPreviewHtml,
+          },
+        }}
+        loadModel={loadPreviewModel}
         onClose={closeResumePreview}
-        onSave={saveResumePreview}
-        onDownload={downloadResumePreview}
-        downloadDisabled={!isDocxResume(resumeFile)}
-        downloadHint="Upload your source resume as .docx to download."
+        onSave={saveDocumentPreview}
+        onDownload={downloadDocumentPreview}
         busy={resumePreview.busy}
         notice={resumePreview.notice}
         error={resumePreview.error}

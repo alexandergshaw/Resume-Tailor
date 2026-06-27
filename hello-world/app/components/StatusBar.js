@@ -96,8 +96,17 @@ export default function StatusBar({
   const menuJob = menu.jobId ? trackedJobs.find((j) => j.id === menu.jobId) : null;
   const menuFlags = menuJob ? jobFlags(menuJob) : null;
 
+  // Whether a tailoring entry has resume / cover-letter content to preview.
+  function previewable(tailoring) {
+    const hasResume = typeof tailoring?.result === "string" && tailoring.result.trim().length > 0;
+    const hasCover =
+      Array.isArray(tailoring?.coverLetterResultLines) && tailoring.coverLetterResultLines.length > 0;
+    return { hasResume, hasCover, hasAny: hasResume || hasCover };
+  }
+
   function renderChip(job) {
     const { tailoring, status } = jobFlags(job);
+    const { hasResume, hasAny } = previewable(tailoring);
     const stateClass =
       status === "done"
         ? ` ${styles.toolbarChipDone}`
@@ -122,13 +131,17 @@ export default function StatusBar({
           <span className={styles.toolbarChipBadge}>Generating…</span>
         ) : null}
         <div className={styles.toolbarChipActions}>
-          {status === "done" && tailoring.result ? (
+          {status === "done" && hasAny ? (
             <span
               role="button"
               tabIndex={0}
-              draggable={isDocxResume(resumeFile)}
+              draggable={hasResume && isDocxResume(resumeFile)}
               className={styles.toolbarChipBtn}
-              title={isDocxResume(resumeFile) ? "Preview / edit resume · drag to upload" : "Preview / edit resume"}
+              title={
+                hasResume && isDocxResume(resumeFile)
+                  ? "Preview / edit resume & cover letter · drag to upload"
+                  : "Preview / edit resume & cover letter"
+              }
               style={{ cursor: "pointer", display: "inline-flex", alignItems: "center" }}
               onClick={() => openResumePreview?.(job)}
               onKeyDown={(e) => {
@@ -245,9 +258,14 @@ export default function StatusBar({
       <Menu anchorEl={menu.anchorEl} open={Boolean(menu.anchorEl)} onClose={closeMenu}>
         {menuJob && menuFlags
           ? [
-              menuFlags.status === "done" && menuFlags.tailoring.result ? (
+              menuFlags.status === "done" && previewable(menuFlags.tailoring).hasAny ? (
                 <MenuItem key="preview" onClick={() => runAndClose(() => openResumePreview?.(menuJob))}>
-                  Preview / edit résumé
+                  Preview / edit documents
+                </MenuItem>
+              ) : null,
+              menuFlags.status === "done" && previewable(menuFlags.tailoring).hasCover ? (
+                <MenuItem key="preview-cover" onClick={() => runAndClose(() => openResumePreview?.(menuJob, { tab: "cover" }))}>
+                  Preview cover letter
                 </MenuItem>
               ) : null,
               <MenuItem key="download" onClick={() => runAndClose(() => downloadResumeForChipJob(menuJob))}>
