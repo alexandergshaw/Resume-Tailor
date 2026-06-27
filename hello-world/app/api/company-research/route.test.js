@@ -3,10 +3,12 @@ import { jsonRequest } from "../../../test/helpers/supabaseMock.js";
 
 vi.mock("@/lib/config/env", () => ({ getServerEnv: vi.fn() }));
 vi.mock("@/lib/llm/geminiClient", () => ({ getGeminiClient: vi.fn() }));
+vi.mock("@/lib/scrape/fetchUrlContent", () => ({ fetchUrlContent: vi.fn() }));
 
 import { POST, parseArticles, extractGroundingSources } from "./route.js";
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
+import { fetchUrlContent } from "@/lib/scrape/fetchUrlContent";
 
 const ARTICLES_JSON = JSON.stringify({
   articles: [
@@ -79,5 +81,43 @@ describe("POST /api/company-research", () => {
     });
     const res = await POST(jsonRequest({ company: "Acme" }));
     expect(res.status).toBe(503);
+  });
+});
+
+describe("POST /api/company-research (custom URL mode)", () => {
+  it("summarizes a pasted article URL into one source", async () => {
+    getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
+    fetchUrlContent.mockResolvedValue({ title: "Acme opens new lab", description: "Acme opened a research lab." });
+    getGeminiClient.mockReturnValue({
+      models: {
+        generateContent: vi.fn().mockResolvedValue({
+          text: '{"articles":[{"title":"Acme opens new lab","source":"TechNews","date":"2026","url":"x","summary":"New lab.","suggestion":"I admire Acme\'s new lab."}]}',
+        }),
+      },
+    });
+    const res = await POST(jsonRequest({ url: "https://news.example/acme-lab", company: "Acme" }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.articles).toHaveLength(1);
+    expect(data.articles[0].url).toBe("https://news.example/acme-lab"); // keeps the real URL
+    expect(data.articles[0].suggestion).toContain("Acme");
+  });
+
+  it("falls back to a title-only card when Gemini isn't configured", async () => {
+    getServerEnv.mockImplementation(() => {
+      throw new Error("Missing required environment variables: Gemini_LLM_API_Key");
+    });
+    fetchUrlContent.mockResolvedValue({ title: "Acme opens new lab", description: "..." });
+    const res = await POST(jsonRequest({ url: "https://news.example/acme-lab" }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.articles[0].title).toBe("Acme opens new lab");
+    expect(data.articles[0].suggestion).toBe("");
+    expect(data.warnings.length).toBeGreaterThan(0);
+  });
+
+  it("400s on a non-http URL", async () => {
+    const res = await POST(jsonRequest({ url: "ftp://nope" }));
+    expect(res.status).toBe(400);
   });
 });

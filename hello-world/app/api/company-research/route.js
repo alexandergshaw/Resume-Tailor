@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { getServerEnv } from "@/lib/config/env";
+import { fetchUrlContent } from "@/lib/scrape/fetchUrlContent";
 
 export const runtime = "nodejs";
 
 const MAX_POSTING_CHARS = 6000;
+const MAX_ARTICLE_CHARS = 6000;
 const WANT = 3;
 
 // Pull the first JSON array (or {articles:[...]}) out of a model text response.
@@ -74,6 +76,76 @@ function buildPrompt({ company, jobTitle, posting }) {
     .join("\n");
 }
 
+function hostOf(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+// A user-supplied article URL → one source card. Fetches the page and, when
+// Gemini is configured, summarizes it into {title, source, date, summary,
+// suggestion}; otherwise returns a title-only card with a blank suggestion to edit.
+async function researchUrl({ url, company, jobTitle }) {
+  const scraped = await fetchUrlContent(url);
+  if (scraped.error) {
+    return NextResponse.json(
+      { error: `Couldn't read that URL (${scraped.error}).` },
+      { status: 502 },
+    );
+  }
+  const baseArticle = {
+    id: "art-url",
+    title: scraped.title || hostOf(url) || "Article",
+    source: hostOf(url),
+    date: "",
+    url,
+    summary: "",
+    suggestion: "",
+  };
+
+  let model;
+  let client;
+  try {
+    model = getServerEnv().geminiModel;
+    client = getGeminiClient();
+  } catch {
+    return NextResponse.json({
+      articles: [baseArticle],
+      grounded: [{ uri: url, title: baseArticle.title }],
+      warnings: ["Added without an AI summary (no Gemini key) — write the suggestion yourself."],
+    });
+  }
+
+  const prompt = [
+    "You are helping a job applicant reference a news article in a cover letter.",
+    `The applicant is applying${company ? ` to "${company}"` : ""}${jobTitle ? ` for the "${jobTitle}" role` : ""}.`,
+    "From the article text below, produce one JSON object describing it for the applicant to reference.",
+    'Return ONLY: {"articles":[{"title":"","source":"","date":"","url":"","summary":"","suggestion":""}]}',
+    "- summary: 1-2 sentences on the relevant, positive angle.",
+    "- suggestion: ONE first-person sentence the applicant could use in a cover letter to reference it (sincere, specific, not flattery).",
+    `- url: ${url}`,
+    "",
+    `Article (title: ${baseArticle.title}):`,
+    String(scraped.description || "").slice(0, MAX_ARTICLE_CHARS),
+  ].join("\n");
+
+  try {
+    const response = await client.models.generateContent({ model, contents: prompt });
+    const parsed = parseArticles(response?.text || "");
+    const a = parsed[0];
+    if (!a) return NextResponse.json({ articles: [baseArticle], grounded: [{ uri: url }], warnings: [] });
+    return NextResponse.json({
+      articles: [{ ...baseArticle, ...a, url, source: a.source || baseArticle.source }],
+      grounded: [{ uri: url, title: a.title || baseArticle.title }],
+      warnings: [],
+    });
+  } catch {
+    return NextResponse.json({ articles: [baseArticle], grounded: [{ uri: url }], warnings: [] });
+  }
+}
+
 export async function POST(request) {
   let body;
   try {
@@ -85,6 +157,16 @@ export async function POST(request) {
   const company = typeof body?.company === "string" ? body.company.trim() : "";
   const jobTitle = typeof body?.jobTitle === "string" ? body.jobTitle.trim() : "";
   const posting = typeof body?.posting === "string" ? body.posting : "";
+  const url = typeof body?.url === "string" ? body.url.trim() : "";
+
+  // Custom-URL mode: the user pasted an article they found.
+  if (url) {
+    if (!/^https?:\/\//i.test(url)) {
+      return NextResponse.json({ error: "Enter a valid http(s) article URL." }, { status: 400 });
+    }
+    return researchUrl({ url, company, jobTitle });
+  }
+
   if (!company) {
     return NextResponse.json({ error: "A company name is required to research." }, { status: 400 });
   }

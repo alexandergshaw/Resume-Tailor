@@ -32,6 +32,7 @@ import {
   base64ToDocxBlob,
 } from "../lib/document/docx";
 import { parseDocxToModel, linesToModel } from "../lib/document/docxPreview";
+import { weaveSources } from "../lib/document/coverLetterWeave";
 import { parseEmploymentHistory } from "../lib/resume/parseEmployment";
 import {
   listMaterials,
@@ -2949,19 +2950,31 @@ export default function Home() {
   }
 
   // --- Company research (recent positive articles for the cover letter) ------
-  // Insert the chosen reference(s) into the cover letter's OPENING paragraph,
-  // right after its first sentence (mid-letter, not the end).
-  function weaveExcerptsIntoIntro(lines, excerpt) {
-    const out = Array.isArray(lines) ? [...lines] : [];
-    const text = String(excerpt || "").trim();
-    if (!text || out.length === 0) return out;
-    // Intro = first substantive line after the greeting.
-    let i = out.findIndex((l, idx) => idx > 0 && l.trim().length > 40);
-    if (i < 0) i = out.length > 1 ? 1 : 0;
-    const intro = out[i] || "";
-    const m = intro.match(/^(.*?[.!?])(\s+)([\s\S]*)$/);
-    out[i] = (m ? `${m[1]} ${text} ${m[3]}` : `${intro} ${text}`).replace(/\s{2,}/g, " ").trim();
-    return out;
+  // Fetch + summarize a user-pasted article URL into a source card, merged into
+  // the dialog's article list.
+  async function addResearchUrl(url) {
+    try {
+      const res = await fetch("/api/company-research", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, company: companyResearch.company, jobTitle: companyResearch.jobTitle }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setCompanyResearch((prev) => ({ ...prev, error: data?.error || "Couldn't add that URL." }));
+        return;
+      }
+      const added = (data.articles || []).map((a, i) => ({ ...a, id: `url-${Date.now()}-${i}` }));
+      setCompanyResearch((prev) => ({
+        ...prev,
+        error: "",
+        needsCompany: false,
+        articles: [...(prev.articles || []), ...added],
+        warnings: [...(prev.warnings || []), ...(data.warnings || [])],
+      }));
+    } catch (err) {
+      setCompanyResearch((prev) => ({ ...prev, error: err.message || "Couldn't add that URL." }));
+    }
   }
 
   async function runCompanyResearchFetch({ jobId, company, jobTitle, posting }) {
@@ -3026,21 +3039,20 @@ export default function Home() {
     if (dlError) pending.setError?.(dlError);
   }
 
-  // Apply chosen references: weave into the intro, update the stored CL + the
-  // copyable panel, and (if a download was deferred) download the woven version.
-  async function applyCompanyResearch(chosen) {
+  // Apply chosen references at their chosen placements: weave them in, update the
+  // stored CL + the copyable panel, and (if deferred) download the woven version.
+  async function applyCompanyResearch(placements) {
     const jobId = companyResearch.jobId;
-    const picks = Array.isArray(chosen) ? chosen.filter((c) => c?.suggestion?.trim()) : [];
+    const picks = Array.isArray(placements) ? placements.filter((c) => c?.suggestion?.trim()) : [];
     setCompanyResearch((prev) => ({ ...prev, open: false }));
     if (!jobId || picks.length === 0) {
       await flushPendingDownload();
       return;
     }
     setCompanyResearchByJob((m) => ({ ...m, [jobId]: picks }));
-    const excerpt = picks.map((c) => c.suggestion.trim()).join(" ");
     // Compute from the current map synchronously so the deferred download uses
     // the woven lines (the setState updater runs later).
-    const wovenLines = weaveExcerptsIntoIntro(tailoringMap[jobId]?.coverLetterResultLines || [], excerpt);
+    const wovenLines = weaveSources(tailoringMap[jobId]?.coverLetterResultLines || [], picks);
     setTailoringMap((current) => ({
       ...current,
       [jobId]: {
@@ -4807,10 +4819,11 @@ export default function Home() {
         articles={companyResearch.articles}
         warnings={companyResearch.warnings}
         busy={companyResearch.busy}
+        coverLetterLines={tailoringMap[companyResearch.jobId]?.coverLetterResultLines || []}
         onClose={closeCompanyResearch}
         onApply={applyCompanyResearch}
         onResearch={researchTypedCompany}
-        placementNote="The chosen suggestion(s) are woven into your opening paragraph"
+        onAddUrl={addResearchUrl}
       />
 
       <SlotReviewDialog
