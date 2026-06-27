@@ -184,8 +184,16 @@ export async function fetchUrlContent(rawUrl, options = {}) {
     const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
     if (titleMatch) title = decodeHtmlEntities(titleMatch[1]).trim();
   }
+  // A browser <title> / og:title usually appends the site name after a pipe or
+  // middot ("Role | U-M Careers"); drop it so the title is just the role.
+  if (title) title = title.replace(/\s*[|·]\s+.*$/, "").trim() || title;
   if (!company) {
-    company = extractMetaContent(html, "property", "og:site_name") || "";
+    const siteName = extractMetaContent(html, "property", "og:site_name") || "";
+    // og:site_name is frequently the careers SITE, not the employer — skip those
+    // so a JSON-LD/heuristic employer name can win instead.
+    if (siteName && !/\b(careers?|jobs?|job board|talent|hiring|recruit)\b/i.test(siteName)) {
+      company = siteName;
+    }
   }
 
   if (!description) {

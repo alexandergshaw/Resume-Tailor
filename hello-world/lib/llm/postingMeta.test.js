@@ -44,4 +44,38 @@ describe("extractPostingMeta", () => {
     expect(extractPostingMeta("")).toEqual({ jobTitle: "", companyName: "" });
     expect(extractPostingMeta(null)).toEqual({ jobTitle: "", companyName: "" });
   });
+
+  it("handles a scraped page: strips the site suffix, skips nav junk, finds the org", () => {
+    // Mirrors careers.umich.edu scraped to text: <title> first, then nav chrome,
+    // a 'Working Title' label block, and the employer named in the body.
+    const posting = [
+      "Fall 2026 Course Assistant for UMSI | U-M Careers",
+      "Skip to main content",
+      "twitter",
+      "rss",
+      "Login",
+      "Help and FAQ",
+      "Main navigation",
+      "Home",
+      "Search Jobs",
+      "Job Summary",
+      "The University of Michigan School of Information (UMSI) is a progressive school.",
+      "Working Title",
+      "Fall 2026 Course Assistant for UMSI",
+      "Job Title",
+      "INSTRUCTIONAL AIDE (TEMP)",
+      "Department",
+      "School of Information",
+    ].join("\n");
+    const { jobTitle, companyName } = extractPostingMeta(posting);
+    expect(jobTitle).toBe("Fall 2026 Course Assistant for UMSI"); // 'Working Title' value, no '| U-M Careers'
+    expect(companyName).toBe("University of Michigan"); // not "Skip to main content"
+  });
+
+  it("detects corporate org suffixes (Inc/LLC/Technologies) and ignores leading 'The'", () => {
+    expect(extractPostingMeta("Backend Engineer\nGlobex Technologies is hiring engineers.").companyName).toBe(
+      "Globex Technologies",
+    );
+    expect(extractPostingMeta("Analyst\nThe Acme Corporation values data.").companyName).toBe("Acme Corporation");
+  });
 });
