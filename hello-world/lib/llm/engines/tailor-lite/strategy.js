@@ -307,15 +307,12 @@ function mapOne(slot, keywords, data, state) {
     return make("keywords", capabilityJoin(keywords, state.byCat, cats, limit, state.universe, state.allowGaps, avoid, occurrence), `Top ${cats.join("+")} keywords`);
   }
 
-  // 5) COURSE_TOPICS — N keywords led by technologies, leaving room for at least
-  // one people skill (rather than score-ranking the two categories together,
-  // which let soft skills lead on teaching-heavy postings).
+  // 5) COURSE_TOPICS — N technologies only, never people skills. Course topics
+  // should read as the technical subjects taught, not soft skills.
   if (COURSE_RE.test(name)) {
     const n = Number.parseInt((name.match(COURSE_COUNT_RE) || [])[1], 10) || 3;
-    const tech = capabilityPool(keywords, state.byCat, ["technology"], state.universe, state.allowGaps).slice(0, Math.max(1, n - 1));
-    const soft = capabilityPool(keywords, state.byCat, ["soft_skill"], state.universe, state.allowGaps);
-    const pool = [...tech, ...soft].filter((v, i, a) => a.indexOf(v) === i);
-    return make("keywords", emphasisSlice(pool, n, 0), `${n} course topics (tech-led)`);
+    const pool = capabilityPool(keywords, state.byCat, ["technology"], state.universe, state.allowGaps);
+    return make("keywords", emphasisSlice(pool, n, 0), `${n} course topics (technical)`);
   }
 
   // 6) LIBRARY_MATCH — real accomplishment / project fragments
