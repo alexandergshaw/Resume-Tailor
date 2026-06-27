@@ -272,6 +272,9 @@ export default function Home() {
     open: false,
     jobId: null,
     company: "",
+    jobTitle: "",
+    posting: "",
+    needsCompany: false,
     loading: false,
     busy: false,
     error: "",
@@ -279,6 +282,13 @@ export default function Home() {
     warnings: [],
   });
   const [companyResearchByJob, setCompanyResearchByJob] = useState({});
+  // When a Generate run produced a cover letter, the download is deferred until
+  // the research picker resolves (apply weaves references; skip/close downloads
+  // as-is). Held in a ref for synchronous access. { downloadArgs, setError }.
+  const pendingResearchRef = useRef(null);
+  // Notice shown after Generate when no company was known, so the user can paste
+  // one and run research manually. { jobId, jobTitle, posting } or null.
+  const [researchNotice, setResearchNotice] = useState(null);
   const [batchTailorState, setBatchTailorState] = useState({
     running: false,
     total: 0,
@@ -2939,38 +2949,38 @@ export default function Home() {
   }
 
   // --- Company research (recent positive articles for the cover letter) ------
-  function closeCompanyResearch() {
-    setCompanyResearch((prev) => ({ ...prev, open: false }));
+  // Insert the chosen reference(s) into the cover letter's OPENING paragraph,
+  // right after its first sentence (mid-letter, not the end).
+  function weaveExcerptsIntoIntro(lines, excerpt) {
+    const out = Array.isArray(lines) ? [...lines] : [];
+    const text = String(excerpt || "").trim();
+    if (!text || out.length === 0) return out;
+    // Intro = first substantive line after the greeting.
+    let i = out.findIndex((l, idx) => idx > 0 && l.trim().length > 40);
+    if (i < 0) i = out.length > 1 ? 1 : 0;
+    const intro = out[i] || "";
+    const m = intro.match(/^(.*?[.!?])(\s+)([\s\S]*)$/);
+    out[i] = (m ? `${m[1]} ${text} ${m[3]}` : `${intro} ${text}`).replace(/\s{2,}/g, " ").trim();
+    return out;
   }
-  async function openCompanyResearch(job) {
-    if (!job) return;
-    const t = tailoringMap[job.id] || {};
-    const company = (job.company || "").trim();
-    setCompanyResearch({
-      open: true,
-      jobId: job.id,
-      company,
-      loading: true,
-      busy: false,
-      error: company ? "" : "No company name is known for this posting.",
-      articles: [],
-      warnings: [],
-    });
-    if (!company) {
-      setCompanyResearch((prev) => ({ ...prev, loading: false }));
-      return;
-    }
+
+  async function runCompanyResearchFetch({ jobId, company, jobTitle, posting }) {
+    setCompanyResearch((prev) => ({ ...prev, jobId, company, loading: true, error: "", needsCompany: false }));
     try {
       const res = await fetch("/api/company-research", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          company,
-          jobTitle: t.generatedJobTitle || job.title || "",
-          posting: job.description || "",
-        }),
+        body: JSON.stringify({ company, jobTitle: jobTitle || "", posting: posting || "" }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      // Research isn't configured (no Gemini key): don't block the download with
+      // an error dialog — close, deliver the cover letter as-is, and note it.
+      if (res.status === 503) {
+        setCompanyResearch((prev) => ({ ...prev, open: false, loading: false }));
+        await flushPendingDownload();
+        setResearchNotice({ message: data?.error || "Company research is unavailable (Gemini key not configured)." });
+        return;
+      }
       if (!res.ok) throw new Error(data?.error || "Company research failed.");
       setCompanyResearch((prev) => ({
         ...prev,
@@ -2982,30 +2992,106 @@ export default function Home() {
       setCompanyResearch((prev) => ({ ...prev, loading: false, error: err.message || "Company research failed." }));
     }
   }
-  // Weave the chosen references into the cover letter: store them for the
-  // preview's copyable panel, and splice a short paragraph before the sign-off.
-  function applyCompanyResearch(chosen) {
+
+  // Open the research dialog. With a known company it fetches immediately; with
+  // none it shows an input so the user can paste one and kick it off.
+  function openCompanyResearch(job) {
+    if (!job) return;
+    const t = tailoringMap[job.id] || {};
+    const company = (job.company || "").trim();
+    const jobTitle = t.generatedJobTitle || job.title || "";
+    const posting = job.description || "";
+    setResearchNotice(null);
+    setCompanyResearch({
+      open: true, jobId: job.id, company, jobTitle, posting,
+      needsCompany: !company, loading: !!company, busy: false, error: "", articles: [], warnings: [],
+    });
+    if (company) runCompanyResearchFetch({ jobId: job.id, company, jobTitle, posting });
+  }
+
+  // The user typed a company in the dialog's input (when none was known).
+  function researchTypedCompany(name) {
+    const company = String(name || "").trim();
+    if (company) runCompanyResearchFetch({ ...companyResearch, company });
+  }
+
+  // Run the deferred download (after the picker resolves), clearing pending.
+  async function flushPendingDownload(coverLetterResultLinesOverride) {
+    const pending = pendingResearchRef.current;
+    pendingResearchRef.current = null;
+    if (!pending) return;
+    const args = { ...pending.downloadArgs };
+    if (coverLetterResultLinesOverride) args.coverLetterResultLines = coverLetterResultLinesOverride;
+    const dlError = await downloadDocxFiles(args);
+    if (dlError) pending.setError?.(dlError);
+  }
+
+  // Apply chosen references: weave into the intro, update the stored CL + the
+  // copyable panel, and (if a download was deferred) download the woven version.
+  async function applyCompanyResearch(chosen) {
     const jobId = companyResearch.jobId;
     const picks = Array.isArray(chosen) ? chosen.filter((c) => c?.suggestion?.trim()) : [];
+    setCompanyResearch((prev) => ({ ...prev, open: false }));
     if (!jobId || picks.length === 0) {
-      closeCompanyResearch();
+      await flushPendingDownload();
       return;
     }
     setCompanyResearchByJob((m) => ({ ...m, [jobId]: picks }));
-    const paragraph = picks.map((c) => c.suggestion.trim()).join(" ");
-    setTailoringMap((current) => {
-      const entry = current[jobId] || {};
-      const lines = Array.isArray(entry.coverLetterResultLines) ? [...entry.coverLetterResultLines] : [];
-      if (lines.length === 0) return current; // no cover letter to weave into yet
-      const signOff = lines.findIndex((l) => /^\s*(sincerely|regards|best|warm regards|thank you)/i.test(l));
-      const at = signOff >= 0 ? signOff : lines.length;
-      lines.splice(at, 0, paragraph);
-      return {
-        ...current,
-        [jobId]: { ...entry, coverLetterResultLines: lines, coverLetterPreviewHtml: undefined, edited: true },
-      };
-    });
+    const excerpt = picks.map((c) => c.suggestion.trim()).join(" ");
+    // Compute from the current map synchronously so the deferred download uses
+    // the woven lines (the setState updater runs later).
+    const wovenLines = weaveExcerptsIntoIntro(tailoringMap[jobId]?.coverLetterResultLines || [], excerpt);
+    setTailoringMap((current) => ({
+      ...current,
+      [jobId]: {
+        ...(current[jobId] || {}),
+        coverLetterResultLines: wovenLines,
+        coverLetterPreviewHtml: undefined,
+        edited: true,
+      },
+    }));
+    await flushPendingDownload(wovenLines.length ? wovenLines : undefined);
+  }
+
+  // Skip/close: if a download was deferred, deliver it without references.
+  function closeCompanyResearch() {
     setCompanyResearch((prev) => ({ ...prev, open: false }));
+    flushPendingDownload();
+  }
+
+  // Called by the Generate flows once a cover letter exists. When a company is
+  // known it defers the download and opens the research picker; otherwise it
+  // downloads now and surfaces a "no research was done" notice the user can act on.
+  async function finishWithOptionalResearch(ctx) {
+    const {
+      jobId, jobTitle, company, posting, applyResume, applyCover,
+      result, resultLines, docxB64, coverLetterResultLines, coverLetterDocxB64, setError,
+    } = ctx;
+    const downloadArgs = {
+      jobTitle,
+      company,
+      result: applyResume ? result : "",
+      resultLines: applyResume ? resultLines : [],
+      coverLetterResultLines: applyCover ? coverLetterResultLines : [],
+      docxB64: applyResume ? docxB64 : "",
+      coverLetterDocxB64: applyCover ? coverLetterDocxB64 : "",
+    };
+    const hasCover = applyCover && Array.isArray(coverLetterResultLines) && coverLetterResultLines.length > 0;
+    if (hasCover && company) {
+      pendingResearchRef.current = { downloadArgs, setError };
+      setResearchNotice(null);
+      setCompanyResearch({
+        open: true, jobId, company, jobTitle: jobTitle || "", posting: posting || "",
+        needsCompany: false, loading: true, busy: false, error: "", articles: [], warnings: [],
+      });
+      runCompanyResearchFetch({ jobId, company, jobTitle, posting });
+      return;
+    }
+    const dlError = await downloadDocxFiles(downloadArgs);
+    if (dlError) setError?.(dlError);
+    if (hasCover && !company) {
+      setResearchNotice({ jobId, jobTitle: jobTitle || "", posting: posting || "" });
+    }
   }
 
   // "Apply" action for an auto-tailored row: download the tailored resume,
@@ -3667,17 +3753,20 @@ export default function Home() {
         setApplicationsRefreshKey((k) => k + 1);
       }
 
-      const dlError = await downloadDocxFiles({
+      await finishWithOptionalResearch({
+        jobId: syntheticJobId,
         jobTitle: nextJobTitle,
         company: nextCompany,
-        result: applyResume ? nextResult : "",
-        resultLines: applyResume ? nextResultLines : [],
-        coverLetterResultLines: applyCover ? nextCoverLetterResultLines : [],
-        docxB64: applyResume ? nextDocxB64 : "",
-        coverLetterDocxB64: applyCover ? nextCoverLetterDocxB64 : "",
+        posting: nextJobDescription || "",
+        applyResume,
+        applyCover,
+        result: nextResult,
+        resultLines: nextResultLines,
+        docxB64: nextDocxB64,
+        coverLetterResultLines: nextCoverLetterResultLines,
+        coverLetterDocxB64: nextCoverLetterDocxB64,
+        setError: setUrlError,
       });
-
-      if (dlError) setUrlError(dlError);
     } catch (err) {
       setUrlError(err.message || "Unexpected error.");
       setUrlHasCompleted(true);
@@ -3874,17 +3963,20 @@ export default function Home() {
         }
       }
 
-      const dlError = await downloadDocxFiles({
+      await finishWithOptionalResearch({
+        jobId: syntheticJobId,
         jobTitle: nextJobTitle,
         company: nextCompany,
-        result: applyResume ? nextResult : "",
-        resultLines: applyResume ? nextResultLines : [],
-        coverLetterResultLines: applyCover ? nextCoverLetterResultLines : [],
-        docxB64: applyResume ? nextDocxB64 : "",
-        coverLetterDocxB64: applyCover ? nextCoverLetterDocxB64 : "",
+        posting: sourcePosting || "",
+        applyResume,
+        applyCover,
+        result: nextResult,
+        resultLines: nextResultLines,
+        docxB64: nextDocxB64,
+        coverLetterResultLines: nextCoverLetterResultLines,
+        coverLetterDocxB64: nextCoverLetterDocxB64,
+        setError: setManualError,
       });
-
-      if (dlError) setManualError(dlError);
     } catch (err) {
       setManualError(err.message || "Unexpected error.");
       setManualHasCompleted(true);
@@ -4661,9 +4753,55 @@ export default function Home() {
         error={resumePreview.error}
       />
 
+      {researchNotice ? (
+        <Box
+          sx={{
+            position: "fixed",
+            top: 16,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 1400,
+            maxWidth: 560,
+            display: "flex",
+            alignItems: "center",
+            gap: 1.5,
+            px: 2,
+            py: 1.25,
+            borderRadius: 1,
+            bgcolor: "#fff8e1",
+            border: "1px solid #f0d98c",
+            boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
+            fontSize: "0.85rem",
+          }}
+        >
+          <Box sx={{ flex: 1 }}>
+            {researchNotice.message ||
+              "Cover letter generated, but no company name was detected — so no company research was done."}
+          </Box>
+          {researchNotice.jobId ? (
+            <Button
+              size="small"
+              variant="contained"
+              sx={{ textTransform: "none", whiteSpace: "nowrap" }}
+              onClick={() => {
+                const n = researchNotice;
+                setResearchNotice(null);
+                openCompanyResearch({ id: n.jobId, title: n.jobTitle, company: "", description: n.posting });
+              }}
+            >
+              Research a company
+            </Button>
+          ) : null}
+          <Button size="small" sx={{ textTransform: "none" }} onClick={() => setResearchNotice(null)}>
+            Dismiss
+          </Button>
+        </Box>
+      ) : null}
+
       <CompanyResearchDialog
         open={companyResearch.open}
         company={companyResearch.company}
+        needsCompany={companyResearch.needsCompany}
         loading={companyResearch.loading}
         error={companyResearch.error}
         articles={companyResearch.articles}
@@ -4671,6 +4809,8 @@ export default function Home() {
         busy={companyResearch.busy}
         onClose={closeCompanyResearch}
         onApply={applyCompanyResearch}
+        onResearch={researchTypedCompany}
+        placementNote="The chosen suggestion(s) are woven into your opening paragraph"
       />
 
       <SlotReviewDialog

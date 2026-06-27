@@ -22,6 +22,7 @@ import { useIsMobile } from "../hooks/useResponsive";
 export default function CompanyResearchDialog({
   open,
   company = "",
+  needsCompany = false,
   loading = false,
   error = "",
   articles = [],
@@ -29,10 +30,13 @@ export default function CompanyResearchDialog({
   busy = false,
   onClose,
   onApply,
+  onResearch,
+  placementNote = "",
 }) {
   const isMobile = useIsMobile();
   const [selected, setSelected] = useState(() => new Set());
   const [suggestions, setSuggestions] = useState({});
+  const [companyInput, setCompanyInput] = useState("");
   const [prevArticles, setPrevArticles] = useState(articles);
 
   if (articles !== prevArticles) {
@@ -68,7 +72,36 @@ export default function CompanyResearchDialog({
         Company research{company ? ` — ${company}` : ""}
       </DialogTitle>
       <DialogContent dividers>
-        {loading ? (
+        {needsCompany && (articles || []).length === 0 && !loading ? (
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5, py: 2 }}>
+            <Box sx={{ fontSize: "0.9rem" }}>
+              No company name was detected for this posting, so no research was done. Enter the company
+              name to research recent, positive coverage to reference in your cover letter.
+            </Box>
+            {error ? <Box sx={{ color: "var(--danger, #d32f2f)", fontSize: "0.85rem" }}>{error}</Box> : null}
+            <Box sx={{ display: "flex", gap: 1 }}>
+              <TextField
+                size="small"
+                fullWidth
+                autoFocus
+                label="Company name"
+                value={companyInput}
+                onChange={(e) => setCompanyInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && companyInput.trim()) onResearch?.(companyInput.trim());
+                }}
+              />
+              <Button
+                variant="contained"
+                onClick={() => onResearch?.(companyInput.trim())}
+                disabled={!companyInput.trim()}
+                sx={{ textTransform: "none", whiteSpace: "nowrap" }}
+              >
+                Research
+              </Button>
+            </Box>
+          </Box>
+        ) : loading ? (
           <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1.5, py: 5 }}>
             <CircularProgress />
             <Box sx={{ fontSize: "0.85rem", color: "var(--text-secondary, #777)" }}>
@@ -84,8 +117,7 @@ export default function CompanyResearchDialog({
         ) : (
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
             <Box sx={{ fontSize: "0.85rem", color: "var(--text-secondary, #777)" }}>
-              Pick the articles you want to reference. The suggestion under each is editable and will be
-              woven into the cover letter (and is also copyable to insert yourself).
+              Pick the articles you want to reference. {placementNote || "The chosen suggestion(s) are woven into your opening paragraph"} — each is editable and also copyable to insert yourself.
             </Box>
             {(warnings || []).map((w, i) => (
               <Box key={i} sx={{ fontSize: "0.78rem", color: "#9a6700", bgcolor: "rgba(255,193,7,0.12)", p: 1, borderRadius: 1 }}>
