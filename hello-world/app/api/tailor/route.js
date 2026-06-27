@@ -201,12 +201,15 @@ export async function POST(request) {
     let scrapedJobTitle = "";
     let scrapedCompany = "";
     let scrapedDescription = "";
+    let scrapeError = "";
     let effectiveJobPosting = jobPosting;
     let effectiveJobPostingUrl = jobPostingUrl;
 
     if (jobPostingUrl) {
       const scraped = await fetchUrlContent(jobPostingUrl);
-      if (!scraped.error) {
+      if (scraped.error) {
+        scrapeError = scraped.error;
+      } else {
         scrapedJobTitle = scraped.title || "";
         scrapedCompany = scraped.company || "";
         scrapedDescription = scraped.description || "";
@@ -217,6 +220,18 @@ export async function POST(request) {
           effectiveJobPostingUrl = "";
         }
       }
+    }
+
+    // Only Gemini can read a URL on its own (urlContext); the offline engines
+    // need the text we scraped. If a URL was given but produced nothing usable,
+    // tell the user plainly instead of failing with a generic error.
+    if (jobPostingUrl && !effectiveJobPosting.trim() && engineName !== "gemini") {
+      return NextResponse.json(
+        {
+          error: `Couldn't read the job posting from that URL${scrapeError ? ` (${scrapeError})` : ""}. Paste the description text instead.`,
+        },
+        { status: 422 },
+      );
     }
 
     // Deterministic last-resort title/company parsed from the posting text, used

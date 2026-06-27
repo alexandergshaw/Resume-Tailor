@@ -21,8 +21,10 @@ export async function POST(request) {
 
   const posting =
     typeof body?.posting === "string" ? body.posting.slice(0, MAX_POSTING_CHARS) : "";
-  if (!posting.trim()) {
-    return NextResponse.json({ error: "posting is required." }, { status: 400 });
+  const postingUrl =
+    typeof body?.url === "string" ? body.url.trim() : typeof body?.jobPostingUrl === "string" ? body.jobPostingUrl.trim() : "";
+  if (!posting.trim() && !postingUrl) {
+    return NextResponse.json({ error: "posting or url is required." }, { status: 400 });
   }
 
   let defaultEngine = "gemini";
@@ -46,6 +48,7 @@ export async function POST(request) {
   try {
     const data = await engine.getProposals({
       jobPosting: posting,
+      jobPostingUrl: postingUrl,
       aggressiveness: Number.isNaN(aggressiveness) ? undefined : aggressiveness,
     });
     return NextResponse.json(data);

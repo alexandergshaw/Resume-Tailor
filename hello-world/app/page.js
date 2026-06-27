@@ -3979,7 +3979,7 @@ export default function Home() {
                   tailorEngine === "external"
                     ? "Resume Tailor API — returns a finished .docx from the service's template."
                     : tailorEngine === "embedded"
-                      ? "Embedded — deterministic in-app engine. No AI, no network."
+                      ? "Embedded — deterministic in-app engine. No AI; reads the posting from a URL or text, then tailors offline."
                       : "Gemini — AI rewrites your uploaded resume's lines."
                 }
               >

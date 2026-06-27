@@ -26,6 +26,7 @@ import { mapSlots } from "./strategy.js";
 import { parsePosting } from "./parser.js";
 import { research } from "./researcher.js";
 import { extractPostingMeta } from "../../postingMeta.js";
+import { fetchUrlContent } from "../../../scrape/fetchUrlContent.js";
 import profile from "./data/profile.json";
 import library from "./data/content_library.json";
 import skillGroups from "./data/skill_groups.json";
@@ -36,6 +37,31 @@ const DATA = { profile, library, skillGroups };
 
 function getWorkflow() {
   return (process.env.RESUME_TAILOR_WORKFLOW || "legacy").trim().toLowerCase();
+}
+
+// Resolve the posting TEXT for a request: use the supplied text, otherwise fetch
+// it from `jobPostingUrl`. Tailoring stays deterministic and AI-free — only
+// reading the posting from a URL touches the network. With `required` (résumé /
+// proposals) an unusable input throws a user-facing error; the cover letter is
+// tolerant (returns "" so its neutral seeds fill in).
+async function resolvePostingText({ jobPosting, jobPostingUrl }, { required = true } = {}) {
+  const text = String(jobPosting || "").trim();
+  if (text) return text;
+  const url = String(jobPostingUrl || "").trim();
+  if (!url) {
+    if (required) throw new Error("A job posting (text or URL) is required for the embedded engine.");
+    return "";
+  }
+  const scraped = await fetchUrlContent(url);
+  if (scraped.error) {
+    if (required) throw new Error(`Could not read the job posting from that URL: ${scraped.error}`);
+    return "";
+  }
+  const description = String(scraped.description || "").trim();
+  if (!description && required) {
+    throw new Error("That URL did not contain a readable job posting. Paste the description text instead.");
+  }
+  return description;
 }
 
 // Keywords for the posting. Both workflows are local; composed uses the in-house
@@ -121,9 +147,8 @@ export const embeddedEngine = {
     return true;
   },
 
-  async getProposals({ jobPosting, aggressiveness }) {
-    const posting = String(jobPosting || "").trim();
-    if (!posting) throw new Error("A job posting is required for the embedded engine.");
+  async getProposals({ jobPosting, jobPostingUrl, aggressiveness }) {
+    const posting = await resolvePostingText({ jobPosting, jobPostingUrl });
     const { slots, keywords } = await buildProposal(
       await getDefaultTemplateBuffer(),
       posting,
@@ -142,9 +167,8 @@ export const embeddedEngine = {
     return out;
   },
 
-  async tailorResume({ jobPosting, values, aggressiveness }) {
-    const posting = String(jobPosting || "").trim();
-    if (!posting) throw new Error("A job posting is required for the embedded engine.");
+  async tailorResume({ jobPosting, jobPostingUrl, values, aggressiveness }) {
+    const posting = await resolvePostingText({ jobPosting, jobPostingUrl });
     const overrides = values && typeof values === "object" ? values : {};
     const r = await render(await getDefaultTemplateBuffer(), posting, { overrides, aggressiveness });
     // Advisory research is excluded from the document — report only.
@@ -173,8 +197,8 @@ export const embeddedEngine = {
     };
   },
 
-  async tailorCoverLetter({ jobPosting, jobTitle, companyName, values, aggressiveness }) {
-    const posting = String(jobPosting || "").trim();
+  async tailorCoverLetter({ jobPosting, jobPostingUrl, jobTitle, companyName, values, aggressiveness }) {
+    const posting = await resolvePostingText({ jobPosting, jobPostingUrl }, { required: false });
     const overrides = values && typeof values === "object" ? values : {};
     // Fall back to title/company parsed from the posting when the caller didn't
     // supply them (e.g. the manual paste flow), so the cover letter is addressed

@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { embeddedEngine } from "./engine.js";
+import { fetchUrlContent } from "../../../scrape/fetchUrlContent.js";
+
+vi.mock("../../../scrape/fetchUrlContent.js", () => ({ fetchUrlContent: vi.fn() }));
 
 const POSTING = [
   "Senior Software Engineer.",
@@ -20,6 +23,40 @@ describe("embeddedEngine.getProposals", () => {
 
   it("rejects an empty posting", async () => {
     await expect(embeddedEngine.getProposals({ jobPosting: "  " })).rejects.toThrow();
+  });
+});
+
+describe("embeddedEngine reads the posting from a URL", () => {
+  afterEach(() => vi.mocked(fetchUrlContent).mockReset());
+
+  it("tailors a résumé from a jobPostingUrl (no text)", async () => {
+    vi.mocked(fetchUrlContent).mockResolvedValue({
+      title: "Senior Engineer",
+      company: "Initech",
+      description: POSTING,
+    });
+    const res = await embeddedEngine.tailorResume({ jobPostingUrl: "https://jobs.example.com/123" });
+    expect(fetchUrlContent).toHaveBeenCalledWith("https://jobs.example.com/123");
+    expect(res.result).toContain("Senior Software Engineer");
+    expect(res.result).not.toContain("{{");
+  });
+
+  it("getProposals works from a URL too", async () => {
+    vi.mocked(fetchUrlContent).mockResolvedValue({ title: "", company: "", description: POSTING });
+    const data = await embeddedEngine.getProposals({ jobPostingUrl: "https://jobs.example.com/123" });
+    expect(data.slots.length).toBeGreaterThan(50);
+  });
+
+  it("surfaces a clear error when the URL can't be read", async () => {
+    vi.mocked(fetchUrlContent).mockResolvedValue({ error: "Failed to fetch URL (status 403)." });
+    await expect(
+      embeddedEngine.tailorResume({ jobPostingUrl: "https://blocked.example.com" }),
+    ).rejects.toThrow(/Could not read the job posting from that URL/);
+  });
+
+  it("does not hit the network when posting text is supplied", async () => {
+    await embeddedEngine.tailorResume({ jobPosting: POSTING });
+    expect(fetchUrlContent).not.toHaveBeenCalled();
   });
 });
 
