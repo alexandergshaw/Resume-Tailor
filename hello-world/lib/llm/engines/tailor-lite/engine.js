@@ -25,7 +25,7 @@ import { extractKeywords } from "./keywords.js";
 import { mapSlots } from "./strategy.js";
 import { parsePosting } from "./parser.js";
 import { research } from "./researcher.js";
-import { extractPostingMeta } from "./postingMeta.js";
+import { extractPostingMeta } from "../../postingMeta.js";
 import profile from "./data/profile.json";
 import library from "./data/content_library.json";
 import skillGroups from "./data/skill_groups.json";

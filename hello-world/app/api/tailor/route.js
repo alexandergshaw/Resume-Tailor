@@ -3,6 +3,7 @@ import mammoth from "mammoth";
 import { getEngine, resolveEngineName } from "@/lib/llm/engines";
 import { getServerEnv } from "@/lib/config/env";
 import { fetchUrlContent } from "@/lib/scrape/fetchUrlContent";
+import { extractPostingMeta } from "@/lib/llm/postingMeta";
 
 export const runtime = "nodejs";
 
@@ -218,6 +219,11 @@ export async function POST(request) {
       }
     }
 
+    // Deterministic last-resort title/company parsed from the posting text, used
+    // to name the generated documents when neither the scrape nor the engine
+    // supplied one (e.g. Gemini returned empty, or a pasted posting with no URL).
+    const postingMeta = extractPostingMeta(effectiveJobPosting);
+
     const resumeArgs = {
       jobPosting: effectiveJobPosting,
       jobPostingUrl: effectiveJobPostingUrl,
@@ -264,8 +270,8 @@ export async function POST(request) {
         const coverDraft = await activeEngine.tailorCoverLetter({
           jobPosting: effectiveJobPosting,
           jobPostingUrl: effectiveJobPostingUrl,
-          companyName: scrapedCompany || result.companyName,
-          jobTitle: result.jobTitle || scrapedJobTitle,
+          companyName: scrapedCompany || result.companyName || postingMeta.companyName,
+          jobTitle: result.jobTitle || scrapedJobTitle || postingMeta.jobTitle,
           resumeText,
           templateLines: coverLetterTemplateLines,
           additionalContext,
@@ -290,9 +296,9 @@ export async function POST(request) {
       report: result.report || null,
       warnings,
       degraded: !!result.degraded,
-      jobTitle: result.jobTitle || scrapedJobTitle,
+      jobTitle: result.jobTitle || scrapedJobTitle || postingMeta.jobTitle,
       jobDescription: scrapedDescription,
-      company: scrapedCompany || result.companyName || "",
+      company: scrapedCompany || result.companyName || postingMeta.companyName || "",
       coverLetterResult,
       coverLetterResultLines,
       coverLetterError,
