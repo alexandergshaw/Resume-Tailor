@@ -115,7 +115,7 @@ describe("embeddedEngine composed workflow (in-house)", () => {
 
     expect(composed.report.workflow).toBe("composed");
     expect(composed.report.advisory).toBeTruthy();
-    expect(composed.report.advisory.topKeywords.length).toBeGreaterThan(0);
+    expect(composed.report.advisory.matched.length).toBeGreaterThan(0);
     // Quarantine: advisory is report-only, so the document is unchanged.
     expect(composed.docxB64).toBe(legacy.docxB64);
     expect(composed.result).not.toContain("{{");

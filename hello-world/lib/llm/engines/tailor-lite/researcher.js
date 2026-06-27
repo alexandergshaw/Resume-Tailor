@@ -7,6 +7,37 @@
 //     become rendered content, via the same occurrence-indexed fill.
 
 import { extractKeywords } from "./keywords.js";
+import skillGroups from "./data/skill_groups.json";
+import library from "./data/content_library.json";
+
+// The candidate's canonical skill universe — everything they can truthfully
+// claim. Built by running the SAME taxonomy extraction over all of their
+// materials (skill rows, library bullet text + tags), so terms nested inside a
+// skill string are recognized too (e.g. "Healthcare Interoperability (HL7, FHIR,
+// CCD/C-CDA)" contributes HL7, FHIR and C-CDA). Used to split the posting's
+// keywords into "matched" (already in the résumé, surfaced by the reorder
+// strategies) vs "gaps" (the posting wants them but the candidate doesn't have
+// them — advisory only, never auto-inserted).
+let universeCache = null;
+function candidateUniverse() {
+  if (universeCache) return universeCache;
+  const blob = [];
+  for (const group of skillGroups.groups || []) {
+    blob.push(group.heading);
+    for (const kw of group.keywords || []) blob.push(kw);
+  }
+  for (const entry of library.entries || []) {
+    blob.push(entry.text);
+    for (const tag of entry.tags || []) blob.push(tag);
+  }
+  const grouped = extractKeywords(blob.join(". "));
+  const set = new Set();
+  for (const category of Object.keys(grouped)) {
+    for (const k of grouped[category]) set.add(k.canonical.toLowerCase());
+  }
+  universeCache = set;
+  return set;
+}
 
 // Top-N distinct canonicals across the given categories, by (-score, canonical).
 function topCanonicals(keywords, categories, n) {
@@ -45,10 +76,18 @@ export function research({ posting, company = "" } = {}) {
   if (organizationContext) facts.ORGANIZATION_CONTEXT = organizationContext;
   if (roleFocus.length) facts.ROLE_FOCUS = roleFocus.join(", ");
 
+  // Split the posting's keywords (ranked) into ones the candidate already has
+  // (surfaced/led in the résumé by the reorder strategies) vs gaps to consider.
+  const universe = candidateUniverse();
+  const ranked = topCanonicals(keywords, [...ROLE_FOCUS_CATEGORIES, "domain"], 100);
+  const matched = ranked.filter((c) => universe.has(c.toLowerCase()));
+  const gaps = ranked.filter((c) => !universe.has(c.toLowerCase()));
+
   const advisory = {
     source: "in-app analysis of the job posting",
     emphases: (keywords.domain || []).slice(0, 3).map((k) => k.canonical),
-    topKeywords: topCanonicals(keywords, [...ROLE_FOCUS_CATEGORIES, "domain"], 10),
+    matched: matched.slice(0, 15),
+    gaps: gaps.slice(0, 15),
   };
 
   return { advisory, facts };

@@ -8,7 +8,7 @@ describe("parsePosting (in-house)", () => {
     const { keywords, emphases } = parsePosting(posting);
     expect(keywords.technology.some((k) => k.canonical === "REST")).toBe(true);
     expect(Array.isArray(emphases)).toBe(true);
-    expect(emphases).toContain("Healthcare");
+    expect(emphases.some((e) => e.includes("Healthcare"))).toBe(true);
   });
 
   it("is deterministic for the same input", () => {

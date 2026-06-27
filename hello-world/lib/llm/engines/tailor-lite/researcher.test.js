@@ -16,10 +16,17 @@ describe("research (in-house)", () => {
     expect(facts.ORGANIZATION_CONTEXT).toMatch(/^your work in /);
   });
 
-  it("returns advisory derived from the posting (report-only)", () => {
-    const { advisory } = research({ posting, company: "Acme Health" });
+  it("identifies matched vs gap keywords (report-only)", () => {
+    const { advisory } = research({
+      posting: `${posting} Also: Kubernetes, Terraform.`,
+      company: "Acme Health",
+    });
     expect(advisory.source).toMatch(/in-app/);
-    expect(advisory.topKeywords.length).toBeGreaterThan(0);
+    // The candidate has these — surfaced in the résumé by the reorder strategies.
+    expect(advisory.matched).toContain("React");
+    // The candidate lacks these — flagged as gaps, never auto-inserted.
+    expect(advisory.gaps).toContain("Kubernetes");
+    expect(advisory.matched).not.toContain("Kubernetes");
   });
 
   it("is deterministic for the same input", () => {
