@@ -224,7 +224,7 @@ export const embeddedEngine = {
       overrides,
       seedByName,
       aggressiveness,
-      maxKeywords: 3, // shorter capability lists read more naturally in prose
+      maxKeywords: 4, // keep capability lists keyword-rich but not a wall
     });
 
     return {
