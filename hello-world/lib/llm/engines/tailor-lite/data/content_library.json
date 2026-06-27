@@ -1,17 +1,53 @@
 {
-  "_comment": "User-editable. Each entry can fill one of the accomplishment slots listed in `slots`. The engine picks the entry whose tags/text best match the posting's keywords, uses each entry at most once, and surfaces the rest as `candidates`.",
+  "_comment": "User-editable bank of your REAL accomplishments. Each entry fills an Experience-bullet slot scoped to ONE job (EXP_<jobIndex>_BULLET, in résumé order: 0=Mutual of Omaha Sr Engineer, 1=Adjunct Professor, 2=Web Platforms Engineer, 3=Union Pacific). The engine ranks a job's entries against the posting (TF-IDF + tag overlap), uses each at most once, and fills that job's bullet positions with the best ones — so a posting-relevant accomplishment leads each job. `text` is inserted VERBATIM (numbers preserved). ADD MORE entries per job than there are bullets to turn reordering into real selection.",
   "entries": [
-    { "id": "lib-001", "slots": ["MEASURABLE_IMPACT"], "text": "a 70% reduction in deployment time", "tags": ["CI/CD", "DevOps", "automation"] },
-    { "id": "lib-002", "slots": ["MEASURABLE_IMPACT"], "text": "a 40% improvement in API p95 latency", "tags": ["performance", "backend", "API"] },
-    { "id": "lib-003", "slots": ["MEASURABLE_IMPACT"], "text": "99.99% uptime across customer-facing services", "tags": ["reliability", "SRE", "observability"] },
-    { "id": "lib-004", "slots": ["SOLUTION_DELIVERED"], "text": "a self-service internal platform that cut onboarding from weeks to hours", "tags": ["platform", "developer experience", "Kubernetes"] },
-    { "id": "lib-005", "slots": ["SOLUTION_DELIVERED"], "text": "an event-driven notification service adopted by 12 teams", "tags": ["event-driven", "messaging", "AWS"] },
-    { "id": "lib-006", "slots": ["ACTION_RESULT"], "text": "Led the migration of a monolith to microservices, tripling release cadence", "tags": ["microservices", "architecture", "AWS"] },
-    { "id": "lib-007", "slots": ["ACTION_RESULT"], "text": "Built a real-time data pipeline processing two billion events per day", "tags": ["data engineering", "Kafka", "streaming"] },
-    { "id": "lib-008", "slots": ["ACTION_RESULT"], "text": "Mentored six engineers and established the team's code-review standards", "tags": ["leadership", "mentoring", "quality"] },
-    { "id": "lib-009", "slots": ["SCOPE_OF_OWNERSHIP"], "text": "end-to-end ownership of the billing and payments domain", "tags": ["payments", "domain", "backend"] },
-    { "id": "lib-010", "slots": ["SCOPE_OF_OWNERSHIP"], "text": "the company's CI/CD and developer-tooling roadmap", "tags": ["CI/CD", "tooling", "developer experience"] },
-    { "id": "lib-011", "slots": ["PROJECT_TYPE"], "text": "a cloud cost-optimization initiative", "tags": ["FinOps", "AWS", "cost"] },
-    { "id": "lib-012", "slots": ["PROJECT_TYPE"], "text": "a zero-downtime database migration", "tags": ["databases", "PostgreSQL", "reliability"] }
+    {
+      "id": "moo-sr-1-scale-leadership",
+      "slots": ["EXP_0_BULLET"],
+      "text": "Led enterprise application engineering initiatives supporting 10,000+ internal users and 75,000+ daily operational events while directing a frontend engineering team of 5 developers responsible for scalable enterprise applications, API integrations, SQL-backed operational workflows, reusable React component libraries, and enterprise modernization.",
+      "tags": ["Leadership", "React", "SQL", "REST", "Enterprise Application Modernization"]
+    },
+    {
+      "id": "moo-sr-2-stack",
+      "slots": ["EXP_0_BULLET"],
+      "text": "Designed, developed, tested, and enhanced enterprise software applications, SQL-backed operational systems, backend integrations, and API-driven workflows using React, JavaScript, TypeScript, SQL, REST APIs, PostgreSQL, HTML5, and CSS3 while improving scalability, interoperability readiness, maintainability, and deployment reliability across enterprise.",
+      "tags": ["React", "JavaScript", "TypeScript", "SQL", "REST", "PostgreSQL", "HTML", "CSS"]
+    },
+    {
+      "id": "moo-sr-3-collaboration",
+      "slots": ["EXP_0_BULLET"],
+      "text": "Collaborated with analysts, QA teams, developers, architects, and operational stakeholders to gather business requirements, develop conceptual and technical designs, support Agile delivery workflows, troubleshoot production issues, conduct peer reviews, and maintain enterprise development standards across distributed operational systems.",
+      "tags": ["Agile", "Code Review", "Requirements Gathering", "Cross-Functional Collaboration"]
+    },
+    {
+      "id": "adjunct-1-teaching",
+      "slots": ["EXP_1_BULLET"],
+      "text": "Delivered software engineering, backend integration, database, API, and enterprise application development instruction to 100+ students per term while designing and modernizing 8+ project-based courses focused on REST APIs, SQL, frontend/backend integration, application testing, enterprise workflows, Agile development, and scalable architecture.",
+      "tags": ["REST", "SQL", "Agile", "Mentoring"]
+    },
+    {
+      "id": "webplatforms-1-apis-reporting",
+      "slots": ["EXP_2_BULLET"],
+      "text": "Developed enterprise applications, REST APIs, SQL-driven reporting solutions, and integration workflows supporting operational modernization, workflow automation, and large-scale data exchange systems.",
+      "tags": ["REST", "SQL", "Data Engineering", "Workflow Automation"]
+    },
+    {
+      "id": "webplatforms-2-stack",
+      "slots": ["EXP_2_BULLET"],
+      "text": "Built scalable backend integrations, operational dashboards, and enterprise web platforms using JavaScript, TypeScript, SQL, React, HTML5, and CSS3 while improving maintainability, visibility, and integration reliability.",
+      "tags": ["JavaScript", "TypeScript", "SQL", "React", "HTML", "CSS"]
+    },
+    {
+      "id": "unionpacific-1-data-systems",
+      "slots": ["EXP_3_BULLET"],
+      "text": "Developed enterprise operational software, backend integrations, SQL reporting utilities, and large-scale data-processing systems supporting enterprise integrations and distributed environments.",
+      "tags": ["SQL", "Data Engineering", "Distributed Systems"]
+    },
+    {
+      "id": "unionpacific-2-data-transformation",
+      "slots": ["EXP_3_BULLET"],
+      "text": "Built data transformation workflows and enterprise software solutions using Java, Python, C++, SQL, and APIs while improving operational reliability, data accessibility, and integration efficiency.",
+      "tags": ["Java", "Python", "C++", "SQL", "Data Transformation"]
+    }
   ]
 }

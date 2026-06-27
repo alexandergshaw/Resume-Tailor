@@ -48,6 +48,26 @@ describe("embeddedEngine.tailorResume", () => {
     const b = await embeddedEngine.tailorResume({ jobPosting: POSTING });
     expect(a.docxB64).toBe(b.docxB64);
   });
+
+  it("reorders a job's bullets toward the posting, keeping every bullet and number", async () => {
+    const MOO = "Senior Engineer (Applications & Enterprise Integrations) | Mutual of Omaha | July 2023";
+    const leadBullet = (lines) => lines[lines.indexOf(MOO) + 1];
+
+    const frontend = await embeddedEngine.tailorResume({
+      jobPosting: "Frontend Engineer: React, JavaScript, TypeScript, HTML5, CSS3, PostgreSQL.",
+    });
+    const leadership = await embeddedEngine.tailorResume({
+      jobPosting: "Engineering Manager: team leadership, stakeholder management, mentoring, code reviews, agile collaboration.",
+    });
+
+    // Same job, different leading accomplishment per posting.
+    expect(leadBullet(frontend.resultLines)).not.toBe(leadBullet(leadership.resultLines));
+    // Strict: numbers preserved, nothing dropped, no leaked placeholders.
+    expect(frontend.result).toContain("10,000+");
+    expect(frontend.result).toContain("75,000+");
+    expect(frontend.result).not.toContain("{{");
+    expect(frontend.report.unfilled).toEqual([]);
+  });
 });
 
 describe("embeddedEngine.tailorCoverLetter", () => {

@@ -1,14 +1,14 @@
 // The bundled default résumé template IS the owner's real Resume.docx (embedded
-// as base64 in resumeTemplateBase64.js). At load time we templatize ONLY the
-// Skills section — turning its five heading paragraphs into {{SKILLS_HEADING}}
-// slots and its five row paragraphs into {{SKILLS_LINE}} slots — so the engine
-// can reorder the skill blocks (and the skills within each row) toward the
-// posting via SKILLS_DISTRIBUTE. Every other paragraph (name, contact, summary,
-// education, experience, projects) is left byte-exact, and run formatting on the
-// templatized paragraphs is preserved (bold headings stay bold).
-//
-// Experience bullets and Projects are NOT templatized yet (verbatim for now).
-// To use a different résumé, replace resumeTemplateBase64.js.
+// as base64 in resumeTemplateBase64.js). At load time we templatize the sections
+// the engine tailors, leaving everything else byte-exact (run formatting on
+// templatized paragraphs is preserved):
+//   - Skills: five {{SKILLS_HEADING}} + five {{SKILLS_LINE}} slots, reordered by
+//     posting relevance via SKILLS_DISTRIBUTE.
+//   - Experience: each bullet -> {{EXP_<jobIndex>_BULLET}}, filled per job by
+//     LIBRARY_MATCH so a job's own bullets reorder toward the posting (never
+//     across employers). Job titles/companies/dates stay verbatim.
+// Name, contact, summary, education and Projects are left byte-exact (Projects
+// is next). To use a different résumé, replace resumeTemplateBase64.js.
 
 import JSZip from "jszip";
 import { FIXED_ENTRY_DATE } from "./docxModel.js";
@@ -53,6 +53,33 @@ function templatizeSkills(documentXml) {
   });
 }
 
+// Turn each Professional Experience bullet into a per-job slot
+// {{EXP_<jobIndex>_BULLET}} (jobIndex increments at each bold job-title line), so
+// LIBRARY_MATCH can reorder a job's own bullets by posting relevance WITHOUT ever
+// moving a bullet to a different employer. Job titles, companies and dates are
+// left verbatim. No-op if the section isn't found.
+function templatizeExperience(documentXml) {
+  const paragraphs = documentXml.match(PARAGRAPH_RE) || [];
+  const startIdx = paragraphs.findIndex(
+    (b) => /w:val="Heading3"/.test(b) && paragraphText(b).trim() === "Professional Experience",
+  );
+  if (startIdx === -1) return documentXml;
+  const endIdx = paragraphs.findIndex((b, idx) => idx > startIdx && /w:val="Heading3"/.test(b));
+
+  let i = -1;
+  let jobIndex = -1;
+  return documentXml.replace(PARAGRAPH_RE, (block) => {
+    i += 1;
+    if (i <= startIdx) return block;
+    if (endIdx !== -1 && i >= endIdx) return block;
+    if (/<w:numPr>/.test(block)) {
+      return setParagraphText(block, `{{EXP_${jobIndex}_BULLET}}`);
+    }
+    if (/<w:b w:val="1"\/>/.test(block)) jobIndex += 1; // a job-title line
+    return block;
+  });
+}
+
 let cache = null;
 
 // Assemble (once) the template as a Node Buffer ready for loadDocx(), with the
@@ -61,7 +88,8 @@ export async function getDefaultTemplateBuffer() {
   if (cache) return cache;
   const zip = await JSZip.loadAsync(Buffer.from(RESUME_TEMPLATE_BASE64, "base64"));
   const documentXml = await zip.file("word/document.xml").async("string");
-  zip.file("word/document.xml", templatizeSkills(documentXml), { date: FIXED_ENTRY_DATE });
+  const templatized = templatizeExperience(templatizeSkills(documentXml));
+  zip.file("word/document.xml", templatized, { date: FIXED_ENTRY_DATE });
   for (const file of Object.values(zip.files)) file.date = FIXED_ENTRY_DATE;
   cache = await zip.generateAsync({ type: "nodebuffer" });
   return cache;
