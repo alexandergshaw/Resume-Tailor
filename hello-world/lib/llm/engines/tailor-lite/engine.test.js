@@ -81,14 +81,17 @@ describe("embeddedEngine composed workflow (in-house)", () => {
     expect(composed.docxB64).toBe(legacy.docxB64); // advisory is report-only
   });
 
-  it("fills cover-letter facts from the posting + company", async () => {
+  it("renders a full, personalized cover letter (composed workflow)", async () => {
     vi.stubEnv("RESUME_TAILOR_WORKFLOW", "composed");
     const res = await embeddedEngine.tailorCoverLetter({
       jobPosting: POSTING,
       jobTitle: "Staff Engineer",
       companyName: "Initech",
     });
-    expect(res.result).toContain("your work at Initech");
+    expect(res.result).toContain("Staff Engineer"); // TARGET_ROLE
+    expect(res.result).toContain("Initech"); // TARGET_ORGANIZATION
     expect(res.result).not.toContain("{{");
+    // The bundled template is a full-page letter, not a stub.
+    expect(res.result.split(/\s+/).filter(Boolean).length).toBeGreaterThan(250);
   });
 });

@@ -1,48 +1,24 @@
-// The bundled default cover-letter template, filled by the same deterministic
-// pipeline as the résumé (scan -> keywords -> strategy -> fill). Profile values
-// populate the writer's details; keyword-join slots reflect the posting; and
-// {{TARGET_ROLE}} / {{TARGET_ORGANIZATION}} are seeded from the job title /
-// company passed to tailorCoverLetter (see engine.js). Editable here.
+// The bundled cover-letter template is the user-authored {{placeholder}} .docx
+// (embedded as base64 in coverLetterTemplateBase64.js). It is a full-page letter
+// that already uses the strategy's {{PLACEHOLDER}} vocabulary, so we load it
+// verbatim (with pinned entry dates for deterministic output) and let the same
+// scan -> keywords -> strategy -> fill pipeline as the résumé populate it.
+//
+// To change the wording or formatting, replace coverLetterTemplateBase64.js with
+// a new base64-encoded .docx that uses the same {{PLACEHOLDER}} vocabulary.
 
-import { buildDocumentXml, buildDocxBuffer } from "./docxPackage.js";
-
-const PARAGRAPHS = [
-  { text: "{{FULL_NAME}}", bold: true, size: 28 },
-  { text: "" },
-  { text: "Dear Hiring Team at {{TARGET_ORGANIZATION}}," },
-  { text: "" },
-  {
-    text:
-      "I am writing to express my interest in the {{TARGET_ROLE}} role at {{TARGET_ORGANIZATION}}. As a {{RANK}} {{PRIMARY_FUNCTION}} with {{YEARS_OF_EXPERIENCE}} years of experience at {{CURRENT_EMPLOYER}}, I specialize in {{SPECIALIZATION}} and would bring that focus to your team.",
-  },
-  { text: "" },
-  {
-    text:
-      "Your posting emphasizes {{JOB_RELEVANT_TECHNOLOGIES}} — areas where I have delivered hands-on results. I pair that technical depth with strengths in {{LEADERSHIP_CAPABILITIES}} and a delivery approach grounded in {{DELIVERY_PRACTICES}}.",
-  },
-  { text: "" },
-  {
-    text:
-      "I am especially drawn to {{ORGANIZATION_CONTEXT}}, and I would bring a focus on {{ROLE_FOCUS}}.",
-  },
-  { text: "" },
-  {
-    text:
-      "I would welcome the opportunity to discuss how my background in {{SPECIALIZATION}} can support {{TARGET_ORGANIZATION}}'s goals. Thank you for your time and consideration.",
-  },
-  { text: "" },
-  { text: "Sincerely," },
-  { text: "{{FULL_NAME}}" },
-];
-
-const DOCUMENT_XML = buildDocumentXml(PARAGRAPHS);
+import JSZip from "jszip";
+import { FIXED_ENTRY_DATE } from "./docxModel.js";
+import { COVER_LETTER_TEMPLATE_BASE64 } from "./coverLetterTemplateBase64.js";
 
 let cache = null;
 
-// Assemble (once) the cover-letter template as a Node Buffer for loadDocx().
+// Assemble (once) the cover-letter template as a Node Buffer for loadDocx(),
+// with every zip entry's timestamp pinned so the output base64 is deterministic.
 export async function getCoverLetterTemplateBuffer() {
-  if (!cache) cache = await buildDocxBuffer(DOCUMENT_XML);
+  if (cache) return cache;
+  const zip = await JSZip.loadAsync(Buffer.from(COVER_LETTER_TEMPLATE_BASE64, "base64"));
+  for (const file of Object.values(zip.files)) file.date = FIXED_ENTRY_DATE;
+  cache = await zip.generateAsync({ type: "nodebuffer" });
   return cache;
 }
-
-export { DOCUMENT_XML as COVER_LETTER_DOCUMENT_XML };
