@@ -1,24 +1,29 @@
 import { describe, it, expect } from "vitest";
-import { mapResearch } from "./researcher.js";
+import { research } from "./researcher.js";
 
-describe("mapResearch", () => {
-  it("turns structured facts into cover-letter phrases and keeps overview/news advisory", () => {
-    const { advisory, facts } = mapResearch({
-      company: { profile: { industry: "Insurance" } },
-      role: { responsibilities: { essential_skills: ["digital strategy", "UX direction"] } },
-      overviews: [{ text: "An insurer.", source: "wikipedia" }],
-      news: [{ title: "Good news", source: "gdelt" }],
-    });
-    expect(facts.ORGANIZATION_CONTEXT).toBe("your work in Insurance");
-    expect(facts.ROLE_FOCUS).toBe("digital strategy, UX direction");
-    expect(advisory.overviews).toHaveLength(1);
-    expect(advisory.news).toHaveLength(1);
+describe("research (in-house)", () => {
+  const posting = "Senior Engineer at a healthcare company. Requirements: JavaScript, React, SQL, REST APIs, Agile.";
+
+  it("derives ORGANIZATION_CONTEXT (company + domain) and ROLE_FOCUS from the posting", () => {
+    const { facts } = research({ posting, company: "Acme Health" });
+    expect(facts.ORGANIZATION_CONTEXT).toContain("Acme Health");
+    expect(typeof facts.ROLE_FOCUS).toBe("string");
+    expect(facts.ROLE_FOCUS.length).toBeGreaterThan(0);
   });
 
-  it("emits no facts when fields are missing (slots fall back / stay visible)", () => {
-    const { advisory, facts } = mapResearch({});
-    expect(facts).toEqual({});
-    expect(advisory.overviews).toEqual([]);
-    expect(advisory.news).toEqual([]);
+  it("falls back to a domain-only context when no company is given", () => {
+    const { facts } = research({ posting });
+    expect(facts.ORGANIZATION_CONTEXT).toMatch(/^your work in /);
+  });
+
+  it("returns advisory derived from the posting (report-only)", () => {
+    const { advisory } = research({ posting, company: "Acme Health" });
+    expect(advisory.source).toMatch(/in-app/);
+    expect(advisory.topKeywords.length).toBeGreaterThan(0);
+  });
+
+  it("is deterministic for the same input", () => {
+    const args = { posting, company: "Acme Health" };
+    expect(research(args)).toEqual(research(args));
   });
 });

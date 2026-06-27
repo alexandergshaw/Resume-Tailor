@@ -1,12 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { embeddedEngine } from "./engine.js";
 
-const jsonResponse = (obj, status = 200) => ({
-  ok: status >= 200 && status < 300,
-  status,
-  json: async () => obj,
-});
-
 const POSTING = [
   "Senior Backend Engineer",
   "Cloud Platform Team",
@@ -88,55 +82,34 @@ describe("embeddedEngine.tailorCoverLetter", () => {
   });
 });
 
-describe("embeddedEngine composed workflow", () => {
+describe("embeddedEngine composed workflow (in-house)", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
-    vi.unstubAllGlobals();
   });
 
-  it("uses Parser keywords and surfaces Researcher advisory, but keeps it out of the résumé", async () => {
-    vi.stubEnv("RESUME_TAILOR_WORKFLOW", "composed");
-    vi.stubEnv("PARSER_API_URL", "https://parser.example");
-    vi.stubEnv("RESEARCHER_API_URL", "https://researcher.example");
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url) => {
-        if (String(url).includes("parser")) {
-          return jsonResponse({
-            results: {
-              technologies: [{ display: "PostgreSQL" }, { display: "REST APIs" }],
-              keywords: [{ display: "healthcare data exchange", score: 0.9 }],
-              field: { top: "Healthcare", ranked: [{ display: "Healthcare" }] },
-            },
-          });
-        }
-        return jsonResponse({
-          company: { profile: { industry: "Insurance" } },
-          overviews: [{ text: "An insurer.", source: "wikipedia" }],
-          news: [],
-        });
-      }),
-    );
+  it("surfaces in-house advisory but the résumé .docx is byte-identical to legacy", async () => {
+    const legacy = await embeddedEngine.tailorResume({ jobPosting: POSTING });
 
-    const res = await embeddedEngine.tailorResume({ jobPosting: POSTING });
+    vi.stubEnv("RESUME_TAILOR_WORKFLOW", "composed");
+    const composed = await embeddedEngine.tailorResume({ jobPosting: POSTING });
+
+    expect(composed.report.workflow).toBe("composed");
+    expect(composed.report.advisory).toBeTruthy();
+    expect(composed.report.advisory.topKeywords.length).toBeGreaterThan(0);
+    // Quarantine: advisory is report-only, so the document is unchanged.
+    expect(composed.docxB64).toBe(legacy.docxB64);
+    expect(composed.result).not.toContain("{{");
+  });
+
+  it("fills cover-letter facts (ORGANIZATION_CONTEXT / ROLE_FOCUS) from the posting + company", async () => {
+    vi.stubEnv("RESUME_TAILOR_WORKFLOW", "composed");
+    const res = await embeddedEngine.tailorCoverLetter({
+      jobPosting: POSTING,
+      jobTitle: "Staff Engineer",
+      companyName: "Initech",
+    });
     expect(res.report.workflow).toBe("composed");
-    expect(res.degraded).toBe(false);
-    expect(res.report.advisory.overviews).toHaveLength(1);
-    // Advisory research never enters the document.
-    expect(res.result).not.toContain("An insurer.");
-    expect(res.result).not.toContain("Insurance");
-    expect(res.result).not.toContain("{{");
-  });
-
-  it("falls back to local extraction (degraded) when the Parser fails", async () => {
-    vi.stubEnv("RESUME_TAILOR_WORKFLOW", "composed");
-    vi.stubEnv("PARSER_API_URL", "https://parser.example");
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({}, 500)));
-
-    const res = await embeddedEngine.tailorResume({ jobPosting: POSTING });
-    expect(res.degraded).toBe(true);
-    expect(res.warnings.length).toBeGreaterThan(0);
-    expect(res.result).toContain("Alex Shaw"); // résumé still generated
+    expect(res.result).toContain("your work at Initech");
     expect(res.result).not.toContain("{{");
   });
 });

@@ -1,70 +1,55 @@
-// Composed-workflow Researcher client. The Researcher hits live external sources,
-// so it is the ONLY non-deterministic input and is strictly quarantined:
-//   - RÉSUMÉS: advisory only — overviews + favorable news are surfaced in the
-//     report with attribution and NEVER auto-inserted, so the .docx is
-//     byte-identical research-on or research-off (strict adherence preserved).
-//   - COVER LETTERS: only STRUCTURED FACTS become rendered content —
-//     company.profile.industry -> {{ORGANIZATION_CONTEXT}} and
-//     role.responsibilities.essential_skills -> {{ROLE_FOCUS}} — turned into
-//     fixed-template phrases and filled via the same occurrence-indexed path.
-// Unconfigured/unreachable -> null; the caller proceeds without research.
+// In-house researcher. Derives advisory context + cover-letter facts from the
+// posting itself (and the company name) — NO external sources, no network, fully
+// deterministic. The quarantine still applies:
+//   - RÉSUMÉS: advisory only — returned for the report, never inserted into the
+//     .docx, so the document is byte-identical with the advisory present or not.
+//   - COVER LETTERS: only the structured facts ORGANIZATION_CONTEXT / ROLE_FOCUS
+//     become rendered content, via the same occurrence-indexed fill.
 
-const FIELDS = {
-  company: "company",
-  profile: "profile",
-  industry: "industry",
-  role: "role",
-  responsibilities: "responsibilities",
-  essentialSkills: "essential_skills",
-  overviews: "overviews",
-  news: "news",
-};
+import { extractKeywords } from "./keywords.js";
 
-// Map a raw research response into { advisory, facts }. Pure/deterministic given
-// the snapshot. advisory is for the résumé report (never the document); facts
-// feed cover-letter slots. Returns fixed-template phrases for the facts.
-export function mapResearch(raw) {
-  const company = raw?.[FIELDS.company] || {};
-  const role = raw?.[FIELDS.role] || {};
-  const industry = company?.[FIELDS.profile]?.[FIELDS.industry] || "";
-  const essential = role?.[FIELDS.responsibilities]?.[FIELDS.essentialSkills];
-  const skills = Array.isArray(essential) ? essential.filter(Boolean) : [];
+// Top-N distinct canonicals across the given categories, by (-score, canonical).
+function topCanonicals(keywords, categories, n) {
+  const merged = [];
+  for (const cat of categories) {
+    for (const item of keywords[cat] || []) merged.push(item);
+  }
+  merged.sort((a, b) => b.score - a.score || a.canonical.localeCompare(b.canonical));
+  const seen = new Set();
+  const out = [];
+  for (const item of merged) {
+    const low = item.canonical.toLowerCase();
+    if (seen.has(low)) continue;
+    seen.add(low);
+    out.push(item.canonical);
+    if (out.length >= n) break;
+  }
+  return out;
+}
 
-  const advisory = {
-    overviews: Array.isArray(raw?.[FIELDS.overviews]) ? raw[FIELDS.overviews] : [],
-    news: Array.isArray(raw?.[FIELDS.news]) ? raw[FIELDS.news] : [],
-  };
+const ROLE_FOCUS_CATEGORIES = ["technology", "tool_platform", "methodology", "soft_skill"];
+
+// Returns { advisory, facts }. `facts` may be empty (slots then fall back).
+export function research({ posting, company = "" } = {}) {
+  const keywords = extractKeywords(String(posting || ""));
+  const domain = (keywords.domain || [])[0]?.canonical || "";
+  const org = String(company || "").trim();
+  const roleFocus = topCanonicals(keywords, ROLE_FOCUS_CATEGORIES, 6);
+
+  let organizationContext = "";
+  if (org && domain) organizationContext = `your work at ${org} in ${domain}`;
+  else if (org) organizationContext = `your work at ${org}`;
+  else if (domain) organizationContext = `your work in ${domain}`;
 
   const facts = {};
-  if (industry) facts.ORGANIZATION_CONTEXT = `your work in ${industry}`;
-  if (skills.length) facts.ROLE_FOCUS = skills.join(", ");
+  if (organizationContext) facts.ORGANIZATION_CONTEXT = organizationContext;
+  if (roleFocus.length) facts.ROLE_FOCUS = roleFocus.join(", ");
 
-  return { advisory, facts, industry, essentialSkills: skills };
-}
-
-function getConfig() {
-  return {
-    url: process.env.RESEARCHER_API_URL || null,
-    key: process.env.RESEARCHER_API_KEY || null,
+  const advisory = {
+    source: "in-app analysis of the job posting",
+    emphases: (keywords.domain || []).slice(0, 3).map((k) => k.canonical),
+    topKeywords: topCanonicals(keywords, [...ROLE_FOCUS_CATEGORIES, "domain"], 10),
   };
-}
 
-export function isResearcherConfigured() {
-  return !!getConfig().url;
-}
-
-// Call the Researcher, or return null if unconfigured. Throws on a
-// reachable-but-failing service so the caller can decide to proceed without it.
-export async function fetchResearch({ posting, emphases = [], company = "" }) {
-  const { url, key } = getConfig();
-  if (!url) return null;
-  const headers = { "Content-Type": "application/json", Accept: "application/json" };
-  if (key) headers["X-API-Key"] = key;
-  const res = await fetch(url.replace(/\/+$/, ""), {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ text: posting, emphases, company }),
-  });
-  if (!res.ok) throw new Error(`Researcher API error: HTTP ${res.status}`);
-  return mapResearch(await res.json());
+  return { advisory, facts };
 }

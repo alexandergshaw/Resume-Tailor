@@ -2,16 +2,15 @@
 // in-process interface as geminiEngine / externalEngine so the registry can swap
 // it in behind RESUME_ENGINE=embedded.
 //
-// Two workflows (RESUME_TAILOR_WORKFLOW): "legacy" (default) is fully local — no
-// network, byte-deterministic. "composed" swaps ONLY Step 2 (keyword extraction)
-// for the external Parser and adds the Researcher, mapping both back into the
-// same local Keyword model / fill core — so strict adherence is preserved:
-//   - Parser keywords map to {canonical,category,score}; fill core is unchanged.
-//   - Researcher is quarantined: ADVISORY ONLY for résumés (report.advisory,
-//     never the .docx, so the document is byte-identical research-on/off), and
-//     STRUCTURED FACTS only for cover letters (ORGANIZATION_CONTEXT / ROLE_FOCUS).
-// Every external call falls back to the local path (flagging `degraded`), so the
-// deterministic core is never blocked by a downstream outage.
+// Two workflows (RESUME_TAILOR_WORKFLOW): "legacy" (default) is plain local
+// keyword extraction. "composed" runs the IN-HOUSE parser + researcher (no
+// external services, no network) — both deterministic and done in this app:
+//   - Parser = local taxonomy/RAKE extraction (parser.js).
+//   - Researcher (researcher.js) is quarantined: ADVISORY ONLY for résumés
+//     (report.advisory, never the .docx, so the document is byte-identical with
+//     it present or not), and STRUCTURED FACTS only for cover letters
+//     (ORGANIZATION_CONTEXT / ROLE_FOCUS), derived from the posting + company.
+// Both workflows are fully deterministic and offline.
 
 import { getDefaultTemplateBuffer } from "./defaultTemplate.js";
 import { getCoverLetterTemplateBuffer } from "./coverLetterTemplate.js";
@@ -24,8 +23,8 @@ import {
 } from "./docxModel.js";
 import { extractKeywords } from "./keywords.js";
 import { mapSlots } from "./strategy.js";
-import { fetchParserKeywords } from "./parser.js";
-import { fetchResearch } from "./researcher.js";
+import { parsePosting } from "./parser.js";
+import { research } from "./researcher.js";
 import profile from "./data/profile.json";
 import library from "./data/content_library.json";
 import skillGroups from "./data/skill_groups.json";
@@ -38,61 +37,35 @@ function getWorkflow() {
   return (process.env.RESUME_TAILOR_WORKFLOW || "legacy").trim().toLowerCase();
 }
 
-// Keywords for the posting. Legacy: local taxonomy extraction. Composed: the
-// Parser, mapped to the local Keyword model — falling back to local (degraded)
-// if the Parser is unconfigured or unreachable.
-async function resolveKeywords(posting) {
-  if (getWorkflow() !== "composed") {
-    return { keywords: extractKeywords(posting), emphases: [], degraded: false, warnings: [] };
+// Keywords for the posting. Both workflows are local; composed uses the in-house
+// parser (taxonomy extraction + emphases). Deterministic, never degraded.
+function resolveKeywords(posting) {
+  if (getWorkflow() === "composed") {
+    const { keywords, emphases } = parsePosting(posting);
+    return { keywords, emphases };
   }
-  try {
-    const parsed = await fetchParserKeywords(posting);
-    if (parsed) return { keywords: parsed.keywords, emphases: parsed.emphases, degraded: false, warnings: [] };
-    return {
-      keywords: extractKeywords(posting),
-      emphases: [],
-      degraded: true,
-      warnings: ["Parser not configured; used local keyword extraction."],
-    };
-  } catch (err) {
-    return {
-      keywords: extractKeywords(posting),
-      emphases: [],
-      degraded: true,
-      warnings: [`Parser unavailable (${err?.message || "error"}); used local keyword extraction.`],
-    };
-  }
+  return { keywords: extractKeywords(posting), emphases: [] };
 }
 
-// Researcher overview/news for the résumé — ADVISORY ONLY, never inserted.
-async function resolveAdvisory({ posting, emphases, company }) {
+// In-house researcher advisory for the résumé — ADVISORY ONLY, never inserted.
+function resolveAdvisory({ posting, company }) {
   if (getWorkflow() !== "composed") return null;
-  try {
-    const research = await fetchResearch({ posting, emphases, company });
-    return research ? research.advisory : null;
-  } catch {
-    return null;
-  }
+  return research({ posting, company }).advisory;
 }
 
-// Researcher structured facts for the cover letter (industry / essential skills).
-async function resolveCoverFacts({ posting, company }) {
+// In-house researcher structured facts for the cover letter.
+function resolveCoverFacts({ posting, company }) {
   if (getWorkflow() !== "composed") return {};
-  try {
-    const research = await fetchResearch({ posting, company });
-    return research ? research.facts : {};
-  } catch {
-    return {};
-  }
+  return research({ posting, company }).facts;
 }
 
 // Scan a template, resolve keywords (legacy/composed), map placeholders.
 async function buildProposal(buffer, posting) {
   const doc = await loadDocx(buffer);
   const rawSlots = scanPlaceholders(doc);
-  const kw = await resolveKeywords(posting);
+  const kw = resolveKeywords(posting);
   const slots = mapSlots(rawSlots, kw.keywords, DATA);
-  return { doc, slots, keywords: kw.keywords, emphases: kw.emphases, degraded: kw.degraded, warnings: kw.warnings };
+  return { doc, slots, keywords: kw.keywords, emphases: kw.emphases };
 }
 
 // Resolve final values and fill a template. `overrides` map slot keys to text;
@@ -123,8 +96,6 @@ async function render(buffer, posting, { overrides = {}, seedByName = {} } = {})
     unfilled,
     keywords: proposal.keywords,
     emphases: proposal.emphases,
-    degraded: proposal.degraded,
-    warnings: proposal.warnings,
   };
 }
 
@@ -151,18 +122,15 @@ export const embeddedEngine = {
   async getProposals({ jobPosting }) {
     const posting = String(jobPosting || "").trim();
     if (!posting) throw new Error("A job posting is required for the embedded engine.");
-    const { slots, keywords, emphases, degraded, warnings } = await buildProposal(
-      await getDefaultTemplateBuffer(),
-      posting,
-    );
-    const advisory = await resolveAdvisory({ posting, emphases, company: "" });
+    const { slots, keywords } = await buildProposal(await getDefaultTemplateBuffer(), posting);
+    const advisory = resolveAdvisory({ posting, company: "" });
     const out = {
       engine_version: ENGINE_VERSION,
       workflow: getWorkflow(),
       slots,
       keywords,
-      warnings,
-      degraded,
+      warnings: [],
+      degraded: false,
     };
     if (advisory) out.advisory = advisory;
     return out;
@@ -174,7 +142,7 @@ export const embeddedEngine = {
     const overrides = values && typeof values === "object" ? values : {};
     const r = await render(await getDefaultTemplateBuffer(), posting, { overrides });
     // Advisory research is excluded from the document — report only.
-    const advisory = await resolveAdvisory({ posting, emphases: r.emphases, company: "" });
+    const advisory = resolveAdvisory({ posting, company: "" });
 
     return {
       engine: "embedded",
@@ -190,8 +158,8 @@ export const embeddedEngine = {
         keywords: r.keywords,
         advisory,
       }),
-      warnings: r.warnings,
-      degraded: r.degraded,
+      warnings: [],
+      degraded: false,
     };
   },
 
@@ -200,7 +168,7 @@ export const embeddedEngine = {
     const overrides = values && typeof values === "object" ? values : {};
     // Composed: structured facts from the Researcher; otherwise neutral fallbacks
     // so a slot never shows raw braces.
-    const facts = await resolveCoverFacts({ posting, company: companyName });
+    const facts = resolveCoverFacts({ posting, company: companyName });
     const seedByName = {
       TARGET_ROLE: String(jobTitle || "").trim() || "the role",
       TARGET_ORGANIZATION: String(companyName || "").trim() || "your organization",
@@ -226,8 +194,8 @@ export const embeddedEngine = {
         keywords: r.keywords,
         extraMeta: { document: "cover_letter" },
       }),
-      warnings: r.warnings,
-      degraded: r.degraded,
+      warnings: [],
+      degraded: false,
     };
   },
 };
