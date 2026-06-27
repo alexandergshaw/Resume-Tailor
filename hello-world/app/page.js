@@ -3880,8 +3880,8 @@ export default function Home() {
       }
 
       const dlError = await downloadDocxFiles({
-        jobTitle: nextJobTitle,
-        company: nextCompany,
+        jobTitle: nextJobTitle || posting.title,
+        company: nextCompany || posting.company,
         result: nextResult,
         resultLines: nextResultLines,
         coverLetterResultLines: nextCoverLetterResultLines,

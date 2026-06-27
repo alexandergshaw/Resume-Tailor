@@ -25,6 +25,7 @@ import { extractKeywords } from "./keywords.js";
 import { mapSlots } from "./strategy.js";
 import { parsePosting } from "./parser.js";
 import { research } from "./researcher.js";
+import { extractPostingMeta } from "./postingMeta.js";
 import profile from "./data/profile.json";
 import library from "./data/content_library.json";
 import skillGroups from "./data/skill_groups.json";
@@ -148,13 +149,17 @@ export const embeddedEngine = {
     const r = await render(await getDefaultTemplateBuffer(), posting, { overrides, aggressiveness });
     // Advisory research is excluded from the document — report only.
     const advisory = resolveAdvisory({ posting, company: "" });
+    // Best-effort title/company so the saved file is named after the posting
+    // ("<Company> - <Position> - Resume.docx") instead of falling back to a
+    // generic default.
+    const meta = extractPostingMeta(posting);
 
     return {
       engine: "embedded",
       result: r.resultLines.join("\n"),
       resultLines: r.resultLines,
-      jobTitle: "",
-      companyName: "",
+      jobTitle: meta.jobTitle,
+      companyName: meta.companyName,
       docxB64: r.docxB64,
       report: buildReport({
         workflow: getWorkflow(),
@@ -171,12 +176,18 @@ export const embeddedEngine = {
   async tailorCoverLetter({ jobPosting, jobTitle, companyName, values, aggressiveness }) {
     const posting = String(jobPosting || "").trim();
     const overrides = values && typeof values === "object" ? values : {};
+    // Fall back to title/company parsed from the posting when the caller didn't
+    // supply them (e.g. the manual paste flow), so the cover letter is addressed
+    // correctly and its file is named like the résumé.
+    const meta = extractPostingMeta(posting);
+    const role = String(jobTitle || "").trim() || meta.jobTitle;
+    const organization = String(companyName || "").trim() || meta.companyName;
     // Composed: structured facts from the Researcher; otherwise neutral fallbacks
     // so a slot never shows raw braces.
-    const facts = resolveCoverFacts({ posting, company: companyName });
+    const facts = resolveCoverFacts({ posting, company: organization });
     const seedByName = {
-      TARGET_ROLE: String(jobTitle || "").trim() || "the role",
-      TARGET_ORGANIZATION: String(companyName || "").trim() || "your organization",
+      TARGET_ROLE: role || "the role",
+      TARGET_ORGANIZATION: organization || "your organization",
       ORGANIZATION_CONTEXT: facts.ORGANIZATION_CONTEXT || "your organization's work",
       ROLE_FOCUS: facts.ROLE_FOCUS || "the priorities in your posting",
       JOB_RELEVANT_TECHNOLOGIES: "modern web and enterprise technologies",
@@ -193,8 +204,8 @@ export const embeddedEngine = {
       engine: "embedded",
       result: r.resultLines.join("\n"),
       resultLines: r.resultLines,
-      jobTitle: String(jobTitle || ""),
-      companyName: String(companyName || ""),
+      jobTitle: role,
+      companyName: organization,
       docxB64: r.docxB64,
       report: buildReport({
         workflow: getWorkflow(),
