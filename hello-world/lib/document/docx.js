@@ -39,22 +39,22 @@ export function sanitizeFileNamePart(value) {
     .trim();
 }
 
+// Document file names follow "<Company> - <Position> - Resume/CL.docx". Company
+// is dropped when unknown so the name never starts with a stray " - ".
+function buildDocumentFileName(jobTitle, company, kind) {
+  const titlePart = sanitizeFileNamePart(jobTitle || "").slice(0, 90) || "Target Role";
+  const companyPart = sanitizeFileNamePart(company || "").slice(0, 60);
+  return companyPart
+    ? `${companyPart} - ${titlePart} - ${kind}.docx`
+    : `${titlePart} - ${kind}.docx`;
+}
+
 export function getDownloadFileNameForTitle(jobTitle, company) {
-  const cleanedTitle = sanitizeFileNamePart(jobTitle || "").slice(0, 90);
-  const cleanedCompany = sanitizeFileNamePart(company || "").slice(0, 60);
-  const titlePart = cleanedTitle || "Target Role";
-  return cleanedCompany
-    ? `Resume - ${cleanedCompany} - ${titlePart}.docx`
-    : `Resume - ${titlePart}.docx`;
+  return buildDocumentFileName(jobTitle, company, "Resume");
 }
 
 export function getDownloadCoverLetterFileNameForTitle(jobTitle, company) {
-  const cleanedTitle = sanitizeFileNamePart(jobTitle || "").slice(0, 90);
-  const cleanedCompany = sanitizeFileNamePart(company || "").slice(0, 60);
-  const titlePart = cleanedTitle || "Target Role";
-  return cleanedCompany
-    ? `Cover Letter - ${cleanedCompany} - ${titlePart}.docx`
-    : `Cover Letter - ${titlePart}.docx`;
+  return buildDocumentFileName(jobTitle, company, "CL");
 }
 
 export function isDocxResume(file) {

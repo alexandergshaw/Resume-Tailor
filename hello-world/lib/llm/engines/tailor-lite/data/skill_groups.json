@@ -2,12 +2,9 @@
   "_comment": "User-editable. Drives SKILLS_DISTRIBUTE: the five skill blocks are reordered so the group most relevant to the posting leads, and the skills within each row are reordered so posting-matched ones come first. `keywords` are your exact display strings (kept verbatim — nothing is dropped or invented); `categories` is fallback membership used only for ranking. File order is the deterministic tie-break, so the default (no posting signal) order matches the résumé.",
   "groups": [
     {
-      "heading": "Healthcare Interoperability & Enterprise Integration",
+      "heading": "Enterprise Integration & Systems Architecture",
       "categories": ["domain"],
       "keywords": [
-        "Healthcare Interoperability (HL7, FHIR, CCD/C-CDA)",
-        "Healthcare Data Mapping",
-        "Payer Workflows",
         "API-Based Architectures",
         "Enterprise Integration Patterns",
         "Systems Integration",
@@ -15,7 +12,7 @@
         "REST APIs",
         "Backend Integration Workflows",
         "Enterprise Application Modernization",
-        "Healthcare Data Exchange"
+        "Event-Driven Architecture"
       ]
     },
     {
