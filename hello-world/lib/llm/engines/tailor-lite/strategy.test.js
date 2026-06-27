@@ -108,21 +108,27 @@ describe("mapSlots areas of emphasis (per-role)", () => {
     }
   });
 
-  it("teaching emphasis (AREA_OF_EMPHASIS) draws from subjects + people skills, not job domains", () => {
+  it("teaching emphasis (AREA_OF_EMPHASIS) leads with the taught subjects, independent of posting", () => {
+    const data = { profile: { values: {}, teaching_subjects: ["Web Development", "Software Engineering", "Database Systems"] } };
+    // A posting whose domains differ from the taught subjects must not change them.
+    const kw2 = { domain: [{ canonical: "Payments", score: 9, count: 1 }, { canonical: "ETL", score: 8, count: 1 }] };
+    const teaching = [0, 1].map(
+      (occ) => mapSlots([slot("AREA_OF_EMPHASIS", occ)], kw2, data, { aggressiveness: 3 })[0].value,
+    );
+    expect(teaching[0]).toBe("Web Development"); // always leads with the first taught subject
+    expect(teaching[1]).toBe("Software Engineering");
+    expect(teaching).not.toContain("Payments"); // never a posting domain
+  });
+
+  it("teaching emphasis falls back to subjects + people skills (never job domains) without a taught list", () => {
     const kw2 = {
       domain: [{ canonical: "Enterprise Integration", score: 9, count: 1 }, { canonical: "ETL", score: 8, count: 1 }],
       technology: [{ canonical: "JavaScript", score: 9, count: 1 }],
-      soft_skill: [{ canonical: "Communication", score: 8, count: 1 }, { canonical: "Leadership", score: 7, count: 1 }],
+      soft_skill: [{ canonical: "Communication", score: 8, count: 1 }],
     };
-    const teaching = [0, 1].map(
-      (occ) => mapSlots([slot("AREA_OF_EMPHASIS", occ)], kw2, { profile: { values: {} } }, { aggressiveness: 3 })[0].value,
-    );
-    // Distinct per occurrence, and never a business-domain term.
-    expect(teaching[0]).not.toBe(teaching[1]);
-    for (const value of teaching) {
-      expect(["Enterprise Integration", "ETL"]).not.toContain(value);
-      expect(["JavaScript", "Communication", "Leadership"]).toContain(value);
-    }
+    const value = mapSlots([slot("AREA_OF_EMPHASIS", 0)], kw2, { profile: { values: {} } }, { aggressiveness: 3 })[0].value;
+    expect(["Enterprise Integration", "ETL"]).not.toContain(value);
+    expect(["JavaScript", "Communication"]).toContain(value);
   });
 });
 
