@@ -22,15 +22,18 @@ function clampAggressiveness(value) {
   return Math.min(5, Math.max(1, n));
 }
 
-// Posting score by canonical (for ranking + gap detection).
+// Posting score by canonical + the set of posting canonicals (for ranking, gap
+// detection, and library-fragment tag matching).
 function buildContext(keywords) {
   const postingScore = new Map();
+  const jobCanonical = new Set();
   for (const category of Object.keys(keywords)) {
     for (const { canonical, score } of keywords[category]) {
       postingScore.set(canonical.toLowerCase(), score);
+      jobCanonical.add(canonical.toLowerCase());
     }
   }
-  return { postingScore };
+  return { postingScore, jobCanonical };
 }
 
 // --- KEYWORD_JOIN ----------------------------------------------------------
@@ -139,7 +142,7 @@ const FRAGMENT_POOLS = {
   SOLUTION_OR_PROCESS: ["the deployment process", "the reporting workflow", "the integration pipeline"],
   TECHNICAL_OR_BUSINESS_RESULT: ["streamlined operations", "improved system reliability", "reduced manual effort", "increased delivery speed"],
   BUSINESS_OR_TECHNICAL_OUTCOME: ["operational efficiency", "system reliability", "delivery velocity"],
-  MEASURABLE_IMPACT: ["a 40% reduction in processing time", "a 30% increase in throughput", "a 50% drop in production defects", "10,000+ users served", "a 60% faster release cycle", "99.9% uptime", "a 35% reduction in manual effort", "a 45% improvement in performance"],
+  MEASURABLE_IMPACT: ["measurable efficiency gains", "improved reliability and performance", "stronger operational outcomes"],
   PERFORMANCE_OR_BUSINESS_METRIC: ["throughput", "reliability", "delivery speed", "operational cost"],
   INITIATIVE_TYPE: ["enterprise modernization", "platform engineering", "integration"],
   INITIATIVE_OR_RESPONSIBILITY: ["a cross-team modernization initiative", "an enterprise integration program"],
@@ -165,6 +168,34 @@ function fragmentValue(name, cursors) {
   const i = cursors.get(name) || 0;
   cursors.set(name, i + 1);
   return pool[i % pool.length];
+}
+
+// --- LIBRARY_MATCH (real, tagged accomplishment/project fragments) ----------
+
+// Relevance of a library fragment to the posting = how many of its tags the
+// posting asks for.
+function fragmentScore(entry, ctx) {
+  let score = 0;
+  for (const tag of entry.tags || []) {
+    if (ctx.jobCanonical.has((canonicalize(tag) || tag).toLowerCase())) score += 1;
+  }
+  return score;
+}
+
+// Best-matching unused content_library fragment for a slot. Real fragments are
+// always eligible; fabricated ones (invented metrics/spin) only when
+// allowFabricated (high aggressiveness). Each fragment is used at most once.
+// Returns the fragment text, or null to fall back to the neutral phrase pool.
+function libraryMatch(name, library, ctx, used, allowFabricated) {
+  const eligible = (library?.entries || []).filter(
+    (e) => (e.slots || []).includes(name) && (allowFabricated || !e.fabricated) && !used.has(e.id),
+  );
+  if (eligible.length === 0) return null;
+  eligible.sort(
+    (a, b) => fragmentScore(b, ctx) - fragmentScore(a, ctx) || String(a.id).localeCompare(String(b.id)),
+  );
+  used.add(eligible[0].id);
+  return eligible[0].text;
 }
 
 const COURSE_RE = /COURSE_TOPICS/;
@@ -202,7 +233,11 @@ function mapOne(slot, keywords, data, state) {
     return make("keywords", capabilityJoin(keywords, state.byCat, ["technology", "soft_skill"], n, state.universe, state.allowGaps), `${n} course topics`);
   }
 
-  // 5) FRAGMENT / PROJECT phrasing pools
+  // 5) LIBRARY_MATCH — real accomplishment / project fragments
+  const lib = libraryMatch(name, data.library, state.ctx, state.used, state.allowFabricated);
+  if (lib != null) return make("library", lib, "From content library");
+
+  // 6) FRAGMENT / PROJECT phrasing pools (neutral fallback)
   const fragment = fragmentValue(name, state.cursors);
   if (fragment != null) return make("phrase", fragment, "Composed phrase");
 
@@ -220,6 +255,15 @@ export function mapSlots(slots, keywords, data, options = {}) {
   const byCat = candidateSkillsByCategory();
   const skillRows = buildSkillRows(keywords, byCat, ctx, universe, GAP_BUDGET[aggressiveness] || 0);
   const allowGaps = aggressiveness >= 3;
-  const state = { ctx, byCat, skillRows, cursors: new Map(), universe, allowGaps };
+  const state = {
+    ctx,
+    byCat,
+    skillRows,
+    cursors: new Map(),
+    universe,
+    allowGaps,
+    used: new Set(),
+    allowFabricated: allowGaps,
+  };
   return slots.map((slot) => ({ ...slot, ...mapOne(slot, keywords, data, state) }));
 }

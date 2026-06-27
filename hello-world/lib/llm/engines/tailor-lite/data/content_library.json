@@ -1,4 +1,92 @@
 {
-  "_comment": "Reserved. The current template composes accomplishment + project bullets from deterministic phrase pools in strategy.js (FRAGMENT_POOLS), and the candidate's real skills live in skill_groups.json. This file is kept for a future tagged accomplishment library (LIBRARY_MATCH).",
-  "entries": []
+  "_comment": "User-editable accomplishment-fragment bank. Each entry fills one or more composed-bullet slots (its `slots`); the engine picks the best-tagged unused fragment per posting (LIBRARY_MATCH), falling back to neutral phrase pools only if none match. Entries WITHOUT `fabricated` are real/truthful and always eligible; `fabricated:true` (invented metrics/spin) only join the pool at aggressiveness >= 3. `text` is inserted verbatim — keep it grammatical for the sentence skeletons. Add more entries (more tags, more topics) to make selection richer.",
+  "entries": [
+    { "id": "sol-healthcare", "slots": ["SOLUTION_OR_INITIATIVE", "SOLUTION_OR_CAPABILITY", "PROJECT_SOLUTION"], "text": "a healthcare integration platform", "tags": ["Healthcare Interoperability", "HL7", "FHIR", "Enterprise Integration"] },
+    { "id": "sol-react-lib", "slots": ["SOLUTION_OR_INITIATIVE", "SOLUTION_OR_CAPABILITY", "PROJECT_SOLUTION"], "text": "a reusable React component library", "tags": ["React", "JavaScript", "TypeScript", "Web Development"] },
+    { "id": "sol-web-platform", "slots": ["SOLUTION_OR_INITIATIVE", "SOLUTION_OR_CAPABILITY", "PROJECT_SOLUTION"], "text": "a responsive web platform", "tags": ["Web Development", "HTML", "CSS", "JavaScript", "User Experience"] },
+    { "id": "sol-reporting", "slots": ["SOLUTION_OR_INITIATIVE", "SOLUTION_OR_CAPABILITY", "PROJECT_SOLUTION"], "text": "a SQL-backed operational reporting platform", "tags": ["SQL", "Business Intelligence", "Data Engineering"] },
+    { "id": "sol-pipeline", "slots": ["SOLUTION_OR_INITIATIVE", "SOLUTION_OR_CAPABILITY", "PROJECT_SOLUTION"], "text": "a large-scale data transformation pipeline", "tags": ["Data Engineering", "ETL", "SQL", "Distributed Systems"] },
+    { "id": "sol-api", "slots": ["SOLUTION_OR_INITIATIVE", "SOLUTION_OR_CAPABILITY", "PROJECT_SOLUTION"], "text": "an enterprise API integration service", "tags": ["REST", "Enterprise Integration", "Microservices"] },
+
+    { "id": "proc-reporting", "slots": ["SOLUTION_OR_PROCESS"], "text": "the reporting and analytics workflow", "tags": ["Business Intelligence", "SQL"] },
+    { "id": "proc-release", "slots": ["SOLUTION_OR_PROCESS"], "text": "the deployment and release process", "tags": ["CI/CD", "DevOps"] },
+    { "id": "proc-integration", "slots": ["SOLUTION_OR_PROCESS"], "text": "the data integration pipeline", "tags": ["Data Engineering", "Enterprise Integration", "ETL"] },
+
+    { "id": "impact-users", "slots": ["MEASURABLE_IMPACT"], "text": "support for 10,000+ internal users", "tags": ["Distributed Systems", "Enterprise Integration"] },
+    { "id": "impact-events", "slots": ["MEASURABLE_IMPACT"], "text": "processing of 75,000+ daily operational events", "tags": ["Data Engineering", "Distributed Systems"] },
+    { "id": "impact-team", "slots": ["MEASURABLE_IMPACT"], "text": "delivery by a focused engineering team of 5", "tags": ["Leadership"] },
+    { "id": "impact-scale", "slots": ["MEASURABLE_IMPACT"], "text": "reliable operation at enterprise scale", "tags": ["Distributed Systems", "Enterprise Integration"] },
+    { "id": "impact-f-proc", "slots": ["MEASURABLE_IMPACT"], "fabricated": true, "text": "a 40% reduction in processing time", "tags": ["Data Engineering", "ETL", "Distributed Systems"] },
+    { "id": "impact-f-defects", "slots": ["MEASURABLE_IMPACT"], "fabricated": true, "text": "a 50% drop in production defects", "tags": ["Unit Testing", "Code Review", "CI/CD"] },
+    { "id": "impact-f-release", "slots": ["MEASURABLE_IMPACT"], "fabricated": true, "text": "a 60% faster release cycle", "tags": ["CI/CD", "DevOps"] },
+    { "id": "impact-f-uptime", "slots": ["MEASURABLE_IMPACT"], "fabricated": true, "text": "99.9% uptime across services", "tags": ["Distributed Systems", "Site Reliability Engineering"] },
+    { "id": "impact-f-manual", "slots": ["MEASURABLE_IMPACT"], "fabricated": true, "text": "a 35% reduction in manual reporting effort", "tags": ["Workflow Automation", "Business Intelligence"] },
+
+    { "id": "res-frontend", "slots": ["TECHNICAL_OR_BUSINESS_RESULT"], "text": "streamlined frontend delivery", "tags": ["React", "Web Development"] },
+    { "id": "res-legacy", "slots": ["TECHNICAL_OR_BUSINESS_RESULT"], "text": "modernized legacy integrations", "tags": ["Enterprise Integration", "Enterprise Application Modernization"] },
+    { "id": "res-data", "slots": ["TECHNICAL_OR_BUSINESS_RESULT"], "text": "improved data reliability", "tags": ["Data Engineering", "SQL"] },
+    { "id": "res-healthcare", "slots": ["TECHNICAL_OR_BUSINESS_RESULT"], "text": "enabled seamless healthcare data exchange", "tags": ["Healthcare Interoperability", "HL7", "FHIR"] },
+
+    { "id": "out-visibility", "slots": ["BUSINESS_OR_TECHNICAL_OUTCOME"], "text": "operational visibility", "tags": ["Business Intelligence"] },
+    { "id": "out-reliability", "slots": ["BUSINESS_OR_TECHNICAL_OUTCOME"], "text": "system reliability", "tags": ["Distributed Systems"] },
+    { "id": "out-integration", "slots": ["BUSINESS_OR_TECHNICAL_OUTCOME"], "text": "integration efficiency", "tags": ["Enterprise Integration"] },
+    { "id": "out-productivity", "slots": ["BUSINESS_OR_TECHNICAL_OUTCOME"], "text": "developer productivity", "tags": ["CI/CD", "Web Development"] },
+
+    { "id": "cap-clinical", "slots": ["NEW_CAPABILITY", "RESULTING_CAPABILITY"], "text": "real-time clinical data exchange", "tags": ["Healthcare Interoperability", "FHIR", "HL7"] },
+    { "id": "cap-reporting", "slots": ["NEW_CAPABILITY", "RESULTING_CAPABILITY"], "text": "self-service operational reporting", "tags": ["Business Intelligence", "SQL"] },
+    { "id": "cap-deploys", "slots": ["NEW_CAPABILITY", "RESULTING_CAPABILITY"], "text": "automated, repeatable deployments", "tags": ["CI/CD", "DevOps"] },
+    { "id": "cap-ui", "slots": ["NEW_CAPABILITY", "RESULTING_CAPABILITY"], "text": "reusable, consistent UI delivery", "tags": ["React", "Web Development", "User Experience"] },
+    { "id": "cap-scale", "slots": ["NEW_CAPABILITY", "RESULTING_CAPABILITY"], "text": "scalable data processing", "tags": ["Data Engineering", "Distributed Systems"] },
+
+    { "id": "init-healthcare", "slots": ["INITIATIVE_TYPE"], "text": "healthcare integration", "tags": ["Healthcare Interoperability", "Enterprise Integration"] },
+    { "id": "init-modern", "slots": ["INITIATIVE_TYPE"], "text": "enterprise application modernization", "tags": ["Enterprise Application Modernization"] },
+    { "id": "init-web", "slots": ["INITIATIVE_TYPE"], "text": "web platform engineering", "tags": ["Web Development", "React"] },
+    { "id": "init-data", "slots": ["INITIATIVE_TYPE"], "text": "data platform", "tags": ["Data Engineering", "ETL"] },
+
+    { "id": "initresp-integration", "slots": ["INITIATIVE_OR_RESPONSIBILITY"], "text": "a cross-team integration program", "tags": ["Enterprise Integration"] },
+    { "id": "initresp-modern", "slots": ["INITIATIVE_OR_RESPONSIBILITY"], "text": "an application modernization effort", "tags": ["Enterprise Application Modernization"] },
+    { "id": "initresp-reporting", "slots": ["INITIATIVE_OR_RESPONSIBILITY"], "text": "a reporting and analytics initiative", "tags": ["Business Intelligence", "Data Engineering"] },
+
+    { "id": "stratplural-modern", "slots": ["STRATEGIC_OUTCOMES"], "text": "enterprise modernization", "tags": ["Enterprise Application Modernization"] },
+    { "id": "stratplural-excellence", "slots": ["STRATEGIC_OUTCOMES"], "text": "operational excellence", "tags": ["Workflow Automation"] },
+    { "id": "stratplural-delivery", "slots": ["STRATEGIC_OUTCOMES"], "text": "scalable delivery", "tags": ["Distributed Systems", "CI/CD"] },
+
+    { "id": "actres-releases", "slots": ["ACTION_RESULT"], "text": "accelerate release cycles", "tags": ["CI/CD", "DevOps"] },
+    { "id": "actres-access", "slots": ["ACTION_RESULT"], "text": "improve data accessibility", "tags": ["Data Engineering", "SQL"] },
+    { "id": "actres-reliability", "slots": ["ACTION_RESULT"], "text": "raise platform reliability", "tags": ["Distributed Systems"] },
+
+    { "id": "actimpl-services", "slots": ["ACTION_OR_IMPLEMENTATION"], "text": "re-architecting core services", "tags": ["Microservices", "REST"] },
+    { "id": "actimpl-automation", "slots": ["ACTION_OR_IMPLEMENTATION"], "text": "automating reporting workflows", "tags": ["Workflow Automation", "SQL"] },
+    { "id": "actimpl-frontend", "slots": ["ACTION_OR_IMPLEMENTATION"], "text": "modernizing the frontend stack", "tags": ["React", "Web Development", "TypeScript"] },
+
+    { "id": "prob-healthcare", "slots": ["PROBLEM_OR_REQUIREMENT"], "text": "complex healthcare interoperability requirements", "tags": ["Healthcare Interoperability", "HL7", "FHIR"] },
+    { "id": "prob-scale", "slots": ["PROBLEM_OR_REQUIREMENT"], "text": "growing scalability and reliability needs", "tags": ["Distributed Systems"] },
+    { "id": "prob-reporting", "slots": ["PROBLEM_OR_REQUIREMENT"], "text": "fragmented reporting and data access", "tags": ["Business Intelligence", "SQL"] },
+    { "id": "prob-integration", "slots": ["PROBLEM_OR_REQUIREMENT"], "text": "evolving enterprise integration requirements", "tags": ["Enterprise Integration"] },
+
+    { "id": "ptype-healthcare", "slots": ["PROJECT_TYPE"], "text": "Healthcare Integration", "tags": ["Healthcare Interoperability", "HL7", "FHIR"] },
+    { "id": "ptype-web", "slots": ["PROJECT_TYPE"], "text": "Web Platform Modernization", "tags": ["Web Development", "React"] },
+    { "id": "ptype-data", "slots": ["PROJECT_TYPE"], "text": "Data Platform Engineering", "tags": ["Data Engineering", "ETL"] },
+    { "id": "ptype-enterprise", "slots": ["PROJECT_TYPE"], "text": "Enterprise Integration", "tags": ["Enterprise Integration", "Microservices"] },
+
+    { "id": "pcap-arch", "slots": ["PRIMARY_CAPABILITY"], "text": "Scalable Architecture", "tags": ["Microservices", "Distributed Systems"] },
+    { "id": "pcap-exchange", "slots": ["PRIMARY_CAPABILITY"], "text": "Real-Time Data Exchange", "tags": ["Healthcare Interoperability", "FHIR", "Data Engineering"] },
+    { "id": "pcap-delivery", "slots": ["PRIMARY_CAPABILITY"], "text": "Automated Delivery", "tags": ["CI/CD", "DevOps"] },
+    { "id": "pcap-web", "slots": ["PRIMARY_CAPABILITY"], "text": "Responsive Web Experiences", "tags": ["Web Development", "User Experience", "React"] },
+
+    { "id": "strat-releases", "slots": ["STRATEGIC_OUTCOME"], "text": "Faster, Safer Releases", "tags": ["CI/CD", "DevOps"] },
+    { "id": "strat-excellence", "slots": ["STRATEGIC_OUTCOME"], "text": "Operational Excellence", "tags": ["Workflow Automation", "Business Intelligence"] },
+    { "id": "strat-reliability", "slots": ["STRATEGIC_OUTCOME"], "text": "Improved Reliability", "tags": ["Distributed Systems"] },
+    { "id": "strat-interop", "slots": ["STRATEGIC_OUTCOME"], "text": "Seamless Interoperability", "tags": ["Healthcare Interoperability", "Enterprise Integration"] },
+
+    { "id": "exist-reporting", "slots": ["EXISTING_SYSTEM_OR_PROCESS"], "text": "legacy reporting systems", "tags": ["Business Intelligence", "SQL"] },
+    { "id": "exist-monolith", "slots": ["EXISTING_SYSTEM_OR_PROCESS"], "text": "a monolithic application", "tags": ["Enterprise Application Modernization", "Microservices"] },
+    { "id": "exist-manual", "slots": ["EXISTING_SYSTEM_OR_PROCESS"], "text": "manual, error-prone workflows", "tags": ["Workflow Automation"] },
+    { "id": "exist-fragmented", "slots": ["EXISTING_SYSTEM_OR_PROCESS"], "text": "fragmented integration points", "tags": ["Enterprise Integration"] },
+
+    { "id": "approach-api", "slots": ["TECHNICAL_APPROACH"], "text": "API-driven integration", "tags": ["REST", "Enterprise Integration"] },
+    { "id": "approach-react", "slots": ["TECHNICAL_APPROACH"], "text": "a modern React and TypeScript stack", "tags": ["React", "TypeScript", "Web Development"] },
+    { "id": "approach-pipelines", "slots": ["TECHNICAL_APPROACH"], "text": "automated data pipelines", "tags": ["Data Engineering", "ETL"] },
+    { "id": "approach-micro", "slots": ["TECHNICAL_APPROACH"], "text": "microservices and event-driven design", "tags": ["Microservices", "Event-Driven Architecture"] }
+  ]
 }
