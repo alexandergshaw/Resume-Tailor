@@ -3565,7 +3565,7 @@ export default function Home() {
       const res = await fetch("/api/tailor/proposals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ posting, engine: tailorEngine }),
+        body: JSON.stringify({ posting, engine: tailorEngine, aggressiveness }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {

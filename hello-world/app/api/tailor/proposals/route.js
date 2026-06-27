@@ -42,8 +42,12 @@ export async function POST(request) {
     );
   }
 
+  const aggressiveness = Number.parseInt(body?.aggressiveness, 10);
   try {
-    const data = await engine.getProposals({ jobPosting: posting });
+    const data = await engine.getProposals({
+      jobPosting: posting,
+      aggressiveness: Number.isNaN(aggressiveness) ? undefined : aggressiveness,
+    });
     return NextResponse.json(data);
   } catch (err) {
     const status = err?.code === "ENGINE_NOT_CONFIGURED" ? 503 : 502;

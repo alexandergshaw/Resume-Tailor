@@ -9,6 +9,18 @@
 // library entries are used at most once, and every sort has a tiebreaker.
 
 import { tokenize, canonicalize } from "./keywords.js";
+import { candidateUniverse } from "./universe.js";
+
+// aggressiveness (1..5) -> how many "gap" keywords (ones the candidate does NOT
+// have) to inject into the skills section. Higher = more tailoring/fabrication;
+// 1 is truthful (reorder/surface only).
+const GAP_BUDGET = { 1: 0, 2: 1, 3: 3, 4: 6, 5: 10 };
+
+function clampAggressiveness(value) {
+  const n = Number.parseInt(value, 10);
+  if (Number.isNaN(n)) return 3;
+  return Math.min(5, Math.max(1, n));
+}
 
 // Capability lines: name -> { categories to draw from, how many to join }.
 const KEYWORD_JOIN = {
@@ -70,10 +82,44 @@ function rankSkillGroups(groups, ctx) {
 
     const matched = (group.keywords || []).filter((k) => matchedKeywords.has(k));
     const rest = (group.keywords || []).filter((k) => !matchedKeywords.has(k));
-    return { index, heading: group.heading, row: [...matched, ...rest].join(", "), score };
+    return {
+      index,
+      heading: group.heading,
+      categories: group.categories || [],
+      row: [...matched, ...rest].join(", "),
+      score,
+    };
   });
   ranked.sort((a, b) => b.score - a.score || a.index - b.index);
   return ranked;
+}
+
+// Inject up to `budget` posting keywords the candidate does NOT have ("gaps")
+// into the matching skill-group row (by category), ranked by posting score. This
+// is the fabrication lever driven by aggressiveness; budget 0 leaves the résumé
+// truthful. Mutates ranked[].row.
+function insertGaps(ranked, keywords, universe, budget) {
+  if (budget <= 0) return;
+  const gaps = [];
+  for (const category of Object.keys(keywords)) {
+    for (const k of keywords[category]) {
+      if (!universe.has(k.canonical.toLowerCase())) {
+        gaps.push({ canonical: k.canonical, category, score: k.score });
+      }
+    }
+  }
+  gaps.sort((a, b) => b.score - a.score || a.canonical.localeCompare(b.canonical));
+
+  let inserted = 0;
+  for (const gap of gaps) {
+    if (inserted >= budget) break;
+    const target = ranked.find((g) => g.categories.includes(gap.category));
+    if (!target) continue;
+    const present = new Set((target.row ? target.row.split(", ") : []).map((s) => s.toLowerCase()));
+    if (present.has(gap.canonical.toLowerCase())) continue;
+    target.row = target.row ? `${target.row}, ${gap.canonical}` : gap.canonical;
+    inserted += 1;
+  }
 }
 
 // Consume up to k keywords from the given categories (merged, ranked), skipping
@@ -217,13 +263,12 @@ function mapOne(slot, keywords, data, state) {
 // Enrich every scanned slot with a strategy + proposed value. Processed in
 // document order so shared keyword pools and the library no-repeat behave
 // deterministically.
-export function mapSlots(slots, keywords, data) {
+export function mapSlots(slots, keywords, data, options = {}) {
   const ctx = buildContext(keywords);
-  const state = {
-    consumed: new Set(),
-    used: new Set(),
-    ctx,
-    skills: rankSkillGroups(data.skillGroups?.groups || [], ctx),
-  };
+  const ranked = rankSkillGroups(data.skillGroups?.groups || [], ctx);
+  const aggressiveness = clampAggressiveness(options.aggressiveness);
+  const universe = options.universe || candidateUniverse();
+  insertGaps(ranked, keywords, universe, GAP_BUDGET[aggressiveness] || 0);
+  const state = { consumed: new Set(), used: new Set(), ctx, skills: ranked };
   return slots.map((slot) => ({ ...slot, ...mapOne(slot, keywords, data, state) }));
 }

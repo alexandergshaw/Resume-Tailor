@@ -60,19 +60,20 @@ function resolveCoverFacts({ posting, company }) {
 }
 
 // Scan a template, resolve keywords (legacy/composed), map placeholders.
-async function buildProposal(buffer, posting) {
+// `aggressiveness` (1..5) drives how much gap-keyword insertion the strategy does.
+async function buildProposal(buffer, posting, aggressiveness) {
   const doc = await loadDocx(buffer);
   const rawSlots = scanPlaceholders(doc);
   const kw = resolveKeywords(posting);
-  const slots = mapSlots(rawSlots, kw.keywords, DATA);
+  const slots = mapSlots(rawSlots, kw.keywords, DATA, { aggressiveness });
   return { doc, slots, keywords: kw.keywords, emphases: kw.emphases };
 }
 
 // Resolve final values and fill a template. `overrides` map slot keys to text;
 // `seedByName` provides a per-name fallback used when a slot is otherwise empty.
 // An empty final value leaves the {{placeholder}} visible (counts as unfilled).
-async function render(buffer, posting, { overrides = {}, seedByName = {} } = {}) {
-  const proposal = await buildProposal(buffer, posting);
+async function render(buffer, posting, { overrides = {}, seedByName = {}, aggressiveness } = {}) {
+  const proposal = await buildProposal(buffer, posting, aggressiveness);
   const finalValues = {};
   const unfilled = [];
   const reportSlots = proposal.slots.map((slot) => {
@@ -119,10 +120,14 @@ export const embeddedEngine = {
     return true;
   },
 
-  async getProposals({ jobPosting }) {
+  async getProposals({ jobPosting, aggressiveness }) {
     const posting = String(jobPosting || "").trim();
     if (!posting) throw new Error("A job posting is required for the embedded engine.");
-    const { slots, keywords } = await buildProposal(await getDefaultTemplateBuffer(), posting);
+    const { slots, keywords } = await buildProposal(
+      await getDefaultTemplateBuffer(),
+      posting,
+      aggressiveness,
+    );
     const advisory = resolveAdvisory({ posting, company: "" });
     const out = {
       engine_version: ENGINE_VERSION,
@@ -136,11 +141,11 @@ export const embeddedEngine = {
     return out;
   },
 
-  async tailorResume({ jobPosting, values }) {
+  async tailorResume({ jobPosting, values, aggressiveness }) {
     const posting = String(jobPosting || "").trim();
     if (!posting) throw new Error("A job posting is required for the embedded engine.");
     const overrides = values && typeof values === "object" ? values : {};
-    const r = await render(await getDefaultTemplateBuffer(), posting, { overrides });
+    const r = await render(await getDefaultTemplateBuffer(), posting, { overrides, aggressiveness });
     // Advisory research is excluded from the document — report only.
     const advisory = resolveAdvisory({ posting, company: "" });
 
@@ -163,7 +168,7 @@ export const embeddedEngine = {
     };
   },
 
-  async tailorCoverLetter({ jobPosting, jobTitle, companyName, values }) {
+  async tailorCoverLetter({ jobPosting, jobTitle, companyName, values, aggressiveness }) {
     const posting = String(jobPosting || "").trim();
     const overrides = values && typeof values === "object" ? values : {};
     // Composed: structured facts from the Researcher; otherwise neutral fallbacks
@@ -178,7 +183,11 @@ export const embeddedEngine = {
       LEADERSHIP_CAPABILITIES: "technical leadership and cross-functional collaboration",
       DELIVERY_PRACTICES: "Agile delivery",
     };
-    const r = await render(await getCoverLetterTemplateBuffer(), posting, { overrides, seedByName });
+    const r = await render(await getCoverLetterTemplateBuffer(), posting, {
+      overrides,
+      seedByName,
+      aggressiveness,
+    });
 
     return {
       engine: "embedded",

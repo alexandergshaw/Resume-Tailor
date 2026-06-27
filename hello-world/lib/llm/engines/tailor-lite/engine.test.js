@@ -49,6 +49,18 @@ describe("embeddedEngine.tailorResume", () => {
     expect(a.docxB64).toBe(b.docxB64);
   });
 
+  it("respects aggressiveness: low stays truthful, high inserts gap keywords", async () => {
+    const posting = "Platform Engineer. Requirements: Kubernetes, Docker, Terraform, AWS, React, SQL.";
+    const low = await embeddedEngine.tailorResume({ jobPosting: posting, aggressiveness: 1 });
+    const high = await embeddedEngine.tailorResume({ jobPosting: posting, aggressiveness: 5 });
+
+    // The candidate does not list Kubernetes anywhere.
+    expect(low.result).not.toContain("Kubernetes");
+    expect(high.result).toContain("Kubernetes");
+    // Even aggressive output stays well-formed (no leaked placeholders).
+    expect(high.result).not.toContain("{{");
+  });
+
   it("reorders a job's bullets toward the posting, keeping every bullet and number", async () => {
     const MOO = "Senior Engineer (Applications & Enterprise Integrations) | Mutual of Omaha | July 2023";
     const leadBullet = (lines) => lines[lines.indexOf(MOO) + 1];

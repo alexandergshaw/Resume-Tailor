@@ -7,37 +7,7 @@
 //     become rendered content, via the same occurrence-indexed fill.
 
 import { extractKeywords } from "./keywords.js";
-import skillGroups from "./data/skill_groups.json";
-import library from "./data/content_library.json";
-
-// The candidate's canonical skill universe — everything they can truthfully
-// claim. Built by running the SAME taxonomy extraction over all of their
-// materials (skill rows, library bullet text + tags), so terms nested inside a
-// skill string are recognized too (e.g. "Healthcare Interoperability (HL7, FHIR,
-// CCD/C-CDA)" contributes HL7, FHIR and C-CDA). Used to split the posting's
-// keywords into "matched" (already in the résumé, surfaced by the reorder
-// strategies) vs "gaps" (the posting wants them but the candidate doesn't have
-// them — advisory only, never auto-inserted).
-let universeCache = null;
-function candidateUniverse() {
-  if (universeCache) return universeCache;
-  const blob = [];
-  for (const group of skillGroups.groups || []) {
-    blob.push(group.heading);
-    for (const kw of group.keywords || []) blob.push(kw);
-  }
-  for (const entry of library.entries || []) {
-    blob.push(entry.text);
-    for (const tag of entry.tags || []) blob.push(tag);
-  }
-  const grouped = extractKeywords(blob.join(". "));
-  const set = new Set();
-  for (const category of Object.keys(grouped)) {
-    for (const k of grouped[category]) set.add(k.canonical.toLowerCase());
-  }
-  universeCache = set;
-  return set;
-}
+import { candidateUniverse } from "./universe.js";
 
 // Top-N distinct canonicals across the given categories, by (-score, canonical).
 function topCanonicals(keywords, categories, n) {

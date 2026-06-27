@@ -46,8 +46,14 @@ const slots = [
   { key: "WIDGET_FROBNICATOR::0", name: "WIDGET_FROBNICATOR", occurrence: 0 },
 ];
 
+// A universe covering all the test's keywords, so nothing counts as a gap
+// (keeps the reorder assertions independent of the bundled candidate data).
+const FULL_UNIVERSE = new Set([
+  "javascript", "python", "go", "rust", "aws", "docker", "agile", "leadership", "fintech",
+]);
+
 describe("mapSlots", () => {
-  const mapped = mapSlots(slots, keywords, data);
+  const mapped = mapSlots(slots, keywords, data, { universe: FULL_UNIVERSE });
   const byKey = Object.fromEntries(mapped.map((s) => [s.key, s]));
 
   it("assigns the right strategy per placeholder name", () => {
@@ -79,5 +85,43 @@ describe("mapSlots", () => {
     expect(byKey["SKILLS_LINE::0"].value).toBe("JavaScript, Python, Go, Rust");
     expect(byKey["SKILLS_HEADING::1"].value).toBe("Cloud");
     expect(byKey["SKILLS_LINE::1"].value).toBe("AWS, Docker");
+  });
+});
+
+describe("mapSlots aggressiveness (gap insertion)", () => {
+  const kw = {
+    technology: [{ canonical: "JavaScript", score: 9, count: 1 }],
+    tool_platform: [
+      { canonical: "Kubernetes", score: 8, count: 1 },
+      { canonical: "Terraform", score: 7, count: 1 },
+    ],
+  };
+  const d = {
+    profile: { values: {} },
+    library: { entries: [] },
+    skillGroups: {
+      groups: [
+        { heading: "Languages", categories: ["technology"], keywords: ["JavaScript"] },
+        { heading: "Cloud", categories: ["tool_platform"], keywords: ["AWS"] },
+      ],
+    },
+  };
+  const universe = new Set(["javascript", "aws"]); // candidate lacks Kubernetes/Terraform
+  const cloudRow = (aggressiveness) =>
+    mapSlots(
+      [{ key: "SKILLS_LINE::1", name: "SKILLS_LINE", occurrence: 1 }],
+      kw,
+      d,
+      { aggressiveness, universe },
+    )[0].value;
+
+  it("inserts nothing at aggressiveness 1 (truthful)", () => {
+    expect(cloudRow(1)).toBe("AWS");
+  });
+
+  it("inserts gap keywords the candidate lacks at high aggressiveness (fabrication)", () => {
+    const row = cloudRow(5);
+    expect(row).toContain("Kubernetes");
+    expect(row).toContain("Terraform");
   });
 });
