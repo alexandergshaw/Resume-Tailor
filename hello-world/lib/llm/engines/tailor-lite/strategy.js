@@ -303,7 +303,8 @@ function mapOne(slot, keywords, data, state) {
   // each repeat shows a distinct slice instead of the same list every time.
   if (KEYWORD_JOIN[name]) {
     const { cats, k, avoid } = KEYWORD_JOIN[name];
-    return make("keywords", capabilityJoin(keywords, state.byCat, cats, k, state.universe, state.allowGaps, avoid, occurrence), `Top ${cats.join("+")} keywords`);
+    const limit = state.maxKeywords ? Math.min(k, state.maxKeywords) : k;
+    return make("keywords", capabilityJoin(keywords, state.byCat, cats, limit, state.universe, state.allowGaps, avoid, occurrence), `Top ${cats.join("+")} keywords`);
   }
 
   // 5) COURSE_TOPICS — N tech/people keywords
@@ -334,6 +335,7 @@ export function mapSlots(slots, keywords, data, options = {}) {
   const byCat = candidateSkillsByCategory();
   const skillRows = buildSkillRows(keywords, byCat, ctx, universe, GAP_BUDGET[aggressiveness] || 0);
   const allowGaps = aggressiveness >= 3;
+  const maxKeywords = Number.isInteger(options.maxKeywords) ? options.maxKeywords : null;
   const state = {
     ctx,
     byCat,
@@ -343,6 +345,7 @@ export function mapSlots(slots, keywords, data, options = {}) {
     allowGaps,
     used: new Set(),
     allowFabricated: allowGaps,
+    maxKeywords,
   };
   return slots.map((slot) => ({ ...slot, ...mapOne(slot, keywords, data, state) }));
 }

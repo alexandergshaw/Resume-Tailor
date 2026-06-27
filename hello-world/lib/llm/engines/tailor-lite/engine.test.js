@@ -128,7 +128,8 @@ describe("embeddedEngine composed workflow (in-house)", () => {
     expect(res.result).toContain("Staff Engineer"); // TARGET_ROLE
     expect(res.result).toContain("Initech"); // TARGET_ORGANIZATION
     expect(res.result).not.toContain("{{");
-    // The bundled template is a full-page letter, not a stub.
-    expect(res.result.split(/\s+/).filter(Boolean).length).toBeGreaterThan(250);
+    // A full, multi-paragraph letter (not a stub) — written as natural prose
+    // rather than keyword lists, so a few hundred words rather than a wall.
+    expect(res.result.split(/\s+/).filter(Boolean).length).toBeGreaterThan(180);
   });
 });
