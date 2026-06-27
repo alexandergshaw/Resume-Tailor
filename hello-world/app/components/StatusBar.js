@@ -33,6 +33,7 @@ export default function StatusBar({
   handleIgnoreJob,
   handleUntrackJob,
   openResumePreview,
+  openCompanyResearch,
   onRegenerate,
 }) {
   const isMobile = useIsMobile();
@@ -312,6 +313,13 @@ export default function StatusBar({
                 }
               >
                 Ask AI
+              </MenuItem>,
+              <MenuItem
+                key="research"
+                disabled={!menuJob.company}
+                onClick={() => runAndClose(() => openCompanyResearch?.(menuJob))}
+              >
+                Research company
               </MenuItem>,
               <MenuItem key="card" onClick={() => runAndClose(() => goToCard(menuJob))}>
                 Go to card

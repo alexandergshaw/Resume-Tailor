@@ -24,6 +24,8 @@ import FormatAlignCenterIcon from "@mui/icons-material/FormatAlignCenter";
 import FormatAlignRightIcon from "@mui/icons-material/FormatAlignRight";
 import FormatListBulletedIcon from "@mui/icons-material/FormatListBulleted";
 import FormatListNumberedIcon from "@mui/icons-material/FormatListNumbered";
+import TravelExploreIcon from "@mui/icons-material/TravelExplore";
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import { renderModelToHtml } from "@/lib/document/docxPreview";
 import { useIsMobile } from "../hooks/useResponsive";
 
@@ -74,6 +76,8 @@ export default function DocumentPreviewDialog({
   onSave,
   onDownload,
   onClose,
+  onResearchCompany,
+  companyReferences = [],
   busy = false,
   notice = "",
   error = "",
@@ -179,6 +183,26 @@ export default function DocumentPreviewDialog({
     if (editorRef.current) draftHtmlRef.current[tab] = editorRef.current.innerHTML;
   };
 
+  const copyText = (text) => {
+    try {
+      navigator.clipboard?.writeText(text);
+    } catch {
+      /* clipboard may be unavailable */
+    }
+  };
+  // Insert a sentence at the caret (edit mode) as its own paragraph; otherwise
+  // copy it so the user can paste wherever they like.
+  const insertReference = (text) => {
+    if (mode === "edit" && editorRef.current) {
+      editorRef.current.focus();
+      restoreSelection();
+      document.execCommand("insertHTML", false, `<p>${text.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))}</p>`);
+      draftHtmlRef.current[tab] = editorRef.current.innerHTML;
+    } else {
+      copyText(text);
+    }
+  };
+
   // The plain text + html of the active document, for save/download.
   const activePayload = () => {
     if (mode === "edit" && editorRef.current) {
@@ -217,6 +241,16 @@ export default function DocumentPreviewDialog({
           ))}
         </Tabs>
         <Box sx={{ flex: 1 }} />
+        {tab === "cover" && onResearchCompany ? (
+          <Button
+            size="small"
+            startIcon={<TravelExploreIcon fontSize="small" />}
+            onClick={onResearchCompany}
+            sx={{ textTransform: "none", my: 0.5 }}
+          >
+            Research company
+          </Button>
+        ) : null}
         {available(tab) ? (
           <ToggleButtonGroup
             size="small"
@@ -270,6 +304,24 @@ export default function DocumentPreviewDialog({
               <MenuItem key={pt} value={pt}>{pt} pt</MenuItem>
             ))}
           </Select>
+        </Box>
+      ) : null}
+
+      {tab === "cover" && companyReferences.length > 0 ? (
+        <Box sx={{ px: 2, py: 1, borderBottom: "1px solid var(--border, #eee)", bgcolor: "rgba(25,118,210,0.04)" }}>
+          <Box sx={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary, #555)", mb: 0.5 }}>
+            Company references {mode === "edit" ? "(Insert at cursor)" : "(switch to Edit to insert, or copy)"}
+          </Box>
+          {companyReferences.map((ref, i) => (
+            <Box key={i} sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, mb: 0.5 }}>
+              <Box sx={{ flex: 1, fontSize: "0.8rem" }}>{ref.suggestion}</Box>
+              <Tooltip title={mode === "edit" ? "Insert into letter" : "Copy"}>
+                <Button size="small" onClick={() => insertReference(ref.suggestion)} sx={{ textTransform: "none", minWidth: 0, px: 1 }}>
+                  {mode === "edit" ? "Insert" : <ContentCopyIcon sx={{ fontSize: 15 }} />}
+                </Button>
+              </Tooltip>
+            </Box>
+          ))}
         </Box>
       ) : null}
 

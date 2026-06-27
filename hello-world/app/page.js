@@ -11,6 +11,7 @@ import ChatPanel from "./components/ChatPanel";
 import StatusBar from "./components/StatusBar";
 import BatchTailorDialog from "./components/BatchTailorDialog";
 import DocumentPreviewDialog from "./components/DocumentPreviewDialog";
+import CompanyResearchDialog from "./components/CompanyResearchDialog";
 import SlotReviewDialog from "./components/SlotReviewDialog";
 import {
   buildJobContextString,
@@ -264,6 +265,20 @@ export default function Home() {
     notice: "",
     error: "",
   });
+  // Company-research modal: recent positive articles to weave into the cover
+  // letter. Ephemeral (session only). `companyResearchByJob` keeps each job's
+  // chosen references for the preview's copyable-suggestions panel.
+  const [companyResearch, setCompanyResearch] = useState({
+    open: false,
+    jobId: null,
+    company: "",
+    loading: false,
+    busy: false,
+    error: "",
+    articles: [],
+    warnings: [],
+  });
+  const [companyResearchByJob, setCompanyResearchByJob] = useState({});
   const [batchTailorState, setBatchTailorState] = useState({
     running: false,
     total: 0,
@@ -2923,6 +2938,76 @@ export default function Home() {
     setResumePreview((prev) => ({ ...prev, busy: false, error: err || "" }));
   }
 
+  // --- Company research (recent positive articles for the cover letter) ------
+  function closeCompanyResearch() {
+    setCompanyResearch((prev) => ({ ...prev, open: false }));
+  }
+  async function openCompanyResearch(job) {
+    if (!job) return;
+    const t = tailoringMap[job.id] || {};
+    const company = (job.company || "").trim();
+    setCompanyResearch({
+      open: true,
+      jobId: job.id,
+      company,
+      loading: true,
+      busy: false,
+      error: company ? "" : "No company name is known for this posting.",
+      articles: [],
+      warnings: [],
+    });
+    if (!company) {
+      setCompanyResearch((prev) => ({ ...prev, loading: false }));
+      return;
+    }
+    try {
+      const res = await fetch("/api/company-research", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          company,
+          jobTitle: t.generatedJobTitle || job.title || "",
+          posting: job.description || "",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Company research failed.");
+      setCompanyResearch((prev) => ({
+        ...prev,
+        loading: false,
+        articles: Array.isArray(data.articles) ? data.articles : [],
+        warnings: Array.isArray(data.warnings) ? data.warnings : [],
+      }));
+    } catch (err) {
+      setCompanyResearch((prev) => ({ ...prev, loading: false, error: err.message || "Company research failed." }));
+    }
+  }
+  // Weave the chosen references into the cover letter: store them for the
+  // preview's copyable panel, and splice a short paragraph before the sign-off.
+  function applyCompanyResearch(chosen) {
+    const jobId = companyResearch.jobId;
+    const picks = Array.isArray(chosen) ? chosen.filter((c) => c?.suggestion?.trim()) : [];
+    if (!jobId || picks.length === 0) {
+      closeCompanyResearch();
+      return;
+    }
+    setCompanyResearchByJob((m) => ({ ...m, [jobId]: picks }));
+    const paragraph = picks.map((c) => c.suggestion.trim()).join(" ");
+    setTailoringMap((current) => {
+      const entry = current[jobId] || {};
+      const lines = Array.isArray(entry.coverLetterResultLines) ? [...entry.coverLetterResultLines] : [];
+      if (lines.length === 0) return current; // no cover letter to weave into yet
+      const signOff = lines.findIndex((l) => /^\s*(sincerely|regards|best|warm regards|thank you)/i.test(l));
+      const at = signOff >= 0 ? signOff : lines.length;
+      lines.splice(at, 0, paragraph);
+      return {
+        ...current,
+        [jobId]: { ...entry, coverLetterResultLines: lines, coverLetterPreviewHtml: undefined, edited: true },
+      };
+    });
+    setCompanyResearch((prev) => ({ ...prev, open: false }));
+  }
+
   // "Apply" action for an auto-tailored row: download the tailored resume,
   // open the posting in a new tab, and bump the application status from
   // auto_tailored → applied so it moves out of the Auto Tailor tab and into
@@ -4541,6 +4626,7 @@ export default function Home() {
         handleIgnoreJob={handleIgnoreJob}
         handleUntrackJob={handleUntrackJob}
         openResumePreview={openResumePreview}
+        openCompanyResearch={openCompanyResearch}
       />
 
       <DocumentPreviewDialog
@@ -4564,9 +4650,27 @@ export default function Home() {
         onClose={closeResumePreview}
         onSave={saveDocumentPreview}
         onDownload={downloadDocumentPreview}
+        onResearchCompany={
+          resumePreview.company
+            ? () => openCompanyResearch({ id: resumePreview.jobId, title: resumePreview.title, company: resumePreview.company, description: tailoringMap[resumePreview.jobId]?.jobDescription || "" })
+            : null
+        }
+        companyReferences={companyResearchByJob[resumePreview.jobId] || []}
         busy={resumePreview.busy}
         notice={resumePreview.notice}
         error={resumePreview.error}
+      />
+
+      <CompanyResearchDialog
+        open={companyResearch.open}
+        company={companyResearch.company}
+        loading={companyResearch.loading}
+        error={companyResearch.error}
+        articles={companyResearch.articles}
+        warnings={companyResearch.warnings}
+        busy={companyResearch.busy}
+        onClose={closeCompanyResearch}
+        onApply={applyCompanyResearch}
       />
 
       <SlotReviewDialog
