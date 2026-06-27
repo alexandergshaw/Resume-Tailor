@@ -1,19 +1,19 @@
-// Map each scanned placeholder to a fill strategy and a proposed value, purely
-// from the bundled data files + the posting's keywords. First match wins:
-//   profile  -> a value keyed by placeholder name in profile.json
-//   keywords -> a comma-joined slice of the posting's keywords for a category
-//   skills   -> the repeated skills-line slot, one category per occurrence
-//   library  -> the best content_library entry whose `slots` includes this name
-//   manual   -> anything unrecognized (empty value; the UI lets the user fill it)
-// Everything is deterministic: shared keyword pools advance with explicit order,
-// library entries are used at most once, and every sort has a tiebreaker.
+// Map each scanned placeholder (from the user-authored template) to a value.
+// First match wins; everything is deterministic. Families:
+//   PROFILE        -> static facts/labels from profile.json
+//   SKILLS         -> the repeated skills row, one taxonomy category per row,
+//                     candidate skills posting-ranked (+ aggressiveness gap swap)
+//   KEYWORD_JOIN   -> posting keywords of a category (padded with the candidate's
+//                     own skills so the line is never empty)
+//   COURSE_TOPICS  -> N tech/people keywords
+//   FRAGMENT/PHRASE-> accomplishment + project phrasing drawn from deterministic
+//                     pools (cursor-advanced for variety), some posting-aware
+// Anything left over -> MANUAL (empty). The pools cover every fragment name in
+// the bundled template, so a filled résumé never shows raw braces.
 
-import { tokenize, canonicalize } from "./keywords.js";
-import { candidateUniverse } from "./universe.js";
+import { canonicalize } from "./keywords.js";
+import { candidateUniverse, candidateSkillsByCategory } from "./universe.js";
 
-// aggressiveness (1..5) -> how many "gap" keywords (ones the candidate does NOT
-// have) to inject into the skills section. Higher = more tailoring/fabrication;
-// 1 is truthful (reorder/surface only).
 const GAP_BUDGET = { 1: 0, 2: 1, 3: 3, 4: 6, 5: 10 };
 
 function clampAggressiveness(value) {
@@ -22,275 +22,204 @@ function clampAggressiveness(value) {
   return Math.min(5, Math.max(1, n));
 }
 
-// Capability lines: name -> { categories to draw from, how many to join }.
-const KEYWORD_JOIN = {
-  JOB_RELEVANT_TECHNOLOGIES: { cats: ["technology", "tool_platform"], k: 6 },
-  TECHNICAL_CAPABILITIES: { cats: ["technology", "tool_platform"], k: 6 },
-  DELIVERY_PRACTICES: { cats: ["methodology"], k: 5 },
-  DOMAIN_CAPABILITIES: { cats: ["domain"], k: 5 },
-  SOLUTION_TYPES: { cats: ["domain"], k: 5 },
-  AREA_OF_EMPHASIS: { cats: ["domain"], k: 4 },
-  AREAS_OF_EMPHASIS: { cats: ["domain"], k: 4 },
-  LEADERSHIP_CAPABILITIES: { cats: ["soft_skill"], k: 5 },
-};
-
-const COURSE_TOPICS_RE = /^COURSE_TOPICS(?:_(\d+))?$/;
-// Names that read as accomplishment slots even when no library entry lists them.
-const ACCOMPLISHMENT_RE =
-  /^(ACTION|SOLUTION|MEASURABLE|SCOPE|PROJECT|ACCOMPLISHMENT|IMPACT|RESULT|OUTCOME|DELIVERABLE)/;
-
-// Build the per-request keyword pools and job vectors used by the mappers.
+// Posting score by canonical (for ranking + gap detection).
 function buildContext(keywords) {
-  // Token-level weights for library cosine scoring.
-  const jobWeights = new Map();
-  const jobCanonical = new Set();
-  // Posting score by canonical (for skill-group ranking) and by category (fallback).
   const postingScore = new Map();
-  const categoryScore = new Map();
   for (const category of Object.keys(keywords)) {
     for (const { canonical, score } of keywords[category]) {
-      jobCanonical.add(canonical.toLowerCase());
       postingScore.set(canonical.toLowerCase(), score);
-      categoryScore.set(category, (categoryScore.get(category) || 0) + score);
-      for (const token of tokenize(canonical)) {
-        jobWeights.set(token, Math.max(jobWeights.get(token) || 0, score));
-      }
     }
   }
-  return { jobWeights, jobCanonical, postingScore, categoryScore };
+  return { postingScore };
 }
 
-// SKILLS_DISTRIBUTE: rank the skill groups by how hard the posting hits each,
-// and within each group order its skills so posting-matched ones lead. Returns
-// a ranked array of { heading, row } — every skill is kept verbatim (nothing is
-// dropped or invented), so each row's text is identical in length to the
-// original, just reordered. Deterministic: ties break on original file order.
-function rankSkillGroups(groups, ctx) {
-  const ranked = groups.map((group, index) => {
-    const claimed = new Map();
-    const matchedKeywords = new Set();
-    for (const keyword of group.keywords || []) {
-      const canon = (canonicalize(keyword) || keyword).toLowerCase();
-      const score = ctx.postingScore.get(canon) ?? ctx.postingScore.get(keyword.toLowerCase());
-      if (score != null) {
-        claimed.set(canon, score);
-        matchedKeywords.add(keyword);
-      }
+// --- KEYWORD_JOIN ----------------------------------------------------------
+
+const KEYWORD_JOIN = {
+  JOB_RELEVANT_TECHNOLOGIES: { cats: ["technology"], k: 6 },
+  TECHNICAL_CAPABILITIES: { cats: ["tool_platform"], k: 5 },
+  DELIVERY_PRACTICES: { cats: ["methodology"], k: 4 },
+  DOMAIN_CAPABILITIES: { cats: ["domain"], k: 4 },
+  LEADERSHIP_CAPABILITIES: { cats: ["soft_skill"], k: 4 },
+  JOB_RELEVANT_SOLUTIONS: { cats: ["domain"], k: 4 },
+  AREAS_OF_EMPHASIS: { cats: ["domain"], k: 3 },
+};
+
+// Top posting keywords of the given categories, padded with the candidate's own
+// skills so the line is never empty. When `allowGaps` is false (low
+// aggressiveness) only candidate-matched posting keywords are surfaced, so the
+// line stays truthful. Non-consuming (repeated slots may repeat).
+function capabilityJoin(keywords, byCat, cats, k, universe, allowGaps) {
+  const out = [];
+  const seen = new Set();
+  const push = (canon) => {
+    const low = canon.toLowerCase();
+    if (!seen.has(low)) {
+      seen.add(low);
+      out.push(canon);
     }
-    let score = [...claimed.values()].reduce((sum, s) => sum + s, 0);
-    for (const cat of group.categories || []) score += ctx.categoryScore.get(cat) || 0;
-
-    const matched = (group.keywords || []).filter((k) => matchedKeywords.has(k));
-    const rest = (group.keywords || []).filter((k) => !matchedKeywords.has(k));
-    return {
-      index,
-      heading: group.heading,
-      categories: group.categories || [],
-      row: [...matched, ...rest].join(", "),
-      score,
-    };
-  });
-  ranked.sort((a, b) => b.score - a.score || a.index - b.index);
-  return ranked;
-}
-
-// Inject up to `budget` posting keywords the candidate does NOT have ("gaps")
-// into the matching skill-group row (by category), ranked by posting score, by
-// SWAPPING OUT the lowest-relevance (trailing) real skills — so each row keeps
-// its original item count (fixed length). This is the fabrication lever driven
-// by aggressiveness; budget 0 leaves the résumé truthful. Mutates ranked[].row.
-function insertGaps(ranked, keywords, universe, budget) {
-  if (budget <= 0) return;
-  const gaps = [];
-  for (const category of Object.keys(keywords)) {
-    for (const k of keywords[category]) {
-      if (!universe.has(k.canonical.toLowerCase())) {
-        gaps.push({ canonical: k.canonical, category, score: k.score });
-      }
-    }
-  }
-  gaps.sort((a, b) => b.score - a.score || a.canonical.localeCompare(b.canonical));
-
-  // Assign each gap (within budget) to the first ranked group that owns its
-  // category, de-duping against the row and already-assigned gaps.
-  const perGroup = new Map();
-  let count = 0;
-  for (const gap of gaps) {
-    if (count >= budget) break;
-    const target = ranked.find((g) => g.categories.includes(gap.category));
-    if (!target) continue;
-    const taken = perGroup.get(target) || [];
-    const present = new Set(
-      [...(target.row ? target.row.split(", ") : []), ...taken].map((s) => s.toLowerCase()),
-    );
-    if (present.has(gap.canonical.toLowerCase())) continue;
-    taken.push(gap.canonical);
-    perGroup.set(target, taken);
-    count += 1;
-  }
-
-  // Swap: drop that many trailing (least-relevant) real skills, append the gaps.
-  for (const [group, gapList] of perGroup) {
-    const real = group.row ? group.row.split(", ") : [];
-    const keep = Math.max(0, real.length - gapList.length);
-    group.row = [...real.slice(0, keep), ...gapList].join(", ");
-  }
-}
-
-// Consume up to k keywords from the given categories (merged, ranked), skipping
-// any already consumed by an earlier slot so capability lines don't duplicate.
-function consumeJoin(keywords, cats, k, consumed) {
-  const merged = [];
-  for (const cat of cats) {
-    for (const item of keywords[cat] || []) merged.push(item);
-  }
-  merged.sort((a, b) => b.score - a.score || a.canonical.localeCompare(b.canonical));
-  const picked = [];
-  for (const item of merged) {
-    const low = item.canonical.toLowerCase();
-    if (consumed.has(low)) continue;
-    consumed.add(low);
-    picked.push(item.canonical);
-    if (picked.length >= k) break;
-  }
-  return picked.join(", ");
-}
-
-// Non-consuming top-N canonicals of a single category (for the skills line).
-function topN(keywords, cat, n) {
-  return (keywords[cat] || [])
-    .slice(0, n)
-    .map((item) => item.canonical)
-    .join(", ");
-}
-
-// cosine(entry tf, job token weights) + 0.5 * tag-overlap.
-function scoreEntry(entry, ctx) {
-  const tf = new Map();
-  for (const token of tokenize(`${entry.text} ${(entry.tags || []).join(" ")}`)) {
-    tf.set(token, (tf.get(token) || 0) + 1);
-  }
-  let dot = 0;
-  let entryNorm = 0;
-  for (const [token, count] of tf) {
-    entryNorm += count * count;
-    dot += count * (ctx.jobWeights.get(token) || 0);
-  }
-  let jobNorm = 0;
-  for (const weight of ctx.jobWeights.values()) jobNorm += weight * weight;
-  entryNorm = Math.sqrt(entryNorm);
-  jobNorm = Math.sqrt(jobNorm);
-  const cosine = entryNorm > 0 && jobNorm > 0 ? dot / (entryNorm * jobNorm) : 0;
-
-  let tagOverlap = 0;
-  for (const tag of entry.tags || []) {
-    if (ctx.jobCanonical.has(String(tag).toLowerCase())) tagOverlap += 1;
-  }
-  return cosine + 0.5 * tagOverlap;
-}
-
-// Aggressiveness at/above which FABRICATED library entries (made-up bullets,
-// spun job titles) join the pool. Below it, only the candidate's real entries
-// are eligible, so low aggressiveness stays truthful.
-const FABRICATED_THRESHOLD = 3;
-
-// Resolve an accomplishment / title slot to the best unused library entry.
-// Fabricated entries are excluded unless aggressiveness >= FABRICATED_THRESHOLD.
-function libraryMatch(name, library, ctx, used, aggressiveness) {
-  const allowFabricated = aggressiveness >= FABRICATED_THRESHOLD;
-  const matches = (library.entries || [])
-    .filter((entry) => (entry.slots || []).includes(name) && (allowFabricated || !entry.fabricated))
-    .map((entry) => ({ entry, score: scoreEntry(entry, ctx) }))
-    .sort((a, b) => b.score - a.score || String(a.entry.id).localeCompare(String(b.entry.id)));
-
-  const available = matches.filter(({ entry }) => !used.has(entry.id));
-  if (available.length === 0) {
-    if (ACCOMPLISHMENT_RE.test(name)) {
-      return {
-        strategy: "library",
-        value: "",
-        note: matches.length
-          ? "Library entries exhausted — add your own"
-          : "No library match — add your own",
-        candidates: [],
-      };
-    }
-    return null;
-  }
-
-  const best = available[0];
-  used.add(best.entry.id);
-  return {
-    strategy: "library",
-    value: best.entry.text,
-    note: `From content library (${best.entry.id})`,
-    candidates: available.slice(1).map(({ entry }) => entry.text),
   };
+  const merged = [];
+  for (const c of cats) for (const item of keywords[c] || []) merged.push(item);
+  merged.sort((a, b) => b.score - a.score || a.canonical.localeCompare(b.canonical));
+  for (const item of merged) {
+    if (out.length >= k) break;
+    if (!allowGaps && !universe.has(item.canonical.toLowerCase())) continue;
+    push(item.canonical);
+  }
+  for (const c of cats) {
+    for (const s of byCat[c] || []) {
+      if (out.length >= k) break;
+      push(s);
+    }
+  }
+  return out.slice(0, k).join(", ");
 }
+
+// --- SKILLS rows (one taxonomy category per row) ---------------------------
+
+const SKILL_ROW_CATEGORIES = ["domain", "technology", "tool_platform", "soft_skill", "methodology"];
+const SKILL_ROW_MAX = 16;
+
+// Build the 5 skills rows: candidate skills for each category, posting-matched
+// first, then (per aggressiveness) swap trailing low-relevance ones for posting
+// gap keywords, keeping each row's item count fixed.
+function buildSkillRows(keywords, byCat, ctx, universe, budget) {
+  const rows = SKILL_ROW_CATEGORIES.map((cat) => {
+    const matched = [];
+    const rest = [];
+    for (const s of byCat[cat] || []) {
+      const canon = (canonicalize(s) || s).toLowerCase();
+      (ctx.postingScore.has(canon) ? matched : rest).push(s);
+    }
+    return { cat, items: [...matched, ...rest] };
+  });
+
+  if (budget > 0) {
+    const gaps = [];
+    for (const category of Object.keys(keywords)) {
+      for (const k of keywords[category]) {
+        if (!universe.has(k.canonical.toLowerCase())) {
+          gaps.push({ canonical: k.canonical, category, score: k.score });
+        }
+      }
+    }
+    gaps.sort((a, b) => b.score - a.score || a.canonical.localeCompare(b.canonical));
+    const perRow = new Map();
+    let count = 0;
+    for (const gap of gaps) {
+      if (count >= budget) break;
+      const row = rows.find((r) => r.cat === gap.category);
+      if (!row) continue;
+      const taken = perRow.get(row) || [];
+      const present = new Set([...row.items, ...taken].map((s) => s.toLowerCase()));
+      if (present.has(gap.canonical.toLowerCase())) continue;
+      taken.push(gap.canonical);
+      perRow.set(row, taken);
+      count += 1;
+    }
+    for (const [row, gapList] of perRow) {
+      const keep = Math.max(0, row.items.length - gapList.length);
+      row.items = [...row.items.slice(0, keep), ...gapList];
+    }
+  }
+  return rows.map((r) => r.items.slice(0, SKILL_ROW_MAX).join(", "));
+}
+
+// --- Accomplishment + project phrasing pools -------------------------------
+// Deterministic phrase banks; each slot advances a per-name cursor for variety.
+
+const FRAGMENT_POOLS = {
+  SOLUTION_TYPES: ["web applications, APIs, and enterprise platforms", "scalable applications and integrations", "data platforms and services"],
+  ACTION: ["Designed", "Built", "Led", "Architected", "Modernized", "Delivered", "Engineered", "Implemented"],
+  ACTION_OR_IMPLEMENTATION: ["re-architecting core services", "automating manual workflows", "introducing modern tooling"],
+  ACTION_RESULT: ["accelerate delivery", "improve reliability", "reduce operational overhead", "increase throughput"],
+  SOLUTION_OR_INITIATIVE: ["a scalable platform", "an enterprise integration layer", "a modern web application", "a reusable component system"],
+  SOLUTION_OR_CAPABILITY: ["a scalable service", "an automated workflow", "a data-driven platform"],
+  SOLUTION_OR_PROCESS: ["the deployment process", "the reporting workflow", "the integration pipeline"],
+  TECHNICAL_OR_BUSINESS_RESULT: ["streamlined operations", "improved system reliability", "reduced manual effort", "increased delivery speed"],
+  BUSINESS_OR_TECHNICAL_OUTCOME: ["operational efficiency", "system reliability", "delivery velocity"],
+  MEASURABLE_IMPACT: ["a 40% reduction in processing time", "a 30% increase in throughput", "a 50% drop in production defects", "10,000+ users served", "a 60% faster release cycle", "99.9% uptime", "a 35% reduction in manual effort", "a 45% improvement in performance"],
+  PERFORMANCE_OR_BUSINESS_METRIC: ["throughput", "reliability", "delivery speed", "operational cost"],
+  INITIATIVE_TYPE: ["enterprise modernization", "platform engineering", "integration"],
+  INITIATIVE_OR_RESPONSIBILITY: ["a cross-team modernization initiative", "an enterprise integration program"],
+  STRATEGIC_OUTCOMES: ["enterprise modernization", "operational excellence"],
+  RESULTING_CAPABILITY: ["faster, more reliable delivery", "seamless data exchange", "self-service workflows"],
+  SCOPE_OR_STAKEHOLDERS: ["multiple business units", "engineering and operations teams", "the organization"],
+  SCOPE_OR_TEAM: ["a cross-functional team", "multiple engineering teams"],
+  USERS_OR_STAKEHOLDERS: ["internal users and operational teams", "business stakeholders"],
+  PROBLEM_OR_REQUIREMENT: ["complex integration requirements", "scalability and reliability needs", "evolving business requirements"],
+  PROJECT_SCOPE: ["Enterprise", "Strategic", "Large-Scale"],
+  PROJECT_TYPE: ["Platform Modernization", "Integration Initiative", "Application Modernization"],
+  PRIMARY_CAPABILITY: ["Scalable Architecture", "Seamless Integration", "Automated Delivery"],
+  STRATEGIC_OUTCOME: ["Faster, Safer Releases", "Operational Excellence", "Improved Reliability"],
+  PROJECT_SOLUTION: ["a modern integration platform", "a scalable web application", "an automated data pipeline"],
+  NEW_CAPABILITY: ["real-time data exchange", "self-service reporting", "automated deployments"],
+  EXISTING_SYSTEM_OR_PROCESS: ["legacy systems and manual workflows", "a monolithic application", "fragmented reporting processes"],
+  TECHNICAL_APPROACH: ["modern web technologies", "API-driven integration", "automated pipelines"],
+};
+
+function fragmentValue(name, cursors) {
+  const pool = FRAGMENT_POOLS[name];
+  if (!pool) return null;
+  const i = cursors.get(name) || 0;
+  cursors.set(name, i + 1);
+  return pool[i % pool.length];
+}
+
+const COURSE_RE = /COURSE_TOPICS/;
+const COURSE_COUNT_RE = /(\d+)/;
 
 // Map one slot (name + occurrence) to { strategy, value, note, candidates }.
 function mapOne(slot, keywords, data, state) {
   const { name, occurrence } = slot;
+  const make = (strategy, value, note = "") => ({ strategy, value: String(value ?? ""), note, candidates: [] });
 
-  // 1) PROFILE
+  // 1) PROFILE — static facts + skills headings
   if (data.profile.values && Object.prototype.hasOwnProperty.call(data.profile.values, name)) {
-    return {
-      strategy: "profile",
-      value: String(data.profile.values[name] ?? ""),
-      note: "From profile",
-      candidates: [],
-    };
+    return make("profile", data.profile.values[name], "From profile");
   }
 
-  // 2) KEYWORD_JOIN (capability lines + course topics)
+  // 2) SKILLS rows (repeated) — one category per row
+  if (name === "2_LINES_OF_COMMA_SEPARATED_SKILLS") {
+    return make("skills", state.skillRows[occurrence % state.skillRows.length] || "", "Skill row");
+  }
+
+  // 3) KEYWORD_JOIN (capability lines)
   if (KEYWORD_JOIN[name]) {
     const { cats, k } = KEYWORD_JOIN[name];
-    return {
-      strategy: "keywords",
-      value: consumeJoin(keywords, cats, k, state.consumed),
-      note: `Top ${cats.join(" + ")} keywords`,
-      candidates: [],
-    };
+    return make("keywords", capabilityJoin(keywords, state.byCat, cats, k, state.universe, state.allowGaps), `Top ${cats.join("+")} keywords`);
   }
-  const course = COURSE_TOPICS_RE.exec(name);
-  if (course) {
-    const k = course[1] ? Number.parseInt(course[1], 10) : 3;
-    return {
-      strategy: "keywords",
-      value: consumeJoin(keywords, ["technology", "soft_skill"], k, state.consumed),
-      note: `${k} course topics`,
-      candidates: [],
-    };
+  // A single area of emphasis — one distinct domain per occurrence.
+  if (name === "AREA_OF_EMPHASIS") {
+    const domains = capabilityJoin(keywords, state.byCat, ["domain"], 6, state.universe, state.allowGaps).split(", ").filter(Boolean);
+    return make("keywords", domains[occurrence % Math.max(1, domains.length)] || "enterprise systems", "Area of emphasis");
   }
 
-  // 3) SKILLS_DISTRIBUTE: the skills section's repeated heading + row slots,
-  // filled by the posting-ranked skill groups (occurrence i = rank i).
-  if (name === "SKILLS_HEADING") {
-    const group = state.skills[occurrence];
-    return { strategy: "skills_header", value: group?.heading || "", note: "Skill group heading", candidates: [] };
-  }
-  if (name === "SKILLS_LINE") {
-    const group = state.skills[occurrence];
-    return { strategy: "skills", value: group?.row || "", note: "Skill group (posting-ranked)", candidates: [] };
+  // 4) COURSE_TOPICS — N tech/people keywords
+  if (COURSE_RE.test(name)) {
+    const n = Number.parseInt((name.match(COURSE_COUNT_RE) || [])[1], 10) || 3;
+    return make("keywords", capabilityJoin(keywords, state.byCat, ["technology", "soft_skill"], n, state.universe, state.allowGaps), `${n} course topics`);
   }
 
-  // 4) LIBRARY_MATCH (accomplishment + job-title slots)
-  const lib = libraryMatch(name, data.library, state.ctx, state.used, state.aggressiveness);
-  if (lib) return lib;
+  // 5) FRAGMENT / PROJECT phrasing pools
+  const fragment = fragmentValue(name, state.cursors);
+  if (fragment != null) return make("phrase", fragment, "Composed phrase");
 
-  // 5) MANUAL
-  return { strategy: "manual", value: "", note: "Needs your input", candidates: [] };
+  // 6) MANUAL
+  return make("manual", "", "Needs your input");
 }
 
-// Enrich every scanned slot with a strategy + proposed value. Processed in
-// document order so shared keyword pools and the library no-repeat behave
-// deterministically.
+// Enrich every scanned slot with a value. Processed in document order so the
+// skill-row categories, area-of-emphasis indexing, and phrase cursors are
+// deterministic.
 export function mapSlots(slots, keywords, data, options = {}) {
   const ctx = buildContext(keywords);
-  const ranked = rankSkillGroups(data.skillGroups?.groups || [], ctx);
   const aggressiveness = clampAggressiveness(options.aggressiveness);
   const universe = options.universe || candidateUniverse();
-  insertGaps(ranked, keywords, universe, GAP_BUDGET[aggressiveness] || 0);
-  const state = { consumed: new Set(), used: new Set(), ctx, skills: ranked, aggressiveness };
+  const byCat = candidateSkillsByCategory();
+  const skillRows = buildSkillRows(keywords, byCat, ctx, universe, GAP_BUDGET[aggressiveness] || 0);
+  const allowGaps = aggressiveness >= 3;
+  const state = { ctx, byCat, skillRows, cursors: new Map(), universe, allowGaps };
   return slots.map((slot) => ({ ...slot, ...mapOne(slot, keywords, data, state) }));
 }

@@ -7,26 +7,40 @@
 
 import { extractKeywords } from "./keywords.js";
 import skillGroups from "./data/skill_groups.json";
-import library from "./data/content_library.json";
 
 let cache = null;
+let byCategoryCache = null;
 
-export function candidateUniverse() {
-  if (cache) return cache;
+function extractCandidateKeywords() {
   const blob = [];
   for (const group of skillGroups.groups || []) {
     blob.push(group.heading);
     for (const kw of group.keywords || []) blob.push(kw);
   }
-  for (const entry of library.entries || []) {
-    blob.push(entry.text);
-    for (const tag of entry.tags || []) blob.push(tag);
-  }
-  const grouped = extractKeywords(blob.join(". "));
+  return extractKeywords(blob.join(". "));
+}
+
+export function candidateUniverse() {
+  if (cache) return cache;
+  const grouped = extractCandidateKeywords();
   const set = new Set();
   for (const category of Object.keys(grouped)) {
     for (const k of grouped[category]) set.add(k.canonical.toLowerCase());
   }
   cache = set;
   return set;
+}
+
+// The candidate's real skills grouped by taxonomy category, e.g.
+// { technology: ["JavaScript", ...], domain: [...], ... }. Used to fill the
+// skills-section rows (one category per row).
+export function candidateSkillsByCategory() {
+  if (byCategoryCache) return byCategoryCache;
+  const grouped = extractCandidateKeywords();
+  const byCat = {};
+  for (const category of Object.keys(grouped)) {
+    byCat[category] = grouped[category].map((k) => k.canonical);
+  }
+  byCategoryCache = byCat;
+  return byCat;
 }

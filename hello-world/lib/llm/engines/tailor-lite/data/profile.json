@@ -1,13 +1,26 @@
 {
-  "_comment": "User-editable. Keys are normalized placeholder names (UPPER_SNAKE_CASE). A placeholder whose name appears here is filled with the matching value via the 'profile' strategy; missing keys fall through to other strategies or MANUAL.",
+  "_comment": "User-editable. Keys are normalized placeholder names. PROFILE strategy fills these as static facts the posting can't supply (rank tiers, function, scale figures) plus the five fixed skills-section heading labels.",
   "values": {
     "FULL_NAME": "Alex Shaw",
-    "CONTACT_LINE": "(531) 210-2376 | alexandergshaw@gmail.com",
     "CURRENT_EMPLOYER": "Mutual of Omaha",
     "RANK": "Senior",
-    "PRIMARY_FUNCTION": "Applications Engineer",
-    "FUNCTION": "Engineering",
+    "TOP_RANK": "Senior",
+    "MEDIUM_RANK": "Software",
+    "LOW_RANK": "Associate",
+    "PRIMARY_FUNCTION": "Software Engineer",
+    "FUNCTION": "Engineer",
+    "SPECIALIZATION": "Applications",
     "YEARS_OF_EXPERIENCE": "7",
-    "SPECIALIZATION": "enterprise applications and healthcare integration"
+    "USER_SCALE": "10,000+",
+    "EVENT_SCALE": "75,000+",
+    "SCALE_DESCRIPTOR": "scalable, enterprise-grade",
+    "ENVIRONMENT_TYPES": "fast-paced, regulated",
+    "LEADERSHIP_LEVEL": "Skilled at",
+    "LEADERSHIP_SCOPE": "cross-functional teams",
+    "ROLE_SPECIFIC_EXPERTISE": "Role-Specific Expertise",
+    "CORE_PROFESSIONAL_CAPABILITIES": "Core Professional Capabilities",
+    "METHODS_SYSTEMS_TECHNOLOGIES": "Methods, Systems & Technologies",
+    "LEADERSHIP_DELIVERY_COLLABORATION": "Leadership, Delivery & Collaboration",
+    "SUPPORTING_TOOLS_KNOWLEDGE": "Supporting Tools & Knowledge"
   }
 }

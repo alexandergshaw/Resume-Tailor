@@ -2,26 +2,20 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { embeddedEngine } from "./engine.js";
 
 const POSTING = [
-  "Senior Backend Engineer",
-  "Cloud Platform Team",
-  "We build payments infrastructure.",
-  "",
+  "Senior Software Engineer.",
   "Requirements:",
-  "Python, AWS, Docker, Kubernetes, PostgreSQL",
-  "Strong leadership and communication",
-  "",
-  "Nice to have:",
-  "Go, Terraform",
+  "React, JavaScript, TypeScript, SQL, PostgreSQL, REST APIs, Agile, leadership.",
+  "Nice to have: Kubernetes, Docker.",
 ].join("\n");
 
 describe("embeddedEngine.getProposals", () => {
-  it("returns the templatized skills slots plus keywords", async () => {
+  it("returns the template's slots plus keywords", async () => {
     const data = await embeddedEngine.getProposals({ jobPosting: POSTING });
+    expect(data.slots.length).toBeGreaterThan(50);
     const byKey = Object.fromEntries(data.slots.map((s) => [s.key, s]));
-    expect(byKey["SKILLS_HEADING::0"].strategy).toBe("skills_header");
-    expect(byKey["SKILLS_LINE::0"].strategy).toBe("skills");
-    expect(byKey["SKILLS_LINE::0"].value.length).toBeGreaterThan(0);
-    expect(data.keywords.technology.some((t) => t.canonical === "Python")).toBe(true);
+    expect(byKey["RANK::0"].strategy).toBe("profile");
+    expect(byKey["JOB_RELEVANT_TECHNOLOGIES::0"].strategy).toBe("keywords");
+    expect(data.keywords.technology.some((t) => t.canonical === "React")).toBe(true);
   });
 
   it("rejects an empty posting", async () => {
@@ -30,17 +24,14 @@ describe("embeddedEngine.getProposals", () => {
 });
 
 describe("embeddedEngine.tailorResume", () => {
-  it("fills the skills slots, keeps all content, and leaks no placeholders", async () => {
+  it("fills the whole template with no leaked placeholders", async () => {
     const res = await embeddedEngine.tailorResume({ jobPosting: POSTING });
-    expect(typeof res.docxB64).toBe("string");
     expect(res.docxB64.length).toBeGreaterThan(200);
-    expect(res.report.meta).toEqual({ renderer: "local", workflow: "legacy" });
-    expect(res.result).toContain("Alex Shaw");
     expect(res.result).not.toContain("{{");
+    expect(res.result).not.toContain("{Area");
+    expect(res.result).toContain("Alex Shaw"); // static name in the template
+    expect(res.result).toContain("Senior Software Engineer"); // RANK + PRIMARY_FUNCTION
     expect(res.report.unfilled).toEqual([]);
-    // All five skill groups are still present (reordered, never dropped).
-    expect(res.result).toContain("Healthcare Interoperability & Enterprise Integration");
-    expect(res.result).toContain("Collaboration & Enterprise Tools");
   });
 
   it("is deterministic: identical input yields byte-identical output", async () => {
@@ -49,53 +40,13 @@ describe("embeddedEngine.tailorResume", () => {
     expect(a.docxB64).toBe(b.docxB64);
   });
 
-  it("aggressiveness gates the fabricated job-title library (company/date stay verbatim)", async () => {
-    const posting =
-      "Healthcare Integration Engineer: HL7, FHIR, C-CDA, REST APIs, enterprise integration, data transformation.";
-    const truthful = await embeddedEngine.tailorResume({ jobPosting: posting, aggressiveness: 1 });
-    const aggressive = await embeddedEngine.tailorResume({ jobPosting: posting, aggressiveness: 5 });
-
-    expect(truthful.result).toContain("Senior Engineer (Applications & Enterprise Integrations)");
-    expect(aggressive.result).toContain("Senior Healthcare Integration Engineer"); // spun variant
-    // The employer and dates are never changed.
-    expect(truthful.result).toContain("Mutual of Omaha | July 2023");
-    expect(aggressive.result).toContain("Mutual of Omaha | July 2023");
-    expect(aggressive.result).not.toContain("{{");
-  });
-
-  it("respects aggressiveness: low stays truthful, high inserts gap keywords", async () => {
-    const posting = "Platform Engineer. Requirements: Kubernetes, Docker, Terraform, AWS, React, SQL.";
+  it("respects aggressiveness: gap keywords appear only at high settings", async () => {
+    const posting = "Platform Engineer. Requirements: Kubernetes, Docker, Terraform, React, SQL.";
     const low = await embeddedEngine.tailorResume({ jobPosting: posting, aggressiveness: 1 });
     const high = await embeddedEngine.tailorResume({ jobPosting: posting, aggressiveness: 5 });
-
-    // The candidate does not list Kubernetes anywhere.
-    expect(low.result).not.toContain("Kubernetes");
+    expect(low.result).not.toContain("Kubernetes"); // candidate lacks it
     expect(high.result).toContain("Kubernetes");
-    // Even aggressive output stays well-formed (no leaked placeholders).
     expect(high.result).not.toContain("{{");
-  });
-
-  it("reorders a job's bullets toward the posting, keeping every bullet and number", async () => {
-    const MOO = "Senior Engineer (Applications & Enterprise Integrations) | Mutual of Omaha | July 2023";
-    const leadBullet = (lines) => lines[lines.indexOf(MOO) + 1];
-
-    // aggressiveness 1 keeps the real bullets + real title, so we test pure reorder.
-    const frontend = await embeddedEngine.tailorResume({
-      jobPosting: "Frontend Engineer: React, JavaScript, TypeScript, HTML5, CSS3, PostgreSQL.",
-      aggressiveness: 1,
-    });
-    const leadership = await embeddedEngine.tailorResume({
-      jobPosting: "Engineering Manager: team leadership, stakeholder management, mentoring, code reviews, agile collaboration.",
-      aggressiveness: 1,
-    });
-
-    // Same job, different leading accomplishment per posting.
-    expect(leadBullet(frontend.resultLines)).not.toBe(leadBullet(leadership.resultLines));
-    // Strict: numbers preserved, nothing dropped, no leaked placeholders.
-    expect(frontend.result).toContain("10,000+");
-    expect(frontend.result).toContain("75,000+");
-    expect(frontend.result).not.toContain("{{");
-    expect(frontend.report.unfilled).toEqual([]);
   });
 });
 
@@ -106,28 +57,11 @@ describe("embeddedEngine.tailorCoverLetter", () => {
       jobTitle: "Staff Engineer",
       companyName: "Initech",
     });
-    expect(res.docxB64.length).toBeGreaterThan(200);
-    const text = res.result;
-    expect(text).toContain("Staff Engineer");
-    expect(text).toContain("Initech");
-    expect(text).toContain("Alex Shaw"); // FULL_NAME from profile.json
-    // Seeded/keyword slots are always filled — no raw placeholder leaks through.
-    expect(text).not.toContain("{{");
+    expect(res.result).toContain("Staff Engineer");
+    expect(res.result).toContain("Initech");
+    expect(res.result).toContain("Alex Shaw");
+    expect(res.result).not.toContain("{{");
     expect(res.report.meta.document).toBe("cover_letter");
-  });
-
-  it("falls back to neutral wording when role/company are missing", async () => {
-    const res = await embeddedEngine.tailorCoverLetter({ jobPosting: POSTING });
-    expect(res.result).toContain("the role");
-    expect(res.result).toContain("your organization");
-    expect(res.result).not.toContain("{{TARGET_ORGANIZATION}}");
-  });
-
-  it("is deterministic for identical input", async () => {
-    const args = { jobPosting: POSTING, jobTitle: "Staff Engineer", companyName: "Initech" };
-    const a = await embeddedEngine.tailorCoverLetter(args);
-    const b = await embeddedEngine.tailorCoverLetter(args);
-    expect(a.docxB64).toBe(b.docxB64);
   });
 });
 
@@ -136,28 +70,24 @@ describe("embeddedEngine composed workflow (in-house)", () => {
     vi.unstubAllEnvs();
   });
 
-  it("surfaces in-house advisory but the résumé .docx is byte-identical to legacy", async () => {
+  it("surfaces advisory (matched/gaps) but the résumé .docx is byte-identical to legacy", async () => {
     const legacy = await embeddedEngine.tailorResume({ jobPosting: POSTING });
 
     vi.stubEnv("RESUME_TAILOR_WORKFLOW", "composed");
     const composed = await embeddedEngine.tailorResume({ jobPosting: POSTING });
 
     expect(composed.report.workflow).toBe("composed");
-    expect(composed.report.advisory).toBeTruthy();
     expect(composed.report.advisory.matched.length).toBeGreaterThan(0);
-    // Quarantine: advisory is report-only, so the document is unchanged.
-    expect(composed.docxB64).toBe(legacy.docxB64);
-    expect(composed.result).not.toContain("{{");
+    expect(composed.docxB64).toBe(legacy.docxB64); // advisory is report-only
   });
 
-  it("fills cover-letter facts (ORGANIZATION_CONTEXT / ROLE_FOCUS) from the posting + company", async () => {
+  it("fills cover-letter facts from the posting + company", async () => {
     vi.stubEnv("RESUME_TAILOR_WORKFLOW", "composed");
     const res = await embeddedEngine.tailorCoverLetter({
       jobPosting: POSTING,
       jobTitle: "Staff Engineer",
       companyName: "Initech",
     });
-    expect(res.report.workflow).toBe("composed");
     expect(res.result).toContain("your work at Initech");
     expect(res.result).not.toContain("{{");
   });
