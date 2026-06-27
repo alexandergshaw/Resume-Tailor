@@ -49,6 +49,20 @@ describe("embeddedEngine.tailorResume", () => {
     expect(a.docxB64).toBe(b.docxB64);
   });
 
+  it("aggressiveness gates the fabricated job-title library (company/date stay verbatim)", async () => {
+    const posting =
+      "Healthcare Integration Engineer: HL7, FHIR, C-CDA, REST APIs, enterprise integration, data transformation.";
+    const truthful = await embeddedEngine.tailorResume({ jobPosting: posting, aggressiveness: 1 });
+    const aggressive = await embeddedEngine.tailorResume({ jobPosting: posting, aggressiveness: 5 });
+
+    expect(truthful.result).toContain("Senior Engineer (Applications & Enterprise Integrations)");
+    expect(aggressive.result).toContain("Senior Healthcare Integration Engineer"); // spun variant
+    // The employer and dates are never changed.
+    expect(truthful.result).toContain("Mutual of Omaha | July 2023");
+    expect(aggressive.result).toContain("Mutual of Omaha | July 2023");
+    expect(aggressive.result).not.toContain("{{");
+  });
+
   it("respects aggressiveness: low stays truthful, high inserts gap keywords", async () => {
     const posting = "Platform Engineer. Requirements: Kubernetes, Docker, Terraform, AWS, React, SQL.";
     const low = await embeddedEngine.tailorResume({ jobPosting: posting, aggressiveness: 1 });
@@ -65,11 +79,14 @@ describe("embeddedEngine.tailorResume", () => {
     const MOO = "Senior Engineer (Applications & Enterprise Integrations) | Mutual of Omaha | July 2023";
     const leadBullet = (lines) => lines[lines.indexOf(MOO) + 1];
 
+    // aggressiveness 1 keeps the real bullets + real title, so we test pure reorder.
     const frontend = await embeddedEngine.tailorResume({
       jobPosting: "Frontend Engineer: React, JavaScript, TypeScript, HTML5, CSS3, PostgreSQL.",
+      aggressiveness: 1,
     });
     const leadership = await embeddedEngine.tailorResume({
       jobPosting: "Engineering Manager: team leadership, stakeholder management, mentoring, code reviews, agile collaboration.",
+      aggressiveness: 1,
     });
 
     // Same job, different leading accomplishment per posting.

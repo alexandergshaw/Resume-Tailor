@@ -88,40 +88,32 @@ describe("mapSlots", () => {
   });
 });
 
-describe("mapSlots aggressiveness (gap insertion)", () => {
-  const kw = {
-    technology: [{ canonical: "JavaScript", score: 9, count: 1 }],
-    tool_platform: [
-      { canonical: "Kubernetes", score: 8, count: 1 },
-      { canonical: "Terraform", score: 7, count: 1 },
-    ],
-  };
+describe("mapSlots aggressiveness (gap insertion swaps, fixed length)", () => {
+  const kw = { tool_platform: [{ canonical: "Kubernetes", score: 9, count: 1 }] };
   const d = {
     profile: { values: {} },
     library: { entries: [] },
     skillGroups: {
-      groups: [
-        { heading: "Languages", categories: ["technology"], keywords: ["JavaScript"] },
-        { heading: "Cloud", categories: ["tool_platform"], keywords: ["AWS"] },
-      ],
+      groups: [{ heading: "Cloud", categories: ["tool_platform"], keywords: ["AWS", "Docker", "Helm"] }],
     },
   };
-  const universe = new Set(["javascript", "aws"]); // candidate lacks Kubernetes/Terraform
+  const universe = new Set(["aws", "docker", "helm"]); // candidate lacks Kubernetes
   const cloudRow = (aggressiveness) =>
     mapSlots(
-      [{ key: "SKILLS_LINE::1", name: "SKILLS_LINE", occurrence: 1 }],
+      [{ key: "SKILLS_LINE::0", name: "SKILLS_LINE", occurrence: 0 }],
       kw,
       d,
       { aggressiveness, universe },
     )[0].value;
 
   it("inserts nothing at aggressiveness 1 (truthful)", () => {
-    expect(cloudRow(1)).toBe("AWS");
+    expect(cloudRow(1)).toBe("AWS, Docker, Helm");
   });
 
-  it("inserts gap keywords the candidate lacks at high aggressiveness (fabrication)", () => {
-    const row = cloudRow(5);
-    expect(row).toContain("Kubernetes");
-    expect(row).toContain("Terraform");
+  it("swaps a low-relevance real skill for the gap keyword, keeping row length fixed", () => {
+    const row = cloudRow(5).split(", ");
+    expect(row).toHaveLength(3); // same item count as the original row
+    expect(row).toContain("Kubernetes"); // gap inserted
+    expect(row).not.toContain("Helm"); // least-relevant real skill swapped out
   });
 });

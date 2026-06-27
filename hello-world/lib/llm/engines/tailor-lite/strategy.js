@@ -95,9 +95,10 @@ function rankSkillGroups(groups, ctx) {
 }
 
 // Inject up to `budget` posting keywords the candidate does NOT have ("gaps")
-// into the matching skill-group row (by category), ranked by posting score. This
-// is the fabrication lever driven by aggressiveness; budget 0 leaves the résumé
-// truthful. Mutates ranked[].row.
+// into the matching skill-group row (by category), ranked by posting score, by
+// SWAPPING OUT the lowest-relevance (trailing) real skills — so each row keeps
+// its original item count (fixed length). This is the fabrication lever driven
+// by aggressiveness; budget 0 leaves the résumé truthful. Mutates ranked[].row.
 function insertGaps(ranked, keywords, universe, budget) {
   if (budget <= 0) return;
   const gaps = [];
@@ -110,15 +111,29 @@ function insertGaps(ranked, keywords, universe, budget) {
   }
   gaps.sort((a, b) => b.score - a.score || a.canonical.localeCompare(b.canonical));
 
-  let inserted = 0;
+  // Assign each gap (within budget) to the first ranked group that owns its
+  // category, de-duping against the row and already-assigned gaps.
+  const perGroup = new Map();
+  let count = 0;
   for (const gap of gaps) {
-    if (inserted >= budget) break;
+    if (count >= budget) break;
     const target = ranked.find((g) => g.categories.includes(gap.category));
     if (!target) continue;
-    const present = new Set((target.row ? target.row.split(", ") : []).map((s) => s.toLowerCase()));
+    const taken = perGroup.get(target) || [];
+    const present = new Set(
+      [...(target.row ? target.row.split(", ") : []), ...taken].map((s) => s.toLowerCase()),
+    );
     if (present.has(gap.canonical.toLowerCase())) continue;
-    target.row = target.row ? `${target.row}, ${gap.canonical}` : gap.canonical;
-    inserted += 1;
+    taken.push(gap.canonical);
+    perGroup.set(target, taken);
+    count += 1;
+  }
+
+  // Swap: drop that many trailing (least-relevant) real skills, append the gaps.
+  for (const [group, gapList] of perGroup) {
+    const real = group.row ? group.row.split(", ") : [];
+    const keep = Math.max(0, real.length - gapList.length);
+    group.row = [...real.slice(0, keep), ...gapList].join(", ");
   }
 }
 
@@ -174,10 +189,17 @@ function scoreEntry(entry, ctx) {
   return cosine + 0.5 * tagOverlap;
 }
 
-// Resolve an accomplishment slot to the best unused library entry.
-function libraryMatch(name, library, ctx, used) {
+// Aggressiveness at/above which FABRICATED library entries (made-up bullets,
+// spun job titles) join the pool. Below it, only the candidate's real entries
+// are eligible, so low aggressiveness stays truthful.
+const FABRICATED_THRESHOLD = 3;
+
+// Resolve an accomplishment / title slot to the best unused library entry.
+// Fabricated entries are excluded unless aggressiveness >= FABRICATED_THRESHOLD.
+function libraryMatch(name, library, ctx, used, aggressiveness) {
+  const allowFabricated = aggressiveness >= FABRICATED_THRESHOLD;
   const matches = (library.entries || [])
-    .filter((entry) => (entry.slots || []).includes(name))
+    .filter((entry) => (entry.slots || []).includes(name) && (allowFabricated || !entry.fabricated))
     .map((entry) => ({ entry, score: scoreEntry(entry, ctx) }))
     .sort((a, b) => b.score - a.score || String(a.entry.id).localeCompare(String(b.entry.id)));
 
@@ -252,8 +274,8 @@ function mapOne(slot, keywords, data, state) {
     return { strategy: "skills", value: group?.row || "", note: "Skill group (posting-ranked)", candidates: [] };
   }
 
-  // 4) LIBRARY_MATCH (accomplishment slots)
-  const lib = libraryMatch(name, data.library, state.ctx, state.used);
+  // 4) LIBRARY_MATCH (accomplishment + job-title slots)
+  const lib = libraryMatch(name, data.library, state.ctx, state.used, state.aggressiveness);
   if (lib) return lib;
 
   // 5) MANUAL
@@ -269,6 +291,6 @@ export function mapSlots(slots, keywords, data, options = {}) {
   const aggressiveness = clampAggressiveness(options.aggressiveness);
   const universe = options.universe || candidateUniverse();
   insertGaps(ranked, keywords, universe, GAP_BUDGET[aggressiveness] || 0);
-  const state = { consumed: new Set(), used: new Set(), ctx, skills: ranked };
+  const state = { consumed: new Set(), used: new Set(), ctx, skills: ranked, aggressiveness };
   return slots.map((slot) => ({ ...slot, ...mapOne(slot, keywords, data, state) }));
 }

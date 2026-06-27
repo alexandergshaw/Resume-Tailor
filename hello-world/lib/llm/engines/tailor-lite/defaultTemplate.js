@@ -53,11 +53,13 @@ function templatizeSkills(documentXml) {
   });
 }
 
-// Turn each Professional Experience bullet into a per-job slot
-// {{EXP_<jobIndex>_BULLET}} (jobIndex increments at each bold job-title line), so
-// LIBRARY_MATCH can reorder a job's own bullets by posting relevance WITHOUT ever
-// moving a bullet to a different employer. Job titles, companies and dates are
-// left verbatim. No-op if the section isn't found.
+// Templatize the Professional Experience section per job (jobIndex increments at
+// each bold job-title line):
+//   - each bullet -> {{EXP_<jobIndex>_BULLET}} (LIBRARY_MATCH reorders/selects a
+//     job's own bullets; never moves a bullet to a different employer)
+//   - the job-title text -> {{JOB_<jobIndex>_TITLE}}, KEEPING " | Company | Date"
+//     verbatim, so LIBRARY_MATCH can pick the most posting-relevant title variant
+// No-op if the section isn't found.
 function templatizeExperience(documentXml) {
   const paragraphs = documentXml.match(PARAGRAPH_RE) || [];
   const startIdx = paragraphs.findIndex(
@@ -75,7 +77,14 @@ function templatizeExperience(documentXml) {
     if (/<w:numPr>/.test(block)) {
       return setParagraphText(block, `{{EXP_${jobIndex}_BULLET}}`);
     }
-    if (/<w:b w:val="1"\/>/.test(block)) jobIndex += 1; // a job-title line
+    if (/<w:b w:val="1"\/>/.test(block)) {
+      jobIndex += 1; // a job-title line
+      const text = paragraphText(block);
+      const sep = text.indexOf(" | ");
+      if (sep !== -1) {
+        return setParagraphText(block, `{{JOB_${jobIndex}_TITLE}}${text.slice(sep)}`);
+      }
+    }
     return block;
   });
 }

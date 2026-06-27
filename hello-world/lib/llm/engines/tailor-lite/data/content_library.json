@@ -1,53 +1,59 @@
 {
-  "_comment": "User-editable bank of your REAL accomplishments. Each entry fills an Experience-bullet slot scoped to ONE job (EXP_<jobIndex>_BULLET, in résumé order: 0=Mutual of Omaha Sr Engineer, 1=Adjunct Professor, 2=Web Platforms Engineer, 3=Union Pacific). The engine ranks a job's entries against the posting (TF-IDF + tag overlap), uses each at most once, and fills that job's bullet positions with the best ones — so a posting-relevant accomplishment leads each job. `text` is inserted VERBATIM (numbers preserved). ADD MORE entries per job than there are bullets to turn reordering into real selection.",
+  "_comment": "User-editable bank. Two slot families, both filled by LIBRARY_MATCH (best tag/keyword match to the posting, each entry used once): JOB_<i>_TITLE (the job-title line, company/date kept verbatim) and EXP_<i>_BULLET (that job's bullet positions). i is résumé order: 0=Mutual of Omaha Sr, 1=Adjunct Professor, 2=Web Platforms Engineer, 3=Union Pacific. Entries WITHOUT `fabricated` are real and always eligible; entries WITH `fabricated:true` are made-up/spun and only join the pool at aggressiveness >= 3, so low settings stay truthful. Add more entries per slot than there are positions to turn reordering into real selection.",
   "entries": [
-    {
-      "id": "moo-sr-1-scale-leadership",
-      "slots": ["EXP_0_BULLET"],
-      "text": "Led enterprise application engineering initiatives supporting 10,000+ internal users and 75,000+ daily operational events while directing a frontend engineering team of 5 developers responsible for scalable enterprise applications, API integrations, SQL-backed operational workflows, reusable React component libraries, and enterprise modernization.",
-      "tags": ["Leadership", "React", "SQL", "REST", "Enterprise Application Modernization"]
-    },
-    {
-      "id": "moo-sr-2-stack",
-      "slots": ["EXP_0_BULLET"],
-      "text": "Designed, developed, tested, and enhanced enterprise software applications, SQL-backed operational systems, backend integrations, and API-driven workflows using React, JavaScript, TypeScript, SQL, REST APIs, PostgreSQL, HTML5, and CSS3 while improving scalability, interoperability readiness, maintainability, and deployment reliability across enterprise.",
-      "tags": ["React", "JavaScript", "TypeScript", "SQL", "REST", "PostgreSQL", "HTML", "CSS"]
-    },
-    {
-      "id": "moo-sr-3-collaboration",
-      "slots": ["EXP_0_BULLET"],
-      "text": "Collaborated with analysts, QA teams, developers, architects, and operational stakeholders to gather business requirements, develop conceptual and technical designs, support Agile delivery workflows, troubleshoot production issues, conduct peer reviews, and maintain enterprise development standards across distributed operational systems.",
-      "tags": ["Agile", "Code Review", "Requirements Gathering", "Cross-Functional Collaboration"]
-    },
-    {
-      "id": "adjunct-1-teaching",
-      "slots": ["EXP_1_BULLET"],
-      "text": "Delivered software engineering, backend integration, database, API, and enterprise application development instruction to 100+ students per term while designing and modernizing 8+ project-based courses focused on REST APIs, SQL, frontend/backend integration, application testing, enterprise workflows, Agile development, and scalable architecture.",
-      "tags": ["REST", "SQL", "Agile", "Mentoring"]
-    },
-    {
-      "id": "webplatforms-1-apis-reporting",
-      "slots": ["EXP_2_BULLET"],
-      "text": "Developed enterprise applications, REST APIs, SQL-driven reporting solutions, and integration workflows supporting operational modernization, workflow automation, and large-scale data exchange systems.",
-      "tags": ["REST", "SQL", "Data Engineering", "Workflow Automation"]
-    },
-    {
-      "id": "webplatforms-2-stack",
-      "slots": ["EXP_2_BULLET"],
-      "text": "Built scalable backend integrations, operational dashboards, and enterprise web platforms using JavaScript, TypeScript, SQL, React, HTML5, and CSS3 while improving maintainability, visibility, and integration reliability.",
-      "tags": ["JavaScript", "TypeScript", "SQL", "React", "HTML", "CSS"]
-    },
-    {
-      "id": "unionpacific-1-data-systems",
-      "slots": ["EXP_3_BULLET"],
-      "text": "Developed enterprise operational software, backend integrations, SQL reporting utilities, and large-scale data-processing systems supporting enterprise integrations and distributed environments.",
-      "tags": ["SQL", "Data Engineering", "Distributed Systems"]
-    },
-    {
-      "id": "unionpacific-2-data-transformation",
-      "slots": ["EXP_3_BULLET"],
-      "text": "Built data transformation workflows and enterprise software solutions using Java, Python, C++, SQL, and APIs while improving operational reliability, data accessibility, and integration efficiency.",
-      "tags": ["Java", "Python", "C++", "SQL", "Data Transformation"]
-    }
+    { "id": "title-0-real", "slots": ["JOB_0_TITLE"], "text": "Senior Engineer (Applications & Enterprise Integrations)", "tags": ["Enterprise Integration", "Leadership"] },
+    { "id": "title-0-swe", "slots": ["JOB_0_TITLE"], "fabricated": true, "text": "Senior Software Engineer", "tags": ["JavaScript", "React", "TypeScript", "Leadership"] },
+    { "id": "title-0-fullstack", "slots": ["JOB_0_TITLE"], "fabricated": true, "text": "Senior Full-Stack Engineer", "tags": ["React", "TypeScript", "REST", "Node.js"] },
+    { "id": "title-0-backend", "slots": ["JOB_0_TITLE"], "fabricated": true, "text": "Senior Backend Engineer", "tags": ["REST", "SQL", "PostgreSQL", "Microservices"] },
+    { "id": "title-0-healthcare", "slots": ["JOB_0_TITLE"], "fabricated": true, "text": "Senior Healthcare Integration Engineer", "tags": ["Healthcare Interoperability", "HL7", "FHIR", "Enterprise Integration"] },
+    { "id": "title-0-data", "slots": ["JOB_0_TITLE"], "fabricated": true, "text": "Senior Data Engineer", "tags": ["Data Engineering", "SQL", "ETL", "Business Intelligence"] },
+    { "id": "title-0-lead", "slots": ["JOB_0_TITLE"], "fabricated": true, "text": "Lead Software Engineer", "tags": ["Leadership", "Mentoring", "Cross-Functional Collaboration"] },
+
+    { "id": "title-1-real", "slots": ["JOB_1_TITLE"], "text": "Adjunct Professor (Software Development, APIs & Enterprise Systems)", "tags": ["Mentoring", "REST", "Enterprise Integration"] },
+    { "id": "title-1-fullstack", "slots": ["JOB_1_TITLE"], "fabricated": true, "text": "Adjunct Professor, Full-Stack Development", "tags": ["JavaScript", "React", "REST"] },
+    { "id": "title-1-data", "slots": ["JOB_1_TITLE"], "fabricated": true, "text": "Adjunct Professor, Data & Backend Engineering", "tags": ["SQL", "Data Engineering", "REST"] },
+    { "id": "title-1-cloud", "slots": ["JOB_1_TITLE"], "fabricated": true, "text": "Adjunct Faculty, Cloud & Enterprise Architecture", "tags": ["Cloud Computing", "Microservices", "Enterprise Integration"] },
+
+    { "id": "title-2-real", "slots": ["JOB_2_TITLE"], "text": "Web Platforms Engineer", "tags": ["JavaScript", "React", "REST"] },
+    { "id": "title-2-fullstack", "slots": ["JOB_2_TITLE"], "fabricated": true, "text": "Full-Stack Web Engineer", "tags": ["React", "TypeScript", "Node.js", "REST"] },
+    { "id": "title-2-backend", "slots": ["JOB_2_TITLE"], "fabricated": true, "text": "Backend & Integration Engineer", "tags": ["REST", "SQL", "Enterprise Integration"] },
+    { "id": "title-2-data", "slots": ["JOB_2_TITLE"], "fabricated": true, "text": "Data & Reporting Engineer", "tags": ["SQL", "Business Intelligence", "Data Engineering", "ETL"] },
+    { "id": "title-2-healthcare", "slots": ["JOB_2_TITLE"], "fabricated": true, "text": "Healthcare Platforms Engineer", "tags": ["Healthcare Interoperability", "REST", "Enterprise Integration"] },
+
+    { "id": "title-3-real", "slots": ["JOB_3_TITLE"], "text": "Web Application Developer (Enterprise Systems & Software Development)", "tags": ["Java", "SQL", "REST"] },
+    { "id": "title-3-data", "slots": ["JOB_3_TITLE"], "fabricated": true, "text": "Software Developer, Data Engineering", "tags": ["Data Engineering", "ETL", "SQL", "Python"] },
+    { "id": "title-3-backend", "slots": ["JOB_3_TITLE"], "fabricated": true, "text": "Backend Software Engineer", "tags": ["Java", "Python", "C++", "SQL"] },
+    { "id": "title-3-integration", "slots": ["JOB_3_TITLE"], "fabricated": true, "text": "Application Developer, Integration & Data", "tags": ["Enterprise Integration", "ETL", "SQL"] },
+    { "id": "title-3-distributed", "slots": ["JOB_3_TITLE"], "fabricated": true, "text": "Distributed Systems Engineer", "tags": ["Distributed Systems", "Java", "Data Engineering"] },
+
+    { "id": "moo-sr-1-scale-leadership", "slots": ["EXP_0_BULLET"], "text": "Led enterprise application engineering initiatives supporting 10,000+ internal users and 75,000+ daily operational events while directing a frontend engineering team of 5 developers responsible for scalable enterprise applications, API integrations, SQL-backed operational workflows, reusable React component libraries, and enterprise modernization.", "tags": ["Leadership", "React", "SQL", "REST", "Enterprise Application Modernization"] },
+    { "id": "moo-sr-2-stack", "slots": ["EXP_0_BULLET"], "text": "Designed, developed, tested, and enhanced enterprise software applications, SQL-backed operational systems, backend integrations, and API-driven workflows using React, JavaScript, TypeScript, SQL, REST APIs, PostgreSQL, HTML5, and CSS3 while improving scalability, interoperability readiness, maintainability, and deployment reliability across enterprise.", "tags": ["React", "JavaScript", "TypeScript", "SQL", "REST", "PostgreSQL", "HTML", "CSS"] },
+    { "id": "moo-sr-3-collaboration", "slots": ["EXP_0_BULLET"], "text": "Collaborated with analysts, QA teams, developers, architects, and operational stakeholders to gather business requirements, develop conceptual and technical designs, support Agile delivery workflows, troubleshoot production issues, conduct peer reviews, and maintain enterprise development standards across distributed operational systems.", "tags": ["Agile", "Code Review", "Requirements Gathering", "Cross-Functional Collaboration"] },
+    { "id": "moo-sr-f1-fhir", "slots": ["EXP_0_BULLET"], "fabricated": true, "text": "Architected a FHIR-based interoperability layer that exchanged 2M+ clinical messages per month across payer and provider systems while meeting HIPAA requirements.", "tags": ["FHIR", "HL7", "Healthcare Interoperability", "Enterprise Integration", "HIPAA"] },
+    { "id": "moo-sr-f2-dashboards", "slots": ["EXP_0_BULLET"], "fabricated": true, "text": "Cut operational report-generation time 60% by redesigning SQL-backed analytics dashboards used by 1,200+ analysts.", "tags": ["SQL", "Business Intelligence", "PostgreSQL", "Data Engineering"] },
+    { "id": "moo-sr-f3-microservices", "slots": ["EXP_0_BULLET"], "fabricated": true, "text": "Led migration of a legacy monolith to a microservices architecture, increasing deployment frequency from monthly to daily.", "tags": ["Microservices", "REST", "CI/CD", "Enterprise Application Modernization"] },
+    { "id": "moo-sr-f4-components", "slots": ["EXP_0_BULLET"], "fabricated": true, "text": "Built a reusable React and TypeScript component library adopted by 8 internal product teams, standardizing UI delivery.", "tags": ["React", "TypeScript", "JavaScript"] },
+    { "id": "moo-sr-f5-cicd", "slots": ["EXP_0_BULLET"], "fabricated": true, "text": "Introduced automated testing and CI/CD pipelines that reduced production defects 45% and shortened release cycles.", "tags": ["CI/CD", "Unit Testing", "DevOps"] },
+    { "id": "moo-sr-f6-kafka", "slots": ["EXP_0_BULLET"], "fabricated": true, "text": "Designed an event-driven integration platform on Apache Kafka processing 500M+ events per day across enterprise systems.", "tags": ["Apache Kafka", "Event-Driven Architecture", "Distributed Systems", "Enterprise Integration"] },
+
+    { "id": "adjunct-1-teaching", "slots": ["EXP_1_BULLET"], "text": "Delivered software engineering, backend integration, database, API, and enterprise application development instruction to 100+ students per term while designing and modernizing 8+ project-based courses focused on REST APIs, SQL, frontend/backend integration, application testing, enterprise workflows, Agile development, and scalable architecture.", "tags": ["REST", "SQL", "Agile", "Mentoring"] },
+    { "id": "adjunct-f1-curriculum", "slots": ["EXP_1_BULLET"], "fabricated": true, "text": "Authored a project-based REST API and SQL curriculum adopted across 3 partner institutions.", "tags": ["REST", "SQL", "Enterprise Integration"] },
+    { "id": "adjunct-f2-coaching", "slots": ["EXP_1_BULLET"], "fabricated": true, "text": "Coached 40+ students into software engineering roles through hands-on full-stack React and Node.js projects.", "tags": ["Mentoring", "React", "JavaScript", "Node.js"] },
+    { "id": "adjunct-f3-data", "slots": ["EXP_1_BULLET"], "fabricated": true, "text": "Modernized a database course to cover PostgreSQL, dimensional data modeling, and ETL pipeline design.", "tags": ["PostgreSQL", "SQL", "ETL", "Data Engineering"] },
+    { "id": "adjunct-f4-cloud", "slots": ["EXP_1_BULLET"], "fabricated": true, "text": "Developed cloud and microservices teaching modules covering AWS, containers, and API design.", "tags": ["Cloud Computing", "Microservices", "AWS", "REST"] },
+
+    { "id": "webplatforms-1-apis-reporting", "slots": ["EXP_2_BULLET"], "text": "Developed enterprise applications, REST APIs, SQL-driven reporting solutions, and integration workflows supporting operational modernization, workflow automation, and large-scale data exchange systems.", "tags": ["REST", "SQL", "Data Engineering", "Workflow Automation"] },
+    { "id": "webplatforms-2-stack", "slots": ["EXP_2_BULLET"], "text": "Built scalable backend integrations, operational dashboards, and enterprise web platforms using JavaScript, TypeScript, SQL, React, HTML5, and CSS3 while improving maintainability, visibility, and integration reliability.", "tags": ["JavaScript", "TypeScript", "SQL", "React", "HTML", "CSS"] },
+    { "id": "webplatforms-f1-dashboards", "slots": ["EXP_2_BULLET"], "fabricated": true, "text": "Delivered a real-time operational dashboard suite that reduced incident response time 35% for enterprise teams.", "tags": ["Business Intelligence", "SQL", "React"] },
+    { "id": "webplatforms-f2-graphql", "slots": ["EXP_2_BULLET"], "fabricated": true, "text": "Built REST and GraphQL APIs powering enterprise web platforms used by 5,000+ daily users.", "tags": ["REST", "GraphQL", "Node.js"] },
+    { "id": "webplatforms-f3-automation", "slots": ["EXP_2_BULLET"], "fabricated": true, "text": "Automated recurring reporting workflows, eliminating 200+ hours of manual effort per month.", "tags": ["Workflow Automation", "SQL", "ETL"] },
+    { "id": "webplatforms-f4-hl7", "slots": ["EXP_2_BULLET"], "fabricated": true, "text": "Integrated third-party healthcare data feeds via HL7 and REST into core operational systems.", "tags": ["HL7", "Healthcare Interoperability", "REST", "Enterprise Integration"] },
+
+    { "id": "unionpacific-1-data-systems", "slots": ["EXP_3_BULLET"], "text": "Developed enterprise operational software, backend integrations, SQL reporting utilities, and large-scale data-processing systems supporting enterprise integrations and distributed environments.", "tags": ["SQL", "Data Engineering", "Distributed Systems"] },
+    { "id": "unionpacific-2-data-transformation", "slots": ["EXP_3_BULLET"], "text": "Built data transformation workflows and enterprise software solutions using Java, Python, C++, SQL, and APIs while improving operational reliability, data accessibility, and integration efficiency.", "tags": ["Java", "Python", "C++", "SQL", "Data Transformation"] },
+    { "id": "unionpacific-f1-pipelines", "slots": ["EXP_3_BULLET"], "fabricated": true, "text": "Built large-scale data-processing pipelines in Python and SQL handling 50M+ records per day.", "tags": ["Python", "SQL", "Data Engineering", "ETL"] },
+    { "id": "unionpacific-f2-reporting", "slots": ["EXP_3_BULLET"], "fabricated": true, "text": "Developed enterprise reporting utilities in Java that consolidated data from 10+ source systems.", "tags": ["Java", "SQL", "Enterprise Integration", "Business Intelligence"] },
+    { "id": "unionpacific-f3-optimization", "slots": ["EXP_3_BULLET"], "fabricated": true, "text": "Optimized batch data-transformation jobs across distributed systems, cutting processing time 40%.", "tags": ["Data Transformation", "ETL", "Distributed Systems"] },
+    { "id": "unionpacific-f4-quality", "slots": ["EXP_3_BULLET"], "fabricated": true, "text": "Created automated data-quality checks that reduced downstream integration errors 30%.", "tags": ["Data Engineering", "Workflow Automation", "SQL"] }
   ]
 }
