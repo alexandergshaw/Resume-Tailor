@@ -107,6 +107,23 @@ describe("mapSlots areas of emphasis (per-role)", () => {
       }
     }
   });
+
+  it("teaching emphasis (AREA_OF_EMPHASIS) draws from subjects + people skills, not job domains", () => {
+    const kw2 = {
+      domain: [{ canonical: "Enterprise Integration", score: 9, count: 1 }, { canonical: "ETL", score: 8, count: 1 }],
+      technology: [{ canonical: "JavaScript", score: 9, count: 1 }],
+      soft_skill: [{ canonical: "Communication", score: 8, count: 1 }, { canonical: "Leadership", score: 7, count: 1 }],
+    };
+    const teaching = [0, 1].map(
+      (occ) => mapSlots([slot("AREA_OF_EMPHASIS", occ)], kw2, { profile: { values: {} } }, { aggressiveness: 3 })[0].value,
+    );
+    // Distinct per occurrence, and never a business-domain term.
+    expect(teaching[0]).not.toBe(teaching[1]);
+    for (const value of teaching) {
+      expect(["Enterprise Integration", "ETL"]).not.toContain(value);
+      expect(["JavaScript", "Communication", "Leadership"]).toContain(value);
+    }
+  });
 });
 
 describe("mapSlots leadership capabilities (no summary redundancy)", () => {

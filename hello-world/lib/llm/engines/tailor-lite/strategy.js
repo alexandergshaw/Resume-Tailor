@@ -116,13 +116,27 @@ function capabilityJoin(keywords, byCat, cats, k, universe, allowGaps, avoid, of
 }
 
 // --- Areas of emphasis (per-role) ------------------------------------------
-// Each role's parenthetical should be in the same domain as the posting but not
-// identical to the other roles'. We draw a generous domain pool once, then give
-// each occurrence a window of `EMPHASIS_WINDOW` that slides by one — consecutive
-// roles overlap (related) without repeating (not identical), as long as the pool
-// is larger than the window.
+// Each role's parenthetical should be related to the posting but not identical
+// across roles. We draw a generous pool once, then give each occurrence a window
+// that slides by one — consecutive roles overlap (related) without repeating.
+//
+// Jobs and teaching draw from DIFFERENT pools so the distinction is clear:
+//   AREAS_OF_EMPHASIS (engineering jobs / the target role) -> business + solution
+//     DOMAINS (e.g. Payments, Web Development, Financial Services).
+//   AREA_OF_EMPHASIS (the candidate's adjunct-professor teaching) -> the concrete
+//     subjects taught + people skills (technology + soft_skill), NOT in-the-weeds
+//     domain jargon like ETL / Distributed Systems, which don't belong as a
+//     teaching emphasis.
 const EMPHASIS_WINDOW = 3;
 const EMPHASIS_POOL = 8;
+const EMPHASIS_CATS = {
+  AREAS_OF_EMPHASIS: ["domain"],
+  AREA_OF_EMPHASIS: ["technology", "soft_skill"],
+};
+const EMPHASIS_FALLBACK = {
+  AREAS_OF_EMPHASIS: "enterprise systems",
+  AREA_OF_EMPHASIS: "software engineering",
+};
 
 function emphasisSlice(pool, size, offset) {
   if (pool.length === 0) return "";
@@ -270,13 +284,14 @@ function mapOne(slot, keywords, data, state) {
     return make("skills", state.skillRows[occurrence % state.skillRows.length] || "", "Skill row");
   }
 
-  // 3) Areas of emphasis — each role gets a related-but-distinct slice of the
-  // posting's domain keywords (sliding window by occurrence). AREA_OF_EMPHASIS is
-  // the singular form (one domain per slot); AREAS_OF_EMPHASIS lists a few.
+  // 3) Areas of emphasis — jobs vs teaching draw from different pools (see
+  // EMPHASIS_CATS). Each occurrence slides a window so repeats stay distinct.
+  // AREA_OF_EMPHASIS (teaching) is the singular form (one subject per slot);
+  // AREAS_OF_EMPHASIS (jobs) lists a few.
   if (name === "AREAS_OF_EMPHASIS" || name === "AREA_OF_EMPHASIS") {
-    const pool = capabilityPool(keywords, state.byCat, ["domain"], state.universe, state.allowGaps).slice(0, EMPHASIS_POOL);
+    const pool = capabilityPool(keywords, state.byCat, EMPHASIS_CATS[name], state.universe, state.allowGaps).slice(0, EMPHASIS_POOL);
     const size = name === "AREA_OF_EMPHASIS" ? 1 : EMPHASIS_WINDOW;
-    return make("keywords", emphasisSlice(pool, size, occurrence) || "enterprise systems", "Areas of emphasis (per-role)");
+    return make("keywords", emphasisSlice(pool, size, occurrence) || EMPHASIS_FALLBACK[name], "Areas of emphasis (per-role)");
   }
 
   // 4) KEYWORD_JOIN (capability lines) — repeated slots slide by occurrence so
