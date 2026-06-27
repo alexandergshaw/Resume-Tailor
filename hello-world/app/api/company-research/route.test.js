@@ -120,4 +120,29 @@ describe("POST /api/company-research (custom URL mode)", () => {
     const res = await POST(jsonRequest({ url: "ftp://nope" }));
     expect(res.status).toBe(400);
   });
+
+  it("falls back to Gemini's URL fetcher when our scrape is blocked (403)", async () => {
+    getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
+    fetchUrlContent.mockResolvedValue({ error: "Failed to fetch URL (status 403)." });
+    const generateContent = vi.fn().mockResolvedValue({
+      text: '{"articles":[{"title":"UMSI AI study","source":"si.umich.edu","date":"2026","url":"x","summary":"AI helps scientists.","suggestion":"I was struck by UMSI\'s AI-for-code research."}]}',
+    });
+    getGeminiClient.mockReturnValue({ models: { generateContent } });
+    const res = await POST(jsonRequest({ url: "https://www.si.umich.edu/news/ai", company: "UMSI" }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.articles[0].suggestion).toContain("UMSI");
+    expect(data.articles[0].url).toBe("https://www.si.umich.edu/news/ai");
+    // used the urlContext tool fallback
+    expect(generateContent.mock.calls[0][0].tools).toEqual([{ urlContext: {} }]);
+  });
+
+  it("502s when the scrape is blocked and there is no Gemini key", async () => {
+    getServerEnv.mockImplementation(() => {
+      throw new Error("Missing required environment variables: Gemini_LLM_API_Key");
+    });
+    fetchUrlContent.mockResolvedValue({ error: "Failed to fetch URL (status 403)." });
+    const res = await POST(jsonRequest({ url: "https://blocked.example/x" }));
+    expect(res.status).toBe(502);
+  });
 });

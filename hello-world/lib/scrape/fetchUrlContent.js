@@ -115,10 +115,15 @@ export async function fetchUrlContent(rawUrl, options = {}) {
   let response;
   try {
     response = await fetch(rawUrl, {
+      // A browser-like UA + headers so the many sites that block obvious bots
+      // (but allow normal browsers) return the page. Sites behind a JS/WAF
+      // challenge will still 403 — the company-research URL path then falls back
+      // to Gemini's own fetcher.
       headers: {
         "User-Agent":
-          "Mozilla/5.0 (compatible; ResumeTailor/1.0; +https://github.com/alexandergshaw/Resume-Tailor)",
-        Accept: "text/html,application/xhtml+xml,*/*",
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
       },
       redirect: "follow",
       signal: AbortSignal.timeout(15000),

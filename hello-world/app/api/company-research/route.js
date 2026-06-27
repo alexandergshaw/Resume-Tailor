@@ -84,17 +84,64 @@ function hostOf(url) {
   }
 }
 
-// A user-supplied article URL → one source card. Fetches the page and, when
-// Gemini is configured, summarizes it into {title, source, date, summary,
-// suggestion}; otherwise returns a title-only card with a blank suggestion to edit.
+function urlSummaryPrompt({ url, company, jobTitle, articleText, title }) {
+  return [
+    "You are helping a job applicant reference a news article in a cover letter.",
+    `The applicant is applying${company ? ` to "${company}"` : ""}${jobTitle ? ` for the "${jobTitle}" role` : ""}.`,
+    articleText
+      ? "From the article text below, produce one JSON object describing it for the applicant to reference."
+      : `Read the article at ${url} and produce one JSON object describing it for the applicant to reference.`,
+    'Return ONLY: {"articles":[{"title":"","source":"","date":"","url":"","summary":"","suggestion":""}]}',
+    "- summary: 1-2 sentences on the relevant, positive angle.",
+    "- suggestion: ONE first-person sentence the applicant could use in a cover letter to reference it (sincere, specific, not flattery).",
+    `- url: ${url}`,
+    articleText ? `\nArticle (title: ${title}):\n${String(articleText).slice(0, MAX_ARTICLE_CHARS)}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+// A user-supplied article URL → one source card. Reads the page ourselves when
+// we can; when our fetch is blocked (e.g. a 403 from a WAF) we fall back to
+// Gemini's own URL fetcher (urlContext). Without a Gemini key we return a
+// title-only card to edit (or a clear error if we can't read the page at all).
 async function researchUrl({ url, company, jobTitle }) {
   const scraped = await fetchUrlContent(url);
-  if (scraped.error) {
-    return NextResponse.json(
-      { error: `Couldn't read that URL (${scraped.error}).` },
-      { status: 502 },
-    );
+
+  let model;
+  let client;
+  try {
+    model = getServerEnv().geminiModel;
+    client = getGeminiClient();
+  } catch {
+    client = null;
   }
+
+  // Our server couldn't read it. Let Gemini fetch it directly if available.
+  if (scraped.error) {
+    if (!client) {
+      return NextResponse.json({ error: `Couldn't read that URL (${scraped.error}).` }, { status: 502 });
+    }
+    try {
+      const response = await client.models.generateContent({
+        model,
+        contents: urlSummaryPrompt({ url, company, jobTitle }),
+        tools: [{ urlContext: {} }],
+      });
+      const a = parseArticles(response?.text || "")[0];
+      if (a) {
+        return NextResponse.json({
+          articles: [{ id: "art-url", title: hostOf(url), source: hostOf(url), date: "", summary: "", suggestion: "", ...a, url }],
+          grounded: [{ uri: url, title: a.title || hostOf(url) }],
+          warnings: [],
+        });
+      }
+    } catch {
+      // fall through to the error below
+    }
+    return NextResponse.json({ error: `Couldn't read that URL (${scraped.error}).` }, { status: 502 });
+  }
+
   const baseArticle = {
     id: "art-url",
     title: scraped.title || hostOf(url) || "Article",
@@ -104,13 +151,7 @@ async function researchUrl({ url, company, jobTitle }) {
     summary: "",
     suggestion: "",
   };
-
-  let model;
-  let client;
-  try {
-    model = getServerEnv().geminiModel;
-    client = getGeminiClient();
-  } catch {
+  if (!client) {
     return NextResponse.json({
       articles: [baseArticle],
       grounded: [{ uri: url, title: baseArticle.title }],
@@ -118,23 +159,12 @@ async function researchUrl({ url, company, jobTitle }) {
     });
   }
 
-  const prompt = [
-    "You are helping a job applicant reference a news article in a cover letter.",
-    `The applicant is applying${company ? ` to "${company}"` : ""}${jobTitle ? ` for the "${jobTitle}" role` : ""}.`,
-    "From the article text below, produce one JSON object describing it for the applicant to reference.",
-    'Return ONLY: {"articles":[{"title":"","source":"","date":"","url":"","summary":"","suggestion":""}]}',
-    "- summary: 1-2 sentences on the relevant, positive angle.",
-    "- suggestion: ONE first-person sentence the applicant could use in a cover letter to reference it (sincere, specific, not flattery).",
-    `- url: ${url}`,
-    "",
-    `Article (title: ${baseArticle.title}):`,
-    String(scraped.description || "").slice(0, MAX_ARTICLE_CHARS),
-  ].join("\n");
-
   try {
-    const response = await client.models.generateContent({ model, contents: prompt });
-    const parsed = parseArticles(response?.text || "");
-    const a = parsed[0];
+    const response = await client.models.generateContent({
+      model,
+      contents: urlSummaryPrompt({ url, company, jobTitle, articleText: scraped.description, title: baseArticle.title }),
+    });
+    const a = parseArticles(response?.text || "")[0];
     if (!a) return NextResponse.json({ articles: [baseArticle], grounded: [{ uri: url }], warnings: [] });
     return NextResponse.json({
       articles: [{ ...baseArticle, ...a, url, source: a.source || baseArticle.source }],
