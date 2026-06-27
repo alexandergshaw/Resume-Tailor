@@ -68,19 +68,22 @@ function significantWords(phrase) {
   );
 }
 
-// Top posting keywords of the given categories, padded with the candidate's own
-// skills so the line is never empty. When `allowGaps` is false (low
+// The most posting-relevant capabilities of the given categories, posting-matched
+// first then padded with the candidate's own skills (so a line is never empty),
+// as an ordered, de-duplicated pool. When `allowGaps` is false (low
 // aggressiveness) only candidate-matched posting keywords are surfaced, so the
 // line stays truthful. Items whose every word is already covered by an earlier
 // item are dropped (no "Cross-Functional Collaboration, …, Collaboration"), and
 // any item sharing a word with `avoid` is skipped (echoes the surrounding prose).
-// Non-consuming (repeated slots may repeat).
-function capabilityJoin(keywords, byCat, cats, k, universe, allowGaps, avoid) {
+const CAPABILITY_POOL_MAX = 24;
+
+function capabilityPool(keywords, byCat, cats, universe, allowGaps, avoid) {
   const out = [];
   const seen = new Set();
   const concepts = []; // word-set of each already-added item
   const avoidWords = avoid && avoid.length ? significantWords(avoid.join(" ")) : null;
   const push = (canon) => {
+    if (out.length >= CAPABILITY_POOL_MAX) return;
     const low = canon.toLowerCase();
     if (seen.has(low)) return;
     const words = [...significantWords(canon)];
@@ -96,17 +99,20 @@ function capabilityJoin(keywords, byCat, cats, k, universe, allowGaps, avoid) {
   for (const c of cats) for (const item of keywords[c] || []) merged.push(item);
   merged.sort((a, b) => b.score - a.score || a.canonical.localeCompare(b.canonical));
   for (const item of merged) {
-    if (out.length >= k) break;
     if (!allowGaps && !universe.has(item.canonical.toLowerCase())) continue;
     push(item.canonical);
   }
-  for (const c of cats) {
-    for (const s of byCat[c] || []) {
-      if (out.length >= k) break;
-      push(s);
-    }
-  }
-  return out.slice(0, k).join(", ");
+  for (const c of cats) for (const s of byCat[c] || []) push(s);
+  return out;
+}
+
+// A k-item capability line drawn from the pool at a sliding `offset`. With
+// offset 0 this is the top-k (so a slot's first occurrence is unchanged);
+// repeated slots pass their occurrence index so each repeat surfaces a distinct,
+// still-relevant slice instead of the same list every time.
+function capabilityJoin(keywords, byCat, cats, k, universe, allowGaps, avoid, offset = 0) {
+  const pool = capabilityPool(keywords, byCat, cats, universe, allowGaps, avoid);
+  return emphasisSlice(pool, k, offset);
 }
 
 // --- Areas of emphasis (per-role) ------------------------------------------
@@ -268,17 +274,16 @@ function mapOne(slot, keywords, data, state) {
   // posting's domain keywords (sliding window by occurrence). AREA_OF_EMPHASIS is
   // the singular form (one domain per slot); AREAS_OF_EMPHASIS lists a few.
   if (name === "AREAS_OF_EMPHASIS" || name === "AREA_OF_EMPHASIS") {
-    const pool = capabilityJoin(keywords, state.byCat, ["domain"], EMPHASIS_POOL, state.universe, state.allowGaps)
-      .split(", ")
-      .filter(Boolean);
+    const pool = capabilityPool(keywords, state.byCat, ["domain"], state.universe, state.allowGaps).slice(0, EMPHASIS_POOL);
     const size = name === "AREA_OF_EMPHASIS" ? 1 : EMPHASIS_WINDOW;
     return make("keywords", emphasisSlice(pool, size, occurrence) || "enterprise systems", "Areas of emphasis (per-role)");
   }
 
-  // 4) KEYWORD_JOIN (capability lines)
+  // 4) KEYWORD_JOIN (capability lines) — repeated slots slide by occurrence so
+  // each repeat shows a distinct slice instead of the same list every time.
   if (KEYWORD_JOIN[name]) {
     const { cats, k, avoid } = KEYWORD_JOIN[name];
-    return make("keywords", capabilityJoin(keywords, state.byCat, cats, k, state.universe, state.allowGaps, avoid), `Top ${cats.join("+")} keywords`);
+    return make("keywords", capabilityJoin(keywords, state.byCat, cats, k, state.universe, state.allowGaps, avoid, occurrence), `Top ${cats.join("+")} keywords`);
   }
 
   // 5) COURSE_TOPICS — N tech/people keywords

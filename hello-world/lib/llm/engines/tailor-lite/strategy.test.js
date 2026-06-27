@@ -55,6 +55,32 @@ describe("mapSlots (template strategies)", () => {
   });
 });
 
+describe("mapSlots capability lines vary per occurrence", () => {
+  // A capability category with more skills than the line shows, so repeats can
+  // slide to distinct slices.
+  const kw = {
+    tool_platform: [
+      { canonical: "AWS", score: 9, count: 1 },
+      { canonical: "Docker", score: 8, count: 1 },
+      { canonical: "Kubernetes", score: 7, count: 1 },
+      { canonical: "Git", score: 6, count: 1 },
+      { canonical: "Jira", score: 5, count: 1 },
+      { canonical: "Jenkins", score: 4, count: 1 },
+    ],
+  };
+  const valueAt = (occ) =>
+    mapSlots([slot("TECHNICAL_CAPABILITIES", occ)], kw, { profile: { values: {} } }, { aggressiveness: 3 })[0].value;
+
+  it("first occurrence is the top-k (unchanged), repeats differ", () => {
+    const first = valueAt(0);
+    const second = valueAt(1);
+    const third = valueAt(2);
+    expect(first.startsWith("AWS, Docker, Kubernetes")).toBe(true); // top-k unchanged
+    expect(second).not.toBe(first);
+    expect(third).not.toBe(second);
+  });
+});
+
 describe("mapSlots areas of emphasis (per-role)", () => {
   const kw = {
     domain: [
