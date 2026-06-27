@@ -22,12 +22,21 @@ import FormatUnderlinedIcon from "@mui/icons-material/FormatUnderlined";
 import FormatAlignLeftIcon from "@mui/icons-material/FormatAlignLeft";
 import FormatAlignCenterIcon from "@mui/icons-material/FormatAlignCenter";
 import FormatAlignRightIcon from "@mui/icons-material/FormatAlignRight";
+import FormatListBulletedIcon from "@mui/icons-material/FormatListBulleted";
+import FormatListNumberedIcon from "@mui/icons-material/FormatListNumbered";
 import { renderModelToHtml } from "@/lib/document/docxPreview";
 import { useIsMobile } from "../hooks/useResponsive";
 
 const SCOPES = ["resume", "cover"];
 const SCOPE_LABEL = { resume: "Resume", cover: "Cover letter" };
 const FONT_SIZES = [8, 9, 10, 11, 12, 13, 14, 16, 18];
+// Block/paragraph styles for the header dropdown (execCommand formatBlock tags).
+const BLOCK_STYLES = [
+  { tag: "P", label: "Normal" },
+  { tag: "H1", label: "Heading 1" },
+  { tag: "H2", label: "Heading 2" },
+  { tag: "H3", label: "Heading 3" },
+];
 
 // A page-like surface so the preview reads like the printed document.
 const pageSx = {
@@ -45,6 +54,11 @@ const pageSx = {
   borderRadius: 1,
   boxShadow: "0 1px 6px rgba(0,0,0,0.10)",
   "& p": { margin: 0 },
+  "& h1": { fontSize: "16pt", fontWeight: 700, margin: "8pt 0 3pt" },
+  "& h2": { fontSize: "13pt", fontWeight: 700, margin: "7pt 0 2pt" },
+  "& h3": { fontSize: "11.5pt", fontWeight: 700, margin: "5pt 0 2pt" },
+  "& ul, & ol": { margin: "3pt 0", paddingLeft: "1.5em" },
+  "& li": { margin: "1pt 0" },
 };
 
 // Preview + edit the tailored résumé and cover letter for a posting. Renders the
@@ -156,6 +170,15 @@ export default function DocumentPreviewDialog({
     if (editorRef.current) draftHtmlRef.current[tab] = editorRef.current.innerHTML;
   };
 
+  // Turn the caret's block into a heading or normal paragraph. Restores the
+  // selection first because the dropdown steals focus.
+  const applyBlockFormat = (tag) => {
+    editorRef.current?.focus();
+    restoreSelection();
+    document.execCommand("formatBlock", false, tag);
+    if (editorRef.current) draftHtmlRef.current[tab] = editorRef.current.innerHTML;
+  };
+
   // The plain text + html of the active document, for save/download.
   const activePayload = () => {
     if (mode === "edit" && editorRef.current) {
@@ -218,6 +241,22 @@ export default function DocumentPreviewDialog({
           <Tooltip title="Align center"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("justifyCenter"); }} sx={{ minWidth: 36 }}><FormatAlignCenterIcon fontSize="small" /></Button></Tooltip>
           <Tooltip title="Align right"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("justifyRight"); }} sx={{ minWidth: 36 }}><FormatAlignRightIcon fontSize="small" /></Button></Tooltip>
           <Box sx={{ width: 8 }} />
+          <Tooltip title="Bulleted list"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("insertUnorderedList"); }} sx={{ minWidth: 36 }}><FormatListBulletedIcon fontSize="small" /></Button></Tooltip>
+          <Tooltip title="Numbered list"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("insertOrderedList"); }} sx={{ minWidth: 36 }}><FormatListNumberedIcon fontSize="small" /></Button></Tooltip>
+          <Box sx={{ width: 8 }} />
+          <Select
+            size="small"
+            displayEmpty
+            value=""
+            onChange={(e) => applyBlockFormat(e.target.value)}
+            renderValue={() => "Style"}
+            sx={{ height: 32, fontSize: "0.8rem", minWidth: 92 }}
+            MenuProps={{ disableAutoFocusItem: true }}
+          >
+            {BLOCK_STYLES.map((b) => (
+              <MenuItem key={b.tag} value={b.tag}>{b.label}</MenuItem>
+            ))}
+          </Select>
           <Select
             size="small"
             displayEmpty
