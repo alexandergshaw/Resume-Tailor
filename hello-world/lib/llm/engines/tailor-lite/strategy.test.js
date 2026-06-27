@@ -55,6 +55,65 @@ describe("mapSlots (template strategies)", () => {
   });
 });
 
+describe("mapSlots areas of emphasis (per-role)", () => {
+  const kw = {
+    domain: [
+      { canonical: "Payments", score: 9, count: 1 },
+      { canonical: "Web Development", score: 8, count: 1 },
+      { canonical: "Financial Services", score: 7, count: 1 },
+      { canonical: "Cloud Computing", score: 6, count: 1 },
+      { canonical: "Fraud Detection", score: 5, count: 1 },
+    ],
+  };
+  const emphasis = (occ) =>
+    mapSlots([slot("AREAS_OF_EMPHASIS", occ)], kw, { profile: { values: {} } }, { aggressiveness: 3 })[0].value;
+
+  it("keeps each role in the posting's domain but not identical to the others", () => {
+    const a = emphasis(0);
+    const b = emphasis(1);
+    const c = emphasis(2);
+    expect(a).not.toBe(b);
+    expect(b).not.toBe(c);
+    // all drawn from the posting's domain keywords (same domain, related)
+    for (const value of [a, b, c]) {
+      for (const term of value.split(", ")) {
+        expect(kw.domain.some((d) => d.canonical === term)).toBe(true);
+      }
+    }
+  });
+});
+
+describe("mapSlots leadership capabilities (no summary redundancy)", () => {
+  // The summary sentence already says "leading cross-functional teams through …",
+  // so these echoing capabilities must be suppressed.
+  const kw = {
+    soft_skill: [
+      { canonical: "Mentoring", score: 9, count: 1 },
+      { canonical: "Cross-Functional Collaboration", score: 8, count: 1 },
+      { canonical: "Leadership", score: 7, count: 1 },
+      { canonical: "Collaboration", score: 6, count: 1 },
+      { canonical: "Project Management", score: 5, count: 1 },
+    ],
+  };
+  const value = mapSlots(
+    [slot("LEADERSHIP_CAPABILITIES")],
+    kw,
+    { profile: { values: {} } },
+    { aggressiveness: 3 },
+  )[0].value;
+
+  it("drops capabilities that echo 'leading cross-functional teams'", () => {
+    expect(value).not.toContain("Leadership");
+    expect(value).not.toContain("Cross-Functional Collaboration");
+    expect(value).toContain("Mentoring");
+  });
+
+  it("does not list the same concept twice", () => {
+    const terms = value.split(", ");
+    expect(new Set(terms).size).toBe(terms.length);
+  });
+});
+
 describe("mapSlots skills-row gap insertion (aggressiveness)", () => {
   // Kubernetes is a domain/tool gap the candidate lacks; it should only appear at
   // high aggressiveness, swapped into the matching skills row.

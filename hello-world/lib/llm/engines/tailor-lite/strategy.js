@@ -43,24 +43,54 @@ const KEYWORD_JOIN = {
   TECHNICAL_CAPABILITIES: { cats: ["tool_platform"], k: 5 },
   DELIVERY_PRACTICES: { cats: ["methodology"], k: 4 },
   DOMAIN_CAPABILITIES: { cats: ["domain"], k: 4 },
-  LEADERSHIP_CAPABILITIES: { cats: ["soft_skill"], k: 4 },
+  // The summary already reads "leading cross-functional teams through
+  // {{LEADERSHIP_CAPABILITIES}}", so suppress capabilities that merely echo those
+  // words (Leadership, Cross-Functional Collaboration) — otherwise the sentence
+  // repeats itself ("leading … Leadership", "cross-functional … Cross-Functional").
+  LEADERSHIP_CAPABILITIES: {
+    cats: ["soft_skill"],
+    k: 4,
+    avoid: ["lead", "leading", "leadership", "cross", "functional", "team", "teams"],
+  },
   JOB_RELEVANT_SOLUTIONS: { cats: ["domain"], k: 4 },
-  AREAS_OF_EMPHASIS: { cats: ["domain"], k: 3 },
 };
+
+// Words too generic to make two phrases "the same concept" on their own.
+const JOIN_STOPWORDS = new Set(["and", "or", "of", "the", "a", "an", "to", "for", "with", "in", "on"]);
+
+// The significant lowercase words of a phrase (for redundancy detection).
+function significantWords(phrase) {
+  return new Set(
+    String(phrase)
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w && !JOIN_STOPWORDS.has(w)),
+  );
+}
 
 // Top posting keywords of the given categories, padded with the candidate's own
 // skills so the line is never empty. When `allowGaps` is false (low
 // aggressiveness) only candidate-matched posting keywords are surfaced, so the
-// line stays truthful. Non-consuming (repeated slots may repeat).
-function capabilityJoin(keywords, byCat, cats, k, universe, allowGaps) {
+// line stays truthful. Items whose every word is already covered by an earlier
+// item are dropped (no "Cross-Functional Collaboration, …, Collaboration"), and
+// any item sharing a word with `avoid` is skipped (echoes the surrounding prose).
+// Non-consuming (repeated slots may repeat).
+function capabilityJoin(keywords, byCat, cats, k, universe, allowGaps, avoid) {
   const out = [];
   const seen = new Set();
+  const concepts = []; // word-set of each already-added item
+  const avoidWords = avoid && avoid.length ? significantWords(avoid.join(" ")) : null;
   const push = (canon) => {
     const low = canon.toLowerCase();
-    if (!seen.has(low)) {
-      seen.add(low);
-      out.push(canon);
+    if (seen.has(low)) return;
+    const words = [...significantWords(canon)];
+    if (words.length) {
+      if (avoidWords && words.some((w) => avoidWords.has(w))) return;
+      if (concepts.some((set) => words.every((w) => set.has(w)))) return;
     }
+    seen.add(low);
+    concepts.push(new Set(words));
+    out.push(canon);
   };
   const merged = [];
   for (const c of cats) for (const item of keywords[c] || []) merged.push(item);
@@ -77,6 +107,24 @@ function capabilityJoin(keywords, byCat, cats, k, universe, allowGaps) {
     }
   }
   return out.slice(0, k).join(", ");
+}
+
+// --- Areas of emphasis (per-role) ------------------------------------------
+// Each role's parenthetical should be in the same domain as the posting but not
+// identical to the other roles'. We draw a generous domain pool once, then give
+// each occurrence a window of `EMPHASIS_WINDOW` that slides by one — consecutive
+// roles overlap (related) without repeating (not identical), as long as the pool
+// is larger than the window.
+const EMPHASIS_WINDOW = 3;
+const EMPHASIS_POOL = 8;
+
+function emphasisSlice(pool, size, offset) {
+  if (pool.length === 0) return "";
+  const n = Math.min(size, pool.length);
+  const start = offset % pool.length;
+  const out = [];
+  for (let i = 0; i < n; i += 1) out.push(pool[(start + i) % pool.length]);
+  return out.join(", ");
 }
 
 // --- SKILLS rows (one taxonomy category per row) ---------------------------
@@ -216,32 +264,38 @@ function mapOne(slot, keywords, data, state) {
     return make("skills", state.skillRows[occurrence % state.skillRows.length] || "", "Skill row");
   }
 
-  // 3) KEYWORD_JOIN (capability lines)
-  if (KEYWORD_JOIN[name]) {
-    const { cats, k } = KEYWORD_JOIN[name];
-    return make("keywords", capabilityJoin(keywords, state.byCat, cats, k, state.universe, state.allowGaps), `Top ${cats.join("+")} keywords`);
-  }
-  // A single area of emphasis — one distinct domain per occurrence.
-  if (name === "AREA_OF_EMPHASIS") {
-    const domains = capabilityJoin(keywords, state.byCat, ["domain"], 6, state.universe, state.allowGaps).split(", ").filter(Boolean);
-    return make("keywords", domains[occurrence % Math.max(1, domains.length)] || "enterprise systems", "Area of emphasis");
+  // 3) Areas of emphasis — each role gets a related-but-distinct slice of the
+  // posting's domain keywords (sliding window by occurrence). AREA_OF_EMPHASIS is
+  // the singular form (one domain per slot); AREAS_OF_EMPHASIS lists a few.
+  if (name === "AREAS_OF_EMPHASIS" || name === "AREA_OF_EMPHASIS") {
+    const pool = capabilityJoin(keywords, state.byCat, ["domain"], EMPHASIS_POOL, state.universe, state.allowGaps)
+      .split(", ")
+      .filter(Boolean);
+    const size = name === "AREA_OF_EMPHASIS" ? 1 : EMPHASIS_WINDOW;
+    return make("keywords", emphasisSlice(pool, size, occurrence) || "enterprise systems", "Areas of emphasis (per-role)");
   }
 
-  // 4) COURSE_TOPICS — N tech/people keywords
+  // 4) KEYWORD_JOIN (capability lines)
+  if (KEYWORD_JOIN[name]) {
+    const { cats, k, avoid } = KEYWORD_JOIN[name];
+    return make("keywords", capabilityJoin(keywords, state.byCat, cats, k, state.universe, state.allowGaps, avoid), `Top ${cats.join("+")} keywords`);
+  }
+
+  // 5) COURSE_TOPICS — N tech/people keywords
   if (COURSE_RE.test(name)) {
     const n = Number.parseInt((name.match(COURSE_COUNT_RE) || [])[1], 10) || 3;
     return make("keywords", capabilityJoin(keywords, state.byCat, ["technology", "soft_skill"], n, state.universe, state.allowGaps), `${n} course topics`);
   }
 
-  // 5) LIBRARY_MATCH — real accomplishment / project fragments
+  // 6) LIBRARY_MATCH — real accomplishment / project fragments
   const lib = libraryMatch(name, data.library, state.ctx, state.used, state.allowFabricated);
   if (lib != null) return make("library", lib, "From content library");
 
-  // 6) FRAGMENT / PROJECT phrasing pools (neutral fallback)
+  // 7) FRAGMENT / PROJECT phrasing pools (neutral fallback)
   const fragment = fragmentValue(name, state.cursors);
   if (fragment != null) return make("phrase", fragment, "Composed phrase");
 
-  // 6) MANUAL
+  // 8) MANUAL
   return make("manual", "", "Needs your input");
 }
 
