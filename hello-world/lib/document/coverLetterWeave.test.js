@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { weaveSources, placementOptions, PLACEMENTS } from "./coverLetterWeave.js";
+import { weaveSources, weaveSourcesAnnotated, placementOptions, PLACEMENTS } from "./coverLetterWeave.js";
 
 const LINES = [
   "Dear Hiring Committee,",
@@ -51,6 +51,37 @@ describe("weaveSources", () => {
   it("is a no-op with no placements or no lines", () => {
     expect(weaveSources(LINES, [])).toEqual(LINES);
     expect(weaveSources([], [{ target: "intro", suggestion: SUGG }])).toEqual([]);
+  });
+});
+
+describe("weaveSourcesAnnotated", () => {
+  const join = (paras) => paras.map((segs) => segs.map((s) => s.text).join("")).join("\n\n");
+  const inserted = (paras) =>
+    paras.flatMap((segs) => segs.filter((s) => s.insert).map((s) => s.text));
+
+  it("joined text matches weaveSources verbatim", () => {
+    const placements = [{ target: "intro", suggestion: SUGG }];
+    expect(join(weaveSourcesAnnotated(LINES, placements))).toBe(weaveSources(LINES, placements).join("\n\n"));
+  });
+
+  it("flags the lead-in + suggestion as the only inserted segment", () => {
+    const paras = weaveSourcesAnnotated(LINES, [{ target: "intro", suggestion: SUGG }]);
+    expect(inserted(paras)).toEqual([`In fact, ${SUGG}`]);
+    // the inserted chunk lives on the intro paragraph, surrounded by original text
+    expect(paras[1].some((s) => s.insert)).toBe(true);
+    expect(paras[1][0].insert).toBe(false);
+  });
+
+  it("marks each target's reference when several are woven in", () => {
+    const paras = weaveSourcesAnnotated(LINES, [
+      { target: "intro", suggestion: "First note." },
+      { target: "why", suggestion: "Second note." },
+    ]);
+    expect(inserted(paras)).toEqual(["In fact, First note.", "Beyond that, Second note."]);
+  });
+
+  it("returns plain single segments when nothing is woven in", () => {
+    expect(weaveSourcesAnnotated(LINES, [])).toEqual(LINES.map((l) => [{ text: l, insert: false }]));
   });
 });
 

@@ -63,3 +63,49 @@ export function weaveSources(lines, placements) {
   }
   return out;
 }
+
+// The lead-in + suggestions text that each placement weaves in, keyed by the
+// paragraph index it lands on. Mirrors weaveSources' grouping so the two agree.
+function insertedTextByLine(woven, placements) {
+  const byLine = {};
+  if (!Array.isArray(placements) || placements.length === 0 || woven.length === 0) return byLine;
+  for (const placement of PLACEMENTS) {
+    const group = placements.filter(
+      (p) => (p?.target || DEFAULT_PLACEMENT) === placement.id && String(p?.suggestion || "").trim(),
+    );
+    if (group.length === 0) continue;
+    const idx = findParagraphIndex(woven, placement);
+    if (idx < 0 || idx >= woven.length) continue;
+    const text = (placement.leadIn || "") + group.map((p) => p.suggestion.trim()).join(" ");
+    (byLine[idx] ||= []).push(text);
+  }
+  return byLine;
+}
+
+// Split a woven line into ordered segments around each inserted chunk, flagging
+// the inserted ones so the preview can highlight exactly what was added.
+function splitHighlights(line, inserts) {
+  const segs = [];
+  let rest = String(line);
+  for (const ins of inserts) {
+    const at = rest.indexOf(ins);
+    if (at < 0) continue; // whitespace collapse shifted it — skip rather than mis-mark
+    if (at > 0) segs.push({ text: rest.slice(0, at), insert: false });
+    segs.push({ text: ins, insert: true });
+    rest = rest.slice(at + ins.length);
+  }
+  if (rest) segs.push({ text: rest, insert: false });
+  return segs.length ? segs : [{ text: String(line), insert: false }];
+}
+
+// Like weaveSources, but returns each paragraph as an array of
+// { text, insert } segments (insert === true for the woven-in references) so the
+// live preview can highlight exactly where each researched line landed. The
+// joined text matches weaveSources' output verbatim.
+export function weaveSourcesAnnotated(lines, placements) {
+  const woven = weaveSources(lines, placements);
+  const byLine = insertedTextByLine(woven, placements);
+  return woven.map((line, idx) =>
+    byLine[idx] ? splitHighlights(line, byLine[idx]) : [{ text: line, insert: false }],
+  );
+}

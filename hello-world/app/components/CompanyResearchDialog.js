@@ -16,7 +16,7 @@ import MenuItem from "@mui/material/MenuItem";
 import CircularProgress from "@mui/material/CircularProgress";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
-import { weaveSources, placementOptions, DEFAULT_PLACEMENT } from "@/lib/document/coverLetterWeave";
+import { weaveSourcesAnnotated, placementOptions, DEFAULT_PLACEMENT } from "@/lib/document/coverLetterWeave";
 import { useIsMobile } from "../hooks/useResponsive";
 
 const PLACEMENT_OPTS = placementOptions();
@@ -107,10 +107,8 @@ export default function CompanyResearchDialog({
     }
   };
 
-  const previewText = () => {
-    const woven = weaveSources(coverLetterLines, chosen().map((c) => ({ target: c.target, suggestion: c.suggestion })));
-    return woven.join("\n\n");
-  };
+  const previewParagraphs = () =>
+    weaveSourcesAnnotated(coverLetterLines, chosen().map((c) => ({ target: c.target, suggestion: c.suggestion })));
 
   const renderPick = () => (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -206,10 +204,15 @@ export default function CompanyResearchDialog({
           </Select>
         </Box>
       ))}
-      <Box sx={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary, #555)", mt: 0.5 }}>Preview</Box>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5 }}>
+        <Box sx={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary, #555)" }}>Preview</Box>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, fontSize: "0.72rem", color: "var(--text-secondary, #777)" }}>
+          <Box component="span" sx={{ bgcolor: "rgba(255,213,79,0.55)", borderRadius: "2px", px: 0.5 }}>highlighted</Box>
+          = added from research
+        </Box>
+      </Box>
       <Box
         sx={{
-          whiteSpace: "pre-wrap",
           fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
           fontSize: "0.85rem",
           lineHeight: 1.45,
@@ -222,7 +225,23 @@ export default function CompanyResearchDialog({
           overflowY: "auto",
         }}
       >
-        {previewText()}
+        {previewParagraphs().map((para, pi) => (
+          <Box key={pi} component="p" sx={{ m: 0, mb: 1.25, "&:last-of-type": { mb: 0 } }}>
+            {para.map((seg, si) =>
+              seg.insert ? (
+                <Box
+                  key={si}
+                  component="mark"
+                  sx={{ bgcolor: "rgba(255,213,79,0.55)", color: "inherit", borderRadius: "2px", px: 0.25 }}
+                >
+                  {seg.text}
+                </Box>
+              ) : (
+                <span key={si}>{seg.text}</span>
+              ),
+            )}
+          </Box>
+        ))}
       </Box>
     </Box>
   );

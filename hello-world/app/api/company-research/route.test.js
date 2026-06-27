@@ -62,6 +62,58 @@ describe("POST /api/company-research", () => {
     expect(data.warnings).toEqual([]); // grounded
   });
 
+  it("replaces the model's link + date with the grounded source's real ones", async () => {
+    getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
+    getGeminiClient.mockReturnValue({
+      models: {
+        generateContent: vi.fn().mockResolvedValue({
+          text:
+            "```json\n" +
+            JSON.stringify({
+              articles: [
+                { title: "Acme raises $50M", source: "TechNews", date: "March 2024", url: "https://hallucinated.example/dead", summary: "Big round.", suggestion: "I admire Acme's growth." },
+              ],
+            }) +
+            "\n```",
+          candidates: [
+            { groundingMetadata: { groundingChunks: [{ web: { uri: "https://vertex.redirect/acme", title: "TechNews" } }] } },
+          ],
+        }),
+      },
+    });
+    fetchUrlContent.mockResolvedValue({
+      title: "Acme raises $50M",
+      description: "...",
+      publishedDate: "March 2026",
+      finalUrl: "https://technews.example/acme-50m",
+    });
+    const res = await POST(jsonRequest({ company: "Acme" }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    // followed the grounded redirect, not the hallucinated model URL
+    expect(fetchUrlContent).toHaveBeenCalledWith("https://vertex.redirect/acme");
+    expect(data.articles[0].url).toBe("https://technews.example/acme-50m");
+    expect(data.articles[0].date).toBe("March 2026");
+  });
+
+  it("drops an unverifiable model link rather than shipping a dead one", async () => {
+    getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
+    getGeminiClient.mockReturnValue({
+      models: {
+        generateContent: vi.fn().mockResolvedValue({
+          text: "```json\n" + JSON.stringify({
+            articles: [{ title: "Acme news", source: "Nowhere", date: "2025", url: "https://dead.example/x", summary: "s", suggestion: "I like Acme." }],
+          }) + "\n```",
+          candidates: [{}], // not grounded
+        }),
+      },
+    });
+    fetchUrlContent.mockResolvedValue({ error: "Failed to fetch URL (status 404)." });
+    const res = await POST(jsonRequest({ company: "Acme" }));
+    const data = await res.json();
+    expect(data.articles[0].url).toBe("");
+  });
+
   it("warns when search wasn't grounded", async () => {
     mockGemini({ grounded: false });
     const res = await POST(jsonRequest({ company: "Acme" }));

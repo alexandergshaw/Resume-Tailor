@@ -54,6 +54,89 @@ export function extractGroundingSources(response) {
   return out;
 }
 
+// --- Grounded-source reconciliation -----------------------------------------
+// The model's JSON `url`/`date` come from its own (often stale or invented)
+// knowledge, so links 404 and dates are wrong. Google's grounding metadata, by
+// contrast, lists the REAL sources it searched. We match each article to a
+// grounded source, then read that page to get a working link + the true date.
+
+function normalizeTitle(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+// Token overlap, normalized by the shorter side. Grounded titles are frequently
+// just the publisher name, so we also score the article's `source` against it.
+function matchScore(article, groundedTitle) {
+  const g = new Set(normalizeTitle(groundedTitle).split(" ").filter(Boolean));
+  if (g.size === 0) return 0;
+  let best = 0;
+  for (const candidate of [article.title, article.source]) {
+    const c = new Set(normalizeTitle(candidate).split(" ").filter(Boolean));
+    if (c.size === 0) continue;
+    let common = 0;
+    for (const t of c) if (g.has(t)) common += 1;
+    best = Math.max(best, common / Math.min(c.size, g.size));
+  }
+  return best;
+}
+
+const MATCH_THRESHOLD = 0.5;
+
+// Assign each article at most one grounded source (unique, highest score first).
+function assignGroundedSources(articles, grounded) {
+  const assign = new Array(articles.length).fill(-1);
+  const pairs = [];
+  articles.forEach((a, ai) =>
+    grounded.forEach((g, gi) => pairs.push({ ai, gi, score: matchScore(a, g.title) })),
+  );
+  pairs.sort((x, y) => y.score - x.score);
+  const usedG = new Set();
+  for (const { ai, gi, score } of pairs) {
+    if (score < MATCH_THRESHOLD) break;
+    if (assign[ai] !== -1 || usedG.has(gi)) continue;
+    assign[ai] = gi;
+    usedG.add(gi);
+  }
+  return assign;
+}
+
+// Replace each article's link + date with verified values: follow the grounded
+// source (or, unmatched, the model's own URL) to its real page. A reachable page
+// yields a working final URL and the true published date; an unreachable grounded
+// link keeps the redirect (still resolves in a browser); an unreachable model
+// link is dropped so we never show a dead link.
+async function enrichArticles(articles, grounded) {
+  if (!Array.isArray(articles) || articles.length === 0) return articles;
+  const list = Array.isArray(grounded) ? grounded : [];
+  const assign = assignGroundedSources(articles, list);
+  return Promise.all(
+    articles.map(async (a, i) => {
+      const groundedUri = assign[i] >= 0 ? String(list[assign[i]].uri || "") : "";
+      const candidate = groundedUri || a.url;
+      if (!candidate) return a;
+      let scraped = null;
+      try {
+        scraped = await fetchUrlContent(candidate);
+      } catch {
+        scraped = { error: "unreadable" };
+      }
+      if (scraped && !scraped.error) {
+        return {
+          ...a,
+          url: scraped.finalUrl || candidate,
+          date: scraped.publishedDate || a.date,
+        };
+      }
+      // Couldn't read it: keep the grounded redirect (it still resolves), but
+      // drop an unverifiable model URL rather than ship a broken link.
+      return { ...a, url: groundedUri };
+    }),
+  );
+}
+
 function buildPrompt({ company, jobTitle, posting }) {
   return [
     "You are a research assistant helping a job applicant.",
@@ -146,7 +229,7 @@ async function researchUrl({ url, company, jobTitle }) {
     id: "art-url",
     title: scraped.title || hostOf(url) || "Article",
     source: hostOf(url),
-    date: "",
+    date: scraped.publishedDate || "",
     url,
     summary: "",
     suggestion: "",
@@ -167,7 +250,8 @@ async function researchUrl({ url, company, jobTitle }) {
     const a = parseArticles(response?.text || "")[0];
     if (!a) return NextResponse.json({ articles: [baseArticle], grounded: [{ uri: url }], warnings: [] });
     return NextResponse.json({
-      articles: [{ ...baseArticle, ...a, url, source: a.source || baseArticle.source }],
+      // The page's own published date (when we found one) wins over the model's.
+      articles: [{ ...baseArticle, ...a, url, source: a.source || baseArticle.source, date: baseArticle.date || a.date || "" }],
       grounded: [{ uri: url, title: a.title || baseArticle.title }],
       warnings: [],
     });
@@ -232,7 +316,8 @@ export async function POST(request) {
         { status: 502 },
       );
     }
-    return NextResponse.json({ articles: articles.slice(0, WANT), grounded, warnings });
+    const enriched = await enrichArticles(articles.slice(0, WANT), grounded);
+    return NextResponse.json({ articles: enriched, grounded, warnings });
   } catch (err) {
     console.error("Company research failed:", err);
     return NextResponse.json(

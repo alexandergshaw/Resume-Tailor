@@ -51,6 +51,84 @@ function extractMetaContent(html, attr, value) {
   return m ? decodeHtmlEntities(m[1]).trim() : "";
 }
 
+const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+// Format a raw date string (ISO, RFC, or "2026") as "Month YYYY" so article
+// cards read consistently. Parses YYYY-MM directly to avoid timezone drift.
+export function formatMonthYear(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  const iso = value.match(/(\d{4})-(\d{2})/);
+  if (iso) {
+    const month = Number(iso[2]);
+    return month >= 1 && month <= 12 ? `${MONTHS[month - 1]} ${iso[1]}` : iso[1];
+  }
+  // A lone year with no month/day signal — don't let Date invent "January".
+  const yearOnly = value.match(/^\D*((?:19|20)\d{2})\D*$/);
+  if (yearOnly) return yearOnly[1];
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    return `${MONTHS[parsed.getUTCMonth()]} ${parsed.getUTCFullYear()}`;
+  }
+  const anyYear = value.match(/\b(?:19|20)\d{2}\b/);
+  return anyYear ? anyYear[0] : "";
+}
+
+function datePublishedFromJsonLd(html) {
+  const scriptRe = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let match;
+  while ((match = scriptRe.exec(html)) !== null) {
+    const raw = match[1].trim();
+    if (!raw) continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    const stack = [parsed];
+    while (stack.length) {
+      const node = stack.pop();
+      if (!node || typeof node !== "object") continue;
+      if (Array.isArray(node)) {
+        for (const child of node) stack.push(child);
+        continue;
+      }
+      const d = node.datePublished || node.dateCreated || node.dateModified;
+      if (typeof d === "string" && d.trim()) return d.trim();
+      for (const value of Object.values(node)) {
+        if (value && typeof value === "object") stack.push(value);
+      }
+    }
+  }
+  return "";
+}
+
+// Best-effort article publication date as "Month YYYY". Prefers structured
+// JSON-LD, then the common published-time meta tags, then a <time datetime>.
+export function extractPublishedDate(html) {
+  if (typeof html !== "string" || !html) return "";
+  const fromLd = datePublishedFromJsonLd(html);
+  if (fromLd) return formatMonthYear(fromLd);
+  const meta =
+    extractMetaContent(html, "property", "article:published_time") ||
+    extractMetaContent(html, "property", "og:article:published_time") ||
+    extractMetaContent(html, "name", "article:published_time") ||
+    extractMetaContent(html, "itemprop", "datePublished") ||
+    extractMetaContent(html, "name", "datePublished") ||
+    extractMetaContent(html, "name", "publish-date") ||
+    extractMetaContent(html, "name", "publishdate") ||
+    extractMetaContent(html, "name", "pubdate") ||
+    extractMetaContent(html, "name", "date");
+  if (meta) return formatMonthYear(meta);
+  const timeTag = html.match(/<time[^>]+datetime=["']([^"']+)["']/i);
+  if (timeTag) return formatMonthYear(timeTag[1]);
+  return "";
+}
+
 function findJsonLdJobPosting(html) {
   const scriptRe = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
   let match;
@@ -205,6 +283,8 @@ export async function fetchUrlContent(rawUrl, options = {}) {
     description = htmlToText(html);
   }
 
+  const publishedDate = extractPublishedDate(html);
+
   if (description.length > maxChars) {
     description = `${description.slice(0, maxChars)}…`;
   }
@@ -213,6 +293,10 @@ export async function fetchUrlContent(rawUrl, options = {}) {
     title,
     company,
     description,
+    publishedDate,
+    // The URL after any redirects — lets callers resolve a grounding-redirect
+    // link to the real article it points at.
+    finalUrl: typeof response.url === "string" && response.url ? response.url : rawUrl,
   };
 }
 
