@@ -103,6 +103,19 @@ describe("fillDocx", () => {
   });
 });
 
+describe("documentLines", () => {
+  it("splits a paragraph's soft line breaks (<w:br/>) into separate lines", async () => {
+    const signoff = `<w:p><w:r><w:t>Sincerely,</w:t><w:br w:type="textWrapping"/><w:t>Alex Shaw</w:t></w:r></w:p>`;
+    const doc = await loadDocx(await makeDocx(signoff));
+    expect(documentLines(doc)).toEqual(["Sincerely,", "Alex Shaw"]);
+  });
+
+  it("keeps a break-free paragraph as a single line", async () => {
+    const doc = await loadDocx(await makeDocx(para(run("One paragraph, one line."))));
+    expect(documentLines(doc)).toEqual(["One paragraph, one line."]);
+  });
+});
+
 describe("findPlaceholders", () => {
   it("matches a cautious single-brace Title Case token", () => {
     const spans = findPlaceholders("Concentration: {Area of Emphasis}");

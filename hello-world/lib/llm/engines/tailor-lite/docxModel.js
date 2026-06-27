@@ -70,6 +70,20 @@ export function paragraphText(block) {
     .join("");
 }
 
+// Like paragraphText, but renders soft line breaks (<w:br/>, <w:cr/>) as
+// newlines. A single paragraph can hold several visual lines — e.g. a
+// "Sincerely,<w:br/>Alex Shaw" sign-off — which paragraphText would otherwise
+// collapse into "Sincerely,Alex Shaw".
+export function paragraphTextWithBreaks(block) {
+  const TOKEN_RE = /<w:t\b[^>]*>([\s\S]*?)<\/w:t>|<w:(?:br|cr)\b[^>]*>/g;
+  let out = "";
+  let m;
+  while ((m = TOKEN_RE.exec(block)) !== null) {
+    out += m[1] !== undefined ? decodeXml(m[1]) : "\n";
+  }
+  return out;
+}
+
 // --- Placeholder matching --------------------------------------------------
 
 // {{ ... }} with no inner braces (the primary, explicit placeholder form).
@@ -295,8 +309,12 @@ export function documentLines(doc) {
   PARAGRAPH_RE.lastIndex = 0;
   let pm;
   while ((pm = PARAGRAPH_RE.exec(body.xml)) !== null) {
-    const text = paragraphText(pm[0]).replace(/\s+$/g, "");
-    if (text.trim().length > 0) lines.push(text);
+    // Soft line breaks within a paragraph each start their own line, so a
+    // "Sincerely,<w:br/>Alex Shaw" sign-off stays on two lines.
+    for (const piece of paragraphTextWithBreaks(pm[0]).split("\n")) {
+      const text = piece.replace(/\s+$/g, "");
+      if (text.trim().length > 0) lines.push(text);
+    }
   }
   return lines;
 }
