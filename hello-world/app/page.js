@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import styles from "./page.module.css";
 import JobDescriptionTab from "./components/JobDescriptionTab";
 import PostingUrlTab from "./components/PostingUrlTab";
+import ScreenshotTab from "./components/ScreenshotTab";
 import ApplyingControls from "./components/ApplyingControls";
 import TrackingTab from "./components/TrackingTab";
 import LiveFeedTab from "./components/LiveFeedTab";
@@ -287,6 +288,12 @@ export default function Home() {
   const [companyResearchByJob, setCompanyResearchByJob] = useState({});
   // Bumped to force the open preview to reload after research is woven in.
   const [previewReloadKey, setPreviewReloadKey] = useState(0);
+  // Screenshot → posting pipeline: each item is { id, name, previewUrl, file,
+  // status: "pending"|"processing"|"done"|"error", statusLabel, jobTitle,
+  // company, url, error, jobId }.
+  const [screenshotItems, setScreenshotItems] = useState([]);
+  const [screenshotProcessing, setScreenshotProcessing] = useState(false);
+  const [screenshotError, setScreenshotError] = useState("");
   const [batchTailorState, setBatchTailorState] = useState({
     running: false,
     total: 0,
@@ -3120,6 +3127,143 @@ export default function Home() {
     if (hasCover) startBackgroundResearch({ jobId, company, jobTitle, posting });
   }
 
+  // --- Screenshots → tailored documents --------------------------------------
+  function updateScreenshotItem(id, patch) {
+    setScreenshotItems((items) => items.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+  }
+
+  function addScreenshotFiles(files) {
+    const imgs = (files || []).filter((f) => f && /^image\/(png|jpe?g|webp)$/i.test(f.type || ""));
+    if (imgs.length === 0) {
+      setScreenshotError("Only PNG, JPG, or WebP screenshots are supported.");
+      return;
+    }
+    setScreenshotError("");
+    const added = imgs.map((file, i) => ({
+      id: `shot-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
+      name: file.name,
+      file,
+      previewUrl: typeof URL !== "undefined" ? URL.createObjectURL(file) : "",
+      status: "pending",
+      statusLabel: "",
+      jobTitle: "",
+      company: "",
+      url: "",
+      error: "",
+      jobId: null,
+    }));
+    setScreenshotItems((items) => [...items, ...added]);
+  }
+
+  function removeScreenshotItem(id) {
+    setScreenshotItems((items) => {
+      const target = items.find((it) => it.id === id);
+      if (target?.previewUrl) {
+        try { URL.revokeObjectURL(target.previewUrl); } catch { /* ignore */ }
+      }
+      return items.filter((it) => it.id !== id);
+    });
+  }
+
+  function clearScreenshots() {
+    setScreenshotItems((items) => {
+      for (const it of items) {
+        if (it.previewUrl) {
+          try { URL.revokeObjectURL(it.previewUrl); } catch { /* ignore */ }
+        }
+      }
+      return [];
+    });
+    setScreenshotError("");
+  }
+
+  function previewScreenshotItem(item) {
+    if (!item?.jobId) return;
+    const t = tailoringMap[item.jobId] || {};
+    openResumePreview(
+      {
+        id: item.jobId,
+        title: item.jobTitle || t.generatedJobTitle || "",
+        company: item.company || "",
+        description: t.jobDescription || "",
+      },
+      { tab: previewScopeAvailable(t, "cover") ? "cover" : "resume" },
+    );
+  }
+
+  // Process each screenshot one by one: read it, find the live posting URL, pull
+  // the posting, and tailor a resume (+ cover letter) into a tracked job.
+  async function processScreenshots() {
+    if (!resumeFile) {
+      setScreenshotError("Upload a resume first so each screenshot can be tailored.");
+      return;
+    }
+    const queue = screenshotItems.filter((it) => it.status === "pending" || it.status === "error");
+    if (queue.length === 0) return;
+    setScreenshotError("");
+    setScreenshotProcessing(true);
+    try {
+      for (const item of queue) {
+        updateScreenshotItem(item.id, { status: "processing", statusLabel: "Reading screenshot…", error: "" });
+        let data;
+        try {
+          const fd = new FormData();
+          fd.append("image", item.file);
+          const res = await fetch("/api/posting-from-image", { method: "POST", body: fd });
+          data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            updateScreenshotItem(item.id, {
+              status: "error",
+              statusLabel: "",
+              error: data?.error || (res.status === 503 ? "Screenshot reading is unavailable (Gemini key not configured)." : "Couldn't read that screenshot."),
+            });
+            continue;
+          }
+        } catch (err) {
+          updateScreenshotItem(item.id, { status: "error", statusLabel: "", error: err.message || "Couldn't read that screenshot." });
+          continue;
+        }
+
+        if (!data?.found) {
+          updateScreenshotItem(item.id, {
+            status: "error",
+            statusLabel: "",
+            jobTitle: data?.jobTitle || "",
+            company: data?.company || "",
+            url: data?.url || "",
+            error: data?.reason || "Couldn't find the live posting URL for this screenshot.",
+          });
+          continue;
+        }
+
+        updateScreenshotItem(item.id, {
+          status: "processing",
+          statusLabel: "Tailoring…",
+          jobTitle: data.jobTitle || "",
+          company: data.company || "",
+          url: data.url || "",
+        });
+
+        const job = {
+          id: item.id,
+          title: data.jobTitle || "Untitled role",
+          company: data.company || "",
+          url: data.url || "",
+          description: data.postingText || "",
+        };
+        setTrackedJobs((prev) => (prev.some((j) => j.id === job.id) ? prev : [...prev, job]));
+        const result = await handleTailorJob(job, { skipDownload: true });
+        if (result?.ok) {
+          updateScreenshotItem(item.id, { status: "done", statusLabel: "", jobId: job.id });
+        } else {
+          updateScreenshotItem(item.id, { status: "error", statusLabel: "", error: result?.error || "Tailoring failed." });
+        }
+      }
+    } finally {
+      setScreenshotProcessing(false);
+    }
+  }
+
   // "Apply" action for an auto-tailored row: download the tailored resume,
   // open the posting in a new tab, and bump the application status from
   // auto_tailored → applied so it moves out of the Auto Tailor tab and into
@@ -3560,7 +3704,7 @@ export default function Home() {
         // Caller (e.g. batch tailoring in "no download" mode) doesn't want a
         // file save prompt for every job. The result is still persisted and
         // available via the per-job card download button.
-        return;
+        return { ok: true };
       }
 
       const dlError = await downloadDocxFiles({
@@ -3575,11 +3719,14 @@ export default function Home() {
 
       if (dlError) {
         updateTailoringJob(job.id, { error: dlError });
-      } else {
-        updateTailoringJob(job.id, { downloaded: true });
+        return { ok: false, error: dlError };
       }
+      updateTailoringJob(job.id, { downloaded: true });
+      return { ok: true };
     } catch (err) {
-      updateTailoringJob(job.id, { status: "error", error: err.message || "Unexpected error." });
+      const message = err.message || "Unexpected error.";
+      updateTailoringJob(job.id, { status: "error", error: message });
+      return { ok: false, error: message };
     }
   }
 
@@ -4491,6 +4638,13 @@ export default function Home() {
           >
             Job Description
           </button>
+          <button
+            type="button"
+            className={activeSection === "screenshots" ? styles.sectionTabActive : styles.sectionTab}
+            onClick={() => setActiveSection("screenshots")}
+          >
+            Screenshots
+          </button>
         </div>
 
         {activeSection === "manual" ? (
@@ -4503,6 +4657,18 @@ export default function Home() {
             askAiAbout={askAiAbout}
             tailorEngine={tailorEngine}
             onReviewFields={() => openSlotReview(jobPosting)}
+          />
+        ) : activeSection === "screenshots" ? (
+          <ScreenshotTab
+            items={screenshotItems}
+            onAddFiles={addScreenshotFiles}
+            onRemoveItem={removeScreenshotItem}
+            onClear={clearScreenshots}
+            onGenerate={processScreenshots}
+            onPreview={previewScreenshotItem}
+            processing={screenshotProcessing}
+            resumeReady={!!resumeFile}
+            error={screenshotError}
           />
         ) : (
           <PostingUrlTab
