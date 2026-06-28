@@ -3,7 +3,7 @@ import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { getServerEnv } from "@/lib/config/env";
 import { fetchUrlContent, extractUrls } from "@/lib/scrape/fetchUrlContent";
 import { lookupAtsPostingUrl } from "@/lib/scrape/atsLookup";
-import { readScreenshotOffline } from "@/lib/scrape/screenshotOcr";
+import { readScreenshotOffline, fieldsFromText } from "@/lib/scrape/screenshotOcr";
 import { searchPostingUrls } from "@/lib/scrape/webSearch";
 
 export const runtime = "nodejs";
@@ -170,21 +170,28 @@ export async function POST(request) {
     return NextResponse.json({ error: "Invalid form data." }, { status: 400 });
   }
 
+  // Engine-driven mode: "ai" = Gemini vision + grounded search (default);
+  // "offline" = no AI / no Gemini key. In offline mode the client usually OCRs
+  // the screenshot in the browser (fast, cached model) and sends just the text,
+  // so the image is optional then.
+  const mode = (formData.get("mode")?.toString() || "ai") === "offline" ? "offline" : "ai";
+  const ocrText = formData.get("ocrText")?.toString() || "";
+  const haveOcrText = mode === "offline" && ocrText.trim().length > 0;
+
   const image = formData.get("image");
-  if (!(image instanceof File)) {
+  const haveImage = image instanceof File;
+  let mimeType = "";
+  if (haveImage) {
+    mimeType = (image.type || "").toLowerCase();
+    if (!ALLOWED_MIME.includes(mimeType)) {
+      return NextResponse.json({ error: "Upload a PNG, JPG, or WebP screenshot." }, { status: 400 });
+    }
+    if (image.size > MAX_IMAGE_BYTES) {
+      return NextResponse.json({ error: "That image is too large — keep screenshots under 12MB." }, { status: 400 });
+    }
+  } else if (!haveOcrText) {
     return NextResponse.json({ error: "An image file is required." }, { status: 400 });
   }
-  const mimeType = (image.type || "").toLowerCase();
-  if (!ALLOWED_MIME.includes(mimeType)) {
-    return NextResponse.json({ error: "Upload a PNG, JPG, or WebP screenshot." }, { status: 400 });
-  }
-  if (image.size > MAX_IMAGE_BYTES) {
-    return NextResponse.json({ error: "That image is too large — keep screenshots under 12MB." }, { status: 400 });
-  }
-
-  // Engine-driven mode: "ai" = Gemini vision + grounded search (default);
-  // "offline" = local OCR + ATS lookup, no AI and no Gemini key required.
-  const mode = (formData.get("mode")?.toString() || "ai") === "offline" ? "offline" : "ai";
 
   let model;
   let client;
@@ -203,13 +210,13 @@ export async function POST(request) {
     }
   }
 
-  const buffer = Buffer.from(await image.arrayBuffer());
+  const buffer = haveImage ? Buffer.from(await image.arrayBuffer()) : null;
 
   // 1) Read the screenshot → { jobTitle, company, location, postingText, searchQuery }.
   let fields;
   try {
     if (mode === "offline") {
-      fields = await readScreenshotOffline(buffer);
+      fields = haveOcrText ? fieldsFromText(ocrText) : await readScreenshotOffline(buffer);
     } else {
       const base64 = buffer.toString("base64");
       const visionResponse = await client.models.generateContent({

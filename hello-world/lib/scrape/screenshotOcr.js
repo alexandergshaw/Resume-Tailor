@@ -28,16 +28,21 @@ export async function ocrImage(buffer) {
   return String(data?.text || "").trim();
 }
 
-// Read a screenshot offline into the reader contract shared with the AI path:
-// { jobTitle, company, location, postingText, searchQuery }.
-export async function readScreenshotOffline(buffer, { ocr = ocrImage } = {}) {
-  const text = await ocr(buffer);
-  const { jobTitle, companyName } = extractPostingMeta(text);
+// Derive the reader contract from already-extracted OCR text (e.g. OCR done in
+// the browser): { jobTitle, company, location, postingText, searchQuery }.
+export function fieldsFromText(text) {
+  const body = String(text || "");
+  const { jobTitle, companyName } = extractPostingMeta(body);
   return {
     jobTitle: jobTitle || "",
     company: companyName || "",
     location: "",
-    postingText: text,
+    postingText: body,
     searchQuery: [jobTitle, companyName].filter(Boolean).join(" "),
   };
+}
+
+// Read a screenshot offline (server-side OCR) into the same reader contract.
+export async function readScreenshotOffline(buffer, { ocr = ocrImage } = {}) {
+  return fieldsFromText(await ocr(buffer));
 }

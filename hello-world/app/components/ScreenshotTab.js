@@ -95,7 +95,7 @@ export default function ScreenshotTab({
           }}
         >
           {offline
-            ? "Embedded engine → reading offline (local OCR, no AI)"
+            ? "Embedded engine → reading in your browser (local OCR, no AI)"
             : "Gemini engine → reading with AI"}
         </Box>
 

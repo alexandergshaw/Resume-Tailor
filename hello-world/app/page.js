@@ -292,6 +292,9 @@ export default function Home() {
   const [screenshotError, setScreenshotError] = useState("");
   // Guards the auto-runner against overlapping/re-entrant processing passes.
   const screenshotBusyRef = useRef(false);
+  // Cached Tesseract worker for offline (Embedded) screenshot reading — created
+  // lazily in the browser so the language model downloads once and is cached.
+  const ocrWorkerRef = useRef(null);
   const [batchTailorState, setBatchTailorState] = useState({
     running: false,
     total: 0,
@@ -3152,6 +3155,19 @@ export default function Home() {
     return { blob: file, name: file.name };
   }
 
+  // OCR a screenshot in the browser (offline/Embedded mode) so the heavy work
+  // and the one-time model download happen client-side — not on the serverless
+  // function, where a cold start re-downloads the model and times out. The
+  // worker is cached for the session; the browser caches the model across loads.
+  async function ocrInBrowser(blob) {
+    if (!ocrWorkerRef.current) {
+      const { createWorker } = await import("tesseract.js");
+      ocrWorkerRef.current = await createWorker("eng");
+    }
+    const { data } = await ocrWorkerRef.current.recognize(blob);
+    return String(data?.text || "").trim();
+  }
+
   // Process each screenshot one by one: read it, find the live posting URL, pull
   // the posting, and tailor a resume (+ cover letter) into a tracked job.
   async function processScreenshots() {
@@ -3170,11 +3186,25 @@ export default function Home() {
         updateScreenshotItem(item.id, { status: "processing", statusLabel: "Reading screenshot…", error: "" });
         let data;
         try {
+          const offline = tailorEngine === "embedded";
           const upload = await compressScreenshot(item.file);
           const fd = new FormData();
-          fd.append("image", upload.blob, upload.name);
-          // Engine dropdown drives AI vs non-AI reading: Embedded = offline OCR.
-          fd.append("mode", tailorEngine === "embedded" ? "offline" : "ai");
+          fd.append("mode", offline ? "offline" : "ai");
+          // Offline: OCR in the browser and send just the text (no slow server
+          // OCR). Fall back to sending the image if browser OCR fails.
+          let sentText = false;
+          if (offline) {
+            try {
+              const text = await ocrInBrowser(upload.blob);
+              if (text && text.trim().length > 20) {
+                fd.append("ocrText", text);
+                sentText = true;
+              }
+            } catch {
+              /* fall back to server-side OCR via the image below */
+            }
+          }
+          if (!sentText) fd.append("image", upload.blob, upload.name);
           const res = await fetch("/api/posting-from-image", { method: "POST", body: fd });
           data = await res.json().catch(() => ({}));
           if (!res.ok) {
