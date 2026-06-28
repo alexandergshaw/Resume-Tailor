@@ -106,6 +106,9 @@ For local development, create a `.env.local` file in `hello-world/` or run `npx 
 | `CRON_SECRET` | Yes (for cron) | Any long random string — sent as `Authorization: Bearer <secret>` by Vercel's scheduler |
 | `GOOGLE_CLIENT_ID` | Yes (for Gmail) | Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client IDs |
 | `GOOGLE_CLIENT_SECRET` | Yes (for Gmail) | Same OAuth client as above |
+| `BRAVE_SEARCH_API_KEY` | No | [Brave Search API](https://brave.com/search/api/) — sturdier offline screenshot search (Embedded engine). Falls back to DuckDuckGo if unset |
+| `GOOGLE_SEARCH_API_KEY` | No | [Google Programmable Search](https://developers.google.com/custom-search/v1/overview) — alternate offline search provider (used if Brave isn't set) |
+| `GOOGLE_SEARCH_ENGINE_ID` | No | The `cx` id of your [Programmable Search Engine](https://programmablesearchengine.google.com/); required alongside `GOOGLE_SEARCH_API_KEY` |
 
 The `KV_REST_API_URL` and `KV_REST_API_TOKEN` variables are injected automatically when you create a Redis database via **Vercel Storage** and connect it to this project.
 

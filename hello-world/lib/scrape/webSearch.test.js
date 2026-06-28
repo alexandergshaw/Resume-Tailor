@@ -39,23 +39,60 @@ describe("searchPostingUrls", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("returns [] for an empty query without fetching", async () => {
-    expect(await searchPostingUrls({ query: "" })).toEqual([]);
+    expect(await searchPostingUrls({ query: "", env: {} })).toEqual([]);
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("fetches DuckDuckGo and returns parsed result URLs", async () => {
+  it("fetches DuckDuckGo and returns parsed result URLs when no key is set", async () => {
     fetch.mockResolvedValue({
       ok: true,
       text: async () =>
         '<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Facme.com%2Fjobs%2F1">r</a>',
     });
-    const out = await searchPostingUrls({ query: "Acme Senior Engineer" });
+    const out = await searchPostingUrls({ query: "Acme Senior Engineer", env: {} });
     expect(out).toEqual(["https://acme.com/jobs/1"]);
     expect(fetch.mock.calls[0][0]).toContain("html.duckduckgo.com/html/?q=");
   });
 
-  it("returns [] when the request fails", async () => {
+  it("returns [] when DuckDuckGo fails", async () => {
     fetch.mockResolvedValue({ ok: false, status: 429, text: async () => "" });
-    expect(await searchPostingUrls({ query: "x" })).toEqual([]);
+    expect(await searchPostingUrls({ query: "x", env: {} })).toEqual([]);
+  });
+
+  it("uses the Brave API when BRAVE_SEARCH_API_KEY is set", async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ web: { results: [{ url: "https://acme.com/careers/eng" }, { url: "https://acme.com/careers/eng" }] } }),
+    });
+    const out = await searchPostingUrls({ query: "Acme Engineer", env: { BRAVE_SEARCH_API_KEY: "k" } });
+    expect(out).toEqual(["https://acme.com/careers/eng"]);
+    const [url, opts] = fetch.mock.calls[0];
+    expect(url).toContain("api.search.brave.com");
+    expect(opts.headers["X-Subscription-Token"]).toBe("k");
+  });
+
+  it("uses Google Programmable Search when its key + engine id are set", async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ items: [{ link: "https://boards.greenhouse.io/acme/jobs/3" }] }),
+    });
+    const out = await searchPostingUrls({
+      query: "Acme Engineer",
+      env: { GOOGLE_SEARCH_API_KEY: "gk", GOOGLE_SEARCH_ENGINE_ID: "cx" },
+    });
+    expect(out).toEqual(["https://boards.greenhouse.io/acme/jobs/3"]);
+    expect(fetch.mock.calls[0][0]).toContain("googleapis.com/customsearch");
+  });
+
+  it("falls through to DuckDuckGo when the keyed provider returns nothing", async () => {
+    fetch
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ web: { results: [] } }) }) // Brave empty
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => '<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Ffallback.example%2Fjob">r</a>',
+      });
+    const out = await searchPostingUrls({ query: "Acme Engineer", env: { BRAVE_SEARCH_API_KEY: "k" } });
+    expect(out).toEqual(["https://fallback.example/job"]);
+    expect(fetch.mock.calls[1][0]).toContain("duckduckgo.com");
   });
 });
