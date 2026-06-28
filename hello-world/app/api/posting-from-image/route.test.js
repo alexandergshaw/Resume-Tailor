@@ -6,11 +6,13 @@ vi.mock("@/lib/scrape/fetchUrlContent", () => ({
   fetchUrlContent: vi.fn(),
   extractUrls: vi.fn(() => []),
 }));
+vi.mock("@/lib/scrape/atsLookup", () => ({ lookupAtsPostingUrl: vi.fn(async () => null) }));
 
 import { POST, parseVisionJson, candidateUrls, rankCandidates, tidyField } from "./route.js";
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { fetchUrlContent, extractUrls } from "@/lib/scrape/fetchUrlContent";
+import { lookupAtsPostingUrl } from "@/lib/scrape/atsLookup";
 
 function imageRequest(file) {
   const fd = new FormData();
@@ -130,6 +132,23 @@ describe("POST /api/posting-from-image", () => {
     expect(data.url).toBe("https://acme.example/jobs/senior-engineer");
     expect(data.jobTitle).toBe("Senior Engineer");
     expect(data.postingText.length).toBeGreaterThan(80);
+  });
+
+  it("uses the company's ATS board URL first when one is found", async () => {
+    mockGemini({ searchText: "https://acme.example/jobs/from-search" });
+    lookupAtsPostingUrl.mockResolvedValueOnce({ url: "https://boards.greenhouse.io/acme/jobs/9", title: "Senior Engineer", source: "greenhouse" });
+    fetchUrlContent.mockResolvedValue({
+      title: "Senior Engineer",
+      company: "Acme",
+      description: "C".repeat(200),
+      finalUrl: "https://boards.greenhouse.io/acme/jobs/9",
+    });
+    const res = await POST(imageRequest(pngFile()));
+    const data = await res.json();
+    expect(data.found).toBe(true);
+    // resolvePosting tried the ATS URL first
+    expect(fetchUrlContent.mock.calls[0][0]).toBe("https://boards.greenhouse.io/acme/jobs/9");
+    expect(data.url).toBe("https://boards.greenhouse.io/acme/jobs/9");
   });
 
   it("names the job from the clean screenshot fields, not the salary-laden page title", async () => {

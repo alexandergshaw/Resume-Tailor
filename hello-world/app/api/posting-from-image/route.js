@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { getServerEnv } from "@/lib/config/env";
 import { fetchUrlContent, extractUrls } from "@/lib/scrape/fetchUrlContent";
+import { lookupAtsPostingUrl } from "@/lib/scrape/atsLookup";
 
 export const runtime = "nodejs";
 
@@ -218,18 +219,26 @@ export async function POST(request) {
     );
   }
 
-  // 2) Find the live posting URL by searching for what we read.
-  let candidates = [];
+  // 2) Find the live posting URL. First try the company's ATS board directly
+  // (deterministic, canonical, never LinkedIn), then Google Search for the rest.
+  const found = [];
+  try {
+    const ats = await lookupAtsPostingUrl({ company: fields.company, jobTitle: fields.jobTitle });
+    if (ats?.url) found.push(ats.url);
+  } catch (err) {
+    console.error("ATS posting lookup failed:", err);
+  }
   try {
     const searchResponse = await client.models.generateContent({
       model,
       contents: urlSearchPrompt(fields),
       tools: [{ googleSearch: {} }],
     });
-    candidates = candidateUrls(searchResponse);
+    found.push(...candidateUrls(searchResponse));
   } catch (err) {
     console.error("Posting URL search failed:", err);
   }
+  const candidates = rankCandidates([...new Set(found.filter(Boolean))]);
 
   if (candidates.length === 0) {
     return NextResponse.json(
