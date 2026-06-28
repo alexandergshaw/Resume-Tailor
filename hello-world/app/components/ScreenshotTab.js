@@ -54,7 +54,7 @@ export default function ScreenshotTab({
   onAddFiles,
   onRemoveItem,
   onClear,
-  onGenerate,
+  onRetry,
   onPreview,
   processing = false,
   resumeReady = true,
@@ -71,15 +71,15 @@ export default function ScreenshotTab({
   };
 
   const anyDone = items.some((i) => i.status === "done");
-  const canGenerate = items.length > 0 && resumeReady && !processing;
+  const failedCount = items.filter((i) => i.status === "error").length;
 
   return (
     <section className={styles.tabPanel}>
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
         <Box sx={{ fontSize: "0.85rem", color: "var(--text-secondary, #777)" }}>
-          Upload screenshots (PNG/JPG) of job postings. One by one, we read the title and text, search
-          for the live posting URL, pull the posting, and tailor your resume (and cover letter, if a
-          template is uploaded) into a tracked job.
+          Upload screenshots (PNG/JPG) of job postings — processing starts automatically. One by one, we
+          read the title and text, search for the live posting URL, pull the posting, and tailor your
+          resume (and cover letter, if a template is uploaded) into a tracked job.
         </Box>
         <Box
           component="span"
@@ -109,12 +109,18 @@ export default function ScreenshotTab({
         />
 
         <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
-          <Button variant="outlined" startIcon={<AddPhotoAlternateIcon />} onClick={pickFiles} disabled={processing} sx={{ textTransform: "none" }}>
+          <Button variant="outlined" startIcon={<AddPhotoAlternateIcon />} onClick={pickFiles} sx={{ textTransform: "none" }}>
             Add screenshots
           </Button>
-          <Button variant="contained" onClick={onGenerate} disabled={!canGenerate} sx={{ textTransform: "none" }}>
-            {processing ? "Working…" : `Generate${items.length ? ` (${items.length})` : ""}`}
-          </Button>
+          {processing ? (
+            <Button variant="contained" disabled startIcon={<CircularProgress size={14} />} sx={{ textTransform: "none" }}>
+              Working…
+            </Button>
+          ) : failedCount > 0 ? (
+            <Button variant="contained" onClick={onRetry} disabled={!resumeReady} sx={{ textTransform: "none" }}>
+              Retry failed ({failedCount})
+            </Button>
+          ) : null}
           {items.length > 0 ? (
             <Button onClick={onClear} disabled={processing} sx={{ textTransform: "none" }}>
               Clear
@@ -141,7 +147,7 @@ export default function ScreenshotTab({
               cursor: "pointer",
             }}
           >
-            No screenshots yet — click to add posting screenshots.
+            No screenshots yet — click to add. Processing starts automatically.
           </Box>
         ) : (
           <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>

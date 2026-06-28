@@ -290,6 +290,8 @@ export default function Home() {
   const [screenshotItems, setScreenshotItems] = useState([]);
   const [screenshotProcessing, setScreenshotProcessing] = useState(false);
   const [screenshotError, setScreenshotError] = useState("");
+  // Guards the auto-runner against overlapping/re-entrant processing passes.
+  const screenshotBusyRef = useRef(false);
   const [batchTailorState, setBatchTailorState] = useState({
     running: false,
     total: 0,
@@ -3153,13 +3155,15 @@ export default function Home() {
   // Process each screenshot one by one: read it, find the live posting URL, pull
   // the posting, and tailor a resume (+ cover letter) into a tracked job.
   async function processScreenshots() {
+    if (screenshotBusyRef.current) return;
     if (!resumeFile) {
       setScreenshotError("Upload a resume first so each screenshot can be tailored.");
       return;
     }
-    const queue = screenshotItems.filter((it) => it.status === "pending" || it.status === "error");
+    const queue = screenshotItems.filter((it) => it.status === "pending");
     if (queue.length === 0) return;
     setScreenshotError("");
+    screenshotBusyRef.current = true;
     setScreenshotProcessing(true);
     try {
       for (const item of queue) {
@@ -3242,8 +3246,26 @@ export default function Home() {
         }
       }
     } finally {
+      screenshotBusyRef.current = false;
       setScreenshotProcessing(false);
     }
+  }
+
+  // Kick off processing automatically as soon as screenshots are added — no
+  // Generate click. Reruns when new pending items appear (more uploads, or a
+  // retry that resets an item to pending), once any in-flight pass finishes.
+  useEffect(() => {
+    if (screenshotProcessing || !resumeFile) return;
+    if (!screenshotItems.some((it) => it.status === "pending")) return;
+    processScreenshots();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screenshotItems, screenshotProcessing, resumeFile]);
+
+  // Reset failed items to pending so the auto-runner retries them.
+  function retryFailedScreenshots() {
+    setScreenshotItems((items) =>
+      items.map((it) => (it.status === "error" ? { ...it, status: "pending", statusLabel: "", error: "" } : it)),
+    );
   }
 
   // "Apply" action for an auto-tailored row: download the tailored resume,
@@ -4489,7 +4511,7 @@ export default function Home() {
             onAddFiles={addScreenshotFiles}
             onRemoveItem={removeScreenshotItem}
             onClear={clearScreenshots}
-            onGenerate={processScreenshots}
+            onRetry={retryFailedScreenshots}
             onPreview={previewScreenshotItem}
             processing={screenshotProcessing}
             resumeReady={!!resumeFile}
