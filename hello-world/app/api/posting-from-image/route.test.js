@@ -7,10 +7,14 @@ vi.mock("@/lib/scrape/fetchUrlContent", () => ({
   extractUrls: vi.fn(() => []),
 }));
 vi.mock("@/lib/scrape/atsLookup", () => ({ lookupAtsPostingUrl: vi.fn(async () => null) }));
-vi.mock("@/lib/scrape/screenshotOcr", () => ({ readScreenshotOffline: vi.fn(), fieldsFromText: vi.fn() }));
+vi.mock("@/lib/scrape/screenshotOcr", async (importOriginal) => ({
+  ...(await importOriginal()),
+  readScreenshotOffline: vi.fn(),
+  fieldsFromText: vi.fn(),
+}));
 vi.mock("@/lib/scrape/webSearch", () => ({ searchPostingUrls: vi.fn(async () => []) }));
 
-import { POST, parseVisionJson, candidateUrls, rankCandidates, tidyField } from "./route.js";
+import { POST, parseVisionJson, candidateUrls, rankCandidates, tidyField, offlineSearchQueries } from "./route.js";
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { fetchUrlContent, extractUrls } from "@/lib/scrape/fetchUrlContent";
@@ -79,6 +83,21 @@ describe("tidyField", () => {
     expect(tidyField("Data Scientist | 130K–160K")).toBe("Data Scientist");
     expect(tidyField("Product Manager")).toBe("Product Manager");
     expect(tidyField("")).toBe("");
+  });
+});
+
+describe("offlineSearchQueries", () => {
+  it("prefers title+company, then a careers variant, capped at 3", () => {
+    const qs = offlineSearchQueries({ jobTitle: "Senior Engineer", company: "Acme", postingText: "Some posting text about the role here" });
+    expect(qs[0]).toBe("Senior Engineer Acme");
+    expect(qs[1]).toBe("Senior Engineer Acme careers job posting");
+    expect(qs.length).toBeLessThanOrEqual(3);
+  });
+
+  it("falls back to raw heading lines when title/company are empty", () => {
+    const qs = offlineSearchQueries({ jobTitle: "", company: "", postingText: "Staff Data Scientist\nat Globex Corporation\nWe build models" });
+    expect(qs).toContain("Staff Data Scientist");
+    expect(qs.length).toBeGreaterThan(0);
   });
 });
 
@@ -307,6 +326,36 @@ describe("POST /api/posting-from-image (offline mode)", () => {
     expect(getGeminiClient).not.toHaveBeenCalled(); // still no AI
     expect(data.found).toBe(true);
     expect(data.url).toBe("https://unknown.example/careers/niche");
+  });
+
+  it("searches on raw OCR lines when parsing yields no title/company", async () => {
+    getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
+    // extractPostingMeta found nothing usable, but the OCR text has lines.
+    fieldsFromText.mockReturnValue({
+      jobTitle: "",
+      company: "",
+      location: "",
+      postingText: "Staff Machine Learning Engineer\nat Globex Corporation\nWe build models at scale",
+      searchQuery: "",
+    });
+    lookupAtsPostingUrl.mockResolvedValueOnce(null);
+    // First query (a raw line) returns a hit.
+    searchPostingUrls.mockResolvedValueOnce(["https://globex.example/jobs/ml-eng"]);
+    fetchUrlContent.mockResolvedValue({
+      title: "Staff Machine Learning Engineer",
+      company: "Globex",
+      description: "M".repeat(200),
+      finalUrl: "https://globex.example/jobs/ml-eng",
+    });
+    const fd = new FormData();
+    fd.append("mode", "offline");
+    fd.append("ocrText", "Staff Machine Learning Engineer at Globex...");
+    const res = await POST({ formData: async () => fd });
+    const data = await res.json();
+    expect(searchPostingUrls).toHaveBeenCalled();
+    expect(searchPostingUrls.mock.calls[0][0].query).toBe("Staff Machine Learning Engineer");
+    expect(data.found).toBe(true);
+    expect(data.url).toBe("https://globex.example/jobs/ml-eng");
   });
 
   it("reports not-found offline when neither the ATS board nor web search match", async () => {

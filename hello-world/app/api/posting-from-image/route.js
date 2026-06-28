@@ -3,7 +3,7 @@ import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { getServerEnv } from "@/lib/config/env";
 import { fetchUrlContent, extractUrls } from "@/lib/scrape/fetchUrlContent";
 import { lookupAtsPostingUrl } from "@/lib/scrape/atsLookup";
-import { readScreenshotOffline, fieldsFromText } from "@/lib/scrape/screenshotOcr";
+import { readScreenshotOffline, fieldsFromText, isChromeLine } from "@/lib/scrape/screenshotOcr";
 import { searchPostingUrls } from "@/lib/scrape/webSearch";
 
 export const runtime = "nodejs";
@@ -121,6 +121,28 @@ export function tidyField(value) {
     .replace(/^\s*[-–—|·•,]+\s*/g, "")
     .replace(/\s*[-–—|·•,]+\s*$/g, "")
     .trim();
+}
+
+// Ordered web-search queries for the offline path. The parsed title/company is
+// best when available, but OCR parsing is unreliable — so also try raw lines
+// from the read text, which usually still contain the role + company.
+export function offlineSearchQueries({ jobTitle, company, postingText } = {}) {
+  const queries = [];
+  const title = String(jobTitle || "").trim();
+  const co = String(company || "").trim();
+  if (title && co) {
+    queries.push(`${title} ${co}`);
+    queries.push(`${title} ${co} careers job posting`);
+  } else if (title || co) {
+    queries.push(`${title || co} careers job posting`);
+  }
+  // Distinctive, heading-ish lines from the raw OCR/posting text (skip chrome).
+  const lines = String(postingText || "")
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter((l) => l.length >= 12 && l.length <= 120 && /[a-z]/i.test(l) && !/[.!?]$/.test(l) && !isChromeLine(l));
+  for (const line of lines.slice(0, 2)) queries.push(line);
+  return [...new Set(queries.filter(Boolean))].slice(0, 3);
 }
 
 function urlSearchPrompt({ jobTitle, company, location, postingText, searchQuery }) {
@@ -270,12 +292,19 @@ export async function POST(request) {
       console.error("Posting URL search failed:", err);
     }
   } else if (found.length === 0) {
-    // Offline mode, no ATS hit: fall back to a non-AI web search.
-    try {
-      const query = fields.searchQuery || [fields.jobTitle, fields.company].filter(Boolean).join(" ");
-      found.push(...(await searchPostingUrls({ query })));
-    } catch (err) {
-      console.error("Offline web search failed:", err);
+    // Offline mode, no ATS hit: try a few non-AI web searches. The parsed
+    // title/company can be wrong or empty on messy OCR, so fall back to raw
+    // lines from the read text. Stop at the first query that yields links.
+    for (const query of offlineSearchQueries(fields)) {
+      try {
+        const hits = await searchPostingUrls({ query });
+        if (hits.length) {
+          found.push(...hits);
+          break;
+        }
+      } catch (err) {
+        console.error("Offline web search failed:", err);
+      }
     }
   }
   const candidates = rankCandidates([...new Set(found.filter(Boolean))]);
