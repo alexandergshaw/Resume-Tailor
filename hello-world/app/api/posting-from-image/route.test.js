@@ -8,7 +8,7 @@ vi.mock("@/lib/scrape/fetchUrlContent", () => ({
 }));
 vi.mock("@/lib/scrape/atsLookup", () => ({ lookupAtsPostingUrl: vi.fn(async () => null) }));
 
-import { POST, parseVisionJson, candidateUrls, rankCandidates, tidyField } from "./route.js";
+import { POST, parseVisionJson, candidateUrls, rankCandidates, tidyField, isBareDomain } from "./route.js";
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { fetchUrlContent, extractUrls } from "@/lib/scrape/fetchUrlContent";
@@ -74,6 +74,15 @@ describe("tidyField", () => {
     expect(tidyField("Data Scientist | 130K–160K")).toBe("Data Scientist");
     expect(tidyField("Product Manager")).toBe("Product Manager");
     expect(tidyField("")).toBe("");
+  });
+});
+
+describe("isBareDomain", () => {
+  it("flags homepages / bare domains but not deep posting URLs", () => {
+    expect(isBareDomain("https://www.governmentjobs.com/")).toBe(true);
+    expect(isBareDomain("https://acme.com")).toBe(true);
+    expect(isBareDomain("https://www.governmentjobs.com/careers/douglas/jobs/5389021/building-inspector")).toBe(false);
+    expect(isBareDomain("https://boards.greenhouse.io/acme/jobs/9")).toBe(false);
   });
 });
 
@@ -151,6 +160,42 @@ describe("POST /api/posting-from-image", () => {
     // resolvePosting tried the ATS URL first
     expect(fetchUrlContent.mock.calls[0][0]).toBe("https://boards.greenhouse.io/acme/jobs/9");
     expect(data.url).toBe("https://boards.greenhouse.io/acme/jobs/9");
+  });
+
+  it("uses the deep posting URL (not the homepage) when the posting page scrapes thin", async () => {
+    // NEOGOV/governmentjobs repro: real posting first, homepage second.
+    mockGemini({
+      searchText:
+        "https://www.governmentjobs.com/careers/douglas/jobs/5389021/building-inspector https://www.governmentjobs.com/",
+    });
+    fetchUrlContent.mockImplementation(async (url) => {
+      if (url.includes("/jobs/5389021/")) return { error: "thin shell (JS-rendered)" };
+      // the homepage scrapes fine — must NOT be chosen
+      return { title: "Government Jobs", company: "", description: "G".repeat(200), finalUrl: "https://www.governmentjobs.com/" };
+    });
+    const res = await POST(imageRequest(pngFile()));
+    const data = await res.json();
+    expect(data.found).toBe(true);
+    expect(data.url).toBe("https://www.governmentjobs.com/careers/douglas/jobs/5389021/building-inspector");
+    // posting text comes from the screenshot (vision), not the homepage
+    expect(data.postingText).toContain("Senior Engineer");
+  });
+
+  it("skips a homepage candidate that scrapes fine, choosing the deep posting + its text", async () => {
+    // Homepage listed FIRST; both scrape fine. The homepage must be skipped.
+    mockGemini({
+      searchText:
+        "https://www.governmentjobs.com/ https://www.governmentjobs.com/careers/douglas/jobs/5389021/building-inspector",
+    });
+    fetchUrlContent.mockImplementation(async (url) => {
+      if (isBareDomain(url)) return { title: "Government Jobs", description: "H".repeat(500), finalUrl: url };
+      return { title: "Building Inspector", company: "Douglas County", description: "Real posting description text. ".repeat(20), finalUrl: url };
+    });
+    const res = await POST(imageRequest(pngFile()));
+    const data = await res.json();
+    expect(data.found).toBe(true);
+    expect(data.url).toBe("https://www.governmentjobs.com/careers/douglas/jobs/5389021/building-inspector");
+    expect(data.postingText).toContain("Real posting description");
   });
 
   it("names the job from the clean screenshot fields, not the salary-laden page title", async () => {

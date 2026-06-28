@@ -148,19 +148,36 @@ function urlSearchPrompt({ jobTitle, company, location, postingText, searchQuery
     .join("\n");
 }
 
+// A URL with no real path — a site homepage / landing page. Never a job posting,
+// and a common wrong fallback (e.g. governmentjobs.com/ instead of the posting).
+export function isBareDomain(url) {
+  try {
+    const path = new URL(url).pathname.replace(/\/+$/, "");
+    return path === "";
+  } catch {
+    return false;
+  }
+}
+
 // Resolve & validate the candidate URLs by fetching them: the first that yields
 // real posting text wins (and gives us a clean final URL + scraped metadata).
+// Homepages are skipped — both as candidates and as redirect destinations — so
+// a JS-rendered posting that scrapes thin doesn't fall through to a landing page.
 async function resolvePosting(candidates) {
   for (const candidate of candidates.slice(0, MAX_URL_CANDIDATES)) {
+    if (isBareDomain(candidate)) continue;
     let scraped;
     try {
       scraped = await fetchUrlContent(candidate);
     } catch {
       continue;
     }
-    if (scraped && !scraped.error && String(scraped.description || "").trim().length > 80) {
+    if (!scraped || scraped.error) continue;
+    const finalUrl = scraped.finalUrl || candidate;
+    if (isBareDomain(finalUrl)) continue;
+    if (String(scraped.description || "").trim().length > 80) {
       return {
-        url: scraped.finalUrl || candidate,
+        url: finalUrl,
         postingText: scraped.description,
         title: scraped.title || "",
         company: scraped.company || "",
@@ -269,6 +286,10 @@ export async function POST(request) {
     );
   }
 
+  // The best posting URL even when scraping was thin/blocked: the first
+  // candidate that isn't a homepage (a JS-rendered posting or a WAF'd page).
+  const bestPostingUrl = candidates.find((u) => !isBareDomain(u)) || "";
+
   // 3) Resolve + pull the posting from the found URL.
   const resolved = await resolvePosting(candidates);
   // Name the documents from the screenshot's own title/company (what the user
@@ -285,13 +306,13 @@ export async function POST(request) {
     });
   }
 
-  // A live URL was located but we couldn't scrape it (e.g. a WAF 403). We still
-  // have the posting's own text from the screenshot — tailor from that, keeping
-  // the located URL for tracking and research.
-  if (fields.postingText.length > 80) {
+  // A real posting URL was located but we couldn't scrape it (JS-rendered SPA
+  // like NEOGOV/governmentjobs, or a WAF 403). Keep that URL — never a homepage —
+  // and tailor from the posting text Gemini already read off the screenshot.
+  if (bestPostingUrl && fields.postingText.length > 80) {
     return NextResponse.json({
       found: true,
-      url: candidates[0],
+      url: bestPostingUrl,
       jobTitle: tidyField(fields.jobTitle),
       company: tidyField(fields.company),
       location: fields.location,
@@ -304,7 +325,7 @@ export async function POST(request) {
       found: false,
       jobTitle: fields.jobTitle,
       company: fields.company,
-      url: candidates[0],
+      url: bestPostingUrl,
       reason: "Found a posting link but couldn't read the posting from it.",
     },
     { status: 200 },
