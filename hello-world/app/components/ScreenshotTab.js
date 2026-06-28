@@ -59,6 +59,7 @@ export default function ScreenshotTab({
   processing = false,
   resumeReady = true,
   offline = false,
+  readerState = "idle",
   error = "",
 }) {
   const inputRef = useRef(null);
@@ -98,6 +99,17 @@ export default function ScreenshotTab({
             ? "Embedded engine → reading in your browser (local OCR, no AI)"
             : "Gemini engine → reading with AI"}
         </Box>
+
+        {offline && readerState === "loading" ? (
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, fontSize: "0.78rem", color: "#5d4037" }}>
+            <CircularProgress size={13} thickness={6} sx={{ color: "#5d4037" }} />
+            Downloading reader… (one-time, then cached)
+          </Box>
+        ) : offline && readerState === "error" ? (
+          <Box sx={{ fontSize: "0.78rem", color: "#9a6700" }}>
+            Couldn&apos;t load the in-browser reader — screenshots will be read on the server instead.
+          </Box>
+        ) : null}
 
         <input
           ref={inputRef}
