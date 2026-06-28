@@ -76,6 +76,17 @@ function guessCompany(lines, title) {
   }
   const ti = lines.indexOf(title);
   if (ti < 0) return "";
+  // "Company · Location · 2 days ago" line right under the title (LinkedIn /
+  // Indeed / Glassdoor). Take the segment before the first separator.
+  for (const raw of [lines[ti + 1], lines[ti + 2], lines[ti - 1]]) {
+    if (!raw) continue;
+    const m = raw.match(/^([A-Z][\w&.\-]+(?:[ &][\w.\-]+){0,3})\s*[·•|]\s+\S/);
+    if (m) {
+      const c = m[1].trim();
+      if (!isChromeLine(c) && !ROLE_RE.test(c)) return c;
+    }
+  }
+  // Otherwise a short proper-noun line right next to the title.
   for (const l of [lines[ti + 1], lines[ti - 1], lines[ti + 2], lines[ti - 2]]) {
     if (!l) continue;
     const words = l.split(/\s+/);

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { decodeDdgHref, parseDdgResults, parseBingResults, searchPostingUrls } from "./webSearch.js";
+import { decodeDdgHref, parseDdgResults, searchPostingUrls } from "./webSearch.js";
 
 describe("decodeDdgHref", () => {
   it("extracts the real URL from a DDG redirect, decoding entities", () => {
@@ -32,20 +32,6 @@ describe("parseDdgResults", () => {
   });
 });
 
-describe("parseBingResults", () => {
-  it("extracts organic result links from h2 anchors, dropping Bing's own", () => {
-    const html = `
-      <li class="b_algo"><h2><a href="https://acme.com/careers/eng" h="ID">Engineer</a></h2></li>
-      <li class="b_algo"><h2><a href="https://www.bing.com/ck/a?u=x">ad</a></h2></li>
-      <li class="b_algo"><h2><a href="https://boards.greenhouse.io/acme/jobs/2">Two</a></h2></li>
-    `;
-    expect(parseBingResults(html, 5)).toEqual([
-      "https://acme.com/careers/eng",
-      "https://boards.greenhouse.io/acme/jobs/2",
-    ]);
-  });
-});
-
 describe("searchPostingUrls", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
@@ -68,19 +54,7 @@ describe("searchPostingUrls", () => {
     expect(fetch.mock.calls[0][0]).toContain("html.duckduckgo.com/html/?q=");
   });
 
-  it("falls back to Bing when DuckDuckGo returns nothing", async () => {
-    fetch
-      .mockResolvedValueOnce({ ok: true, text: async () => "<html>no results</html>" }) // DDG empty
-      .mockResolvedValueOnce({
-        ok: true,
-        text: async () => '<li class="b_algo"><h2><a href="https://acme.com/jobs/9">r</a></h2></li>',
-      });
-    const out = await searchPostingUrls({ query: "Acme Engineer", env: {} });
-    expect(out).toEqual(["https://acme.com/jobs/9"]);
-    expect(fetch.mock.calls[1][0]).toContain("bing.com/search");
-  });
-
-  it("returns [] when every keyless provider fails", async () => {
+  it("returns [] when DuckDuckGo fails", async () => {
     fetch.mockResolvedValue({ ok: false, status: 429, text: async () => "" });
     expect(await searchPostingUrls({ query: "x", env: {} })).toEqual([]);
   });

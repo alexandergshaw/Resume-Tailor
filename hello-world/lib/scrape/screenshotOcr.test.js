@@ -25,6 +25,13 @@ describe("fieldsFromText", () => {
     expect(out.company).toBe("GitLab");
   });
 
+  it("reads the company from a 'Company · Location · time' line under the title", () => {
+    const text = "Senior Data Engineer\nNimbus Robotics · San Francisco, CA · 2 days ago\nApply\nAbout the role";
+    const out = fieldsFromText(text);
+    expect(out.jobTitle).toBe("Senior Data Engineer");
+    expect(out.company).toBe("Nimbus Robotics");
+  });
+
   it("prefers a role line over a company-name line the parser latched onto", () => {
     const text = "GitHub\nMenu\nSenior Product Manager - Remote (US)\nWhat you will do\nLead product strategy across teams.";
     const out = fieldsFromText(text);

@@ -112,46 +112,13 @@ async function duckDuckGoSearch(query, limit) {
   return parseDdgResults(html, limit);
 }
 
-// --- Bing HTML scrape (keyless fallback, more datacenter-tolerant than DDG) --
-
-// Organic Bing results put the destination in <h2><a href="…"> and aren't
-// wrapped in redirects; drop Bing's own/ad links.
-export function parseBingResults(html, limit = 5) {
-  const text = String(html || "");
-  const re = /<h2[^>]*>\s*<a\b[^>]*\bhref="([^"]+)"/gi;
-  const out = [];
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    const url = m[1].replace(/&amp;/g, "&");
-    if (/^https?:\/\//i.test(url) && !/^https?:\/\/(?:[^/]*\.)?bing\.com/i.test(url)) out.push(url);
-  }
-  return dedupeUrls(out, limit);
-}
-
-async function bingSearch(query, limit) {
-  let res;
-  try {
-    res = await fetch(`https://www.bing.com/search?q=${encodeURIComponent(query)}&count=${limit}`, {
-      headers: {
-        "User-Agent": BROWSER_UA,
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        // Skip Bing's consent interstitial so organic results render.
-        Cookie: "SRCHHPGUSR=SRCHLANG=en; _EDGE_CD=m=en-US",
-      },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-  } catch {
-    return [];
-  }
-  if (!res.ok) return [];
-  return parseBingResults(await res.text(), limit);
-}
-
 /**
  * Search the web for posting URLs matching a query, using the best available
- * provider: Brave → Google CSE (if keyed) → DuckDuckGo → Bing. Falls through
- * when one errors or returns nothing. Best-effort.
+ * provider: Brave → Google CSE (if keyed) → DuckDuckGo. Best-effort.
+ *
+ * NOTE: the keyless DuckDuckGo scrape works from residential IPs but is blocked
+ * from many datacenter IPs (e.g. Vercel), and Bing serves bot-detected junk, so
+ * a search API key (Brave/Google) is the only reliable option on a deployment.
  * @returns {Promise<string[]>} up to `limit` candidate URLs.
  */
 export async function searchPostingUrls({ query, limit = 5, env = process.env } = {}) {
@@ -166,9 +133,5 @@ export async function searchPostingUrls({ query, limit = 5, env = process.env } 
     const hits = await googleSearch(q, env.GOOGLE_SEARCH_API_KEY, env.GOOGLE_SEARCH_ENGINE_ID, limit);
     if (hits.length) return hits;
   }
-  // Keyless scrapers — DDG often blocks datacenter IPs (e.g. Vercel), so fall
-  // back to Bing, which is more tolerant.
-  const ddg = await duckDuckGoSearch(q, limit);
-  if (ddg.length) return ddg;
-  return bingSearch(q, limit);
+  return duckDuckGoSearch(q, limit);
 }
