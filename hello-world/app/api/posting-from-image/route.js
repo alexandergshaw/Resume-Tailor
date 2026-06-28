@@ -3,8 +3,6 @@ import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { getServerEnv } from "@/lib/config/env";
 import { fetchUrlContent, extractUrls } from "@/lib/scrape/fetchUrlContent";
 import { lookupAtsPostingUrl } from "@/lib/scrape/atsLookup";
-import { readScreenshotOffline, fieldsFromText, isChromeLine } from "@/lib/scrape/screenshotOcr";
-import { searchPostingUrls } from "@/lib/scrape/webSearch";
 
 export const runtime = "nodejs";
 // Reading + searching + pulling a posting can chain several network calls; give
@@ -123,35 +121,6 @@ export function tidyField(value) {
     .trim();
 }
 
-// Ordered web-search queries for the offline path. The parsed title/company is
-// best when available, but OCR parsing is unreliable — so also try raw lines
-// from the read text, which usually still contain the role + company.
-export function offlineSearchQueries({ jobTitle, company, postingText } = {}) {
-  const queries = [];
-  const title = String(jobTitle || "").trim();
-  const co = String(company || "").trim();
-  if (title && co) {
-    queries.push(`${title} ${co}`);
-    queries.push(`${title} ${co} careers job posting`);
-  } else if (title || co) {
-    queries.push(`${title || co} careers job posting`);
-  }
-  // Distinctive, heading-ish lines from the raw OCR/posting text (skip chrome).
-  const lines = String(postingText || "")
-    .split(/\n+/)
-    .map((l) => l.trim())
-    .filter((l) => l.length >= 12 && l.length <= 120 && /[a-z]/i.test(l) && !/[.!?]$/.test(l) && !isChromeLine(l));
-  for (const line of lines.slice(0, 2)) queries.push(line);
-  const result = [...new Set(queries.filter(Boolean))].slice(0, 3);
-  // Last resort: if parsing produced nothing usable, still search on the raw
-  // text so we never skip the search entirely.
-  if (result.length === 0) {
-    const raw = String(postingText || "").replace(/\s+/g, " ").trim().slice(0, 80);
-    if (raw) result.push(raw);
-  }
-  return result;
-}
-
 function urlSearchPrompt({ jobTitle, company, location, postingText, searchQuery }) {
   return [
     "Using Google Search, find the live URL of this exact job posting.",
@@ -199,76 +168,55 @@ export async function POST(request) {
     return NextResponse.json({ error: "Invalid form data." }, { status: 400 });
   }
 
-  // Engine-driven mode: "ai" = Gemini vision + grounded search (default);
-  // "offline" = no AI / no Gemini key. In offline mode the client usually OCRs
-  // the screenshot in the browser (fast, cached model) and sends just the text,
-  // so the image is optional then.
-  const mode = (formData.get("mode")?.toString() || "ai") === "offline" ? "offline" : "ai";
-  const ocrText = formData.get("ocrText")?.toString() || "";
-  const haveOcrText = mode === "offline" && ocrText.trim().length > 0;
-
   const image = formData.get("image");
-  const haveImage = image instanceof File;
-  let mimeType = "";
-  if (haveImage) {
-    mimeType = (image.type || "").toLowerCase();
-    if (!ALLOWED_MIME.includes(mimeType)) {
-      return NextResponse.json({ error: "Upload a PNG, JPG, or WebP screenshot." }, { status: 400 });
-    }
-    if (image.size > MAX_IMAGE_BYTES) {
-      return NextResponse.json({ error: "That image is too large — keep screenshots under 12MB." }, { status: 400 });
-    }
-  } else if (!haveOcrText) {
+  if (!(image instanceof File)) {
     return NextResponse.json({ error: "An image file is required." }, { status: 400 });
   }
-
-  let model;
-  let client;
-  if (mode === "ai") {
-    try {
-      model = getServerEnv().geminiModel;
-      client = getGeminiClient();
-    } catch {
-      return NextResponse.json(
-        {
-          error:
-            "Reading screenshots with AI needs the Gemini API key. Switch the engine to Embedded to read screenshots without AI.",
-        },
-        { status: 503 },
-      );
-    }
+  const mimeType = (image.type || "").toLowerCase();
+  if (!ALLOWED_MIME.includes(mimeType)) {
+    return NextResponse.json({ error: "Upload a PNG, JPG, or WebP screenshot." }, { status: 400 });
+  }
+  if (image.size > MAX_IMAGE_BYTES) {
+    return NextResponse.json({ error: "That image is too large — keep screenshots under 12MB." }, { status: 400 });
   }
 
-  const buffer = haveImage ? Buffer.from(await image.arrayBuffer()) : null;
+  // Reading the screenshot + finding the posting always use Gemini; the selected
+  // tailoring engine (e.g. Embedded) only governs the downstream document
+  // generation, not this step.
+  let model;
+  let client;
+  try {
+    model = getServerEnv().geminiModel;
+    client = getGeminiClient();
+  } catch {
+    return NextResponse.json(
+      { error: "Reading screenshots needs the Gemini API key to be configured." },
+      { status: 503 },
+    );
+  }
+
+  const base64 = Buffer.from(await image.arrayBuffer()).toString("base64");
 
   // 1) Read the screenshot → { jobTitle, company, location, postingText, searchQuery }.
   let fields;
   try {
-    if (mode === "offline") {
-      fields = haveOcrText ? fieldsFromText(ocrText) : await readScreenshotOffline(buffer);
-    } else {
-      const base64 = buffer.toString("base64");
-      const visionResponse = await client.models.generateContent({
-        model,
-        contents: [
-          {
-            role: "user",
-            parts: [
-              { inlineData: { mimeType: mimeType === "image/jpg" ? "image/jpeg" : mimeType, data: base64 } },
-              { text: visionPrompt() },
-            ],
-          },
-        ],
-        config: { responseMimeType: "application/json" },
-      });
-      fields = parseVisionJson(visionResponse?.text || "");
-    }
+    const visionResponse = await client.models.generateContent({
+      model,
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { inlineData: { mimeType: mimeType === "image/jpg" ? "image/jpeg" : mimeType, data: base64 } },
+            { text: visionPrompt() },
+          ],
+        },
+      ],
+      config: { responseMimeType: "application/json" },
+    });
+    fields = parseVisionJson(visionResponse?.text || "");
   } catch (err) {
     console.error("Screenshot read failed:", err);
-    return NextResponse.json(
-      { error: mode === "offline" ? "Couldn't read that screenshot (OCR failed)." : err?.message || "Couldn't read that screenshot." },
-      { status: 502 },
-    );
+    return NextResponse.json({ error: err?.message || "Couldn't read that screenshot." }, { status: 502 });
   }
 
   if (!fields || (!fields.jobTitle && !fields.postingText)) {
@@ -278,8 +226,8 @@ export async function POST(request) {
     );
   }
 
-  // 2) Find the live posting URL. The company's ATS board first (deterministic,
-  // canonical, never LinkedIn); in AI mode also Google Search for the rest.
+  // 2) Find the live posting URL: the company's ATS board first (deterministic,
+  // canonical, never LinkedIn), then Gemini's grounded Google Search.
   const found = [];
   try {
     const ats = await lookupAtsPostingUrl({ company: fields.company, jobTitle: fields.jobTitle });
@@ -287,46 +235,25 @@ export async function POST(request) {
   } catch (err) {
     console.error("ATS posting lookup failed:", err);
   }
-  if (mode === "ai") {
-    try {
-      const searchResponse = await client.models.generateContent({
-        model,
-        contents: urlSearchPrompt(fields),
-        tools: [{ googleSearch: {} }],
-      });
-      found.push(...candidateUrls(searchResponse));
-    } catch (err) {
-      console.error("Posting URL search failed:", err);
-    }
-  } else if (found.length === 0) {
-    // Offline mode, no ATS hit: try a few non-AI web searches. The parsed
-    // title/company can be wrong or empty on messy OCR, so fall back to raw
-    // lines from the read text. Stop at the first query that yields links.
-    for (const query of offlineSearchQueries(fields)) {
-      try {
-        const hits = await searchPostingUrls({ query });
-        if (hits.length) {
-          found.push(...hits);
-          break;
-        }
-      } catch (err) {
-        console.error("Offline web search failed:", err);
-      }
-    }
+  try {
+    const searchResponse = await client.models.generateContent({
+      model,
+      contents: urlSearchPrompt(fields),
+      tools: [{ googleSearch: {} }],
+    });
+    found.push(...candidateUrls(searchResponse));
+  } catch (err) {
+    console.error("Posting URL search failed:", err);
   }
   const candidates = rankCandidates([...new Set(found.filter(Boolean))]);
 
   if (candidates.length === 0) {
-    const what = [fields.jobTitle, fields.company].filter(Boolean).join(" — ");
     return NextResponse.json(
       {
         found: false,
         jobTitle: fields.jobTitle,
         company: fields.company,
-        reason:
-          mode === "offline"
-            ? `Couldn't find a live URL${what ? ` for "${what}"` : ""} without AI. Switch the engine to Gemini, or set a search API key.`
-            : "Couldn't find the live posting URL for this screenshot.",
+        reason: "Couldn't find the live posting URL for this screenshot.",
       },
       { status: 200 },
     );

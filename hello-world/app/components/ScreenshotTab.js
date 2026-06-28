@@ -58,8 +58,6 @@ export default function ScreenshotTab({
   onPreview,
   processing = false,
   resumeReady = true,
-  offline = false,
-  readerState = "idle",
   error = "",
 }) {
   const inputRef = useRef(null);
@@ -78,38 +76,10 @@ export default function ScreenshotTab({
     <section className={styles.tabPanel}>
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
         <Box sx={{ fontSize: "0.85rem", color: "var(--text-secondary, #777)" }}>
-          Upload screenshots (PNG/JPG) of job postings — processing starts automatically. One by one, we
-          read the title and text, search for the live posting URL, pull the posting, and tailor your
-          resume (and cover letter, if a template is uploaded) into a tracked job.
+          Upload screenshots (PNG/JPG) of job postings — processing starts automatically. One by one,
+          Gemini reads the posting and finds it online, then the selected engine tailors your resume
+          (and cover letter, if a template is uploaded) into a tracked job.
         </Box>
-        <Box
-          component="span"
-          sx={{
-            alignSelf: "flex-start",
-            fontSize: "0.72rem",
-            fontWeight: 600,
-            borderRadius: 999,
-            px: 1,
-            py: 0.25,
-            color: offline ? "#5d4037" : "#1565c0",
-            bgcolor: offline ? "rgba(121,85,72,0.12)" : "rgba(25,118,210,0.10)",
-          }}
-        >
-          {offline
-            ? "Embedded engine → reading in your browser (local OCR, no AI)"
-            : "Gemini engine → reading with AI"}
-        </Box>
-
-        {offline && readerState === "loading" ? (
-          <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, fontSize: "0.78rem", color: "#5d4037" }}>
-            <CircularProgress size={13} thickness={6} sx={{ color: "#5d4037" }} />
-            Downloading reader… (one-time, then cached)
-          </Box>
-        ) : offline && readerState === "error" ? (
-          <Box sx={{ fontSize: "0.78rem", color: "#9a6700" }}>
-            Couldn&apos;t load the in-browser reader — screenshots will be read on the server instead.
-          </Box>
-        ) : null}
 
         <input
           ref={inputRef}

@@ -292,13 +292,6 @@ export default function Home() {
   const [screenshotError, setScreenshotError] = useState("");
   // Guards the auto-runner against overlapping/re-entrant processing passes.
   const screenshotBusyRef = useRef(false);
-  // Cached Tesseract worker for offline (Embedded) screenshot reading — created
-  // lazily in the browser so the language model downloads once and is cached.
-  const ocrWorkerRef = useRef(null);
-  const ocrWorkerPromiseRef = useRef(null);
-  // "idle" | "loading" (model downloading) | "ready" | "error" — surfaced in the
-  // Screenshots tab so the one-time model download isn't a silent wait.
-  const [ocrReaderState, setOcrReaderState] = useState("idle");
   const [batchTailorState, setBatchTailorState] = useState({
     running: false,
     total: 0,
@@ -3159,46 +3152,6 @@ export default function Home() {
     return { blob: file, name: file.name };
   }
 
-  // Create (or reuse) the browser Tesseract worker. The first call downloads the
-  // language model — tracked via ocrReaderState so the UI can show progress —
-  // and is de-duped so a pre-warm and a real OCR don't both build a worker.
-  function ensureOcrWorker() {
-    if (ocrWorkerRef.current) return Promise.resolve(ocrWorkerRef.current);
-    if (ocrWorkerPromiseRef.current) return ocrWorkerPromiseRef.current;
-    setOcrReaderState("loading");
-    ocrWorkerPromiseRef.current = (async () => {
-      const { createWorker } = await import("tesseract.js");
-      const worker = await createWorker("eng");
-      ocrWorkerRef.current = worker;
-      setOcrReaderState("ready");
-      return worker;
-    })().catch((err) => {
-      ocrWorkerPromiseRef.current = null;
-      setOcrReaderState("error");
-      throw err;
-    });
-    return ocrWorkerPromiseRef.current;
-  }
-
-  // OCR a screenshot in the browser (offline/Embedded mode) so the heavy work
-  // and the one-time model download happen client-side — not on the serverless
-  // function, where a cold start re-downloads the model and times out. The
-  // worker is cached for the session; the browser caches the model across loads.
-  async function ocrInBrowser(blob) {
-    const worker = await ensureOcrWorker();
-    const { data } = await worker.recognize(blob);
-    return String(data?.text || "").trim();
-  }
-
-  // Pre-warm the browser OCR worker as soon as the user lands on the Screenshots
-  // tab with the Embedded engine selected, so the model is downloading before
-  // they add a screenshot rather than on the first read.
-  useEffect(() => {
-    if (tailorEngine === "embedded" && activeSection === "screenshots") {
-      ensureOcrWorker().catch(() => {});
-    }
-  }, [tailorEngine, activeSection]);
-
   // Process each screenshot one by one: read it, find the live posting URL, pull
   // the posting, and tailor a resume (+ cover letter) into a tracked job.
   async function processScreenshots() {
@@ -3217,25 +3170,9 @@ export default function Home() {
         updateScreenshotItem(item.id, { status: "processing", statusLabel: "Reading screenshot…", error: "" });
         let data;
         try {
-          const offline = tailorEngine === "embedded";
           const upload = await compressScreenshot(item.file);
           const fd = new FormData();
-          fd.append("mode", offline ? "offline" : "ai");
-          // Offline: OCR in the browser and send just the text (no slow server
-          // OCR). Fall back to sending the image if browser OCR fails.
-          let sentText = false;
-          if (offline) {
-            try {
-              const text = await ocrInBrowser(upload.blob);
-              if (text && text.trim().length > 20) {
-                fd.append("ocrText", text);
-                sentText = true;
-              }
-            } catch {
-              /* fall back to server-side OCR via the image below */
-            }
-          }
-          if (!sentText) fd.append("image", upload.blob, upload.name);
+          fd.append("image", upload.blob, upload.name);
           const res = await fetch("/api/posting-from-image", { method: "POST", body: fd });
           data = await res.json().catch(() => ({}));
           if (!res.ok) {
@@ -4576,8 +4513,6 @@ export default function Home() {
             onPreview={previewScreenshotItem}
             processing={screenshotProcessing}
             resumeReady={!!resumeFile}
-            offline={tailorEngine === "embedded"}
-            readerState={ocrReaderState}
             error={screenshotError}
           />
         ) : (

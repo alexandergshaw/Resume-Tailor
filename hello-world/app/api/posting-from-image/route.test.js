@@ -7,25 +7,16 @@ vi.mock("@/lib/scrape/fetchUrlContent", () => ({
   extractUrls: vi.fn(() => []),
 }));
 vi.mock("@/lib/scrape/atsLookup", () => ({ lookupAtsPostingUrl: vi.fn(async () => null) }));
-vi.mock("@/lib/scrape/screenshotOcr", async (importOriginal) => ({
-  ...(await importOriginal()),
-  readScreenshotOffline: vi.fn(),
-  fieldsFromText: vi.fn(),
-}));
-vi.mock("@/lib/scrape/webSearch", () => ({ searchPostingUrls: vi.fn(async () => []) }));
 
-import { POST, parseVisionJson, candidateUrls, rankCandidates, tidyField, offlineSearchQueries } from "./route.js";
+import { POST, parseVisionJson, candidateUrls, rankCandidates, tidyField } from "./route.js";
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { fetchUrlContent, extractUrls } from "@/lib/scrape/fetchUrlContent";
 import { lookupAtsPostingUrl } from "@/lib/scrape/atsLookup";
-import { readScreenshotOffline, fieldsFromText } from "@/lib/scrape/screenshotOcr";
-import { searchPostingUrls } from "@/lib/scrape/webSearch";
 
-function imageRequest(file, mode) {
+function imageRequest(file) {
   const fd = new FormData();
   if (file) fd.append("image", file);
-  if (mode) fd.append("mode", mode);
   return { formData: async () => fd };
 }
 
@@ -83,27 +74,6 @@ describe("tidyField", () => {
     expect(tidyField("Data Scientist | 130K–160K")).toBe("Data Scientist");
     expect(tidyField("Product Manager")).toBe("Product Manager");
     expect(tidyField("")).toBe("");
-  });
-});
-
-describe("offlineSearchQueries", () => {
-  it("prefers title+company, then a careers variant, capped at 3", () => {
-    const qs = offlineSearchQueries({ jobTitle: "Senior Engineer", company: "Acme", postingText: "Some posting text about the role here" });
-    expect(qs[0]).toBe("Senior Engineer Acme");
-    expect(qs[1]).toBe("Senior Engineer Acme careers job posting");
-    expect(qs.length).toBeLessThanOrEqual(3);
-  });
-
-  it("falls back to raw heading lines when title/company are empty", () => {
-    const qs = offlineSearchQueries({ jobTitle: "", company: "", postingText: "Staff Data Scientist\nat Globex Corporation\nWe build models" });
-    expect(qs).toContain("Staff Data Scientist");
-    expect(qs.length).toBeGreaterThan(0);
-  });
-
-  it("always yields at least one query from raw text as a last resort", () => {
-    const qs = offlineSearchQueries({ jobTitle: "", company: "", postingText: "short" });
-    expect(qs).toEqual(["short"]);
-    expect(offlineSearchQueries({ jobTitle: "", company: "", postingText: "" })).toEqual([]);
   });
 });
 
@@ -234,149 +204,11 @@ describe("POST /api/posting-from-image", () => {
     expect(res.status).toBe(400);
   });
 
-  it("503s when Gemini isn't configured (AI mode)", async () => {
+  it("503s when Gemini isn't configured", async () => {
     getServerEnv.mockImplementation(() => {
       throw new Error("Missing required environment variables: Gemini_LLM_API_Key");
     });
     const res = await POST(imageRequest(pngFile()));
     expect(res.status).toBe(503);
-  });
-});
-
-describe("POST /api/posting-from-image (offline mode)", () => {
-  it("uses browser-supplied OCR text (no image, no server OCR, no Gemini)", async () => {
-    getServerEnv.mockImplementation(() => {
-      throw new Error("Missing required environment variables: Gemini_LLM_API_Key");
-    });
-    fieldsFromText.mockReturnValue({
-      jobTitle: "Senior Engineer",
-      company: "Acme",
-      location: "",
-      postingText: "P".repeat(200),
-      searchQuery: "Acme Senior Engineer",
-    });
-    lookupAtsPostingUrl.mockResolvedValueOnce({ url: "https://boards.greenhouse.io/acme/jobs/9", title: "Senior Engineer", source: "greenhouse" });
-    fetchUrlContent.mockResolvedValue({
-      title: "Senior Engineer",
-      company: "Acme",
-      description: "Q".repeat(200),
-      finalUrl: "https://boards.greenhouse.io/acme/jobs/9",
-    });
-    const fd = new FormData();
-    fd.append("mode", "offline");
-    fd.append("ocrText", "Senior Engineer at Acme — we are hiring...");
-    const res = await POST({ formData: async () => fd });
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.found).toBe(true);
-    expect(data.url).toBe("https://boards.greenhouse.io/acme/jobs/9");
-    expect(fieldsFromText).toHaveBeenCalled();
-    expect(readScreenshotOffline).not.toHaveBeenCalled();
-    expect(getGeminiClient).not.toHaveBeenCalled();
-  });
-
-  it("400s offline with neither an image nor OCR text", async () => {
-    const fd = new FormData();
-    fd.append("mode", "offline");
-    const res = await POST({ formData: async () => fd });
-    expect(res.status).toBe(400);
-  });
-
-  it("reads via server OCR + ATS without Gemini, no key required", async () => {
-    // Even with no Gemini key, offline mode must work.
-    getServerEnv.mockImplementation(() => {
-      throw new Error("Missing required environment variables: Gemini_LLM_API_Key");
-    });
-    readScreenshotOffline.mockResolvedValue({
-      jobTitle: "Senior Engineer",
-      company: "Acme",
-      location: "",
-      postingText: "P".repeat(200),
-      searchQuery: "Acme Senior Engineer",
-    });
-    lookupAtsPostingUrl.mockResolvedValueOnce({ url: "https://boards.greenhouse.io/acme/jobs/9", title: "Senior Engineer", source: "greenhouse" });
-    fetchUrlContent.mockResolvedValue({
-      title: "Senior Engineer",
-      company: "Acme",
-      description: "Q".repeat(200),
-      finalUrl: "https://boards.greenhouse.io/acme/jobs/9",
-    });
-    const res = await POST(imageRequest(pngFile(), "offline"));
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.found).toBe(true);
-    expect(data.url).toBe("https://boards.greenhouse.io/acme/jobs/9");
-    expect(getGeminiClient).not.toHaveBeenCalled();
-  });
-
-  it("falls back to a non-AI web search when the ATS board has no match", async () => {
-    getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
-    readScreenshotOffline.mockResolvedValue({
-      jobTitle: "Niche Role",
-      company: "Unknown Co",
-      location: "",
-      postingText: "Z".repeat(200),
-      searchQuery: "Unknown Co Niche Role",
-    });
-    lookupAtsPostingUrl.mockResolvedValueOnce(null);
-    searchPostingUrls.mockResolvedValueOnce(["https://unknown.example/careers/niche"]);
-    fetchUrlContent.mockResolvedValue({
-      title: "Niche Role",
-      company: "Unknown Co",
-      description: "W".repeat(200),
-      finalUrl: "https://unknown.example/careers/niche",
-    });
-    const res = await POST(imageRequest(pngFile(), "offline"));
-    const data = await res.json();
-    expect(searchPostingUrls).toHaveBeenCalled();
-    expect(getGeminiClient).not.toHaveBeenCalled(); // still no AI
-    expect(data.found).toBe(true);
-    expect(data.url).toBe("https://unknown.example/careers/niche");
-  });
-
-  it("searches on raw OCR lines when parsing yields no title/company", async () => {
-    getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
-    // extractPostingMeta found nothing usable, but the OCR text has lines.
-    fieldsFromText.mockReturnValue({
-      jobTitle: "",
-      company: "",
-      location: "",
-      postingText: "Staff Machine Learning Engineer\nat Globex Corporation\nWe build models at scale",
-      searchQuery: "",
-    });
-    lookupAtsPostingUrl.mockResolvedValueOnce(null);
-    // First query (a raw line) returns a hit.
-    searchPostingUrls.mockResolvedValueOnce(["https://globex.example/jobs/ml-eng"]);
-    fetchUrlContent.mockResolvedValue({
-      title: "Staff Machine Learning Engineer",
-      company: "Globex",
-      description: "M".repeat(200),
-      finalUrl: "https://globex.example/jobs/ml-eng",
-    });
-    const fd = new FormData();
-    fd.append("mode", "offline");
-    fd.append("ocrText", "Staff Machine Learning Engineer at Globex...");
-    const res = await POST({ formData: async () => fd });
-    const data = await res.json();
-    expect(searchPostingUrls).toHaveBeenCalled();
-    expect(searchPostingUrls.mock.calls[0][0].query).toBe("Staff Machine Learning Engineer");
-    expect(data.found).toBe(true);
-    expect(data.url).toBe("https://globex.example/jobs/ml-eng");
-  });
-
-  it("reports not-found offline when neither the ATS board nor web search match", async () => {
-    getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
-    readScreenshotOffline.mockResolvedValue({
-      jobTitle: "Niche Role",
-      company: "Unknown Co",
-      location: "",
-      postingText: "Z".repeat(200),
-      searchQuery: "Unknown Co Niche Role",
-    });
-    lookupAtsPostingUrl.mockResolvedValueOnce(null);
-    searchPostingUrls.mockResolvedValueOnce([]);
-    const res = await POST(imageRequest(pngFile(), "offline"));
-    const data = await res.json();
-    expect(data.found).toBe(false);
   });
 });
