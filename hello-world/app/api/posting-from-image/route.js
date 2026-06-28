@@ -159,32 +159,45 @@ export function isBareDomain(url) {
   }
 }
 
-// Resolve & validate the candidate URLs by fetching them: the first that yields
-// real posting text wins (and gives us a clean final URL + scraped metadata).
-// Homepages are skipped — both as candidates and as redirect destinations — so
-// a JS-rendered posting that scrapes thin doesn't fall through to a landing page.
+// Resolve & validate the candidate URLs by fetching them. Returns:
+//   resolved  — the first candidate that yields real posting text (with its
+//               clean final URL + scraped metadata), or null.
+//   validUrl  — the best URL to surface even when no text was scraped: a
+//               confirmed-reachable non-homepage page, else a blocked-but-
+//               plausible one. Candidates that REDIRECT to a homepage (e.g. an
+//               expired governmentjobs job id) are excluded entirely, so we
+//               never display a deep URL that bounces to the site root.
 async function resolvePosting(candidates) {
+  let liveUrl = ""; // fetched OK, lands on a real (non-homepage) page
+  let maybeUrl = ""; // non-homepage candidate we couldn't reach (WAF/timeout)
   for (const candidate of candidates.slice(0, MAX_URL_CANDIDATES)) {
     if (isBareDomain(candidate)) continue;
     let scraped;
     try {
       scraped = await fetchUrlContent(candidate);
     } catch {
+      scraped = { error: "fetch failed" };
+    }
+    if (!scraped || scraped.error) {
+      if (!maybeUrl) maybeUrl = candidate;
       continue;
     }
-    if (!scraped || scraped.error) continue;
     const finalUrl = scraped.finalUrl || candidate;
-    if (isBareDomain(finalUrl)) continue;
+    if (isBareDomain(finalUrl)) continue; // redirected to the homepage — dead
+    if (!liveUrl) liveUrl = finalUrl;
     if (String(scraped.description || "").trim().length > 80) {
       return {
-        url: finalUrl,
-        postingText: scraped.description,
-        title: scraped.title || "",
-        company: scraped.company || "",
+        resolved: {
+          url: finalUrl,
+          postingText: scraped.description,
+          title: scraped.title || "",
+          company: scraped.company || "",
+        },
+        validUrl: finalUrl,
       };
     }
   }
-  return null;
+  return { resolved: null, validUrl: liveUrl || maybeUrl };
 }
 
 export async function POST(request) {
@@ -286,12 +299,8 @@ export async function POST(request) {
     );
   }
 
-  // The best posting URL even when scraping was thin/blocked: the first
-  // candidate that isn't a homepage (a JS-rendered posting or a WAF'd page).
-  const bestPostingUrl = candidates.find((u) => !isBareDomain(u)) || "";
-
   // 3) Resolve + pull the posting from the found URL.
-  const resolved = await resolvePosting(candidates);
+  const { resolved, validUrl } = await resolvePosting(candidates);
   // Name the documents from the screenshot's own title/company (what the user
   // saw) rather than the scraped page <title>, which often carries salary,
   // location, and the site name. Fall back to the scrape only when vision missed.
@@ -306,13 +315,13 @@ export async function POST(request) {
     });
   }
 
-  // A real posting URL was located but we couldn't scrape it (JS-rendered SPA
-  // like NEOGOV/governmentjobs, or a WAF 403). Keep that URL — never a homepage —
-  // and tailor from the posting text Gemini already read off the screenshot.
-  if (bestPostingUrl && fields.postingText.length > 80) {
+  // A real posting URL was located but we couldn't scrape it (WAF 403 / thin
+  // SPA). validUrl is never a homepage-bouncing link — tailor from the posting
+  // text Gemini already read off the screenshot, keeping the working URL.
+  if (validUrl && fields.postingText.length > 80) {
     return NextResponse.json({
       found: true,
-      url: bestPostingUrl,
+      url: validUrl,
       jobTitle: tidyField(fields.jobTitle),
       company: tidyField(fields.company),
       location: fields.location,
@@ -325,8 +334,10 @@ export async function POST(request) {
       found: false,
       jobTitle: fields.jobTitle,
       company: fields.company,
-      url: bestPostingUrl,
-      reason: "Found a posting link but couldn't read the posting from it.",
+      url: validUrl,
+      reason: validUrl
+        ? "Found a posting link but couldn't read the posting from it."
+        : "The posting link redirected to the site's homepage — the posting may have expired or moved.",
     },
     { status: 200 },
   );

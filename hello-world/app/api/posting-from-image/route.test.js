@@ -198,6 +198,23 @@ describe("POST /api/posting-from-image", () => {
     expect(data.postingText).toContain("Real posting description");
   });
 
+  it("does not surface a deep URL that redirects to the homepage (expired posting)", async () => {
+    // Stale governmentjobs id: 200, but finalUrl after redirect is the homepage.
+    mockGemini({
+      searchText: "https://www.governmentjobs.com/careers/douglascounty/jobs/2928863/building-inspector",
+    });
+    fetchUrlContent.mockResolvedValue({
+      title: "GovernmentJobs",
+      description: "H".repeat(500),
+      finalUrl: "https://www.governmentjobs.com/",
+    });
+    const res = await POST(imageRequest(pngFile()));
+    const data = await res.json();
+    expect(data.found).toBe(false);
+    expect(data.url || "").not.toContain("2928863");
+    expect(data.reason).toMatch(/homepage|expired/i);
+  });
+
   it("names the job from the clean screenshot fields, not the salary-laden page title", async () => {
     mockGemini();
     fetchUrlContent.mockResolvedValue({
