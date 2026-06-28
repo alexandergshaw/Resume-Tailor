@@ -99,19 +99,21 @@ describe("candidateUrls", () => {
 });
 
 describe("rankCandidates", () => {
-  it("pushes LinkedIn-style hosts to the end while keeping other order stable", () => {
+  it("pushes aggregator hosts (LinkedIn, Indeed, …) to the end, order stable", () => {
     expect(
       rankCandidates([
         "https://www.linkedin.com/jobs/view/123",
+        "https://www.indeed.com/viewjob?jk=abc",
         "https://boards.greenhouse.io/acme/jobs/1",
         "https://acme.com/careers/eng",
-        "https://lnkd.in/abc",
+        "https://www.glassdoor.com/job-listing/x",
       ]),
     ).toEqual([
       "https://boards.greenhouse.io/acme/jobs/1",
       "https://acme.com/careers/eng",
       "https://www.linkedin.com/jobs/view/123",
-      "https://lnkd.in/abc",
+      "https://www.indeed.com/viewjob?jk=abc",
+      "https://www.glassdoor.com/job-listing/x",
     ]);
   });
 });

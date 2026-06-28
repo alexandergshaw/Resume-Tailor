@@ -46,10 +46,19 @@ function groundingUris(response) {
   return out;
 }
 
-// Sites we'd rather not link to as the canonical posting. LinkedIn gates the
-// posting behind a login wall (so we usually can't scrape it anyway) and isn't
-// the original source — prefer the company's careers page or an open job board.
-const DEPRIORITIZED_HOSTS = ["linkedin.com", "lnkd.in"];
+// Aggregators we'd rather not link to as the canonical posting: they gate
+// content behind logins/CAPTCHAs, geo-block, or expire their job URLs, so the
+// link often doesn't work for the user. Prefer the company's own careers page or
+// the ATS board it's posted on.
+const DEPRIORITIZED_HOSTS = [
+  "linkedin.com",
+  "lnkd.in",
+  "indeed.com",
+  "glassdoor.com",
+  "ziprecruiter.com",
+  "monster.com",
+  "simplyhired.com",
+];
 
 function isDeprioritizedHost(url) {
   try {
@@ -60,9 +69,10 @@ function isDeprioritizedHost(url) {
   }
 }
 
-// Stable reorder that pushes de-prioritized hosts (e.g. LinkedIn) to the end
-// while preserving the model's relative ordering otherwise, so resolvePosting
-// tries the original/open sources first and only falls back to LinkedIn.
+// Stable reorder that pushes de-prioritized hosts (LinkedIn, Indeed, etc.) to
+// the end while preserving the model's relative ordering otherwise, so
+// resolvePosting tries the original/open sources first and only falls back to
+// an aggregator when nothing else resolves.
 export function rankCandidates(urls) {
   const list = Array.isArray(urls) ? urls : [];
   return [
@@ -130,8 +140,8 @@ function urlSearchPrompt({ jobTitle, company, location, postingText, searchQuery
     location ? `Location: ${location}` : "",
     postingText ? `Distinctive text from the posting: ${postingText.slice(0, 240)}` : "",
     "",
-    "Return the single best DIRECT URL to the posting's own page. Prefer the company's own careers site, or an openly accessible job board (Greenhouse, Lever, Ashby, Workday, Indeed, etc.).",
-    "Avoid LinkedIn unless the posting appears nowhere else — LinkedIn requires a login and is not the original source.",
+    "Return the single best DIRECT URL to the posting's own page. Strongly prefer the company's own careers site or the ATS board it's hosted on (Greenhouse, Lever, Ashby, Workday, SmartRecruiters, etc.).",
+    "Avoid aggregators like LinkedIn, Indeed, Glassdoor, and ZipRecruiter unless the posting appears nowhere else — they require logins/CAPTCHAs, expire, and are not the original source.",
     "Output ONLY the URL on its own line, nothing else. If you cannot confidently find it, output NONE.",
   ]
     .filter(Boolean)
