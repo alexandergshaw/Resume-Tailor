@@ -41,9 +41,34 @@ function groundingUris(response) {
   return out;
 }
 
+// Sites we'd rather not link to as the canonical posting. LinkedIn gates the
+// posting behind a login wall (so we usually can't scrape it anyway) and isn't
+// the original source — prefer the company's careers page or an open job board.
+const DEPRIORITIZED_HOSTS = ["linkedin.com", "lnkd.in"];
+
+function isDeprioritizedHost(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+    return DEPRIORITIZED_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+  } catch {
+    return false;
+  }
+}
+
+// Stable reorder that pushes de-prioritized hosts (e.g. LinkedIn) to the end
+// while preserving the model's relative ordering otherwise, so resolvePosting
+// tries the original/open sources first and only falls back to LinkedIn.
+export function rankCandidates(urls) {
+  const list = Array.isArray(urls) ? urls : [];
+  return [
+    ...list.filter((u) => !isDeprioritizedHost(u)),
+    ...list.filter((u) => isDeprioritizedHost(u)),
+  ];
+}
+
 // Ordered, de-duplicated URL candidates for the posting: prefer direct URLs the
 // model wrote out, then fall back to the grounded redirect links (which resolve
-// to the real source when followed).
+// to the real source when followed). LinkedIn-style hosts sink to the bottom.
 export function candidateUrls(searchResponse) {
   const fromText = extractUrls(searchResponse?.text || "", MAX_URL_CANDIDATES);
   const fromGrounding = groundingUris(searchResponse);
@@ -56,7 +81,7 @@ export function candidateUrls(searchResponse) {
     out.push(cleaned);
     if (out.length >= MAX_URL_CANDIDATES) break;
   }
-  return out;
+  return rankCandidates(out);
 }
 
 function visionPrompt() {
@@ -100,7 +125,8 @@ function urlSearchPrompt({ jobTitle, company, location, postingText, searchQuery
     location ? `Location: ${location}` : "",
     postingText ? `Distinctive text from the posting: ${postingText.slice(0, 240)}` : "",
     "",
-    "Return the single best DIRECT URL to the posting's own page (the company's careers site or the job board where it is listed).",
+    "Return the single best DIRECT URL to the posting's own page. Prefer the company's own careers site, or an openly accessible job board (Greenhouse, Lever, Ashby, Workday, Indeed, etc.).",
+    "Avoid LinkedIn unless the posting appears nowhere else — LinkedIn requires a login and is not the original source.",
     "Output ONLY the URL on its own line, nothing else. If you cannot confidently find it, output NONE.",
   ]
     .filter(Boolean)

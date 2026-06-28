@@ -7,7 +7,7 @@ vi.mock("@/lib/scrape/fetchUrlContent", () => ({
   extractUrls: vi.fn(() => []),
 }));
 
-import { POST, parseVisionJson, candidateUrls, tidyField } from "./route.js";
+import { POST, parseVisionJson, candidateUrls, rankCandidates, tidyField } from "./route.js";
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { fetchUrlContent, extractUrls } from "@/lib/scrape/fetchUrlContent";
@@ -82,6 +82,35 @@ describe("candidateUrls", () => {
       candidates: [{ groundingMetadata: { groundingChunks: [{ web: { uri: "https://vertex.redirect/x" } }] } }],
     };
     expect(candidateUrls(res)).toEqual(["https://acme.example/jobs/1", "https://vertex.redirect/x"]);
+  });
+
+  it("sinks LinkedIn below the original source", () => {
+    const res = {
+      text: "https://www.linkedin.com/jobs/view/123 or https://boards.greenhouse.io/acme/jobs/1",
+      candidates: [{}],
+    };
+    expect(candidateUrls(res)).toEqual([
+      "https://boards.greenhouse.io/acme/jobs/1",
+      "https://www.linkedin.com/jobs/view/123",
+    ]);
+  });
+});
+
+describe("rankCandidates", () => {
+  it("pushes LinkedIn-style hosts to the end while keeping other order stable", () => {
+    expect(
+      rankCandidates([
+        "https://www.linkedin.com/jobs/view/123",
+        "https://boards.greenhouse.io/acme/jobs/1",
+        "https://acme.com/careers/eng",
+        "https://lnkd.in/abc",
+      ]),
+    ).toEqual([
+      "https://boards.greenhouse.io/acme/jobs/1",
+      "https://acme.com/careers/eng",
+      "https://www.linkedin.com/jobs/view/123",
+      "https://lnkd.in/abc",
+    ]);
   });
 });
 
