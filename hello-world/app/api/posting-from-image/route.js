@@ -4,6 +4,7 @@ import { getServerEnv } from "@/lib/config/env";
 import { fetchUrlContent, extractUrls } from "@/lib/scrape/fetchUrlContent";
 import { lookupAtsPostingUrl } from "@/lib/scrape/atsLookup";
 import { readScreenshotOffline } from "@/lib/scrape/screenshotOcr";
+import { searchPostingUrls } from "@/lib/scrape/webSearch";
 
 export const runtime = "nodejs";
 
@@ -256,6 +257,14 @@ export async function POST(request) {
       found.push(...candidateUrls(searchResponse));
     } catch (err) {
       console.error("Posting URL search failed:", err);
+    }
+  } else if (found.length === 0) {
+    // Offline mode, no ATS hit: fall back to a non-AI web search.
+    try {
+      const query = fields.searchQuery || [fields.jobTitle, fields.company].filter(Boolean).join(" ");
+      found.push(...(await searchPostingUrls({ query })));
+    } catch (err) {
+      console.error("Offline web search failed:", err);
     }
   }
   const candidates = rankCandidates([...new Set(found.filter(Boolean))]);

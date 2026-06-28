@@ -8,6 +8,7 @@ vi.mock("@/lib/scrape/fetchUrlContent", () => ({
 }));
 vi.mock("@/lib/scrape/atsLookup", () => ({ lookupAtsPostingUrl: vi.fn(async () => null) }));
 vi.mock("@/lib/scrape/screenshotOcr", () => ({ readScreenshotOffline: vi.fn() }));
+vi.mock("@/lib/scrape/webSearch", () => ({ searchPostingUrls: vi.fn(async () => []) }));
 
 import { POST, parseVisionJson, candidateUrls, rankCandidates, tidyField } from "./route.js";
 import { getServerEnv } from "@/lib/config/env";
@@ -15,6 +16,7 @@ import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { fetchUrlContent, extractUrls } from "@/lib/scrape/fetchUrlContent";
 import { lookupAtsPostingUrl } from "@/lib/scrape/atsLookup";
 import { readScreenshotOffline } from "@/lib/scrape/screenshotOcr";
+import { searchPostingUrls } from "@/lib/scrape/webSearch";
 
 function imageRequest(file, mode) {
   const fd = new FormData();
@@ -244,16 +246,42 @@ describe("POST /api/posting-from-image (offline mode)", () => {
     expect(getGeminiClient).not.toHaveBeenCalled();
   });
 
-  it("reports not-found offline when the ATS board has no match", async () => {
+  it("falls back to a non-AI web search when the ATS board has no match", async () => {
     getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
     readScreenshotOffline.mockResolvedValue({
       jobTitle: "Niche Role",
       company: "Unknown Co",
       location: "",
       postingText: "Z".repeat(200),
-      searchQuery: "",
+      searchQuery: "Unknown Co Niche Role",
     });
     lookupAtsPostingUrl.mockResolvedValueOnce(null);
+    searchPostingUrls.mockResolvedValueOnce(["https://unknown.example/careers/niche"]);
+    fetchUrlContent.mockResolvedValue({
+      title: "Niche Role",
+      company: "Unknown Co",
+      description: "W".repeat(200),
+      finalUrl: "https://unknown.example/careers/niche",
+    });
+    const res = await POST(imageRequest(pngFile(), "offline"));
+    const data = await res.json();
+    expect(searchPostingUrls).toHaveBeenCalled();
+    expect(getGeminiClient).not.toHaveBeenCalled(); // still no AI
+    expect(data.found).toBe(true);
+    expect(data.url).toBe("https://unknown.example/careers/niche");
+  });
+
+  it("reports not-found offline when neither the ATS board nor web search match", async () => {
+    getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
+    readScreenshotOffline.mockResolvedValue({
+      jobTitle: "Niche Role",
+      company: "Unknown Co",
+      location: "",
+      postingText: "Z".repeat(200),
+      searchQuery: "Unknown Co Niche Role",
+    });
+    lookupAtsPostingUrl.mockResolvedValueOnce(null);
+    searchPostingUrls.mockResolvedValueOnce([]);
     const res = await POST(imageRequest(pngFile(), "offline"));
     const data = await res.json();
     expect(data.found).toBe(false);
