@@ -3140,6 +3140,8 @@ export default function Home() {
         try {
           const fd = new FormData();
           fd.append("image", item.file);
+          // Engine dropdown drives AI vs non-AI reading: Embedded = offline OCR.
+          fd.append("mode", tailorEngine === "embedded" ? "offline" : "ai");
           const res = await fetch("/api/posting-from-image", { method: "POST", body: fd });
           data = await res.json().catch(() => ({}));
           if (!res.ok) {
@@ -4446,6 +4448,7 @@ export default function Home() {
             onPreview={previewScreenshotItem}
             processing={screenshotProcessing}
             resumeReady={!!resumeFile}
+            offline={tailorEngine === "embedded"}
             error={screenshotError}
           />
         ) : (

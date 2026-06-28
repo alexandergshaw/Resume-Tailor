@@ -58,6 +58,7 @@ export default function ScreenshotTab({
   onPreview,
   processing = false,
   resumeReady = true,
+  offline = false,
   error = "",
 }) {
   const inputRef = useRef(null);
@@ -79,6 +80,23 @@ export default function ScreenshotTab({
           Upload screenshots (PNG/JPG) of job postings. One by one, we read the title and text, search
           for the live posting URL, pull the posting, and tailor your resume (and cover letter, if a
           template is uploaded) into a tracked job.
+        </Box>
+        <Box
+          component="span"
+          sx={{
+            alignSelf: "flex-start",
+            fontSize: "0.72rem",
+            fontWeight: 600,
+            borderRadius: 999,
+            px: 1,
+            py: 0.25,
+            color: offline ? "#5d4037" : "#1565c0",
+            bgcolor: offline ? "rgba(121,85,72,0.12)" : "rgba(25,118,210,0.10)",
+          }}
+        >
+          {offline
+            ? "Embedded engine → reading offline (local OCR, no AI)"
+            : "Gemini engine → reading with AI"}
         </Box>
 
         <input

@@ -7,16 +7,19 @@ vi.mock("@/lib/scrape/fetchUrlContent", () => ({
   extractUrls: vi.fn(() => []),
 }));
 vi.mock("@/lib/scrape/atsLookup", () => ({ lookupAtsPostingUrl: vi.fn(async () => null) }));
+vi.mock("@/lib/scrape/screenshotOcr", () => ({ readScreenshotOffline: vi.fn() }));
 
 import { POST, parseVisionJson, candidateUrls, rankCandidates, tidyField } from "./route.js";
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { fetchUrlContent, extractUrls } from "@/lib/scrape/fetchUrlContent";
 import { lookupAtsPostingUrl } from "@/lib/scrape/atsLookup";
+import { readScreenshotOffline } from "@/lib/scrape/screenshotOcr";
 
-function imageRequest(file) {
+function imageRequest(file, mode) {
   const fd = new FormData();
   if (file) fd.append("image", file);
+  if (mode) fd.append("mode", mode);
   return { formData: async () => fd };
 }
 
@@ -204,11 +207,55 @@ describe("POST /api/posting-from-image", () => {
     expect(res.status).toBe(400);
   });
 
-  it("503s when Gemini isn't configured", async () => {
+  it("503s when Gemini isn't configured (AI mode)", async () => {
     getServerEnv.mockImplementation(() => {
       throw new Error("Missing required environment variables: Gemini_LLM_API_Key");
     });
     const res = await POST(imageRequest(pngFile()));
     expect(res.status).toBe(503);
+  });
+});
+
+describe("POST /api/posting-from-image (offline mode)", () => {
+  it("reads via OCR + ATS without Gemini, no key required", async () => {
+    // Even with no Gemini key, offline mode must work.
+    getServerEnv.mockImplementation(() => {
+      throw new Error("Missing required environment variables: Gemini_LLM_API_Key");
+    });
+    readScreenshotOffline.mockResolvedValue({
+      jobTitle: "Senior Engineer",
+      company: "Acme",
+      location: "",
+      postingText: "P".repeat(200),
+      searchQuery: "Acme Senior Engineer",
+    });
+    lookupAtsPostingUrl.mockResolvedValueOnce({ url: "https://boards.greenhouse.io/acme/jobs/9", title: "Senior Engineer", source: "greenhouse" });
+    fetchUrlContent.mockResolvedValue({
+      title: "Senior Engineer",
+      company: "Acme",
+      description: "Q".repeat(200),
+      finalUrl: "https://boards.greenhouse.io/acme/jobs/9",
+    });
+    const res = await POST(imageRequest(pngFile(), "offline"));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.found).toBe(true);
+    expect(data.url).toBe("https://boards.greenhouse.io/acme/jobs/9");
+    expect(getGeminiClient).not.toHaveBeenCalled();
+  });
+
+  it("reports not-found offline when the ATS board has no match", async () => {
+    getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
+    readScreenshotOffline.mockResolvedValue({
+      jobTitle: "Niche Role",
+      company: "Unknown Co",
+      location: "",
+      postingText: "Z".repeat(200),
+      searchQuery: "",
+    });
+    lookupAtsPostingUrl.mockResolvedValueOnce(null);
+    const res = await POST(imageRequest(pngFile(), "offline"));
+    const data = await res.json();
+    expect(data.found).toBe(false);
   });
 });

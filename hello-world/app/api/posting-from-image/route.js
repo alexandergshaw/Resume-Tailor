@@ -3,6 +3,7 @@ import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { getServerEnv } from "@/lib/config/env";
 import { fetchUrlContent, extractUrls } from "@/lib/scrape/fetchUrlContent";
 import { lookupAtsPostingUrl } from "@/lib/scrape/atsLookup";
+import { readScreenshotOffline } from "@/lib/scrape/screenshotOcr";
 
 export const runtime = "nodejs";
 
@@ -176,40 +177,57 @@ export async function POST(request) {
     return NextResponse.json({ error: "That image is too large — keep screenshots under 12MB." }, { status: 400 });
   }
 
+  // Engine-driven mode: "ai" = Gemini vision + grounded search (default);
+  // "offline" = local OCR + ATS lookup, no AI and no Gemini key required.
+  const mode = (formData.get("mode")?.toString() || "ai") === "offline" ? "offline" : "ai";
+
   let model;
   let client;
-  try {
-    model = getServerEnv().geminiModel;
-    client = getGeminiClient();
-  } catch {
-    return NextResponse.json(
-      { error: "Reading screenshots needs the Gemini API key to be configured." },
-      { status: 503 },
-    );
+  if (mode === "ai") {
+    try {
+      model = getServerEnv().geminiModel;
+      client = getGeminiClient();
+    } catch {
+      return NextResponse.json(
+        {
+          error:
+            "Reading screenshots with AI needs the Gemini API key. Switch the engine to Embedded to read screenshots without AI.",
+        },
+        { status: 503 },
+      );
+    }
   }
 
-  const base64 = Buffer.from(await image.arrayBuffer()).toString("base64");
+  const buffer = Buffer.from(await image.arrayBuffer());
 
-  // 1) Read the screenshot: title/company plus a search query and fallback text.
+  // 1) Read the screenshot → { jobTitle, company, location, postingText, searchQuery }.
   let fields;
   try {
-    const visionResponse = await client.models.generateContent({
-      model,
-      contents: [
-        {
-          role: "user",
-          parts: [
-            { inlineData: { mimeType: mimeType === "image/jpg" ? "image/jpeg" : mimeType, data: base64 } },
-            { text: visionPrompt() },
-          ],
-        },
-      ],
-      config: { responseMimeType: "application/json" },
-    });
-    fields = parseVisionJson(visionResponse?.text || "");
+    if (mode === "offline") {
+      fields = await readScreenshotOffline(buffer);
+    } else {
+      const base64 = buffer.toString("base64");
+      const visionResponse = await client.models.generateContent({
+        model,
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { inlineData: { mimeType: mimeType === "image/jpg" ? "image/jpeg" : mimeType, data: base64 } },
+              { text: visionPrompt() },
+            ],
+          },
+        ],
+        config: { responseMimeType: "application/json" },
+      });
+      fields = parseVisionJson(visionResponse?.text || "");
+    }
   } catch (err) {
     console.error("Screenshot read failed:", err);
-    return NextResponse.json({ error: err?.message || "Couldn't read that screenshot." }, { status: 502 });
+    return NextResponse.json(
+      { error: mode === "offline" ? "Couldn't read that screenshot (OCR failed)." : err?.message || "Couldn't read that screenshot." },
+      { status: 502 },
+    );
   }
 
   if (!fields || (!fields.jobTitle && !fields.postingText)) {
@@ -219,8 +237,8 @@ export async function POST(request) {
     );
   }
 
-  // 2) Find the live posting URL. First try the company's ATS board directly
-  // (deterministic, canonical, never LinkedIn), then Google Search for the rest.
+  // 2) Find the live posting URL. The company's ATS board first (deterministic,
+  // canonical, never LinkedIn); in AI mode also Google Search for the rest.
   const found = [];
   try {
     const ats = await lookupAtsPostingUrl({ company: fields.company, jobTitle: fields.jobTitle });
@@ -228,15 +246,17 @@ export async function POST(request) {
   } catch (err) {
     console.error("ATS posting lookup failed:", err);
   }
-  try {
-    const searchResponse = await client.models.generateContent({
-      model,
-      contents: urlSearchPrompt(fields),
-      tools: [{ googleSearch: {} }],
-    });
-    found.push(...candidateUrls(searchResponse));
-  } catch (err) {
-    console.error("Posting URL search failed:", err);
+  if (mode === "ai") {
+    try {
+      const searchResponse = await client.models.generateContent({
+        model,
+        contents: urlSearchPrompt(fields),
+        tools: [{ googleSearch: {} }],
+      });
+      found.push(...candidateUrls(searchResponse));
+    } catch (err) {
+      console.error("Posting URL search failed:", err);
+    }
   }
   const candidates = rankCandidates([...new Set(found.filter(Boolean))]);
 
