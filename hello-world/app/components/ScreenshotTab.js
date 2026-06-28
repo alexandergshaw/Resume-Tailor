@@ -90,7 +90,15 @@ export default function ScreenshotTab({
           style={{ display: "none" }}
         />
 
-        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
+        <Box
+          sx={{
+            display: "flex",
+            flexDirection: { xs: "column", sm: "row" },
+            gap: 1,
+            flexWrap: "wrap",
+            alignItems: { xs: "stretch", sm: "center" },
+          }}
+        >
           <Button variant="outlined" startIcon={<AddPhotoAlternateIcon />} onClick={pickFiles} sx={{ textTransform: "none" }}>
             Add screenshots
           </Button>
@@ -138,49 +146,56 @@ export default function ScreenshotTab({
                 key={item.id}
                 sx={{
                   display: "flex",
-                  gap: 1.5,
-                  p: 1.25,
+                  gap: { xs: 1, sm: 1.5 },
+                  p: { xs: 1, sm: 1.25 },
                   border: "1px solid var(--border, #e0e0e0)",
                   borderRadius: 1,
                   alignItems: "flex-start",
                 }}
               >
                 {item.previewUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
+                  <Box
+                    component="img"
                     src={item.previewUrl}
                     alt={item.name}
-                    style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 4, border: "1px solid var(--border,#e0e0e0)", flexShrink: 0 }}
+                    sx={{
+                      width: { xs: 52, sm: 72 },
+                      height: { xs: 52, sm: 72 },
+                      objectFit: "cover",
+                      borderRadius: 1,
+                      border: "1px solid var(--border,#e0e0e0)",
+                      flexShrink: 0,
+                    }}
                   />
                 ) : null}
                 <Box sx={{ flex: 1, minWidth: 0 }}>
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
                     <StatusPill status={item.status} statusLabel={item.statusLabel} />
-                    <Box sx={{ fontSize: "0.78rem", color: "var(--text-secondary,#999)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 }}>
+                    <Box sx={{ fontSize: "0.78rem", color: "var(--text-secondary,#999)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
                       {item.name}
                     </Box>
                   </Box>
                   {item.jobTitle || item.company ? (
-                    <Box sx={{ fontSize: "0.85rem", fontWeight: 600, mt: 0.5 }}>
+                    <Box sx={{ fontSize: "0.85rem", fontWeight: 600, mt: 0.5, overflowWrap: "anywhere" }}>
                       {[item.jobTitle, item.company].filter(Boolean).join(" · ")}
                     </Box>
                   ) : null}
                   {item.url ? (
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mt: 0.25 }}>
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mt: 0.25, minWidth: 0 }}>
                       <Box
                         component="a"
                         href={item.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        sx={{ fontSize: "0.75rem", color: "#1565c0", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 320 }}
+                        sx={{ fontSize: "0.75rem", color: "#1565c0", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}
                       >
                         {item.url}
                       </Box>
-                      <OpenInNewIcon sx={{ fontSize: 13, color: "#1565c0" }} />
+                      <OpenInNewIcon sx={{ fontSize: 13, color: "#1565c0", flexShrink: 0 }} />
                     </Box>
                   ) : null}
                   {item.error ? (
-                    <Box sx={{ fontSize: "0.78rem", color: "var(--danger, #d32f2f)", mt: 0.5 }}>{item.error}</Box>
+                    <Box sx={{ fontSize: "0.78rem", color: "var(--danger, #d32f2f)", mt: 0.5, overflowWrap: "anywhere" }}>{item.error}</Box>
                   ) : null}
                   {item.status === "done" ? (
                     <Button
@@ -195,7 +210,7 @@ export default function ScreenshotTab({
                 </Box>
                 <Tooltip title="Remove">
                   <span>
-                    <IconButton size="small" onClick={() => onRemoveItem?.(item.id)} disabled={processing} sx={{ flexShrink: 0 }}>
+                    <IconButton size="small" onClick={() => onRemoveItem?.(item.id)} disabled={processing} sx={{ flexShrink: 0, mt: -0.5, mr: -0.5 }}>
                       <CloseIcon sx={{ fontSize: 16 }} />
                     </IconButton>
                   </span>
