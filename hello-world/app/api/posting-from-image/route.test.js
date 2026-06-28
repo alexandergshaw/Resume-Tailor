@@ -7,7 +7,7 @@ vi.mock("@/lib/scrape/fetchUrlContent", () => ({
   extractUrls: vi.fn(() => []),
 }));
 
-import { POST, parseVisionJson, candidateUrls } from "./route.js";
+import { POST, parseVisionJson, candidateUrls, tidyField } from "./route.js";
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { fetchUrlContent, extractUrls } from "@/lib/scrape/fetchUrlContent";
@@ -65,6 +65,16 @@ describe("parseVisionJson", () => {
   });
 });
 
+describe("tidyField", () => {
+  it("strips salary figures, ranges, and parentheticals from a title", () => {
+    expect(tidyField("Senior Software Engineer - $120k-$150k - Remote")).toBe("Senior Software Engineer - Remote");
+    expect(tidyField("Staff Engineer ($180,000/yr)")).toBe("Staff Engineer");
+    expect(tidyField("Data Scientist | 130K–160K")).toBe("Data Scientist");
+    expect(tidyField("Product Manager")).toBe("Product Manager");
+    expect(tidyField("")).toBe("");
+  });
+});
+
 describe("candidateUrls", () => {
   it("prefers model-written URLs, then grounded redirects, de-duped", () => {
     const res = {
@@ -91,6 +101,22 @@ describe("POST /api/posting-from-image", () => {
     expect(data.url).toBe("https://acme.example/jobs/senior-engineer");
     expect(data.jobTitle).toBe("Senior Engineer");
     expect(data.postingText.length).toBeGreaterThan(80);
+  });
+
+  it("names the job from the clean screenshot fields, not the salary-laden page title", async () => {
+    mockGemini();
+    fetchUrlContent.mockResolvedValue({
+      // a typical noisy job-board <title>
+      title: "Senior Engineer - $120k-$150k - Remote",
+      company: "Some Job Board",
+      description: "B".repeat(200),
+      finalUrl: "https://acme.example/jobs/senior-engineer",
+    });
+    const res = await POST(imageRequest(pngFile()));
+    const data = await res.json();
+    expect(data.found).toBe(true);
+    expect(data.jobTitle).toBe("Senior Engineer"); // vision value, not the page title
+    expect(data.company).toBe("Acme");
   });
 
   it("reports not-found when no posting URL can be located", async () => {

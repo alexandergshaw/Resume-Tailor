@@ -3185,6 +3185,10 @@ export default function Home() {
         setTrackedJobs((prev) => (prev.some((j) => j.id === job.id) ? prev : [...prev, job]));
         const result = await handleTailorJob(job, { skipDownload: true });
         if (result?.ok) {
+          // Name the files from the screenshot's own clean title/company. The
+          // tailor engine can re-derive a noisier title (salary, location), so
+          // pin the title we read from the posting.
+          if (data.jobTitle) updateTailoringJob(job.id, { generatedJobTitle: data.jobTitle });
           updateScreenshotItem(item.id, { status: "done", statusLabel: "", jobId: job.id });
         } else {
           updateScreenshotItem(item.id, { status: "error", statusLabel: "", error: result?.error || "Tailoring failed." });

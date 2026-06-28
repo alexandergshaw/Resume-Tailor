@@ -63,13 +63,32 @@ function visionPrompt() {
   return [
     "You are reading a screenshot of an online job posting. Extract only what is VISIBLE in the image.",
     'Return ONLY a JSON object: {"jobTitle":"","company":"","location":"","postingText":"","searchQuery":""}',
-    "- jobTitle: the role title shown.",
-    "- company: the hiring company or organization.",
+    "- jobTitle: the ROLE TITLE ONLY (e.g. \"Senior Software Engineer\"). Exclude the company name, salary or pay range, location, work mode (remote/hybrid/onsite), employment type (full-time/contract), seniority pay bands, requisition IDs, and dates.",
+    "- company: the hiring company or organization NAME ONLY — no tagline, location, salary, or industry.",
     "- location: the location if shown, otherwise \"\".",
     "- postingText: ALL readable posting text in the image (summary, responsibilities, qualifications) as plain text.",
     "- searchQuery: a concise web-search query that would locate THIS exact posting — include the title, the company, and one distinctive phrase.",
     "Never invent details that are not visible in the image.",
   ].join("\n");
+}
+
+// Strip salary figures, parentheticals, and dangling separators so a value is
+// clean enough to put in a file name. Used for the job title and company so the
+// downloaded files read "<Company> - <Role> - Resume.docx", not the page's
+// salary-laden <title>.
+export function tidyField(value) {
+  return String(value || "")
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\[[^\]]*\]/g, " ")
+    // $120k, $120,000, $120k–$150k, 120k/yr, etc.
+    .replace(/\$\s?[\d.,]+\s?[kKmM]?(?:\s*[-–—]\s*\$?\s?[\d.,]+\s?[kKmM]?)?(?:\s*(?:\/|per)\s*(?:yr|year|hr|hour|mo|month|wk|week))?/g, " ")
+    .replace(/\b\d{2,3}\s?[kK]\b(?:\s*[-–—]\s*\d{2,3}\s?[kK]\b)?/g, " ")
+    .replace(/\s+/g, " ")
+    // collapse separators left dangling where a salary chunk was removed
+    .replace(/(\s*[-–—|·•,]\s*){2,}/g, " - ")
+    .replace(/^\s*[-–—|·•,]+\s*/g, "")
+    .replace(/\s*[-–—|·•,]+\s*$/g, "")
+    .trim();
 }
 
 function urlSearchPrompt({ jobTitle, company, location, postingText, searchQuery }) {
@@ -200,12 +219,15 @@ export async function POST(request) {
 
   // 3) Resolve + pull the posting from the found URL.
   const resolved = await resolvePosting(candidates);
+  // Name the documents from the screenshot's own title/company (what the user
+  // saw) rather than the scraped page <title>, which often carries salary,
+  // location, and the site name. Fall back to the scrape only when vision missed.
   if (resolved) {
     return NextResponse.json({
       found: true,
       url: resolved.url,
-      jobTitle: resolved.title || fields.jobTitle,
-      company: resolved.company || fields.company,
+      jobTitle: tidyField(fields.jobTitle || resolved.title),
+      company: tidyField(fields.company || resolved.company),
       location: fields.location,
       postingText: resolved.postingText,
     });
@@ -218,8 +240,8 @@ export async function POST(request) {
     return NextResponse.json({
       found: true,
       url: candidates[0],
-      jobTitle: fields.jobTitle,
-      company: fields.company,
+      jobTitle: tidyField(fields.jobTitle),
+      company: tidyField(fields.company),
       location: fields.location,
       postingText: fields.postingText,
     });
