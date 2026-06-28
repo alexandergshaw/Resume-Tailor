@@ -99,6 +99,12 @@ describe("offlineSearchQueries", () => {
     expect(qs).toContain("Staff Data Scientist");
     expect(qs.length).toBeGreaterThan(0);
   });
+
+  it("always yields at least one query from raw text as a last resort", () => {
+    const qs = offlineSearchQueries({ jobTitle: "", company: "", postingText: "short" });
+    expect(qs).toEqual(["short"]);
+    expect(offlineSearchQueries({ jobTitle: "", company: "", postingText: "" })).toEqual([]);
+  });
 });
 
 describe("candidateUrls", () => {

@@ -142,7 +142,14 @@ export function offlineSearchQueries({ jobTitle, company, postingText } = {}) {
     .map((l) => l.trim())
     .filter((l) => l.length >= 12 && l.length <= 120 && /[a-z]/i.test(l) && !/[.!?]$/.test(l) && !isChromeLine(l));
   for (const line of lines.slice(0, 2)) queries.push(line);
-  return [...new Set(queries.filter(Boolean))].slice(0, 3);
+  const result = [...new Set(queries.filter(Boolean))].slice(0, 3);
+  // Last resort: if parsing produced nothing usable, still search on the raw
+  // text so we never skip the search entirely.
+  if (result.length === 0) {
+    const raw = String(postingText || "").replace(/\s+/g, " ").trim().slice(0, 80);
+    if (raw) result.push(raw);
+  }
+  return result;
 }
 
 function urlSearchPrompt({ jobTitle, company, location, postingText, searchQuery }) {
@@ -310,12 +317,16 @@ export async function POST(request) {
   const candidates = rankCandidates([...new Set(found.filter(Boolean))]);
 
   if (candidates.length === 0) {
+    const what = [fields.jobTitle, fields.company].filter(Boolean).join(" — ");
     return NextResponse.json(
       {
         found: false,
         jobTitle: fields.jobTitle,
         company: fields.company,
-        reason: "Couldn't find the live posting URL for this screenshot.",
+        reason:
+          mode === "offline"
+            ? `Couldn't find a live URL${what ? ` for "${what}"` : ""} without AI. Switch the engine to Gemini, or set a search API key.`
+            : "Couldn't find the live posting URL for this screenshot.",
       },
       { status: 200 },
     );
