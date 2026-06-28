@@ -105,9 +105,9 @@ function visionPrompt() {
     'Return ONLY a JSON object: {"jobTitle":"","company":"","location":"","postingText":"","searchQuery":""}',
     "- jobTitle: the ROLE TITLE ONLY (e.g. \"Senior Software Engineer\"). Exclude the company name, salary or pay range, location, work mode (remote/hybrid/onsite), employment type (full-time/contract), seniority pay bands, requisition IDs, and dates.",
     "- company: the hiring company or organization NAME ONLY — no tagline, location, salary, or industry.",
-    "- location: the location if shown, otherwise \"\".",
+    "- location: the location if shown (include the state/region when visible, e.g. \"Omaha, NE\"), otherwise \"\".",
     "- postingText: ALL readable posting text in the image (summary, responsibilities, qualifications) as plain text.",
-    "- searchQuery: a concise web-search query that would locate THIS exact posting — include the title, the company, and one distinctive phrase.",
+    "- searchQuery: a concise web-search query that would locate THIS exact posting — include the title, the company, the location WITH its state/region, and any visible job or requisition number (these disambiguate similarly named employers).",
     "Never invent details that are not visible in the image.",
   ].join("\n");
 }
@@ -140,7 +140,9 @@ function urlSearchPrompt({ jobTitle, company, location, postingText, searchQuery
     location ? `Location: ${location}` : "",
     postingText ? `Distinctive text from the posting: ${postingText.slice(0, 240)}` : "",
     "",
-    "Return the single best DIRECT URL to the posting's own page. Strongly prefer the company's own careers site or the ATS board it's hosted on (Greenhouse, Lever, Ashby, Workday, SmartRecruiters, etc.).",
+    "Return the single best DIRECT URL to the posting's own page. Strongly prefer the company's own careers site or the ATS board it's hosted on (Greenhouse, Lever, Ashby, Workday, SmartRecruiters, NEOGOV/governmentjobs, etc.).",
+    "Use the location — city AND state — to pick the RIGHT employer: many organizations share a name (e.g. there are several 'Douglas County' governments in different states).",
+    "Only return a URL that actually appears in the search results — never construct, guess, or edit a URL (do not invent or alter the path, slug, or job id).",
     "Avoid aggregators like LinkedIn, Indeed, Glassdoor, and ZipRecruiter unless the posting appears nowhere else — they require logins/CAPTCHAs, expire, and are not the original source.",
     "Output ONLY the URL on its own line, nothing else. If you cannot confidently find it, output NONE.",
   ]
@@ -337,7 +339,7 @@ export async function POST(request) {
       url: validUrl,
       reason: validUrl
         ? "Found a posting link but couldn't read the posting from it."
-        : "The posting link redirected to the site's homepage — the posting may have expired or moved.",
+        : "Couldn't pin down the exact posting URL (the link found wasn't the right one). Try again, or paste it in the Posting URL tab.",
     },
     { status: 200 },
   );

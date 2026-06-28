@@ -198,8 +198,8 @@ describe("POST /api/posting-from-image", () => {
     expect(data.postingText).toContain("Real posting description");
   });
 
-  it("does not surface a deep URL that redirects to the homepage (expired posting)", async () => {
-    // Stale governmentjobs id: 200, but finalUrl after redirect is the homepage.
+  it("does not surface a deep URL that redirects to the homepage (wrong/stale link)", async () => {
+    // Wrong governmentjobs slug+id: 200, but finalUrl after redirect is the homepage.
     mockGemini({
       searchText: "https://www.governmentjobs.com/careers/douglascounty/jobs/2928863/building-inspector",
     });
@@ -212,7 +212,7 @@ describe("POST /api/posting-from-image", () => {
     const data = await res.json();
     expect(data.found).toBe(false);
     expect(data.url || "").not.toContain("2928863");
-    expect(data.reason).toMatch(/homepage|expired/i);
+    expect(data.reason).toMatch(/pin down|wasn't the right|Posting URL tab/i);
   });
 
   it("names the job from the clean screenshot fields, not the salary-laden page title", async () => {
