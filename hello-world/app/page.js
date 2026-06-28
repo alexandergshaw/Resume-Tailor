@@ -55,10 +55,6 @@ import Tooltip from "@mui/material/Tooltip";
 import Autocomplete from "@mui/material/Autocomplete";
 import Chip from "@mui/material/Chip";
 import DescriptionIcon from "@mui/icons-material/Description";
-import RefreshIcon from "@mui/icons-material/Refresh";
-import OpenInNewIcon from "@mui/icons-material/OpenInNew";
-import Badge from "@mui/material/Badge";
-import Menu from "@mui/material/Menu";
 import { GREENHOUSE_COMPANIES, COMPANY_CATEGORIES } from "../lib/greenhouse/companies";
 import { createClient } from "../lib/supabase/client";
 import { upsertPosition } from "../lib/supabase/upsertPosition";
@@ -359,14 +355,9 @@ export default function Home() {
   const [autoTailoredPostings, setAutoTailoredPostings] = useState([]);
   const [autoTailoredLoading, setAutoTailoredLoading] = useState(false);
   const [autoTailoredError, setAutoTailoredError] = useState(null);
-  // In-app notification state (bell UI in header).
-  const [notifications, setNotifications] = useState([]);
-  const [notifUnreadCount, setNotifUnreadCount] = useState(0);
-  const [notifAnchorEl, setNotifAnchorEl] = useState(null);
-  // Gmail inbox panel state.
-  const [gmailAnchorEl, setGmailAnchorEl] = useState(null);
+  // Gmail messages, matched to applications for the Tracking tab's email
+  // classification badges (loaded in the background).
   const [gmailMessages, setGmailMessages] = useState([]);
-  const [gmailLoading, setGmailLoading] = useState(false);
   const [highlightedAppId, setHighlightedAppId] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [mainTab, setMainTab] = useState("applying");
@@ -1202,58 +1193,6 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSavedSearchId, activeSavedSearchDirty]);
 
-  // Notifications: load on sign-in and poll every 60s. Also refetch when the
-  // tab regains focus so the bell stays in sync.
-  useEffect(() => {
-    if (!currentUser) {
-      setNotifications([]);
-      setNotifUnreadCount(0);
-      return;
-    }
-    let cancelled = false;
-    async function load() {
-      try {
-        const res = await fetch("/api/notifications?limit=30", { cache: "no-store" });
-        if (!res.ok) return;
-        const json = await res.json();
-        if (cancelled) return;
-        setNotifications(Array.isArray(json?.notifications) ? json.notifications : []);
-        setNotifUnreadCount(typeof json?.unreadCount === "number" ? json.unreadCount : 0);
-      } catch {}
-    }
-    load();
-    const interval = setInterval(load, 60_000);
-    const onFocus = () => load();
-    window.addEventListener("focus", onFocus);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-      window.removeEventListener("focus", onFocus);
-    };
-  }, [currentUser]);
-
-  async function markAllNotificationsRead() {
-    if (notifUnreadCount === 0) return;
-    setNotifUnreadCount(0);
-    setNotifications((prev) =>
-      prev.map((n) => (n.read_at ? n : { ...n, read_at: new Date().toISOString() })),
-    );
-    try {
-      await fetch("/api/notifications", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ allRead: true }),
-      });
-    } catch {}
-  }
-
-  function handleNotificationClick(notif) {
-    setNotifAnchorEl(null);
-    if (notif?.related_application_id || notif?.kind === "auto_tailor") {
-      setMainTab("interviewing");
-    }
-  }
-
   // Fetch Gmail messages from the server and match them to applications.
   // Used both by the icon click handler and by the periodic auto-refresh.
   async function loadGmailMessages() {
@@ -1271,14 +1210,6 @@ export default function Home() {
         .map((item) => ({ ...item, classification: classifyMessage(item.message) }));
       setGmailMessages(matched);
     } catch {}
-  }
-
-  async function handleOpenGmailMenu(e) {
-    setGmailAnchorEl(e.currentTarget);
-    if (gmailMessages.length > 0) return; // already loaded
-    setGmailLoading(true);
-    await loadGmailMessages();
-    setGmailLoading(false);
   }
 
   // Background refresh: fetch Gmail once after the user's applications load,
@@ -4304,7 +4235,15 @@ export default function Home() {
   return (
     <div className={styles.page}>
       <main className={styles.main}>
-        <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 2 }}>
+        <Box
+          sx={{
+            display: "flex",
+            flexDirection: { xs: "column", sm: "row" },
+            alignItems: { xs: "stretch", sm: "flex-start" },
+            justifyContent: "space-between",
+            gap: { xs: 1.5, sm: 2 },
+          }}
+        >
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <h1 className={styles.title}>Resume Tailor</h1>
             <p className={styles.subtitle}>
@@ -4313,7 +4252,16 @@ export default function Home() {
             </p>
           </Box>
           {currentUser && (
-            <Box sx={{ pt: 0.5, flexShrink: 0, display: "flex", alignItems: "center", gap: 0.5 }}>
+            <Box
+              sx={{
+                pt: { xs: 0, sm: 0.5 },
+                flexShrink: 0,
+                display: "flex",
+                alignItems: "center",
+                gap: 0.5,
+                alignSelf: { xs: "stretch", sm: "auto" },
+              }}
+            >
               <Tooltip
                 title={
                   tailorEngine === "external"
@@ -4323,7 +4271,7 @@ export default function Home() {
                       : "Gemini — AI rewrites your uploaded resume's lines."
                 }
               >
-                <FormControl size="small" sx={{ minWidth: 150 }}>
+                <FormControl size="small" sx={{ minWidth: 150, width: { xs: "100%", sm: "auto" } }}>
                   <InputLabel id="engine-select-label">Engine</InputLabel>
                   <Select
                     labelId="engine-select-label"
@@ -4338,180 +4286,6 @@ export default function Home() {
                   </Select>
                 </FormControl>
               </Tooltip>
-              <Tooltip title="Job emails">
-                <IconButton
-                  size="large"
-                  aria-label="Job-related emails"
-                  onClick={handleOpenGmailMenu}
-                >
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="2" y="4" width="20" height="16" rx="2"></rect>
-                    <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path>
-                  </svg>
-                </IconButton>
-              </Tooltip>
-              <Menu
-                anchorEl={gmailAnchorEl}
-                open={Boolean(gmailAnchorEl)}
-                onClose={() => setGmailAnchorEl(null)}
-                slotProps={{ paper: { sx: { maxWidth: 420, width: { xs: "calc(100vw - 24px)", sm: 400 } } } }}
-                anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-                transformOrigin={{ vertical: "top", horizontal: "right" }}
-              >
-                <Box sx={{ px: 2, py: 1, borderBottom: "1px solid #eceff1", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <Box sx={{ fontWeight: 600 }}>Job emails</Box>
-                  <Tooltip title="Refresh">
-                    <IconButton
-                      size="small"
-                      onClick={async () => {
-                        setGmailLoading(true);
-                        await loadGmailMessages();
-                        setGmailLoading(false);
-                      }}
-                      disabled={gmailLoading}
-                      aria-label="Refresh job emails"
-                    >
-                      <RefreshIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                </Box>
-                {gmailLoading ? (
-                  <Box sx={{ px: 2, py: 3, color: "#78909c", fontSize: "0.85rem", textAlign: "center" }}>Loading…</Box>
-                ) : gmailMessages.length === 0 ? (
-                  <Box sx={{ px: 2, py: 3, color: "#78909c", fontSize: "0.85rem", textAlign: "center" }}>No matching job emails found.</Box>
-                ) : (
-                  gmailMessages.map(({ message, application, score: _score, classification }) => {
-                    const chipStyles = {
-                      confirmation: { label: "Applied", color: "#1565c0", bg: "#e3f2fd" },
-                      interview:    { label: "Interview", color: "#2e7d32", bg: "#e8f5e9" },
-                      rejection:    { label: "Rejected", color: "#b71c1c", bg: "#ffebee" },
-                    };
-                    const chip = chipStyles[classification] ?? null;
-                    return (
-                    <MenuItem
-                      key={message.id}
-                      sx={{ whiteSpace: "normal", alignItems: "flex-start", py: 1, gap: 1, borderBottom: "1px solid #f5f5f5" }}
-                    >
-                      <Box sx={{ flex: 1, minWidth: 0 }}>
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
-                          <Box sx={{ fontWeight: 600, fontSize: "0.85rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>{message.subject || "(no subject)"}</Box>
-                          {chip && (
-                            <Box sx={{ fontSize: "0.68rem", fontWeight: 700, color: chip.color, bgcolor: chip.bg, px: 0.75, py: 0.2, borderRadius: 1, flexShrink: 0, letterSpacing: "0.03em" }}>
-                              {chip.label}
-                            </Box>
-                          )}
-                          {application && (
-                            <Tooltip title={`Go to ${application.positions?.company ?? application.company} row`}>
-                              <IconButton
-                                size="small"
-                                sx={{ flexShrink: 0, p: 0.25 }}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setGmailAnchorEl(null);
-                                  setMainTab("interviewing");
-                                  setHighlightedAppId(application.id);
-                                  setTimeout(() => {
-                                    const row = document.querySelector(`[data-app-id="${application.id}"]`);
-                                    if (row) row.scrollIntoView({ behavior: "smooth", block: "center" });
-                                  }, 120);
-                                  setTimeout(() => setHighlightedAppId(null), 2500);
-                                  // If email is classified, pre-populate and open the stage dialog
-                                  if (classification === "interview") {
-                                    setTimeout(() => setStageDialog(createStageDialogState({
-                                      open: true,
-                                      applicationId: application.id,
-                                      stageType: "phone_screen",
-                                      outcome: "pending",
-                                    })), 150);
-                                  } else if (classification === "rejection") {
-                                    setTimeout(() => setStageDialog(createStageDialogState({
-                                      open: true,
-                                      applicationId: application.id,
-                                      stageType: "other",
-                                      stageName: "Rejected",
-                                      outcome: "failed",
-                                    })), 150);
-                                  }
-                                }}
-                              >
-                                <OpenInNewIcon sx={{ fontSize: 14 }} />
-                              </IconButton>
-                            </Tooltip>
-                          )}
-                        </Box>
-                        <Box sx={{ display: "flex", gap: 1, alignItems: "center", mt: 0.25 }}>
-                          {application && (
-                            <Box sx={{ fontSize: "0.72rem", fontWeight: 600, color: "#1976d2", bgcolor: "#e3f2fd", px: 0.75, py: 0.25, borderRadius: 1, flexShrink: 0 }}>
-                              {application.positions?.company ?? application.company}
-                            </Box>
-                          )}
-                          <Box sx={{ color: "#546e7a", fontSize: "0.75rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{message.from}</Box>
-                        </Box>
-                        {message.snippet && (
-                          <Box sx={{ color: "#78909c", fontSize: "0.73rem", mt: 0.25, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{message.snippet}</Box>
-                        )}
-                      </Box>
-                    </MenuItem>
-                    );
-                  })
-                )}
-              </Menu>
-              <Tooltip title="Notifications">
-                <IconButton
-                  size="large"
-                  aria-label={`${notifUnreadCount} unread notifications`}
-                  onClick={(e) => {
-                    setNotifAnchorEl(e.currentTarget);
-                    // Mark as read when the menu is opened.
-                    setTimeout(() => { markAllNotificationsRead(); }, 0);
-                  }}
-                >
-                  <Badge badgeContent={notifUnreadCount} color="error" max={99}>
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
-                      <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
-                    </svg>
-                  </Badge>
-                </IconButton>
-              </Tooltip>
-              <Menu
-                anchorEl={notifAnchorEl}
-                open={Boolean(notifAnchorEl)}
-                onClose={() => setNotifAnchorEl(null)}
-                slotProps={{ paper: { sx: { maxWidth: 380, width: { xs: "calc(100vw - 24px)", sm: 360 } } } }}
-                anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-                transformOrigin={{ vertical: "top", horizontal: "right" }}
-              >
-                <Box sx={{ px: 2, py: 1, display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #eceff1" }}>
-                  <Box sx={{ fontWeight: 600 }}>Notifications</Box>
-                </Box>
-                {notifications.length === 0 ? (
-                  <Box sx={{ px: 2, py: 3, color: "#78909c", fontSize: "0.85rem", textAlign: "center" }}>
-                    No notifications yet.
-                  </Box>
-                ) : (
-                  notifications.map((n) => (
-                    <MenuItem
-                      key={n.id}
-                      onClick={() => handleNotificationClick(n)}
-                      sx={{ whiteSpace: "normal", alignItems: "flex-start", py: 1, gap: 1, borderBottom: "1px solid #f5f5f5" }}
-                    >
-                      <Box sx={{ width: 8, height: 8, mt: 0.75, borderRadius: "50%", bgcolor: n.read_at ? "transparent" : "#1976d2", flexShrink: 0 }} />
-                      <Box sx={{ flex: 1, minWidth: 0 }}>
-                        <Box sx={{ fontWeight: 600, fontSize: "0.85rem" }}>{n.title}</Box>
-                        {n.body && (
-                          <Box sx={{ color: "#546e7a", fontSize: "0.75rem", whiteSpace: "pre-line", mt: 0.25 }}>
-                            {n.body}
-                          </Box>
-                        )}
-                        <Box sx={{ color: "#90a4ae", fontSize: "0.7rem", mt: 0.5 }}>
-                          {new Date(n.created_at).toLocaleString()}
-                        </Box>
-                      </Box>
-                    </MenuItem>
-                  ))
-                )}
-              </Menu>
             </Box>
           )}
         </Box>
