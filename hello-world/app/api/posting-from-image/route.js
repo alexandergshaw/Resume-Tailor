@@ -7,6 +7,10 @@ import { readScreenshotOffline } from "@/lib/scrape/screenshotOcr";
 import { searchPostingUrls } from "@/lib/scrape/webSearch";
 
 export const runtime = "nodejs";
+// Reading + searching + pulling a posting can chain several network calls; give
+// the function room so it isn't killed mid-request (which surfaces client-side
+// as a bare "Failed to fetch").
+export const maxDuration = 60;
 
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024; // 12MB — screenshots are well under this
 const ALLOWED_MIME = ["image/png", "image/jpeg", "image/jpg", "image/webp"];

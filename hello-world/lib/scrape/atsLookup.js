@@ -112,22 +112,24 @@ export async function lookupAtsPostingUrl({ company, jobTitle } = {}) {
     }
   }
 
+  // Fetch the boards concurrently so a slow/dead board can't stall the request
+  // (sequential worst case was MAX_BOARDS × the per-fetch timeout).
+  const selected = boards.slice(0, MAX_BOARDS);
+  const results = await Promise.all(
+    selected.map(async (board) => ({ board, postings: await fetchBoardPostings(board.ats, board.slug) })),
+  );
+
   let best = null;
-  let fetched = 0;
-  for (const board of boards) {
-    if (fetched >= MAX_BOARDS) break;
-    fetched += 1;
-    const postings = await fetchBoardPostings(board.ats, board.slug);
+  for (const { board, postings } of results) {
     const threshold = board.guessed ? GUESSED_THRESHOLD : KNOWN_THRESHOLD;
     for (const posting of postings) {
       if (!posting.url) continue;
       const score = titleMatchScore(title, posting.title);
+      // Strict > keeps the first board (known boards are listed first) on ties.
       if (score >= threshold && (!best || score > best.score)) {
         best = { score, url: posting.url, title: posting.title, source: board.ats };
       }
     }
-    // A near-exact match on a trusted board is good enough to stop early.
-    if (best && best.score >= 0.85 && !board.guessed) break;
   }
 
   return best ? { url: best.url, title: best.title, source: best.source } : null;

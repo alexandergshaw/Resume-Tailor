@@ -3122,6 +3122,34 @@ export default function Home() {
     );
   }
 
+  // Downscale + re-encode a screenshot before upload so the request stays well
+  // under the serverless body limit (~4.5MB) and OCR/vision run faster. Falls
+  // back to the original file if the browser can't process it.
+  async function compressScreenshot(file, maxDim = 1600, quality = 0.85) {
+    try {
+      if (typeof createImageBitmap !== "function" || typeof document === "undefined") {
+        return { blob: file, name: file.name };
+      }
+      const bitmap = await createImageBitmap(file);
+      const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+      const w = Math.max(1, Math.round(bitmap.width * scale));
+      const h = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      bitmap.close?.();
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+      if (blob && blob.size > 0 && blob.size < file.size) {
+        return { blob, name: file.name.replace(/\.[^.]+$/, "") + ".jpg" };
+      }
+    } catch {
+      /* fall through to the original file */
+    }
+    return { blob: file, name: file.name };
+  }
+
   // Process each screenshot one by one: read it, find the live posting URL, pull
   // the posting, and tailor a resume (+ cover letter) into a tracked job.
   async function processScreenshots() {
@@ -3138,8 +3166,9 @@ export default function Home() {
         updateScreenshotItem(item.id, { status: "processing", statusLabel: "Reading screenshot…", error: "" });
         let data;
         try {
+          const upload = await compressScreenshot(item.file);
           const fd = new FormData();
-          fd.append("image", item.file);
+          fd.append("image", upload.blob, upload.name);
           // Engine dropdown drives AI vs non-AI reading: Embedded = offline OCR.
           fd.append("mode", tailorEngine === "embedded" ? "offline" : "ai");
           const res = await fetch("/api/posting-from-image", { method: "POST", body: fd });
@@ -3148,12 +3177,28 @@ export default function Home() {
             updateScreenshotItem(item.id, {
               status: "error",
               statusLabel: "",
-              error: data?.error || (res.status === 503 ? "Screenshot reading is unavailable (Gemini key not configured)." : "Couldn't read that screenshot."),
+              error:
+                data?.error ||
+                (res.status === 503
+                  ? "Screenshot reading is unavailable (Gemini key not configured)."
+                  : res.status === 413
+                    ? "That screenshot is too large to upload — try a smaller crop."
+                    : "Couldn't read that screenshot."),
             });
             continue;
           }
         } catch (err) {
-          updateScreenshotItem(item.id, { status: "error", statusLabel: "", error: err.message || "Couldn't read that screenshot." });
+          // A bare "Failed to fetch" means no response came back — usually an
+          // oversized upload, a timeout, or the server being unreachable.
+          const networkish =
+            err?.name === "TypeError" || /failed to fetch|networkerror|load failed/i.test(err?.message || "");
+          updateScreenshotItem(item.id, {
+            status: "error",
+            statusLabel: "",
+            error: networkish
+              ? "Couldn't reach the server — the screenshot may be too large or the request timed out. Try a smaller screenshot."
+              : err.message || "Couldn't read that screenshot.",
+          });
           continue;
         }
 
