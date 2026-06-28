@@ -486,7 +486,7 @@ export default function Home() {
 
   useEffect(() => {
     const saved = localStorage.getItem("activeSection");
-    if (saved === "url" || saved === "manual") {
+    if (saved === "url" || saved === "manual" || saved === "screenshots") {
       setActiveSection(saved);
     }
     const savedTab = localStorage.getItem("mainTab");
