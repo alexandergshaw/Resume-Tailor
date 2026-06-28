@@ -275,21 +275,18 @@ export default function Home() {
     company: "",
     jobTitle: "",
     posting: "",
-    needsCompany: false,
-    loading: false,
     busy: false,
-    error: "",
-    articles: [],
-    warnings: [],
   });
+  // Per-job research results, fetched in the background when a preview opens so
+  // the "Research company" button can show them immediately (or a loader while
+  // still in flight). Keyed by jobId: { loading, articles, warnings, error,
+  // needsCompany }.
+  const [researchByJob, setResearchByJob] = useState({});
+  // Job ids whose background research has already been kicked off (dedupe).
+  const researchStartedRef = useRef(new Set());
   const [companyResearchByJob, setCompanyResearchByJob] = useState({});
-  // When a Generate run produced a cover letter, the download is deferred until
-  // the research picker resolves (apply weaves references; skip/close downloads
-  // as-is). Held in a ref for synchronous access. { downloadArgs, setError }.
-  const pendingResearchRef = useRef(null);
-  // Notice shown after Generate when no company was known, so the user can paste
-  // one and run research manually. { jobId, jobTitle, posting } or null.
-  const [researchNotice, setResearchNotice] = useState(null);
+  // Bumped to force the open preview to reload after research is woven in.
+  const [previewReloadKey, setPreviewReloadKey] = useState(0);
   const [batchTailorState, setBatchTailorState] = useState({
     running: false,
     total: 0,
@@ -2851,6 +2848,16 @@ export default function Home() {
       notice: "",
       error: "",
     });
+    // Warm company research as soon as the preview opens (only when a cover
+    // letter exists — that's where the references are used).
+    if (previewScopeAvailable(t, "cover")) {
+      startBackgroundResearch({
+        jobId: job.id,
+        company: job.company || "",
+        jobTitle: t.generatedJobTitle || job.title || "",
+        posting: t.jobDescription || job.description || "",
+      });
+    }
   }
   function closeResumePreview() {
     setResumePreview((prev) => ({ ...prev, open: false }));
@@ -2950,9 +2957,70 @@ export default function Home() {
   }
 
   // --- Company research (recent positive articles for the cover letter) ------
-  // Fetch + summarize a user-pasted article URL into a source card, merged into
-  // the dialog's article list.
+  // Fetch recent positive coverage for a job's company and stash it under
+  // researchByJob[jobId], so the preview's "Research company" button shows
+  // results immediately (or a loader while this is still in flight).
+  async function fetchResearchInto({ jobId, company, jobTitle, posting }) {
+    if (!jobId || !company) return;
+    researchStartedRef.current.add(jobId);
+    setResearchByJob((m) => ({
+      ...m,
+      [jobId]: { loading: true, articles: [], warnings: [], error: "", needsCompany: false },
+    }));
+    try {
+      const res = await fetch("/api/company-research", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ company, jobTitle: jobTitle || "", posting: posting || "" }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 503) {
+        setResearchByJob((m) => ({
+          ...m,
+          [jobId]: {
+            loading: false, articles: [], warnings: [], needsCompany: false,
+            error: data?.error || "Company research is unavailable (Gemini key not configured).",
+          },
+        }));
+        return;
+      }
+      if (!res.ok) throw new Error(data?.error || "Company research failed.");
+      setResearchByJob((m) => ({
+        ...m,
+        [jobId]: {
+          loading: false, needsCompany: false, error: "",
+          articles: Array.isArray(data.articles) ? data.articles : [],
+          warnings: Array.isArray(data.warnings) ? data.warnings : [],
+        },
+      }));
+    } catch (err) {
+      setResearchByJob((m) => ({
+        ...m,
+        [jobId]: { loading: false, articles: [], warnings: [], needsCompany: false, error: err.message || "Company research failed." },
+      }));
+    }
+  }
+
+  // Warm research for a job once (deduped). With no company yet, mark needsCompany
+  // so the dialog prompts for one instead of spinning forever.
+  function startBackgroundResearch({ jobId, company, jobTitle, posting }) {
+    if (!jobId || researchStartedRef.current.has(jobId)) return;
+    const co = String(company || "").trim();
+    if (!co) {
+      researchStartedRef.current.add(jobId);
+      setResearchByJob((m) =>
+        m[jobId] ? m : { ...m, [jobId]: { loading: false, articles: [], warnings: [], error: "", needsCompany: true } },
+      );
+      return;
+    }
+    fetchResearchInto({ jobId, company: co, jobTitle, posting });
+  }
+
+  // Fetch + summarize a user-pasted article URL into a source card, appended to
+  // the job's research results.
   async function addResearchUrl(url) {
+    const jobId = companyResearch.jobId;
+    if (!jobId) return;
     try {
       const res = await fetch("/api/company-research", {
         method: "POST",
@@ -2961,97 +3029,57 @@ export default function Home() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setCompanyResearch((prev) => ({ ...prev, error: data?.error || "Couldn't add that URL." }));
+        setResearchByJob((m) => ({ ...m, [jobId]: { ...(m[jobId] || {}), error: data?.error || "Couldn't add that URL." } }));
         return;
       }
       const added = (data.articles || []).map((a, i) => ({ ...a, id: `url-${Date.now()}-${i}` }));
-      setCompanyResearch((prev) => ({
-        ...prev,
-        error: "",
-        needsCompany: false,
-        articles: [...(prev.articles || []), ...added],
-        warnings: [...(prev.warnings || []), ...(data.warnings || [])],
-      }));
-    } catch (err) {
-      setCompanyResearch((prev) => ({ ...prev, error: err.message || "Couldn't add that URL." }));
-    }
-  }
-
-  async function runCompanyResearchFetch({ jobId, company, jobTitle, posting }) {
-    setCompanyResearch((prev) => ({ ...prev, jobId, company, loading: true, error: "", needsCompany: false }));
-    try {
-      const res = await fetch("/api/company-research", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ company, jobTitle: jobTitle || "", posting: posting || "" }),
+      setResearchByJob((m) => {
+        const cur = m[jobId] || { articles: [], warnings: [] };
+        return {
+          ...m,
+          [jobId]: {
+            ...cur,
+            loading: false,
+            needsCompany: false,
+            error: "",
+            articles: [...(cur.articles || []), ...added],
+            warnings: [...(cur.warnings || []), ...(data.warnings || [])],
+          },
+        };
       });
-      const data = await res.json().catch(() => ({}));
-      // Research isn't configured (no Gemini key): don't block the download with
-      // an error dialog — close, deliver the cover letter as-is, and note it.
-      if (res.status === 503) {
-        setCompanyResearch((prev) => ({ ...prev, open: false, loading: false }));
-        await flushPendingDownload();
-        setResearchNotice({ message: data?.error || "Company research is unavailable (Gemini key not configured)." });
-        return;
-      }
-      if (!res.ok) throw new Error(data?.error || "Company research failed.");
-      setCompanyResearch((prev) => ({
-        ...prev,
-        loading: false,
-        articles: Array.isArray(data.articles) ? data.articles : [],
-        warnings: Array.isArray(data.warnings) ? data.warnings : [],
-      }));
     } catch (err) {
-      setCompanyResearch((prev) => ({ ...prev, loading: false, error: err.message || "Company research failed." }));
+      setResearchByJob((m) => ({ ...m, [jobId]: { ...(m[jobId] || {}), error: err.message || "Couldn't add that URL." } }));
     }
   }
 
-  // Open the research dialog. With a known company it fetches immediately; with
-  // none it shows an input so the user can paste one and kick it off.
+  // Open the research dialog over the preview, ensuring the job's research has
+  // been kicked off (it usually already was, when the preview opened).
   function openCompanyResearch(job) {
     if (!job) return;
     const t = tailoringMap[job.id] || {};
     const company = (job.company || "").trim();
     const jobTitle = t.generatedJobTitle || job.title || "";
-    const posting = job.description || "";
-    setResearchNotice(null);
-    setCompanyResearch({
-      open: true, jobId: job.id, company, jobTitle, posting,
-      needsCompany: !company, loading: !!company, busy: false, error: "", articles: [], warnings: [],
-    });
-    if (company) runCompanyResearchFetch({ jobId: job.id, company, jobTitle, posting });
+    const posting = job.description || t.jobDescription || "";
+    setCompanyResearch({ open: true, jobId: job.id, company, jobTitle, posting, busy: false });
+    startBackgroundResearch({ jobId: job.id, company, jobTitle, posting });
   }
 
   // The user typed a company in the dialog's input (when none was known).
   function researchTypedCompany(name) {
     const company = String(name || "").trim();
-    if (company) runCompanyResearchFetch({ ...companyResearch, company });
+    if (!company || !companyResearch.jobId) return;
+    setCompanyResearch((prev) => ({ ...prev, company }));
+    fetchResearchInto({ jobId: companyResearch.jobId, company, jobTitle: companyResearch.jobTitle, posting: companyResearch.posting });
   }
 
-  // Run the deferred download (after the picker resolves), clearing pending.
-  async function flushPendingDownload(coverLetterResultLinesOverride) {
-    const pending = pendingResearchRef.current;
-    pendingResearchRef.current = null;
-    if (!pending) return;
-    const args = { ...pending.downloadArgs };
-    if (coverLetterResultLinesOverride) args.coverLetterResultLines = coverLetterResultLinesOverride;
-    const dlError = await downloadDocxFiles(args);
-    if (dlError) pending.setError?.(dlError);
-  }
-
-  // Apply chosen references at their chosen placements: weave them in, update the
-  // stored CL + the copyable panel, and (if deferred) download the woven version.
-  async function applyCompanyResearch(placements) {
+  // Apply chosen references at their chosen placements: weave them into the cover
+  // letter and refresh the open preview so the woven version shows.
+  function applyCompanyResearch(placements) {
     const jobId = companyResearch.jobId;
     const picks = Array.isArray(placements) ? placements.filter((c) => c?.suggestion?.trim()) : [];
     setCompanyResearch((prev) => ({ ...prev, open: false }));
-    if (!jobId || picks.length === 0) {
-      await flushPendingDownload();
-      return;
-    }
+    if (!jobId || picks.length === 0) return;
     setCompanyResearchByJob((m) => ({ ...m, [jobId]: picks }));
-    // Compute from the current map synchronously so the deferred download uses
-    // the woven lines (the setState updater runs later).
     const wovenLines = weaveSources(tailoringMap[jobId]?.coverLetterResultLines || [], picks);
     setTailoringMap((current) => ({
       ...current,
@@ -3059,51 +3087,37 @@ export default function Home() {
         ...(current[jobId] || {}),
         coverLetterResultLines: wovenLines,
         coverLetterPreviewHtml: undefined,
+        coverLetterDocxB64: undefined,
         edited: true,
       },
     }));
-    await flushPendingDownload(wovenLines.length ? wovenLines : undefined);
+    setPreviewReloadKey((k) => k + 1);
   }
 
-  // Skip/close: if a download was deferred, deliver it without references.
+  // Close the research dialog (the preview stays open underneath).
   function closeCompanyResearch() {
     setCompanyResearch((prev) => ({ ...prev, open: false }));
-    flushPendingDownload();
   }
 
-  // Called by the Generate flows once a cover letter exists. When a company is
-  // known it defers the download and opens the research picker; otherwise it
-  // downloads now and surfaces a "no research was done" notice the user can act on.
-  async function finishWithOptionalResearch(ctx) {
-    const {
-      jobId, jobTitle, company, posting, applyResume, applyCover,
-      result, resultLines, docxB64, coverLetterResultLines, coverLetterDocxB64, setError,
-    } = ctx;
-    const downloadArgs = {
-      jobTitle,
-      company,
-      result: applyResume ? result : "",
-      resultLines: applyResume ? resultLines : [],
-      coverLetterResultLines: applyCover ? coverLetterResultLines : [],
-      docxB64: applyResume ? docxB64 : "",
-      coverLetterDocxB64: applyCover ? coverLetterDocxB64 : "",
-    };
-    const hasCover = applyCover && Array.isArray(coverLetterResultLines) && coverLetterResultLines.length > 0;
-    if (hasCover && company) {
-      pendingResearchRef.current = { downloadArgs, setError };
-      setResearchNotice(null);
-      setCompanyResearch({
-        open: true, jobId, company, jobTitle: jobTitle || "", posting: posting || "",
-        needsCompany: false, loading: true, busy: false, error: "", articles: [], warnings: [],
-      });
-      runCompanyResearchFetch({ jobId, company, jobTitle, posting });
-      return;
-    }
-    const dlError = await downloadDocxFiles(downloadArgs);
-    if (dlError) setError?.(dlError);
-    if (hasCover && !company) {
-      setResearchNotice({ jobId, jobTitle: jobTitle || "", posting: posting || "" });
-    }
+  // Called by the Generate flows once the resume + cover letter exist: open the
+  // preview modal (cover tab when there's a cover letter) and warm company
+  // research in the background so it's ready behind the "Research company" button.
+  // The user reviews and downloads from the preview.
+  function finishByOpeningPreview(ctx) {
+    const { jobId, jobTitle, company, posting, applyCover, coverLetterResultLines } = ctx;
+    const hasCover =
+      applyCover && Array.isArray(coverLetterResultLines) && coverLetterResultLines.length > 0;
+    setResumePreview({
+      open: true,
+      jobId,
+      title: jobTitle || "",
+      company: company || "",
+      tab: hasCover ? "cover" : "resume",
+      busy: false,
+      notice: "",
+      error: "",
+    });
+    if (hasCover) startBackgroundResearch({ jobId, company, jobTitle, posting });
   }
 
   // "Apply" action for an auto-tailored row: download the tailored resume,
@@ -3765,19 +3779,14 @@ export default function Home() {
         setApplicationsRefreshKey((k) => k + 1);
       }
 
-      await finishWithOptionalResearch({
+      finishByOpeningPreview({
         jobId: syntheticJobId,
         jobTitle: nextJobTitle,
         company: nextCompany,
         posting: nextJobDescription || "",
         applyResume,
         applyCover,
-        result: nextResult,
-        resultLines: nextResultLines,
-        docxB64: nextDocxB64,
         coverLetterResultLines: nextCoverLetterResultLines,
-        coverLetterDocxB64: nextCoverLetterDocxB64,
-        setError: setUrlError,
       });
     } catch (err) {
       setUrlError(err.message || "Unexpected error.");
@@ -3975,19 +3984,14 @@ export default function Home() {
         }
       }
 
-      await finishWithOptionalResearch({
+      finishByOpeningPreview({
         jobId: syntheticJobId,
         jobTitle: nextJobTitle,
         company: nextCompany,
         posting: sourcePosting || "",
         applyResume,
         applyCover,
-        result: nextResult,
-        resultLines: nextResultLines,
-        docxB64: nextDocxB64,
         coverLetterResultLines: nextCoverLetterResultLines,
-        coverLetterDocxB64: nextCoverLetterDocxB64,
-        setError: setManualError,
       });
     } catch (err) {
       setManualError(err.message || "Unexpected error.");
@@ -4751,73 +4755,37 @@ export default function Home() {
           },
         }}
         loadModel={loadPreviewModel}
+        reloadKey={previewReloadKey}
         onClose={closeResumePreview}
         onSave={saveDocumentPreview}
         onDownload={downloadDocumentPreview}
-        onResearchCompany={
-          resumePreview.company
-            ? () => openCompanyResearch({ id: resumePreview.jobId, title: resumePreview.title, company: resumePreview.company, description: tailoringMap[resumePreview.jobId]?.jobDescription || "" })
-            : null
+        onResearchCompany={() =>
+          openCompanyResearch({
+            id: resumePreview.jobId,
+            title: resumePreview.title,
+            company: resumePreview.company,
+            description: tailoringMap[resumePreview.jobId]?.jobDescription || "",
+          })
         }
+        researchLoading={!!researchByJob[resumePreview.jobId]?.loading}
+        researchCount={(researchByJob[resumePreview.jobId]?.articles || []).length}
         companyReferences={companyResearchByJob[resumePreview.jobId] || []}
         busy={resumePreview.busy}
         notice={resumePreview.notice}
         error={resumePreview.error}
       />
 
-      {researchNotice ? (
-        <Box
-          sx={{
-            position: "fixed",
-            top: 16,
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 1400,
-            maxWidth: 560,
-            display: "flex",
-            alignItems: "center",
-            gap: 1.5,
-            px: 2,
-            py: 1.25,
-            borderRadius: 1,
-            bgcolor: "#fff8e1",
-            border: "1px solid #f0d98c",
-            boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
-            fontSize: "0.85rem",
-          }}
-        >
-          <Box sx={{ flex: 1 }}>
-            {researchNotice.message ||
-              "Cover letter generated, but no company name was detected — so no company research was done."}
-          </Box>
-          {researchNotice.jobId ? (
-            <Button
-              size="small"
-              variant="contained"
-              sx={{ textTransform: "none", whiteSpace: "nowrap" }}
-              onClick={() => {
-                const n = researchNotice;
-                setResearchNotice(null);
-                openCompanyResearch({ id: n.jobId, title: n.jobTitle, company: "", description: n.posting });
-              }}
-            >
-              Research a company
-            </Button>
-          ) : null}
-          <Button size="small" sx={{ textTransform: "none" }} onClick={() => setResearchNotice(null)}>
-            Dismiss
-          </Button>
-        </Box>
-      ) : null}
-
       <CompanyResearchDialog
         open={companyResearch.open}
         company={companyResearch.company}
-        needsCompany={companyResearch.needsCompany}
-        loading={companyResearch.loading}
-        error={companyResearch.error}
-        articles={companyResearch.articles}
-        warnings={companyResearch.warnings}
+        needsCompany={
+          !!researchByJob[companyResearch.jobId]?.needsCompany &&
+          (researchByJob[companyResearch.jobId]?.articles || []).length === 0
+        }
+        loading={!!researchByJob[companyResearch.jobId]?.loading}
+        error={researchByJob[companyResearch.jobId]?.error || ""}
+        articles={researchByJob[companyResearch.jobId]?.articles || []}
+        warnings={researchByJob[companyResearch.jobId]?.warnings || []}
         busy={companyResearch.busy}
         coverLetterLines={tailoringMap[companyResearch.jobId]?.coverLetterResultLines || []}
         onClose={closeCompanyResearch}

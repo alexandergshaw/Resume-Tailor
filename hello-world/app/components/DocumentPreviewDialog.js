@@ -73,10 +73,13 @@ export default function DocumentPreviewDialog({
   initialTab = "resume",
   scopes = {},
   loadModel,
+  reloadKey = 0,
   onSave,
   onDownload,
   onClose,
   onResearchCompany,
+  researchLoading = false,
+  researchCount = 0,
   companyReferences = [],
   busy = false,
   notice = "",
@@ -88,6 +91,7 @@ export default function DocumentPreviewDialog({
   // Per-scope render state: { loading, html, error }.
   const [docState, setDocState] = useState({});
   const [prevOpen, setPrevOpen] = useState(open);
+  const [prevReloadKey, setPrevReloadKey] = useState(reloadKey);
   const editorRef = useRef(null);
   const draftHtmlRef = useRef({}); // scope -> edited innerHTML (uncommitted)
   const savedRangeRef = useRef(null); // selection captured before a control steals focus
@@ -104,6 +108,15 @@ export default function DocumentPreviewDialog({
       setDocState({});
       draftHtmlRef.current = {};
     }
+  }
+
+  // Drop cached renders when the parent bumps reloadKey (e.g. after research is
+  // woven into the cover letter) so the preview reflects the updated document.
+  if (reloadKey !== prevReloadKey) {
+    setPrevReloadKey(reloadKey);
+    setDocState({});
+    draftHtmlRef.current = {};
+    setMode("view");
   }
 
   // Load (parse) the active document's model into HTML on demand.
@@ -244,11 +257,15 @@ export default function DocumentPreviewDialog({
         {tab === "cover" && onResearchCompany ? (
           <Button
             size="small"
-            startIcon={<TravelExploreIcon fontSize="small" />}
+            startIcon={researchLoading ? <CircularProgress size={14} /> : <TravelExploreIcon fontSize="small" />}
             onClick={onResearchCompany}
             sx={{ textTransform: "none", my: 0.5 }}
           >
-            Research company
+            {researchLoading
+              ? "Researching…"
+              : researchCount > 0
+                ? `Research company (${researchCount})`
+                : "Research company"}
           </Button>
         ) : null}
         {available(tab) ? (
