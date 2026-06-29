@@ -40,7 +40,11 @@ function buildContext(keywords) {
 
 const KEYWORD_JOIN = {
   JOB_RELEVANT_TECHNOLOGIES: { cats: ["technology"], k: 6 },
-  TECHNICAL_CAPABILITIES: { cats: ["tool_platform"], k: 5 },
+  // The opening paragraph's "hands-on work with {{TECHNICAL_CAPABILITIES}}"
+  // should showcase the most impressive APPLICABLE tech (languages, frameworks,
+  // databases) — posting-matched first, then the candidate's strongest stack —
+  // not just collaboration tools. Falls back to tool_platform so it's never empty.
+  TECHNICAL_CAPABILITIES: { cats: ["technology", "tool_platform"], k: 5 },
   DELIVERY_PRACTICES: { cats: ["methodology"], k: 4 },
   DOMAIN_CAPABILITIES: { cats: ["domain"], k: 4 },
   // The summary already reads "leading cross-functional teams through

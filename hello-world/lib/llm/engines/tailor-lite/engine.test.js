@@ -98,6 +98,12 @@ describe("embeddedEngine.tailorCoverLetter", () => {
     expect(res.result).toContain("Initech");
     expect(res.result).toContain("Alex Shaw");
     expect(res.result).not.toContain("{{");
+    // Soft-skills line reads "experience in", not "leadership in".
+    expect(res.result).toContain("experience in");
+    expect(res.result).not.toContain("leadership in");
+    // The opening "hands-on work with …" tech list leads with real technologies
+    // (languages/frameworks), not just collaboration tools.
+    expect(res.result).toMatch(/hands-on work with [^.]*\b(React|TypeScript|JavaScript|PostgreSQL|SQL)\b/);
     expect(res.report.meta.document).toBe("cover_letter");
   });
 });

@@ -13,11 +13,25 @@ import { COVER_LETTER_TEMPLATE_BASE64 } from "./coverLetterTemplateBase64.js";
 
 let cache = null;
 
+// Small wording tweaks applied to the bundled template at load time, so we don't
+// have to regenerate the whole opaque base64 for a phrasing change.
+const TEMPLATE_TEXT_PATCHES = [
+  // The soft-skills line reads better as "experience in <soft skills>" than
+  // "leadership in <soft skills>".
+  ["leadership in", "experience in"],
+];
+
 // Assemble (once) the cover-letter template as a Node Buffer for loadDocx(),
 // with every zip entry's timestamp pinned so the output base64 is deterministic.
 export async function getCoverLetterTemplateBuffer() {
   if (cache) return cache;
   const zip = await JSZip.loadAsync(Buffer.from(COVER_LETTER_TEMPLATE_BASE64, "base64"));
+  const docFile = zip.file("word/document.xml");
+  if (docFile) {
+    let xml = await docFile.async("string");
+    for (const [from, to] of TEMPLATE_TEXT_PATCHES) xml = xml.split(from).join(to);
+    zip.file("word/document.xml", xml, { date: FIXED_ENTRY_DATE });
+  }
   for (const file of Object.values(zip.files)) file.date = FIXED_ENTRY_DATE;
   cache = await zip.generateAsync({ type: "nodebuffer" });
   return cache;

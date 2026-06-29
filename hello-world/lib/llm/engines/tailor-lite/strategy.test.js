@@ -32,9 +32,11 @@ describe("mapSlots (template strategies)", () => {
     expect(byKey["RANK::0"].value).toBe("Senior");
   });
 
-  it("KEYWORD_JOIN surfaces posting keywords by category (no cross-slot overlap)", () => {
+  it("KEYWORD_JOIN surfaces posting keywords by category", () => {
     expect(byKey["JOB_RELEVANT_TECHNOLOGIES::0"].value).toContain("React"); // technology
-    expect(byKey["TECHNICAL_CAPABILITIES::0"].value).toContain("Figma"); // tool_platform
+    // The opening tech list leads with impressive technologies, then tools.
+    expect(byKey["TECHNICAL_CAPABILITIES::0"].value).toContain("React"); // technology
+    expect(byKey["TECHNICAL_CAPABILITIES::0"].value).toContain("Figma"); // tool_platform too
     expect(byKey["JOB_RELEVANT_TECHNOLOGIES::0"].value).not.toContain("Figma");
   });
 
