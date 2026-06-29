@@ -88,11 +88,11 @@ function resolveCoverFacts({ posting, company }) {
 
 // Scan a template, resolve keywords (legacy/composed), map placeholders.
 // `aggressiveness` (1..5) drives how much gap-keyword insertion the strategy does.
-async function buildProposal(buffer, posting, aggressiveness, maxKeywords) {
+async function buildProposal(buffer, posting, aggressiveness, maxKeywords, serialAnd) {
   const doc = await loadDocx(buffer);
   const rawSlots = scanPlaceholders(doc);
   const kw = resolveKeywords(posting);
-  const slots = mapSlots(rawSlots, kw.keywords, DATA, { aggressiveness, maxKeywords });
+  const slots = mapSlots(rawSlots, kw.keywords, DATA, { aggressiveness, maxKeywords, serialAnd });
   return { doc, slots, keywords: kw.keywords, emphases: kw.emphases };
 }
 
@@ -101,8 +101,8 @@ async function buildProposal(buffer, posting, aggressiveness, maxKeywords) {
 // `maxKeywords` caps comma-joined capability lists (the cover letter reads better
 // with shorter lists than the résumé). An empty final value leaves the
 // {{placeholder}} visible (counts as unfilled).
-async function render(buffer, posting, { overrides = {}, seedByName = {}, aggressiveness, maxKeywords } = {}) {
-  const proposal = await buildProposal(buffer, posting, aggressiveness, maxKeywords);
+async function render(buffer, posting, { overrides = {}, seedByName = {}, aggressiveness, maxKeywords, serialAnd } = {}) {
+  const proposal = await buildProposal(buffer, posting, aggressiveness, maxKeywords, serialAnd);
   const finalValues = {};
   const unfilled = [];
   const reportSlots = proposal.slots.map((slot) => {
@@ -225,6 +225,7 @@ export const embeddedEngine = {
       seedByName,
       aggressiveness,
       maxKeywords: 4, // keep capability lists keyword-rich but not a wall
+      serialAnd: true, // prose lists read "A, B, and C", not "A, B, C"
     });
 
     return {

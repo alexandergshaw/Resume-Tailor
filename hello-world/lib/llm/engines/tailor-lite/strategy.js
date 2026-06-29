@@ -114,9 +114,9 @@ function capabilityPool(keywords, byCat, cats, universe, allowGaps, avoid) {
 // offset 0 this is the top-k (so a slot's first occurrence is unchanged);
 // repeated slots pass their occurrence index so each repeat surfaces a distinct,
 // still-relevant slice instead of the same list every time.
-function capabilityJoin(keywords, byCat, cats, k, universe, allowGaps, avoid, offset = 0) {
+function capabilityJoin(keywords, byCat, cats, k, universe, allowGaps, avoid, offset = 0, serialAnd = false) {
   const pool = capabilityPool(keywords, byCat, cats, universe, allowGaps, avoid);
-  return emphasisSlice(pool, k, offset);
+  return emphasisSlice(pool, k, offset, serialAnd);
 }
 
 // --- Areas of emphasis (per-role) ------------------------------------------
@@ -141,13 +141,22 @@ const EMPHASIS_FALLBACK = {
   AREA_OF_EMPHASIS: "software engineering",
 };
 
-function emphasisSlice(pool, size, offset) {
+// Join list items, optionally with a serial ("Oxford") "and" before the last —
+// prose reads "A, B, and C"; comma-only lists (e.g. résumé skill rows) read
+// "A, B, C". serialAnd is on for the cover letter's prose lists only.
+function joinList(items, serialAnd) {
+  if (!serialAnd || items.length < 2) return items.join(", ");
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+}
+
+function emphasisSlice(pool, size, offset, serialAnd = false) {
   if (pool.length === 0) return "";
   const n = Math.min(size, pool.length);
   const start = offset % pool.length;
   const out = [];
   for (let i = 0; i < n; i += 1) out.push(pool[(start + i) % pool.length]);
-  return out.join(", ");
+  return joinList(out, serialAnd);
 }
 
 // --- SKILLS rows (one taxonomy category per row) ---------------------------
@@ -296,11 +305,11 @@ function mapOne(slot, keywords, data, state) {
     const pool = taught.length
       ? taught
       : capabilityPool(keywords, state.byCat, TEACHING_FALLBACK_CATS, state.universe, state.allowGaps).slice(0, EMPHASIS_POOL);
-    return make("keywords", emphasisSlice(pool, 1, occurrence) || EMPHASIS_FALLBACK.AREA_OF_EMPHASIS, "Teaching emphasis (subjects taught)");
+    return make("keywords", emphasisSlice(pool, 1, occurrence, state.serialAnd) || EMPHASIS_FALLBACK.AREA_OF_EMPHASIS, "Teaching emphasis (subjects taught)");
   }
   if (name === "AREAS_OF_EMPHASIS") {
     const pool = capabilityPool(keywords, state.byCat, ["domain"], state.universe, state.allowGaps).slice(0, EMPHASIS_POOL);
-    return make("keywords", emphasisSlice(pool, EMPHASIS_WINDOW, occurrence) || EMPHASIS_FALLBACK.AREAS_OF_EMPHASIS, "Areas of emphasis (per-role)");
+    return make("keywords", emphasisSlice(pool, EMPHASIS_WINDOW, occurrence, state.serialAnd) || EMPHASIS_FALLBACK.AREAS_OF_EMPHASIS, "Areas of emphasis (per-role)");
   }
 
   // 4) KEYWORD_JOIN (capability lines) — repeated slots slide by occurrence so
@@ -308,7 +317,7 @@ function mapOne(slot, keywords, data, state) {
   if (KEYWORD_JOIN[name]) {
     const { cats, k, avoid } = KEYWORD_JOIN[name];
     const limit = state.maxKeywords ? Math.min(k, state.maxKeywords) : k;
-    return make("keywords", capabilityJoin(keywords, state.byCat, cats, limit, state.universe, state.allowGaps, avoid, occurrence), `Top ${cats.join("+")} keywords`);
+    return make("keywords", capabilityJoin(keywords, state.byCat, cats, limit, state.universe, state.allowGaps, avoid, occurrence, state.serialAnd), `Top ${cats.join("+")} keywords`);
   }
 
   // 5) COURSE_TOPICS — N technologies only, never people skills. Course topics
@@ -316,7 +325,7 @@ function mapOne(slot, keywords, data, state) {
   if (COURSE_RE.test(name)) {
     const n = Number.parseInt((name.match(COURSE_COUNT_RE) || [])[1], 10) || 3;
     const pool = capabilityPool(keywords, state.byCat, ["technology"], state.universe, state.allowGaps);
-    return make("keywords", emphasisSlice(pool, n, 0), `${n} course topics (technical)`);
+    return make("keywords", emphasisSlice(pool, n, 0, state.serialAnd), `${n} course topics (technical)`);
   }
 
   // 6) LIBRARY_MATCH — real accomplishment / project fragments
@@ -352,6 +361,8 @@ export function mapSlots(slots, keywords, data, options = {}) {
     used: new Set(),
     allowFabricated: allowGaps,
     maxKeywords,
+    // Serial "and" before the last list item (prose lists; cover letter only).
+    serialAnd: !!options.serialAnd,
   };
   return slots.map((slot) => ({ ...slot, ...mapOne(slot, keywords, data, state) }));
 }

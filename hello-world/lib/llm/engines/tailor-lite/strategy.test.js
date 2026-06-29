@@ -55,6 +55,13 @@ describe("mapSlots (template strategies)", () => {
     expect(byKey["WIDGET_FROBNICATOR::0"].strategy).toBe("manual");
     expect(byKey["WIDGET_FROBNICATOR::0"].value).toBe("");
   });
+
+  it("serialAnd joins prose lists with an Oxford 'and'; default stays comma-only", () => {
+    const plain = mapSlots([slot("JOB_RELEVANT_TECHNOLOGIES")], keywords, data, { aggressiveness: 3 })[0].value;
+    const anded = mapSlots([slot("JOB_RELEVANT_TECHNOLOGIES")], keywords, data, { aggressiveness: 3, serialAnd: true })[0].value;
+    expect(plain).not.toMatch(/, and /);
+    expect(anded).toMatch(/, and \S/);
+  });
 });
 
 describe("mapSlots capability lines vary per occurrence", () => {
