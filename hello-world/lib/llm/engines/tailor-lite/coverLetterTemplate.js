@@ -19,6 +19,11 @@ const TEMPLATE_TEXT_PATCHES = [
   // The soft-skills line reads better as "experience in <soft skills>" than
   // "leadership in <soft skills>".
   ["leadership in", "experience in"],
+  // Warmer, plainer phrasing for the teaching clause (still professional).
+  [
+    "alongside the higher-education instruction that maps directly to this role",
+    "plus the classroom teaching experience that fits this role well",
+  ],
 ];
 
 // Assemble (once) the cover-letter template as a Node Buffer for loadDocx(),

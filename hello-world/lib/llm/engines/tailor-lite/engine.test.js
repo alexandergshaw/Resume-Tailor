@@ -101,6 +101,9 @@ describe("embeddedEngine.tailorCoverLetter", () => {
     // Soft-skills line reads "experience in", not "leadership in".
     expect(res.result).toContain("experience in");
     expect(res.result).not.toContain("leadership in");
+    // Teaching clause uses warmer, plainer phrasing.
+    expect(res.result).toContain("classroom teaching experience that fits this role well");
+    expect(res.result).not.toContain("alongside the higher-education instruction");
     // The opening "hands-on work with …" tech list leads with real technologies
     // (languages/frameworks), not just collaboration tools.
     expect(res.result).toMatch(/hands-on work with [^.]*\b(React|TypeScript|JavaScript|PostgreSQL|SQL)\b/);
