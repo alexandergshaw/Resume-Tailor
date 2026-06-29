@@ -356,6 +356,16 @@ function mapOne(slot, keywords, data, state) {
     return make("keywords", emphasisSlice(pool, 1, occurrence, state.serialAnd) || EMPHASIS_FALLBACK.AREA_OF_EMPHASIS, "Teaching emphasis (subjects taught)");
   }
   if (name === "AREAS_OF_EMPHASIS") {
+    // For an academic-subject posting (e.g. teaching math), the full-time software
+    // roles lead with the quantitative, math-adjacent facets of that work (data
+    // analysis, mathematical modeling, …) so they read as relevant to the role,
+    // rather than the engineering domains used for software postings.
+    if (state.ctx.postingCategories.has("subject")) {
+      const bridge = (data.profile.academic_job_emphases || []).filter((s) => typeof s === "string" && s.trim());
+      if (bridge.length) {
+        return make("keywords", emphasisSlice(bridge, EMPHASIS_WINDOW, occurrence, state.serialAnd), "Areas of emphasis (academic bridge)");
+      }
+    }
     const pool = capabilityPool(keywords, state.byCat, ["domain"], state.universe, state.allowGaps, JOB_DOMAIN_AVOID).slice(0, EMPHASIS_POOL);
     return make("keywords", emphasisSlice(pool, EMPHASIS_WINDOW, occurrence, state.serialAnd) || EMPHASIS_FALLBACK.AREAS_OF_EMPHASIS, "Areas of emphasis (per-role)");
   }

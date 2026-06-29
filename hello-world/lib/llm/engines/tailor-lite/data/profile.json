@@ -1,5 +1,13 @@
 {
-  "_comment": "User-editable. `values` keys are normalized placeholder names filled as static facts the posting can't supply (rank tiers, function, scale figures) plus the five skills-section heading labels. `teaching_subjects` is the ordered list of technical subjects you taught — it drives the adjunct-professor AREA_OF_EMPHASIS so teaching emphasis always leads with the subjects you taught, independent of the posting.",
+  "_comment": "User-editable. `values` keys are normalized placeholder names filled as static facts the posting can't supply (rank tiers, function, scale figures) plus the five skills-section heading labels. `teaching_subjects` is the ordered list of technical subjects you taught — it drives the adjunct-professor AREA_OF_EMPHASIS so teaching emphasis always leads with the subjects you taught, independent of the posting. `academic_job_emphases` is the ordered list of quantitative, math-adjacent facets of your full-time software work — it replaces the engineering-domain AREAS_OF_EMPHASIS on your full-time roles when the posting is an academic-subject (e.g. math) teaching role, so those roles read as relevant to teaching math.",
+  "academic_job_emphases": [
+    "Data Analysis",
+    "Mathematical Modeling",
+    "Quantitative Analysis",
+    "Statistical Reporting",
+    "Data Modeling",
+    "Algorithm Design"
+  ],
   "teaching_subjects": [
     "Web Development",
     "Software Engineering",

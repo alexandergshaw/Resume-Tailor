@@ -117,6 +117,23 @@ describe("mapSlots areas of emphasis (per-role)", () => {
     }
   });
 
+  it("uses the math-adjacent academic bridge for full-time job emphasis on an academic posting", () => {
+    const data = {
+      profile: {
+        values: {},
+        academic_job_emphases: ["Data Analysis", "Mathematical Modeling", "Quantitative Analysis"],
+      },
+    };
+    const mathKw = { subject: [{ canonical: "College Algebra", score: 4, count: 1 }] };
+    const value = mapSlots([slot("AREAS_OF_EMPHASIS", 0)], mathKw, data, { aggressiveness: 3 })[0].value;
+    expect(value).toContain("Data Analysis");
+    expect(value).toContain("Mathematical Modeling");
+
+    // A software posting still uses the engineering domains, not the bridge list.
+    const csValue = mapSlots([slot("AREAS_OF_EMPHASIS", 0)], kw, data, { aggressiveness: 3 })[0].value;
+    expect(csValue).not.toContain("Data Analysis");
+  });
+
   it("never lists 'Education' in a job's emphasis or solutions, even for an education posting", () => {
     // An education-sector posting where "Education" outscores the real domains.
     const eduKw = {
