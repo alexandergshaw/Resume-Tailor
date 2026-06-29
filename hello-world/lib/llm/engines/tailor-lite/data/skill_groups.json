@@ -12,7 +12,10 @@
         "REST APIs",
         "Backend Integration Workflows",
         "Enterprise Application Modernization",
-        "Event-Driven Architecture"
+        "Event-Driven Architecture",
+        "OAuth",
+        "JSON",
+        "Authentication"
       ]
     },
     {
@@ -45,7 +48,10 @@
         "Enterprise Dashboards",
         "Distributed Systems",
         "Data Transformation Pipelines",
-        "Enterprise Software Platforms"
+        "Enterprise Software Platforms",
+        "Salesforce",
+        "Workday",
+        "Google Analytics"
       ]
     },
     {
@@ -74,6 +80,18 @@
         "Microsoft Teams",
         "Zoom",
         "Google Workspace"
+      ]
+    },
+    {
+      "heading": "Content Management & PHP Development",
+      "categories": ["technology", "tool_platform"],
+      "keywords": [
+        "Drupal",
+        "WordPress",
+        "PHP",
+        "Composer",
+        "Pantheon",
+        "Content Management Systems"
       ]
     }
   ]
