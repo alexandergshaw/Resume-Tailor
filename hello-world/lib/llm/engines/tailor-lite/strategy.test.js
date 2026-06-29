@@ -228,6 +228,26 @@ describe("mapSlots academic-subject catering (skills row + summary focus)", () =
     const csFocus = mapSlots([slot("ROLE_RELEVANT_FOCUS")], csKw, data, { aggressiveness: 3 })[0].value;
     expect(csFocus).not.toContain("College Algebra");
   });
+
+  it("swaps in the curated data/math override for capability lines on an academic posting", () => {
+    const overridden = {
+      profile: {
+        values: {},
+        academic_overrides: {
+          TECHNICAL_CAPABILITIES: ["SQL", "Data Modeling", "Data Visualization"],
+          DOMAIN_CAPABILITIES: ["Data Analysis", "Statistics", "Mathematical Modeling"],
+        },
+      },
+    };
+    const tech = mapSlots([slot("TECHNICAL_CAPABILITIES")], mathKw, overridden, { aggressiveness: 3 })[0].value;
+    expect(tech).toContain("Data Modeling");
+    const dom = mapSlots([slot("DOMAIN_CAPABILITIES")], mathKw, overridden, { aggressiveness: 3 })[0].value;
+    expect(dom).toContain("Mathematical Modeling");
+
+    // A software posting ignores the override and uses the candidate's real skills.
+    const csTech = mapSlots([slot("TECHNICAL_CAPABILITIES")], csKw, overridden, { aggressiveness: 3 })[0].value;
+    expect(csTech).not.toContain("Data Modeling");
+  });
 });
 
 describe("mapSlots leadership capabilities (no summary redundancy)", () => {

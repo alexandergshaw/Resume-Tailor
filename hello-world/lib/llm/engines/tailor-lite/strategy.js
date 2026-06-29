@@ -374,9 +374,19 @@ function mapOne(slot, keywords, data, state) {
   // each repeat shows a distinct slice instead of the same list every time.
   if (KEYWORD_JOIN[name]) {
     const { cats, k, avoid, academic } = KEYWORD_JOIN[name];
-    // An academic-subject posting leads the list with the subjects taught.
-    const effectiveCats = academic && state.ctx.postingCategories.has("subject") ? ["subject", ...cats] : cats;
     const limit = state.maxKeywords ? Math.min(k, state.maxKeywords) : k;
+    // On an academic-subject posting, a curated list (profile.academic_overrides)
+    // can REPLACE a capability line so the cover letter, summary, and job bullets
+    // surface data/math-relevant tech and domains instead of the web-stack defaults.
+    if (state.ctx.postingCategories.has("subject")) {
+      const override = (data.profile.academic_overrides || {})[name];
+      const items = Array.isArray(override) ? override.filter((s) => typeof s === "string" && s.trim()) : null;
+      if (items && items.length) {
+        return make("keywords", emphasisSlice(items, limit, occurrence, state.serialAnd), `Academic override (${name})`);
+      }
+    }
+    // Otherwise an `academic` slot still leads the list with the subjects taught.
+    const effectiveCats = academic && state.ctx.postingCategories.has("subject") ? ["subject", ...cats] : cats;
     return make("keywords", capabilityJoin(keywords, state.byCat, effectiveCats, limit, state.universe, state.allowGaps, avoid, occurrence, state.serialAnd), `Top ${effectiveCats.join("+")} keywords`);
   }
 

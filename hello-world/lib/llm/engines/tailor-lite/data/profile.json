@@ -8,6 +8,11 @@
     "Data Modeling",
     "Algorithm Design"
   ],
+  "_academic_overrides_comment": "On an academic-subject posting, these curated lists REPLACE the named capability lines (drawn from the candidate's skills by default) so the cover letter, summary, and job bullets surface data/math-relevant tech and domains instead of the web-stack defaults. Keyed by normalized placeholder name; each list slides per occurrence for variety. Edit to whatever data/quantitative tech you can speak to.",
+  "academic_overrides": {
+    "TECHNICAL_CAPABILITIES": ["SQL", "PostgreSQL", "Data Modeling", "Data Visualization", "Data Engineering", "ETL"],
+    "DOMAIN_CAPABILITIES": ["Data Analysis", "Quantitative Analysis", "Statistics", "Mathematical Modeling", "Business Intelligence"]
+  },
   "teaching_subjects": [
     "Web Development",
     "Software Engineering",
