@@ -91,6 +91,11 @@ const KEYWORD_JOIN = {
     avoid: ["lead", "leading", "leadership", "cross", "functional", "team", "teams"],
   },
   JOB_RELEVANT_SOLUTIONS: { cats: ["domain"], k: 4, avoid: JOB_DOMAIN_AVOID },
+  // Résumé summary tail ("Experienced with …, and {{ROLE_RELEVANT_FOCUS}}"). Same
+  // as DOMAIN_CAPABILITIES for software postings, but `academic` lets an academic
+  // posting lead the list with the subjects taught (College Algebra, …). Used only
+  // in the summary, so the cover letter and job bullets are untouched.
+  ROLE_RELEVANT_FOCUS: { cats: ["domain"], k: 4, academic: true },
 };
 
 // Words too generic to make two phrases "the same concept" on their own.
@@ -198,11 +203,20 @@ function emphasisSlice(pool, size, offset, serialAnd = false) {
 const SKILL_ROW_CATEGORIES = ["domain", "technology", "tool_platform", "soft_skill", "methodology"];
 const SKILL_ROW_MAX = 16;
 
+// The five rows map one taxonomy category each. For an academic-subject posting
+// (e.g. College Algebra), the first row ("Role-Specific Expertise") leads with the
+// subjects taught instead of engineering domains; everything else is unchanged, so
+// software postings keep the exact default rows.
+function skillRowCategories(ctx) {
+  if (!ctx.postingCategories.has("subject")) return SKILL_ROW_CATEGORIES;
+  return ["subject", ...SKILL_ROW_CATEGORIES.slice(1)];
+}
+
 // Build the 5 skills rows: candidate skills for each category, posting-matched
 // first, then (per aggressiveness) swap trailing low-relevance ones for posting
 // gap keywords, keeping each row's item count fixed.
 function buildSkillRows(keywords, byCat, ctx, universe, budget) {
-  const rows = SKILL_ROW_CATEGORIES.map((cat) => {
+  const rows = skillRowCategories(ctx).map((cat) => {
     const matched = [];
     const rest = [];
     for (const s of byCat[cat] || []) {
@@ -349,9 +363,11 @@ function mapOne(slot, keywords, data, state) {
   // 4) KEYWORD_JOIN (capability lines) — repeated slots slide by occurrence so
   // each repeat shows a distinct slice instead of the same list every time.
   if (KEYWORD_JOIN[name]) {
-    const { cats, k, avoid } = KEYWORD_JOIN[name];
+    const { cats, k, avoid, academic } = KEYWORD_JOIN[name];
+    // An academic-subject posting leads the list with the subjects taught.
+    const effectiveCats = academic && state.ctx.postingCategories.has("subject") ? ["subject", ...cats] : cats;
     const limit = state.maxKeywords ? Math.min(k, state.maxKeywords) : k;
-    return make("keywords", capabilityJoin(keywords, state.byCat, cats, limit, state.universe, state.allowGaps, avoid, occurrence, state.serialAnd), `Top ${cats.join("+")} keywords`);
+    return make("keywords", capabilityJoin(keywords, state.byCat, effectiveCats, limit, state.universe, state.allowGaps, avoid, occurrence, state.serialAnd), `Top ${effectiveCats.join("+")} keywords`);
   }
 
   // 5) COURSE_TOPICS — the subjects taught that this posting asks for. For an

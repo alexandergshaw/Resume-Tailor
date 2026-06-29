@@ -188,6 +188,31 @@ describe("mapSlots areas of emphasis (per-role)", () => {
   });
 });
 
+describe("mapSlots academic-subject catering (skills row + summary focus)", () => {
+  const data = { profile: { values: {} } };
+  // The real profile teaches College Algebra etc., so these draw from the bundled
+  // skill_groups / taxonomy.
+  const mathKw = { subject: [{ canonical: "College Algebra", score: 4, count: 1 }] };
+  const csKw = { domain: [{ canonical: "Web Development", score: 9, count: 1 }] };
+
+  it("leads the first skills row with subjects for an academic posting, domains otherwise", () => {
+    const mathRow = mapSlots([slot("2_LINES_OF_COMMA_SEPARATED_SKILLS", 0)], mathKw, data, { aggressiveness: 3 })[0].value;
+    expect(mathRow).toContain("College Algebra");
+
+    const csRow = mapSlots([slot("2_LINES_OF_COMMA_SEPARATED_SKILLS", 0)], csKw, data, { aggressiveness: 3 })[0].value;
+    expect(csRow).not.toContain("College Algebra");
+    expect(csRow).toContain("Web Development");
+  });
+
+  it("ROLE_RELEVANT_FOCUS (summary tail) leads with subjects for an academic posting, domains otherwise", () => {
+    const mathFocus = mapSlots([slot("ROLE_RELEVANT_FOCUS")], mathKw, data, { aggressiveness: 3 })[0].value;
+    expect(mathFocus.startsWith("College Algebra")).toBe(true);
+
+    const csFocus = mapSlots([slot("ROLE_RELEVANT_FOCUS")], csKw, data, { aggressiveness: 3 })[0].value;
+    expect(csFocus).not.toContain("College Algebra");
+  });
+});
+
 describe("mapSlots leadership capabilities (no summary redundancy)", () => {
   // The summary sentence already says "leading cross-functional teams through …",
   // so these echoing capabilities must be suppressed.
