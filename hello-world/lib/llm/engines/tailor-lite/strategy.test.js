@@ -137,16 +137,43 @@ describe("mapSlots areas of emphasis (per-role)", () => {
     }
   });
 
-  it("teaching emphasis (AREA_OF_EMPHASIS) leads with the taught subjects, independent of posting", () => {
+  it("teaching emphasis draws only from taught subjects, never the posting's own domains", () => {
     const data = { profile: { values: {}, teaching_subjects: ["Web Development", "Software Engineering", "Database Systems"] } };
     // A posting whose domains differ from the taught subjects must not change them.
     const kw2 = { domain: [{ canonical: "Payments", score: 9, count: 1 }, { canonical: "ETL", score: 8, count: 1 }] };
     const teaching = [0, 1].map(
       (occ) => mapSlots([slot("AREA_OF_EMPHASIS", occ)], kw2, data, { aggressiveness: 3 })[0].value,
     );
-    expect(teaching[0]).toBe("Web Development"); // always leads with the first taught subject
+    expect(teaching[0]).toBe("Web Development");
     expect(teaching[1]).toBe("Software Engineering");
     expect(teaching).not.toContain("Payments"); // never a posting domain
+  });
+
+  it("leads teaching emphasis and course topics with the subjects an academic posting names", () => {
+    const data = {
+      profile: {
+        values: {},
+        teaching_subjects: ["Web Development", "Software Engineering", "College Algebra", "Precalculus", "Statistics"],
+      },
+    };
+    // A College Algebra posting: the subject is named outright (tier 2); the other
+    // math subjects share its "subject" category (tier 1); the CS subjects do not.
+    const mathKw = { subject: [{ canonical: "College Algebra", score: 4, count: 1 }] };
+    const emphasis = [0, 1].map(
+      (occ) => mapSlots([slot("AREA_OF_EMPHASIS", occ)], mathKw, data, { aggressiveness: 3 })[0].value,
+    );
+    expect(emphasis[0]).toBe("College Algebra"); // posting-named subject leads
+    expect(emphasis[1]).toBe("Precalculus"); // same-category subject, not a CS one
+    expect(emphasis).not.toContain("Web Development");
+
+    const topics = mapSlots(
+      [slot("LIST_OF_3_COURSE_TOPICS_RELEVANT_TO_JOB_POSTING", 0)],
+      mathKw,
+      data,
+      { aggressiveness: 3 },
+    )[0].value;
+    expect(topics.startsWith("College Algebra")).toBe(true);
+    expect(topics).not.toContain("Web Development");
   });
 
   it("teaching emphasis falls back to subjects + people skills (never job domains) without a taught list", () => {

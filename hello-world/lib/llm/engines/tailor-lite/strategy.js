@@ -11,7 +11,7 @@
 // Anything left over -> MANUAL (empty). The pools cover every fragment name in
 // the bundled template, so a filled résumé never shows raw braces.
 
-import { canonicalize } from "./keywords.js";
+import { canonicalize, categorize } from "./keywords.js";
 import { candidateUniverse, candidateSkillsByCategory } from "./universe.js";
 
 const GAP_BUDGET = { 1: 0, 2: 1, 3: 3, 4: 6, 5: 10 };
@@ -27,13 +27,39 @@ function clampAggressiveness(value) {
 function buildContext(keywords) {
   const postingScore = new Map();
   const jobCanonical = new Set();
+  const postingCategories = new Set();
   for (const category of Object.keys(keywords)) {
+    if ((keywords[category] || []).length) postingCategories.add(category);
     for (const { canonical, score } of keywords[category]) {
       postingScore.set(canonical.toLowerCase(), score);
       jobCanonical.add(canonical.toLowerCase());
     }
   }
-  return { postingScore, jobCanonical };
+  return { postingScore, jobCanonical, postingCategories };
+}
+
+// Rank the candidate's taught subjects against a posting so the adjunct teaching
+// emphasis and course topics surface what THIS posting actually teaches. Tiers:
+//   2 — the posting names the subject outright (e.g. "College Algebra");
+//   1 — an ACADEMIC subject whose "subject" category the posting emphasizes (so a
+//       College Algebra posting groups the other math courses together);
+//   0 — everything else.
+// The tier-1 affinity is deliberately limited to the "subject" category: a
+// software posting still ranks its teaching subjects by exact match + the
+// authored order, exactly as before — only academic-subject postings regroup.
+// Stable within each tier (authored order is the tie-break).
+function postingTier(subject, ctx) {
+  const canon = canonicalize(subject);
+  if (canon && ctx.jobCanonical.has(canon.toLowerCase())) return 2;
+  if (categorize(subject) === "subject" && ctx.postingCategories.has("subject")) return 1;
+  return 0;
+}
+
+function rankTaughtSubjects(subjects, ctx) {
+  return subjects
+    .map((s, i) => ({ s, i, tier: postingTier(s, ctx) }))
+    .sort((a, b) => b.tier - a.tier || a.i - b.i)
+    .map((x) => x.s);
 }
 
 // --- KEYWORD_JOIN ----------------------------------------------------------
@@ -311,7 +337,7 @@ function mapOne(slot, keywords, data, state) {
   if (name === "AREA_OF_EMPHASIS") {
     const taught = (data.profile.teaching_subjects || []).filter((s) => typeof s === "string" && s.trim());
     const pool = taught.length
-      ? taught
+      ? rankTaughtSubjects(taught, state.ctx)
       : capabilityPool(keywords, state.byCat, TEACHING_FALLBACK_CATS, state.universe, state.allowGaps).slice(0, EMPHASIS_POOL);
     return make("keywords", emphasisSlice(pool, 1, occurrence, state.serialAnd) || EMPHASIS_FALLBACK.AREA_OF_EMPHASIS, "Teaching emphasis (subjects taught)");
   }
@@ -328,12 +354,26 @@ function mapOne(slot, keywords, data, state) {
     return make("keywords", capabilityJoin(keywords, state.byCat, cats, limit, state.universe, state.allowGaps, avoid, occurrence, state.serialAnd), `Top ${cats.join("+")} keywords`);
   }
 
-  // 5) COURSE_TOPICS — N technologies only, never people skills. Course topics
-  // should read as the technical subjects taught, not soft skills.
+  // 5) COURSE_TOPICS — the subjects taught that this posting asks for. For an
+  // academic-subject posting (e.g. College Algebra) lead with the matching taught
+  // subjects; otherwise fall back to the candidate's technologies (the original
+  // behavior for software postings). Never people skills.
   if (COURSE_RE.test(name)) {
     const n = Number.parseInt((name.match(COURSE_COUNT_RE) || [])[1], 10) || 3;
-    const pool = capabilityPool(keywords, state.byCat, ["technology"], state.universe, state.allowGaps);
-    return make("keywords", emphasisSlice(pool, n, 0, state.serialAnd), `${n} course topics (technical)`);
+    const taught = (data.profile.teaching_subjects || []).filter((s) => typeof s === "string" && s.trim());
+    const subjectTopics = rankTaughtSubjects(taught, state.ctx).filter(
+      (s) => categorize(s) === "subject" && postingTier(s, state.ctx) >= 1,
+    );
+    const techPool = capabilityPool(keywords, state.byCat, ["technology"], state.universe, state.allowGaps);
+    const seen = new Set();
+    const pool = [];
+    for (const item of [...subjectTopics, ...techPool]) {
+      const low = item.toLowerCase();
+      if (seen.has(low)) continue;
+      seen.add(low);
+      pool.push(item);
+    }
+    return make("keywords", emphasisSlice(pool, n, 0, state.serialAnd), `${n} course topics (subjects + technical)`);
   }
 
   // 6) LIBRARY_MATCH — real accomplishment / project fragments

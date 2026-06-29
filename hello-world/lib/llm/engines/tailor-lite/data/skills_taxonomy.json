@@ -1,5 +1,5 @@
 {
-  "_comment": "User-editable buzzword/synonym web. canonical = display casing inserted/surfaced; aliases (lowercased; hyphens & slashes treated as spaces) are the synonyms matched against the posting via longest n-gram match. category is one of: technology, tool_platform, methodology, soft_skill, certification, domain. Set match_canonical:false for short/ambiguous canonicals so only the aliases match.",
+  "_comment": "User-editable buzzword/synonym web. canonical = display casing inserted/surfaced; aliases (lowercased; hyphens & slashes treated as spaces) are the synonyms matched against the posting via longest n-gram match. category is one of: technology, tool_platform, methodology, soft_skill, certification, domain, subject. The `subject` category is for academic courses taught (e.g. College Algebra); it never feeds engineering skill rows or job emphases — it only drives the adjunct teaching emphasis and course topics when a teaching posting names those subjects. Set match_canonical:false for short/ambiguous canonicals so only the aliases match.",
   "entries": [
     { "canonical": "JavaScript", "category": "technology", "aliases": ["javascript", "js", "ecmascript", "es6", "vanilla js"] },
     { "canonical": "TypeScript", "category": "technology", "aliases": ["ts"] },
@@ -192,6 +192,14 @@
     { "canonical": "SaaS", "category": "domain", "aliases": ["software as a service"] },
     { "canonical": "Payments", "category": "domain", "aliases": ["payment processing", "payments infrastructure"] },
     { "canonical": "Supply Chain", "category": "domain", "aliases": ["logistics"] },
-    { "canonical": "Telecommunications", "category": "domain", "aliases": ["telecom"] }
+    { "canonical": "Telecommunications", "category": "domain", "aliases": ["telecom"] },
+
+    { "canonical": "College Algebra", "category": "subject", "aliases": ["college algebra"] },
+    { "canonical": "Algebra", "category": "subject", "aliases": ["algebra", "intermediate algebra", "elementary algebra"] },
+    { "canonical": "Precalculus", "category": "subject", "aliases": ["precalculus", "pre calculus", "college algebra and trigonometry"] },
+    { "canonical": "Trigonometry", "category": "subject", "aliases": ["trigonometry", "trig"] },
+    { "canonical": "Calculus", "category": "subject", "aliases": ["calculus", "differential calculus", "integral calculus"] },
+    { "canonical": "Statistics", "category": "subject", "aliases": ["statistics", "elementary statistics", "introductory statistics", "probability and statistics"] },
+    { "canonical": "Mathematics", "category": "subject", "aliases": ["mathematics", "math", "quantitative reasoning", "quantitative literacy", "developmental mathematics", "developmental math"] }
   ]
 }
