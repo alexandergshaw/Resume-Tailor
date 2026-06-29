@@ -10,6 +10,7 @@ import skillGroups from "./data/skill_groups.json";
 
 let cache = null;
 let byCategoryCache = null;
+let conditionalCache = null;
 
 function extractCandidateKeywords() {
   const blob = [];
@@ -18,6 +19,29 @@ function extractCandidateKeywords() {
     for (const kw of group.keywords || []) blob.push(kw);
   }
   return extractKeywords(blob.join(". "));
+}
+
+// Canonical (lowercased) skills that belong to a `conditional` skill group: real
+// skills that should only surface in the résumé when the posting actually asks for
+// them, never as padding. The strategy keeps them out of the unmatched "rest" of a
+// skills row / capability line.
+export function conditionalSkillSet() {
+  if (conditionalCache) return conditionalCache;
+  const set = new Set();
+  for (const group of skillGroups.groups || []) {
+    if (!group.conditional) continue;
+    // Extract each keyword on its own so adjacency never merges two (e.g. joined
+    // "PHP. Composer" would match the "php composer" Composer alias and lose PHP).
+    for (const kw of group.keywords || []) {
+      const grouped = extractKeywords(kw);
+      for (const category of Object.keys(grouped)) {
+        if (category === "topic") continue;
+        for (const k of grouped[category]) set.add(k.canonical.toLowerCase());
+      }
+    }
+  }
+  conditionalCache = set;
+  return set;
 }
 
 export function candidateUniverse() {

@@ -12,7 +12,7 @@
 // the bundled template, so a filled résumé never shows raw braces.
 
 import { canonicalize } from "./keywords.js";
-import { candidateUniverse, candidateSkillsByCategory } from "./universe.js";
+import { candidateUniverse, candidateSkillsByCategory, conditionalSkillSet } from "./universe.js";
 
 const GAP_BUDGET = { 1: 0, 2: 1, 3: 3, 4: 6, 5: 10 };
 
@@ -186,7 +186,14 @@ function capabilityPool(keywords, byCat, cats, universe, allowGaps, avoid) {
     if (!allowGaps && !universe.has(item.canonical.toLowerCase())) continue;
     push(item.canonical);
   }
-  for (const c of cats) for (const s of byCat[c] || []) push(s);
+  // Pad with the candidate's own skills — but never with `conditional` skills,
+  // which only belong here when the posting itself asks for them (i.e. when they
+  // arrive via `merged` above).
+  const conditional = conditionalSkillSet();
+  for (const c of cats) for (const s of byCat[c] || []) {
+    if (conditional.has((canonicalize(s) || s).toLowerCase())) continue;
+    push(s);
+  }
   return out;
 }
 
@@ -251,12 +258,16 @@ const SKILL_ROW_MAX = 16;
 // of engineering domains; everything else is unchanged, so software postings keep
 // the exact default rows.
 function buildSkillRows(keywords, byCat, ctx, universe, budget, area) {
+  const conditional = conditionalSkillSet();
   const orderByPosting = (items) => {
     const matched = [];
     const rest = [];
     for (const s of items) {
       const canon = (canonicalize(s) || s).toLowerCase();
-      (ctx.postingScore.has(canon) ? matched : rest).push(s);
+      if (ctx.postingScore.has(canon)) matched.push(s);
+      // A conditional skill only appears when the posting matches it — never as
+      // unmatched row padding.
+      else if (!conditional.has(canon)) rest.push(s);
     }
     return [...matched, ...rest];
   };

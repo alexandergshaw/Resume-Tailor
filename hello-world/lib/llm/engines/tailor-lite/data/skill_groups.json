@@ -1,5 +1,5 @@
 {
-  "_comment": "User-editable. Drives SKILLS_DISTRIBUTE: the five skill blocks are reordered so the group most relevant to the posting leads, and the skills within each row are reordered so posting-matched ones come first. `keywords` are your exact display strings (kept verbatim — nothing is dropped or invented); `categories` is fallback membership used only for ranking. File order is the deterministic tie-break, so the default (no posting signal) order matches the résumé.",
+  "_comment": "User-editable. Drives SKILLS_DISTRIBUTE: the five skill blocks are reordered so the group most relevant to the posting leads, and the skills within each row are reordered so posting-matched ones come first. `keywords` are your exact display strings (kept verbatim — nothing is dropped or invented); `categories` is fallback membership used only for ranking. File order is the deterministic tie-break, so the default (no posting signal) order matches the résumé. A group with `\"conditional\": true` holds specialized skills that are part of your skill set (so they still match a posting that asks for them) but are NOT padded into the skills rows / capability lines unless the posting actually mentions them — use it for niche stacks you don't want on every résumé.",
   "groups": [
     {
       "heading": "Enterprise Integration & Systems Architecture",
@@ -12,10 +12,7 @@
         "REST APIs",
         "Backend Integration Workflows",
         "Enterprise Application Modernization",
-        "Event-Driven Architecture",
-        "OAuth",
-        "JSON",
-        "Authentication"
+        "Event-Driven Architecture"
       ]
     },
     {
@@ -48,10 +45,7 @@
         "Enterprise Dashboards",
         "Distributed Systems",
         "Data Transformation Pipelines",
-        "Enterprise Software Platforms",
-        "Salesforce",
-        "Workday",
-        "Google Analytics"
+        "Enterprise Software Platforms"
       ]
     },
     {
@@ -83,7 +77,8 @@
       ]
     },
     {
-      "heading": "Content Management & PHP Development",
+      "heading": "CMS, PHP & Integration Platforms",
+      "conditional": true,
       "categories": ["technology", "tool_platform"],
       "keywords": [
         "Drupal",
@@ -91,7 +86,13 @@
         "PHP",
         "Composer",
         "Pantheon",
-        "Content Management Systems"
+        "Content Management Systems",
+        "OAuth",
+        "JSON",
+        "Authentication",
+        "Salesforce",
+        "Workday",
+        "Google Analytics"
       ]
     }
   ]
