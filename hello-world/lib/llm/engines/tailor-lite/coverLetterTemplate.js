@@ -26,6 +26,12 @@ const TEMPLATE_TEXT_PATCHES = [
     "My background spans hands-on work with {{TECHNICAL_CAPABILITIES}}, domain expertise in {{DOMAIN_CAPABILITIES}}, and leadership in {{LEADERSHIP_CAPABILITIES}}, alongside the higher-education instruction that maps directly to this role.",
     "My background spans hands-on work with {{TECHNICAL_CAPABILITIES}}. I pair that with domain expertise in {{DOMAIN_CAPABILITIES}} and experience in {{LEADERSHIP_CAPABILITIES}}.",
   ],
+  // Anchor the industry half of the intro sentence with concrete production
+  // scale (kept as literals here so the letter can state exact daily figures).
+  [
+    "{{YEARS_OF_EXPERIENCE}}+ years in industry and several years teaching",
+    "{{YEARS_OF_EXPERIENCE}}+ years in industry building systems that support 10,000 daily users and 100,000 daily service hits, and several years teaching",
+  ],
   // Fold the headline teaching figures into the intro sentence so they land up
   // front, right where the adjunct background is introduced.
   [
