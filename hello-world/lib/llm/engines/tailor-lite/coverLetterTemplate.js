@@ -30,7 +30,7 @@ const TEMPLATE_TEXT_PATCHES = [
   // scale (kept as literals here so the letter can state exact daily figures).
   [
     "{{YEARS_OF_EXPERIENCE}}+ years in industry and several years teaching",
-    "{{YEARS_OF_EXPERIENCE}}+ years in industry building systems that support 10,000 daily users and 100,000 daily service hits, and several years teaching",
+    "{{YEARS_OF_EXPERIENCE}}+ years in industry building systems that support 10,000 daily users and 75,000 daily service hits, and several years teaching",
   ],
   // Fold the headline teaching figures into the intro sentence so they land up
   // front, right where the adjunct background is introduced.
