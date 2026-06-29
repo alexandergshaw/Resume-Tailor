@@ -18,13 +18,19 @@ let cache = null;
 const TEMPLATE_TEXT_PATCHES = [
   // Opening paragraph rewrite. The original third sentence was one run-on with
   // three comma-joined sub-lists (technical / domain / leadership capabilities)
-  // plus a trailing teaching clause. Break it into separate sentences, keep the
-  // soft-skills line as "experience in <soft skills>" (not "leadership in"), and
-  // lead the teaching half with concrete adjunct accomplishments (courses built/
-  // revamped, students per term) in the warmer, plainer voice.
+  // plus a trailing teaching clause. Break it into separate sentences and keep the
+  // soft-skills line as "experience in <soft skills>" (not "leadership in"). The
+  // concrete adjunct figures (courses built/revamped, students per term) now live
+  // in the intro sentence (see the "teaching as an adjunct professor" patch below).
   [
     "My background spans hands-on work with {{TECHNICAL_CAPABILITIES}}, domain expertise in {{DOMAIN_CAPABILITIES}}, and leadership in {{LEADERSHIP_CAPABILITIES}}, alongside the higher-education instruction that maps directly to this role.",
-    "My background spans hands-on work with {{TECHNICAL_CAPABILITIES}}. I pair that with domain expertise in {{DOMAIN_CAPABILITIES}} and experience in {{LEADERSHIP_CAPABILITIES}}. In the classroom, I have designed and revamped eight project-based courses and taught more than 100 students each term. It is teaching experience that fits this role well.",
+    "My background spans hands-on work with {{TECHNICAL_CAPABILITIES}}. I pair that with domain expertise in {{DOMAIN_CAPABILITIES}} and experience in {{LEADERSHIP_CAPABILITIES}}.",
+  ],
+  // Fold the headline teaching figures into the intro sentence so they land up
+  // front, right where the adjunct background is introduced.
+  [
+    "teaching as an adjunct professor, I bring both genuine technical depth",
+    "teaching as an adjunct professor, during which I designed and revamped eight project-based courses and taught more than 100 students each term, I bring both genuine technical depth",
   ],
   // The opening paragraph now carries the headline teaching figures (courses
   // built, students per term), so soften paragraph 3 to keep the qualitative
