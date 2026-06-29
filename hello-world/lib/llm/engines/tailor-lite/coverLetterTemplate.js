@@ -34,13 +34,15 @@ const TEMPLATE_TEXT_PATCHES = [
   ],
   // Split the intro into two sentences: the credentials stand on their own
   // ("I am a …" gives the otherwise-subjectless "As a …" clause a main verb),
-  // then the "I bring …" statement follows as its own sentence. A participial
-  // phrase ("designing and revamping … for … students") mirrors the industry
-  // half's "building systems that support …" so the credentials read in parallel.
+  // then the "I bring …" statement follows as its own sentence. The teaching half
+  // sets its activities off with a comma and states them as two distinct actions
+  // ("designing and revamping … courses and teaching … students") so the figures
+  // are unambiguous — not the stacked "-ing" run or "courses for … students" that
+  // read as if the courses were sized for the students.
   ["As a {{RANK}} {{PRIMARY_FUNCTION}} with", "I am a {{RANK}} {{PRIMARY_FUNCTION}} with"],
   [
-    "teaching as an adjunct professor, I bring both genuine technical depth",
-    "teaching as an adjunct professor designing and revamping eight project-based courses for more than 100 students each term. I bring both genuine technical depth",
+    "several years teaching as an adjunct professor, I bring both genuine technical depth",
+    "several years as an adjunct professor, designing and revamping eight project-based courses and teaching more than 100 students each term. I bring both genuine technical depth",
   ],
   // The opening paragraph now carries the headline teaching figures (courses
   // built, students per term), so soften paragraph 3 to keep the qualitative
