@@ -19,7 +19,7 @@
     },
     {
       "name": "Business",
-      "match": ["Business Administration", "Business Analyst", "Business Operations", "Operations Manager", "Operations Management", "Marketing", "Accounting", "Microeconomics", "Macroeconomics", "MBA", "Entrepreneurship", "Product Strategy"],
+      "match": ["Business Administration", "Business Analyst", "Business Operations", "Operations Manager", "Marketing Manager", "Marketing Strategy", "Digital Marketing", "Accountant", "Microeconomics", "Macroeconomics", "MBA", "Entrepreneurship", "Product Strategy"],
       "subjects": ["Business Administration", "Operations Management", "Business Analysis", "Management Information Systems", "Project Management"],
       "job_emphases": ["Business Analysis", "Process Improvement", "Operational Strategy", "Stakeholder Management", "Project Delivery", "Requirements Analysis"],
       "technical_capabilities": ["SQL", "Operational Reporting", "Business Intelligence", "Enterprise Dashboards", "Workflow Automation", "Data Visualization"],
@@ -27,7 +27,7 @@
     },
     {
       "name": "Project Management",
-      "match": ["Project Manager", "Project Management", "Program Manager", "Program Management", "Product Manager", "Product Management", "PMP", "Scrum Master", "Delivery Manager"],
+      "match": ["Project Manager", "Program Manager", "Product Manager", "PMP", "Scrum Master", "Delivery Manager", "Project Management Office", "Agile Coach"],
       "subjects": ["Project Management", "Agile Methodologies", "Risk Management", "Stakeholder Management", "Program Coordination"],
       "job_emphases": ["Project Management", "Agile Delivery", "Cross-Functional Leadership", "Stakeholder Management", "Risk Management", "Delivery Coordination"],
       "technical_capabilities": ["Jira", "Agile", "Project Planning", "Roadmapping", "Workflow Automation", "Operational Reporting"],
@@ -35,7 +35,7 @@
     },
     {
       "name": "Communications",
-      "match": ["Public Speaking", "Corporate Communications", "Communications Specialist", "Communications Manager", "Mass Communication", "Communication Studies", "Public Relations", "Internal Communications"],
+      "match": ["Corporate Communications", "Communications Specialist", "Communications Manager", "Mass Communication", "Communication Studies", "Public Relations", "Internal Communications", "Strategic Communications"],
       "subjects": ["Public Speaking", "Interpersonal Communication", "Professional Communication", "Presentation Skills", "Team Communication"],
       "job_emphases": ["Stakeholder Communication", "Cross-Functional Collaboration", "Presentation", "Technical Documentation", "Requirements Gathering", "Team Facilitation"],
       "technical_capabilities": ["Technical Documentation", "Confluence", "Microsoft Teams", "Presentation Tools", "Knowledge Bases", "Collaboration Platforms"],
@@ -51,7 +51,7 @@
     },
     {
       "name": "Technical Communication",
-      "match": ["Technical Writer", "Technical Writing", "Technical Communication", "API Documentation", "Documentation Specialist", "Developer Documentation", "Content Designer"],
+      "match": ["Technical Writer", "Technical Communicator", "Documentation Specialist", "Content Designer", "Information Developer", "Documentation Engineer"],
       "subjects": ["Technical Communication", "Technical Writing", "API Documentation", "Documentation Standards", "Information Design"],
       "job_emphases": ["Technical Writing", "API Documentation", "Documentation Standards", "Knowledge Management", "Content Strategy", "Developer Enablement"],
       "technical_capabilities": ["Technical Documentation", "Markdown", "API Documentation", "Git", "Content Management System", "Style Guides"],
