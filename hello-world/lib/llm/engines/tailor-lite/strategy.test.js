@@ -117,21 +117,22 @@ describe("mapSlots areas of emphasis (per-role)", () => {
     }
   });
 
-  it("uses the teaching area's job_emphases for full-time job emphasis on a teaching posting", () => {
+  it("uses the focus area's job_emphases for full-time job emphasis when the posting needs that area", () => {
     const data = {
       profile: {
         values: {},
-        teaching_areas: [
-          { name: "Mathematics", match: ["College Algebra"], subjects: ["College Algebra"], job_emphases: ["Data Analysis", "Mathematical Modeling", "Quantitative Analysis"] },
+        focus_areas: [
+          { name: "Mathematics", match: ["College Algebra", "Precalculus"], subjects: ["College Algebra"], job_emphases: ["Data Analysis", "Mathematical Modeling", "Quantitative Analysis"] },
         ],
       },
     };
-    const teaching = { aggressiveness: 3, posting: "Adjunct faculty position to teach College Algebra." };
-    const value = mapSlots([slot("AREAS_OF_EMPHASIS", 0)], {}, data, teaching)[0].value;
+    // Any posting that calls for the area (here a math posting) — teaching or not.
+    const opts = { aggressiveness: 3, posting: "Instructor needed for College Algebra and Precalculus." };
+    const value = mapSlots([slot("AREAS_OF_EMPHASIS", 0)], {}, data, opts)[0].value;
     expect(value).toContain("Data Analysis");
     expect(value).toContain("Mathematical Modeling");
 
-    // A software posting (no teaching signal) still uses the engineering domains.
+    // A software posting names no area term, so the engineering domains are kept.
     const csValue = mapSlots([slot("AREAS_OF_EMPHASIS", 0)], kw, data, { aggressiveness: 3, posting: "Senior Software Engineer building web apps." })[0].value;
     expect(csValue).not.toContain("Data Analysis");
   });
@@ -168,21 +169,21 @@ describe("mapSlots areas of emphasis (per-role)", () => {
     expect(teaching).not.toContain("Payments"); // never a posting domain
   });
 
-  it("leads teaching emphasis and course topics with the subjects a teaching posting names", () => {
+  it("leads the adjunct emphasis and course topics with the resolved area's subjects", () => {
     const data = {
       profile: {
         values: {},
         default_teaching_subjects: ["Web Development", "Software Engineering"],
-        teaching_areas: [
+        focus_areas: [
           { name: "Mathematics", match: ["College Algebra", "Precalculus", "Statistics"], subjects: ["College Algebra", "Precalculus", "Statistics"] },
         ],
       },
     };
-    const opts = { aggressiveness: 3, posting: "Adjunct faculty to teach College Algebra to students." };
+    const opts = { aggressiveness: 3, posting: "Instructor for College Algebra and Precalculus courses." };
     const emphasis = [0, 1].map(
       (occ) => mapSlots([slot("AREA_OF_EMPHASIS", occ)], {}, data, opts)[0].value,
     );
-    expect(emphasis[0]).toBe("College Algebra"); // posting-named subject leads
+    expect(emphasis[0]).toBe("College Algebra"); // the area's first subject leads
     expect(emphasis[1]).toBe("Precalculus"); // next subject in the area, not a CS one
     expect(emphasis).not.toContain("Web Development");
 
@@ -203,11 +204,11 @@ describe("mapSlots areas of emphasis (per-role)", () => {
   });
 });
 
-describe("mapSlots teaching-area catering (skills row + summary focus + capability lines)", () => {
+describe("mapSlots focus-area catering (skills row + summary focus + capability lines)", () => {
   const data = {
     profile: {
       values: {},
-      teaching_areas: [
+      focus_areas: [
         {
           name: "Mathematics",
           match: ["College Algebra", "Precalculus", "Statistics"],
@@ -218,11 +219,11 @@ describe("mapSlots teaching-area catering (skills row + summary focus + capabili
       ],
     },
   };
-  const mathPosting = "Adjunct faculty position to teach College Algebra.";
+  const mathPosting = "Instructor for College Algebra and Precalculus courses.";
   const csKw = { domain: [{ canonical: "Web Development", score: 9, count: 1 }] };
   const csPosting = "Senior Software Engineer building web applications.";
 
-  it("leads the first skills row with the area's subjects for a teaching posting, domains otherwise", () => {
+  it("leads the first skills row with the area's subjects when the posting needs the area, domains otherwise", () => {
     const mathRow = mapSlots([slot("2_LINES_OF_COMMA_SEPARATED_SKILLS", 0)], {}, data, { aggressiveness: 3, posting: mathPosting })[0].value;
     expect(mathRow).toContain("College Algebra");
 
