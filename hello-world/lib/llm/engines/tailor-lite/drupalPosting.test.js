@@ -90,6 +90,20 @@ describe("Drupal/Integrations posting tailoring", () => {
     }
   });
 
+  it("addresses the cover letter to the employer, not a consortium org in the boilerplate", async () => {
+    const posting = [
+      "Drupal and Integrations Developer",
+      "Smith College in Northampton, MA",
+      "Job Summary: Maintain enterprise Drupal applications and integrations.",
+      "About Smith College",
+      "Smith College is a member of the Five College Consortium with Amherst, Hampshire and Mt. Holyoke Colleges, and the University of Massachusetts Amherst.",
+    ].join("\n");
+    // No companyName passed -> the engine extracts the org from the posting.
+    const cl = (await embeddedEngine.tailorCoverLetter({ jobPosting: posting })).result;
+    expect(cl).toContain("Smith College");
+    expect(cl).not.toContain("University of Massachusetts Amherst");
+  });
+
   it("keeps the cover-letter technical-skills line short for a non-technical posting", async () => {
     const mathCover = (
       await embeddedEngine.tailorCoverLetter({

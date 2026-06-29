@@ -91,6 +91,28 @@ describe("extractPostingMeta", () => {
     expect(companyName).toBe("Smith College");
   });
 
+  it("prefers a University employer at the top over a College in the boilerplate", () => {
+    // The symmetric case: a "University of …" employer in the header must still win
+    // over a "… College" named lower (so the document-order fix isn't just biased
+    // toward colleges).
+    const posting = [
+      "Research Software Engineer",
+      "University of Massachusetts Amherst in Amherst, MA",
+      "About",
+      "We are part of the Five College Consortium with Smith College and Amherst College.",
+    ].join("\n");
+    expect(extractPostingMeta(posting).companyName).toBe("University of Massachusetts Amherst");
+  });
+
+  it("keeps the header employer when partner orgs appear later in the body", () => {
+    const posting = [
+      "Backend Engineer",
+      "Globex Corporation",
+      "We partner closely with Initech Inc. and Acme LLC across the industry.",
+    ].join("\n");
+    expect(extractPostingMeta(posting).companyName).toBe("Globex Corporation");
+  });
+
   it("detects corporate org suffixes (Inc/LLC/Technologies) and ignores leading 'The'", () => {
     expect(extractPostingMeta("Backend Engineer\nGlobex Technologies is hiring engineers.").companyName).toBe(
       "Globex Technologies",
