@@ -117,6 +117,26 @@ describe("mapSlots areas of emphasis (per-role)", () => {
     }
   });
 
+  it("never lists 'Education' in a job's emphasis or solutions, even for an education posting", () => {
+    // An education-sector posting where "Education" outscores the real domains.
+    const eduKw = {
+      domain: [
+        { canonical: "Education", score: 10, count: 3 },
+        { canonical: "Web Development", score: 8, count: 1 },
+        { canonical: "Payments", score: 6, count: 1 },
+      ],
+    };
+    // The per-role "(Areas of Emphasis)" parenthetical and the
+    // "…responsible for {{JOB_RELEVANT_SOLUTIONS}}…" bullet both draw domains
+    // from the posting; neither may surface "Education".
+    for (const name of ["AREAS_OF_EMPHASIS", "JOB_RELEVANT_SOLUTIONS"]) {
+      for (let occ = 0; occ < 4; occ += 1) {
+        const value = mapSlots([slot(name, occ)], eduKw, { profile: { values: {} } }, { aggressiveness: 3 })[0].value;
+        expect(value.split(", ")).not.toContain("Education");
+      }
+    }
+  });
+
   it("teaching emphasis (AREA_OF_EMPHASIS) leads with the taught subjects, independent of posting", () => {
     const data = { profile: { values: {}, teaching_subjects: ["Web Development", "Software Engineering", "Database Systems"] } };
     // A posting whose domains differ from the taught subjects must not change them.

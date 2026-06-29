@@ -38,6 +38,14 @@ function buildContext(keywords) {
 
 // --- KEYWORD_JOIN ----------------------------------------------------------
 
+// "Education" is the candidate's teaching context (surfaced separately via
+// teaching_subjects -> the adjunct-professor AREA_OF_EMPHASIS and the teaching
+// paragraph), never a domain his engineering roles owned. Keep it out of every
+// job-scoped domain list — the per-role "(Areas of Emphasis)" parenthetical and
+// the "…responsible for {{JOB_RELEVANT_SOLUTIONS}}…" bullet — so an
+// education-sector posting can't make the software jobs read as education jobs.
+const JOB_DOMAIN_AVOID = ["education"];
+
 const KEYWORD_JOIN = {
   JOB_RELEVANT_TECHNOLOGIES: { cats: ["technology"], k: 6 },
   // The opening paragraph's "hands-on work with {{TECHNICAL_CAPABILITIES}}"
@@ -56,7 +64,7 @@ const KEYWORD_JOIN = {
     k: 4,
     avoid: ["lead", "leading", "leadership", "cross", "functional", "team", "teams"],
   },
-  JOB_RELEVANT_SOLUTIONS: { cats: ["domain"], k: 4 },
+  JOB_RELEVANT_SOLUTIONS: { cats: ["domain"], k: 4, avoid: JOB_DOMAIN_AVOID },
 };
 
 // Words too generic to make two phrases "the same concept" on their own.
@@ -308,7 +316,7 @@ function mapOne(slot, keywords, data, state) {
     return make("keywords", emphasisSlice(pool, 1, occurrence, state.serialAnd) || EMPHASIS_FALLBACK.AREA_OF_EMPHASIS, "Teaching emphasis (subjects taught)");
   }
   if (name === "AREAS_OF_EMPHASIS") {
-    const pool = capabilityPool(keywords, state.byCat, ["domain"], state.universe, state.allowGaps).slice(0, EMPHASIS_POOL);
+    const pool = capabilityPool(keywords, state.byCat, ["domain"], state.universe, state.allowGaps, JOB_DOMAIN_AVOID).slice(0, EMPHASIS_POOL);
     return make("keywords", emphasisSlice(pool, EMPHASIS_WINDOW, occurrence, state.serialAnd) || EMPHASIS_FALLBACK.AREAS_OF_EMPHASIS, "Areas of emphasis (per-role)");
   }
 

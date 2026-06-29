@@ -16,13 +16,23 @@ let cache = null;
 // Small wording tweaks applied to the bundled template at load time, so we don't
 // have to regenerate the whole opaque base64 for a phrasing change.
 const TEMPLATE_TEXT_PATCHES = [
-  // The soft-skills line reads better as "experience in <soft skills>" than
-  // "leadership in <soft skills>".
-  ["leadership in", "experience in"],
-  // Warmer, plainer phrasing for the teaching clause (still professional).
+  // Opening paragraph rewrite. The original third sentence was one run-on with
+  // three comma-joined sub-lists (technical / domain / leadership capabilities)
+  // plus a trailing teaching clause. Break it into separate sentences, keep the
+  // soft-skills line as "experience in <soft skills>" (not "leadership in"), and
+  // lead the teaching half with concrete adjunct accomplishments (courses built/
+  // revamped, students per term) in the warmer, plainer voice.
   [
-    "alongside the higher-education instruction that maps directly to this role",
-    "plus the classroom teaching experience that fits this role well",
+    "My background spans hands-on work with {{TECHNICAL_CAPABILITIES}}, domain expertise in {{DOMAIN_CAPABILITIES}}, and leadership in {{LEADERSHIP_CAPABILITIES}}, alongside the higher-education instruction that maps directly to this role.",
+    "My background spans hands-on work with {{TECHNICAL_CAPABILITIES}}. I pair that with domain expertise in {{DOMAIN_CAPABILITIES}} and experience in {{LEADERSHIP_CAPABILITIES}}. In the classroom, I've designed and revamped eight project-based courses and taught more than 100 students each term. It's teaching experience that fits this role well.",
+  ],
+  // The opening paragraph now carries the headline teaching figures (courses
+  // built, students per term), so soften paragraph 3 to keep the qualitative
+  // feedback point without repeating "project-based courses" / the student count.
+  ["building project-based courses around", "building hands-on courses around"],
+  [
+    "giving clear, constructive feedback to more than 100 students each term",
+    "giving every student clear, constructive feedback",
   ],
 ];
 

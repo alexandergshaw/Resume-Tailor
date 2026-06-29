@@ -101,8 +101,12 @@ describe("embeddedEngine.tailorCoverLetter", () => {
     // Soft-skills line reads "experience in", not "leadership in".
     expect(res.result).toContain("experience in");
     expect(res.result).not.toContain("leadership in");
-    // Teaching clause uses warmer, plainer phrasing.
-    expect(res.result).toContain("classroom teaching experience that fits this role well");
+    // Opening paragraph leads the teaching half with concrete adjunct
+    // accomplishments in the warmer, plainer voice, and the old run-on sub-list
+    // sentence is gone.
+    expect(res.result).toContain("designed and revamped eight project-based courses");
+    expect(res.result).toContain("more than 100 students each term");
+    expect(res.result).toContain("teaching experience that fits this role well");
     expect(res.result).not.toContain("alongside the higher-education instruction");
     // Prose capability lists use a serial ("Oxford") "and": "A, B, and C".
     expect(res.result).toMatch(/, and /);
