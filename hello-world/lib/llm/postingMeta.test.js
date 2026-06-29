@@ -72,6 +72,25 @@ describe("extractPostingMeta", () => {
     expect(companyName).toBe("University of Michigan"); // not "Skip to main content"
   });
 
+  it("picks the employer named at the top, not a consortium org in the boilerplate", () => {
+    // Smith College posting: the employer is named in the header, but the "About"
+    // section mentions "the University of Massachusetts Amherst". The employer must
+    // win — not the University-of pattern matched lower in the page.
+    const posting = [
+      "Drupal and Integrations Developer",
+      "Smith College in Northampton, MA",
+      "Type: Full-Time",
+      "Department: Communications and Marketing",
+      "Job Summary",
+      "Maintain, manage and improve mission critical enterprise applications.",
+      "About Smith College",
+      "Smith College is a member of the Five College Consortium with Amherst, Hampshire and Mt. Holyoke Colleges, and the University of Massachusetts Amherst.",
+    ].join("\n");
+    const { jobTitle, companyName } = extractPostingMeta(posting);
+    expect(jobTitle).toBe("Drupal and Integrations Developer");
+    expect(companyName).toBe("Smith College");
+  });
+
   it("detects corporate org suffixes (Inc/LLC/Technologies) and ignores leading 'The'", () => {
     expect(extractPostingMeta("Backend Engineer\nGlobex Technologies is hiring engineers.").companyName).toBe(
       "Globex Technologies",

@@ -106,11 +106,14 @@ function valueAfterLabel(lines, labelRe) {
   return "";
 }
 
-// Scan line-by-line (never across line breaks) so an org name is matched within
-// a single line; patterns are tried in priority order across all lines.
+// Scan line-by-line (never across line breaks) so an org name is matched within a
+// single line. Lines are scanned in DOCUMENT ORDER — the employer is named at the
+// top (title/header), while other orgs (a consortium, "About …" boilerplate, e.g.
+// "Smith College … the University of Massachusetts Amherst") appear lower — so the
+// first line that names any org wins; within a line, patterns try in priority order.
 function findOrg(lines) {
-  for (const re of ORG_PATTERNS) {
-    for (const line of lines) {
+  for (const line of lines) {
+    for (const re of ORG_PATTERNS) {
       const m = line.match(re);
       if (m) return m[0].replace(/^The\s+/i, "").trim();
     }
