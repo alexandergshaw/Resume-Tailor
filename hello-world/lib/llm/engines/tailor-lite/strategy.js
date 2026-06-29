@@ -11,7 +11,7 @@
 // Anything left over -> MANUAL (empty). The pools cover every fragment name in
 // the bundled template, so a filled résumé never shows raw braces.
 
-import { canonicalize, categorize } from "./keywords.js";
+import { canonicalize } from "./keywords.js";
 import { candidateUniverse, candidateSkillsByCategory } from "./universe.js";
 
 const GAP_BUDGET = { 1: 0, 2: 1, 3: 3, 4: 6, 5: 10 };
@@ -27,39 +27,71 @@ function clampAggressiveness(value) {
 function buildContext(keywords) {
   const postingScore = new Map();
   const jobCanonical = new Set();
-  const postingCategories = new Set();
   for (const category of Object.keys(keywords)) {
-    if ((keywords[category] || []).length) postingCategories.add(category);
     for (const { canonical, score } of keywords[category]) {
       postingScore.set(canonical.toLowerCase(), score);
       jobCanonical.add(canonical.toLowerCase());
     }
   }
-  return { postingScore, jobCanonical, postingCategories };
+  return { postingScore, jobCanonical };
 }
 
-// Rank the candidate's taught subjects against a posting so the adjunct teaching
-// emphasis and course topics surface what THIS posting actually teaches. Tiers:
-//   2 — the posting names the subject outright (e.g. "College Algebra");
-//   1 — an ACADEMIC subject whose "subject" category the posting emphasizes (so a
-//       College Algebra posting groups the other math courses together);
-//   0 — everything else.
-// The tier-1 affinity is deliberately limited to the "subject" category: a
-// software posting still ranks its teaching subjects by exact match + the
-// authored order, exactly as before — only academic-subject postings regroup.
-// Stable within each tier (authored order is the tie-break).
-function postingTier(subject, ctx) {
-  const canon = canonicalize(subject);
-  if (canon && ctx.jobCanonical.has(canon.toLowerCase())) return 2;
-  if (categorize(subject) === "subject" && ctx.postingCategories.has("subject")) return 1;
-  return 0;
-}
-
+// Rank a list of taught subjects so the one(s) the posting names outright lead,
+// then the authored order (stable). Used for the adjunct teaching emphasis and
+// course topics within a single resolved teaching area.
 function rankTaughtSubjects(subjects, ctx) {
+  const named = (s) => {
+    const canon = canonicalize(s);
+    return canon && ctx.jobCanonical.has(canon.toLowerCase());
+  };
   return subjects
-    .map((s, i) => ({ s, i, tier: postingTier(s, ctx) }))
-    .sort((a, b) => b.tier - a.tier || a.i - b.i)
+    .map((s, i) => ({ s, i, named: named(s) ? 1 : 0 }))
+    .sort((a, b) => b.named - a.named || a.i - b.i)
     .map((x) => x.s);
+}
+
+// The subjects shown in the adjunct teaching emphasis / course topics: the resolved
+// teaching area's subjects, or the default teaching subjects for a non-teaching
+// (e.g. software) posting.
+function teachingSubjects(data, state) {
+  const fromArea = state.teachingArea && Array.isArray(state.teachingArea.subjects) ? state.teachingArea.subjects : null;
+  const list = fromArea || data.profile.default_teaching_subjects || [];
+  return list.filter((s) => typeof s === "string" && s.trim());
+}
+
+// --- Teaching-area resolution ----------------------------------------------
+// A teaching posting (faculty/adjunct/instructor/… signal) that names one of a
+// teaching area's `match` terms activates that area, which then drives the
+// subject-specific tailoring (adjunct emphasis, course topics, full-time job
+// emphasis, skills first row, summary focus, capability lines). A software job —
+// even one that mentions, say, "Cybersecurity" — has no teaching signal, so no
+// area activates and the résumé keeps its default (software) shape.
+const TEACHING_SIGNAL_RE = /\b(adjunct|faculty|instructor|lecturer|professor|tutor|curriculum|syllabus|coursework)\b/i;
+
+// How strongly a posting names an area's match term: the extracted-keyword score
+// if it's a recognized canonical, else 1 for a raw-text mention (so free-text
+// course names like "Business Administration" still count).
+function matchStrength(term, ctx, postingLower) {
+  const canon = canonicalize(term);
+  if (canon && ctx.postingScore.has(canon.toLowerCase())) return ctx.postingScore.get(canon.toLowerCase());
+  return postingLower.includes(term.toLowerCase()) ? 1 : 0;
+}
+
+function resolveTeachingArea(areas, ctx, posting) {
+  const text = String(posting || "");
+  if (!text || !TEACHING_SIGNAL_RE.test(text)) return null;
+  const postingLower = text.toLowerCase();
+  let best = null;
+  let bestScore = 0;
+  for (const area of areas || []) {
+    let score = 0;
+    for (const term of area.match || []) score += matchStrength(term, ctx, postingLower);
+    if (score > bestScore) {
+      best = area;
+      bestScore = score;
+    }
+  }
+  return bestScore > 0 ? best : null;
 }
 
 // --- KEYWORD_JOIN ----------------------------------------------------------
@@ -78,9 +110,9 @@ const KEYWORD_JOIN = {
   // should showcase the most impressive APPLICABLE tech (languages, frameworks,
   // databases) — posting-matched first, then the candidate's strongest stack —
   // not just collaboration tools. Falls back to tool_platform so it's never empty.
-  TECHNICAL_CAPABILITIES: { cats: ["technology", "tool_platform"], k: 5 },
+  TECHNICAL_CAPABILITIES: { cats: ["technology", "tool_platform"], k: 5, areaField: "technical_capabilities" },
   DELIVERY_PRACTICES: { cats: ["methodology"], k: 4 },
-  DOMAIN_CAPABILITIES: { cats: ["domain"], k: 4 },
+  DOMAIN_CAPABILITIES: { cats: ["domain"], k: 4, areaField: "domain_capabilities" },
   // The summary already reads "leading cross-functional teams through
   // {{LEADERSHIP_CAPABILITIES}}", so suppress capabilities that merely echo those
   // words (Leadership, Cross-Functional Collaboration) — otherwise the sentence
@@ -92,10 +124,10 @@ const KEYWORD_JOIN = {
   },
   JOB_RELEVANT_SOLUTIONS: { cats: ["domain"], k: 4, avoid: JOB_DOMAIN_AVOID },
   // Résumé summary tail ("Experienced with …, and {{ROLE_RELEVANT_FOCUS}}"). Same
-  // as DOMAIN_CAPABILITIES for software postings, but `academic` lets an academic
-  // posting lead the list with the subjects taught (College Algebra, …). Used only
-  // in the summary, so the cover letter and job bullets are untouched.
-  ROLE_RELEVANT_FOCUS: { cats: ["domain"], k: 4, academic: true },
+  // as DOMAIN_CAPABILITIES for software postings, but on a resolved teaching posting
+  // it leads with the subjects taught (College Algebra, …). Used only in the
+  // summary, so the cover letter and job bullets are untouched.
+  ROLE_RELEVANT_FOCUS: { cats: ["domain"], k: 4, areaField: "subjects" },
 };
 
 // Words too generic to make two phrases "the same concept" on their own.
@@ -203,28 +235,31 @@ function emphasisSlice(pool, size, offset, serialAnd = false) {
 const SKILL_ROW_CATEGORIES = ["domain", "technology", "tool_platform", "soft_skill", "methodology"];
 const SKILL_ROW_MAX = 16;
 
-// The five rows map one taxonomy category each. For an academic-subject posting
-// (e.g. College Algebra), the first row ("Role-Specific Expertise") leads with the
-// subjects taught instead of engineering domains; everything else is unchanged, so
-// software postings keep the exact default rows.
-function skillRowCategories(ctx) {
-  if (!ctx.postingCategories.has("subject")) return SKILL_ROW_CATEGORIES;
-  return ["subject", ...SKILL_ROW_CATEGORIES.slice(1)];
-}
-
 // Build the 5 skills rows: candidate skills for each category, posting-matched
 // first, then (per aggressiveness) swap trailing low-relevance ones for posting
-// gap keywords, keeping each row's item count fixed.
-function buildSkillRows(keywords, byCat, ctx, universe, budget) {
-  const rows = skillRowCategories(ctx).map((cat) => {
+// gap keywords, keeping each row's item count fixed. On a resolved teaching posting
+// the first row ("Role-Specific Expertise") leads with that area's subjects instead
+// of engineering domains; everything else is unchanged, so software postings keep
+// the exact default rows.
+function buildSkillRows(keywords, byCat, ctx, universe, budget, area) {
+  const orderByPosting = (items) => {
     const matched = [];
     const rest = [];
-    for (const s of byCat[cat] || []) {
+    for (const s of items) {
       const canon = (canonicalize(s) || s).toLowerCase();
       (ctx.postingScore.has(canon) ? matched : rest).push(s);
     }
-    return { cat, items: [...matched, ...rest] };
-  });
+    return [...matched, ...rest];
+  };
+  // The first row is the teaching area's subjects ("__subjects__" never matches a
+  // gap category, so it is never gap-swapped), or the candidate's domains.
+  const firstRow = area && Array.isArray(area.subjects) && area.subjects.length
+    ? { cat: "__subjects__", items: orderByPosting(area.subjects) }
+    : { cat: "domain", items: orderByPosting(byCat.domain || []) };
+  const rows = [
+    firstRow,
+    ...SKILL_ROW_CATEGORIES.slice(1).map((cat) => ({ cat, items: orderByPosting(byCat[cat] || []) })),
+  ];
 
   if (budget > 0) {
     const gaps = [];
@@ -344,27 +379,22 @@ function mapOne(slot, keywords, data, state) {
     return make("skills", state.skillRows[occurrence % state.skillRows.length] || "", "Skill row");
   }
 
-  // 3) Areas of emphasis — jobs use the posting's domains; teaching leads with
-  // the candidate's taught technical subjects (posting-independent). Each
-  // occurrence slides a window so repeats stay distinct. AREA_OF_EMPHASIS
-  // (teaching) is the singular form (one subject per slot).
+  // 3) Areas of emphasis. The adjunct teaching emphasis (AREA_OF_EMPHASIS, one
+  // subject per slot) leads with the resolved teaching area's subjects, or the
+  // default teaching subjects for a non-teaching posting. The full-time-role
+  // AREAS_OF_EMPHASIS leads with that area's job_emphases (the facets of the work
+  // relevant to teaching it), or the posting's engineering domains for software.
   if (name === "AREA_OF_EMPHASIS") {
-    const taught = (data.profile.teaching_subjects || []).filter((s) => typeof s === "string" && s.trim());
-    const pool = taught.length
-      ? rankTaughtSubjects(taught, state.ctx)
+    const subjects = teachingSubjects(data, state);
+    const pool = subjects.length
+      ? rankTaughtSubjects(subjects, state.ctx)
       : capabilityPool(keywords, state.byCat, TEACHING_FALLBACK_CATS, state.universe, state.allowGaps).slice(0, EMPHASIS_POOL);
     return make("keywords", emphasisSlice(pool, 1, occurrence, state.serialAnd) || EMPHASIS_FALLBACK.AREA_OF_EMPHASIS, "Teaching emphasis (subjects taught)");
   }
   if (name === "AREAS_OF_EMPHASIS") {
-    // For an academic-subject posting (e.g. teaching math), the full-time software
-    // roles lead with the quantitative, math-adjacent facets of that work (data
-    // analysis, mathematical modeling, …) so they read as relevant to the role,
-    // rather than the engineering domains used for software postings.
-    if (state.ctx.postingCategories.has("subject")) {
-      const bridge = (data.profile.academic_job_emphases || []).filter((s) => typeof s === "string" && s.trim());
-      if (bridge.length) {
-        return make("keywords", emphasisSlice(bridge, EMPHASIS_WINDOW, occurrence, state.serialAnd), "Areas of emphasis (academic bridge)");
-      }
+    const bridge = (state.teachingArea?.job_emphases || []).filter((s) => typeof s === "string" && s.trim());
+    if (bridge.length) {
+      return make("keywords", emphasisSlice(bridge, EMPHASIS_WINDOW, occurrence, state.serialAnd), `Areas of emphasis (${state.teachingArea.name})`);
     }
     const pool = capabilityPool(keywords, state.byCat, ["domain"], state.universe, state.allowGaps, JOB_DOMAIN_AVOID).slice(0, EMPHASIS_POOL);
     return make("keywords", emphasisSlice(pool, EMPHASIS_WINDOW, occurrence, state.serialAnd) || EMPHASIS_FALLBACK.AREAS_OF_EMPHASIS, "Areas of emphasis (per-role)");
@@ -373,33 +403,26 @@ function mapOne(slot, keywords, data, state) {
   // 4) KEYWORD_JOIN (capability lines) — repeated slots slide by occurrence so
   // each repeat shows a distinct slice instead of the same list every time.
   if (KEYWORD_JOIN[name]) {
-    const { cats, k, avoid, academic } = KEYWORD_JOIN[name];
+    const { cats, k, avoid, areaField } = KEYWORD_JOIN[name];
     const limit = state.maxKeywords ? Math.min(k, state.maxKeywords) : k;
-    // On an academic-subject posting, a curated list (profile.academic_overrides)
-    // can REPLACE a capability line so the cover letter, summary, and job bullets
-    // surface data/math-relevant tech and domains instead of the web-stack defaults.
-    if (state.ctx.postingCategories.has("subject")) {
-      const override = (data.profile.academic_overrides || {})[name];
-      const items = Array.isArray(override) ? override.filter((s) => typeof s === "string" && s.trim()) : null;
-      if (items && items.length) {
-        return make("keywords", emphasisSlice(items, limit, occurrence, state.serialAnd), `Academic override (${name})`);
+    // On a resolved teaching posting, a slot mapped to an area field is REPLACED by
+    // that area's curated list (the subjects taught, or its data/domain capability
+    // lines), so the cover letter, summary, and job bullets read for the subject area.
+    if (state.teachingArea && areaField) {
+      const list = (state.teachingArea[areaField] || []).filter((s) => typeof s === "string" && s.trim());
+      if (list.length) {
+        return make("keywords", emphasisSlice(list, limit, occurrence, state.serialAnd), `Teaching area (${state.teachingArea.name}.${areaField})`);
       }
     }
-    // Otherwise an `academic` slot still leads the list with the subjects taught.
-    const effectiveCats = academic && state.ctx.postingCategories.has("subject") ? ["subject", ...cats] : cats;
-    return make("keywords", capabilityJoin(keywords, state.byCat, effectiveCats, limit, state.universe, state.allowGaps, avoid, occurrence, state.serialAnd), `Top ${effectiveCats.join("+")} keywords`);
+    return make("keywords", capabilityJoin(keywords, state.byCat, cats, limit, state.universe, state.allowGaps, avoid, occurrence, state.serialAnd), `Top ${cats.join("+")} keywords`);
   }
 
-  // 5) COURSE_TOPICS — the subjects taught that this posting asks for. For an
-  // academic-subject posting (e.g. College Algebra) lead with the matching taught
-  // subjects; otherwise fall back to the candidate's technologies (the original
-  // behavior for software postings). Never people skills.
+  // 5) COURSE_TOPICS — the subjects taught that this posting asks for. For a
+  // resolved teaching posting lead with the matching area subjects; otherwise fall
+  // back to the candidate's technologies (the default for software postings).
   if (COURSE_RE.test(name)) {
     const n = Number.parseInt((name.match(COURSE_COUNT_RE) || [])[1], 10) || 3;
-    const taught = (data.profile.teaching_subjects || []).filter((s) => typeof s === "string" && s.trim());
-    const subjectTopics = rankTaughtSubjects(taught, state.ctx).filter(
-      (s) => categorize(s) === "subject" && postingTier(s, state.ctx) >= 1,
-    );
+    const subjectTopics = state.teachingArea ? rankTaughtSubjects(teachingSubjects(data, state), state.ctx) : [];
     const techPool = capabilityPool(keywords, state.byCat, ["technology"], state.universe, state.allowGaps);
     const seen = new Set();
     const pool = [];
@@ -409,7 +432,7 @@ function mapOne(slot, keywords, data, state) {
       seen.add(low);
       pool.push(item);
     }
-    return make("keywords", emphasisSlice(pool, n, 0, state.serialAnd), `${n} course topics (subjects + technical)`);
+    return make("keywords", emphasisSlice(pool, n, 0, state.serialAnd), `${n} course topics`);
   }
 
   // 6) LIBRARY_MATCH — real accomplishment / project fragments
@@ -432,13 +455,17 @@ export function mapSlots(slots, keywords, data, options = {}) {
   const aggressiveness = clampAggressiveness(options.aggressiveness);
   const universe = options.universe || candidateUniverse();
   const byCat = candidateSkillsByCategory();
-  const skillRows = buildSkillRows(keywords, byCat, ctx, universe, GAP_BUDGET[aggressiveness] || 0);
+  // The teaching posting's subject area (or null) drives every subject-specific
+  // tailoring decision below.
+  const teachingArea = resolveTeachingArea(data.profile?.teaching_areas, ctx, options.posting);
+  const skillRows = buildSkillRows(keywords, byCat, ctx, universe, GAP_BUDGET[aggressiveness] || 0, teachingArea);
   const allowGaps = aggressiveness >= 3;
   const maxKeywords = Number.isInteger(options.maxKeywords) ? options.maxKeywords : null;
   const state = {
     ctx,
     byCat,
     skillRows,
+    teachingArea,
     cursors: new Map(),
     universe,
     allowGaps,

@@ -1,30 +1,78 @@
 {
-  "_comment": "User-editable. `values` keys are normalized placeholder names filled as static facts the posting can't supply (rank tiers, function, scale figures) plus the five skills-section heading labels. `teaching_subjects` is the ordered list of technical subjects you taught — it drives the adjunct-professor AREA_OF_EMPHASIS so teaching emphasis always leads with the subjects you taught, independent of the posting. `academic_job_emphases` is the ordered list of quantitative, math-adjacent facets of your full-time software work — it replaces the engineering-domain AREAS_OF_EMPHASIS on your full-time roles when the posting is an academic-subject (e.g. math) teaching role, so those roles read as relevant to teaching math.",
-  "academic_job_emphases": [
-    "Data Analysis",
-    "Mathematical Modeling",
-    "Quantitative Analysis",
-    "Statistical Reporting",
-    "Data Modeling",
-    "Algorithm Design"
-  ],
-  "_academic_overrides_comment": "On an academic-subject posting, these curated lists REPLACE the named capability lines (drawn from the candidate's skills by default) so the cover letter, summary, and job bullets surface data/math-relevant tech and domains instead of the web-stack defaults. Keyed by normalized placeholder name; each list slides per occurrence for variety. Edit to whatever data/quantitative tech you can speak to.",
-  "academic_overrides": {
-    "TECHNICAL_CAPABILITIES": ["SQL", "PostgreSQL", "Data Modeling", "Data Visualization", "Data Engineering", "ETL"],
-    "DOMAIN_CAPABILITIES": ["Data Analysis", "Quantitative Analysis", "Statistics", "Mathematical Modeling", "Business Intelligence"]
-  },
-  "teaching_subjects": [
+  "_comment": "User-editable. `values` keys are normalized placeholder names filled as static facts the posting can't supply (rank tiers, function, scale figures) plus the five skills-section heading labels. `default_teaching_subjects` drives the adjunct-professor teaching emphasis / course topics when the posting is NOT a recognized academic teaching posting (e.g. a software job). `teaching_areas` enables subject-specific tailoring: when a posting reads as a teaching role (faculty/adjunct/instructor/… signal) AND names one of an area's `match` terms, that area is activated and drives the adjunct teaching emphasis + course topics (`subjects`), the full-time job AREAS_OF_EMPHASIS (`job_emphases`), the skills-section first row + summary focus (`subjects`), and the cover-letter/summary capability lines (`technical_capabilities`, `domain_capabilities`). EDIT each area to the subjects you can actually teach and the real, defensible facets of your work — the defaults below are conservative starting points, and the AI / Cybersecurity lists in particular should be trimmed to what you can speak to.",
+  "default_teaching_subjects": [
     "Web Development",
     "Software Engineering",
     "Database Systems",
     "Application Development",
     "Cloud Computing",
-    "Data Engineering",
-    "College Algebra",
-    "Precalculus",
-    "Statistics",
-    "Trigonometry",
-    "Calculus"
+    "Data Engineering"
+  ],
+  "teaching_areas": [
+    {
+      "name": "Mathematics",
+      "match": ["College Algebra", "Precalculus", "Trigonometry", "Calculus", "Statistics", "Algebra", "Quantitative Reasoning", "Mathematics"],
+      "subjects": ["College Algebra", "Precalculus", "Trigonometry", "Statistics", "Calculus"],
+      "job_emphases": ["Data Analysis", "Mathematical Modeling", "Quantitative Analysis", "Statistical Reporting", "Data Modeling", "Algorithm Design"],
+      "technical_capabilities": ["SQL", "PostgreSQL", "Data Modeling", "Data Visualization", "Data Engineering", "ETL"],
+      "domain_capabilities": ["Data Analysis", "Quantitative Analysis", "Statistics", "Mathematical Modeling", "Business Intelligence"]
+    },
+    {
+      "name": "Business",
+      "match": ["Business Administration", "Principles of Business", "Introduction to Business", "Business", "Management", "Marketing", "Accounting", "Economics", "Microeconomics", "Macroeconomics", "Entrepreneurship"],
+      "subjects": ["Business Administration", "Operations Management", "Business Analysis", "Management Information Systems", "Project Management"],
+      "job_emphases": ["Business Analysis", "Process Improvement", "Operational Strategy", "Stakeholder Management", "Project Delivery", "Requirements Analysis"],
+      "technical_capabilities": ["SQL", "Operational Reporting", "Business Intelligence", "Enterprise Dashboards", "Workflow Automation", "Data Visualization"],
+      "domain_capabilities": ["Business Analysis", "Operations", "Process Improvement", "Stakeholder Management", "Enterprise Systems"]
+    },
+    {
+      "name": "Project Management",
+      "match": ["Project Management", "Program Management", "Product Management", "Agile", "Scrum", "PMP"],
+      "subjects": ["Project Management", "Agile Methodologies", "Risk Management", "Stakeholder Management", "Program Coordination"],
+      "job_emphases": ["Project Management", "Agile Delivery", "Cross-Functional Leadership", "Stakeholder Management", "Risk Management", "Delivery Coordination"],
+      "technical_capabilities": ["Jira", "Agile", "Project Planning", "Roadmapping", "Workflow Automation", "Operational Reporting"],
+      "domain_capabilities": ["Project Management", "Agile Delivery", "Delivery Management", "Stakeholder Management", "Process Improvement"]
+    },
+    {
+      "name": "Communications",
+      "match": ["Public Speaking", "Interpersonal Communication", "Mass Communication", "Communication Studies", "Communications", "Speech", "Oral Communication"],
+      "subjects": ["Public Speaking", "Interpersonal Communication", "Professional Communication", "Presentation Skills", "Team Communication"],
+      "job_emphases": ["Stakeholder Communication", "Cross-Functional Collaboration", "Presentation", "Technical Documentation", "Requirements Gathering", "Team Facilitation"],
+      "technical_capabilities": ["Technical Documentation", "Confluence", "Microsoft Teams", "Presentation Tools", "Knowledge Bases", "Collaboration Platforms"],
+      "domain_capabilities": ["Communication", "Collaboration", "Stakeholder Engagement", "Presentation", "Knowledge Sharing"]
+    },
+    {
+      "name": "English",
+      "match": ["English Composition", "Composition", "English", "Rhetoric", "Literature", "Creative Writing", "Grammar", "Writing"],
+      "subjects": ["English Composition", "Professional Writing", "Technical Writing", "Editing", "Rhetoric"],
+      "job_emphases": ["Technical Writing", "Documentation", "Editing", "Content Development", "Communication", "Knowledge Management"],
+      "technical_capabilities": ["Technical Documentation", "Markdown", "Content Management System", "Style Guides", "Editing Workflows", "Knowledge Bases"],
+      "domain_capabilities": ["Technical Writing", "Documentation", "Content Development", "Communication", "Editing"]
+    },
+    {
+      "name": "Technical Communication",
+      "match": ["Technical Communication", "Technical Writing", "Documentation", "API Documentation", "Technical Editing", "Information Design"],
+      "subjects": ["Technical Communication", "Technical Writing", "API Documentation", "Documentation Standards", "Information Design"],
+      "job_emphases": ["Technical Writing", "API Documentation", "Documentation Standards", "Knowledge Management", "Content Strategy", "Developer Enablement"],
+      "technical_capabilities": ["Technical Documentation", "Markdown", "API Documentation", "Git", "Content Management System", "Style Guides"],
+      "domain_capabilities": ["Technical Communication", "Documentation", "Developer Experience", "Knowledge Management", "Information Design"]
+    },
+    {
+      "name": "Cybersecurity",
+      "match": ["Cybersecurity", "Cyber Security", "Information Security", "Network Security", "Information Assurance", "Security Fundamentals"],
+      "subjects": ["Cybersecurity", "Application Security", "Secure Development", "Network Security", "Security Fundamentals"],
+      "job_emphases": ["Application Security", "Secure Development", "Risk Management", "Compliance", "Identity and Access Management", "Secure Architecture"],
+      "technical_capabilities": ["Authentication", "Authorization", "Encryption", "Secure Coding", "Access Control", "Vulnerability Management"],
+      "domain_capabilities": ["Cybersecurity", "Application Security", "Compliance", "Risk Management", "Secure Architecture"]
+    },
+    {
+      "name": "Artificial Intelligence",
+      "match": ["Artificial Intelligence", "Machine Learning", "Deep Learning", "Neural Networks", "Data Science", "Intelligent Systems"],
+      "subjects": ["Artificial Intelligence", "Machine Learning", "Data Science", "Applied AI", "Intelligent Systems"],
+      "job_emphases": ["Machine Learning", "Data Science", "Algorithm Design", "Model Development", "Data Engineering", "Applied Analytics"],
+      "technical_capabilities": ["Python", "SQL", "Data Engineering", "Data Modeling", "Model Development", "Data Pipelines"],
+      "domain_capabilities": ["Machine Learning", "Artificial Intelligence", "Data Science", "Applied Analytics", "Data Engineering"]
+    }
   ],
   "values": {
     "FULL_NAME": "Alex Shaw",

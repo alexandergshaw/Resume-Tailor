@@ -92,7 +92,7 @@ async function buildProposal(buffer, posting, aggressiveness, maxKeywords, seria
   const doc = await loadDocx(buffer);
   const rawSlots = scanPlaceholders(doc);
   const kw = resolveKeywords(posting);
-  const slots = mapSlots(rawSlots, kw.keywords, DATA, { aggressiveness, maxKeywords, serialAnd });
+  const slots = mapSlots(rawSlots, kw.keywords, DATA, { aggressiveness, maxKeywords, serialAnd, posting });
   return { doc, slots, keywords: kw.keywords, emphases: kw.emphases };
 }
 

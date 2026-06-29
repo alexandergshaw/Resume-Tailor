@@ -117,20 +117,22 @@ describe("mapSlots areas of emphasis (per-role)", () => {
     }
   });
 
-  it("uses the math-adjacent academic bridge for full-time job emphasis on an academic posting", () => {
+  it("uses the teaching area's job_emphases for full-time job emphasis on a teaching posting", () => {
     const data = {
       profile: {
         values: {},
-        academic_job_emphases: ["Data Analysis", "Mathematical Modeling", "Quantitative Analysis"],
+        teaching_areas: [
+          { name: "Mathematics", match: ["College Algebra"], subjects: ["College Algebra"], job_emphases: ["Data Analysis", "Mathematical Modeling", "Quantitative Analysis"] },
+        ],
       },
     };
-    const mathKw = { subject: [{ canonical: "College Algebra", score: 4, count: 1 }] };
-    const value = mapSlots([slot("AREAS_OF_EMPHASIS", 0)], mathKw, data, { aggressiveness: 3 })[0].value;
+    const teaching = { aggressiveness: 3, posting: "Adjunct faculty position to teach College Algebra." };
+    const value = mapSlots([slot("AREAS_OF_EMPHASIS", 0)], {}, data, teaching)[0].value;
     expect(value).toContain("Data Analysis");
     expect(value).toContain("Mathematical Modeling");
 
-    // A software posting still uses the engineering domains, not the bridge list.
-    const csValue = mapSlots([slot("AREAS_OF_EMPHASIS", 0)], kw, data, { aggressiveness: 3 })[0].value;
+    // A software posting (no teaching signal) still uses the engineering domains.
+    const csValue = mapSlots([slot("AREAS_OF_EMPHASIS", 0)], kw, data, { aggressiveness: 3, posting: "Senior Software Engineer building web apps." })[0].value;
     expect(csValue).not.toContain("Data Analysis");
   });
 
@@ -154,41 +156,37 @@ describe("mapSlots areas of emphasis (per-role)", () => {
     }
   });
 
-  it("teaching emphasis draws only from taught subjects, never the posting's own domains", () => {
-    const data = { profile: { values: {}, teaching_subjects: ["Web Development", "Software Engineering", "Database Systems"] } };
-    // A posting whose domains differ from the taught subjects must not change them.
+  it("teaching emphasis defaults to the candidate's default teaching subjects for a non-teaching posting", () => {
+    const data = { profile: { values: {}, default_teaching_subjects: ["Web Development", "Software Engineering", "Database Systems"] } };
+    // A software posting (no teaching signal): emphasis stays in the authored order.
     const kw2 = { domain: [{ canonical: "Payments", score: 9, count: 1 }, { canonical: "ETL", score: 8, count: 1 }] };
     const teaching = [0, 1].map(
-      (occ) => mapSlots([slot("AREA_OF_EMPHASIS", occ)], kw2, data, { aggressiveness: 3 })[0].value,
+      (occ) => mapSlots([slot("AREA_OF_EMPHASIS", occ)], kw2, data, { aggressiveness: 3, posting: "Senior Software Engineer." })[0].value,
     );
     expect(teaching[0]).toBe("Web Development");
     expect(teaching[1]).toBe("Software Engineering");
     expect(teaching).not.toContain("Payments"); // never a posting domain
   });
 
-  it("leads teaching emphasis and course topics with the subjects an academic posting names", () => {
+  it("leads teaching emphasis and course topics with the subjects a teaching posting names", () => {
     const data = {
       profile: {
         values: {},
-        teaching_subjects: ["Web Development", "Software Engineering", "College Algebra", "Precalculus", "Statistics"],
+        default_teaching_subjects: ["Web Development", "Software Engineering"],
+        teaching_areas: [
+          { name: "Mathematics", match: ["College Algebra", "Precalculus", "Statistics"], subjects: ["College Algebra", "Precalculus", "Statistics"] },
+        ],
       },
     };
-    // A College Algebra posting: the subject is named outright (tier 2); the other
-    // math subjects share its "subject" category (tier 1); the CS subjects do not.
-    const mathKw = { subject: [{ canonical: "College Algebra", score: 4, count: 1 }] };
+    const opts = { aggressiveness: 3, posting: "Adjunct faculty to teach College Algebra to students." };
     const emphasis = [0, 1].map(
-      (occ) => mapSlots([slot("AREA_OF_EMPHASIS", occ)], mathKw, data, { aggressiveness: 3 })[0].value,
+      (occ) => mapSlots([slot("AREA_OF_EMPHASIS", occ)], {}, data, opts)[0].value,
     );
     expect(emphasis[0]).toBe("College Algebra"); // posting-named subject leads
-    expect(emphasis[1]).toBe("Precalculus"); // same-category subject, not a CS one
+    expect(emphasis[1]).toBe("Precalculus"); // next subject in the area, not a CS one
     expect(emphasis).not.toContain("Web Development");
 
-    const topics = mapSlots(
-      [slot("LIST_OF_3_COURSE_TOPICS_RELEVANT_TO_JOB_POSTING", 0)],
-      mathKw,
-      data,
-      { aggressiveness: 3 },
-    )[0].value;
+    const topics = mapSlots([slot("LIST_OF_3_COURSE_TOPICS_RELEVANT_TO_JOB_POSTING", 0)], {}, data, opts)[0].value;
     expect(topics.startsWith("College Algebra")).toBe(true);
     expect(topics).not.toContain("Web Development");
   });
@@ -205,47 +203,50 @@ describe("mapSlots areas of emphasis (per-role)", () => {
   });
 });
 
-describe("mapSlots academic-subject catering (skills row + summary focus)", () => {
-  const data = { profile: { values: {} } };
-  // The real profile teaches College Algebra etc., so these draw from the bundled
-  // skill_groups / taxonomy.
-  const mathKw = { subject: [{ canonical: "College Algebra", score: 4, count: 1 }] };
+describe("mapSlots teaching-area catering (skills row + summary focus + capability lines)", () => {
+  const data = {
+    profile: {
+      values: {},
+      teaching_areas: [
+        {
+          name: "Mathematics",
+          match: ["College Algebra", "Precalculus", "Statistics"],
+          subjects: ["College Algebra", "Precalculus", "Statistics", "Trigonometry", "Calculus"],
+          technical_capabilities: ["SQL", "Data Modeling", "Data Visualization"],
+          domain_capabilities: ["Data Analysis", "Statistics", "Mathematical Modeling"],
+        },
+      ],
+    },
+  };
+  const mathPosting = "Adjunct faculty position to teach College Algebra.";
   const csKw = { domain: [{ canonical: "Web Development", score: 9, count: 1 }] };
+  const csPosting = "Senior Software Engineer building web applications.";
 
-  it("leads the first skills row with subjects for an academic posting, domains otherwise", () => {
-    const mathRow = mapSlots([slot("2_LINES_OF_COMMA_SEPARATED_SKILLS", 0)], mathKw, data, { aggressiveness: 3 })[0].value;
+  it("leads the first skills row with the area's subjects for a teaching posting, domains otherwise", () => {
+    const mathRow = mapSlots([slot("2_LINES_OF_COMMA_SEPARATED_SKILLS", 0)], {}, data, { aggressiveness: 3, posting: mathPosting })[0].value;
     expect(mathRow).toContain("College Algebra");
 
-    const csRow = mapSlots([slot("2_LINES_OF_COMMA_SEPARATED_SKILLS", 0)], csKw, data, { aggressiveness: 3 })[0].value;
+    const csRow = mapSlots([slot("2_LINES_OF_COMMA_SEPARATED_SKILLS", 0)], csKw, data, { aggressiveness: 3, posting: csPosting })[0].value;
     expect(csRow).not.toContain("College Algebra");
     expect(csRow).toContain("Web Development");
   });
 
-  it("ROLE_RELEVANT_FOCUS (summary tail) leads with subjects for an academic posting, domains otherwise", () => {
-    const mathFocus = mapSlots([slot("ROLE_RELEVANT_FOCUS")], mathKw, data, { aggressiveness: 3 })[0].value;
+  it("ROLE_RELEVANT_FOCUS (summary tail) leads with the area's subjects for a teaching posting, domains otherwise", () => {
+    const mathFocus = mapSlots([slot("ROLE_RELEVANT_FOCUS")], {}, data, { aggressiveness: 3, posting: mathPosting })[0].value;
     expect(mathFocus.startsWith("College Algebra")).toBe(true);
 
-    const csFocus = mapSlots([slot("ROLE_RELEVANT_FOCUS")], csKw, data, { aggressiveness: 3 })[0].value;
+    const csFocus = mapSlots([slot("ROLE_RELEVANT_FOCUS")], csKw, data, { aggressiveness: 3, posting: csPosting })[0].value;
     expect(csFocus).not.toContain("College Algebra");
   });
 
-  it("swaps in the curated data/math override for capability lines on an academic posting", () => {
-    const overridden = {
-      profile: {
-        values: {},
-        academic_overrides: {
-          TECHNICAL_CAPABILITIES: ["SQL", "Data Modeling", "Data Visualization"],
-          DOMAIN_CAPABILITIES: ["Data Analysis", "Statistics", "Mathematical Modeling"],
-        },
-      },
-    };
-    const tech = mapSlots([slot("TECHNICAL_CAPABILITIES")], mathKw, overridden, { aggressiveness: 3 })[0].value;
+  it("swaps in the area's curated tech/domain capability lines for a teaching posting", () => {
+    const tech = mapSlots([slot("TECHNICAL_CAPABILITIES")], {}, data, { aggressiveness: 3, posting: mathPosting })[0].value;
     expect(tech).toContain("Data Modeling");
-    const dom = mapSlots([slot("DOMAIN_CAPABILITIES")], mathKw, overridden, { aggressiveness: 3 })[0].value;
+    const dom = mapSlots([slot("DOMAIN_CAPABILITIES")], {}, data, { aggressiveness: 3, posting: mathPosting })[0].value;
     expect(dom).toContain("Mathematical Modeling");
 
-    // A software posting ignores the override and uses the candidate's real skills.
-    const csTech = mapSlots([slot("TECHNICAL_CAPABILITIES")], csKw, overridden, { aggressiveness: 3 })[0].value;
+    // A software posting ignores the area and uses the candidate's real skills.
+    const csTech = mapSlots([slot("TECHNICAL_CAPABILITIES")], csKw, data, { aggressiveness: 3, posting: csPosting })[0].value;
     expect(csTech).not.toContain("Data Modeling");
   });
 });
