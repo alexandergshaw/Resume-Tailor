@@ -105,6 +105,8 @@ describe("embeddedEngine.tailorCoverLetter", () => {
     // sub-list sentence (and its trailing teaching clause) is gone.
     expect(res.result).toContain("designing and revamping eight project-based courses");
     expect(res.result).toContain("more than 100 students each term");
+    // Credentials and the "I bring …" statement are two separate sentences.
+    expect(res.result).toContain("each term. I bring both genuine technical depth");
     expect(res.result).not.toContain("teaching experience that fits this role well");
     expect(res.result).not.toContain("alongside the higher-education instruction");
     // Formal register: no contractions (possessives like "team's" are fine).
