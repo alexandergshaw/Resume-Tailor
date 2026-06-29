@@ -108,6 +108,8 @@ describe("embeddedEngine.tailorCoverLetter", () => {
     expect(res.result).toContain("more than 100 students each term");
     expect(res.result).toContain("teaching experience that fits this role well");
     expect(res.result).not.toContain("alongside the higher-education instruction");
+    // Formal register: no contractions (possessives like "team's" are fine).
+    expect(res.result).not.toMatch(/\b(?:I'm|I've|I'd|it's)\b/i);
     // Prose capability lists use a serial ("Oxford") "and": "A, B, and C".
     expect(res.result).toMatch(/, and /);
     // The opening "hands-on work with …" tech list leads with real technologies

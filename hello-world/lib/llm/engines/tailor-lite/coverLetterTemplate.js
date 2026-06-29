@@ -24,7 +24,7 @@ const TEMPLATE_TEXT_PATCHES = [
   // revamped, students per term) in the warmer, plainer voice.
   [
     "My background spans hands-on work with {{TECHNICAL_CAPABILITIES}}, domain expertise in {{DOMAIN_CAPABILITIES}}, and leadership in {{LEADERSHIP_CAPABILITIES}}, alongside the higher-education instruction that maps directly to this role.",
-    "My background spans hands-on work with {{TECHNICAL_CAPABILITIES}}. I pair that with domain expertise in {{DOMAIN_CAPABILITIES}} and experience in {{LEADERSHIP_CAPABILITIES}}. In the classroom, I've designed and revamped eight project-based courses and taught more than 100 students each term. It's teaching experience that fits this role well.",
+    "My background spans hands-on work with {{TECHNICAL_CAPABILITIES}}. I pair that with domain expertise in {{DOMAIN_CAPABILITIES}} and experience in {{LEADERSHIP_CAPABILITIES}}. In the classroom, I have designed and revamped eight project-based courses and taught more than 100 students each term. It is teaching experience that fits this role well.",
   ],
   // The opening paragraph now carries the headline teaching figures (courses
   // built, students per term), so soften paragraph 3 to keep the qualitative
@@ -34,6 +34,14 @@ const TEMPLATE_TEXT_PATCHES = [
     "giving clear, constructive feedback to more than 100 students each term",
     "giving every student clear, constructive feedback",
   ],
+  // Spell out contractions throughout for a more formal register. (Possessives
+  // like "the team's" and "{{TARGET_ORGANIZATION}}'s" are left untouched.)
+  ["I'm excited to apply", "I am excited to apply"],
+  ["and it's work I genuinely enjoy", "and it is work I genuinely enjoy"],
+  ["professor, I've taught", "professor, I have taught"],
+  ["I'd be glad to support", "I would be glad to support"],
+  ["I'm careful to apply", "I am careful to apply"],
+  ["I'd welcome the chance", "I would welcome the chance"],
 ];
 
 // Assemble (once) the cover-letter template as a Node Buffer for loadDocx(),
