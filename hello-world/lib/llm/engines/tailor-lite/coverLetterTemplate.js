@@ -33,10 +33,12 @@ const TEMPLATE_TEXT_PATCHES = [
     "{{YEARS_OF_EXPERIENCE}}+ years in industry building systems that support 10,000 daily users and 75,000 daily service hits, and several years teaching",
   ],
   // Fold the headline teaching figures into the intro sentence so they land up
-  // front, right where the adjunct background is introduced.
+  // front. A participial phrase ("designing and revamping … for … students")
+  // mirrors the industry half's "building systems that support …", so the two
+  // halves read in parallel instead of as a chain of comma clauses.
   [
     "teaching as an adjunct professor, I bring both genuine technical depth",
-    "teaching as an adjunct professor, during which I designed and revamped eight project-based courses and taught more than 100 students each term, I bring both genuine technical depth",
+    "teaching as an adjunct professor designing and revamping eight project-based courses for more than 100 students each term, I bring both genuine technical depth",
   ],
   // The opening paragraph now carries the headline teaching figures (courses
   // built, students per term), so soften paragraph 3 to keep the qualitative

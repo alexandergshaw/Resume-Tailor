@@ -103,7 +103,7 @@ describe("embeddedEngine.tailorCoverLetter", () => {
     expect(res.result).not.toContain("leadership in");
     // The intro sentence carries the concrete adjunct figures, and the old run-on
     // sub-list sentence (and its trailing teaching clause) is gone.
-    expect(res.result).toContain("designed and revamped eight project-based courses");
+    expect(res.result).toContain("designing and revamping eight project-based courses");
     expect(res.result).toContain("more than 100 students each term");
     expect(res.result).not.toContain("teaching experience that fits this role well");
     expect(res.result).not.toContain("alongside the higher-education instruction");
