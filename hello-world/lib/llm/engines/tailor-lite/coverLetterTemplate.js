@@ -16,6 +16,14 @@ let cache = null;
 // Small wording tweaks applied to the bundled template at load time, so we don't
 // have to regenerate the whole opaque base64 for a phrasing change.
 const TEMPLATE_TEXT_PATCHES = [
+  // Add a broad, posting-matched technical-skills sentence to the second
+  // paragraph so EVERY tool/tech/method the posting names appears in the letter
+  // (the short prose capability lines can't hold them all). ROLE_RELEVANT_STACK is
+  // uncapped, so this line carries the full relevant stack.
+  [
+    "to {{ACTION_RESULT}} across {{DOMAIN_CAPABILITIES}}.",
+    "to {{ACTION_RESULT}} across {{DOMAIN_CAPABILITIES}}. My technical toolkit for this kind of work spans {{ROLE_RELEVANT_STACK}}.",
+  ],
   // Opening paragraph rewrite. The original third sentence was one run-on with
   // three comma-joined sub-lists (technical / domain / leadership capabilities)
   // plus a trailing teaching clause. Break it into separate sentences and keep the

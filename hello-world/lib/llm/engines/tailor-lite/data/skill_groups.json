@@ -92,7 +92,13 @@
         "Authentication",
         "Salesforce",
         "Workday",
-        "Google Analytics"
+        "Slate CRM",
+        "Google Analytics",
+        "Server-Side Tagging",
+        "Core Web Vitals",
+        "SEO",
+        "Configuration Management",
+        "Regression Testing"
       ]
     }
   ]

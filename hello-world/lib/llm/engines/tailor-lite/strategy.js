@@ -139,6 +139,12 @@ const KEYWORD_JOIN = {
   ROLE_RELEVANT_FOCUS: { cats: ["domain"], k: 4, areaField: "subjects" },
 };
 
+// Categories the cover letter's technical-skills line ({{ROLE_RELEVANT_STACK}})
+// draws from, and the minimum length it pads to so a non-technical posting still
+// yields a short, sensible line instead of raw braces.
+const STACK_CATS = ["technology", "tool_platform", "methodology", "domain"];
+const STACK_MIN = 6;
+
 // Words too generic to make two phrases "the same concept" on their own.
 const JOIN_STOPWORDS = new Set(["and", "or", "of", "the", "a", "an", "to", "for", "with", "in", "on"]);
 
@@ -422,6 +428,40 @@ function mapOne(slot, keywords, data, state) {
 
   // 4) KEYWORD_JOIN (capability lines) — repeated slots slide by occurrence so
   // each repeat shows a distinct slice instead of the same list every time.
+  // ROLE_RELEVANT_STACK — the cover letter's technical-skills line. Lists every
+  // tool/tech/method/domain THIS posting names (uncapped, so the full relevant
+  // stack appears), padded up to a small minimum with the candidate's core skills
+  // so a non-technical posting yields a short line rather than a wall or raw braces.
+  if (name === "ROLE_RELEVANT_STACK") {
+    const avoidWords = significantWords(JOB_DOMAIN_AVOID.join(" "));
+    const seen = new Set();
+    const out = [];
+    const tryPush = (s) => {
+      const low = (canonicalize(s) || s).toLowerCase();
+      if (!low || seen.has(low)) return;
+      const words = [...significantWords(s)];
+      if (words.length && words.some((w) => avoidWords.has(w))) return;
+      seen.add(low);
+      out.push(s);
+    };
+    const merged = [];
+    for (const c of STACK_CATS) for (const item of keywords[c] || []) merged.push(item);
+    merged.sort((a, b) => b.score - a.score || a.canonical.localeCompare(b.canonical));
+    for (const item of merged) {
+      if (!state.allowGaps && !state.universe.has(item.canonical.toLowerCase())) continue;
+      tryPush(item.canonical);
+    }
+    if (out.length < STACK_MIN) {
+      const conditional = conditionalSkillSet();
+      for (const c of STACK_CATS) for (const s of state.byCat[c] || []) {
+        if (out.length >= STACK_MIN) break;
+        if (conditional.has((canonicalize(s) || s).toLowerCase())) continue;
+        tryPush(s);
+      }
+    }
+    return make("keywords", joinList(out, state.serialAnd), "Posting-matched technical stack");
+  }
+
   if (KEYWORD_JOIN[name]) {
     const { cats, k, avoid, areaField } = KEYWORD_JOIN[name];
     const limit = state.maxKeywords ? Math.min(k, state.maxKeywords) : k;
