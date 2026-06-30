@@ -21,8 +21,8 @@ import Tabs from "@mui/material/Tabs";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import AddIcon from "@mui/icons-material/Add";
-import DeleteIcon from "@mui/icons-material/DeleteOutline";
-import EditIcon from "@mui/icons-material/EditOutlined";
+import DeleteIcon from "@mui/icons-material/Delete";
+import EditIcon from "@mui/icons-material/Edit";
 
 async function api(path, method, body) {
   const res = await fetch(path, {

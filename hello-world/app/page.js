@@ -8,6 +8,7 @@ import ScreenshotTab from "./components/ScreenshotTab";
 import ApplyingControls from "./components/ApplyingControls";
 import TrackingTab from "./components/TrackingTab";
 import LiveFeedTab from "./components/LiveFeedTab";
+import LibraryEditor from "./components/LibraryEditor";
 import ChatPanel from "./components/ChatPanel";
 import StatusBar from "./components/StatusBar";
 import BatchTailorDialog from "./components/BatchTailorDialog";
@@ -495,7 +496,13 @@ export default function Home() {
       setActiveSection(saved);
     }
     const savedTab = localStorage.getItem("mainTab");
-    if (savedTab === "applying" || savedTab === "manualApplying" || savedTab === "interviewing" || savedTab === "feed") {
+    if (
+      savedTab === "applying" ||
+      savedTab === "manualApplying" ||
+      savedTab === "interviewing" ||
+      savedTab === "feed" ||
+      savedTab === "library"
+    ) {
       setMainTab(savedTab);
     }
     const savedContextPanel = localStorage.getItem("contextPanelOpen");
@@ -4487,6 +4494,13 @@ export default function Home() {
           >
             Tracking
           </button>
+          <button
+            type="button"
+            className={mainTab === "library" ? styles.mainTabActive : styles.mainTab}
+            onClick={() => setMainTab("library")}
+          >
+            Library
+          </button>
         </div>
 
         {mainTab === "applying" && (
@@ -4722,6 +4736,8 @@ export default function Home() {
             canTailor={!!resumeFile}
           />
         )}
+
+        {mainTab === "library" && <LibraryEditor />}
 
         {/* Always-mounted dialogs (not gated by active main tab). */}
         <BatchTailorDialog
