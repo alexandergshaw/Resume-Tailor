@@ -36,6 +36,9 @@ export default function RootLayout({ children }) {
             gap: "12px",
             flexWrap: "wrap",
           }}>
+            <a href="/library" style={{ marginRight: "auto", fontSize: 14, fontWeight: 600, color: "var(--text)", textDecoration: "none" }}>
+              Library
+            </a>
             <GmailButton />
             <AuthButton />
           </header>
