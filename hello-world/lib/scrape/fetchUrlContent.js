@@ -6,6 +6,13 @@ const BLOCKED_IP_PREFIXES = [
 ];
 const MAX_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_DESCRIPTION_CHARS = 12000;
+// A browser-like UA so sites that block obvious bots (but allow normal browsers)
+// return the page.
+const BROWSER_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+// Workday job pages are JS-rendered SPAs with no usable server HTML, but each
+// tenant exposes the posting as JSON via its Candidate Experience (CXS) API.
+const WORKDAY_HOST_RE = /(^|\.)myworkdayjobs\.com$/i;
 
 export function decodeHtmlEntities(value) {
   if (typeof value !== "string") return "";
@@ -174,6 +181,72 @@ function findJsonLdJobPosting(html) {
   return null;
 }
 
+// Strip the legal-entity prefix many institutions use as their Workday
+// hiringOrganization name ("The Trustees of the Smith College" -> "Smith College";
+// "The Regents of the University of California" -> "University of California").
+export function cleanOrgName(name) {
+  return String(name || "")
+    .trim()
+    .replace(/^the\s+/i, "")
+    .replace(/^(?:board of )?(?:trustees|regents|curators|governors|visitors|directors) of (?:the )?/i, "")
+    .replace(/^the\s+/i, "")
+    .trim();
+}
+
+// Map a public Workday job URL to its CXS JSON endpoint:
+//   https://<tenant>.<dc>.myworkdayjobs.com/<locale?>/<site>/job/<path>
+//   -> https://<tenant>.<dc>.myworkdayjobs.com/wday/cxs/<tenant>/<site>/job/<path>
+export function workdayCxsUrl(parsed) {
+  const segments = parsed.pathname.split("/").filter(Boolean);
+  const jobIdx = segments.indexOf("job");
+  if (jobIdx < 1 || jobIdx >= segments.length - 1) return "";
+  const site = segments[jobIdx - 1];
+  const jobPath = segments.slice(jobIdx + 1).join("/");
+  const tenant = parsed.hostname.split(".")[0];
+  if (!tenant || !site || !jobPath) return "";
+  return `${parsed.origin}/wday/cxs/${tenant}/${site}/job/${jobPath}`;
+}
+
+// Read a Workday posting through the CXS JSON API. Returns the fetchUrlContent
+// shape, or null to fall back to the generic HTML path.
+async function fetchWorkday(parsed, maxChars) {
+  const cxs = workdayCxsUrl(parsed);
+  if (!cxs) return null;
+  let response;
+  try {
+    response = await fetch(cxs, {
+      headers: { "User-Agent": BROWSER_UA, Accept: "application/json" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch {
+    return null;
+  }
+  if (!response.ok) return null;
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    return null;
+  }
+  const info = data && data.jobPostingInfo;
+  if (!info || typeof info.jobDescription !== "string") return null;
+  let description = htmlToText(info.jobDescription);
+  if (!description) return null;
+  if (description.length > maxChars) description = `${description.slice(0, maxChars)}…`;
+  const orgName =
+    data.hiringOrganization && typeof data.hiringOrganization.name === "string"
+      ? data.hiringOrganization.name
+      : "";
+  return {
+    title: typeof info.title === "string" ? info.title.trim() : "",
+    company: cleanOrgName(orgName),
+    description,
+    publishedDate: formatMonthYear(info.startDate || ""),
+    finalUrl: cxs,
+  };
+}
+
 /**
  * Fetch a URL and extract plain-text content along with title/company metadata.
  * Returns { title, company, description } or { error }.
@@ -198,6 +271,14 @@ export async function fetchUrlContent(rawUrl, options = {}) {
     return { error: "That URL is not allowed." };
   }
 
+  // Workday SPAs have no usable server HTML — read the posting via the CXS JSON
+  // API instead, so URL lookup works for the (very common) Workday job boards.
+  if (WORKDAY_HOST_RE.test(hostname)) {
+    const wd = await fetchWorkday(parsed, maxChars);
+    if (wd) return wd;
+    // Fall through to the generic fetch if the CXS API didn't yield a posting.
+  }
+
   let response;
   try {
     response = await fetch(rawUrl, {
@@ -206,8 +287,7 @@ export async function fetchUrlContent(rawUrl, options = {}) {
       // challenge will still 403 — the company-research URL path then falls back
       // to Gemini's own fetcher.
       headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "User-Agent": BROWSER_UA,
         Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
       },

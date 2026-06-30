@@ -39,6 +39,9 @@ describe("embeddedEngine reads the posting from a URL", () => {
     expect(fetchUrlContent).toHaveBeenCalledWith("https://jobs.example.com/123");
     expect(res.result).toContain("Senior Software Engineer");
     expect(res.result).not.toContain("{{");
+    // The scraper's clean title/company are used (not re-derived from the body).
+    expect(res.jobTitle).toBe("Senior Engineer");
+    expect(res.companyName).toBe("Initech");
   });
 
   it("getProposals works from a URL too", async () => {

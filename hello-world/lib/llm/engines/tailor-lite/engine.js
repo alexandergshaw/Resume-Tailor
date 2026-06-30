@@ -39,29 +39,43 @@ function getWorkflow() {
   return (process.env.RESUME_TAILOR_WORKFLOW || "legacy").trim().toLowerCase();
 }
 
-// Resolve the posting TEXT for a request: use the supplied text, otherwise fetch
-// it from `jobPostingUrl`. Tailoring stays deterministic and AI-free — only
-// reading the posting from a URL touches the network. With `required` (résumé /
-// proposals) an unusable input throws a user-facing error; the cover letter is
-// tolerant (returns "" so its neutral seeds fill in).
+// Resolve a request to { text, meta } for the posting: use the supplied text,
+// otherwise fetch it from `jobPostingUrl`. Tailoring stays deterministic and
+// AI-free — only reading the posting from a URL touches the network. When fetched,
+// `meta` carries the scraper's clean title/company (e.g. Workday's CXS JSON), which
+// is more reliable than re-deriving them from the description text. With `required`
+// (résumé / proposals) an unusable input throws; the cover letter is tolerant.
 async function resolvePostingText({ jobPosting, jobPostingUrl }, { required = true } = {}) {
   const text = String(jobPosting || "").trim();
-  if (text) return text;
+  if (text) return { text, meta: null };
   const url = String(jobPostingUrl || "").trim();
   if (!url) {
     if (required) throw new Error("A job posting (text or URL) is required for the embedded engine.");
-    return "";
+    return { text: "", meta: null };
   }
   const scraped = await fetchUrlContent(url);
   if (scraped.error) {
     if (required) throw new Error(`Could not read the job posting from that URL: ${scraped.error}`);
-    return "";
+    return { text: "", meta: null };
   }
   const description = String(scraped.description || "").trim();
   if (!description && required) {
     throw new Error("That URL did not contain a readable job posting. Paste the description text instead.");
   }
-  return description;
+  return {
+    text: description,
+    meta: { jobTitle: String(scraped.title || "").trim(), companyName: String(scraped.company || "").trim() },
+  };
+}
+
+// Best-effort title/company: prefer the scraper's structured values (a URL fetch),
+// else parse them from the posting text.
+function postingMetaFor(posting, scrapedMeta) {
+  const parsed = extractPostingMeta(posting);
+  return {
+    jobTitle: (scrapedMeta && scrapedMeta.jobTitle) || parsed.jobTitle,
+    companyName: (scrapedMeta && scrapedMeta.companyName) || parsed.companyName,
+  };
 }
 
 // Keywords for the posting. Both workflows are local; composed uses the in-house
@@ -150,7 +164,7 @@ export const embeddedEngine = {
   },
 
   async getProposals({ jobPosting, jobPostingUrl, aggressiveness }) {
-    const posting = await resolvePostingText({ jobPosting, jobPostingUrl });
+    const { text: posting } = await resolvePostingText({ jobPosting, jobPostingUrl });
     const { slots, keywords } = await buildProposal(
       await getDefaultTemplateBuffer(),
       posting,
@@ -170,7 +184,7 @@ export const embeddedEngine = {
   },
 
   async tailorResume({ jobPosting, jobPostingUrl, values, aggressiveness }) {
-    const posting = await resolvePostingText({ jobPosting, jobPostingUrl });
+    const { text: posting, meta: scrapedMeta } = await resolvePostingText({ jobPosting, jobPostingUrl });
     const overrides = values && typeof values === "object" ? values : {};
     const r = await render(await getDefaultTemplateBuffer(), posting, { overrides, aggressiveness });
     // Advisory research is excluded from the document — report only.
@@ -178,7 +192,7 @@ export const embeddedEngine = {
     // Best-effort title/company so the saved file is named after the posting
     // ("<Company> - <Position> - Resume.docx") instead of falling back to a
     // generic default.
-    const meta = extractPostingMeta(posting);
+    const meta = postingMetaFor(posting, scrapedMeta);
 
     return {
       engine: "embedded",
@@ -200,12 +214,12 @@ export const embeddedEngine = {
   },
 
   async tailorCoverLetter({ jobPosting, jobPostingUrl, jobTitle, companyName, values, aggressiveness }) {
-    const posting = await resolvePostingText({ jobPosting, jobPostingUrl }, { required: false });
+    const { text: posting, meta: scrapedMeta } = await resolvePostingText({ jobPosting, jobPostingUrl }, { required: false });
     const overrides = values && typeof values === "object" ? values : {};
-    // Fall back to title/company parsed from the posting when the caller didn't
-    // supply them (e.g. the manual paste flow), so the cover letter is addressed
-    // correctly and its file is named like the résumé.
-    const meta = extractPostingMeta(posting);
+    // Fall back to title/company from the scrape (URL) or parsed from the posting
+    // when the caller didn't supply them (e.g. the manual paste flow), so the cover
+    // letter is addressed correctly and its file is named like the résumé.
+    const meta = postingMetaFor(posting, scrapedMeta);
     const role = String(jobTitle || "").trim() || meta.jobTitle;
     const organization = String(companyName || "").trim() || meta.companyName;
     // Composed: structured facts from the Researcher; otherwise neutral fallbacks
