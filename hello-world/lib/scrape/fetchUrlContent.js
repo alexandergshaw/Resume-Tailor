@@ -98,12 +98,8 @@ function datePublishedFromJsonLd(html) {
   while ((match = scriptRe.exec(html)) !== null) {
     const raw = match[1].trim();
     if (!raw) continue;
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      continue;
-    }
+    const parsed = parseJsonLenient(raw);
+    if (!parsed) continue;
     const stack = [parsed];
     while (stack.length) {
       const node = stack.pop();
@@ -142,6 +138,22 @@ export function extractPublishedDate(html) {
   const timeTag = html.match(/<time[^>]+datetime=["']([^"']+)["']/i);
   if (timeTag) return formatMonthYear(timeTag[1]);
   return "";
+}
+
+// Parse a JSON blob, tolerating the single most common real-world defect in
+// hand-built JSON-LD: a trailing comma before a } or ] (e.g. HigherEdJobs' JobPosting
+// node ends "…"$22 per hour",}"). Strict parse first; only the retry strips trailing
+// commas, so valid JSON is never altered. Returns the value, or null if still invalid.
+export function parseJsonLenient(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    try {
+      return JSON.parse(String(raw).replace(/,(\s*[}\]])/g, "$1"));
+    } catch {
+      return null;
+    }
+  }
 }
 
 // Every JSON blob a page embeds: JSON-LD, framework state (__NEXT_DATA__), and any
@@ -188,12 +200,8 @@ function postingFromNode(node) {
 // works without a per-site branch. Returns { title, company, description } or null.
 export function findEmbeddedJobPosting(html) {
   for (const raw of collectJsonBlobs(html)) {
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      continue;
-    }
+    const parsed = parseJsonLenient(raw);
+    if (!parsed) continue;
     const stack = [parsed];
     let visited = 0;
     while (stack.length && visited < 20000) {

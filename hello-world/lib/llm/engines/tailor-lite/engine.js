@@ -81,13 +81,18 @@ function postingMetaFor(posting, scrapedMeta) {
 }
 
 // A posting is a teaching/academic role when it names teaching ACTIVITIES (not
-// merely an academic employer — a developer job at a college is still industry).
-// A single strong signal (adjunct, faculty, lecturer, curriculum, …) decides it;
+// merely an academic employer — a developer/IT job at a university is still
+// industry). A single strong signal (adjunct, lecturer, curriculum, …) decides it;
 // otherwise two of the weaker activity signals must co-occur. Drives the cover
 // letter framing (teaching vs. industry) so an industry role is not pitched as an
 // adjunct-teaching application.
+//
+// NOTE: bare "faculty"/"students" are deliberately NOT strong signals — higher-ed
+// postings for non-teaching roles routinely include "About <University>" boilerplate
+// ("world-renowned faculty", "extraordinary students"), which must not flip framing.
+// Only teaching-ROLE phrases ("faculty position", "teaching faculty") count.
 const TEACHING_STRONG_RE =
-  /\b(?:adjunct|faculty|lecturer|professor|instructor|tenure[ -]?track|curriculum|syllab(?:us|i)|coursework|course materials|pedagog\w*|teaching position|teaching faculty)\b/i;
+  /\b(?:adjunct|lecturer|professor|instructor|tenure[ -]?track|curriculum|syllab(?:us|i)|coursework|course materials|pedagog\w*|teaching (?:position|faculty|load)|faculty (?:position|appointment))\b/i;
 const TEACHING_WEAK_RES = [
   /\bteach(?:es|ing)?\b/i,
   /\bstudents?\b/i,

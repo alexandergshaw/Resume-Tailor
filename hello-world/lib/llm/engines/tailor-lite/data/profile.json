@@ -83,7 +83,7 @@
     },
     {
       "name": "UX Engineering",
-      "match": ["UX Engineer", "UX Engineering", "Design System", "Design Systems", "Component Library", "Component Libraries", "Design Engineer", "UI Engineer", "Frontend Engineer", "Design Systems Engineer", "Storybook"],
+      "match": ["UX Engineer", "UX Engineering", "Design System", "Design Systems", "Component Library", "Component Libraries", "Design Engineer", "UI Engineer", "Design Systems Engineer", "Storybook"],
       "subjects": ["Design Systems", "Frontend Engineering", "User Interface Design", "Interaction Design", "Accessibility", "Component Libraries"],
       "job_emphases": ["Design Systems", "Component Libraries", "Frontend Engineering", "Technical Debt Reduction", "Reusable UI Components", "Interaction Design", "Accessibility"],
       "technical_capabilities": ["React", "TypeScript", "Tailwind CSS", "Storybook", "Component Libraries", "Responsive Design"],

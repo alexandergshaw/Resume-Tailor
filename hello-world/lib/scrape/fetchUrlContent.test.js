@@ -152,6 +152,25 @@ describe("findEmbeddedJobPosting (host-agnostic)", () => {
     const html = `<script type="application/json">${JSON.stringify({ "@type": "Product", name: "Widget", description: "A nice widget" })}</script>`;
     expect(findEmbeddedJobPosting(html)).toBeNull();
   });
+
+  it("tolerates a trailing comma in hand-built JSON-LD (e.g. HigherEdJobs)", () => {
+    // HigherEdJobs' JobPosting node ends a nested object with a trailing comma,
+    // which strict JSON.parse rejects — so the posting must still be recovered.
+    const html = `<script type="application/ld+json">
+      {
+        "@type": "JobPosting",
+        "title": "Temporary Computer Science Developer",
+        "hiringOrganization": { "@type": "Organization", "name": "Worcester Polytechnic Institute" },
+        "description": "<b>JOB DESCRIPTION</b><br>PHP, the LAMP stack, Angular, REST APIs, and Drupal.",
+        "baseSalary": { "@type": "MonetaryAmount", "value": { "@type": "QuantitativeValue", "value": "$22 per hour", } }
+      }
+    </script>`;
+    const r = findEmbeddedJobPosting(html);
+    expect(r).not.toBeNull();
+    expect(r.title).toBe("Temporary Computer Science Developer");
+    expect(r.company).toBe("Worcester Polytechnic Institute");
+    expect(r.description).toContain("Drupal");
+  });
 });
 
 describe("fetchUrlContent — generic embedded JSON", () => {
