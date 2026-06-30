@@ -88,6 +88,14 @@
       "job_emphases": ["Design Systems", "Component Libraries", "Frontend Engineering", "Technical Debt Reduction", "Reusable UI Components", "Interaction Design", "Accessibility"],
       "technical_capabilities": ["React", "TypeScript", "Tailwind CSS", "Storybook", "Component Libraries", "Responsive Design"],
       "domain_capabilities": ["Design Systems", "Frontend Engineering", "User Experience", "Interaction Design", "Accessibility"]
+    },
+    {
+      "name": "Solution Architecture",
+      "match": ["Solution Architect", "Solutions Architect", "Solution Architecture", "Solution Design", "Software Architect", "Application Architect", "System Design", "Systems Design", "Platform Modernization", "Reference Architecture", "Technical Architect", "Enterprise Architect", "Cloud Architect"],
+      "subjects": ["Solution Architecture", "Software Architecture", "Platform Modernization", "System Design", "Cloud Architecture", "Enterprise Integration"],
+      "job_emphases": ["Solution Architecture", "Platform Modernization", "Solution Design", "System Design", "Reference Architecture", "Technical Roadmaps", "Application Modernization"],
+      "technical_capabilities": ["AWS", "Microservices", "Event-Driven Architecture", "Distributed Systems", "API-Based Architectures", "Cloud Computing"],
+      "domain_capabilities": ["Solution Architecture", "Software Architecture", "Enterprise Application Modernization", "Distributed Systems", "Cloud Computing"]
     }
   ],
   "values": {
