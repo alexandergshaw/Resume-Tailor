@@ -144,39 +144,75 @@ export function extractPublishedDate(html) {
   return "";
 }
 
-function findJsonLdJobPosting(html) {
-  const scriptRe = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
-  let match;
-  while ((match = scriptRe.exec(html)) !== null) {
-    const raw = match[1].trim();
-    if (!raw) continue;
+// Every JSON blob a page embeds: JSON-LD, framework state (__NEXT_DATA__), and any
+// other application/json script. Lets us find posting data host-agnostically.
+function collectJsonBlobs(html) {
+  const blobs = [];
+  const re = /<script\b[^>]*\btype=["'](?:application\/ld\+json|application\/json)["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const raw = m[1].trim();
+    if (raw) blobs.push(raw);
+  }
+  return blobs;
+}
+
+// A node is a job posting if it is JSON-LD-typed JobPosting or carries an explicit
+// job-description field (Workday/ATS shapes) — job-specific signals, so we don't
+// mistake an article or product node for a posting.
+function isJobPostingNode(node) {
+  if (!node || typeof node !== "object" || Array.isArray(node)) return false;
+  const type = node["@type"];
+  if (type === "JobPosting" || (Array.isArray(type) && type.includes("JobPosting"))) return true;
+  return typeof node.jobDescription === "string" && node.jobDescription.trim().length > 40;
+}
+
+// Normalize a posting-shaped node to { title, company, description }.
+function postingFromNode(node) {
+  const title = String(node.title || node.jobTitle || node.name || "").trim();
+  let company = "";
+  const org = node.hiringOrganization || node.company;
+  if (org && typeof org === "object" && typeof org.name === "string") company = org.name.trim();
+  else if (typeof org === "string") company = org.trim();
+  const descRaw =
+    typeof node.jobDescription === "string"
+      ? node.jobDescription
+      : typeof node.description === "string"
+        ? node.description
+        : "";
+  return { title, company, description: htmlToText(descRaw) };
+}
+
+// Deep-search a page's embedded JSON for a job-posting-shaped node. Host-agnostic:
+// any board that embeds JSON-LD JobPosting or its posting JSON (Next.js/ATS state)
+// works without a per-site branch. Returns { title, company, description } or null.
+export function findEmbeddedJobPosting(html) {
+  for (const raw of collectJsonBlobs(html)) {
     let parsed;
     try {
       parsed = JSON.parse(raw);
     } catch {
       continue;
     }
-    const candidates = [];
     const stack = [parsed];
-    while (stack.length) {
+    let visited = 0;
+    while (stack.length && visited < 20000) {
       const node = stack.pop();
+      visited += 1;
       if (!node || typeof node !== "object") continue;
       if (Array.isArray(node)) {
         for (const child of node) stack.push(child);
         continue;
       }
-      const type = node["@type"];
-      if (
-        type === "JobPosting" ||
-        (Array.isArray(type) && type.includes("JobPosting"))
-      ) {
-        candidates.push(node);
+      // Workday-style wrapper: { jobPostingInfo: {...}, hiringOrganization: {...} }.
+      if (node.jobPostingInfo && typeof node.jobPostingInfo === "object" && typeof node.jobPostingInfo.jobDescription === "string") {
+        return postingFromNode({ ...node.jobPostingInfo, hiringOrganization: node.hiringOrganization });
       }
-      if (Array.isArray(node["@graph"])) {
-        for (const child of node["@graph"]) stack.push(child);
+      if (isJobPostingNode(node)) return postingFromNode(node);
+      for (const value of Object.values(node)) {
+        if (value && typeof value === "object") stack.push(value);
       }
     }
-    if (candidates.length > 0) return candidates[0];
   }
   return null;
 }
@@ -247,6 +283,15 @@ async function fetchWorkday(parsed, maxChars) {
   };
 }
 
+// SPA job boards with no usable server HTML, read via their public JSON API. To
+// support a new board, add an entry { test, fetch } here — no changes to
+// fetchUrlContent itself. `test(hostname, parsedUrl)` decides if it applies;
+// `fetch(parsedUrl, maxChars)` returns the fetchUrlContent shape, or null to fall
+// back to the generic HTML path.
+const SPA_PROVIDERS = [
+  { name: "workday", test: (host) => WORKDAY_HOST_RE.test(host), fetch: fetchWorkday },
+];
+
 /**
  * Fetch a URL and extract plain-text content along with title/company metadata.
  * Returns { title, company, description } or { error }.
@@ -271,12 +316,14 @@ export async function fetchUrlContent(rawUrl, options = {}) {
     return { error: "That URL is not allowed." };
   }
 
-  // Workday SPAs have no usable server HTML — read the posting via the CXS JSON
-  // API instead, so URL lookup works for the (very common) Workday job boards.
-  if (WORKDAY_HOST_RE.test(hostname)) {
-    const wd = await fetchWorkday(parsed, maxChars);
-    if (wd) return wd;
-    // Fall through to the generic fetch if the CXS API didn't yield a posting.
+  // SPA boards (Workday, …) expose the posting only via a JSON API — use it. Any
+  // board not covered here still works through the generic HTML + embedded-JSON
+  // path below, so a new SPA board is the only case that needs a provider entry.
+  for (const provider of SPA_PROVIDERS) {
+    if (!provider.test(hostname, parsed)) continue;
+    const viaApi = await provider.fetch(parsed, maxChars);
+    if (viaApi) return viaApi;
+    break; // matched the provider but its API didn't yield a posting — fall through
   }
 
   let response;
@@ -331,18 +378,11 @@ export async function fetchUrlContent(rawUrl, options = {}) {
   let company = "";
   let description = "";
 
-  const jobPosting = findJsonLdJobPosting(html);
-  if (jobPosting) {
-    if (typeof jobPosting.title === "string") title = jobPosting.title.trim();
-    const org = jobPosting.hiringOrganization;
-    if (org && typeof org === "object" && typeof org.name === "string") {
-      company = org.name.trim();
-    } else if (typeof org === "string") {
-      company = org.trim();
-    }
-    if (typeof jobPosting.description === "string") {
-      description = htmlToText(jobPosting.description);
-    }
+  const embedded = findEmbeddedJobPosting(html);
+  if (embedded) {
+    title = embedded.title || title;
+    company = cleanOrgName(embedded.company) || company;
+    description = embedded.description || description;
   }
 
   if (!title) {

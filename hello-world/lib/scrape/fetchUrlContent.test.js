@@ -6,7 +6,29 @@ import {
   workdayCxsUrl,
   cleanOrgName,
   fetchUrlContent,
+  findEmbeddedJobPosting,
 } from "./fetchUrlContent.js";
+
+// A minimal mock of an HTML fetch Response (streaming body + content-type).
+function htmlResponse(html, url = "https://board.example.com/job/1") {
+  let sent = false;
+  return {
+    ok: true,
+    status: 200,
+    url,
+    headers: { get: (k) => (String(k).toLowerCase() === "content-type" ? "text/html; charset=utf-8" : null) },
+    body: {
+      getReader: () => ({
+        read: async () => {
+          if (sent) return { done: true, value: undefined };
+          sent = true;
+          return { done: false, value: new TextEncoder().encode(html) };
+        },
+        cancel() {},
+      }),
+    },
+  };
+}
 
 describe("htmlToText", () => {
   it("strips real HTML tags and decodes entities", () => {
@@ -95,6 +117,56 @@ describe("cleanOrgName", () => {
     expect(cleanOrgName("The Regents of the University of California")).toBe("University of California");
     expect(cleanOrgName("Board of Trustees of Acme University")).toBe("Acme University");
     expect(cleanOrgName("Globex Corporation")).toBe("Globex Corporation");
+  });
+});
+
+describe("findEmbeddedJobPosting (host-agnostic)", () => {
+  it("reads a JSON-LD JobPosting", () => {
+    const html = `<script type="application/ld+json">${JSON.stringify({
+      "@type": "JobPosting",
+      title: "Engineer",
+      hiringOrganization: { name: "Acme" },
+      description: "<p>Work <b>here</b></p>",
+    })}</script>`;
+    expect(findEmbeddedJobPosting(html)).toMatchObject({ title: "Engineer", company: "Acme", description: "Work here" });
+  });
+
+  it("digs a JobPosting out of __NEXT_DATA__ framework state", () => {
+    const html = `<script id="__NEXT_DATA__" type="application/json">${JSON.stringify({
+      props: { pageProps: { posting: { "@type": "JobPosting", jobTitle: "Analyst", description: "x".repeat(60) } } },
+    })}</script>`;
+    expect(findEmbeddedJobPosting(html).title).toBe("Analyst");
+  });
+
+  it("handles a Workday-style jobPostingInfo wrapper embedded in a page", () => {
+    const html = `<script type="application/json">${JSON.stringify({
+      jobPostingInfo: { title: "Dev", jobDescription: `<p>${"y".repeat(60)}</p>` },
+      hiringOrganization: { name: "Globex" },
+    })}</script>`;
+    const r = findEmbeddedJobPosting(html);
+    expect(r.title).toBe("Dev");
+    expect(r.company).toBe("Globex");
+  });
+
+  it("ignores non-job JSON so an article/product page isn't misread", () => {
+    const html = `<script type="application/json">${JSON.stringify({ "@type": "Product", name: "Widget", description: "A nice widget" })}</script>`;
+    expect(findEmbeddedJobPosting(html)).toBeNull();
+  });
+});
+
+describe("fetchUrlContent — generic embedded JSON", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("extracts an embedded JobPosting from an arbitrary SPA page (no per-site code)", async () => {
+    const html = `<html><head><title>Board</title></head><body><script id="__NEXT_DATA__" type="application/json">${JSON.stringify({
+      props: { pageProps: { job: { "@type": "JobPosting", title: "Data Engineer", hiringOrganization: { name: "The Trustees of the Foo College" }, description: "<p>Build pipelines with Python and SQL.</p>" } } },
+    })}</script></body></html>`;
+    vi.stubGlobal("fetch", vi.fn(async () => htmlResponse(html)));
+    const r = await fetchUrlContent("https://board.example.com/job/1");
+    expect(r.error).toBeUndefined();
+    expect(r.title).toBe("Data Engineer");
+    expect(r.company).toBe("Foo College"); // cleanOrgName applied at the fetch layer
+    expect(r.description).toContain("Python and SQL");
   });
 });
 
