@@ -96,6 +96,14 @@
       "job_emphases": ["Solution Architecture", "Platform Modernization", "Solution Design", "System Design", "Reference Architecture", "Technical Roadmaps", "Application Modernization"],
       "technical_capabilities": ["AWS", "Microservices", "Event-Driven Architecture", "Distributed Systems", "API-Based Architectures", "Cloud Computing"],
       "domain_capabilities": ["Solution Architecture", "Software Architecture", "Enterprise Application Modernization", "Distributed Systems", "Cloud Computing"]
+    },
+    {
+      "name": "Engineering Leadership",
+      "match": ["Engineering Manager", "Software Engineering Manager", "Director of Engineering", "Director Software Engineering", "Engineering Director", "Head of Engineering", "VP of Engineering", "Engineering Leadership", "Engineering Management", "Talent Development", "Coaching & Mentoring", "leading engineering teams", "Engineering Best Practices"],
+      "subjects": ["Engineering Leadership", "Technical Leadership", "Engineering Management", "Mentorship & Coaching", "Engineering Best Practices", "Software Architecture"],
+      "job_emphases": ["Engineering Leadership", "Team Leadership", "Mentoring & Coaching", "Engineering Best Practices", "Technical Solution Delivery", "Talent Development", "Production Stability"],
+      "technical_capabilities": ["Cloud Computing", "CI/CD", "Docker", "Microservices", "Distributed Systems", "Observability"],
+      "domain_capabilities": ["Engineering Leadership", "Software Architecture", "Engineering Management", "Distributed Systems", "Agile Delivery"]
     }
   ],
   "values": {
