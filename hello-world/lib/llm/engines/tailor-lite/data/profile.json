@@ -80,6 +80,14 @@
       "job_emphases": ["Systems Architecture", "Distributed Systems", "Modeling and Simulation", "Systems Integration", "Complex Systems Design", "Solution Architecture"],
       "technical_capabilities": ["Distributed Systems", "Event-Driven Architecture", "Microservices", "API-Based Architectures", "System Modeling", "Cloud Computing"],
       "domain_capabilities": ["Systems Engineering", "Distributed Systems", "Systems Architecture", "Modeling and Simulation", "Complex Systems"]
+    },
+    {
+      "name": "UX Engineering",
+      "match": ["UX Engineer", "UX Engineering", "Design System", "Design Systems", "Component Library", "Component Libraries", "Design Engineer", "UI Engineer", "Frontend Engineer", "Design Systems Engineer", "Storybook"],
+      "subjects": ["Design Systems", "Frontend Engineering", "User Interface Design", "Interaction Design", "Accessibility", "Component Libraries"],
+      "job_emphases": ["Design Systems", "Component Libraries", "Frontend Engineering", "Reusable UI Components", "Interaction Design", "Accessibility"],
+      "technical_capabilities": ["React", "TypeScript", "Tailwind CSS", "Storybook", "Component Libraries", "Responsive Design"],
+      "domain_capabilities": ["Design Systems", "Frontend Engineering", "User Experience", "Interaction Design", "Accessibility"]
     }
   ],
   "values": {
