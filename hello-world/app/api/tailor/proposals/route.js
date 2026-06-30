@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getEngine, resolveEngineName } from "@/lib/llm/engines";
 import { getServerEnv } from "@/lib/config/env";
+import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
@@ -45,11 +46,20 @@ export async function POST(request) {
   }
 
   const aggressiveness = Number.parseInt(body?.aggressiveness, 10);
+  let userId;
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    userId = user?.id;
+  } catch {
+    userId = undefined;
+  }
   try {
     const data = await engine.getProposals({
       jobPosting: posting,
       jobPostingUrl: postingUrl,
       aggressiveness: Number.isNaN(aggressiveness) ? undefined : aggressiveness,
+      userId,
     });
     return NextResponse.json(data);
   } catch (err) {

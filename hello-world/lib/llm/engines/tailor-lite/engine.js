@@ -28,6 +28,7 @@ import { research } from "./researcher.js";
 import { extractPostingMeta, cleanPostingTitle } from "../../postingMeta.js";
 import { fetchUrlContent } from "../../../scrape/fetchUrlContent.js";
 import { defaultLibraryData } from "./library/defaults.js";
+import { loadLibrary } from "./library/loadLibrary.js";
 
 export const ENGINE_VERSION = "tailor-lite-0.1.0";
 
@@ -213,14 +214,18 @@ export const embeddedEngine = {
     return true;
   },
 
-  async getProposals({ jobPosting, jobPostingUrl, aggressiveness }) {
+  async getProposals({ jobPosting, jobPostingUrl, aggressiveness, userId }) {
     const { text: posting } = await resolvePostingText({ jobPosting, jobPostingUrl });
+    const data = toData(await loadLibrary({ userId }));
     const { slots, keywords } = await buildProposal(
       await getDefaultTemplateBuffer(),
       posting,
       aggressiveness,
+      undefined,
+      undefined,
+      data,
     );
-    const advisory = resolveAdvisory({ posting, company: "", data: DEFAULT_DATA });
+    const advisory = resolveAdvisory({ posting, company: "", data });
     const out = {
       engine_version: ENGINE_VERSION,
       workflow: getWorkflow(),
@@ -233,12 +238,13 @@ export const embeddedEngine = {
     return out;
   },
 
-  async tailorResume({ jobPosting, jobPostingUrl, values, aggressiveness }) {
+  async tailorResume({ jobPosting, jobPostingUrl, values, aggressiveness, userId }) {
     const { text: posting, meta: scrapedMeta } = await resolvePostingText({ jobPosting, jobPostingUrl });
     const overrides = values && typeof values === "object" ? values : {};
-    const r = await render(await getDefaultTemplateBuffer(), posting, { overrides, aggressiveness });
+    const data = toData(await loadLibrary({ userId }));
+    const r = await render(await getDefaultTemplateBuffer(), posting, { overrides, aggressiveness, data });
     // Advisory research is excluded from the document — report only.
-    const advisory = resolveAdvisory({ posting, company: "", data: DEFAULT_DATA });
+    const advisory = resolveAdvisory({ posting, company: "", data });
     // Best-effort title/company so the saved file is named after the posting
     // ("<Company> - <Position> - Resume.docx") instead of falling back to a
     // generic default.
@@ -263,9 +269,10 @@ export const embeddedEngine = {
     };
   },
 
-  async tailorCoverLetter({ jobPosting, jobPostingUrl, jobTitle, companyName, values, aggressiveness }) {
+  async tailorCoverLetter({ jobPosting, jobPostingUrl, jobTitle, companyName, values, aggressiveness, userId }) {
     const { text: posting, meta: scrapedMeta } = await resolvePostingText({ jobPosting, jobPostingUrl }, { required: false });
     const overrides = values && typeof values === "object" ? values : {};
+    const data = toData(await loadLibrary({ userId }));
     // Fall back to title/company from the scrape (URL) or parsed from the posting
     // when the caller didn't supply them (e.g. the manual paste flow), so the cover
     // letter is addressed correctly and its file is named like the résumé.
@@ -274,7 +281,7 @@ export const embeddedEngine = {
     const organization = String(companyName || "").trim() || meta.companyName;
     // Composed: structured facts from the Researcher; otherwise neutral fallbacks
     // so a slot never shows raw braces.
-    const facts = resolveCoverFacts({ posting, company: organization, data: DEFAULT_DATA });
+    const facts = resolveCoverFacts({ posting, company: organization, data });
     const seedByName = {
       TARGET_ROLE: role || "the role",
       TARGET_ORGANIZATION: organization || "your organization",
@@ -290,6 +297,7 @@ export const embeddedEngine = {
       aggressiveness,
       maxKeywords: 4, // keep capability lists keyword-rich but not a wall
       serialAnd: true, // prose lists read "A, B, and C", not "A, B, C"
+      data,
     });
 
     return {

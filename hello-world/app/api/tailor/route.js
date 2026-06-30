@@ -4,6 +4,7 @@ import { getEngine, resolveEngineName } from "@/lib/llm/engines";
 import { getServerEnv } from "@/lib/config/env";
 import { fetchUrlContent } from "@/lib/scrape/fetchUrlContent";
 import { extractPostingMeta } from "@/lib/llm/postingMeta";
+import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
@@ -138,6 +139,17 @@ function parseTemplateLines(rawTemplateLines) {
 
 export async function POST(request) {
   try {
+    // The signed-in user (if any) selects which tailor library the embedded engine
+    // reads. No user -> the engine falls back to the bundled defaults.
+    let userId;
+    try {
+      const supabase = await createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      userId = user?.id;
+    } catch {
+      userId = undefined;
+    }
+
     const formData = await request.formData();
 
     const jobPosting = formData.get("jobPosting")?.toString().trim() || "";
@@ -252,6 +264,7 @@ export async function POST(request) {
       contextDocuments,
       values,
       steeringInstructions,
+      userId,
     };
 
     // Run the selected engine. If "external" is chosen but not configured, fall
@@ -295,6 +308,7 @@ export async function POST(request) {
           additionalContext,
           contextDocuments,
           steeringInstructions,
+          userId,
         });
         coverLetterResultLines = coverDraft.resultLines;
         coverLetterResult = coverDraft.result;

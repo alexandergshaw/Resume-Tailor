@@ -165,6 +165,7 @@ export async function tailorAndQueueOne({
     resumeBuffer,
     jobPosting: job.description || job.title || "",
     jobTitleHint: job.title || "",
+    userId,
   });
   if (!resumeDraft?.result) {
     throw new Error("Resume tailoring returned no content.");
@@ -191,6 +192,7 @@ export async function tailorAndQueueOne({
         jobPostingUrl: job.url || "",
         companyName: job.company || "",
         jobTitle: resumeDraft.jobTitle || job.title || "",
+        userId,
       });
       if (coverDraft?.result) {
         coverLetterId = await saveGeneratedCoverLetter(admin, {

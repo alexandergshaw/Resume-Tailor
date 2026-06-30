@@ -41,6 +41,7 @@ export async function tailorResumeHeadless({
   jobTitleHint = "",
   additionalContext = "",
   aggressiveness = 3,
+  userId,
 }) {
   if (!resumeBuffer || !Buffer.isBuffer(resumeBuffer)) {
     throw new Error("tailorResumeHeadless: resumeBuffer (Buffer) is required.");
@@ -73,6 +74,7 @@ export async function tailorResumeHeadless({
     additionalContext,
     aggressiveness,
     contextDocuments: [],
+    userId,
   });
 
   return {
@@ -109,6 +111,7 @@ export async function tailorCoverLetterHeadless({
   companyName = "",
   jobTitle = "",
   additionalContext = "",
+  userId,
 }) {
   if (!coverLetterBuffer || !Buffer.isBuffer(coverLetterBuffer)) return null;
   if (!jobPosting || jobPosting.trim().length === 0) return null;
@@ -148,6 +151,7 @@ export async function tailorCoverLetterHeadless({
     templateLines,
     additionalContext,
     contextDocuments: [],
+    userId,
   });
 
   return {
