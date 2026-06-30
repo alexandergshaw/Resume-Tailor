@@ -67,11 +67,11 @@
     },
     {
       "name": "Artificial Intelligence",
-      "match": ["Artificial Intelligence", "Machine Learning", "Deep Learning", "Data Scientist", "ML Engineer", "Neural Networks", "Natural Language Processing", "Computer Vision"],
-      "subjects": ["Artificial Intelligence", "Machine Learning", "Data Science", "Applied AI", "Intelligent Systems"],
-      "job_emphases": ["Machine Learning", "Data Science", "Algorithm Design", "Model Development", "Data Engineering", "Applied Analytics"],
-      "technical_capabilities": ["Python", "SQL", "Data Engineering", "Data Modeling", "Model Development", "Data Pipelines"],
-      "domain_capabilities": ["Machine Learning", "Artificial Intelligence", "Data Science", "Applied Analytics", "Data Engineering"]
+      "match": ["Artificial Intelligence", "Machine Learning", "Deep Learning", "Generative AI", "Data Scientist", "ML Engineer", "Neural Networks", "Natural Language Processing", "Computer Vision"],
+      "subjects": ["Artificial Intelligence", "Machine Learning", "Deep Learning", "Generative AI", "Data Science", "Applied AI"],
+      "job_emphases": ["Machine Learning", "Software Engineering", "Data Science", "Algorithm Design", "Data Analysis", "Model Development", "Applied Analytics"],
+      "technical_capabilities": ["Python", "Algorithms", "Data Structures", "SQL", "Data Modeling", "Data Pipelines"],
+      "domain_capabilities": ["Machine Learning", "Artificial Intelligence", "Generative AI", "Deep Learning", "Data Science"]
     },
     {
       "name": "Systems Engineering",
