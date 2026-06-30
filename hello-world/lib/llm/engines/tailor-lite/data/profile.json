@@ -72,6 +72,14 @@
       "job_emphases": ["Machine Learning", "Data Science", "Algorithm Design", "Model Development", "Data Engineering", "Applied Analytics"],
       "technical_capabilities": ["Python", "SQL", "Data Engineering", "Data Modeling", "Model Development", "Data Pipelines"],
       "domain_capabilities": ["Machine Learning", "Artificial Intelligence", "Data Science", "Applied Analytics", "Data Engineering"]
+    },
+    {
+      "name": "Systems Engineering",
+      "match": ["Systems Engineering", "Digital Engineering", "Model-Based Systems Engineering", "MBSE", "Systems Architecture", "Systems Architecting", "Systems Modeling", "Model-Centric", "Engineering Management", "SysML"],
+      "subjects": ["Systems Engineering", "Digital Engineering", "Model-Based Systems Engineering", "Systems Modeling and Simulation", "Distributed Systems Architecture"],
+      "job_emphases": ["Systems Architecture", "Distributed Systems", "Modeling and Simulation", "Systems Integration", "Complex Systems Design", "Solution Architecture"],
+      "technical_capabilities": ["Distributed Systems", "Event-Driven Architecture", "Microservices", "API-Based Architectures", "System Modeling", "Cloud Computing"],
+      "domain_capabilities": ["Systems Engineering", "Distributed Systems", "Systems Architecture", "Modeling and Simulation", "Complex Systems"]
     }
   ],
   "values": {
