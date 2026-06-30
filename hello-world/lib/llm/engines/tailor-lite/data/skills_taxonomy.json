@@ -218,6 +218,7 @@
     { "canonical": "Accessibility", "category": "domain", "aliases": ["accessibility", "a11y", "web accessibility", "wcag", "ada compliance", "accessible design"] },
     { "canonical": "Responsive Design", "category": "domain", "aliases": ["responsive design", "responsive web design", "responsive behavior", "responsive layouts", "mobile responsive", "responsive ui"] },
     { "canonical": "Motion Design", "category": "domain", "aliases": ["motion design", "ui animation", "ui motion", "web animation", "motion and animation"] },
+    { "canonical": "Technical Debt Reduction", "category": "domain", "aliases": ["technical debt", "tech debt", "ux-related technical debt", "ux related technical debt", "frontend technical debt"] },
     { "canonical": "SEO", "category": "domain", "aliases": ["search engine optimization", "seo optimization"] },
     { "canonical": "Distributed Systems", "category": "domain", "aliases": ["distributed computing", "scalable systems", "high availability", "distributed systems architecting", "distributed systems architecture"] },
     { "canonical": "Systems Engineering", "category": "domain", "aliases": ["systems engineering", "digital systems engineering"] },

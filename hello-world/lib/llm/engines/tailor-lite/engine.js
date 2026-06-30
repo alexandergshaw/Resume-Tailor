@@ -25,7 +25,7 @@ import { extractKeywords } from "./keywords.js";
 import { mapSlots } from "./strategy.js";
 import { parsePosting } from "./parser.js";
 import { research } from "./researcher.js";
-import { extractPostingMeta } from "../../postingMeta.js";
+import { extractPostingMeta, cleanPostingTitle } from "../../postingMeta.js";
 import { fetchUrlContent } from "../../../scrape/fetchUrlContent.js";
 import profile from "./data/profile.json";
 import library from "./data/content_library.json";
@@ -69,13 +69,45 @@ async function resolvePostingText({ jobPosting, jobPostingUrl }, { required = tr
 }
 
 // Best-effort title/company: prefer the scraper's structured values (a URL fetch),
-// else parse them from the posting text.
+// else parse them from the posting text. The title is run through cleanPostingTitle
+// so board boilerplate ("Job Application for UX Engineer") never reaches the letter
+// or the saved file name.
 function postingMetaFor(posting, scrapedMeta) {
   const parsed = extractPostingMeta(posting);
   return {
-    jobTitle: (scrapedMeta && scrapedMeta.jobTitle) || parsed.jobTitle,
+    jobTitle: cleanPostingTitle((scrapedMeta && scrapedMeta.jobTitle) || parsed.jobTitle),
     companyName: (scrapedMeta && scrapedMeta.companyName) || parsed.companyName,
   };
+}
+
+// A posting is a teaching/academic role when it names teaching ACTIVITIES (not
+// merely an academic employer — a developer job at a college is still industry).
+// A single strong signal (adjunct, faculty, lecturer, curriculum, …) decides it;
+// otherwise two of the weaker activity signals must co-occur. Drives the cover
+// letter framing (teaching vs. industry) so an industry role is not pitched as an
+// adjunct-teaching application.
+const TEACHING_STRONG_RE =
+  /\b(?:adjunct|faculty|lecturer|professor|instructor|tenure[ -]?track|curriculum|syllab(?:us|i)|coursework|course materials|pedagog\w*|teaching position|teaching faculty)\b/i;
+const TEACHING_WEAK_RES = [
+  /\bteach(?:es|ing)?\b/i,
+  /\bstudents?\b/i,
+  /\bstudent body\b/i,
+  /\bcourses?\b/i,
+  /\bclassroom\b/i,
+  /\bsemester\b/i,
+  /\blearners?\b/i,
+  /\blectures?\b/i,
+];
+export function isTeachingPosting(posting) {
+  const text = String(posting || "");
+  if (!text.trim()) return false;
+  if (TEACHING_STRONG_RE.test(text)) return true;
+  let hits = 0;
+  for (const re of TEACHING_WEAK_RES) {
+    if (re.test(text)) hits += 1;
+    if (hits >= 2) return true;
+  }
+  return false;
 }
 
 // Keywords for the posting. Both workflows are local; composed uses the in-house
@@ -220,7 +252,7 @@ export const embeddedEngine = {
     // when the caller didn't supply them (e.g. the manual paste flow), so the cover
     // letter is addressed correctly and its file is named like the résumé.
     const meta = postingMetaFor(posting, scrapedMeta);
-    const role = String(jobTitle || "").trim() || meta.jobTitle;
+    const role = cleanPostingTitle(String(jobTitle || "").trim()) || meta.jobTitle;
     const organization = String(companyName || "").trim() || meta.companyName;
     // Composed: structured facts from the Researcher; otherwise neutral fallbacks
     // so a slot never shows raw braces.
@@ -234,7 +266,7 @@ export const embeddedEngine = {
       LEADERSHIP_CAPABILITIES: "technical leadership and cross-functional collaboration",
       DELIVERY_PRACTICES: "Agile delivery",
     };
-    const r = await render(await getCoverLetterTemplateBuffer(), posting, {
+    const r = await render(await getCoverLetterTemplateBuffer({ teaching: isTeachingPosting(posting) }), posting, {
       overrides,
       seedByName,
       aggressiveness,

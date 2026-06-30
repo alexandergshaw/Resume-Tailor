@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractPostingMeta } from "./postingMeta.js";
+import { extractPostingMeta, cleanPostingTitle } from "./postingMeta.js";
 
 describe("extractPostingMeta", () => {
   it("parses the app's normalized job-card shape (title / 'Company in Location')", () => {
@@ -118,5 +118,34 @@ describe("extractPostingMeta", () => {
       "Globex Technologies",
     );
     expect(extractPostingMeta("Analyst\nThe Acme Corporation values data.").companyName).toBe("Acme Corporation");
+  });
+
+  it("strips ATS title boilerplate (Greenhouse '<...> at <Company>' header)", () => {
+    // Greenhouse page <title> is "Job Application for <Role> at <Company>".
+    const { jobTitle, companyName } = extractPostingMeta("Job Application for UX Engineer at Clover Health\nRemote - USA");
+    expect(jobTitle).toBe("UX Engineer");
+    expect(companyName).toBe("Clover Health");
+  });
+});
+
+describe("cleanPostingTitle", () => {
+  it("strips board boilerplate prefixes, keeping the role", () => {
+    expect(cleanPostingTitle("Job Application for UX Engineer")).toBe("UX Engineer");
+    expect(cleanPostingTitle("Apply for Staff Engineer")).toBe("Staff Engineer");
+    expect(cleanPostingTitle("Careers - Data Analyst")).toBe("Data Analyst");
+    expect(cleanPostingTitle("Now Hiring Senior Designer")).toBe("Senior Designer");
+    expect(cleanPostingTitle("Job: Backend Engineer")).toBe("Backend Engineer");
+  });
+
+  it("leaves a clean title untouched and does not strip role words used as labels", () => {
+    expect(cleanPostingTitle("UX Engineer")).toBe("UX Engineer");
+    // A real title that merely starts with a label word (no separator) is kept.
+    expect(cleanPostingTitle("Hiring Manager")).toBe("Hiring Manager");
+    expect(cleanPostingTitle("Position Engineer")).toBe("Position Engineer");
+  });
+
+  it("is empty-safe", () => {
+    expect(cleanPostingTitle("")).toBe("");
+    expect(cleanPostingTitle(null)).toBe("");
   });
 });

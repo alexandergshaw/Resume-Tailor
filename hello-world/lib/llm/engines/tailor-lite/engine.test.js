@@ -91,9 +91,9 @@ describe("embeddedEngine.tailorResume", () => {
 });
 
 describe("embeddedEngine.tailorCoverLetter", () => {
-  it("renders a cover letter seeded with the role, organization, and profile", async () => {
+  it("renders an industry cover letter (no teaching framing) for a non-teaching posting", async () => {
     const res = await embeddedEngine.tailorCoverLetter({
-      jobPosting: POSTING,
+      jobPosting: POSTING, // "Senior Software Engineer" — no teaching signal
       jobTitle: "Staff Engineer",
       companyName: "Initech",
     });
@@ -104,14 +104,15 @@ describe("embeddedEngine.tailorCoverLetter", () => {
     // Soft-skills line reads "experience in", not "leadership in".
     expect(res.result).toContain("experience in");
     expect(res.result).not.toContain("leadership in");
-    // The intro sentence carries the concrete adjunct figures, and the old run-on
-    // sub-list sentence (and its trailing teaching clause) is gone.
-    expect(res.result).toContain("designing and revamping eight project-based courses");
-    expect(res.result).toContain("more than 100 students each term");
-    // Credentials and the "I bring …" statement are two separate sentences.
-    expect(res.result).toContain("each term. I bring both genuine technical depth");
-    expect(res.result).not.toContain("teaching experience that fits this role well");
+    // The adjunct-teaching framing is dropped for an industry role: no students,
+    // courses, rubrics, or "students and courses" closing.
+    expect(res.result).not.toMatch(/\bstudents?\b/i);
+    expect(res.result).not.toContain("project-based courses");
+    expect(res.result).not.toContain("rubrics");
+    expect(res.result).not.toContain("instructional team");
     expect(res.result).not.toContain("alongside the higher-education instruction");
+    // Industry framing leads with a shipping track record.
+    expect(res.result).toContain("track record of shipping production-quality software");
     // Formal register: no contractions (possessives like "team's" are fine).
     expect(res.result).not.toMatch(/\b(?:I'm|I've|I'd|it's)\b/i);
     // Prose capability lists use a serial ("Oxford") "and": "A, B, and C".
@@ -120,6 +121,19 @@ describe("embeddedEngine.tailorCoverLetter", () => {
     // (languages/frameworks), not just collaboration tools.
     expect(res.result).toMatch(/hands-on work with [^.]*\b(React|TypeScript|JavaScript|PostgreSQL|SQL)\b/);
     expect(res.report.meta.document).toBe("cover_letter");
+  });
+
+  it("keeps the adjunct-teaching framing for a teaching posting", async () => {
+    const res = await embeddedEngine.tailorCoverLetter({
+      jobPosting: "Adjunct Faculty position to teach undergraduate courses and provide quality instruction to students each term.",
+      jobTitle: "Adjunct Faculty",
+      companyName: "Community College",
+    });
+    // The teaching variant retains the concrete adjunct figures.
+    expect(res.result).toContain("designing and revamping eight project-based courses");
+    expect(res.result).toContain("more than 100 students each term");
+    expect(res.result).not.toContain("{{");
+    expect(res.result).not.toMatch(/\b(?:I'm|I've|I'd|it's)\b/i);
   });
 });
 

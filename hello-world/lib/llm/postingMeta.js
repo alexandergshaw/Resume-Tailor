@@ -69,6 +69,30 @@ function cleanLine(value) {
   return String(value || "").replace(/\s+/g, " ").trim();
 }
 
+// ATS / job-board boilerplate that wraps the real role on a page <title> or
+// heading ("Job Application for UX Engineer", "Apply for Staff Engineer",
+// "Careers - Data Analyst"). Stripped so the title is just the role — host-
+// agnostic (Greenhouse uses "Job Application for …", others "Apply for …" etc.).
+// Phrase prefixes are safe to strip on their own (they never begin a real title).
+const TITLE_PHRASE_PREFIX =
+  /^(?:job application for|application for|apply (?:for|to)|now hiring|we(?:'re| are) hiring)\s+/i;
+// Label prefixes only strip when followed by a separator, so a genuine title that
+// merely starts with the word ("Hiring Manager", "Position Engineer") is untouched.
+const TITLE_LABEL_PREFIX =
+  /^(?:careers?|jobs?|job (?:posting|opening|req(?:uisition)?)|posting|position|role|vacancy|opportunity|hiring)\s*[:\-–—]\s*/i;
+
+export function cleanPostingTitle(title) {
+  let t = cleanLine(title);
+  if (!t) return "";
+  let prev;
+  // Iterate so stacked prefixes collapse ("Careers: Job Application for X").
+  do {
+    prev = t;
+    t = t.replace(TITLE_PHRASE_PREFIX, "").replace(TITLE_LABEL_PREFIX, "").trim();
+  } while (t !== prev && t);
+  return t || cleanLine(title);
+}
+
 // A line short and punctuation-light enough to be a heading (title/company)
 // rather than a sentence of prose.
 function looksLikeHeading(line) {
@@ -180,5 +204,5 @@ export function extractPostingMeta(posting) {
     companyName = stripLocation(headings[1]);
   }
 
-  return { jobTitle: jobTitle || "", companyName: companyName || "" };
+  return { jobTitle: cleanPostingTitle(jobTitle) || "", companyName: companyName || "" };
 }

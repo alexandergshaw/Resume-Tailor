@@ -69,4 +69,29 @@ describe("UX Engineer / design system posting tailoring", () => {
     const emphasis = (firstRole.match(/\(([^)]*)\)/) || [, ""])[1];
     expect(/Design Systems|Component Libraries|Frontend Engineering/.test(emphasis), `full-time emphasis: ${emphasis}`).toBe(true);
   });
+
+  it("frames the cover letter for the industry role, not as an adjunct-teaching application", () => {
+    // The UX Engineer posting has no teaching signal: the letter must drop the
+    // "support students / project-based courses / rubrics / students and courses"
+    // framing the bundled template uses for academic postings.
+    expect(cover).not.toMatch(/\bstudents?\b/i);
+    expect(cover).not.toContain("project-based courses");
+    expect(cover).not.toContain("rubrics");
+    expect(cover).not.toContain("instructional team");
+    expect(cover).not.toContain("higher-education instruction");
+    // It addresses the posting's explicit technical-debt responsibility.
+    expect(cover).toMatch(/technical debt/i);
+  });
+
+  it("cleans ATS title boilerplate so the letter names the real role", async () => {
+    // The greenhouse page title is "Job Application for UX Engineer at Clover Health".
+    const res = await embeddedEngine.tailorCoverLetter({
+      jobPosting: UX_POSTING,
+      jobTitle: "Job Application for UX Engineer",
+      companyName: "Clover Health",
+    });
+    expect(res.jobTitle).toBe("UX Engineer");
+    expect(res.result).toContain("the UX Engineer position at Clover Health");
+    expect(res.result).not.toContain("Job Application for");
+  });
 });
