@@ -417,7 +417,8 @@ export default function DocumentPreviewDialog({
               value={steerText}
               onChange={(e) => setSteerText(e.target.value)}
               onKeyDown={(e) => {
-                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                // Enter submits; Shift+Enter inserts a newline.
+                if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
                   submitSteer();
                 }
@@ -437,7 +438,7 @@ export default function DocumentPreviewDialog({
             </Button>
           </Box>
           <Box sx={{ fontSize: "0.7rem", color: "var(--muted, #888)", mt: 0.5 }}>
-            Regenerates this document with Gemini using your instructions. ⌘/Ctrl+Enter to submit.
+            Regenerates this document with Gemini using your instructions. Enter to submit, Shift+Enter for a new line.
           </Box>
         </Box>
       ) : null}
