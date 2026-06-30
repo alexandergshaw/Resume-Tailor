@@ -71,6 +71,9 @@ describe("embeddedEngine.tailorResume", () => {
     expect(res.result).not.toContain("{Area");
     expect(res.result).toContain("Alex Shaw"); // static name in the template
     expect(res.result).toContain("Senior Software Engineer"); // RANK + PRIMARY_FUNCTION
+    // The standing leadership fact (leads a team of 5) is always surfaced.
+    expect(res.result).toContain("a cross-functional team of 5"); // summary
+    expect(res.result).toContain("team of 5"); // and the first-role bullet
     expect(res.report.unfilled).toEqual([]);
   });
 
@@ -113,6 +116,8 @@ describe("embeddedEngine.tailorCoverLetter", () => {
     expect(res.result).not.toContain("alongside the higher-education instruction");
     // Industry framing leads with a shipping track record.
     expect(res.result).toContain("track record of shipping production-quality software");
+    // The standing leadership fact (leads a team of 5) is always surfaced.
+    expect(res.result).toContain("I lead an engineering team of five");
     // Formal register: no contractions (possessives like "team's" are fine).
     expect(res.result).not.toMatch(/\b(?:I'm|I've|I'd|it's)\b/i);
     // Prose capability lists use a serial ("Oxford") "and": "A, B, and C".
@@ -132,6 +137,8 @@ describe("embeddedEngine.tailorCoverLetter", () => {
     // The teaching variant retains the concrete adjunct figures.
     expect(res.result).toContain("designing and revamping eight project-based courses");
     expect(res.result).toContain("more than 100 students each term");
+    // …and still surfaces the standing leadership fact (leads a team of 5).
+    expect(res.result).toContain("I lead an engineering team of five");
     expect(res.result).not.toContain("{{");
     expect(res.result).not.toMatch(/\b(?:I'm|I've|I'd|it's)\b/i);
   });

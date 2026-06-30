@@ -20,6 +20,16 @@ const cache = new Map();
 // teaching paragraphs into role-focused prose. Both share the same {{PLACEHOLDER}}
 // vocabulary, so the same fill pipeline populates either variant.
 
+// Applied to BOTH variants. Paragraph 2 (the current-role paragraph) always states
+// that the candidate leads an engineering team of five — a standing fact that should
+// surface in every letter regardless of posting or framing.
+const SHARED_PATCHES = [
+  [
+    "In my current role at {{CURRENT_EMPLOYER}}, I lead {{INITIATIVE_TYPE}} initiatives",
+    "In my current role at {{CURRENT_EMPLOYER}}, I lead an engineering team of five on {{INITIATIVE_TYPE}} initiatives",
+  ],
+];
+
 // Small wording tweaks applied to the bundled template at load time, so we don't
 // have to regenerate the whole opaque base64 for a phrasing change.
 const TEACHING_PATCHES = [
@@ -126,7 +136,7 @@ export async function getCoverLetterTemplateBuffer({ teaching = true } = {}) {
   const docFile = zip.file("word/document.xml");
   if (docFile) {
     let xml = await docFile.async("string");
-    for (const [from, to] of teaching ? TEACHING_PATCHES : INDUSTRY_PATCHES) {
+    for (const [from, to] of [...SHARED_PATCHES, ...(teaching ? TEACHING_PATCHES : INDUSTRY_PATCHES)]) {
       xml = xml.split(from).join(to);
     }
     zip.file("word/document.xml", xml, { date: FIXED_ENTRY_DATE });
