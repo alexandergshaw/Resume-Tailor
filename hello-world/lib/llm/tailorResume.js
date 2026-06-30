@@ -78,11 +78,23 @@ function buildTailorPrompt({
   additionalContext,
   aggressiveness,
   contextDocuments,
+  steeringInstructions,
 }) {
   const aggressivenessConfig = getAggressivenessConfig(aggressiveness);
   const jobPostingBlock = jobPostingUrl
     ? `Job posting URL: ${jobPostingUrl}\nFetch the full job description from this URL and use it to tailor the resume.`
     : `Job posting:\n${jobPosting}`;
+  // When the user reviewed a previous draft and asked for specific changes,
+  // surface those as a high-priority revision request that still defers to the
+  // hard constraints (layout fidelity, slot count, no fabrication).
+  const steering = (steeringInstructions || "").trim();
+  const steeringBlock = steering
+    ? [
+        "USER REVISION REQUEST (highest priority): The user reviewed your previous draft of this resume and is asking for the following specific changes. Apply them faithfully in this new version, while still honoring every hard constraint above (preserve layout/slot count, do not fabricate):",
+        steering,
+        "",
+      ]
+    : [];
   return [
     "You are an expert resume editor.",
     `Rewrite the resume to match the job posting with aggressiveness level ${aggressivenessConfig.level}/5 (${aggressivenessConfig.label}) while preserving the source resume layout exactly.`,
@@ -113,6 +125,7 @@ function buildTailorPrompt({
     `C) Style policy: ${aggressivenessConfig.stylePolicy}`,
     "D) Internally self-check that your output reflects the chosen aggressiveness level before finalizing. If level is 1–2, the diff against the source resume should be small and targeted. If level is 4–5, most eligible lines should be visibly reworded around the posting.",
     "",
+    ...steeringBlock,
     jobPostingBlock,
     "",
     `Additional context:\n${additionalContext || "None provided."}`,
@@ -206,6 +219,7 @@ export async function generateTailoredResumeDraft({
   additionalContext,
   aggressiveness,
   contextDocuments,
+  steeringInstructions,
 }) {
   const normalizedTemplateLines = Array.isArray(templateLines)
     ? templateLines.filter((line) => typeof line === "string")
@@ -226,6 +240,7 @@ export async function generateTailoredResumeDraft({
     additionalContext,
     aggressiveness,
     contextDocuments,
+    steeringInstructions,
   });
 
   const response = await client.models.generateContent({
@@ -269,12 +284,21 @@ function buildCoverLetterPrompt({
   templateLines,
   additionalContext,
   contextDocuments,
+  steeringInstructions,
 }) {
   const jobPostingBlock = jobPostingUrl
     ? `Job posting URL: ${jobPostingUrl}\nFetch the full job description from this URL and use it to tailor the cover letter.`
     : `Job posting:\n${jobPosting || "Not provided."}`;
   const charBudget = templateLines.map((line) => (line || "").length);
   const totalChars = charBudget.reduce((sum, n) => sum + n, 0);
+  const steering = (steeringInstructions || "").trim();
+  const steeringBlock = steering
+    ? [
+        "USER REVISION REQUEST (highest priority): The user reviewed your previous draft of this cover letter and is asking for the following specific changes. Apply them faithfully, while still honoring every hard constraint above (line count, character budgets, no fabrication):",
+        steering,
+        "",
+      ]
+    : [];
 
   return [
     "You are an expert cover letter writer.",
@@ -296,6 +320,7 @@ function buildCoverLetterPrompt({
     `Target role: ${jobTitle || "Not provided."}`,
     `Target company: ${companyName || "Not provided."}`,
     "",
+    ...steeringBlock,
     jobPostingBlock,
     "",
     `Additional context:\n${additionalContext || "None provided."}`,
@@ -340,6 +365,7 @@ export async function generateTailoredCoverLetterDraft({
   templateLines,
   additionalContext,
   contextDocuments,
+  steeringInstructions,
 }) {
   const normalizedTemplateLines = Array.isArray(templateLines)
     ? templateLines.map((line) => (typeof line === "string" ? line : ""))
@@ -360,6 +386,7 @@ export async function generateTailoredCoverLetterDraft({
     templateLines: normalizedTemplateLines,
     additionalContext,
     contextDocuments,
+    steeringInstructions,
   });
 
   const response = await client.models.generateContent({

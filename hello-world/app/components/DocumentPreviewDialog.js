@@ -14,7 +14,9 @@ import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Select from "@mui/material/Select";
 import MenuItem from "@mui/material/MenuItem";
+import TextField from "@mui/material/TextField";
 import CircularProgress from "@mui/material/CircularProgress";
+import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
 import DescriptionIcon from "@mui/icons-material/Description";
 import FormatBoldIcon from "@mui/icons-material/FormatBold";
 import FormatItalicIcon from "@mui/icons-material/FormatItalic";
@@ -72,9 +74,11 @@ export default function DocumentPreviewDialog({
   company = "",
   initialTab = "resume",
   scopes = {},
+  engine = "",
   loadModel,
   reloadKey = 0,
   onSave,
+  onResubmit,
   onDownload,
   onClose,
   onResearchCompany,
@@ -90,6 +94,9 @@ export default function DocumentPreviewDialog({
   const [mode, setMode] = useState("view"); // "view" | "edit"
   // Per-scope render state: { loading, html, error }.
   const [docState, setDocState] = useState({});
+  // Steering box: free-text instructions to re-run the Gemini tailor with.
+  const [steerText, setSteerText] = useState("");
+  const [resubmitting, setResubmitting] = useState(false);
   const [prevOpen, setPrevOpen] = useState(open);
   const [prevReloadKey, setPrevReloadKey] = useState(reloadKey);
   const editorRef = useRef(null);
@@ -107,6 +114,7 @@ export default function DocumentPreviewDialog({
       setMode("view");
       setDocState({});
       draftHtmlRef.current = {};
+      setSteerText("");
     }
   }
 
@@ -231,9 +239,26 @@ export default function DocumentPreviewDialog({
   };
   const handleDownload = () => onDownload?.(tab, activePayload());
 
+  // Resubmit the active document to Gemini with the typed steering instructions.
+  // The parent re-runs the tailor and refreshes the preview; on success we clear
+  // the box. Only available for the Gemini engine (see steeringEnabled below).
+  const submitSteer = async () => {
+    const text = steerText.trim();
+    if (!text || resubmitting || busy) return;
+    setResubmitting(true);
+    try {
+      const ok = await onResubmit?.(tab, text);
+      if (ok !== false) setSteerText("");
+    } finally {
+      setResubmitting(false);
+    }
+  };
+
   const heading = [company, jobTitle].filter(Boolean).join(" · ");
   const state = docState[tab] || {};
   const hasContent = SCOPES.some(available);
+  // Steering is a Gemini-only feature: only Gemini re-tailors from instructions.
+  const steeringEnabled = engine === "gemini" && available(tab) && typeof onResubmit === "function";
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth fullScreen={isMobile}>
@@ -376,6 +401,46 @@ export default function DocumentPreviewDialog({
           <Box sx={{ mt: 1.5, color: "#2e7d32", fontSize: "0.85rem", textAlign: "center" }}>{notice}</Box>
         ) : null}
       </DialogContent>
+
+      {steeringEnabled ? (
+        <Box sx={{ px: 2, pt: 1.25, pb: 0.5, borderTop: "1px solid var(--border, #eee)", bgcolor: "rgba(25,118,210,0.04)" }}>
+          <Box sx={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary, #555)", mb: 0.75 }}>
+            Ask Gemini to revise this {SCOPE_LABEL[tab].toLowerCase()}
+          </Box>
+          <Box sx={{ display: "flex", alignItems: "flex-start", gap: 1 }}>
+            <TextField
+              multiline
+              minRows={1}
+              maxRows={4}
+              fullWidth
+              size="small"
+              value={steerText}
+              onChange={(e) => setSteerText(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                  e.preventDefault();
+                  submitSteer();
+                }
+              }}
+              placeholder="e.g. Emphasize leadership, shorten the summary, and call out my Python experience"
+              disabled={resubmitting || busy}
+              sx={{ bgcolor: "#fff", borderRadius: 1 }}
+            />
+            <Button
+              onClick={submitSteer}
+              disabled={!steerText.trim() || resubmitting || busy}
+              variant="contained"
+              startIcon={resubmitting ? <CircularProgress size={14} color="inherit" /> : <AutoFixHighIcon fontSize="small" />}
+              sx={{ textTransform: "none", whiteSpace: "nowrap", mt: 0.25 }}
+            >
+              {resubmitting ? "Revising…" : "Revise"}
+            </Button>
+          </Box>
+          <Box sx={{ fontSize: "0.7rem", color: "var(--muted, #888)", mt: 0.5 }}>
+            Regenerates this document with Gemini using your instructions. ⌘/Ctrl+Enter to submit.
+          </Box>
+        </Box>
+      ) : null}
 
       <DialogActions sx={{ flexWrap: "wrap", gap: 1, px: 2, py: 1.5 }}>
         <Button onClick={onClose} sx={{ textTransform: "none" }}>Close</Button>

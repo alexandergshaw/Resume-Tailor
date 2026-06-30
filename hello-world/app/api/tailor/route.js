@@ -143,6 +143,8 @@ export async function POST(request) {
     const jobPosting = formData.get("jobPosting")?.toString().trim() || "";
     const jobPostingUrl = formData.get("jobPostingUrl")?.toString().trim() || "";
     const additionalContext = parseAdditionalContext(formData.get("additionalContext"));
+    // Optional free-text steering from the preview's "revise with Gemini" box.
+    const steeringInstructions = parseAdditionalContext(formData.get("steeringInstructions"));
     const aggressiveness = parseAggressiveness(formData.get("aggressiveness"));
     const contextDocuments = await parseContextDocuments(formData);
     const templateLines = parseTemplateLines(
@@ -249,6 +251,7 @@ export async function POST(request) {
       aggressiveness,
       contextDocuments,
       values,
+      steeringInstructions,
     };
 
     // Run the selected engine. If "external" is chosen but not configured, fall
@@ -291,6 +294,7 @@ export async function POST(request) {
           templateLines: coverLetterTemplateLines,
           additionalContext,
           contextDocuments,
+          steeringInstructions,
         });
         coverLetterResultLines = coverDraft.resultLines;
         coverLetterResult = coverDraft.result;

@@ -259,6 +259,9 @@ export default function Home() {
     title: "",
     company: "",
     tab: "resume",
+    // Posting source kept around so the preview can re-tailor (Gemini steering).
+    posting: "",
+    url: "",
     busy: false,
     notice: "",
     error: "",
@@ -2784,6 +2787,8 @@ export default function Home() {
       title: t.generatedJobTitle || job.title || "",
       company: job.company || "",
       tab: wantsCover ? "cover" : "resume",
+      posting: t.jobDescription || job.description || "",
+      url: job.url || "",
       busy: false,
       notice: "",
       error: "",
@@ -2894,6 +2899,95 @@ export default function Home() {
     }
     const err = await downloadDocxFiles(args);
     setResumePreview((prev) => ({ ...prev, busy: false, error: err || "" }));
+  }
+
+  // Re-run the Gemini tailor for the previewed document using the free-text
+  // steering instructions the user typed in the preview. Updates only the
+  // active scope (resume or cover letter), drops any cached/edited preview HTML
+  // so the fresh draft renders, and refreshes the open preview. Returns true on
+  // success so the dialog can clear its input. Gemini-only by design — the
+  // offline engines don't read steering instructions.
+  async function resubmitDocumentPreview(scope, instructions) {
+    const jobId = resumePreview.jobId;
+    const text = String(instructions || "").trim();
+    if (!jobId || !text) return false;
+    if (!resumeFile) {
+      setResumePreview((prev) => ({ ...prev, error: "Upload a resume first to revise it.", notice: "" }));
+      return false;
+    }
+    const entry = tailoringMap[jobId] || {};
+    const posting = (resumePreview.posting || entry.jobDescription || "").trim();
+    const url = (resumePreview.url || "").trim();
+    if (!posting && !url) {
+      setResumePreview((prev) => ({ ...prev, error: "Couldn't find the job posting to revise against.", notice: "" }));
+      return false;
+    }
+    const applyCover = scope === "cover";
+
+    setResumePreview((prev) => ({ ...prev, busy: true, notice: "", error: "" }));
+    try {
+      const formData = new FormData();
+      if (posting) formData.append("jobPosting", posting);
+      else formData.append("jobPostingUrl", url);
+      formData.append("additionalContext", additionalContext);
+      formData.append("aggressiveness", String(aggressiveness));
+      formData.append("engine", "gemini");
+      formData.append("steeringInstructions", text);
+      const templateLines = await buildTemplateLinesForUpload(resumeFile);
+      formData.append("templateLines", JSON.stringify(templateLines));
+      contextFiles.forEach((file) => formData.append("contextFiles", file));
+      formData.append("resume", resumeFile);
+      // Only regenerate the cover letter when that's the document being revised.
+      if (applyCover && coverLetterFile) {
+        const coverLetterTemplateLines = await buildTemplateLinesForUpload(coverLetterFile);
+        formData.append("coverLetterTemplateLines", JSON.stringify(coverLetterTemplateLines));
+        formData.append("coverLetter", coverLetterFile);
+      }
+
+      const response = await fetch("/api/tailor", { method: "POST", body: formData });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "Failed to revise the document.");
+
+      if (applyCover) {
+        const lines = Array.isArray(payload.coverLetterResultLines) ? payload.coverLetterResultLines : [];
+        const coverErr = typeof payload.coverLetterError === "string" ? payload.coverLetterError : "";
+        if (coverErr) throw new Error(coverErr);
+        if (lines.length === 0) throw new Error("Gemini returned an empty cover letter.");
+        updateTailoringJob(jobId, {
+          coverLetterResultLines: lines,
+          coverLetterDocxB64: typeof payload.coverLetterDocxB64 === "string" ? payload.coverLetterDocxB64 : "",
+          coverLetterPreviewHtml: undefined,
+          edited: false,
+          status: "done",
+        });
+      } else {
+        const result = payload.result?.trim() || "";
+        const lines = Array.isArray(payload.resultLines) ? payload.resultLines : [];
+        if (!result) throw new Error("Gemini returned an empty resume.");
+        const nextTitle = typeof payload.jobTitle === "string" ? payload.jobTitle.trim() : "";
+        updateTailoringJob(jobId, {
+          result,
+          resultLines: lines,
+          docxB64: typeof payload.docxB64 === "string" ? payload.docxB64 : "",
+          resumePreviewHtml: undefined,
+          ...(nextTitle ? { generatedJobTitle: nextTitle } : {}),
+          edited: false,
+          status: "done",
+        });
+      }
+
+      setPreviewReloadKey((k) => k + 1);
+      setResumePreview((prev) => ({
+        ...prev,
+        busy: false,
+        error: "",
+        notice: `Revised the ${applyCover ? "cover letter" : "resume"} with your instructions.`,
+      }));
+      return true;
+    } catch (err) {
+      setResumePreview((prev) => ({ ...prev, busy: false, error: err?.message || "Couldn't revise the document.", notice: "" }));
+      return false;
+    }
   }
 
   // --- Company research (recent positive articles for the cover letter) ------
@@ -3044,7 +3138,7 @@ export default function Home() {
   // research in the background so it's ready behind the "Research company" button.
   // The user reviews and downloads from the preview.
   function finishByOpeningPreview(ctx) {
-    const { jobId, jobTitle, company, posting, applyCover, coverLetterResultLines } = ctx;
+    const { jobId, jobTitle, company, posting, url, applyCover, coverLetterResultLines } = ctx;
     const hasCover =
       applyCover && Array.isArray(coverLetterResultLines) && coverLetterResultLines.length > 0;
     setResumePreview({
@@ -3053,6 +3147,8 @@ export default function Home() {
       title: jobTitle || "",
       company: company || "",
       tab: hasCover ? "cover" : "resume",
+      posting: posting || "",
+      url: url || "",
       busy: false,
       notice: "",
       error: "",
@@ -3933,6 +4029,7 @@ export default function Home() {
         jobTitle: nextJobTitle,
         company: nextCompany,
         posting: nextJobDescription || "",
+        url: trimmedUrl,
         applyResume,
         applyCover,
         coverLetterResultLines: nextCoverLetterResultLines,
@@ -4765,10 +4862,12 @@ export default function Home() {
             html: tailoringMap[resumePreview.jobId]?.coverLetterPreviewHtml,
           },
         }}
+        engine={tailorEngine}
         loadModel={loadPreviewModel}
         reloadKey={previewReloadKey}
         onClose={closeResumePreview}
         onSave={saveDocumentPreview}
+        onResubmit={resubmitDocumentPreview}
         onDownload={downloadDocumentPreview}
         onResearchCompany={() =>
           openCompanyResearch({
