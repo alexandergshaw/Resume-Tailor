@@ -7,8 +7,8 @@ import { extractKeywords } from "./keywords.js";
 
 const MAX_EMPHASES = 3;
 
-export function parsePosting(posting) {
-  const keywords = extractKeywords(posting);
+export function parsePosting(posting, taxonomy) {
+  const keywords = extractKeywords(posting, taxonomy);
   const emphases = (keywords.domain || []).slice(0, MAX_EMPHASES).map((k) => k.canonical);
   return { keywords, emphases };
 }

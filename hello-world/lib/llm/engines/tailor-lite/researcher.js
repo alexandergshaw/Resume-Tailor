@@ -31,8 +31,8 @@ function topCanonicals(keywords, categories, n) {
 const ROLE_FOCUS_CATEGORIES = ["technology", "tool_platform", "methodology", "soft_skill"];
 
 // Returns { advisory, facts }. `facts` may be empty (slots then fall back).
-export function research({ posting, company = "" } = {}) {
-  const keywords = extractKeywords(String(posting || ""));
+export function research({ posting, company = "", taxonomy, skillGroups } = {}) {
+  const keywords = extractKeywords(String(posting || ""), taxonomy);
   const domain = (keywords.domain || [])[0]?.canonical || "";
   const org = String(company || "").trim();
   const roleFocus = topCanonicals(keywords, ROLE_FOCUS_CATEGORIES, 6);
@@ -48,7 +48,7 @@ export function research({ posting, company = "" } = {}) {
 
   // Split the posting's keywords (ranked) into ones the candidate already has
   // (surfaced/led in the résumé by the reorder strategies) vs gaps to consider.
-  const universe = candidateUniverse();
+  const universe = candidateUniverse(skillGroups, taxonomy);
   const ranked = topCanonicals(keywords, [...ROLE_FOCUS_CATEGORIES, "domain"], 100);
   const matched = ranked.filter((c) => universe.has(c.toLowerCase()));
   const gaps = ranked.filter((c) => !universe.has(c.toLowerCase()));

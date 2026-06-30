@@ -8,10 +8,11 @@
 // Section weighting boosts terms in the title area and requirement/skills
 // sections so they outrank nice-to-haves.
 
-import taxonomy from "./data/skills_taxonomy.json";
-import stopwords from "./data/stopwords.json";
+import { defaultLibraryData } from "./library/defaults.js";
 
-const STOPWORDS = new Set(stopwords);
+// Taxonomy is injectable (per-user libraries); stopwords stay bundled (not editable).
+const defaultTaxonomy = defaultLibraryData.taxonomy;
+const STOPWORDS = new Set(defaultLibraryData.stopwords);
 
 // A token is a maximal run of alphanumerics that may carry interior/leading/
 // trailing +, #, or . (so c++, c#, .net, node.js survive). A trailing "." is a
@@ -46,9 +47,12 @@ function segmentLine(line) {
 // Build a lowercase alias -> { canonical, category } map once. Canonical text
 // (and each alias) is registered lowercased; the canonical itself is also a
 // match key so "JavaScript" resolves to itself.
-let aliasMapCache = null;
-function getAliasMap() {
-  if (aliasMapCache) return aliasMapCache;
+// Built once per taxonomy object (keyed on the taxonomy reference), so the bundled
+// default is cached exactly as before and each per-user taxonomy gets its own entry.
+const aliasMapCache = new WeakMap();
+function getAliasMap(taxonomy = defaultTaxonomy) {
+  const cached = aliasMapCache.get(taxonomy);
+  if (cached) return cached;
   const map = new Map();
   for (const entry of taxonomy.entries || []) {
     const meta = { canonical: entry.canonical, category: entry.category };
@@ -62,24 +66,24 @@ function getAliasMap() {
       if (lower && !map.has(lower)) map.set(lower, meta);
     }
   }
-  aliasMapCache = map;
+  aliasMapCache.set(taxonomy, map);
   return map;
 }
 
 // Resolve a free-text term to its taxonomy canonical (or null if unknown).
 // Tokenized the same way as keyword matching so "rest apis" -> "REST", etc.
-export function canonicalize(term) {
+export function canonicalize(term, taxonomy = defaultTaxonomy) {
   const lower = String(term).toLowerCase().replace(/[-/]/g, " ").trim();
-  return getAliasMap().get(lower)?.canonical || null;
+  return getAliasMap(taxonomy).get(lower)?.canonical || null;
 }
 
 // The résumé-specific category for a term, or null if unknown. Used by the
 // composed (Parser) path to type Parser terms locally — the Parser supplies
 // display casing, but the technology/tool/methodology/soft_skill/domain split is
 // resume-specific and stays here.
-export function categorize(term) {
+export function categorize(term, taxonomy = defaultTaxonomy) {
   const lower = String(term).toLowerCase().replace(/[-/]/g, " ").trim();
-  return getAliasMap().get(lower)?.category || null;
+  return getAliasMap(taxonomy).get(lower)?.category || null;
 }
 
 const HEADER_RE = /(requirement|qualification|must have|skills)/i;
@@ -184,8 +188,8 @@ function rakePhrases(text, aliasMap) {
 // Extract keywords grouped by category. Returns
 //   { technology: [{canonical, score, count}], ..., topic: [...] }
 // with each list sorted by (-score, canonical).
-export function extractKeywords(posting) {
-  const aliasMap = getAliasMap();
+export function extractKeywords(posting, taxonomy = defaultTaxonomy) {
+  const aliasMap = getAliasMap(taxonomy);
   const acc = new Map(); // canonical -> { category, score, count }
 
   for (const { line, weight } of lineWeights(posting)) {

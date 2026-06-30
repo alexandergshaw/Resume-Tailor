@@ -39,9 +39,9 @@ function buildContext(keywords) {
 // Rank a list of taught subjects so the one(s) the posting names outright lead,
 // then the authored order (stable). Used for the adjunct teaching emphasis and
 // course topics within a single resolved teaching area.
-function rankTaughtSubjects(subjects, ctx) {
+function rankTaughtSubjects(subjects, ctx, taxonomy) {
   const named = (s) => {
-    const canon = canonicalize(s);
+    const canon = canonicalize(s, taxonomy);
     return canon && ctx.jobCanonical.has(canon.toLowerCase());
   };
   return subjects
@@ -73,8 +73,8 @@ const AREA_SIGNAL_THRESHOLD = 2;
 // score (section-weighted: title x3, requirements x2, body x1) if it's a known
 // canonical, else the number of raw-text mentions (so role/discipline phrases like
 // "Technical Writer" or "Business Administration" that aren't in the taxonomy count).
-function matchStrength(term, ctx, postingLower) {
-  const canon = canonicalize(term);
+function matchStrength(term, ctx, postingLower, taxonomy) {
+  const canon = canonicalize(term, taxonomy);
   if (canon && ctx.postingScore.has(canon.toLowerCase())) return ctx.postingScore.get(canon.toLowerCase());
   const needle = term.toLowerCase();
   if (!needle) return 0;
@@ -87,14 +87,14 @@ function matchStrength(term, ctx, postingLower) {
   return count;
 }
 
-function resolveFocusArea(areas, ctx, posting) {
+function resolveFocusArea(areas, ctx, posting, taxonomy) {
   const postingLower = String(posting || "").toLowerCase();
   if (!postingLower) return null;
   let best = null;
   let bestScore = 0;
   for (const area of areas || []) {
     let score = 0;
-    for (const term of area.match || []) score += matchStrength(term, ctx, postingLower);
+    for (const term of area.match || []) score += matchStrength(term, ctx, postingLower, taxonomy);
     if (score > bestScore) {
       best = area;
       bestScore = score;
@@ -167,7 +167,7 @@ function significantWords(phrase) {
 // any item sharing a word with `avoid` is skipped (echoes the surrounding prose).
 const CAPABILITY_POOL_MAX = 24;
 
-function capabilityPool(keywords, byCat, cats, universe, allowGaps, avoid) {
+function capabilityPool(keywords, byCat, cats, universe, allowGaps, avoid, taxonomy, skillGroups) {
   const out = [];
   const seen = new Set();
   const concepts = []; // word-set of each already-added item
@@ -195,9 +195,9 @@ function capabilityPool(keywords, byCat, cats, universe, allowGaps, avoid) {
   // Pad with the candidate's own skills — but never with `conditional` skills,
   // which only belong here when the posting itself asks for them (i.e. when they
   // arrive via `merged` above).
-  const conditional = conditionalSkillSet();
+  const conditional = conditionalSkillSet(skillGroups, taxonomy);
   for (const c of cats) for (const s of byCat[c] || []) {
-    if (conditional.has((canonicalize(s) || s).toLowerCase())) continue;
+    if (conditional.has((canonicalize(s, taxonomy) || s).toLowerCase())) continue;
     push(s);
   }
   return out;
@@ -207,8 +207,8 @@ function capabilityPool(keywords, byCat, cats, universe, allowGaps, avoid) {
 // offset 0 this is the top-k (so a slot's first occurrence is unchanged);
 // repeated slots pass their occurrence index so each repeat surfaces a distinct,
 // still-relevant slice instead of the same list every time.
-function capabilityJoin(keywords, byCat, cats, k, universe, allowGaps, avoid, offset = 0, serialAnd = false) {
-  const pool = capabilityPool(keywords, byCat, cats, universe, allowGaps, avoid);
+function capabilityJoin(keywords, byCat, cats, k, universe, allowGaps, avoid, offset = 0, serialAnd = false, taxonomy, skillGroups) {
+  const pool = capabilityPool(keywords, byCat, cats, universe, allowGaps, avoid, taxonomy, skillGroups);
   return emphasisSlice(pool, k, offset, serialAnd);
 }
 
@@ -263,13 +263,13 @@ const SKILL_ROW_MAX = 16;
 // the first row ("Role-Specific Expertise") leads with that area's subjects instead
 // of engineering domains; everything else is unchanged, so software postings keep
 // the exact default rows.
-function buildSkillRows(keywords, byCat, ctx, universe, budget, area) {
-  const conditional = conditionalSkillSet();
+function buildSkillRows(keywords, byCat, ctx, universe, budget, area, taxonomy, skillGroups) {
+  const conditional = conditionalSkillSet(skillGroups, taxonomy);
   const orderByPosting = (items) => {
     const matched = [];
     const rest = [];
     for (const s of items) {
-      const canon = (canonicalize(s) || s).toLowerCase();
+      const canon = (canonicalize(s, taxonomy) || s).toLowerCase();
       if (ctx.postingScore.has(canon)) matched.push(s);
       // A conditional skill only appears when the posting matches it — never as
       // unmatched row padding.
@@ -363,10 +363,10 @@ function fragmentValue(name, cursors) {
 
 // Relevance of a library fragment to the posting = how many of its tags the
 // posting asks for.
-function fragmentScore(entry, ctx) {
+function fragmentScore(entry, ctx, taxonomy) {
   let score = 0;
   for (const tag of entry.tags || []) {
-    if (ctx.jobCanonical.has((canonicalize(tag) || tag).toLowerCase())) score += 1;
+    if (ctx.jobCanonical.has((canonicalize(tag, taxonomy) || tag).toLowerCase())) score += 1;
   }
   return score;
 }
@@ -375,13 +375,13 @@ function fragmentScore(entry, ctx) {
 // always eligible; fabricated ones (invented metrics/spin) only when
 // allowFabricated (high aggressiveness). Each fragment is used at most once.
 // Returns the fragment text, or null to fall back to the neutral phrase pool.
-function libraryMatch(name, library, ctx, used, allowFabricated) {
+function libraryMatch(name, library, ctx, used, allowFabricated, taxonomy) {
   const eligible = (library?.entries || []).filter(
     (e) => (e.slots || []).includes(name) && (allowFabricated || !e.fabricated) && !used.has(e.id),
   );
   if (eligible.length === 0) return null;
   eligible.sort(
-    (a, b) => fragmentScore(b, ctx) - fragmentScore(a, ctx) || String(a.id).localeCompare(String(b.id)),
+    (a, b) => fragmentScore(b, ctx, taxonomy) - fragmentScore(a, ctx, taxonomy) || String(a.id).localeCompare(String(b.id)),
   );
   used.add(eligible[0].id);
   return eligible[0].text;
@@ -413,8 +413,8 @@ function mapOne(slot, keywords, data, state) {
   if (name === "AREA_OF_EMPHASIS") {
     const subjects = teachingSubjects(data, state);
     const pool = subjects.length
-      ? rankTaughtSubjects(subjects, state.ctx)
-      : capabilityPool(keywords, state.byCat, TEACHING_FALLBACK_CATS, state.universe, state.allowGaps).slice(0, EMPHASIS_POOL);
+      ? rankTaughtSubjects(subjects, state.ctx, state.taxonomy)
+      : capabilityPool(keywords, state.byCat, TEACHING_FALLBACK_CATS, state.universe, state.allowGaps, undefined, state.taxonomy, state.skillGroups).slice(0, EMPHASIS_POOL);
     return make("keywords", emphasisSlice(pool, 1, occurrence, state.serialAnd) || EMPHASIS_FALLBACK.AREA_OF_EMPHASIS, "Teaching emphasis (subjects taught)");
   }
   if (name === "AREAS_OF_EMPHASIS") {
@@ -422,7 +422,7 @@ function mapOne(slot, keywords, data, state) {
     if (bridge.length) {
       return make("keywords", emphasisSlice(bridge, EMPHASIS_WINDOW, occurrence, state.serialAnd), `Areas of emphasis (${state.focusArea.name})`);
     }
-    const pool = capabilityPool(keywords, state.byCat, ["domain"], state.universe, state.allowGaps, JOB_DOMAIN_AVOID).slice(0, EMPHASIS_POOL);
+    const pool = capabilityPool(keywords, state.byCat, ["domain"], state.universe, state.allowGaps, JOB_DOMAIN_AVOID, state.taxonomy, state.skillGroups).slice(0, EMPHASIS_POOL);
     return make("keywords", emphasisSlice(pool, EMPHASIS_WINDOW, occurrence, state.serialAnd) || EMPHASIS_FALLBACK.AREAS_OF_EMPHASIS, "Areas of emphasis (per-role)");
   }
 
@@ -437,7 +437,7 @@ function mapOne(slot, keywords, data, state) {
     const seen = new Set();
     const out = [];
     const tryPush = (s) => {
-      const low = (canonicalize(s) || s).toLowerCase();
+      const low = (canonicalize(s, state.taxonomy) || s).toLowerCase();
       if (!low || seen.has(low)) return;
       const words = [...significantWords(s)];
       if (words.length && words.some((w) => avoidWords.has(w))) return;
@@ -452,10 +452,10 @@ function mapOne(slot, keywords, data, state) {
       tryPush(item.canonical);
     }
     if (out.length < STACK_MIN) {
-      const conditional = conditionalSkillSet();
+      const conditional = conditionalSkillSet(state.skillGroups, state.taxonomy);
       for (const c of STACK_CATS) for (const s of state.byCat[c] || []) {
         if (out.length >= STACK_MIN) break;
-        if (conditional.has((canonicalize(s) || s).toLowerCase())) continue;
+        if (conditional.has((canonicalize(s, state.taxonomy) || s).toLowerCase())) continue;
         tryPush(s);
       }
     }
@@ -474,7 +474,7 @@ function mapOne(slot, keywords, data, state) {
         return make("keywords", emphasisSlice(list, limit, occurrence, state.serialAnd), `Focus area (${state.focusArea.name}.${areaField})`);
       }
     }
-    return make("keywords", capabilityJoin(keywords, state.byCat, cats, limit, state.universe, state.allowGaps, avoid, occurrence, state.serialAnd), `Top ${cats.join("+")} keywords`);
+    return make("keywords", capabilityJoin(keywords, state.byCat, cats, limit, state.universe, state.allowGaps, avoid, occurrence, state.serialAnd, state.taxonomy, state.skillGroups), `Top ${cats.join("+")} keywords`);
   }
 
   // 5) COURSE_TOPICS — the subjects taught that this posting asks for. For a
@@ -482,8 +482,8 @@ function mapOne(slot, keywords, data, state) {
   // back to the candidate's technologies (the default for software postings).
   if (COURSE_RE.test(name)) {
     const n = Number.parseInt((name.match(COURSE_COUNT_RE) || [])[1], 10) || 3;
-    const subjectTopics = state.focusArea ? rankTaughtSubjects(teachingSubjects(data, state), state.ctx) : [];
-    const techPool = capabilityPool(keywords, state.byCat, ["technology"], state.universe, state.allowGaps);
+    const subjectTopics = state.focusArea ? rankTaughtSubjects(teachingSubjects(data, state), state.ctx, state.taxonomy) : [];
+    const techPool = capabilityPool(keywords, state.byCat, ["technology"], state.universe, state.allowGaps, undefined, state.taxonomy, state.skillGroups);
     const seen = new Set();
     const pool = [];
     for (const item of [...subjectTopics, ...techPool]) {
@@ -496,7 +496,7 @@ function mapOne(slot, keywords, data, state) {
   }
 
   // 6) LIBRARY_MATCH — real accomplishment / project fragments
-  const lib = libraryMatch(name, data.library, state.ctx, state.used, state.allowFabricated);
+  const lib = libraryMatch(name, data.library, state.ctx, state.used, state.allowFabricated, state.taxonomy);
   if (lib != null) return make("library", lib, "From content library");
 
   // 7) FRAGMENT / PROJECT phrasing pools (neutral fallback)
@@ -513,12 +513,18 @@ function mapOne(slot, keywords, data, state) {
 export function mapSlots(slots, keywords, data, options = {}) {
   const ctx = buildContext(keywords);
   const aggressiveness = clampAggressiveness(options.aggressiveness);
-  const universe = options.universe || candidateUniverse();
-  const byCat = candidateSkillsByCategory();
+  // The library the rest of the mapper reads from. `data.taxonomy`/`data.skillGroups`
+  // are supplied by the engine (bundled default, or a per-user library); when absent
+  // (e.g. a hand-built `data` in a unit test) the keyword/universe helpers fall back
+  // to the bundled defaults, so behavior is unchanged.
+  const taxonomy = data.taxonomy;
+  const skillGroups = data.skillGroups;
+  const universe = options.universe || candidateUniverse(skillGroups, taxonomy);
+  const byCat = candidateSkillsByCategory(skillGroups, taxonomy);
   // The posting's resolved focus area (or null) drives every area-specific
   // tailoring decision below.
-  const focusArea = resolveFocusArea(data.profile?.focus_areas, ctx, options.posting);
-  const skillRows = buildSkillRows(keywords, byCat, ctx, universe, GAP_BUDGET[aggressiveness] || 0, focusArea);
+  const focusArea = resolveFocusArea(data.profile?.focus_areas, ctx, options.posting, taxonomy);
+  const skillRows = buildSkillRows(keywords, byCat, ctx, universe, GAP_BUDGET[aggressiveness] || 0, focusArea, taxonomy, skillGroups);
   const allowGaps = aggressiveness >= 3;
   const maxKeywords = Number.isInteger(options.maxKeywords) ? options.maxKeywords : null;
   const state = {
@@ -532,6 +538,8 @@ export function mapSlots(slots, keywords, data, options = {}) {
     used: new Set(),
     allowFabricated: allowGaps,
     maxKeywords,
+    taxonomy,
+    skillGroups,
     // Serial "and" before the last list item (prose lists; cover letter only).
     serialAnd: !!options.serialAnd,
   };

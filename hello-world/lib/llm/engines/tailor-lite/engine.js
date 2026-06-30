@@ -27,13 +27,26 @@ import { parsePosting } from "./parser.js";
 import { research } from "./researcher.js";
 import { extractPostingMeta, cleanPostingTitle } from "../../postingMeta.js";
 import { fetchUrlContent } from "../../../scrape/fetchUrlContent.js";
-import profile from "./data/profile.json";
-import library from "./data/content_library.json";
-import skillGroups from "./data/skill_groups.json";
+import { defaultLibraryData } from "./library/defaults.js";
 
 export const ENGINE_VERSION = "tailor-lite-0.1.0";
 
-const DATA = { profile, library, skillGroups };
+// Map a library bundle ({ taxonomy, profile, skillGroups, contentLibrary, stopwords })
+// to the `data` the strategy mapper consumes (where `library` is the content library).
+// `taxonomy` + `skillGroups` ride along so keyword extraction, canonicalization, and
+// the candidate universe all read from the SAME library — the bundled default here,
+// or a per-user library once the loader (P2) supplies one.
+function toData(bundle) {
+  return {
+    profile: bundle.profile,
+    library: bundle.contentLibrary,
+    skillGroups: bundle.skillGroups,
+    taxonomy: bundle.taxonomy,
+    stopwords: bundle.stopwords,
+  };
+}
+
+const DEFAULT_DATA = toData(defaultLibraryData);
 
 function getWorkflow() {
   return (process.env.RESUME_TAILOR_WORKFLOW || "legacy").trim().toLowerCase();
@@ -117,33 +130,33 @@ export function isTeachingPosting(posting) {
 
 // Keywords for the posting. Both workflows are local; composed uses the in-house
 // parser (taxonomy extraction + emphases). Deterministic, never degraded.
-function resolveKeywords(posting) {
+function resolveKeywords(posting, data) {
   if (getWorkflow() === "composed") {
-    const { keywords, emphases } = parsePosting(posting);
+    const { keywords, emphases } = parsePosting(posting, data.taxonomy);
     return { keywords, emphases };
   }
-  return { keywords: extractKeywords(posting), emphases: [] };
+  return { keywords: extractKeywords(posting, data.taxonomy), emphases: [] };
 }
 
 // In-house researcher advisory for the résumé — ADVISORY ONLY, never inserted.
-function resolveAdvisory({ posting, company }) {
+function resolveAdvisory({ posting, company, data }) {
   if (getWorkflow() !== "composed") return null;
-  return research({ posting, company }).advisory;
+  return research({ posting, company, taxonomy: data.taxonomy, skillGroups: data.skillGroups }).advisory;
 }
 
 // In-house researcher structured facts for the cover letter.
-function resolveCoverFacts({ posting, company }) {
+function resolveCoverFacts({ posting, company, data }) {
   if (getWorkflow() !== "composed") return {};
-  return research({ posting, company }).facts;
+  return research({ posting, company, taxonomy: data.taxonomy, skillGroups: data.skillGroups }).facts;
 }
 
 // Scan a template, resolve keywords (legacy/composed), map placeholders.
 // `aggressiveness` (1..5) drives how much gap-keyword insertion the strategy does.
-async function buildProposal(buffer, posting, aggressiveness, maxKeywords, serialAnd) {
+async function buildProposal(buffer, posting, aggressiveness, maxKeywords, serialAnd, data = DEFAULT_DATA) {
   const doc = await loadDocx(buffer);
   const rawSlots = scanPlaceholders(doc);
-  const kw = resolveKeywords(posting);
-  const slots = mapSlots(rawSlots, kw.keywords, DATA, { aggressiveness, maxKeywords, serialAnd, posting });
+  const kw = resolveKeywords(posting, data);
+  const slots = mapSlots(rawSlots, kw.keywords, data, { aggressiveness, maxKeywords, serialAnd, posting });
   return { doc, slots, keywords: kw.keywords, emphases: kw.emphases };
 }
 
@@ -152,8 +165,8 @@ async function buildProposal(buffer, posting, aggressiveness, maxKeywords, seria
 // `maxKeywords` caps comma-joined capability lists (the cover letter reads better
 // with shorter lists than the résumé). An empty final value leaves the
 // {{placeholder}} visible (counts as unfilled).
-async function render(buffer, posting, { overrides = {}, seedByName = {}, aggressiveness, maxKeywords, serialAnd } = {}) {
-  const proposal = await buildProposal(buffer, posting, aggressiveness, maxKeywords, serialAnd);
+async function render(buffer, posting, { overrides = {}, seedByName = {}, aggressiveness, maxKeywords, serialAnd, data = DEFAULT_DATA } = {}) {
+  const proposal = await buildProposal(buffer, posting, aggressiveness, maxKeywords, serialAnd, data);
   const finalValues = {};
   const unfilled = [];
   const reportSlots = proposal.slots.map((slot) => {
@@ -207,7 +220,7 @@ export const embeddedEngine = {
       posting,
       aggressiveness,
     );
-    const advisory = resolveAdvisory({ posting, company: "" });
+    const advisory = resolveAdvisory({ posting, company: "", data: DEFAULT_DATA });
     const out = {
       engine_version: ENGINE_VERSION,
       workflow: getWorkflow(),
@@ -225,7 +238,7 @@ export const embeddedEngine = {
     const overrides = values && typeof values === "object" ? values : {};
     const r = await render(await getDefaultTemplateBuffer(), posting, { overrides, aggressiveness });
     // Advisory research is excluded from the document — report only.
-    const advisory = resolveAdvisory({ posting, company: "" });
+    const advisory = resolveAdvisory({ posting, company: "", data: DEFAULT_DATA });
     // Best-effort title/company so the saved file is named after the posting
     // ("<Company> - <Position> - Resume.docx") instead of falling back to a
     // generic default.
@@ -261,7 +274,7 @@ export const embeddedEngine = {
     const organization = String(companyName || "").trim() || meta.companyName;
     // Composed: structured facts from the Researcher; otherwise neutral fallbacks
     // so a slot never shows raw braces.
-    const facts = resolveCoverFacts({ posting, company: organization });
+    const facts = resolveCoverFacts({ posting, company: organization, data: DEFAULT_DATA });
     const seedByName = {
       TARGET_ROLE: role || "the role",
       TARGET_ORGANIZATION: organization || "your organization",
