@@ -22,16 +22,24 @@ export function decodeHtmlEntities(value) {
     });
 }
 
+// Strip tags + map block/line breaks to newlines (one pass).
+function stripTags(html) {
+  return html
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, " ")
+    .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ")
+    .replace(/<\/(p|div|li|h[1-6]|tr|br)>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, " ");
+}
+
 export function htmlToText(html) {
   if (typeof html !== "string") return "";
-  return decodeHtmlEntities(
-    html
-      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, " ")
-      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ")
-      .replace(/<\/(p|div|li|h[1-6]|tr|br)>/gi, "\n")
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<[^>]+>/g, " "),
-  )
+  // Strip tags, then decode entities. Some sources (e.g. higheredjobs' JSON-LD
+  // JobPosting.description) are HTML that's been entity-encoded, so decoding
+  // reveals a second layer of literal tags (<strong>, <br>) — strip those too.
+  let text = decodeHtmlEntities(stripTags(html));
+  if (/<\/?[a-z][^>]*>/i.test(text)) text = decodeHtmlEntities(stripTags(text));
+  return text
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .replace(/[ \t]{2,}/g, " ")

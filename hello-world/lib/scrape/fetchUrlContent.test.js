@@ -1,5 +1,20 @@
 import { describe, it, expect } from "vitest";
-import { extractPublishedDate, formatMonthYear } from "./fetchUrlContent.js";
+import { extractPublishedDate, formatMonthYear, htmlToText } from "./fetchUrlContent.js";
+
+describe("htmlToText", () => {
+  it("strips real HTML tags and decodes entities", () => {
+    expect(htmlToText("<p>Hello &amp; <strong>welcome</strong></p>")).toBe("Hello & welcome");
+  });
+
+  it("cleans entity-encoded HTML (e.g. higheredjobs JSON-LD descriptions)", () => {
+    // The posting body arrives double-encoded: &lt;strong&gt; rather than <strong>.
+    const encoded = "&lt;strong&gt;Job ID: &lt;/strong&gt; 60125&lt;br&gt;&lt;br&gt;&lt;strong&gt;Job Description&lt;/strong&gt;&lt;br&gt;The Department invites applications.";
+    const out = htmlToText(encoded);
+    expect(out).not.toMatch(/<\/?[a-z][^>]*>/i); // no literal tags left
+    expect(out).toContain("Job ID: 60125");
+    expect(out).toContain("The Department invites applications.");
+  });
+});
 
 describe("formatMonthYear", () => {
   it("formats ISO dates as Month YYYY without timezone drift", () => {
