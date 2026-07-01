@@ -148,7 +148,21 @@ function summarizeApplications(applications) {
   return parts.join(" ");
 }
 
-function interviewPrep(applications) {
+// Templates for predicting likely interview questions from a posting's top
+// terms — what an LLM does when you ask "help me prep for this role".
+const TECH_QUESTION_TEMPLATES = [
+  (t) => `Walk me through a project where you used ${t}.`,
+  (t) => `How have you applied ${t} in production?`,
+  (t) => `What trade-offs have you run into working with ${t}?`,
+];
+
+// Likely questions for a specific posting, derived from its dominant terms.
+export function likelyQuestions(subject, { limit = 3 } = {}) {
+  const terms = topTerms(subject, limit + 1);
+  return terms.slice(0, limit).map((t) => pick(t, TECH_QUESTION_TEMPLATES)(t));
+}
+
+function interviewPrep(applications, subject) {
   const apps = Array.isArray(applications) ? applications : [];
   const upcoming = [];
   for (const a of apps) {
@@ -156,10 +170,20 @@ function interviewPrep(applications) {
       if (st && st.scheduledAt) upcoming.push(`${a.company || "a role"} (${st.name || st.type || "interview"})`);
     }
   }
-  const parts = [
+  const parts = [];
+  // When a posting is pinned, predict what they'll actually ask about.
+  if (subject && subject.trim()) {
+    const questions = likelyQuestions(subject);
+    if (questions.length > 0) {
+      parts.push(
+        `Based on this posting, expect questions like: ${questions.join(" ")} Have one concrete story or example ready for each.`,
+      );
+    }
+  }
+  parts.push(
     "For behavioral questions, answer in STAR order: Situation, Task, Action, Result — and end on a number or clear outcome. Prepare three or four stories you can flex across questions (a conflict, a failure, a win, a leadership moment).",
     "For technical questions, restate the problem and constraints first, think out loud, and call out trade-offs before you commit to an approach.",
-  ];
+  );
   if (upcoming.length > 0) {
     parts.push(`You have interviews coming up for: ${upcoming.slice(0, 5).join(", ")} — rehearse a story tied to each role.`);
   }
@@ -288,7 +312,7 @@ export function localChatReply({
   if (RE.coverLetter.test(text)) return coverLetterHelp(pinnedContext);
   if (RE.resume.test(text)) return reviewResume(resumeText);
   if (RE.applications.test(text)) return summarizeApplications(applications);
-  if (RE.interview.test(text)) return interviewPrep(applications);
+  if (RE.interview.test(text)) return interviewPrep(applications, subject);
   if (RE.greeting.test(text)) return capabilities();
 
   // A posting is the subject → analyze it (the common "Ask AI on this job" flow).

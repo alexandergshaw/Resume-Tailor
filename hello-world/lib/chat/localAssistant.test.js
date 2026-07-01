@@ -54,6 +54,16 @@ describe("localChatReply intents", () => {
     expect(localChatReply(userMsg("help me prepare for my interview"))).toMatch(/STAR/);
   });
 
+  it("predicts likely questions from the pinned posting during interview prep", () => {
+    const reply = localChatReply({
+      ...userMsg("help me prep for the interview"),
+      pinnedContext: { label: "Backend Engineer", content: POSTING },
+    });
+    expect(reply).toMatch(/expect questions like/i);
+    expect(reply.toLowerCase()).toMatch(/node|kubernetes|postgresql|api/);
+    expect(reply).toMatch(/STAR/); // general guidance still included
+  });
+
   it("gives cover letter guidance", () => {
     expect(localChatReply(userMsg("any tips for my cover letter?"))).toMatch(/three short paragraphs/i);
   });
