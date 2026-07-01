@@ -1,9 +1,8 @@
 import "./globals.css";
 import { Manrope, Source_Serif_4 } from "next/font/google";
 import Providers from "@/app/components/Providers";
-import AuthButton from "@/app/components/AuthButton";
-import GmailButton from "@/app/components/GmailButton";
-import ThemeToggle from "@/app/components/ThemeToggle";
+import EngineSelect from "@/app/components/EngineSelect";
+import SettingsMenu from "@/app/components/SettingsMenu";
 import { themeCssText, noFlashScript } from "@/app/theme";
 
 const manrope = Manrope({
@@ -76,9 +75,8 @@ export default function RootLayout({ children }) {
               />
               Resume Tailor
             </span>
-            <ThemeToggle />
-            <GmailButton />
-            <AuthButton />
+            <EngineSelect />
+            <SettingsMenu />
           </header>
           {children}
         </Providers>

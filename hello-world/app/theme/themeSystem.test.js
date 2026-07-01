@@ -100,7 +100,12 @@ describe("wiring", () => {
     expect(src).toContain("noFlashScript");
     expect(src).toMatch(/id="theme-tokens"/);
     expect(src).toContain("suppressHydrationWarning");
-    expect(src).toContain("ThemeToggle");
+  });
+
+  it("layout.js mounts the engine picker and settings menu in the bar", () => {
+    const src = read(join(APP_DIR, "layout.js"));
+    expect(src).toContain("EngineSelect");
+    expect(src).toContain("SettingsMenu");
   });
 
   it("Providers wires the color mode into the MUI theme", () => {
@@ -110,10 +115,11 @@ describe("wiring", () => {
     expect(src).toContain("ThemeProvider");
   });
 
-  it("ThemeToggle uses the color mode and is accessible", () => {
-    const src = read(join(COMPONENTS_DIR, "ThemeToggle.js"));
+  it("SettingsMenu wires the color mode and collapses the bar controls", () => {
+    const src = read(join(COMPONENTS_DIR, "SettingsMenu.js"));
     expect(src).toContain("useColorMode");
-    expect(src).toContain("toggleMode");
+    expect(src).toContain("GmailButton");
+    expect(src).toContain("AuthButton");
     expect(src).toMatch(/aria-label/);
   });
 

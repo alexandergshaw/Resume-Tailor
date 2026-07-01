@@ -43,6 +43,7 @@ import {
   removeMaterial,
 } from "../lib/supabase/materials";
 import { openPostingBeside, openBlankBeside, navigateBeside } from "../lib/window/openPostingBeside";
+import { useEngine } from "@/app/settings/engine";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import TextField from "@mui/material/TextField";
@@ -384,10 +385,10 @@ export default function Home() {
   const fabDragStartRef = useRef(null);
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
   const [aggressiveness, setAggressiveness] = useState(3);
-  // Document-generation engine: "gemini" (LLM line-rewrite), "external" (Resume
-  // Tailor API), or "embedded" (in-process deterministic engine). Sent with
-  // every tailor request; persisted locally.
-  const [tailorEngine, setTailorEngine] = useState("gemini");
+  // Document-generation engine ("gemini" | "external" | "embedded"). Owned by a
+  // shared store so the top-bar picker and this tailoring logic stay in sync;
+  // the store handles localStorage persistence under "tailorEngine".
+  const { engine: tailorEngine } = useEngine();
   // External-engine "review fields" flow: fetched proposal slots the user can
   // edit before generating the document with those `values`.
   const [slotReview, setSlotReview] = useState({ open: false, loading: false, error: "", slots: [] });
@@ -513,10 +514,6 @@ export default function Home() {
     if (!Number.isNaN(savedAggressiveness) && savedAggressiveness >= 1 && savedAggressiveness <= 5) {
       setAggressiveness(savedAggressiveness);
     }
-    const savedEngine = localStorage.getItem("tailorEngine");
-    if (savedEngine === "gemini" || savedEngine === "external" || savedEngine === "embedded") {
-      setTailorEngine(savedEngine);
-    }
   }, []);
 
   useEffect(() => {
@@ -534,10 +531,6 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("aggressiveness", String(aggressiveness));
   }, [aggressiveness]);
-
-  useEffect(() => {
-    localStorage.setItem("tailorEngine", tailorEngine);
-  }, [tailorEngine]);
 
   useEffect(() => {
     try {
@@ -4428,43 +4421,6 @@ export default function Home() {
               resume to each posting.
             </p>
           </Box>
-          {currentUser && (
-            <Box
-              sx={{
-                pt: { xs: 0, sm: 0.5 },
-                flexShrink: 0,
-                display: "flex",
-                alignItems: "center",
-                gap: 0.5,
-                alignSelf: { xs: "stretch", sm: "auto" },
-              }}
-            >
-              <Tooltip
-                title={
-                  tailorEngine === "external"
-                    ? "Resume Tailor API — returns a finished .docx from the service's template."
-                    : tailorEngine === "embedded"
-                      ? "Embedded — deterministic in-app engine. No AI; reads the posting from a URL or text, then tailors offline."
-                      : "Gemini — AI rewrites your uploaded resume's lines."
-                }
-              >
-                <FormControl size="small" sx={{ minWidth: 150, width: { xs: "100%", sm: "auto" } }}>
-                  <InputLabel id="engine-select-label">Engine</InputLabel>
-                  <Select
-                    labelId="engine-select-label"
-                    id="engine-select"
-                    label="Engine"
-                    value={tailorEngine}
-                    onChange={(event) => setTailorEngine(event.target.value)}
-                  >
-                    <MenuItem value="gemini">Gemini (AI)</MenuItem>
-                    <MenuItem value="external">Resume Tailor API</MenuItem>
-                    <MenuItem value="embedded">Embedded (no AI)</MenuItem>
-                  </Select>
-                </FormControl>
-              </Tooltip>
-            </Box>
-          )}
         </Box>
 
         <div className={styles.mainTabs}>
