@@ -1,26 +1,45 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
-import Chip from "@mui/material/Chip";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { CopilotSession } from "@/lib/copilot/session";
+import TranscriptView from "./TranscriptView";
 
-// Phase 1: capture BOTH sides of the call — the interviewer (shared tab audio)
-// and you (microphone) — as two independent Deepgram streams, so every line is
-// labeled with who said it without any diarization.
+function fmtClock(ms) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+// Phase 2: a polished live transcript — auto-scrolling, speaker-grouped, with
+// per-turn timestamps, an elapsed clock, copy/clear controls, and a recording
+// consent notice.
 export default function CopilotClient() {
   const [status, setStatus] = useState("idle"); // idle | connecting | live | error
   const [warning, setWarning] = useState("");
   const [error, setError] = useState("");
-  const [finals, setFinals] = useState([]); // { id, speaker, text }
+  const [finals, setFinals] = useState([]); // { id, speaker, text, at }
   const [interims, setInterims] = useState({ them: "", you: "" });
+  const [startedAt, setStartedAt] = useState(null);
+  const [now, setNow] = useState(0);
+  const [showConsent, setShowConsent] = useState(true);
 
   const sessionRef = useRef(null);
   const idRef = useRef(0);
+
+  const live = status === "live" || status === "connecting";
+
+  // Tick the elapsed clock once a second while a session is running.
+  useEffect(() => {
+    if (!live || !startedAt) return undefined;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [live, startedAt]);
 
   const stop = useCallback(async () => {
     if (sessionRef.current) {
@@ -36,21 +55,21 @@ export default function CopilotClient() {
     setWarning("");
     setFinals([]);
     setInterims({ them: "", you: "" });
+    setStartedAt(null);
     setStatus("connecting");
     try {
       const session = new CopilotSession({
         withMic: true,
-        onStatus: (s) => setStatus(s),
-        onError: (err) => {
-          // Session surfaces mic-optional problems as warnings; a hard capture
-          // failure rejects start() below and lands in the catch instead.
-          setWarning(err.message);
+        onStatus: (s) => {
+          setStatus(s);
+          if (s === "live") setStartedAt((prev) => prev || Date.now());
         },
+        onError: (err) => setWarning(err.message),
         onTranscript: ({ speaker, transcript, isFinal }) => {
           if (isFinal) {
             setFinals((prev) => [
               ...prev,
-              { id: (idRef.current += 1), speaker, text: transcript },
+              { id: (idRef.current += 1), speaker, text: transcript, at: Date.now() },
             ]);
             setInterims((prev) => ({ ...prev, [speaker]: "" }));
           } else {
@@ -67,20 +86,38 @@ export default function CopilotClient() {
     }
   }, [stop]);
 
-  const live = status === "live" || status === "connecting";
-  const hasContent =
-    finals.length > 0 || interims.them || interims.you;
+  const clearTranscript = useCallback(() => {
+    setFinals([]);
+    setInterims({ them: "", you: "" });
+  }, []);
+
+  const copyTranscript = useCallback(() => {
+    const text = finals
+      .map((l) => `${l.speaker === "them" ? "Them" : "You"}: ${l.text}`)
+      .join("\n");
+    if (text) navigator.clipboard?.writeText(text).catch(() => {});
+  }, [finals]);
+
+  const elapsed = startedAt ? now - startedAt : 0;
 
   return (
-    <Box sx={{ maxWidth: 820, mx: "auto", p: 3 }}>
+    <Box sx={{ maxWidth: 900, mx: "auto", p: 3 }}>
       <Typography variant="h5" sx={{ mb: 0.5, fontWeight: 700 }}>
         Interview Copilot
       </Typography>
       <Typography variant="body2" sx={{ color: "var(--text-secondary)", mb: 2 }}>
         Share the meeting tab (with &quot;Share tab audio&quot; enabled) and allow
-        your mic. Both sides of the call are transcribed live and labeled.
-        Chrome or Edge only.
+        your mic. Both sides of the call are transcribed live and labeled. Chrome
+        or Edge only.
       </Typography>
+
+      {showConsent ? (
+        <Alert severity="info" sx={{ mb: 2 }} onClose={() => setShowConsent(false)}>
+          Recording notice: audio is streamed to Deepgram for transcription. Make
+          sure everyone on the call consents before you start — some regions
+          require all-party consent.
+        </Alert>
+      ) : null}
 
       {error ? (
         <Alert severity="error" sx={{ mb: 2 }}>
@@ -93,7 +130,11 @@ export default function CopilotClient() {
         </Alert>
       ) : null}
 
-      <Stack direction="row" spacing={1.5} sx={{ mb: 2, alignItems: "center" }}>
+      <Stack
+        direction="row"
+        spacing={1.5}
+        sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
+      >
         {live ? (
           <Button variant="outlined" color="error" onClick={stop}>
             Stop
@@ -104,69 +145,35 @@ export default function CopilotClient() {
           </Button>
         )}
         <StatusPill status={status} />
+        {startedAt ? (
+          <Typography
+            variant="body2"
+            sx={{ color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}
+          >
+            {fmtClock(elapsed)}
+          </Typography>
+        ) : null}
+        <Box sx={{ flex: 1 }} />
+        <Button
+          size="small"
+          variant="text"
+          onClick={copyTranscript}
+          disabled={finals.length === 0}
+        >
+          Copy
+        </Button>
+        <Button
+          size="small"
+          variant="text"
+          onClick={clearTranscript}
+          disabled={finals.length === 0}
+        >
+          Clear
+        </Button>
       </Stack>
 
-      <Box
-        sx={{
-          minHeight: 320,
-          p: 2,
-          borderRadius: 2,
-          border: "1px solid var(--border)",
-          background: "var(--bg-surface)",
-          boxShadow: "var(--shadow-soft)",
-        }}
-      >
-        {!hasContent ? (
-          <Typography sx={{ color: "var(--text-muted)" }}>
-            Transcript will appear here…
-          </Typography>
-        ) : (
-          <Stack spacing={1}>
-            {finals.map((line) => (
-              <TranscriptLine
-                key={line.id}
-                speaker={line.speaker}
-                text={line.text}
-              />
-            ))}
-            {interims.them ? (
-              <TranscriptLine speaker="them" text={interims.them} interim />
-            ) : null}
-            {interims.you ? (
-              <TranscriptLine speaker="you" text={interims.you} interim />
-            ) : null}
-          </Stack>
-        )}
-      </Box>
+      <TranscriptView finals={finals} interims={interims} startedAt={startedAt} />
     </Box>
-  );
-}
-
-function TranscriptLine({ speaker, text, interim = false }) {
-  const isThem = speaker === "them";
-  return (
-    <Stack direction="row" spacing={1} sx={{ alignItems: "baseline" }}>
-      <Chip
-        size="small"
-        label={isThem ? "Them" : "You"}
-        sx={{
-          height: 20,
-          fontSize: 11,
-          fontWeight: 700,
-          color: isThem ? "var(--accent-contrast)" : "var(--text-secondary)",
-          background: isThem ? "var(--accent)" : "var(--bg-soft)",
-          border: isThem ? "none" : "1px solid var(--border)",
-        }}
-      />
-      <Typography
-        sx={{
-          color: interim ? "var(--text-muted)" : "var(--text-primary)",
-          fontStyle: interim ? "italic" : "normal",
-        }}
-      >
-        {text}
-      </Typography>
-    </Stack>
   );
 }
 
