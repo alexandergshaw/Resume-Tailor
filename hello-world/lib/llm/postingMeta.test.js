@@ -126,6 +126,37 @@ describe("extractPostingMeta", () => {
     expect(jobTitle).toBe("UX Engineer");
     expect(companyName).toBe("Clover Health");
   });
+
+  it("skips a 'Job Description' boilerplate heading and takes the real role (MassMutual)", () => {
+    // The scraped description text opens with a bare "Job Description" heading; the
+    // role is the next line ("AI Engineer | Data Science & AI Engineering").
+    const posting = [
+      "Job Description",
+      "AI Engineer | Data Science & AI Engineering",
+      "Full-Time Hybrid (3 days/week in office)",
+      "The Opportunity",
+      "MassMutual's AI & Data Science team is seeking a motivated AI Engineer.",
+    ].join("\n");
+    const { jobTitle, companyName } = extractPostingMeta(posting);
+    expect(jobTitle).toBe("AI Engineer");
+    // Boilerplate/employment lines must not be mistaken for the company.
+    expect(companyName).not.toBe("Job Description");
+    expect(companyName).not.toBe("AI Engineer");
+    expect(companyName).not.toBe("Full-Time Hybrid (3 days/week in office)");
+  });
+
+  it("does not treat bare section headings or employment lines as the title", () => {
+    const posting = ["Job Description", "Staff Data Scientist", "Full-Time Remote", "Responsibilities", "Build models."].join("\n");
+    const { jobTitle, companyName } = extractPostingMeta(posting);
+    expect(jobTitle).toBe("Staff Data Scientist");
+    expect(companyName).not.toBe("Full-Time Remote");
+    expect(companyName).not.toBe("Responsibilities");
+  });
+
+  it("keeps a real title that merely starts with an employment word", () => {
+    expect(extractPostingMeta("Temporary Computer Science Developer\nWPI").jobTitle).toBe("Temporary Computer Science Developer");
+    expect(extractPostingMeta("Contract Software Engineer\nAcme Inc.").jobTitle).toBe("Contract Software Engineer");
+  });
 });
 
 describe("cleanPostingTitle", () => {

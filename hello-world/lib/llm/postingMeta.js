@@ -99,6 +99,47 @@ function looksLikeHeading(line) {
   return line.length > 0 && line.length <= 90 && !/[.!?]$/.test(line);
 }
 
+// Boilerplate ATS section headings (bare, no separator) — never a title or company.
+// Distinct from LABEL_LINE (which needs a trailing ":"/"-"): these are standalone
+// headings like "Job Description", "The Opportunity", "Responsibilities" that pollute
+// the heading candidates and get mistaken for the role (the MassMutual bug).
+const SECTION_HEADING_RE = new RegExp(
+  "^(?:" +
+    [
+      "job description", "job summary", "position summary", "role summary",
+      "the (?:opportunity|team|impact|role|mission|company|position)",
+      "(?:role|position|company) overview", "overview", "summary",
+      "about(?: us| the (?:role|team|company|position|opportunity|job))?",
+      "who (?:you|we) are", "what (?:you'?ll (?:do|bring)|we offer|to expect)",
+      "(?:key )?responsibilities", "duties(?: (?:and|&) responsibilities)?",
+      "(?:key |minimum |basic |preferred |required |essential )?qualifications",
+      "(?:minimum |basic |preferred |required )?requirements",
+      "benefits", "perks(?: (?:and|&) benefits)?", "compensation", "salary(?: range)?",
+      "how to apply", "equal opportunity employer", "description",
+    ].join("|") +
+    ")$",
+  "i",
+);
+
+// A line that is ONLY employment/work-arrangement info ("Full-Time Hybrid (3
+// days/week in office)") — never a title. Token-based so a real title that merely
+// STARTS with such a word ("Temporary Computer Science Developer") is NOT skipped.
+const EMPLOYMENT_WORDS = new Set([
+  "full", "part", "time", "fulltime", "parttime", "hybrid", "remote", "onsite",
+  "on", "site", "contract", "temporary", "permanent", "freelance", "seasonal",
+  "days", "day", "week", "weekly", "office", "in", "per", "the",
+]);
+const EMPLOYMENT_CORE = new Set([
+  "fulltime", "parttime", "hybrid", "remote", "onsite", "contract",
+  "temporary", "permanent", "freelance", "seasonal", "full", "part", "time",
+]);
+function isEmploymentLine(line) {
+  const tokens = String(line).toLowerCase().match(/[a-z0-9]+/g) || [];
+  if (tokens.length === 0) return false;
+  const hasCore = tokens.some((t) => EMPLOYMENT_CORE.has(t));
+  return hasCore && tokens.every((t) => EMPLOYMENT_WORDS.has(t) || /^\d+$/.test(t));
+}
+
 // Strip a trailing site name off a scraped <title>: "Role | U-M Careers" -> "Role".
 // Pipe / middot are almost always site separators; a dash is only treated as one
 // when the trailing part actually names a careers site (so real titles like
@@ -181,8 +222,17 @@ export function extractPostingMeta(posting) {
     if (v) companyName = stripLocation(v);
   }
 
-  // Heading candidates = non-metadata, non-junk, heading-shaped lines, in order.
-  const headings = lines.filter((l) => !LABEL_LINE.test(l) && !JUNK_LINE.test(l) && looksLikeHeading(l));
+  // Heading candidates = non-metadata, non-junk, non-boilerplate, heading-shaped
+  // lines, in order. Bare section headings ("Job Description") and pure
+  // employment-arrangement lines are excluded so they can't be mistaken for the role.
+  const headings = lines.filter(
+    (l) =>
+      !LABEL_LINE.test(l) &&
+      !JUNK_LINE.test(l) &&
+      !SECTION_HEADING_RE.test(l) &&
+      !isEmploymentLine(l) &&
+      looksLikeHeading(l),
+  );
 
   // 3) "<Title> at <Company>" on the first heading line.
   if ((!jobTitle || !companyName) && headings[0]) {
