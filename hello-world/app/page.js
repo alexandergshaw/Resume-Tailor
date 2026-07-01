@@ -1020,11 +1020,12 @@ export default function Home() {
     document.body.style.userSelect = "none";
   }
 
-  // Extract employment history from an uploaded résumé (.docx/.txt) using AI and
-  // append the detected positions to the list (capped at 4). The file is parsed
-  // to text on-device, then sent to /api/extract-employment (Gemini). If that
-  // route is unavailable, we fall back to the on-device heuristic parser so the
-  // feature still works. Existing non-empty entries are preserved; fields stay
+  // Extract employment history from an uploaded résumé (.docx/.txt) and append
+  // the detected positions to the list (capped at 4). The file is parsed to text
+  // on-device. On the Embedded engine we parse it entirely on-device with the
+  // heuristic parser (no network/LLM); otherwise we send it to
+  // /api/extract-employment (Gemini) and fall back to that same parser if the
+  // route is unavailable. Existing non-empty entries are preserved; fields stay
   // editable so the user can fix any misses.
   async function importEmploymentFromResume(file) {
     if (!file) return;
@@ -1039,21 +1040,24 @@ export default function Home() {
 
       let positions = [];
       let usedAi = false;
-      try {
-        const res = await fetch("/api/extract-employment", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ resumeText }),
-        });
-        if (res.ok) {
-          const json = await res.json();
-          if (Array.isArray(json?.positions)) {
-            positions = json.positions;
-            usedAi = true;
+      // Embedded engine: parse on-device only, never call the LLM route.
+      if (tailorEngine !== "embedded") {
+        try {
+          const res = await fetch("/api/extract-employment", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ resumeText, engine: tailorEngine }),
+          });
+          if (res.ok) {
+            const json = await res.json();
+            if (Array.isArray(json?.positions)) {
+              positions = json.positions;
+              usedAi = true;
+            }
           }
+        } catch {
+          // Network/route error — fall through to the offline parser.
         }
-      } catch {
-        // Network/route error — fall through to the offline parser.
       }
       if (!usedAi) {
         positions = parseEmploymentHistory(lines);
