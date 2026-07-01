@@ -9,6 +9,8 @@
 
 import { extractKeywords } from "@/lib/llm/engines/tailor-lite/keywords";
 import { defaultLibraryData } from "@/lib/llm/engines/tailor-lite/library/defaults";
+import { summarize } from "@/lib/text/summarize";
+import { pick, pickDistinct } from "@/lib/text/phrasing";
 
 const SKILL_CATEGORIES = ["technology", "tool_platform", "domain", "methodology"];
 
@@ -17,6 +19,17 @@ function lastUserText(messages) {
     .reverse()
     .find((x) => x && x.role !== "assistant" && typeof x.content === "string" && x.content.trim());
   return m ? m.content.trim() : "";
+}
+
+function lastAssistantText(messages) {
+  const m = [...(messages || [])]
+    .reverse()
+    .find((x) => x && x.role === "assistant" && typeof x.content === "string" && x.content.trim());
+  return m ? m.content.trim() : "";
+}
+
+function wordCount(text) {
+  return String(text || "").trim().split(/\s+/).filter(Boolean).length;
 }
 
 // Top salient skills/terms from a block of text, highest-scoring first, de-duped.
@@ -154,16 +167,90 @@ function coverLetterHelp(pinnedContext) {
 }
 
 function capabilities() {
-  return "I'm the offline assistant (Embedded engine — no AI). I work from what's in front of you, so I can: analyze a job posting you've pinned or pasted and flag the key skills to emphasize, review the resume you've uploaded, summarize your tracked applications and upcoming interviews, and share interview and cover-letter guidance. For open-ended back-and-forth, switch the engine to Gemini in the top bar.";
+  return "I'm the offline assistant (Embedded engine — no AI). I work from what's in front of you, so I can: analyze or summarize a job posting you've pinned or pasted, estimate your fit against it, review the resume you've uploaded, summarize your tracked applications and upcoming interviews, and share interview, salary, and cover-letter guidance. For open-ended back-and-forth, switch the engine to Gemini in the top bar.";
+}
+
+// "Summarize this" over whatever the user is looking at — the pinned posting /
+// fetched article, else the resume — using the extractive summarizer plus the
+// salient terms. A real multi-sentence summary, not a keyword dump.
+function summarizeSubject(subject, resumeText) {
+  const body = subject || resumeText || "";
+  if (!body.trim()) {
+    return "Pin a posting (use “Ask AI” on a job), paste some text, or upload your resume, and I'll summarize the key points.";
+  }
+  const gist = summarize(body, { maxSentences: 4 });
+  const terms = topTerms(body, 6);
+  const parts = [`Here's the gist: ${gist}`];
+  if (terms.length > 0) parts.push(`Key themes: ${list(terms)}.`);
+  return parts.join(" ");
+}
+
+// Keyword-based fit estimate between the pinned posting and the uploaded resume.
+function fitAssessment(subject, resumeText) {
+  if (!subject || !subject.trim()) {
+    return "Pin the posting (use “Ask AI” on a job) so I can compare it against your resume and estimate your fit.";
+  }
+  const postingTerms = topTerms(subject, 8);
+  if (postingTerms.length === 0) {
+    return "I couldn't pull clear requirements out of that posting. Paste the responsibilities/qualifications and I'll estimate your fit.";
+  }
+  if (!resumeText || !resumeText.trim()) {
+    return `Upload your resume and I'll compare it against this posting's key skills: ${list(postingTerms)}.`;
+  }
+  const have = new Set(topTerms(resumeText, 40).map((t) => t.toLowerCase()));
+  const matched = postingTerms.filter((t) => have.has(t.toLowerCase()));
+  const gaps = postingTerms.filter((t) => !have.has(t.toLowerCase()));
+  const ratio = matched.length / postingTerms.length;
+  const label = ratio >= 0.6 ? "strong" : ratio >= 0.35 ? "reasonable" : "stretch";
+  const parts = [
+    `By keyword overlap you look like a ${label} fit: your resume covers ${matched.length > 0 ? list(matched) : "few of the listed skills"}.`,
+  ];
+  if (gaps.length > 0) parts.push(`It doesn't clearly show: ${list(gaps)} — add those if you have them.`);
+  parts.push(
+    "Keyword overlap isn't the whole story, though — seniority, domain, and how you frame your experience matter just as much.",
+  );
+  return parts.join(" ");
+}
+
+const SALARY_TIPS = [
+  "Research the range first (levels.fyi, Glassdoor, and peers) so you can anchor on data, not a feeling.",
+  "Let the employer name a number first when you can; if pushed, give a researched range with your target near the top.",
+  "Negotiate total comp — base, bonus, equity, sign-on, PTO — not just salary.",
+  "Get the offer in writing before you counter, and counter once, confidently, with a specific number and a short reason.",
+];
+function salaryGuidance(seed) {
+  const [a, b] = pickDistinct(seed, SALARY_TIPS, 2);
+  return `A few principles: ${a} ${b || ""}`.trim();
+}
+
+// Shorten the previous answer on request (a common follow-up).
+function condense(prevAssistant) {
+  const short = summarize(prevAssistant, { maxSentences: 1 });
+  return short ? `In short: ${short}` : prevAssistant;
+}
+
+const MORE_TIPS = [
+  "One more thing: quantify wherever you can — numbers make claims credible.",
+  "Also worth doing: tailor the top third of your resume to each posting; that's the part that actually gets read.",
+  "Extra tip: for every requirement you meet, have one specific story or metric ready to back it up.",
+  "And: mirror the posting's exact wording for skills you genuinely have — many first-pass filters match on literal terms.",
+];
+function moreTips(seed) {
+  return pick(seed, MORE_TIPS);
 }
 
 const RE = {
   greeting: /^(hi|hey|hello|yo|help|what can you do|who are you)\b/i,
+  shorten: /\b(shorter|too long|condense|tighten|make it (short|brief)|briefer|tl;?dr)\b/i,
+  more: /\b(more|expand|elaborate|go on|tell me more|details|deeper|keep going)\b/i,
+  summarize: /\b(summari[sz]e|tl;?dr|key points|main points|the gist|in short|sum up|overview of)\b/i,
+  fit: /\b(good fit|am i a fit|should i apply|do i qualify|qualified|my chances|a stretch|how well do i match|match this)\b/i,
+  salary: /\b(salary|compensation|comp\b|pay|negotiat|counter( ?offer)?|sign[- ]?on|equity|how much should i (ask|make)|worth)\b/i,
   resume: /\b(my resume|my cv|review (my )?resume|improve (my )?resume|resume feedback|critique)\b/i,
-  applications: /\b(applications?|how many jobs|my pipeline|tracking|applied|status of|where am i)\b/i,
+  applications: /\b(applications?|how many jobs|my pipeline|tracking|applied|status of|where am i|which (job|one)|prioriti[sz]e|focus on)\b/i,
   interview: /\b(interview|prepare|prep|star method|behavioral|whiteboard)\b/i,
   coverLetter: /\b(cover letter|cover-letter)\b/i,
-  posting: /\b(this (job|role|posting|position|description)|requirements?|qualifications?|responsibilities|what skills|tailor|match|good fit|should i apply)\b/i,
+  posting: /\b(this (job|role|posting|position|description)|requirements?|qualifications?|responsibilities|what skills|tailor|emphasi[sz]e)\b/i,
 };
 
 // Produce a single assistant reply for the embedded engine. Returns a plain
@@ -178,8 +265,18 @@ export function localChatReply({
 } = {}) {
   const text = lastUserText(messages);
   const subject = subjectText({ pinnedContext, fetchedUrls, attachedFiles });
+  const prevAssistant = lastAssistantText(messages);
+  const isBriefFollowUp = wordCount(text) <= 5;
 
-  // Explicit intents first, most specific to least.
+  // Conversational follow-ups that operate on the previous answer. Guarded to
+  // short messages so "tell me more about the salary" still routes to salary.
+  if (prevAssistant && isBriefFollowUp && RE.shorten.test(text)) return condense(prevAssistant);
+  if (prevAssistant && isBriefFollowUp && RE.more.test(text)) return moreTips(text);
+
+  // Explicit intents, most specific to least.
+  if (RE.summarize.test(text)) return summarizeSubject(subject, resumeText);
+  if (RE.fit.test(text)) return fitAssessment(subject, resumeText);
+  if (RE.salary.test(text)) return salaryGuidance(text);
   if (RE.coverLetter.test(text)) return coverLetterHelp(pinnedContext);
   if (RE.resume.test(text)) return reviewResume(resumeText);
   if (RE.applications.test(text)) return summarizeApplications(applications);
@@ -194,6 +291,9 @@ export function localChatReply({
     return "Pin a posting (use “Ask AI” on a job) or paste the description, and I'll flag the key skills to emphasize and how to tailor for it.";
   }
 
-  // Fallback: honest, and steer to what the offline assistant can actually do.
+  // Fallback: rather than a canned capabilities blurb, try to be useful from
+  // whatever context exists — summarize the subject, or comment on the resume.
+  if (subject) return summarizeSubject(subject, resumeText);
+  if (resumeText && resumeText.trim()) return reviewResume(resumeText);
   return `${capabilities()} What would you like to start with?`;
 }

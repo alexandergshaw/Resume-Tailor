@@ -28,7 +28,7 @@ describe("topTerms", () => {
 describe("localChatReply intents", () => {
   it("describes its capabilities for greetings/help", () => {
     expect(localChatReply(userMsg("hi"))).toMatch(/offline assistant/i);
-    expect(localChatReply(userMsg("what can you do?"))).toMatch(/analyze a job posting/i);
+    expect(localChatReply(userMsg("what can you do?"))).toMatch(/job posting/i);
   });
 
   it("reviews the resume when one is uploaded, prompts to upload otherwise", () => {
@@ -74,8 +74,77 @@ describe("localChatReply intents", () => {
     expect(localChatReply(userMsg("what skills should I tailor for?"))).toMatch(/pin a posting|paste the description/i);
   });
 
-  it("falls back honestly when nothing matches", () => {
+  it("falls back honestly when nothing matches and there's no context", () => {
     const reply = localChatReply(userMsg("tell me a joke"));
     expect(reply).toMatch(/offline assistant/i);
+  });
+
+  it("summarizes the pinned posting on request", () => {
+    const reply = localChatReply({
+      ...userMsg("can you summarize this posting?"),
+      pinnedContext: { label: "Backend", content: POSTING },
+    });
+    expect(reply).toMatch(/gist/i);
+    expect(reply.toLowerCase()).toMatch(/node|api|engineer|kubernetes/);
+  });
+
+  it("estimates fit between the posting and the resume", () => {
+    const reply = localChatReply({
+      ...userMsg("am I a good fit for this role?"),
+      pinnedContext: { label: "Backend", content: POSTING },
+      resumeText: RESUME,
+    });
+    expect(reply).toMatch(/\b(strong|reasonable|stretch)\b/i);
+    expect(reply.toLowerCase()).toMatch(/node/); // a matched skill
+    expect(reply).toMatch(/doesn't clearly show/i); // gaps flagged
+  });
+
+  it("gives salary / negotiation guidance", () => {
+    expect(localChatReply(userMsg("how much should I ask for in salary?"))).toMatch(
+      /range|total comp|levels\.fyi|offer|negotiat/i,
+    );
+  });
+
+  it("shortens the previous answer on a brief follow-up", () => {
+    const reply = localChatReply({
+      messages: [
+        { role: "user", content: "cover letter tips?" },
+        {
+          role: "assistant",
+          content:
+            "Keep it to three short paragraphs. Lead with why this role. Prove it with one story. End confidently.",
+        },
+        { role: "user", content: "make it shorter" },
+      ],
+    });
+    expect(reply).toMatch(/^In short:/);
+  });
+
+  it("adds complementary tips on 'tell me more'", () => {
+    const reply = localChatReply({
+      messages: [
+        { role: "user", content: "resume tips" },
+        { role: "assistant", content: "Start bullets with strong verbs." },
+        { role: "user", content: "tell me more" },
+      ],
+    });
+    expect(reply).toMatch(/quantify|tailor|requirement|mirror/i);
+  });
+
+  it("routes 'more about X' to the topic, not the follow-up handler", () => {
+    const reply = localChatReply({
+      messages: [
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "Hello." },
+        { role: "user", content: "tell me more about negotiating salary" },
+      ],
+    });
+    expect(reply).toMatch(/range|total comp|offer|negotiat/i);
+  });
+
+  it("uses the resume as a grounded fallback instead of a canned blurb", () => {
+    const reply = localChatReply({ ...userMsg("hmm ok"), resumeText: RESUME });
+    expect(reply).toMatch(/strongest on|action verb/i);
+    expect(reply).not.toMatch(/offline assistant/i);
   });
 });
