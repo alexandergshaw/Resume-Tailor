@@ -1,12 +1,7 @@
 "use client";
 
-import Button from "@mui/material/Button";
-import Dialog from "@mui/material/Dialog";
-import DialogActions from "@mui/material/DialogActions";
-import DialogContent from "@mui/material/DialogContent";
-import DialogTitle from "@mui/material/DialogTitle";
 import TextField from "@mui/material/TextField";
-import { useIsMobile } from "../hooks/useResponsive";
+import FormDialog from "./FormDialog";
 
 export default function AddCommunicationDialog({
   addCommunicationDialog,
@@ -16,56 +11,44 @@ export default function AddCommunicationDialog({
   communicationSaving,
   handleSaveCommunication,
 }) {
-  const isMobile = useIsMobile();
   const close = () => {
     setCommunicationError("");
     setAddCommunicationDialog({ open: false, applicationId: null, company: "", role: "", body: "" });
   };
 
+  const heading =
+    addCommunicationDialog.company || addCommunicationDialog.role
+      ? ` — ${addCommunicationDialog.company || "Unknown Company"}${addCommunicationDialog.role ? ` / ${addCommunicationDialog.role}` : ""}`
+      : "";
+
   return (
-    <Dialog
+    <FormDialog
       open={addCommunicationDialog.open}
       onClose={close}
+      title={`Add Recruiter Communication${heading}`}
       maxWidth="md"
-      fullWidth
-      fullScreen={isMobile}
+      contentSx={{ pt: 2 }}
+      error={communicationError}
+      busy={communicationSaving}
+      onSubmit={handleSaveCommunication}
+      submitDisabled={!addCommunicationDialog.body.trim()}
+      submitLabel="Save Communication"
     >
-      <DialogTitle>
-        Add Recruiter Communication
-        {(addCommunicationDialog.company || addCommunicationDialog.role) ? ` — ${addCommunicationDialog.company || "Unknown Company"}${addCommunicationDialog.role ? ` / ${addCommunicationDialog.role}` : ""}` : ""}
-      </DialogTitle>
-      <DialogContent dividers sx={{ pt: 2 }}>
-        <TextField
-          label="Paste communication"
-          placeholder="Paste the recruiter email, LinkedIn message, or call notes here..."
-          value={addCommunicationDialog.body}
-          onChange={(e) => setAddCommunicationDialog((prev) => ({ ...prev, body: e.target.value }))}
-          fullWidth
-          multiline
-          minRows={12}
-          sx={{
-            "& .MuiOutlinedInput-root": {
-              alignItems: "flex-start",
-              borderRadius: 2.5,
-            },
-          }}
-        />
-        {communicationError ? (
-          <p style={{ color: "var(--danger)", margin: "12px 0 0" }}>{communicationError}</p>
-        ) : null}
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={close}>
-          Cancel
-        </Button>
-        <Button
-          variant="contained"
-          disabled={communicationSaving || !addCommunicationDialog.body.trim()}
-          onClick={handleSaveCommunication}
-        >
-          {communicationSaving ? "Saving..." : "Save Communication"}
-        </Button>
-      </DialogActions>
-    </Dialog>
+      <TextField
+        label="Paste communication"
+        placeholder="Paste the recruiter email, LinkedIn message, or call notes here..."
+        value={addCommunicationDialog.body}
+        onChange={(e) => setAddCommunicationDialog((prev) => ({ ...prev, body: e.target.value }))}
+        fullWidth
+        multiline
+        minRows={12}
+        sx={{
+          "& .MuiOutlinedInput-root": {
+            alignItems: "flex-start",
+            borderRadius: 2.5,
+          },
+        }}
+      />
+    </FormDialog>
   );
 }

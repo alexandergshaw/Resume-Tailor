@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import Box from "@mui/material/Box";
@@ -24,7 +24,7 @@ import ShieldOutlinedIcon from "@mui/icons-material/ShieldOutlined";
 // Full login experience: email/password sign in + sign up, Google OAuth, and a
 // TOTP MFA challenge step shown when the signed-in user must step up to aal2.
 // Rendered without the app chrome (AppHeader hides itself on /login).
-export default function LoginPage() {
+function LoginForm() {
   const [supabase] = useState(() => createClient());
   const searchParams = useSearchParams();
   const redirectTo = searchParams?.get("redirect") || "/";
@@ -323,5 +323,14 @@ export default function LoginPage() {
         )}
       </Paper>
     </Box>
+  );
+}
+
+// useSearchParams must sit under a Suspense boundary for static generation.
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
   );
 }

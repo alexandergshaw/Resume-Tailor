@@ -9,6 +9,7 @@ import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
 import { useIsMobile } from "../hooks/useResponsive";
+import FieldError from "./FieldError";
 
 export default function CommunicationsDialog({
   communicationsDialog,
@@ -44,7 +45,7 @@ export default function CommunicationsDialog({
             <CircularProgress size={24} />
           </Box>
         ) : communicationsDialog.error ? (
-          <p style={{ color: "var(--danger)", margin: 0 }}>{communicationsDialog.error}</p>
+          <FieldError>{communicationsDialog.error}</FieldError>
         ) : communicationsDialog.items.length === 0 ? (
           <p style={{ color: "var(--text-secondary)", margin: 0 }}>No recruiter communications logged yet.</p>
         ) : (
