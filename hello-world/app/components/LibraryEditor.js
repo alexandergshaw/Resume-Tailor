@@ -214,13 +214,20 @@ function EntityTab({ title, description, rows, schema, endpoint, idField = "id",
 
   return (
     <Box>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1} sx={{ mb: 2 }}>
-        <Box>
-          <Typography variant="subtitle1" sx={{ fontWeight: 600, lineHeight: 1.2 }}>{title}s</Typography>
-          {description ? <Typography variant="caption" color="text.secondary">{description}</Typography> : null}
-        </Box>
-        <Button startIcon={<AddIcon sx={{ fontSize: 18 }} />} variant="contained" size="small" disableElevation onClick={openAdd} sx={{ whiteSpace: "nowrap", textTransform: "none", borderRadius: 1.5 }}>Add</Button>
+      <Stack direction="row" spacing={2} sx={{ mb: description ? 0.75 : 2, justifyContent: "space-between", alignItems: "center" }}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 600, minWidth: 0 }}>{title}s</Typography>
+        <Button
+          startIcon={<AddIcon sx={{ fontSize: 18 }} />}
+          variant="contained"
+          size="small"
+          disableElevation
+          onClick={openAdd}
+          sx={{ flexShrink: 0, alignSelf: "center", whiteSpace: "nowrap", textTransform: "none", borderRadius: 1.5 }}
+        >
+          Add
+        </Button>
       </Stack>
+      {description ? <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 2 }}>{description}</Typography> : null}
       {warnings?.length ? <Alert severity="warning" sx={{ mb: 1 }} onClose={() => setWarnings([])}>{warnings.join(" ")}</Alert> : null}
 
       {rows.length === 0 ? (
@@ -232,7 +239,7 @@ function EntityTab({ title, description, rows, schema, endpoint, idField = "id",
         <Stack spacing={1}>
           {rows.map((row) => (
             <Box key={row[idField]} sx={{ border: "1px solid var(--border)", borderRadius: 1.5, p: 1.75 }}>
-              <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+              <Stack direction="row" spacing={1} sx={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                 <Typography variant="subtitle2" sx={{ fontWeight: 600, wordBreak: "break-word" }}>{cellText(schema[0], row[schema[0].key])}</Typography>
                 {actions(row)}
               </Stack>
@@ -337,13 +344,13 @@ function ProfileTab({ profile, onChanged }) {
       {saved ? <Alert severity="success" sx={{ mb: 1 }} onClose={() => setSaved(false)}>Saved.</Alert> : null}
       <Stack spacing={1}>
         {Object.keys(values).sort().map((k) => (
-          <Stack direction="row" spacing={1} key={k} alignItems="center">
+          <Stack direction="row" spacing={1} key={k} sx={{ alignItems: "center" }}>
             <TextField label={k} value={values[k]} onChange={(e) => setValues((v) => ({ ...v, [k]: e.target.value }))} sx={{ flex: 1 }} size="small" />
             <IconButton aria-label="remove" onClick={() => setValues((v) => { const n = { ...v }; delete n[k]; return n; })}><DeleteIcon fontSize="small" /></IconButton>
           </Stack>
         ))}
       </Stack>
-      <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ mt: 2 }} alignItems={{ xs: "stretch", sm: "center" }}>
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ mt: 2, alignItems: { xs: "stretch", sm: "center" } }}>
         <TextField label="New key" value={newKey} onChange={(e) => setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]+/g, "_"))} size="small" />
         <Button onClick={() => { if (newKey && !(newKey in values)) { setValues((v) => ({ ...v, [newKey]: "" })); setNewKey(""); } }}>Add key</Button>
       </Stack>
@@ -397,7 +404,7 @@ function PreviewTab() {
       {result ? (
         <Box sx={{ mt: 3 }}>
           <Typography variant="subtitle2">Detected: {result.jobTitle || "—"}{result.companyName ? ` @ ${result.companyName}` : ""}</Typography>
-          <Stack direction="row" spacing={0.5} flexWrap="wrap" sx={{ my: 1, gap: 0.5 }}>
+          <Stack direction="row" spacing={0.5} sx={{ my: 1, flexWrap: "wrap" }}>
             {topKeywords.map((k) => <Chip key={k} size="small" label={k} />)}
           </Stack>
           <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, gap: 2 }}>
@@ -502,7 +509,7 @@ function ImportDialog({ open, onClose, onChanged }) {
             <Stack spacing={0.5} sx={{ mt: 1, maxHeight: 260, overflow: "auto", pr: 1 }}>
               {buzz.length === 0 ? <Typography variant="body2" color="text.secondary">Nothing new — your library already covers this posting.</Typography> : null}
               {buzz.map((b, i) => (
-                <Stack key={`${b.canonical}-${i}`} direction="row" spacing={1} alignItems="center">
+                <Stack key={`${b.canonical}-${i}`} direction="row" spacing={1} sx={{ alignItems: "center" }}>
                   <Checkbox size="small" checked={b.selected} onChange={(e) => setBuzz((arr) => arr.map((x, j) => j === i ? { ...x, selected: e.target.checked } : x))} sx={{ p: 0.5 }} />
                   <Typography variant="body2" sx={{ flex: 1, wordBreak: "break-word" }}>{b.canonical}</Typography>
                   <TextField select size="small" value={b.category} onChange={(e) => setBuzz((arr) => arr.map((x, j) => j === i ? { ...x, category: e.target.value, selected: true } : x))} sx={{ minWidth: 150 }}>
@@ -630,14 +637,14 @@ export default function LibraryEditor() {
 
   return (
     <Box sx={{ width: "100%", maxWidth: 1080, minWidth: 0, mx: "auto", p: { xs: 2, md: 4 } }}>
-      <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={2} sx={{ mb: 3 }}>
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ mb: 3, justifyContent: "space-between", alignItems: { xs: "stretch", sm: "center" } }}>
         <Box>
           <Typography variant="h5" sx={{ fontWeight: 600, letterSpacing: "-0.01em" }}>Tailoring Library</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
             The terms, focus areas, and skills the engine uses. Changes apply on your next tailoring run.
           </Typography>
         </Box>
-        <Button variant="outlined" size="small" onClick={() => setImportOpen(true)} sx={{ whiteSpace: "nowrap", textTransform: "none", borderRadius: 1.5, alignSelf: { xs: "flex-start", sm: "auto" } }}>
+        <Button variant="outlined" size="small" onClick={() => setImportOpen(true)} sx={{ flexShrink: 0, alignSelf: { xs: "flex-start", sm: "center" }, whiteSpace: "nowrap", textTransform: "none", borderRadius: 1.5 }}>
           Import from posting
         </Button>
       </Stack>
