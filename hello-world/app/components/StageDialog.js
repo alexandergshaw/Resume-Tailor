@@ -6,6 +6,11 @@ import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import TextField from "@mui/material/TextField";
 import FormDialog from "./FormDialog";
+import {
+  STAGE_TYPE_OPTIONS,
+  STAGE_OUTCOME_OPTIONS,
+  createStageDialogState,
+} from "../../lib/tracking/stages";
 
 export default function StageDialog({
   stageDialog,
@@ -14,9 +19,6 @@ export default function StageDialog({
   setStageError,
   stageSaving,
   handleSaveStage,
-  createStageDialogState,
-  STAGE_TYPE_OPTIONS,
-  STAGE_OUTCOME_OPTIONS,
 }) {
   const close = () => {
     setStageError("");

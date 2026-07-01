@@ -10,6 +10,7 @@ import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
 import { useIsMobile } from "../hooks/useResponsive";
 import FieldError from "./FieldError";
+import FormattedContent from "./FormattedContent";
 
 export default function AppViewDialog({
   appDialog,
@@ -18,7 +19,6 @@ export default function AppViewDialog({
   communicationsDialog,
   loadCommunicationsForApp,
   openAddCommunicationDialog,
-  FormattedContent,
 }) {
   const isMobile = useIsMobile();
   const dApp = appDialog.rowIndex != null ? applicationData[appDialog.rowIndex] : null;

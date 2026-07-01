@@ -16,6 +16,11 @@ import TableSortLabel from "@mui/material/TableSortLabel";
 import DescriptionIcon from "@mui/icons-material/Description";
 import styles from "../page.module.css";
 import { useIsTablet } from "../hooks/useResponsive";
+import {
+  STAGE_TYPE_LABELS,
+  createStageDialogState,
+  formatDateTimeLocalInputValue,
+} from "../../lib/tracking/stages";
 import StageDialog from "./StageDialog";
 import CommunicationsDialog from "./CommunicationsDialog";
 import AddCommunicationDialog from "./AddCommunicationDialog";
@@ -54,16 +59,11 @@ export default function TrackingTab({
   downloadDocxFiles,
   buildDocxFromUploadedTemplate,
   getDownloadFileNameForTitle,
-  formatDateTimeLocalInputValue,
-  createStageDialogState,
-  STAGE_TYPE_LABELS,
   // Dialog props
   stageDialog,
   stageError,
   stageSaving,
   handleSaveStage,
-  STAGE_TYPE_OPTIONS,
-  STAGE_OUTCOME_OPTIONS,
   communicationsDialog,
   setCommunicationsDialog,
   addCommunicationDialog,
@@ -88,7 +88,6 @@ export default function TrackingTab({
   handleSaveAddApplication,
   appDialog,
   loadCommunicationsForApp,
-  FormattedContent,
   highlightedAppId,
   emailClassificationsByAppId = {},
 }) {
@@ -654,9 +653,6 @@ export default function TrackingTab({
         setStageError={setStageError}
         stageSaving={stageSaving}
         handleSaveStage={handleSaveStage}
-        createStageDialogState={createStageDialogState}
-        STAGE_TYPE_OPTIONS={STAGE_TYPE_OPTIONS}
-        STAGE_OUTCOME_OPTIONS={STAGE_OUTCOME_OPTIONS}
       />
 
       <CommunicationsDialog
@@ -700,7 +696,6 @@ export default function TrackingTab({
         communicationsDialog={communicationsDialog}
         loadCommunicationsForApp={loadCommunicationsForApp}
         openAddCommunicationDialog={openAddCommunicationDialog}
-        FormattedContent={FormattedContent}
       />
     </section>
   );

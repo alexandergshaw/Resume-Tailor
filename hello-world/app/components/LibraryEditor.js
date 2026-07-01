@@ -25,11 +25,10 @@ import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
-import useMediaQuery from "@mui/material/useMediaQuery";
-import { useTheme } from "@mui/material/styles";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
+import { useIsMobile } from "../hooks/useResponsive";
 
 async function api(path, method, body) {
   const res = await fetch(path, {
@@ -43,11 +42,6 @@ async function api(path, method, body) {
     throw new Error(detail || `Request failed (${res.status})`);
   }
   return data;
-}
-
-function useIsMobile() {
-  const theme = useTheme();
-  return useMediaQuery(theme.breakpoints.down("sm"));
 }
 
 // --- A freeSolo tag input for string-array fields ---------------------------
