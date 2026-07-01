@@ -28,7 +28,6 @@ import {
   buildTemplateLinesForUpload,
   buildDocxFromUploadedTemplate,
   getDownloadFileNameForTitle,
-  downloadMinimalistDocx,
   createDocumentDownloaders,
   extractResumeTextLines,
   triggerBlobDownload,
@@ -37,6 +36,12 @@ import {
 import { parseDocxToModel, linesToModel } from "../lib/document/docxPreview";
 import { weaveSources } from "../lib/document/coverLetterWeave";
 import { parseEmploymentHistory } from "../lib/resume/parseEmployment";
+import { useProfileEntries } from "./hooks/useProfileEntries";
+import {
+  REFERENCE_CONFIG,
+  EDUCATION_CONFIG,
+  EMPLOYMENT_CONFIG,
+} from "../lib/materials/profileEntries";
 import {
   listMaterials,
   uploadMaterial,
@@ -238,21 +243,12 @@ export default function Home() {
   const chatPanelRef = useRef(null);
   const chatScrollRef = useRef(null);
 
-  // Personal references the user can keep handy and copy when an application
-  // asks for them. Stored locally only.
-  const [references, setReferences] = useState([]);
-  const [referencesOpen, setReferencesOpen] = useState(false);
-  const [referenceCopiedId, setReferenceCopiedId] = useState(null);
-
-  // Education entries the user can store and copy into applications.
-  const [educationEntries, setEducationEntries] = useState([]);
-  const [educationOpen, setEducationOpen] = useState(false);
-  const [educationCopiedId, setEducationCopiedId] = useState(null);
-
-  // Employment history entries (up to 4) the user can store and copy.
-  const [employmentEntries, setEmploymentEntries] = useState([]);
-  const [employmentOpen, setEmploymentOpen] = useState(false);
-  const [employmentCopiedId, setEmploymentCopiedId] = useState(null);
+  // Materials profile lists (references / education / employment). Each is a
+  // self-contained controller: CRUD, per-row + all copy, localStorage
+  // persistence, and docx export. See lib/materials/profileEntries.js.
+  const referencesCtl = useProfileEntries(REFERENCE_CONFIG);
+  const educationCtl = useProfileEntries(EDUCATION_CONFIG);
+  const employmentCtl = useProfileEntries(EMPLOYMENT_CONFIG);
   // Status of the "import from résumé" action on the Employment History section.
   const [employmentImport, setEmploymentImport] = useState({ loading: false, error: "", message: "" });
 
@@ -394,9 +390,9 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prefs: {
-            referencesOpen,
-            educationOpen,
-            employmentOpen,
+            referencesOpen: referencesCtl.open,
+            educationOpen: educationCtl.open,
+            employmentOpen: employmentCtl.open,
             appliedSort: interviewSort,
             hideAppliedJobs,
           },
@@ -404,7 +400,7 @@ export default function Home() {
       }).catch(() => {});
     }, 400);
     return () => clearTimeout(handle);
-  }, [referencesOpen, educationOpen, employmentOpen, interviewSort, hideAppliedJobs, currentUser]);
+  }, [referencesCtl.open, educationCtl.open, employmentCtl.open, interviewSort, hideAppliedJobs, currentUser]);
 
   // Track auth state + load applied jobs + load stored files
   useEffect(() => {
@@ -434,9 +430,9 @@ export default function Home() {
           if (res.ok) {
             const json = await res.json();
             const prefs = json?.prefs && typeof json.prefs === "object" ? json.prefs : {};
-            if (typeof prefs.referencesOpen === "boolean") setReferencesOpen(prefs.referencesOpen);
-            if (typeof prefs.educationOpen === "boolean") setEducationOpen(prefs.educationOpen);
-            if (typeof prefs.employmentOpen === "boolean") setEmploymentOpen(prefs.employmentOpen);
+            if (typeof prefs.referencesOpen === "boolean") referencesCtl.setOpen(prefs.referencesOpen);
+            if (typeof prefs.educationOpen === "boolean") educationCtl.setOpen(prefs.educationOpen);
+            if (typeof prefs.employmentOpen === "boolean") employmentCtl.setOpen(prefs.employmentOpen);
             if (typeof prefs.hideAppliedJobs === "boolean") setHideAppliedJobs(prefs.hideAppliedJobs);
             if (
               prefs.appliedSort &&
@@ -493,6 +489,9 @@ export default function Home() {
       loadUserData(session?.user ?? null);
     });
     return () => subscription.unsubscribe();
+    // Mount-only: sets up the auth subscription once. The profile controllers
+    // used inside loadUserData change identity each render and must not re-run it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -1120,96 +1119,6 @@ export default function Home() {
     localStorage.setItem("chatSize", JSON.stringify(chatSize));
   }, [chatSize]);
 
-  // Hydrate the stored personal references once on mount.
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("applicationReferences");
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        setReferences(
-          parsed
-            .filter((r) => r && typeof r === "object")
-            .map((r) => ({
-              id: typeof r.id === "string" && r.id ? r.id : `ref-${Math.random().toString(36).slice(2, 10)}`,
-              name: String(r.name || ""),
-              title: String(r.title || ""),
-              company: String(r.company || ""),
-              relationship: String(r.relationship || ""),
-              email: String(r.email || ""),
-              phone: String(r.phone || ""),
-              notes: String(r.notes || ""),
-            })),
-        );
-      }
-    } catch {}
-  }, []);
-  useEffect(() => {
-    try {
-      localStorage.setItem("applicationReferences", JSON.stringify(references));
-    } catch {}
-  }, [references]);
-
-  // Hydrate/save stored education entries.
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("applicationEducation");
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        setEducationEntries(
-          parsed
-            .filter((e) => e && typeof e === "object")
-            .map((e) => ({
-              id: typeof e.id === "string" && e.id ? e.id : `edu-${Math.random().toString(36).slice(2, 10)}`,
-              school: String(e.school || ""),
-              degree: String(e.degree || ""),
-              field: String(e.field || ""),
-              location: String(e.location || ""),
-              startDate: String(e.startDate || ""),
-              endDate: String(e.endDate || ""),
-              gpa: String(e.gpa || ""),
-              notes: String(e.notes || ""),
-            })),
-        );
-      }
-    } catch {}
-  }, []);
-  useEffect(() => {
-    try {
-      localStorage.setItem("applicationEducation", JSON.stringify(educationEntries));
-    } catch {}
-  }, [educationEntries]);
-
-  // Hydrate/save stored employment history entries (up to 4).
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("applicationEmployment");
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        setEmploymentEntries(
-          parsed
-            .filter((e) => e && typeof e === "object")
-            .map((e) => ({
-              id: typeof e.id === "string" && e.id ? e.id : `emp-${Math.random().toString(36).slice(2, 10)}`,
-              company: String(e.company || ""),
-              title: String(e.title || ""),
-              location: String(e.location || ""),
-              startDate: String(e.startDate || ""),
-              endDate: String(e.endDate || ""),
-              notes: String(e.notes || ""),
-            })),
-        );
-      }
-    } catch {}
-  }, []);
-  useEffect(() => {
-    try {
-      localStorage.setItem("applicationEmployment", JSON.stringify(employmentEntries));
-    } catch {}
-  }, [employmentEntries]);
-
   // Close the chat when clicking outside its panel (but not on the FAB itself).
   useEffect(() => {
     if (!chatOpen) return;
@@ -1249,153 +1158,6 @@ export default function Home() {
     window.addEventListener("pointerup", onUp);
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
-  }
-
-  function addReference() {
-    setReferences((prev) => [
-      ...prev,
-      {
-        id: `ref-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        name: "",
-        title: "",
-        company: "",
-        relationship: "",
-        email: "",
-        phone: "",
-        notes: "",
-      },
-    ]);
-    setReferencesOpen(true);
-  }
-  function updateReference(id, field, value) {
-    setReferences((prev) =>
-      prev.map((ref) => (ref.id === id ? { ...ref, [field]: value } : ref)),
-    );
-  }
-  function removeReference(id) {
-    setReferences((prev) => prev.filter((ref) => ref.id !== id));
-  }
-  function formatReferenceBlock(ref) {
-    if (!ref) return "";
-    const headerBits = [ref.name, ref.title].filter(Boolean).join(", ");
-    const orgLine = [ref.company, ref.relationship].filter(Boolean).join(" — ");
-    const lines = [];
-    if (headerBits) lines.push(headerBits);
-    if (orgLine) lines.push(orgLine);
-    if (ref.email) lines.push(`Email: ${ref.email}`);
-    if (ref.phone) lines.push(`Phone: ${ref.phone}`);
-    if (ref.notes) lines.push(ref.notes);
-    return lines.join("\n");
-  }
-  async function copyReferenceBlock(ref) {
-    const text = formatReferenceBlock(ref);
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      setReferenceCopiedId(ref.id);
-      setTimeout(() => {
-        setReferenceCopiedId((current) => (current === ref.id ? null : current));
-      }, 1500);
-    } catch {}
-  }
-
-  // Education entry helpers.
-  function addEducationEntry() {
-    setEducationEntries((prev) => [
-      ...prev,
-      {
-        id: `edu-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        school: "",
-        degree: "",
-        field: "",
-        location: "",
-        startDate: "",
-        endDate: "",
-        gpa: "",
-        notes: "",
-      },
-    ]);
-    setEducationOpen(true);
-  }
-  function updateEducationEntry(id, field, value) {
-    setEducationEntries((prev) =>
-      prev.map((entry) => (entry.id === id ? { ...entry, [field]: value } : entry)),
-    );
-  }
-  function removeEducationEntry(id) {
-    setEducationEntries((prev) => prev.filter((entry) => entry.id !== id));
-  }
-  function formatEducationBlock(entry) {
-    if (!entry) return "";
-    const lines = [];
-    if (entry.school) lines.push(entry.school);
-    const degreeLine = [entry.degree, entry.field].filter(Boolean).join(", ");
-    if (degreeLine) lines.push(degreeLine);
-    const dateRange = [entry.startDate, entry.endDate].filter(Boolean).join(" – ");
-    const metaBits = [entry.location, dateRange].filter(Boolean).join(" • ");
-    if (metaBits) lines.push(metaBits);
-    if (entry.gpa) lines.push(`GPA: ${entry.gpa}`);
-    if (entry.notes) lines.push(entry.notes);
-    return lines.join("\n");
-  }
-  async function copyEducationBlock(entry) {
-    const text = formatEducationBlock(entry);
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      setEducationCopiedId(entry.id);
-      setTimeout(() => {
-        setEducationCopiedId((current) => (current === entry.id ? null : current));
-      }, 1500);
-    } catch {}
-  }
-
-  // Employment history helpers (max 4 entries).
-  function addEmploymentEntry() {
-    if (employmentEntries.length >= 4) return;
-    setEmploymentEntries((prev) => [
-      ...prev,
-      {
-        id: `emp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        company: "",
-        title: "",
-        location: "",
-        startDate: "",
-        endDate: "",
-        notes: "",
-      },
-    ]);
-    setEmploymentOpen(true);
-  }
-  function updateEmploymentEntry(id, field, value) {
-    setEmploymentEntries((prev) =>
-      prev.map((entry) => (entry.id === id ? { ...entry, [field]: value } : entry)),
-    );
-  }
-  function removeEmploymentEntry(id) {
-    setEmploymentEntries((prev) => prev.filter((entry) => entry.id !== id));
-  }
-  function formatEmploymentBlock(entry) {
-    if (!entry) return "";
-    const lines = [];
-    const titleLine = [entry.title, entry.company].filter(Boolean).join(" at ");
-    if (titleLine) lines.push(titleLine);
-    const dateRange = [entry.startDate, entry.endDate].filter(Boolean).join(" – ");
-    const metaBits = [entry.location, dateRange].filter(Boolean).join(" • ");
-    if (metaBits) lines.push(metaBits);
-    if (entry.notes) lines.push(entry.notes);
-    return lines.join("\n");
-  }
-  async function copyEmploymentBlock(entry) {
-    const text = formatEmploymentBlock(entry);
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      setEmploymentCopiedId(entry.id);
-      setTimeout(() => {
-        setEmploymentCopiedId((current) => (current === entry.id ? null : current));
-      }, 1500);
-    } catch {}
   }
 
   // Extract employment history from an uploaded résumé (.docx/.txt) using AI and
@@ -1445,7 +1207,7 @@ export default function Home() {
         });
         return;
       }
-      const existing = employmentEntries.filter(
+      const existing = employmentCtl.entries.filter(
         (e) => e.company || e.title || e.location || e.startDate || e.endDate || e.notes,
       );
       // Skip positions that already exist (by company + title) so re-uploading
@@ -1467,8 +1229,8 @@ export default function Home() {
           notes: entry.notes || "",
         }));
       const added = additions.length;
-      setEmploymentEntries([...existing, ...additions]);
-      setEmploymentOpen(true);
+      employmentCtl.setEntries([...existing, ...additions]);
+      employmentCtl.setOpen(true);
       const suffix = usedAi ? "" : " (offline parser — AI unavailable)";
       const noRoomMessage =
         existing.length >= 4
@@ -1592,153 +1354,6 @@ export default function Home() {
     } catch (err) {
       setMaterialsError(err?.message || "Could not attach that file.");
     }
-  }
-
-  // Combined-copy helpers: copy every reference / education entry as one block.
-  function formatAllReferences() {
-    return references
-      .map((ref) => formatReferenceBlock(ref))
-      .filter(Boolean)
-      .join("\n\n");
-  }
-  function formatAllEducation() {
-    return educationEntries
-      .map((entry) => formatEducationBlock(entry))
-      .filter(Boolean)
-      .join("\n\n");
-  }
-  function formatAllEmployment() {
-    return employmentEntries
-      .map((entry) => formatEmploymentBlock(entry))
-      .filter(Boolean)
-      .join("\n\n");
-  }
-  const [allReferencesCopied, setAllReferencesCopied] = useState(false);
-  const [allEducationCopied, setAllEducationCopied] = useState(false);
-  const [allEmploymentCopied, setAllEmploymentCopied] = useState(false);
-  const [referencesDownloadError, setReferencesDownloadError] = useState("");
-  const [educationDownloadError, setEducationDownloadError] = useState("");
-  const [employmentDownloadError, setEmploymentDownloadError] = useState("");
-
-  function buildReferenceDocEntries() {
-    return references
-      .map((ref) => {
-        const lines = formatReferenceBlock(ref)
-          .split("\n")
-          .map((line) => line.trim())
-          .filter(Boolean);
-        if (lines.length === 0) return null;
-        const [primaryLine, secondaryLine, ...details] = lines;
-        return {
-          primaryLine,
-          secondaryLine: secondaryLine || "",
-          details,
-        };
-      })
-      .filter(Boolean);
-  }
-
-  function buildEmploymentDocEntries() {
-    return employmentEntries
-      .map((entry) => {
-        const lines = formatEmploymentBlock(entry)
-          .split("\n")
-          .map((line) => line.trim())
-          .filter(Boolean);
-        if (lines.length === 0) return null;
-        const [primaryLine, secondaryLine, ...details] = lines;
-        return {
-          primaryLine,
-          secondaryLine: secondaryLine || "",
-          details,
-        };
-      })
-      .filter(Boolean);
-  }
-
-  function buildEducationDocEntries() {
-    return educationEntries
-      .map((entry) => {
-        const lines = formatEducationBlock(entry)
-          .split("\n")
-          .map((line) => line.trim())
-          .filter(Boolean);
-        if (lines.length === 0) return null;
-        const [primaryLine, secondaryLine, ...details] = lines;
-        return {
-          primaryLine,
-          secondaryLine: secondaryLine || "",
-          details,
-        };
-      })
-      .filter(Boolean);
-  }
-
-  async function downloadReferencesDocx() {
-    setReferencesDownloadError("");
-    const err = await downloadMinimalistDocx({
-      title: "Professional References",
-      fileName: "References.docx",
-      entries: buildReferenceDocEntries(),
-    });
-    if (err) {
-      console.warn("[references export] failed:", err);
-      setReferencesDownloadError(err);
-    }
-  }
-
-  async function downloadEmploymentDocx() {
-    setEmploymentDownloadError("");
-    const err = await downloadMinimalistDocx({
-      title: "Employment History",
-      fileName: "Employment-History.docx",
-      entries: buildEmploymentDocEntries(),
-    });
-    if (err) {
-      console.warn("[employment export] failed:", err);
-      setEmploymentDownloadError(err);
-    }
-  }
-
-  async function downloadEducationDocx() {
-    setEducationDownloadError("");
-    const err = await downloadMinimalistDocx({
-      title: "Education",
-      fileName: "Education.docx",
-      entries: buildEducationDocEntries(),
-    });
-    if (err) {
-      console.warn("[education export] failed:", err);
-      setEducationDownloadError(err);
-    }
-  }
-
-  async function copyAllReferences() {
-    const text = formatAllReferences();
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      setAllReferencesCopied(true);
-      setTimeout(() => setAllReferencesCopied(false), 1500);
-    } catch {}
-  }
-  async function copyAllEducation() {
-    const text = formatAllEducation();
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      setAllEducationCopied(true);
-      setTimeout(() => setAllEducationCopied(false), 1500);
-    } catch {}
-  }
-  async function copyAllEmployment() {
-    const text = formatAllEmployment();
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      setAllEmploymentCopied(true);
-      setTimeout(() => setAllEmploymentCopied(false), 1500);
-    } catch {}
   }
 
   // Per-field copy helper for references / education TextFields.
@@ -4281,48 +3896,48 @@ export default function Home() {
           additionalContext={additionalContext}
           setAdditionalContext={setAdditionalContext}
           setContextFiles={setContextFiles}
-          referencesOpen={referencesOpen}
-          setReferencesOpen={setReferencesOpen}
-          references={references}
-          addReference={addReference}
-          updateReference={updateReference}
-          removeReference={removeReference}
-          copyReferenceBlock={copyReferenceBlock}
-          formatReferenceBlock={formatReferenceBlock}
-          referenceCopiedId={referenceCopiedId}
-          copyAllReferences={copyAllReferences}
-          formatAllReferences={formatAllReferences}
-          allReferencesCopied={allReferencesCopied}
-          downloadReferencesDocx={downloadReferencesDocx}
-          referencesDownloadError={referencesDownloadError}
-          educationOpen={educationOpen}
-          setEducationOpen={setEducationOpen}
-          educationEntries={educationEntries}
-          addEducationEntry={addEducationEntry}
-          updateEducationEntry={updateEducationEntry}
-          removeEducationEntry={removeEducationEntry}
-          copyEducationBlock={copyEducationBlock}
-          formatEducationBlock={formatEducationBlock}
-          educationCopiedId={educationCopiedId}
-          copyAllEducation={copyAllEducation}
-          formatAllEducation={formatAllEducation}
-          allEducationCopied={allEducationCopied}
-          downloadEducationDocx={downloadEducationDocx}
-          educationDownloadError={educationDownloadError}
-          employmentOpen={employmentOpen}
-          setEmploymentOpen={setEmploymentOpen}
-          employmentEntries={employmentEntries}
-          addEmploymentEntry={addEmploymentEntry}
-          updateEmploymentEntry={updateEmploymentEntry}
-          removeEmploymentEntry={removeEmploymentEntry}
-          copyEmploymentBlock={copyEmploymentBlock}
-          formatEmploymentBlock={formatEmploymentBlock}
-          employmentCopiedId={employmentCopiedId}
-          copyAllEmployment={copyAllEmployment}
-          formatAllEmployment={formatAllEmployment}
-          allEmploymentCopied={allEmploymentCopied}
-          downloadEmploymentDocx={downloadEmploymentDocx}
-          employmentDownloadError={employmentDownloadError}
+          referencesOpen={referencesCtl.open}
+          setReferencesOpen={referencesCtl.setOpen}
+          references={referencesCtl.entries}
+          addReference={referencesCtl.add}
+          updateReference={referencesCtl.update}
+          removeReference={referencesCtl.remove}
+          copyReferenceBlock={referencesCtl.copyBlock}
+          formatReferenceBlock={referencesCtl.formatBlock}
+          referenceCopiedId={referencesCtl.copiedId}
+          copyAllReferences={referencesCtl.copyAll}
+          formatAllReferences={referencesCtl.formatAll}
+          allReferencesCopied={referencesCtl.allCopied}
+          downloadReferencesDocx={referencesCtl.downloadDocx}
+          referencesDownloadError={referencesCtl.downloadError}
+          educationOpen={educationCtl.open}
+          setEducationOpen={educationCtl.setOpen}
+          educationEntries={educationCtl.entries}
+          addEducationEntry={educationCtl.add}
+          updateEducationEntry={educationCtl.update}
+          removeEducationEntry={educationCtl.remove}
+          copyEducationBlock={educationCtl.copyBlock}
+          formatEducationBlock={educationCtl.formatBlock}
+          educationCopiedId={educationCtl.copiedId}
+          copyAllEducation={educationCtl.copyAll}
+          formatAllEducation={educationCtl.formatAll}
+          allEducationCopied={educationCtl.allCopied}
+          downloadEducationDocx={educationCtl.downloadDocx}
+          educationDownloadError={educationCtl.downloadError}
+          employmentOpen={employmentCtl.open}
+          setEmploymentOpen={employmentCtl.setOpen}
+          employmentEntries={employmentCtl.entries}
+          addEmploymentEntry={employmentCtl.add}
+          updateEmploymentEntry={employmentCtl.update}
+          removeEmploymentEntry={employmentCtl.remove}
+          copyEmploymentBlock={employmentCtl.copyBlock}
+          formatEmploymentBlock={employmentCtl.formatBlock}
+          employmentCopiedId={employmentCtl.copiedId}
+          copyAllEmployment={employmentCtl.copyAll}
+          formatAllEmployment={employmentCtl.formatAll}
+          allEmploymentCopied={employmentCtl.allCopied}
+          downloadEmploymentDocx={employmentCtl.downloadDocx}
+          employmentDownloadError={employmentCtl.downloadError}
           importEmploymentFromResume={importEmploymentFromResume}
           employmentImport={employmentImport}
           materials={materials}
