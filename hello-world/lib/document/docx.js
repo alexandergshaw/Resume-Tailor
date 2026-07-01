@@ -568,7 +568,9 @@ export function createDocumentDownloaders(deps) {
       : [];
     let jobTitle = tailoring.generatedJobTitle || job.title || "";
     let company = job.company || "";
-    let docxPath = "";
+    // A rehydrated chip (post-reload) carries the saved docx storage path so we
+    // can serve the faithful document even without a re-uploaded template.
+    let docxPath = !tailoring.edited && typeof tailoring.docxPath === "string" ? tailoring.docxPath : "";
 
     if (!docxB64 && !text) {
       // Fall back to the saved application row (post-reload case).

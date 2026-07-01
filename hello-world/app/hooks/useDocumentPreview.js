@@ -189,6 +189,11 @@ export function useDocumentPreview({
       args.resultLines = lines;
       args.resumeFileName = entry.resumeFileName || "";
       if (serveFinished && typeof entry.docxB64 === "string") args.docxB64 = entry.docxB64;
+      // Restored chips have no in-session docx blob but do carry the saved
+      // storage path — serve that faithful copy when the text is unedited.
+      if (serveFinished && !entry.docxB64 && typeof entry.docxPath === "string" && entry.docxPath) {
+        args.docxPath = entry.docxPath;
+      }
     }
     const err = await downloadDocxFiles(args);
     setResumePreview((prev) => ({ ...prev, busy: false, error: err || "" }));
