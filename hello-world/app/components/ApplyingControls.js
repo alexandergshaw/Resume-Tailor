@@ -383,7 +383,7 @@ export default function ApplyingControls({
                     size="small"
                     disabled={!formatAllReferences()}
                     onClick={(e) => { e.stopPropagation(); copyAllReferences(); }}
-                    sx={{ p: 0.5, color: allReferencesCopied ? "#2e7d32" : "var(--text-secondary)" }}
+                    sx={{ p: 0.5, color: allReferencesCopied ? "var(--success)" : "var(--text-secondary)" }}
                     aria-label="Copy all references"
                   >
                     {allReferencesCopied ? (
@@ -408,7 +408,7 @@ export default function ApplyingControls({
             }}
           >
             {referencesDownloadError ? (
-              <Box sx={{ fontSize: "0.78rem", color: "var(--error, #d32f2f)" }}>
+              <Box sx={{ fontSize: "0.78rem", color: "var(--danger)" }}>
                 {referencesDownloadError}
               </Box>
             ) : null}
@@ -435,7 +435,7 @@ export default function ApplyingControls({
                     display: "flex",
                     flexDirection: "column",
                     gap: 1,
-                    backgroundColor: "var(--bg-soft, #fbfdff)",
+                    backgroundColor: "var(--bg-soft)",
                   }}
                 >
                   <Box
@@ -640,7 +640,7 @@ export default function ApplyingControls({
                     size="small"
                     disabled={!formatAllEducation()}
                     onClick={(e) => { e.stopPropagation(); copyAllEducation(); }}
-                    sx={{ p: 0.5, color: allEducationCopied ? "#2e7d32" : "var(--text-secondary)" }}
+                    sx={{ p: 0.5, color: allEducationCopied ? "var(--success)" : "var(--text-secondary)" }}
                     aria-label="Copy all education"
                   >
                     {allEducationCopied ? (
@@ -665,7 +665,7 @@ export default function ApplyingControls({
             }}
           >
             {educationDownloadError ? (
-              <Box sx={{ fontSize: "0.78rem", color: "var(--error, #d32f2f)" }}>
+              <Box sx={{ fontSize: "0.78rem", color: "var(--danger)" }}>
                 {educationDownloadError}
               </Box>
             ) : null}
@@ -692,7 +692,7 @@ export default function ApplyingControls({
                     display: "flex",
                     flexDirection: "column",
                     gap: 1,
-                    backgroundColor: "var(--bg-soft, #fbfdff)",
+                    backgroundColor: "var(--bg-soft)",
                   }}
                 >
                   <Box
@@ -907,7 +907,7 @@ export default function ApplyingControls({
                     size="small"
                     disabled={!formatAllEmployment()}
                     onClick={(e) => { e.stopPropagation(); copyAllEmployment(); }}
-                    sx={{ p: 0.5, color: allEmploymentCopied ? "#2e7d32" : "var(--text-secondary)" }}
+                    sx={{ p: 0.5, color: allEmploymentCopied ? "var(--success)" : "var(--text-secondary)" }}
                     aria-label="Copy all employment"
                   >
                     {allEmploymentCopied ? (
@@ -939,7 +939,7 @@ export default function ApplyingControls({
                 display: "flex",
                 flexDirection: "column",
                 gap: 0.75,
-                backgroundColor: "var(--bg-soft, #fbfdff)",
+                backgroundColor: "var(--bg-soft)",
               }}
             >
               <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
@@ -967,7 +967,7 @@ export default function ApplyingControls({
                 </Box>
               </Box>
               {employmentImport?.error ? (
-                <Box sx={{ fontSize: "0.78rem", color: "var(--error, #d32f2f)" }}>
+                <Box sx={{ fontSize: "0.78rem", color: "var(--danger)" }}>
                   {employmentImport.error}
                 </Box>
               ) : null}
@@ -979,7 +979,7 @@ export default function ApplyingControls({
             </Box>
 
             {employmentDownloadError ? (
-              <Box sx={{ fontSize: "0.78rem", color: "var(--error, #d32f2f)" }}>
+              <Box sx={{ fontSize: "0.78rem", color: "var(--danger)" }}>
                 {employmentDownloadError}
               </Box>
             ) : null}
@@ -1005,7 +1005,7 @@ export default function ApplyingControls({
                     display: "flex",
                     flexDirection: "column",
                     gap: 1,
-                    backgroundColor: "var(--bg-soft, #fbfdff)",
+                    backgroundColor: "var(--bg-soft)",
                   }}
                 >
                   <Box
@@ -1159,7 +1159,7 @@ export default function ApplyingControls({
           </Box>
         </Box>
         {materialsError ? (
-          <Box sx={{ fontSize: "0.78rem", color: "var(--error, #d32f2f)" }}>{materialsError}</Box>
+          <Box sx={{ fontSize: "0.78rem", color: "var(--danger)" }}>{materialsError}</Box>
         ) : null}
         {materials.length > 0 ? (
           <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
@@ -1175,7 +1175,7 @@ export default function ApplyingControls({
                   borderRadius: 1.5,
                   px: 1.25,
                   py: 0.75,
-                  backgroundColor: "var(--bg-soft, #fbfdff)",
+                  backgroundColor: "var(--bg-soft)",
                 }}
               >
                 <Box sx={{ minWidth: 0 }}>

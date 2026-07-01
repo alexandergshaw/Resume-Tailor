@@ -23,7 +23,7 @@ export default function SavedSearchStrip({
         pb: 0.5,
         scrollbarWidth: "thin",
         "&::-webkit-scrollbar": { height: 6 },
-        "&::-webkit-scrollbar-thumb": { background: "#ccc", borderRadius: 3 },
+        "&::-webkit-scrollbar-thumb": { background: "var(--border)", borderRadius: 3 },
       }}
     >
       <Box
@@ -37,19 +37,19 @@ export default function SavedSearchStrip({
           maxWidth: 180,
           px: 1.25,
           py: 1,
-          border: "1px dashed #90a4ae",
+          border: "1px dashed var(--border-strong)",
           borderRadius: 1,
-          bgcolor: "#f5f8fa",
+          bgcolor: "var(--bg-soft)",
           cursor: "pointer",
           display: "flex",
           flexDirection: "column",
           justifyContent: "center",
           alignItems: "center",
-          color: "#37474f",
+          color: "var(--text-primary)",
           fontSize: "0.75rem",
           lineHeight: 1.2,
           textAlign: "center",
-          "&:hover": { bgcolor: "#eceff1" },
+          "&:hover": { bgcolor: "var(--bg-soft)" },
         }}
         title="Save current search controls"
       >
@@ -89,10 +89,10 @@ export default function SavedSearchStrip({
               maxWidth: 220,
               px: 1.25,
               py: 0.75,
-              border: isActive ? "1px solid #1976d2" : "1px solid #cfd8dc",
+              border: isActive ? "1px solid var(--accent)" : "1px solid var(--border)",
               borderRadius: 1,
-              bgcolor: isActive ? "#e3f2fd" : "#fff",
-              boxShadow: isActive ? "0 0 0 2px rgba(25, 118, 210, 0.18)" : "none",
+              bgcolor: isActive ? "var(--accent-soft)" : "var(--bg-surface)",
+              boxShadow: isActive ? "0 0 0 2px var(--accent-soft)" : "none",
               cursor: "pointer",
               position: "relative",
               display: "flex",
@@ -100,7 +100,7 @@ export default function SavedSearchStrip({
               gap: 0.25,
               fontSize: "0.75rem",
               transition: "background-color 120ms ease, box-shadow 120ms ease, border-color 120ms ease",
-              "&:hover": { borderColor: "#1976d2", boxShadow: isActive ? "0 0 0 2px rgba(25, 118, 210, 0.25)" : 1 },
+              "&:hover": { borderColor: "var(--accent)", boxShadow: isActive ? "0 0 0 2px rgba(25, 118, 210, 0.25)" : 1 },
             }}
             title={`Apply saved search: ${entry.name}`}
           >
@@ -116,13 +116,13 @@ export default function SavedSearchStrip({
                   height: 18,
                   px: 0.5,
                   borderRadius: 9,
-                  bgcolor: "#d32f2f",
-                  color: "#fff",
+                  bgcolor: "var(--danger)",
+                  color: "var(--bg-surface)",
                   fontSize: "0.65rem",
                   fontWeight: 700,
                   lineHeight: "18px",
                   textAlign: "center",
-                  boxShadow: "0 0 0 2px #fff",
+                  boxShadow: "0 0 0 2px var(--bg-surface)",
                   pointerEvents: "none",
                 }}
               >
@@ -143,7 +143,7 @@ export default function SavedSearchStrip({
             </Box>
             <Box
               sx={{
-                color: "#546e7a",
+                color: "var(--text-secondary)",
                 whiteSpace: "nowrap",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -152,7 +152,7 @@ export default function SavedSearchStrip({
               {queryLabel}
             </Box>
             {chipSummaryParts.length > 0 && (
-              <Box sx={{ color: "#78909c", fontSize: "0.7rem" }}>
+              <Box sx={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>
                 {chipSummaryParts.join(" · ")}
               </Box>
             )}
@@ -165,8 +165,8 @@ export default function SavedSearchStrip({
                 top: 2,
                 right: 2,
                 p: 0.25,
-                color: "#90a4ae",
-                "&:hover": { color: "#d32f2f", bgcolor: "transparent" },
+                color: "var(--border-strong)",
+                "&:hover": { color: "var(--danger)", bgcolor: "transparent" },
               }}
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>

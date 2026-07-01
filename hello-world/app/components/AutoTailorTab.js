@@ -30,11 +30,11 @@ export default function AutoTailorTab({
         <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
           <Box>
             <Box sx={{ fontWeight: 600, fontSize: "0.95rem", mb: 0.5 }}>Saved searches</Box>
-            <Box sx={{ color: "#546e7a", fontSize: "0.8rem", mb: 1.25 }}>
+            <Box sx={{ color: "var(--text-secondary)", fontSize: "0.8rem", mb: 1.25 }}>
               Toggle auto-tailor on a saved search to have the daily cron tailor your resume to matching new postings.
             </Box>
             {savedSearches.length === 0 ? (
-              <Box sx={{ color: "#78909c", fontSize: "0.85rem", fontStyle: "italic" }}>
+              <Box sx={{ color: "var(--text-muted)", fontSize: "0.85rem", fontStyle: "italic" }}>
                 No saved searches yet. Save one from the Job Search tab to enable auto-tailoring.
               </Box>
             ) : (
@@ -63,9 +63,9 @@ export default function AutoTailorTab({
                       key={entry.id}
                       sx={{
                         p: 1.25,
-                        border: "1px solid #cfd8dc",
+                        border: "1px solid var(--border)",
                         borderRadius: 1,
-                        bgcolor: "#fff",
+                        bgcolor: "var(--bg-surface)",
                         display: "flex",
                         flexDirection: "column",
                         gap: 0.5,
@@ -74,14 +74,14 @@ export default function AutoTailorTab({
                       }}
                     >
                       <Box sx={{ fontWeight: 600, fontSize: "0.9rem", pr: 3 }}>{entry.name}</Box>
-                      <Box sx={{ color: "#546e7a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      <Box sx={{ color: "var(--text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                         {queryLabel}
                       </Box>
                       {chipSummaryParts.length > 0 && (
-                        <Box sx={{ color: "#78909c", fontSize: "0.7rem" }}>{chipSummaryParts.join(" · ")}</Box>
+                        <Box sx={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>{chipSummaryParts.join(" · ")}</Box>
                       )}
                       {isServerBacked ? (
-                        <Box sx={{ mt: 0.5, pt: 0.75, borderTop: "1px dashed #cfd8dc", display: "flex", flexDirection: "column", gap: 0.5 }}>
+                        <Box sx={{ mt: 0.5, pt: 0.75, borderTop: "1px dashed var(--border)", display: "flex", flexDirection: "column", gap: 0.5 }}>
                           <FormControlLabel
                             control={
                               <Switch
@@ -94,7 +94,7 @@ export default function AutoTailorTab({
                             sx={{ m: 0 }}
                           />
                           {entry.autoTailorEnabled && (
-                            <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, fontSize: "0.75rem", color: "#546e7a" }}>
+                            <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, fontSize: "0.75rem", color: "var(--text-secondary)" }}>
                               <span>Daily cap:</span>
                               <TextField
                                 type="number"
@@ -112,7 +112,7 @@ export default function AutoTailorTab({
                           )}
                         </Box>
                       ) : (
-                        <Box sx={{ mt: 0.5, pt: 0.75, borderTop: "1px dashed #cfd8dc", color: "#90a4ae", fontSize: "0.72rem", fontStyle: "italic" }}>
+                        <Box sx={{ mt: 0.5, pt: 0.75, borderTop: "1px dashed var(--border)", color: "var(--border-strong)", fontSize: "0.72rem", fontStyle: "italic" }}>
                           Sign-in–only saved search (local). Re-save while signed in to enable auto-tailor.
                         </Box>
                       )}
@@ -120,7 +120,7 @@ export default function AutoTailorTab({
                         size="small"
                         aria-label={`Delete saved search ${entry.name}`}
                         onClick={() => deleteSavedSearch(entry.id)}
-                        sx={{ position: "absolute", top: 2, right: 2, p: 0.25, color: "#90a4ae", "&:hover": { color: "#d32f2f", bgcolor: "transparent" } }}
+                        sx={{ position: "absolute", top: 2, right: 2, p: 0.25, color: "var(--border-strong)", "&:hover": { color: "var(--danger)", bgcolor: "transparent" } }}
                       >
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                       </IconButton>
@@ -133,7 +133,7 @@ export default function AutoTailorTab({
 
           <Box>
             <Box sx={{ fontWeight: 600, fontSize: "0.95rem", mb: 0.5 }}>Auto-tailored postings</Box>
-            <Box sx={{ color: "#546e7a", fontSize: "0.8rem", mb: 1.25 }}>
+            <Box sx={{ color: "var(--text-secondary)", fontSize: "0.8rem", mb: 1.25 }}>
               Postings that were automatically tailored by the daily cron based on your enabled saved searches.
             </Box>
             {autoTailoredLoading ? (
@@ -141,21 +141,21 @@ export default function AutoTailorTab({
                 <CircularProgress size={24} />
               </Box>
             ) : autoTailoredError ? (
-              <p style={{ color: "var(--error, #d32f2f)" }}>Error: {autoTailoredError}</p>
+              <p style={{ color: "var(--danger)" }}>Error: {autoTailoredError}</p>
             ) : autoTailoredPostings.length === 0 ? (
-              <Box sx={{ color: "#78909c", fontSize: "0.85rem", fontStyle: "italic" }}>
+              <Box sx={{ color: "var(--text-muted)", fontSize: "0.85rem", fontStyle: "italic" }}>
                 No auto-tailored postings yet. Enable auto-tailor on a saved search above and wait for the next cron run.
               </Box>
             ) : (
-              <Box sx={{ overflowX: "auto", border: "1px solid #cfd8dc", borderRadius: 1 }}>
+              <Box sx={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 1 }}>
                 <Box component="table" sx={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
-                  <Box component="thead" sx={{ bgcolor: "#f5f7f8" }}>
+                  <Box component="thead" sx={{ bgcolor: "var(--bg-soft)" }}>
                     <Box component="tr">
-                      <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Date</Box>
-                      <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Company</Box>
-                      <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Title</Box>
-                      <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Posting</Box>
-                      <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Actions</Box>
+                      <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid var(--border)", fontWeight: 600 }}>Date</Box>
+                      <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid var(--border)", fontWeight: 600 }}>Company</Box>
+                      <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid var(--border)", fontWeight: 600 }}>Title</Box>
+                      <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid var(--border)", fontWeight: 600 }}>Posting</Box>
+                      <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid var(--border)", fontWeight: 600 }}>Actions</Box>
                     </Box>
                   </Box>
                   <Box component="tbody">
@@ -164,16 +164,16 @@ export default function AutoTailorTab({
                       const dateLabel = dateRaw ? new Date(dateRaw).toLocaleString() : "—";
                       const pos = row.positions || {};
                       return (
-                        <Box component="tr" key={row.id} sx={{ "&:hover": { bgcolor: "#fafbfc" } }}>
-                          <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1", whiteSpace: "nowrap" }}>{dateLabel}</Box>
-                          <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1" }}>{pos.company || "—"}</Box>
-                          <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1" }}>{pos.title || "—"}</Box>
-                          <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1" }}>
+                        <Box component="tr" key={row.id} sx={{ "&:hover": { bgcolor: "var(--bg-soft)" } }}>
+                          <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)", whiteSpace: "nowrap" }}>{dateLabel}</Box>
+                          <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)" }}>{pos.company || "—"}</Box>
+                          <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)" }}>{pos.title || "—"}</Box>
+                          <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)" }}>
                             {pos.url ? (
-                              <a href={pos.url} target="_blank" rel="noopener noreferrer" style={{ color: "#1976d2" }}>View</a>
+                              <a href={pos.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}>View</a>
                             ) : "—"}
                           </Box>
-                          <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1", whiteSpace: "nowrap" }}>
+                          <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)", whiteSpace: "nowrap" }}>
                             <Button
                               size="small"
                               variant="contained"

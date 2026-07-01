@@ -145,10 +145,10 @@ function FormattedContent({ text, kind }) {
                   fontSize: kind === "resume" ? 14 : 14.5,
                   mt: i > 0 ? 2.5 : 0,
                   mb: kind === "jd" ? 1 : 0.5,
-                  borderBottom: kind === "resume" ? "1px solid rgba(0,0,0,0.12)" : kind === "jd" ? "1px solid rgba(25, 118, 210, 0.18)" : "none",
+                  borderBottom: kind === "resume" ? "1px solid rgba(0,0,0,0.12)" : kind === "jd" ? "1px solid var(--accent-soft)" : "none",
                   pb: kind === "resume" ? 0.25 : kind === "jd" ? 0.35 : 0,
                   letterSpacing: kind === "jd" ? 0.15 : 0.3,
-                  color: kind === "jd" ? "#163b66" : "inherit",
+                  color: kind === "jd" ? "var(--accent)" : "inherit",
                 }}
               >
                 {line.endsWith(":") ? line.slice(0, -1) : line}
@@ -1945,8 +1945,8 @@ export default function Home() {
               p: 0.5,
               alignSelf: options.alignTop ? "flex-start" : "center",
               mt: options.alignTop ? "4px" : 0,
-              color: copied ? "#2e7d32" : "#546e7a",
-              "&:hover": { color: "#1976d2", bgcolor: "transparent" },
+              color: copied ? "var(--success)" : "var(--text-secondary)",
+              "&:hover": { color: "var(--accent)", bgcolor: "transparent" },
             }}
           >
             {copied ? (

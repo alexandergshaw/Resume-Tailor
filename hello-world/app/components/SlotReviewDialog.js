@@ -47,7 +47,7 @@ export default function SlotReviewDialog({
             <CircularProgress />
           </Box>
         ) : error ? (
-          <Box sx={{ color: "var(--danger, #d32f2f)", fontSize: "0.9rem" }}>{error}</Box>
+          <Box sx={{ color: "var(--danger)", fontSize: "0.9rem" }}>{error}</Box>
         ) : slots.length === 0 ? (
           <Box sx={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>
             No fields to review for this posting.

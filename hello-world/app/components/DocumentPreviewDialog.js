@@ -42,10 +42,11 @@ const BLOCK_STYLES = [
   { tag: "H3", label: "Heading 3" },
 ];
 
-// A page-like surface so the preview reads like the printed document.
+// A page-like surface so the preview reads like the printed document. The
+// "paper" stays white with dark ink in both themes (it mirrors a printed page).
 const pageSx = {
-  bgcolor: "#fff",
-  color: "#111",
+  bgcolor: "var(--paper-bg)",
+  color: "var(--paper-ink)",
   fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
   fontSize: "11pt",
   lineHeight: 1.3,
@@ -54,7 +55,7 @@ const pageSx = {
   mx: "auto",
   maxWidth: 720,
   minHeight: 360,
-  border: "1px solid var(--border, #e0e0e0)",
+  border: "1px solid var(--border)",
   borderRadius: 1,
   boxShadow: "0 1px 6px rgba(0,0,0,0.10)",
   "& p": { margin: 0 },
@@ -266,7 +267,7 @@ export default function DocumentPreviewDialog({
         Tailored documents{heading ? ` — ${heading}` : ""}
       </DialogTitle>
 
-      <Box sx={{ px: 2, display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", borderBottom: "1px solid var(--border, #e0e0e0)" }}>
+      <Box sx={{ px: 2, display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", borderBottom: "1px solid var(--border)" }}>
         <Tabs value={tab} onChange={(_e, v) => { setTab(v); setMode("view"); }} sx={{ minHeight: 40 }}>
           {SCOPES.map((scope) => (
             <Tab
@@ -308,7 +309,7 @@ export default function DocumentPreviewDialog({
       </Box>
 
       {mode === "edit" && available(tab) ? (
-        <Box sx={{ px: 2, py: 0.75, display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap", borderBottom: "1px solid var(--border, #eee)" }}>
+        <Box sx={{ px: 2, py: 0.75, display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap", borderBottom: "1px solid var(--border)" }}>
           <Tooltip title="Bold"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("bold"); }} sx={{ minWidth: 36 }}><FormatBoldIcon fontSize="small" /></Button></Tooltip>
           <Tooltip title="Italic"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("italic"); }} sx={{ minWidth: 36 }}><FormatItalicIcon fontSize="small" /></Button></Tooltip>
           <Tooltip title="Underline"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("underline"); }} sx={{ minWidth: 36 }}><FormatUnderlinedIcon fontSize="small" /></Button></Tooltip>
@@ -350,8 +351,8 @@ export default function DocumentPreviewDialog({
       ) : null}
 
       {tab === "cover" && companyReferences.length > 0 ? (
-        <Box sx={{ px: 2, py: 1, borderBottom: "1px solid var(--border, #eee)", bgcolor: "rgba(25,118,210,0.04)" }}>
-          <Box sx={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary, #555)", mb: 0.5 }}>
+        <Box sx={{ px: 2, py: 1, borderBottom: "1px solid var(--border)", bgcolor: "var(--accent-soft)" }}>
+          <Box sx={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary)", mb: 0.5 }}>
             Company references {mode === "edit" ? "(Insert at cursor)" : "(switch to Edit to insert, or copy)"}
           </Box>
           {companyReferences.map((ref, i) => (
@@ -367,19 +368,19 @@ export default function DocumentPreviewDialog({
         </Box>
       ) : null}
 
-      <DialogContent dividers sx={{ bgcolor: "var(--surface-2, #f5f5f5)" }}>
+      <DialogContent dividers sx={{ bgcolor: "var(--surface-2)" }}>
         {!hasContent ? (
-          <Box sx={{ p: 4, textAlign: "center", color: "var(--muted, #777)" }}>
+          <Box sx={{ p: 4, textAlign: "center", color: "var(--text-muted)" }}>
             Nothing generated yet for this posting.
           </Box>
         ) : !available(tab) ? (
-          <Box sx={{ p: 4, textAlign: "center", color: "var(--muted, #777)" }}>
+          <Box sx={{ p: 4, textAlign: "center", color: "var(--text-muted)" }}>
             No {SCOPE_LABEL[tab].toLowerCase()} has been generated for this posting yet.
           </Box>
         ) : state.loading ? (
           <Box sx={{ p: 6, textAlign: "center" }}><CircularProgress size={28} /></Box>
         ) : state.error ? (
-          <Box sx={{ p: 4, textAlign: "center", color: "var(--danger, #d32f2f)" }}>{state.error}</Box>
+          <Box sx={{ p: 4, textAlign: "center", color: "var(--danger)" }}>{state.error}</Box>
         ) : mode === "edit" ? (
           <Box
             ref={editorRef}
@@ -389,22 +390,22 @@ export default function DocumentPreviewDialog({
             onKeyUp={saveSelection}
             onMouseUp={saveSelection}
             onBlur={saveSelection}
-            sx={{ ...pageSx, outline: "none", "&:focus": { boxShadow: "0 0 0 2px var(--accent, #1976d2)" } }}
+            sx={{ ...pageSx, outline: "none", "&:focus": { boxShadow: "0 0 0 2px var(--accent)" } }}
           />
         ) : (
           <Box sx={pageSx} dangerouslySetInnerHTML={{ __html: state.html || "" }} />
         )}
 
         {error ? (
-          <Box sx={{ mt: 1.5, color: "var(--danger, #d32f2f)", fontSize: "0.85rem", textAlign: "center" }}>{error}</Box>
+          <Box sx={{ mt: 1.5, color: "var(--danger)", fontSize: "0.85rem", textAlign: "center" }}>{error}</Box>
         ) : notice ? (
-          <Box sx={{ mt: 1.5, color: "#2e7d32", fontSize: "0.85rem", textAlign: "center" }}>{notice}</Box>
+          <Box sx={{ mt: 1.5, color: "var(--success)", fontSize: "0.85rem", textAlign: "center" }}>{notice}</Box>
         ) : null}
       </DialogContent>
 
       {steeringEnabled ? (
-        <Box sx={{ px: 2, pt: 1.25, pb: 0.5, borderTop: "1px solid var(--border, #eee)", bgcolor: "rgba(25,118,210,0.04)" }}>
-          <Box sx={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary, #555)", mb: 0.75 }}>
+        <Box sx={{ px: 2, pt: 1.25, pb: 0.5, borderTop: "1px solid var(--border)", bgcolor: "var(--accent-soft)" }}>
+          <Box sx={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary)", mb: 0.75 }}>
             Ask Gemini to revise this {SCOPE_LABEL[tab].toLowerCase()}
           </Box>
           <Box sx={{ display: "flex", alignItems: "flex-start", gap: 1 }}>
@@ -425,7 +426,7 @@ export default function DocumentPreviewDialog({
               }}
               placeholder="e.g. Emphasize leadership, shorten the summary, and call out my Python experience"
               disabled={resubmitting || busy}
-              sx={{ bgcolor: "#fff", borderRadius: 1 }}
+              sx={{ bgcolor: "var(--bg-surface)", borderRadius: 1 }}
             />
             <Button
               onClick={submitSteer}
@@ -437,7 +438,7 @@ export default function DocumentPreviewDialog({
               {resubmitting ? "Revising…" : "Revise"}
             </Button>
           </Box>
-          <Box sx={{ fontSize: "0.7rem", color: "var(--muted, #888)", mt: 0.5 }}>
+          <Box sx={{ fontSize: "0.7rem", color: "var(--text-muted)", mt: 0.5 }}>
             Regenerates this document with Gemini using your instructions. Enter to submit, Shift+Enter for a new line.
           </Box>
         </Box>

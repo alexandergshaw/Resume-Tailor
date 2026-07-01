@@ -122,7 +122,7 @@ export default function EditAppDialog({
           )}
         </Box>
         {editAppError ? (
-          <p style={{ color: "var(--error, #d32f2f)", margin: 0 }}>{editAppError}</p>
+          <p style={{ color: "var(--danger)", margin: 0 }}>{editAppError}</p>
         ) : null}
       </DialogContent>
       <DialogActions>

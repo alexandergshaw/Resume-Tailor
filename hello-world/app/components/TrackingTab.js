@@ -104,7 +104,7 @@ export default function TrackingTab({
           <CircularProgress />
         </Box>
       ) : applicationError ? (
-        <p style={{ color: "var(--error, #d32f2f)" }}>Error loading applications: {applicationError}</p>
+        <p style={{ color: "var(--danger)" }}>Error loading applications: {applicationError}</p>
       ) : applicationData.length === 0 ? (
         <>
           <Box sx={{ mb: 2 }}>
@@ -138,9 +138,9 @@ export default function TrackingTab({
                 const stages = applicationStages[app.id] || [];
                 const emailClassification = emailClassificationsByAppId[app.id] ?? null;
                 const EMAIL_CHIP_STYLES = {
-                  confirmation: { label: "Applied", color: "#1565c0", bg: "#e3f2fd" },
-                  interview:    { label: "Interview", color: "#2e7d32", bg: "#e8f5e9" },
-                  rejection:    { label: "Rejected", color: "#b71c1c", bg: "#ffebee" },
+                  confirmation: { label: "Applied", color: "var(--accent-hover)", bg: "var(--accent-soft)" },
+                  interview:    { label: "Interview", color: "var(--success)", bg: "var(--success-soft)" },
+                  rejection:    { label: "Rejected", color: "var(--danger-hover)", bg: "var(--danger-soft)" },
                 };
                 const emailChip = emailClassification ? EMAIL_CHIP_STYLES[emailClassification] : null;
                 const canDownloadResume = !!resume?.content && !!resumeFile && isDocxResume(resumeFile);
@@ -152,14 +152,14 @@ export default function TrackingTab({
                       border: "1px solid var(--border)",
                       borderRadius: 2,
                       p: 1.75,
-                      backgroundColor: "var(--bg-surface, #fff)",
+                      backgroundColor: "var(--bg-surface)",
                       display: "flex",
                       flexDirection: "column",
                       gap: 1.25,
                       ...(highlightedAppId === app.id && {
-                        outline: "2px solid #1976d2",
+                        outline: "2px solid var(--accent)",
                         outlineOffset: "-2px",
-                        backgroundColor: "#e3f2fd",
+                        backgroundColor: "var(--accent-soft)",
                       }),
                     }}
                   >
@@ -276,7 +276,7 @@ export default function TrackingTab({
                       minWidth: companyColWidth,
                       maxWidth: companyColWidth,
                       zIndex: 4,
-                      backgroundColor: "var(--bg-surface, #fff)",
+                      backgroundColor: "var(--bg-surface)",
                       boxShadow: "1px 0 0 var(--border)",
                     }}
                   >
@@ -298,7 +298,7 @@ export default function TrackingTab({
                           width: 10,
                           height: "calc(100% + 16px)",
                           cursor: "col-resize",
-                          "&:hover": { backgroundColor: "var(--accent, #1976d2)", opacity: 0.4 },
+                          "&:hover": { backgroundColor: "var(--accent)", opacity: 0.4 },
                         }}
                         title="Drag to resize"
                       />
@@ -314,7 +314,7 @@ export default function TrackingTab({
                       minWidth: roleColWidth,
                       maxWidth: roleColWidth,
                       zIndex: 4,
-                      backgroundColor: "var(--bg-surface, #fff)",
+                      backgroundColor: "var(--bg-surface)",
                       boxShadow: "1px 0 0 var(--border)",
                     }}
                   >
@@ -336,7 +336,7 @@ export default function TrackingTab({
                           width: 10,
                           height: "calc(100% + 16px)",
                           cursor: "col-resize",
-                          "&:hover": { backgroundColor: "var(--accent, #1976d2)", opacity: 0.4 },
+                          "&:hover": { backgroundColor: "var(--accent)", opacity: 0.4 },
                         }}
                         title="Drag to resize"
                       />
@@ -383,9 +383,9 @@ export default function TrackingTab({
                   const stages = applicationStages[app.id] || [];
                   const emailClassification = emailClassificationsByAppId[app.id] ?? null;
                   const EMAIL_CHIP_STYLES = {
-                    confirmation: { label: "Applied", color: "#1565c0", bg: "#e3f2fd" },
-                    interview:    { label: "Interview", color: "#2e7d32", bg: "#e8f5e9" },
-                    rejection:    { label: "Rejected", color: "#b71c1c", bg: "#ffebee" },
+                    confirmation: { label: "Applied", color: "var(--accent-hover)", bg: "var(--accent-soft)" },
+                    interview:    { label: "Interview", color: "var(--success)", bg: "var(--success-soft)" },
+                    rejection:    { label: "Rejected", color: "var(--danger-hover)", bg: "var(--danger-soft)" },
                   };
                   const emailChip = emailClassification ? EMAIL_CHIP_STYLES[emailClassification] : null;
 
@@ -403,9 +403,9 @@ export default function TrackingTab({
                       sx={{
                         cursor: "pointer",
                         ...(highlightedAppId === app.id && {
-                          outline: "2px solid #1976d2",
+                          outline: "2px solid var(--accent)",
                           outlineOffset: "-2px",
-                          backgroundColor: "#e3f2fd !important",
+                          backgroundColor: "var(--accent-soft) !important",
                         }),
                       }}
                     >
@@ -421,7 +421,7 @@ export default function TrackingTab({
                           minWidth: companyColWidth,
                           maxWidth: companyColWidth,
                           zIndex: 2,
-                          backgroundColor: "var(--bg-surface, #fff)",
+                          backgroundColor: "var(--bg-surface)",
                           boxShadow: "1px 0 0 var(--border)",
                         }}
                       >
@@ -443,7 +443,7 @@ export default function TrackingTab({
                           minWidth: roleColWidth,
                           maxWidth: roleColWidth,
                           zIndex: 2,
-                          backgroundColor: "var(--bg-surface, #fff)",
+                          backgroundColor: "var(--bg-surface)",
                           boxShadow: "1px 0 0 var(--border)",
                         }}
                       >
@@ -488,7 +488,7 @@ export default function TrackingTab({
                                       content: buildStageContextString(app, stage),
                                       prompt: `Help me prepare for my "${stage.stage_name || stage.stage_type || "interview"}" at ${pos?.company || "this company"}: `,
                                     })}
-                                    deleteIcon={<span style={{ fontSize: 11, padding: "0 4px", color: "var(--accent, #1976d2)" }} title="Ask AI">AI</span>}
+                                    deleteIcon={<span style={{ fontSize: 11, padding: "0 4px", color: "var(--accent)" }} title="Ask AI">AI</span>}
                                   />
                                 );
                               })}

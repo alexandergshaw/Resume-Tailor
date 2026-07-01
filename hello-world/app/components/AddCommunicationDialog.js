@@ -51,7 +51,7 @@ export default function AddCommunicationDialog({
           }}
         />
         {communicationError ? (
-          <p style={{ color: "var(--error, #d32f2f)", margin: "12px 0 0" }}>{communicationError}</p>
+          <p style={{ color: "var(--danger)", margin: "12px 0 0" }}>{communicationError}</p>
         ) : null}
       </DialogContent>
       <DialogActions>

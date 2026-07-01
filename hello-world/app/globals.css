@@ -1,17 +1,11 @@
-:root {
-  --bg-canvas: #edf2f7;
-  --bg-surface: #ffffff;
-  --bg-soft: #f5f8fc;
-  --text-primary: #122033;
-  --text-secondary: #445a73;
-  --text-muted: #667f99;
-  --border: #d2deea;
-  --border-strong: #aebfd1;
-  --accent: #0d4a8f;
-  --accent-hover: #0a3b72;
-  --danger: #b4232d;
-  --shadow: 0 20px 50px -28px rgba(17, 34, 51, 0.4);
-}
+/*
+ * Global reset + structural styles only.
+ *
+ * The color palette (CSS custom properties like --accent, --border, --bg-*) is
+ * injected from the design tokens in app/theme/tokens.js via the root layout,
+ * for both light and `:root[data-theme="dark"]`. Do NOT hardcode palette values
+ * here — reference the tokens with var(--token) so light/dark stay in sync.
+ */
 
 html {
   height: 100%;
@@ -28,10 +22,7 @@ body {
   display: flex;
   flex-direction: column;
   color: var(--text-primary);
-  background:
-    radial-gradient(circle at 18% 14%, #dbe7f2 0%, transparent 36%),
-    radial-gradient(circle at 88% 82%, #d4e2ef 0%, transparent 33%),
-    var(--bg-canvas);
+  background: var(--app-background);
   font-family: var(--font-manrope), "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;

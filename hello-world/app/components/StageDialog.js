@@ -107,7 +107,7 @@ export default function StageDialog({
           size="small"
         />
         {stageError ? (
-          <p style={{ color: "var(--error, #d32f2f)", margin: 0 }}>{stageError}</p>
+          <p style={{ color: "var(--danger)", margin: 0 }}>{stageError}</p>
         ) : null}
       </DialogContent>
       <DialogActions>

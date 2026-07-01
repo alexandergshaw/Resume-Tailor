@@ -68,7 +68,7 @@ export default function ChatPanel({
         display: "flex",
         flexDirection: "column",
         backgroundColor: "var(--bg-surface)",
-        border: chatDragActive ? "2px dashed var(--accent, #1976d2)" : "1px solid var(--border-strong)",
+        border: chatDragActive ? "2px dashed var(--accent)" : "1px solid var(--border-strong)",
         borderRadius: 3,
         boxShadow: "0 24px 48px rgba(15, 23, 42, 0.18)",
         overflow: "hidden",
@@ -99,7 +99,7 @@ export default function ChatPanel({
               borderTopLeftRadius: 3,
               opacity: 0.6,
             },
-            "&:hover::before": { opacity: 1, borderColor: "var(--accent, #1976d2)" },
+            "&:hover::before": { opacity: 1, borderColor: "var(--accent)" },
           }}
         />
       )}
@@ -111,7 +111,7 @@ export default function ChatPanel({
           px: 2,
           py: 1.25,
           borderBottom: "1px solid var(--border)",
-          backgroundColor: "var(--bg-soft, #fbfdff)",
+          backgroundColor: "var(--bg-soft)",
         }}
       >
         <Box sx={{ fontWeight: 700, fontSize: "0.95rem", color: "var(--text-primary)" }}>
@@ -134,13 +134,13 @@ export default function ChatPanel({
             px: 1.5,
             py: 0.75,
             borderBottom: "1px solid var(--border)",
-            backgroundColor: "rgba(25, 118, 210, 0.06)",
+            backgroundColor: "var(--accent-soft)",
             display: "flex",
             alignItems: "center",
             gap: 1,
           }}
         >
-          <Box sx={{ fontSize: 11, fontWeight: 700, color: "var(--accent, #1976d2)", textTransform: "uppercase", letterSpacing: 0.4 }}>
+          <Box sx={{ fontSize: 11, fontWeight: 700, color: "var(--accent)", textTransform: "uppercase", letterSpacing: 0.4 }}>
             Context
           </Box>
           <Box sx={{ flex: 1, fontSize: "0.85rem", color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -195,8 +195,8 @@ export default function ChatPanel({
                   lineHeight: 1.5,
                   whiteSpace: "pre-wrap",
                   wordBreak: "break-word",
-                  backgroundColor: m.role === "user" ? "var(--accent)" : "var(--bg-soft, #f3f6fb)",
-                  color: m.role === "user" ? "#f8fbff" : "var(--text-primary)",
+                  backgroundColor: m.role === "user" ? "var(--accent)" : "var(--bg-soft)",
+                  color: m.role === "user" ? "var(--bg-soft)" : "var(--text-primary)",
                   border: m.role === "user" ? "none" : "1px solid var(--border)",
                 }}
               >
@@ -286,7 +286,7 @@ export default function ChatPanel({
           </Box>
         ) : null}
         {chatError ? (
-          <Box sx={{ alignSelf: "flex-start", color: "var(--danger, #d32f2f)", fontSize: "0.85rem", px: 0.5 }}>
+          <Box sx={{ alignSelf: "flex-start", color: "var(--danger)", fontSize: "0.85rem", px: 0.5 }}>
             {chatError}
           </Box>
         ) : null}
@@ -319,12 +319,12 @@ export default function ChatPanel({
           </Box>
         ) : null}
         {chatAttachError ? (
-          <Box sx={{ fontSize: 12, color: "var(--danger, #d32f2f)" }}>
+          <Box sx={{ fontSize: 12, color: "var(--danger)" }}>
             {chatAttachError}
           </Box>
         ) : null}
         {chatDragActive ? (
-          <Box sx={{ fontSize: 12, color: "var(--accent, #1976d2)", fontStyle: "italic" }}>
+          <Box sx={{ fontSize: 12, color: "var(--accent)", fontStyle: "italic" }}>
             Drop files to attach as context…
           </Box>
         ) : null}

@@ -112,12 +112,12 @@ export default function CompanyResearchDialog({
 
   const renderPick = () => (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <Box sx={{ fontSize: "0.85rem", color: "var(--text-secondary, #777)" }}>
+      <Box sx={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
         Pick the articles to reference (you can edit each suggestion). Next, you&apos;ll choose where each goes
         and preview the letter.
       </Box>
       {(warnings || []).map((w, i) => (
-        <Box key={i} sx={{ fontSize: "0.78rem", color: "#9a6700", bgcolor: "rgba(255,193,7,0.12)", p: 1, borderRadius: 1 }}>
+        <Box key={i} sx={{ fontSize: "0.78rem", color: "var(--warning)", bgcolor: "var(--warning-soft)", p: 1, borderRadius: 1 }}>
           {w}
         </Box>
       ))}
@@ -128,9 +128,9 @@ export default function CompanyResearchDialog({
             display: "flex",
             gap: 1,
             p: 1.5,
-            border: "1px solid var(--border, #e0e0e0)",
+            border: "1px solid var(--border)",
             borderRadius: 1,
-            bgcolor: selected.has(a.id) ? "rgba(25,118,210,0.05)" : "transparent",
+            bgcolor: selected.has(a.id) ? "var(--accent-soft)" : "transparent",
           }}
         >
           <Checkbox checked={selected.has(a.id)} onChange={() => toggle(a.id)} sx={{ p: 0.5, mt: -0.25 }} />
@@ -145,7 +145,7 @@ export default function CompanyResearchDialog({
                 </Tooltip>
               ) : null}
             </Box>
-            <Box sx={{ fontSize: "0.72rem", color: "var(--text-secondary, #777)" }}>
+            <Box sx={{ fontSize: "0.72rem", color: "var(--text-secondary)" }}>
               {[a.source, a.date].filter(Boolean).join(" · ")}
             </Box>
             {a.summary ? <Box sx={{ fontSize: "0.82rem", mt: 0.5 }}>{a.summary}</Box> : null}
@@ -190,7 +190,7 @@ export default function CompanyResearchDialog({
 
   const renderArrange = () => (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <Box sx={{ fontSize: "0.85rem", color: "var(--text-secondary, #777)" }}>
+      <Box sx={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
         Choose where each reference goes — the connecting wording adapts to the paragraph. The preview updates
         as you change placements.
       </Box>
@@ -205,8 +205,8 @@ export default function CompanyResearchDialog({
         </Box>
       ))}
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5 }}>
-        <Box sx={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary, #555)" }}>Preview</Box>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, fontSize: "0.72rem", color: "var(--text-secondary, #777)" }}>
+        <Box sx={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary)" }}>Preview</Box>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, fontSize: "0.72rem", color: "var(--text-secondary)" }}>
           <Box component="span" sx={{ bgcolor: "rgba(255,213,79,0.55)", borderRadius: "2px", px: 0.5 }}>highlighted</Box>
           = added from research
         </Box>
@@ -216,9 +216,10 @@ export default function CompanyResearchDialog({
           fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
           fontSize: "0.85rem",
           lineHeight: 1.45,
-          bgcolor: "#fff",
-          color: "#111",
-          border: "1px solid var(--border, #e0e0e0)",
+          // Mirrors the printed letter — paper stays light in both themes.
+          bgcolor: "var(--paper-bg)",
+          color: "var(--paper-ink)",
+          border: "1px solid var(--border)",
           borderRadius: 1,
           p: 2,
           maxHeight: 320,
@@ -261,7 +262,7 @@ export default function CompanyResearchDialog({
               No company name was detected for this posting, so no research was done. Enter the company name to
               research recent, positive coverage — or paste a specific article URL below.
             </Box>
-            {error ? <Box sx={{ color: "var(--danger, #d32f2f)", fontSize: "0.85rem" }}>{error}</Box> : null}
+            {error ? <Box sx={{ color: "var(--danger)", fontSize: "0.85rem" }}>{error}</Box> : null}
             <Box sx={{ display: "flex", gap: 1 }}>
               <TextField
                 size="small"
@@ -288,14 +289,14 @@ export default function CompanyResearchDialog({
         ) : loading ? (
           <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1.5, py: 5 }}>
             <CircularProgress />
-            <Box sx={{ fontSize: "0.85rem", color: "var(--text-secondary, #777)" }}>
+            <Box sx={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
               Searching for recent, positive coverage of {company || "the company"}…
             </Box>
           </Box>
         ) : error ? (
-          <Box sx={{ color: "var(--danger, #d32f2f)", fontSize: "0.9rem", py: 2 }}>{error}</Box>
+          <Box sx={{ color: "var(--danger)", fontSize: "0.9rem", py: 2 }}>{error}</Box>
         ) : showPickEmpty ? (
-          <Box sx={{ color: "var(--text-secondary, #777)", fontSize: "0.9rem", py: 2 }}>
+          <Box sx={{ color: "var(--text-secondary)", fontSize: "0.9rem", py: 2 }}>
             No articles found. Try again or paste an article URL.
           </Box>
         ) : step === "arrange" ? (

@@ -116,7 +116,7 @@ export default function AddAppDialog({
           )}
         </Box>
         {addAppError ? (
-          <p style={{ color: "var(--error, #d32f2f)", margin: 0 }}>{addAppError}</p>
+          <p style={{ color: "var(--danger)", margin: 0 }}>{addAppError}</p>
         ) : null}
       </DialogContent>
       <DialogActions>

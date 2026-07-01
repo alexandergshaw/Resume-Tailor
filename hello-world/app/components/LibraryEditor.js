@@ -267,7 +267,7 @@ function EntityTab({ title, description, rows, schema, endpoint, idField = "id",
               "& thead th": { textTransform: "uppercase", fontSize: 10.5, letterSpacing: "0.06em", color: "text.secondary", fontWeight: 700, textAlign: "left", py: 1.25, px: 1.75, borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" },
               "& tbody td": { fontSize: 13.5, py: 1.25, px: 1.75, borderBottom: "1px solid var(--border)", verticalAlign: "top" },
               "& tbody tr:last-of-type td": { borderBottom: "none" },
-              "& tbody tr:hover td": { backgroundColor: "rgba(127,127,127,0.06)" },
+              "& tbody tr:hover td": { backgroundColor: "var(--bg-soft)" },
             }}
           >
             <thead>

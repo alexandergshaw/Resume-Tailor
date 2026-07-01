@@ -240,19 +240,19 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
           </Button>
         )}
       </Box>
-      <Typography sx={{ color: "#546e7a", fontSize: "0.8rem", mb: 1.5 }}>
+      <Typography sx={{ color: "var(--text-secondary)", fontSize: "0.8rem", mb: 1.5 }}>
         Jobs matched from your saved searches, auto-saved with a tailored resume and cover letter.
         Work through them one at a time.
       </Typography>
 
-      {error && <p style={{ color: "var(--error, #d32f2f)" }}>Error: {error}</p>}
+      {error && <p style={{ color: "var(--danger)" }}>Error: {error}</p>}
 
       {loading ? (
         <Box sx={{ display: "flex", justifyContent: "center", py: 3 }}>
           <CircularProgress size={24} />
         </Box>
       ) : items.length === 0 ? (
-        <Box sx={{ color: "#78909c", fontSize: "0.85rem", fontStyle: "italic" }}>
+        <Box sx={{ color: "var(--text-muted)", fontSize: "0.85rem", fontStyle: "italic" }}>
           Nothing queued yet. Enable auto-tailor on a saved search and wait for the next run.
         </Box>
       ) : walking && current ? (
@@ -267,7 +267,7 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
           <Typography sx={{ fontWeight: 700, fontSize: "1.05rem" }}>
             {current.positions?.title || "Untitled role"}
           </Typography>
-          <Typography sx={{ color: "#546e7a", mb: 0.5 }}>
+          <Typography sx={{ color: "var(--text-secondary)", mb: 0.5 }}>
             {current.positions?.company || "—"}
             {current.positions?.location ? ` · ${current.positions.location}` : ""}
           </Typography>
@@ -358,21 +358,21 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
               Remove
             </Button>
           </Box>
-          <Typography sx={{ color: "#90a4ae", fontSize: "0.72rem", mt: 1 }}>
+          <Typography sx={{ color: "var(--border-strong)", fontSize: "0.72rem", mt: 1 }}>
             Jobs stay in the queue until you change their status in the Tracking tab.
           </Typography>
         </Paper>
       ) : (
-        <Box sx={{ overflowX: "auto", border: "1px solid #cfd8dc", borderRadius: 1 }}>
+        <Box sx={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 1 }}>
           <Box component="table" sx={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
-            <Box component="thead" sx={{ bgcolor: "#f5f7f8" }}>
+            <Box component="thead" sx={{ bgcolor: "var(--bg-soft)" }}>
               <Box component="tr">
-                <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Saved</Box>
-                <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>From</Box>
-                <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Company</Box>
-                <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Title</Box>
-                <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Docs</Box>
-                <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid #cfd8dc", fontWeight: 600 }}>Actions</Box>
+                <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid var(--border)", fontWeight: 600 }}>Saved</Box>
+                <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid var(--border)", fontWeight: 600 }}>From</Box>
+                <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid var(--border)", fontWeight: 600 }}>Company</Box>
+                <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid var(--border)", fontWeight: 600 }}>Title</Box>
+                <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid var(--border)", fontWeight: 600 }}>Docs</Box>
+                <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid var(--border)", fontWeight: 600 }}>Actions</Box>
               </Box>
             </Box>
             <Box component="tbody">
@@ -380,16 +380,16 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
                 const pos = row.positions || {};
                 const dateLabel = row.auto_saved_at ? new Date(row.auto_saved_at).toLocaleString() : "—";
                 return (
-                  <Box component="tr" key={row.id} sx={{ "&:hover": { bgcolor: "#fafbfc" } }}>
-                    <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1", whiteSpace: "nowrap" }}>{dateLabel}</Box>
-                    <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1" }}>{originName(row) || "—"}</Box>
-                    <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1" }}>{pos.company || "—"}</Box>
-                    <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1" }}>{pos.title || "—"}</Box>
-                    <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1", whiteSpace: "nowrap" }}>
+                  <Box component="tr" key={row.id} sx={{ "&:hover": { bgcolor: "var(--bg-soft)" } }}>
+                    <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)", whiteSpace: "nowrap" }}>{dateLabel}</Box>
+                    <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)" }}>{originName(row) || "—"}</Box>
+                    <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)" }}>{pos.company || "—"}</Box>
+                    <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)" }}>{pos.title || "—"}</Box>
+                    <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)", whiteSpace: "nowrap" }}>
                       <Button size="small" onClick={() => handleDownloadResume(row)} disabled={!resumeFor(row)} sx={{ textTransform: "none", minWidth: 0, px: 0.75 }}>Résumé</Button>
                       <Button size="small" onClick={() => handleDownloadCover(row)} disabled={!coverFor(row)} sx={{ textTransform: "none", minWidth: 0, px: 0.75 }}>Cover</Button>
                     </Box>
-                    <Box component="td" sx={{ p: 1, borderBottom: "1px solid #eceff1", whiteSpace: "nowrap" }}>
+                    <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)", whiteSpace: "nowrap" }}>
                       <Button
                         size="small"
                         variant={row.auto_apply_opened_at ? "outlined" : "contained"}

@@ -44,7 +44,7 @@ export default function CommunicationsDialog({
             <CircularProgress size={24} />
           </Box>
         ) : communicationsDialog.error ? (
-          <p style={{ color: "var(--error, #d32f2f)", margin: 0 }}>{communicationsDialog.error}</p>
+          <p style={{ color: "var(--danger)", margin: 0 }}>{communicationsDialog.error}</p>
         ) : communicationsDialog.items.length === 0 ? (
           <p style={{ color: "var(--text-secondary)", margin: 0 }}>No recruiter communications logged yet.</p>
         ) : (
@@ -55,8 +55,8 @@ export default function CommunicationsDialog({
                 sx={{
                   p: 1.5,
                   borderRadius: 2.5,
-                  border: "1px solid rgba(15, 23, 42, 0.08)",
-                  backgroundColor: "rgba(248, 250, 252, 0.8)",
+                  border: "1px solid var(--border)",
+                  backgroundColor: "var(--bg-soft)",
                 }}
               >
                 <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap", mb: 1 }}>

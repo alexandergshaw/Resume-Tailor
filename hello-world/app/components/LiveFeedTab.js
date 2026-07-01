@@ -800,8 +800,8 @@ export default function LiveFeedTab({
                   ? "none"
                   : `0 0 0 3px ${
                       isStale
-                        ? "rgba(237, 108, 2, 0.16)"
-                        : "rgba(46, 125, 50, 0.16)"
+                        ? "var(--warning-soft)"
+                        : "var(--success-soft)"
                     }`,
             }}
           />
@@ -1236,7 +1236,7 @@ export default function LiveFeedTab({
               <Box
                 key={posting.id}
                 sx={{
-                  border: "1px solid var(--border, #e0e0e0)",
+                  border: "1px solid var(--border)",
                   borderRadius: 1.5,
                   p: 1.5,
                   display: "flex",
@@ -1285,9 +1285,9 @@ export default function LiveFeedTab({
                         label={salaryLabel}
                         sx={{
                           fontWeight: 700,
-                          bgcolor: "#e8f5e9",
-                          color: "#2e7d32",
-                          border: "1px solid #a5d6a7",
+                          bgcolor: "var(--success-soft)",
+                          color: "var(--success)",
+                          border: "1px solid var(--success-soft)",
                         }}
                       />
                     )}

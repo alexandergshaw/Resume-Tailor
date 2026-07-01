@@ -196,7 +196,7 @@ export default function JobSearchTab({
                             target="_blank"
                             rel="noopener noreferrer"
                             className={styles.jobCardTitle}
-                            style={{ textDecoration: "underline", color: "var(--accent, #1976d2)", cursor: "pointer" }}
+                            style={{ textDecoration: "underline", color: "var(--accent)", cursor: "pointer" }}
                           >
                             {job.title}
                           </a>

@@ -12,7 +12,7 @@
   padding: clamp(20px, 4vw, 36px);
   border: 1px solid var(--border);
   border-radius: 18px;
-  background: linear-gradient(180deg, var(--bg-surface) 0%, #fbfdff 100%);
+  background: linear-gradient(180deg, var(--bg-surface) 0%, var(--bg-soft) 100%);
   box-shadow: var(--shadow);
 }
 
@@ -212,8 +212,8 @@
   border: none;
   border-radius: 12px;
   padding: 12px 22px;
-  background: linear-gradient(180deg, #1660b6 0%, var(--accent) 100%);
-  color: #f8fbff;
+  background: linear-gradient(180deg, var(--accent) 0%, var(--accent-hover) 100%);
+  color: var(--accent-contrast);
   font: inherit;
   font-weight: 700;
   letter-spacing: 0.01em;
@@ -223,7 +223,7 @@
 
 @media (hover: hover) {
   .button:hover:not(:disabled) {
-    background: linear-gradient(180deg, #11539d 0%, var(--accent-hover) 100%);
+    background: linear-gradient(180deg, var(--accent-hover) 0%, var(--accent) 100%);
     box-shadow: 0 10px 20px -12px rgba(17, 60, 110, 0.7);
     transform: translateY(-1px);
   }
@@ -518,7 +518,7 @@
 
 .cardBtnPrimary {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-contrast);
   border-color: var(--accent);
 }
 .cardBtnPrimary:hover:not(:disabled) {
@@ -541,12 +541,12 @@
 }
 
 .cardBtnApplied {
-  background: #e8f5e9;
-  color: #2e7d32;
-  border-color: #81c784;
+  background: var(--success-soft);
+  color: var(--success);
+  border-color: var(--success);
 }
 .cardBtnApplied:hover {
-  background: #c8e6c9;
+  background: var(--success-soft);
 }
 
 .jobCardLink {
@@ -601,7 +601,9 @@
   color: var(--text-primary);
 }
 
-/* ── Floating viewed-postings toolbar ─────────────────────────── */
+/* ── Floating viewed-postings toolbar ───────────────────────────
+   Intentionally a fixed "dark glass" dock (not theme-tokenized): it reads as a
+   distinct overlay bar in both light and dark modes. Leave its colors literal. */
 
 .floatingToolbar {
   position: fixed;

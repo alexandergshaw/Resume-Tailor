@@ -18,10 +18,10 @@ const ACCEPT = "image/png,image/jpeg,image/webp";
 // Per-status presentation. "processing" covers reading the image + finding the
 // URL + tailoring; the item's statusLabel carries the specific step.
 const STATUS_STYLE = {
-  pending: { color: "#777", bg: "rgba(0,0,0,0.04)", label: "Queued" },
-  processing: { color: "#1565c0", bg: "rgba(25,118,210,0.10)", label: "Working…" },
-  done: { color: "#2e7d32", bg: "rgba(46,125,50,0.12)", label: "Ready" },
-  error: { color: "#c62828", bg: "rgba(198,40,40,0.10)", label: "Failed" },
+  pending: { color: "var(--text-muted)", bg: "rgba(0,0,0,0.04)", label: "Queued" },
+  processing: { color: "var(--accent-hover)", bg: "var(--accent-soft)", label: "Working…" },
+  done: { color: "var(--success)", bg: "var(--success-soft)", label: "Ready" },
+  error: { color: "var(--danger-hover)", bg: "var(--danger-soft)", label: "Failed" },
 };
 
 function StatusPill({ status, statusLabel }) {
@@ -75,7 +75,7 @@ export default function ScreenshotTab({
   return (
     <section className={styles.tabPanel}>
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-        <Box sx={{ fontSize: "0.85rem", color: "var(--text-secondary, #777)" }}>
+        <Box sx={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
           Upload screenshots (PNG/JPG) of job postings — processing starts automatically. One by one,
           Gemini reads the posting and finds it online, then the selected engine tailors your resume
           (and cover letter, if a template is uploaded) into a tracked job.
@@ -119,7 +119,7 @@ export default function ScreenshotTab({
         </Box>
 
         {!resumeReady ? (
-          <Box sx={{ fontSize: "0.8rem", color: "#9a6700", bgcolor: "rgba(255,193,7,0.12)", p: 1, borderRadius: 1 }}>
+          <Box sx={{ fontSize: "0.8rem", color: "var(--warning)", bgcolor: "var(--warning-soft)", p: 1, borderRadius: 1 }}>
             Upload a resume first so each screenshot can be tailored.
           </Box>
         ) : null}
@@ -128,11 +128,11 @@ export default function ScreenshotTab({
           <Box
             onClick={pickFiles}
             sx={{
-              border: "1px dashed var(--border, #cfcfcf)",
+              border: "1px dashed var(--border)",
               borderRadius: 1,
               p: 3,
               textAlign: "center",
-              color: "var(--text-secondary, #999)",
+              color: "var(--text-secondary)",
               fontSize: "0.85rem",
               cursor: "pointer",
             }}
@@ -148,7 +148,7 @@ export default function ScreenshotTab({
                   display: "flex",
                   gap: { xs: 1, sm: 1.5 },
                   p: { xs: 1, sm: 1.25 },
-                  border: "1px solid var(--border, #e0e0e0)",
+                  border: "1px solid var(--border)",
                   borderRadius: 1,
                   alignItems: "flex-start",
                 }}
@@ -163,7 +163,7 @@ export default function ScreenshotTab({
                       height: { xs: 52, sm: 72 },
                       objectFit: "cover",
                       borderRadius: 1,
-                      border: "1px solid var(--border,#e0e0e0)",
+                      border: "1px solid var(--border)",
                       flexShrink: 0,
                     }}
                   />
@@ -171,7 +171,7 @@ export default function ScreenshotTab({
                 <Box sx={{ flex: 1, minWidth: 0 }}>
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
                     <StatusPill status={item.status} statusLabel={item.statusLabel} />
-                    <Box sx={{ fontSize: "0.78rem", color: "var(--text-secondary,#999)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
+                    <Box sx={{ fontSize: "0.78rem", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
                       {item.name}
                     </Box>
                   </Box>
@@ -187,15 +187,15 @@ export default function ScreenshotTab({
                         href={item.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        sx={{ fontSize: "0.75rem", color: "#1565c0", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}
+                        sx={{ fontSize: "0.75rem", color: "var(--accent-hover)", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}
                       >
                         {item.url}
                       </Box>
-                      <OpenInNewIcon sx={{ fontSize: 13, color: "#1565c0", flexShrink: 0 }} />
+                      <OpenInNewIcon sx={{ fontSize: 13, color: "var(--accent-hover)", flexShrink: 0 }} />
                     </Box>
                   ) : null}
                   {item.error ? (
-                    <Box sx={{ fontSize: "0.78rem", color: "var(--danger, #d32f2f)", mt: 0.5, overflowWrap: "anywhere" }}>{item.error}</Box>
+                    <Box sx={{ fontSize: "0.78rem", color: "var(--danger)", mt: 0.5, overflowWrap: "anywhere" }}>{item.error}</Box>
                   ) : null}
                   {item.status === "done" ? (
                     <Button
@@ -221,7 +221,7 @@ export default function ScreenshotTab({
         )}
 
         {anyDone ? (
-          <Box sx={{ fontSize: "0.78rem", color: "var(--text-secondary, #777)" }}>
+          <Box sx={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>
             Tailored documents are saved to your tracked jobs — open any with “Preview documents”.
           </Box>
         ) : null}
