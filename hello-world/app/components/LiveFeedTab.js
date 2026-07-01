@@ -539,6 +539,8 @@ export default function LiveFeedTab({
   const savedSearchIdsKey = savedSearches.map((s) => s.id).join(",");
   useEffect(() => {
     if (!currentUser || savedSearches.length === 0) {
+      // Reset the derived counts when there's nothing to fetch (mount/inputs cleared).
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setUnviewedCounts({});
       return;
     }

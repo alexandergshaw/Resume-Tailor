@@ -1977,7 +1977,7 @@ export default function Home() {
       .then((r) => r.json())
       .then((data) => { setJobResults(data.jobs || []); })
       .catch(() => {});
-  }, [selectedCompanies]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedCompanies]);
 
   // Re-run search (debounced) when the query text changes
   useEffect(() => {
@@ -2599,6 +2599,8 @@ export default function Home() {
       if (row?.id && !seen.has(row.id)) count++;
     }
     return count;
+    // autoTailorSeenVersion is bumped when the seen set changes, forcing recompute.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoTailoredPostings, autoTailorSeenVersion]);
   // When the user opens the Auto Tailor tab, mark current rows as seen.
   useEffect(() => {

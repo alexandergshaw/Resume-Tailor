@@ -5,7 +5,9 @@ import { useEffect, useState } from "react";
 
 export default function AuthButton() {
   const [user, setUser] = useState(null);
-  const supabase = createClient();
+  // Stable across renders so the auth subscription is set up once (createClient()
+  // in the render body would make a new client every render).
+  const [supabase] = useState(() => createClient());
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
@@ -15,7 +17,7 @@ export default function AuthButton() {
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [supabase]);
 
   const signIn = () =>
     supabase.auth.signInWithOAuth({
