@@ -142,31 +142,15 @@ export default function Home() {
     selectedIds: [],
   });
   const [jobPosting, setJobPosting] = useState("");
-  const [manualResult, setManualResult] = useState("");
-  const [manualResultLines, setManualResultLines] = useState([]);
-  const [manualCoverLetterResultLines, setManualCoverLetterResultLines] = useState([]);
-  const [manualGeneratedJobTitle, setManualGeneratedJobTitle] = useState("");
-  const [manualGeneratedCompany, setManualGeneratedCompany] = useState("");
-  // Finished docs returned by the external engine (base64) for the manual tab.
-  const [manualGeneratedDocxB64, setManualGeneratedDocxB64] = useState("");
-  const [manualGeneratedCoverLetterDocxB64, setManualGeneratedCoverLetterDocxB64] = useState("");
+  // Manual (job-description) tailoring surface. Results flow through the shared
+  // tailoringMap → StatusBar chip + preview dialog, so only submit status/error
+  // live here.
   const [manualIsSubmitting, setManualIsSubmitting] = useState(false);
   const [manualError, setManualError] = useState("");
-  const [manualHasCompleted, setManualHasCompleted] = useState(false);
-  const [manualIsDownloading, setManualIsDownloading] = useState(false);
+  // URL tailoring surface (same story as the manual surface above).
   const [urlPosting, setUrlPosting] = useState("");
-  const [urlResult, setUrlResult] = useState("");
-  const [urlResultLines, setUrlResultLines] = useState([]);
-  const [urlCoverLetterResultLines, setUrlCoverLetterResultLines] = useState([]);
-  const [urlGeneratedJobTitle, setUrlGeneratedJobTitle] = useState("");
-  const [urlGeneratedCompany, setUrlGeneratedCompany] = useState("");
-  // Finished docs returned by the external engine (base64) for the URL tab.
-  const [urlGeneratedDocxB64, setUrlGeneratedDocxB64] = useState("");
-  const [urlGeneratedCoverLetterDocxB64, setUrlGeneratedCoverLetterDocxB64] = useState("");
   const [urlIsSubmitting, setUrlIsSubmitting] = useState(false);
   const [urlError, setUrlError] = useState("");
-  const [urlHasCompleted, setUrlHasCompleted] = useState(false);
-  const [urlIsDownloading, setUrlIsDownloading] = useState(false);
   const [activeSection, setActiveSection] = useState("url");
   const [ignoredJobIds, setIgnoredJobIds] = useState(new Set());
   const [appliedJobIds, setAppliedJobIds] = useState(new Set());
@@ -3358,10 +3342,6 @@ export default function Home() {
     }
 
     setUrlError("");
-    setUrlResult("");
-    setUrlResultLines([]);
-    setUrlGeneratedJobTitle("");
-    setUrlHasCompleted(false);
     setUrlIsSubmitting(true);
 
     const trimmedUrl = sourceUrl;
@@ -3408,15 +3388,7 @@ export default function Home() {
       const nextDocxB64 = typeof payload.docxB64 === "string" ? payload.docxB64 : "";
       const nextCoverLetterDocxB64 = typeof payload.coverLetterDocxB64 === "string" ? payload.coverLetterDocxB64 : "";
 
-      setUrlResult(nextResult);
-      setUrlResultLines(nextResultLines);
-      setUrlCoverLetterResultLines(nextCoverLetterResultLines);
       if (nextCoverLetterError) setUrlError(nextCoverLetterError);
-      setUrlGeneratedJobTitle(nextJobTitle);
-      setUrlGeneratedCompany(nextCompany);
-      setUrlGeneratedDocxB64(nextDocxB64);
-      setUrlGeneratedCoverLetterDocxB64(nextCoverLetterDocxB64);
-      setUrlHasCompleted(true);
 
       // Update the synthesized tracked job's title now that we have one.
       const syntheticJob = {
@@ -3482,26 +3454,10 @@ export default function Home() {
       });
     } catch (err) {
       setUrlError(err.message || "Unexpected error.");
-      setUrlHasCompleted(true);
       updateTailoringJob(syntheticJobId, { status: "error" });
     } finally {
       setUrlIsSubmitting(false);
     }
-  }
-
-  async function handleUrlDownload() {
-    setUrlIsDownloading(true);
-    const dlError = await downloadDocxFiles({
-      jobTitle: urlGeneratedJobTitle,
-      company: urlGeneratedCompany,
-      result: urlResult,
-      resultLines: urlResultLines,
-      coverLetterResultLines: urlCoverLetterResultLines,
-      docxB64: urlGeneratedDocxB64,
-      coverLetterDocxB64: urlGeneratedCoverLetterDocxB64,
-    });
-    if (dlError) setUrlError(dlError);
-    setUrlIsDownloading(false);
   }
 
   // Fetch the external engine's proposed slots for the current posting so the
@@ -3563,10 +3519,6 @@ export default function Home() {
     }
 
     setManualError("");
-    setManualResult("");
-    setManualResultLines([]);
-    setManualGeneratedJobTitle("");
-    setManualHasCompleted(false);
     setManualIsSubmitting(true);
 
     const syntheticJobId = opts.syntheticJobId ?? `manual-${Date.now()}`;
@@ -3615,15 +3567,7 @@ export default function Home() {
       const nextDocxB64 = typeof payload.docxB64 === "string" ? payload.docxB64 : "";
       const nextCoverLetterDocxB64 = typeof payload.coverLetterDocxB64 === "string" ? payload.coverLetterDocxB64 : "";
 
-      setManualResult(nextResult);
-      setManualResultLines(nextResultLines);
-      setManualCoverLetterResultLines(nextCoverLetterResultLines);
       if (nextCoverLetterError) setManualError(nextCoverLetterError);
-      setManualGeneratedJobTitle(nextJobTitle);
-      setManualGeneratedCompany(nextCompany);
-      setManualGeneratedDocxB64(nextDocxB64);
-      setManualGeneratedCoverLetterDocxB64(nextCoverLetterDocxB64);
-      setManualHasCompleted(true);
 
       // Update the synthesized tracked job's title/company now that we have them.
       const syntheticJob = {
@@ -3687,26 +3631,10 @@ export default function Home() {
       });
     } catch (err) {
       setManualError(err.message || "Unexpected error.");
-      setManualHasCompleted(true);
       updateTailoringJob(syntheticJobId, { status: "error" });
     } finally {
       setManualIsSubmitting(false);
     }
-  }
-
-  async function handleManualDownload() {
-    setManualIsDownloading(true);
-    const dlError = await downloadDocxFiles({
-      jobTitle: manualGeneratedJobTitle,
-      company: manualGeneratedCompany,
-      result: manualResult,
-      resultLines: manualResultLines,
-      coverLetterResultLines: manualCoverLetterResultLines,
-      docxB64: manualGeneratedDocxB64,
-      coverLetterDocxB64: manualGeneratedCoverLetterDocxB64,
-    });
-    if (dlError) setManualError(dlError);
-    setManualIsDownloading(false);
   }
 
   // Tailor a résumé + cover letter for a Live Feed posting. Mirrors
