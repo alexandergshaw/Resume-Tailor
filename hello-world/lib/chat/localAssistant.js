@@ -11,6 +11,7 @@ import { extractKeywords } from "@/lib/llm/engines/tailor-lite/keywords";
 import { defaultLibraryData } from "@/lib/llm/engines/tailor-lite/library/defaults";
 import { summarize } from "@/lib/text/summarize";
 import { pick, pickDistinct } from "@/lib/text/phrasing";
+import { critiqueResume, renderCritique } from "@/lib/resume/critique";
 
 const SKILL_CATEGORIES = ["technology", "tool_platform", "domain", "methodology"];
 
@@ -106,9 +107,16 @@ function reviewResume(resumeText) {
   const terms = topTerms(resumeText, 8);
   const parts = [];
   if (terms.length > 0) parts.push(`Your resume reads strongest on: ${list(terms)}.`);
-  parts.push(
-    "A few quick wins: start every bullet with an action verb and a concrete outcome (numbers beat adjectives), keep it to the experience most relevant to the roles you're targeting, and mirror the exact keywords from each posting you apply to. Trim anything older than ~10 years to a line or two.",
-  );
+  // Bullet-level critique of the candidate's actual experience lines — the part
+  // an LLM reviewer does that generic advice can't.
+  const critique = renderCritique(critiqueResume(resumeText));
+  if (critique) {
+    parts.push(critique);
+  } else {
+    parts.push(
+      "A few quick wins: start every bullet with an action verb and a concrete outcome (numbers beat adjectives), keep it to the experience most relevant to the roles you're targeting, and mirror the exact keywords from each posting you apply to.",
+    );
+  }
   return parts.join(" ");
 }
 
