@@ -3,6 +3,9 @@ import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { getServerEnv } from "@/lib/config/env";
 import { fetchUrlContent, extractUrls } from "@/lib/scrape/fetchUrlContent";
 import { lookupAtsPostingUrl } from "@/lib/scrape/atsLookup";
+import { wantsEmbedded } from "@/lib/llm/featureEngine";
+import { readScreenshotOffline } from "@/lib/scrape/screenshotOcr";
+import { searchPostingUrls } from "@/lib/scrape/webSearch";
 
 export const runtime = "nodejs";
 // Reading + searching + pulling a posting can chain several network calls; give
@@ -222,43 +225,60 @@ export async function POST(request) {
     return NextResponse.json({ error: "That image is too large — keep screenshots under 12MB." }, { status: 400 });
   }
 
-  // Reading the screenshot + finding the posting always use Gemini; the selected
-  // tailoring engine (e.g. Embedded) only governs the downstream document
-  // generation, not this step.
+  // Reading the screenshot + finding the posting normally use Gemini. The
+  // Embedded engine instead reads it offline with Tesseract OCR and finds the
+  // URL with a keyless web search, so this works with no Gemini key.
+  const embedded = wantsEmbedded(formData.get("engine")?.toString() || "");
+
   let model;
   let client;
-  try {
-    model = getServerEnv().geminiModel;
-    client = getGeminiClient();
-  } catch {
-    return NextResponse.json(
-      { error: "Reading screenshots needs the Gemini API key to be configured." },
-      { status: 503 },
-    );
+  if (!embedded) {
+    try {
+      model = getServerEnv().geminiModel;
+      client = getGeminiClient();
+    } catch {
+      return NextResponse.json(
+        {
+          error:
+            "Reading screenshots needs the Gemini API key to be configured, or switch to the Embedded engine.",
+        },
+        { status: 503 },
+      );
+    }
   }
 
-  const base64 = Buffer.from(await image.arrayBuffer()).toString("base64");
+  const buffer = Buffer.from(await image.arrayBuffer());
 
   // 1) Read the screenshot → { jobTitle, company, location, postingText, searchQuery }.
   let fields;
-  try {
-    const visionResponse = await client.models.generateContent({
-      model,
-      contents: [
-        {
-          role: "user",
-          parts: [
-            { inlineData: { mimeType: mimeType === "image/jpg" ? "image/jpeg" : mimeType, data: base64 } },
-            { text: visionPrompt() },
-          ],
-        },
-      ],
-      config: { responseMimeType: "application/json" },
-    });
-    fields = parseVisionJson(visionResponse?.text || "");
-  } catch (err) {
-    console.error("Screenshot read failed:", err);
-    return NextResponse.json({ error: err?.message || "Couldn't read that screenshot." }, { status: 502 });
+  if (embedded) {
+    try {
+      fields = await readScreenshotOffline(buffer);
+    } catch (err) {
+      console.error("Offline screenshot OCR failed:", err);
+      return NextResponse.json({ error: err?.message || "Couldn't read that screenshot." }, { status: 502 });
+    }
+  } else {
+    const base64 = buffer.toString("base64");
+    try {
+      const visionResponse = await client.models.generateContent({
+        model,
+        contents: [
+          {
+            role: "user",
+            parts: [
+              { inlineData: { mimeType: mimeType === "image/jpg" ? "image/jpeg" : mimeType, data: base64 } },
+              { text: visionPrompt() },
+            ],
+          },
+        ],
+        config: { responseMimeType: "application/json" },
+      });
+      fields = parseVisionJson(visionResponse?.text || "");
+    } catch (err) {
+      console.error("Screenshot read failed:", err);
+      return NextResponse.json({ error: err?.message || "Couldn't read that screenshot." }, { status: 502 });
+    }
   }
 
   if (!fields || (!fields.jobTitle && !fields.postingText)) {
@@ -269,7 +289,8 @@ export async function POST(request) {
   }
 
   // 2) Find the live posting URL: the company's ATS board first (deterministic,
-  // canonical, never LinkedIn), then Gemini's grounded Google Search.
+  // canonical, never LinkedIn), then either Gemini's grounded Google Search or,
+  // for the Embedded engine, a keyless web search.
   const found = [];
   try {
     const ats = await lookupAtsPostingUrl({ company: fields.company, jobTitle: fields.jobTitle });
@@ -277,15 +298,27 @@ export async function POST(request) {
   } catch (err) {
     console.error("ATS posting lookup failed:", err);
   }
-  try {
-    const searchResponse = await client.models.generateContent({
-      model,
-      contents: urlSearchPrompt(fields),
-      tools: [{ googleSearch: {} }],
-    });
-    found.push(...candidateUrls(searchResponse));
-  } catch (err) {
-    console.error("Posting URL search failed:", err);
+  if (embedded) {
+    try {
+      const query =
+        fields.searchQuery || [fields.jobTitle, fields.company].filter(Boolean).join(" ");
+      if (query.trim()) {
+        found.push(...(await searchPostingUrls({ query, limit: MAX_URL_CANDIDATES })));
+      }
+    } catch (err) {
+      console.error("Offline posting URL search failed:", err);
+    }
+  } else {
+    try {
+      const searchResponse = await client.models.generateContent({
+        model,
+        contents: urlSearchPrompt(fields),
+        tools: [{ googleSearch: {} }],
+      });
+      found.push(...candidateUrls(searchResponse));
+    } catch (err) {
+      console.error("Posting URL search failed:", err);
+    }
   }
   const candidates = rankCandidates([...new Set(found.filter(Boolean))]);
 

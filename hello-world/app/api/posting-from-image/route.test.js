@@ -7,16 +7,24 @@ vi.mock("@/lib/scrape/fetchUrlContent", () => ({
   extractUrls: vi.fn(() => []),
 }));
 vi.mock("@/lib/scrape/atsLookup", () => ({ lookupAtsPostingUrl: vi.fn(async () => null) }));
+vi.mock("@/lib/scrape/screenshotOcr", () => ({ readScreenshotOffline: vi.fn() }));
+vi.mock("@/lib/scrape/webSearch", () => ({ searchPostingUrls: vi.fn(async () => []) }));
 
 import { POST, parseVisionJson, candidateUrls, rankCandidates, tidyField, isBareDomain } from "./route.js";
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { fetchUrlContent, extractUrls } from "@/lib/scrape/fetchUrlContent";
 import { lookupAtsPostingUrl } from "@/lib/scrape/atsLookup";
+import { readScreenshotOffline } from "@/lib/scrape/screenshotOcr";
+import { searchPostingUrls } from "@/lib/scrape/webSearch";
 
-function imageRequest(file) {
+// Default to the Gemini engine; the embedded suite passes "embedded" explicitly.
+// (Without an engine, wantsEmbedded would pick embedded when no Gemini key is
+// set in the test environment.)
+function imageRequest(file, engine = "gemini") {
   const fd = new FormData();
   if (file) fd.append("image", file);
+  if (engine) fd.append("engine", engine);
   return { formData: async () => fd };
 }
 
@@ -274,5 +282,81 @@ describe("POST /api/posting-from-image", () => {
     });
     const res = await POST(imageRequest(pngFile()));
     expect(res.status).toBe(503);
+  });
+});
+
+describe("POST /api/posting-from-image (embedded engine)", () => {
+  const OFFLINE_FIELDS = {
+    jobTitle: "Senior Engineer",
+    company: "Acme",
+    location: "Remote",
+    postingText: "We are hiring a Senior Engineer to build delightful products and scale our platform.",
+    searchQuery: "Acme Senior Engineer remote",
+  };
+
+  it("reads the screenshot offline (OCR) and finds the URL via keyless search — no Gemini", async () => {
+    readScreenshotOffline.mockResolvedValue({ ...OFFLINE_FIELDS });
+    searchPostingUrls.mockResolvedValue(["https://acme.example/jobs/senior-engineer"]);
+    fetchUrlContent.mockResolvedValue({
+      title: "Senior Engineer",
+      company: "Acme",
+      description: "A".repeat(200),
+      finalUrl: "https://acme.example/jobs/senior-engineer",
+    });
+
+    const res = await POST(imageRequest(pngFile(), "embedded"));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.found).toBe(true);
+    expect(data.url).toBe("https://acme.example/jobs/senior-engineer");
+    expect(data.jobTitle).toBe("Senior Engineer");
+    // The Gemini client must never be constructed on the embedded path.
+    expect(getGeminiClient).not.toHaveBeenCalled();
+    expect(searchPostingUrls).toHaveBeenCalledWith(
+      expect.objectContaining({ query: "Acme Senior Engineer remote" }),
+    );
+  });
+
+  it("still uses the ATS board URL first on the embedded path", async () => {
+    readScreenshotOffline.mockResolvedValue({ ...OFFLINE_FIELDS });
+    lookupAtsPostingUrl.mockResolvedValueOnce({ url: "https://boards.greenhouse.io/acme/jobs/9" });
+    searchPostingUrls.mockResolvedValue(["https://acme.example/jobs/from-search"]);
+    fetchUrlContent.mockResolvedValue({
+      title: "Senior Engineer",
+      company: "Acme",
+      description: "C".repeat(200),
+      finalUrl: "https://boards.greenhouse.io/acme/jobs/9",
+    });
+
+    const res = await POST(imageRequest(pngFile(), "embedded"));
+    const data = await res.json();
+    expect(data.found).toBe(true);
+    expect(fetchUrlContent.mock.calls[0][0]).toBe("https://boards.greenhouse.io/acme/jobs/9");
+  });
+
+  it("works with no Gemini key configured at all", async () => {
+    getServerEnv.mockImplementation(() => {
+      throw new Error("Missing required environment variables: Gemini_LLM_API_Key");
+    });
+    readScreenshotOffline.mockResolvedValue({ ...OFFLINE_FIELDS });
+    searchPostingUrls.mockResolvedValue(["https://acme.example/jobs/senior-engineer"]);
+    fetchUrlContent.mockResolvedValue({
+      title: "Senior Engineer",
+      description: "A".repeat(200),
+      finalUrl: "https://acme.example/jobs/senior-engineer",
+    });
+
+    const res = await POST(imageRequest(pngFile(), "embedded"));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.found).toBe(true);
+  });
+
+  it("reports not-found when OCR yields no recognizable posting", async () => {
+    readScreenshotOffline.mockResolvedValue({ jobTitle: "", company: "", location: "", postingText: "", searchQuery: "" });
+    const res = await POST(imageRequest(pngFile(), "embedded"));
+    const data = await res.json();
+    expect(data.found).toBe(false);
+    expect(searchPostingUrls).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { readEngine } from "../settings/engine";
 
 // Screenshots → tailored-job pipeline for the "Screenshots" manual-applying tab.
 // Users drop posting screenshots; each is compressed, sent to
@@ -136,6 +137,9 @@ export function useScreenshots({
           const upload = await compressScreenshot(item.file);
           const fd = new FormData();
           fd.append("image", upload.blob, upload.name);
+          // Let the selected engine govern how the screenshot is read: Embedded
+          // reads it offline (OCR + keyless search); otherwise Gemini vision.
+          fd.append("engine", readEngine());
           const res = await fetch("/api/posting-from-image", { method: "POST", body: fd });
           data = await res.json().catch(() => ({}));
           if (!res.ok) {
