@@ -10,6 +10,7 @@ import { classifyQuestionType } from "./questionType.js";
 import { extractKeywords } from "@/lib/llm/engines/tailor-lite/keywords";
 import { defaultLibraryData } from "@/lib/llm/engines/tailor-lite/library/defaults";
 import { parseEmploymentHistory } from "@/lib/resume/parseEmployment";
+import { pick } from "@/lib/text/phrasing";
 
 const SKILL_CATEGORIES = ["technology", "tool_platform", "domain"];
 const MAX_POINTS = 5;
@@ -68,31 +69,85 @@ export function matchedSkills(question, skills) {
 
 function skillHint(question, skills) {
   const matched = matchedSkills(question, skills);
-  const pick = (matched.length ? matched : skills).slice(0, 3);
-  return pick.join(", ");
+  const chosen = (matched.length ? matched : skills).slice(0, 3);
+  return chosen.join(", ");
 }
 
-function behavioralPoints({ headline, metric, hint }) {
+// Tidy a profile line into a short reference phrase to weave into a talking
+// point: strip bullets, trailing punctuation, clamp, and lowercase the leading
+// word so it reads mid-sentence ("…e.g. built and scaled a platform").
+function cleanLine(sentence) {
+  let t = String(sentence || "").replace(/^[\s•\-*–—>]+/, "").trim();
+  t = t.replace(/[.;,\s]+$/, "");
+  if (t.length > 140) t = `${t.slice(0, 140).trim()}…`;
+  if (/^[A-Z][a-z]/.test(t)) t = t.charAt(0).toLowerCase() + t.slice(1);
+  return t;
+}
+
+const ACHIEVEMENT_VERBS =
+  /\b(built|led|designed|shipped|launched|scaled|drove|improved|reduced|created|owned|delivered|managed|architected|automated|migrated|grew|cut|increased|implemented|developed|optimi[sz]ed|mentored)\b/i;
+
+// The single most relevant, concrete line from the candidate's profile for this
+// question — the raw material an LLM would cite. Profiles are line-oriented
+// (resume/prep bullets), so it scores each line by overlap with the question
+// plus an "accomplishment" signal (a verb or metric), skipping headers and
+// skills lists.
+export function relevantExperienceLine(profile, question) {
+  const lines = String(profile || "")
+    .split(/\r?\n+/)
+    .map((l) => l.replace(/^[\s•\-*–—>]+/, "").trim())
+    .filter(Boolean);
+  const qTerms = new Set((String(question || "").toLowerCase().match(/[a-z0-9]{3,}/g) || []));
+
+  let best = "";
+  let bestScore = 0;
+  for (const s of lines) {
+    if (s.length < 24) continue;
+    if (/^(skills?|technologies|tools|education|summary|objective)\s*:/i.test(s)) continue;
+    const words = s.toLowerCase().match(/[a-z0-9]{3,}/g) || [];
+    let overlap = 0;
+    for (const w of words) if (qTerms.has(w)) overlap += 1;
+    const hasSignal = /\d/.test(s) || ACHIEVEMENT_VERBS.test(s);
+    const score = overlap * 2 + (hasSignal ? 1 : 0);
+    if (score > bestScore) {
+      bestScore = score;
+      best = s;
+    }
+  }
+  return bestScore > 0 ? cleanLine(best) : "";
+}
+
+function behavioralPoints({ headline, metric, hint, expRef, seed }) {
   const situation = headline.company
     ? `a specific project at ${headline.company}${headline.title ? ` as ${headline.title}` : ""}`
     : "one specific, relevant project";
+  const opener = pick(seed, ["Set the scene briefly", "Frame the context in a sentence", "Open with where and when"]);
+  // Prefer a real accomplishment as the Action example; fall back to the skills hint.
+  const actionTail = expRef ? ` — e.g. ${expRef}` : hint ? ` (${hint})` : "";
   return [
-    `Situation: Set the scene briefly — ${situation}.`,
+    `Situation: ${opener} — ${situation}.`,
     "Task: State the goal you personally owned and why it mattered.",
-    `Action: Walk through the concrete steps you took${hint ? ` (${hint})` : ""}.`,
+    `Action: Walk through the concrete steps you took${actionTail}.`,
     `Result: Close with a measurable outcome${metric ? ` — e.g. ${metric}` : " (a metric or clear impact)"}.`,
   ];
 }
 
-function technicalPoints({ question, skills, hint }) {
+function technicalPoints({ question, skills, hint, expRef, seed }) {
   const matched = matchedSkills(question, skills);
-  const grounding = matched.length
-    ? `Ground it in your hands-on experience with ${matched.slice(0, 3).join(", ")}.`
-    : hint
-      ? `Draw on your ${hint} background for a concrete reference point.`
-      : "Anchor it in a real system you've built, not theory.";
-  return [
+  const grounding = expRef
+    ? `Ground it in real work you've done — e.g. ${expRef}.`
+    : matched.length
+      ? `Ground it in your hands-on experience with ${matched.slice(0, 3).join(", ")}.`
+      : hint
+        ? `Draw on your ${hint} background for a concrete reference point.`
+        : "Anchor it in a real system you've built, not theory.";
+  const open = pick(seed, [
     "Clarify the requirements and constraints before you answer.",
+    "Restate the problem and pin down the constraints first.",
+    "Ask a clarifying question, then state your assumptions.",
+  ]);
+  return [
+    open,
     "Think out loud — outline your approach before diving into details.",
     grounding,
     "Call out the trade-offs (time vs. space, simplicity vs. scale) and justify your choice.",
@@ -100,16 +155,24 @@ function technicalPoints({ question, skills, hint }) {
   ];
 }
 
-function generalPoints({ headline, skills }) {
-  return [
-    headline.company
+function generalPoints({ headline, skills, expRef, seed }) {
+  const anchor = expRef
+    ? `Anchor your answer in a concrete example — e.g. ${expRef}.`
+    : headline.company
       ? `Anchor your answer in a concrete example from ${headline.company}.`
-      : "Anchor your answer in one concrete example, not generalities.",
+      : "Anchor your answer in one concrete example, not generalities.";
+  const close = pick(seed, [
+    "Tie it back to why this specific role and company excite you.",
+    "Close by connecting it to what this role is asking for.",
+    "End on why this team, specifically, is the right fit for you.",
+  ]);
+  return [
+    anchor,
     skills.length
       ? `Highlight the strengths most relevant to this role: ${skills.slice(0, 3).join(", ")}.`
       : "Highlight the 2-3 strengths most relevant to this role.",
     "Keep it to ~60-90 seconds — lead with the point, then the evidence.",
-    "Tie it back to why this specific role and company excite you.",
+    close,
   ];
 }
 
@@ -122,11 +185,13 @@ export function draftAnswerLocal({ question, profile = "" } = {}) {
   const headline = profileHeadline(profile);
   const metric = profileMetric(profile);
   const hint = skillHint(q, skills);
+  const expRef = relevantExperienceLine(profile, q);
+  const seed = q || profile;
 
   let points;
-  if (type === "behavioral") points = behavioralPoints({ headline, metric, hint });
-  else if (type === "technical") points = technicalPoints({ question: q, skills, hint });
-  else points = generalPoints({ headline, skills });
+  if (type === "behavioral") points = behavioralPoints({ headline, metric, hint, expRef, seed });
+  else if (type === "technical") points = technicalPoints({ question: q, skills, hint, expRef, seed });
+  else points = generalPoints({ headline, skills, expRef, seed });
 
   return {
     points: points.filter((p) => typeof p === "string" && p.trim()).slice(0, MAX_POINTS),

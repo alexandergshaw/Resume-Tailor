@@ -5,6 +5,7 @@ import {
   profileHeadline,
   profileMetric,
   matchedSkills,
+  relevantExperienceLine,
 } from "./answerLocal.js";
 
 const PROFILE = [
@@ -36,6 +37,14 @@ describe("profile mining helpers", () => {
   it("matches question keywords against profile skills", () => {
     expect(matchedSkills("Design a scalable API in Node.js", ["Node.js", "React"])).toEqual(["Node.js"]);
     expect(matchedSkills("Tell me about yourself", ["Node.js"])).toEqual([]);
+  });
+
+  it("finds the most relevant accomplishment line for a question", () => {
+    const line = relevantExperienceLine(PROFILE, "how do you handle latency at scale?");
+    expect(line.toLowerCase()).toContain("latency");
+    // Header/skills lines are not returned as an example.
+    expect(line.toLowerCase()).not.toMatch(/^skills:/);
+    expect(relevantExperienceLine("", "anything")).toBe("");
   });
 });
 
@@ -72,7 +81,9 @@ describe("draftAnswerLocal", () => {
     });
     expect(type).toBe("general");
     expect(points.length).toBeGreaterThanOrEqual(3);
-    expect(points.some((p) => /Acme/.test(p))).toBe(true);
+    // Anchored in a concrete example (the real accomplishment, or the company).
+    expect(points[0]).toMatch(/concrete example/i);
+    expect(points.join(" ")).toMatch(/Acme|platform|latency/);
   });
 
   it("still returns usable points with an empty profile", () => {
@@ -82,5 +93,24 @@ describe("draftAnswerLocal", () => {
     });
     expect(points).toHaveLength(4);
     expect(points[0]).toMatch(/^Situation:/);
+  });
+
+  it("weaves a real profile accomplishment into the points", () => {
+    const { points } = draftAnswerLocal({
+      question: "Tell me about a time you improved performance.",
+      profile: PROFILE,
+    });
+    // The Action point should cite the concrete latency/platform accomplishment.
+    expect(points.join(" ").toLowerCase()).toMatch(/latency|platform/);
+  });
+
+  it("varies phrasing across different questions", () => {
+    const openers = [
+      "Tell me about a time you led a project.",
+      "Tell me about a time you missed a deadline.",
+      "Tell me about a time you disagreed with a coworker.",
+      "Tell me about a time you mentored someone.",
+    ].map((q) => draftAnswerLocal({ question: q, profile: "" }).points[0]);
+    expect(new Set(openers).size).toBeGreaterThan(1);
   });
 });
