@@ -43,6 +43,19 @@ describe("POST /api/copilot/detect (embedded engine)", () => {
     expect(getServerEnv).not.toHaveBeenCalled();
   });
 
+  it("returns the cleaned question, not the raw utterance", async () => {
+    mockUser();
+    const res = await POST(
+      jsonRequest({
+        utterance: "Okay, great, so, um, can you tell me about a time you missed a deadline?",
+        engine: "embedded",
+      }),
+    );
+    const data = await res.json();
+    expect(data.isQuestion).toBe(true);
+    expect(data.question).toBe("Can you tell me about a time you missed a deadline?");
+  });
+
   it("classifies a non-question as not a question", async () => {
     mockUser();
     const res = await POST(jsonRequest({ utterance: "Great, thanks for sharing.", engine: "embedded" }));

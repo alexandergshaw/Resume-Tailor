@@ -23,6 +23,40 @@ export function normalizeQuestion(text) {
   return (text || "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+// Spoken-language filler that live transcription keeps but a written question
+// shouldn't: hesitations, hedges, and lead-in acknowledgements.
+const FILLER_RE = /\b(?:um+|uh+|erm+|hmm+|you know|i mean|kind of like|sort of like|like,)\s*/gi;
+const LEAD_IN_RE =
+  /^(?:(?:great|awesome|cool|perfect|okay|ok|alright|all right|right|so|well|yeah|yes|thanks|thank you|got it|makes sense|good|sure|anyway|moving on|next question|next up)[,.!\s]+)+/i;
+const INTERROGATIVE_RE =
+  /^(?:who|what|when|where|why|which|whose|whom|how|can|could|would|will|should|do|does|did|is|are|was|were|have|has|had|am|may|might|shall)\b/i;
+
+// Tidy a detected interviewer question the way the LLM path does: drop lead-in
+// acknowledgements ("Great, so, um…"), strip hesitations, collapse stutters
+// ("can can you"), fix casing, and end interrogatives with a question mark.
+// Purely cosmetic — never changes the substance of the ask.
+export function cleanQuestion(text) {
+  let q = String(text || "").trim();
+  if (!q) return "";
+
+  q = q.replace(LEAD_IN_RE, "");
+  q = q.replace(FILLER_RE, " ");
+  // Collapse immediate word repeats from transcription stutter ("can can you").
+  q = q.replace(/\b(\w+)(\s+\1\b)+/gi, "$1");
+  q = q.replace(/\s+([,.?!])/g, "$1").replace(/\s{2,}/g, " ").trim();
+  // Leftover leading separators after stripping ("— so, what…" → "what…").
+  q = q.replace(/^[,.\-–—:;\s]+/, "");
+  if (!q) return String(text || "").trim();
+
+  q = q.charAt(0).toUpperCase() + q.slice(1);
+  // Interrogative sentences should end in "?" (Deepgram sometimes emits ".").
+  if (!/[?]$/.test(q)) {
+    if (/[.!]$/.test(q) && INTERROGATIVE_RE.test(q)) q = q.replace(/[.!]+$/, "?");
+    else if (!/[.!?]$/.test(q) && INTERROGATIVE_RE.test(q)) q = `${q}?`;
+  }
+  return q;
+}
+
 // Returns { isQuestion, reason?, question? }. `reason` is "punctuation" when the
 // utterance ends in "?" (Deepgram's smart_format/punctuate supplies this) or
 // "starter" when it opens with an interrogative / common interview lead-in.

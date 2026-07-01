@@ -3,7 +3,7 @@ import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { parseModelJson } from "@/lib/llm/extractEmployment";
 import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
 import { wantsEmbedded } from "@/lib/llm/featureEngine";
-import { detectQuestion } from "@/lib/copilot/questions";
+import { detectQuestion, cleanQuestion } from "@/lib/copilot/questions";
 import { classifyQuestionType } from "@/lib/copilot/questionType";
 
 const SYSTEM = [
@@ -53,10 +53,12 @@ export async function POST(request) {
     const context = (body?.context ?? "").toString().slice(0, MAX_CONTEXT_CHARS);
 
     // Embedded engine: classify with the zero-cost heuristic detector — no LLM.
+    // The detected question is tidied like the LLM path tidies it (fillers,
+    // lead-ins, stutters, punctuation) so the card reads clean.
     if (wantsEmbedded(body?.engine)) {
       const det = detectQuestion(utterance);
       const isQuestion = !!det.isQuestion && !!det.question;
-      const question = isQuestion ? det.question.trim() : "";
+      const question = isQuestion ? cleanQuestion(det.question) : "";
       const type = isQuestion ? classifyQuestionType(question) : "general";
       return Response.json({ isQuestion: isQuestion && !!question, question, type });
     }

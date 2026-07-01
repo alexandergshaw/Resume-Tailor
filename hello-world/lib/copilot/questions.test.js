@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectQuestion, normalizeQuestion } from "./questions";
+import { detectQuestion, normalizeQuestion, cleanQuestion } from "./questions";
 
 describe("detectQuestion", () => {
   it("flags utterances ending in a question mark", () => {
@@ -37,5 +37,35 @@ describe("detectQuestion", () => {
 
   it("normalizes whitespace and case for dedupe", () => {
     expect(normalizeQuestion("  Why   THIS  role? ")).toBe("why this role?");
+  });
+});
+
+describe("cleanQuestion", () => {
+  it("strips lead-in acknowledgements and hesitations", () => {
+    expect(cleanQuestion("Great, so, um, can you walk me through your last project?")).toBe(
+      "Can you walk me through your last project?",
+    );
+  });
+
+  it("collapses transcription stutters", () => {
+    expect(cleanQuestion("can can you describe your role?")).toBe("Can you describe your role?");
+  });
+
+  it("ends interrogatives with a question mark", () => {
+    expect(cleanQuestion("how would you design a rate limiter.")).toBe(
+      "How would you design a rate limiter?",
+    );
+    expect(cleanQuestion("what does your team look like")).toBe("What does your team look like?");
+  });
+
+  it("leaves imperative asks' punctuation alone", () => {
+    expect(cleanQuestion("Tell me about a time you failed.")).toBe(
+      "Tell me about a time you failed.",
+    );
+  });
+
+  it("never empties a question and handles blank input", () => {
+    expect(cleanQuestion("")).toBe("");
+    expect(cleanQuestion("Okay, so.")).toBeTruthy(); // degenerate input stays non-empty
   });
 });
