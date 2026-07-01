@@ -3,6 +3,8 @@ import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { extractUrls, fetchUrlContent } from "@/lib/scrape/fetchUrlContent";
 import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
 import { logChatMessage } from "@/lib/supabase/logChatMessage";
+import { wantsEmbedded } from "@/lib/llm/featureEngine";
+import { localChatReply } from "@/lib/chat/localAssistant";
 
 const SYSTEM_PROMPT = [
   "You are a concise, friendly career assistant inside the Resume Tailor app.",
@@ -112,6 +114,54 @@ function buildContextBlock(resumeText, applications, pinnedContext, attachedFile
   return parts.join("\n\n");
 }
 
+// Resolve any URLs referenced by the latest user message (and, when the pinned
+// context carries a URL but no inline description, that URL too) into scraped
+// page content. Shared by both the Gemini and embedded paths so each can reason
+// about linked postings/articles. Non-throwing; returns [] on nothing to fetch.
+async function resolveFetchedUrls({ messages, pinnedContext }) {
+  let fetchedUrls = [];
+  const lastUserMessage = [...messages]
+    .reverse()
+    .find((m) => m && m.role !== "assistant" && typeof m.content === "string");
+  if (lastUserMessage) {
+    const urls = extractUrls(lastUserMessage.content, MAX_FETCHED_URLS);
+    if (urls.length > 0) {
+      fetchedUrls = await Promise.all(
+        urls.map(async (url) => {
+          const res = await fetchUrlContent(url, { maxChars: MAX_FETCHED_URL_CHARS });
+          return { url, ...res };
+        }),
+      );
+    }
+  }
+
+  if (
+    pinnedContext &&
+    typeof pinnedContext.content === "string" &&
+    pinnedContext.content.trim() &&
+    !/(^|\n)\s*Description:\s*\n[^\s]/i.test(pinnedContext.content)
+  ) {
+    const alreadyFetched = new Set(fetchedUrls.map((u) => u.url));
+    const remaining = Math.max(0, MAX_FETCHED_URLS - fetchedUrls.length);
+    if (remaining > 0) {
+      const pinnedUrls = extractUrls(pinnedContext.content, remaining).filter(
+        (u) => !alreadyFetched.has(u),
+      );
+      if (pinnedUrls.length > 0) {
+        const results = await Promise.all(
+          pinnedUrls.map(async (url) => {
+            const res = await fetchUrlContent(url, { maxChars: MAX_FETCHED_URL_CHARS });
+            return { url, ...res };
+          }),
+        );
+        fetchedUrls = [...fetchedUrls, ...results];
+      }
+    }
+  }
+
+  return fetchedUrls;
+}
+
 export async function POST(request) {
   try {
     const body = await request.json();
@@ -165,6 +215,26 @@ export async function POST(request) {
       console.error("[chat] failed to log user message:", err);
     }
 
+    // Resolve any linked URLs first — both paths use them as reference material.
+    const fetchedUrls = await resolveFetchedUrls({ messages, pinnedContext });
+
+    // Embedded engine: answer from the provided context with the offline
+    // rule/retrieval assistant — no LLM, no API key.
+    if (wantsEmbedded(body?.engine)) {
+      const reply = localChatReply({
+        messages,
+        resumeText,
+        applications,
+        pinnedContext,
+        attachedFiles,
+        fetchedUrls,
+      });
+      if (!reply) {
+        return Response.json({ error: "Could not generate a reply." }, { status: 502 });
+      }
+      return Response.json({ reply });
+    }
+
     const { geminiModel } = getServerEnv();
     const client = getGeminiClient();
 
@@ -194,53 +264,6 @@ export async function POST(request) {
         if (contents[i].role === "user") {
           contents[i].parts.push(...inlineParts);
           break;
-        }
-      }
-    }
-
-    // Auto-fetch any URLs in the most recent user message so the model can
-    // reason about external content (job postings, articles, etc.).
-    let fetchedUrls = [];
-    const lastUserMessage = [...messages]
-      .reverse()
-      .find((m) => m && m.role !== "assistant" && typeof m.content === "string");
-    if (lastUserMessage) {
-      const urls = extractUrls(lastUserMessage.content, MAX_FETCHED_URLS);
-      if (urls.length > 0) {
-        const results = await Promise.all(
-          urls.map(async (url) => {
-            const res = await fetchUrlContent(url, { maxChars: MAX_FETCHED_URL_CHARS });
-            return { url, ...res };
-          }),
-        );
-        fetchedUrls = results;
-      }
-    }
-
-    // If the pinned context lacks an actual job description but carries a URL
-    // (typical for Greenhouse postings whose `content` came back empty), fetch
-    // that URL server-side so the model still has the posting body. Skip URLs
-    // we already fetched from the user message.
-    if (
-      pinnedContext &&
-      typeof pinnedContext.content === "string" &&
-      pinnedContext.content.trim() &&
-      !/(^|\n)\s*Description:\s*\n[^\s]/i.test(pinnedContext.content)
-    ) {
-      const alreadyFetched = new Set(fetchedUrls.map((u) => u.url));
-      const remaining = Math.max(0, MAX_FETCHED_URLS - fetchedUrls.length);
-      if (remaining > 0) {
-        const pinnedUrls = extractUrls(pinnedContext.content, remaining).filter(
-          (u) => !alreadyFetched.has(u),
-        );
-        if (pinnedUrls.length > 0) {
-          const results = await Promise.all(
-            pinnedUrls.map(async (url) => {
-              const res = await fetchUrlContent(url, { maxChars: MAX_FETCHED_URL_CHARS });
-              return { url, ...res };
-            }),
-          );
-          fetchedUrls = [...fetchedUrls, ...results];
         }
       }
     }

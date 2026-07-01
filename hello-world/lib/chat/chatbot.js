@@ -3,6 +3,8 @@
 // utilities into `createChatHandlers` and gets back closures bound to that
 // snapshot.
 
+import { readEngine } from "@/app/settings/engine";
+
 export function buildJobContextString(job) {
   const lines = [];
   if (job.title) lines.push(`Title: ${job.title}`);
@@ -257,6 +259,8 @@ export function createChatHandlers(deps) {
           ),
           tab: mainTab,
           section: activeSection,
+          // Embedded engine answers from context offline; otherwise Gemini.
+          engine: readEngine(),
         }),
       });
       const payload = await response.json();
