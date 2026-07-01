@@ -20,7 +20,6 @@ import {
   buildJobContextString,
   buildApplicationContextString as buildApplicationContextStringBase,
   buildStageContextString,
-  createChatHandlers,
 } from "../lib/chat/chatbot";
 import {
   isDocxResume,
@@ -40,6 +39,7 @@ import { useProfileEntries } from "./hooks/useProfileEntries";
 import { useScreenshots } from "./hooks/useScreenshots";
 import { useCompanyResearch } from "./hooks/useCompanyResearch";
 import { useDocumentPreview } from "./hooks/useDocumentPreview";
+import { useChat } from "./hooks/useChat";
 import {
   REFERENCE_CONFIG,
   EDUCATION_CONFIG,
@@ -170,22 +170,8 @@ export default function Home() {
   // External-engine "review fields" flow: fetched proposal slots the user can
   // edit before generating the document with those `values`.
   const [slotReview, setSlotReview] = useState({ open: false, loading: false, error: "", slots: [] });
-  const [chatOpen, setChatOpen] = useState(false);
-  const [chatMessages, setChatMessages] = useState([]);
-  const [chatInput, setChatInput] = useState("");
-  const [chatSending, setChatSending] = useState(false);
-  const [chatError, setChatError] = useState("");
-  const [chatPinnedContext, setChatPinnedContext] = useState(null);
-  const [chatAttachedFiles, setChatAttachedFiles] = useState([]);
-  const [chatAttachError, setChatAttachError] = useState("");
-  const [chatCopiedIndex, setChatCopiedIndex] = useState(null);
-  const [chatDragActive, setChatDragActive] = useState(false);
-  // Resizable chat panel: stored size in px. Default matches prior sm breakpoint values.
-  const [chatSize, setChatSize] = useState({ width: 380, height: 520 });
-  const [chatResizing, setChatResizing] = useState(false);
-  const chatResizeStartRef = useRef(null);
-  const chatPanelRef = useRef(null);
-  const chatScrollRef = useRef(null);
+  // Floating "AI Help" chat panel (thread, pinned context, attachments, size).
+  const chat = useChat({ resumeFile, applicationData, applicationStages, mainTab, activeSection });
 
   // Materials profile lists (references / education / employment). Each is a
   // self-contained controller: CRUD, per-row + all copy, localStorage
@@ -205,7 +191,6 @@ export default function Home() {
   const [materials, setMaterials] = useState([]);
   const [materialsBusy, setMaterialsBusy] = useState(false);
   const [materialsError, setMaterialsError] = useState("");
-  const chatInputRef = useRef(null);
   const [appDialog, setAppDialog] = useState({ open: false, rowIndex: null, kind: "jd" });
   const [stageDialog, setStageDialog] = useState(createStageDialogState());
   const [stageSaving, setStageSaving] = useState(false);
@@ -1026,16 +1011,6 @@ export default function Home() {
           });
         }
       }
-      const cs = localStorage.getItem("chatSize");
-      if (cs) {
-        const parsed = JSON.parse(cs);
-        if (
-          parsed && typeof parsed.width === "number" && typeof parsed.height === "number"
-          && parsed.width >= 280 && parsed.height >= 320
-        ) {
-          setChatSize(parsed);
-        }
-      }
     } catch {}
   }, []);
   useEffect(() => {
@@ -1062,26 +1037,6 @@ export default function Home() {
     window.addEventListener("resize", clampFab);
     return () => window.removeEventListener("resize", clampFab);
   }, []);
-  useEffect(() => {
-    localStorage.setItem("chatSize", JSON.stringify(chatSize));
-  }, [chatSize]);
-
-  // Close the chat when clicking outside its panel (but not on the FAB itself).
-  useEffect(() => {
-    if (!chatOpen) return;
-    function handlePointerDown(e) {
-      if (chatResizing) return;
-      const panel = chatPanelRef.current;
-      if (!panel) return;
-      if (panel.contains(e.target)) return;
-      // Don't close when the click is on the FAB — it has its own toggle.
-      const fabEl = e.target.closest?.(".MuiFab-root");
-      if (fabEl) return;
-      setChatOpen(false);
-    }
-    document.addEventListener("mousedown", handlePointerDown);
-    return () => document.removeEventListener("mousedown", handlePointerDown);
-  }, [chatOpen, chatResizing]);
 
   // Drag handler shared by both frozen-column resize handles.
   function startColResize(which, event) {
@@ -1285,7 +1240,7 @@ export default function Home() {
   async function askAiAboutMaterial(item) {
     if (!item) return;
     setMaterialsError("");
-    setChatOpen(true);
+    chat.setChatOpen(true);
     try {
       let file = item.source === "local" && item.file ? item.file : null;
       if (!file && currentUser) {
@@ -1297,7 +1252,7 @@ export default function Home() {
         }
         file = new File([blob], item.name, { type: blob.type || undefined });
       }
-      if (file) await addChatAttachments([file]);
+      if (file) await chat.addChatAttachments([file]);
     } catch (err) {
       setMaterialsError(err?.message || "Could not attach that file.");
     }
@@ -2112,42 +2067,9 @@ export default function Home() {
     return found.length > 0 ? Math.min(...found) : null;
   }
 
-  // Chatbot handlers — implementations live in ./lib/chatbot.
+  // Application-context builder for the chat + tracking table.
   const buildApplicationContextString = (app) =>
     buildApplicationContextStringBase(app, applicationStages);
-  const {
-    addChatAttachments,
-    askAiAbout,
-    sendChatMessage,
-    resendUserMessage,
-    startChatResize,
-  } = createChatHandlers({
-    chatInput,
-    chatMessages,
-    chatSending,
-    chatPinnedContext,
-    chatAttachedFiles,
-    chatSize,
-    setChatInput,
-    setChatMessages,
-    setChatSending,
-    setChatError,
-    setChatOpen,
-    setChatPinnedContext,
-    setChatAttachedFiles,
-    setChatAttachError,
-    setChatSize,
-    setChatResizing,
-    chatInputRef,
-    resumeFile,
-    applicationData,
-    applicationStages,
-    mainTab,
-    activeSection,
-    isDocxResume,
-    isTextResume,
-    buildTemplateLinesForUpload,
-  });
 
   // Document download handlers — implementations live in ../lib/document/docx.
   const {
@@ -2386,29 +2308,25 @@ export default function Home() {
     el.scrollBy({ left: e.deltaY > 0 ? 120 : -120, behavior: "smooth" });
   }
 
+  // Keep the pinned chat context in sync when a job's tailored resume updates.
   useEffect(() => {
-    const el = chatScrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [chatMessages, chatSending, chatOpen]);
-
-  useEffect(() => {
-    if (!chatPinnedContext?.sourceJobId) return;
-    const jobId = chatPinnedContext.sourceJobId;
+    if (!chat.chatPinnedContext?.sourceJobId) return;
+    const jobId = chat.chatPinnedContext.sourceJobId;
     const tailoring = tailoringMap[jobId];
     if (!tailoring?.result) return;
     const tailoredBlock = `\n\nTailored Resume:\n${tailoring.result}`;
-    if (chatPinnedContext.content?.includes(tailoredBlock)) return;
+    if (chat.chatPinnedContext.content?.includes(tailoredBlock)) return;
     const jobFromResults = jobResults.find((j) => j.id === jobId);
     const jobFromTracked = trackedJobs.find((j) => j.id === jobId);
     const jobForContext = jobFromResults || jobFromTracked;
     if (!jobForContext) return;
-    setChatPinnedContext((prev) =>
+    chat.setChatPinnedContext((prev) =>
       prev && prev.sourceJobId === jobId
         ? { ...prev, content: `${buildJobContextString(jobForContext)}${tailoredBlock}` }
         : prev,
     );
-  }, [tailoringMap, chatPinnedContext, jobResults, trackedJobs]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tailoringMap, chat.chatPinnedContext, jobResults, trackedJobs]);
 
   async function handleTrackJob(job) {
     setTrackedJobs((prev) => {
@@ -3259,7 +3177,7 @@ export default function Home() {
             manualIsSubmitting={manualIsSubmitting}
             manualError={manualError}
             handleManualSubmit={handleManualSubmit}
-            askAiAbout={askAiAbout}
+            askAiAbout={chat.askAiAbout}
             tailorEngine={tailorEngine}
             onReviewFields={() => openSlotReview(jobPosting)}
           />
@@ -3282,7 +3200,7 @@ export default function Home() {
             urlIsSubmitting={urlIsSubmitting}
             urlError={urlError}
             handleUrlSubmit={handleUrlSubmit}
-            askAiAbout={askAiAbout}
+            askAiAbout={chat.askAiAbout}
           />
         )}
 
@@ -3307,7 +3225,7 @@ export default function Home() {
             toggleInterviewSort={toggleInterviewSort}
             sortLabelSx={sortLabelSx}
             startColResize={startColResize}
-            askAiAbout={askAiAbout}
+            askAiAbout={chat.askAiAbout}
             buildApplicationContextString={buildApplicationContextString}
             buildStageContextString={buildStageContextString}
             openCommsInAppDialog={openCommsInAppDialog}
@@ -3427,7 +3345,7 @@ export default function Home() {
           setFabDragging(false);
           // Suppress click-toggle if the user actually dragged.
           if (start?.moved) return;
-          setChatOpen((v) => !v);
+          chat.setChatOpen((v) => !v);
         }}
         sx={{
           position: "fixed",
@@ -3442,36 +3360,36 @@ export default function Home() {
           boxShadow: "0 16px 32px rgba(25, 118, 210, 0.26)",
         }}
       >
-        {chatOpen ? "Close" : "AI Help"}
+        {chat.chatOpen ? "Close" : "AI Help"}
       </Fab>
 
-      {chatOpen ? (
+      {chat.chatOpen ? (
         <ChatPanel
-          chatPanelRef={chatPanelRef}
-          chatScrollRef={chatScrollRef}
-          chatInputRef={chatInputRef}
-          chatDragActive={chatDragActive}
-          setChatDragActive={setChatDragActive}
-          addChatAttachments={addChatAttachments}
+          chatPanelRef={chat.chatPanelRef}
+          chatScrollRef={chat.chatScrollRef}
+          chatInputRef={chat.chatInputRef}
+          chatDragActive={chat.chatDragActive}
+          setChatDragActive={chat.setChatDragActive}
+          addChatAttachments={chat.addChatAttachments}
           fabPos={fabPos}
-          chatSize={chatSize}
-          startChatResize={startChatResize}
-          chatMessages={chatMessages}
-          setChatMessages={setChatMessages}
-          chatError={chatError}
-          setChatError={setChatError}
-          chatPinnedContext={chatPinnedContext}
-          setChatPinnedContext={setChatPinnedContext}
-          chatSending={chatSending}
-          chatCopiedIndex={chatCopiedIndex}
-          setChatCopiedIndex={setChatCopiedIndex}
-          resendUserMessage={resendUserMessage}
-          chatAttachedFiles={chatAttachedFiles}
-          setChatAttachedFiles={setChatAttachedFiles}
-          chatAttachError={chatAttachError}
-          chatInput={chatInput}
-          setChatInput={setChatInput}
-          sendChatMessage={sendChatMessage}
+          chatSize={chat.chatSize}
+          startChatResize={chat.startChatResize}
+          chatMessages={chat.chatMessages}
+          setChatMessages={chat.setChatMessages}
+          chatError={chat.chatError}
+          setChatError={chat.setChatError}
+          chatPinnedContext={chat.chatPinnedContext}
+          setChatPinnedContext={chat.setChatPinnedContext}
+          chatSending={chat.chatSending}
+          chatCopiedIndex={chat.chatCopiedIndex}
+          setChatCopiedIndex={chat.setChatCopiedIndex}
+          resendUserMessage={chat.resendUserMessage}
+          chatAttachedFiles={chat.chatAttachedFiles}
+          setChatAttachedFiles={chat.setChatAttachedFiles}
+          chatAttachError={chat.chatAttachError}
+          chatInput={chat.chatInput}
+          setChatInput={chat.setChatInput}
+          sendChatMessage={chat.sendChatMessage}
         />
       ) : null}
 
@@ -3490,7 +3408,7 @@ export default function Home() {
         isDocxResume={isDocxResume}
         buildDocxFromUploadedTemplate={buildDocxFromUploadedTemplate}
         getDownloadFileNameForTitle={getDownloadFileNameForTitle}
-        askAiAbout={askAiAbout}
+        askAiAbout={chat.askAiAbout}
         buildJobContextString={buildJobContextString}
         setMainTab={setMainTab}
         setActiveSection={setActiveSection}
