@@ -6,6 +6,10 @@ import Chip from "@mui/material/Chip";
 import Avatar from "@mui/material/Avatar";
 import TextField from "@mui/material/TextField";
 import { useIsMobile } from "../hooks/useResponsive";
+import { useEngine } from "../settings/engine";
+
+const EMBEDDED_TOOLTIP =
+  "Embedded engine: replies are generated on-device from your pinned posting, resume, and applications — no AI, works offline. Switch to Gemini in the top bar for open-ended chat.";
 
 export default function ChatPanel({
   chatPanelRef,
@@ -37,6 +41,10 @@ export default function ChatPanel({
   // On phones the resizable floating panel becomes a near-full-width bottom
   // sheet (and the pixel-drag resize handle is hidden) for usable chatting.
   const isMobile = useIsMobile();
+  // Reflect the selected engine live: on "embedded" the chat is an offline,
+  // no-AI assistant, so surface that plainly in the header and empty state.
+  const { engine } = useEngine();
+  const isEmbedded = engine === "embedded";
   return (
     <Box
       ref={chatPanelRef}
@@ -114,8 +122,39 @@ export default function ChatPanel({
           backgroundColor: "var(--bg-soft)",
         }}
       >
-        <Box sx={{ fontWeight: 700, fontSize: "0.95rem", color: "var(--text-primary)" }}>
-          AI Help
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, minWidth: 0 }}>
+          <Box sx={{ fontWeight: 700, fontSize: "0.95rem", color: "var(--text-primary)" }}>
+            AI Help
+          </Box>
+          {isEmbedded ? (
+            <Chip
+              size="small"
+              label="Offline · no AI"
+              title={EMBEDDED_TOOLTIP}
+              icon={
+                <Box
+                  component="span"
+                  sx={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: "50%",
+                    backgroundColor: "var(--accent)",
+                    ml: "6px !important",
+                  }}
+                />
+              }
+              sx={{
+                height: 20,
+                fontSize: 10.5,
+                fontWeight: 700,
+                letterSpacing: 0.2,
+                color: "var(--text-secondary)",
+                backgroundColor: "var(--bg-soft)",
+                border: "1px solid var(--border)",
+                "& .MuiChip-label": { px: 0.75 },
+              }}
+            />
+          ) : null}
         </Box>
         {chatMessages.length > 0 ? (
           <Button
@@ -171,7 +210,9 @@ export default function ChatPanel({
       >
         {chatMessages.length === 0 ? (
           <Box sx={{ color: "var(--text-secondary)", fontSize: "0.9rem", lineHeight: 1.5, px: 0.5, pt: 0.5 }}>
-            Ask anything about your resume, this posting, or your job search.
+            {isEmbedded
+              ? "Offline assistant (no AI). I answer from your pinned posting, uploaded resume, and tracked applications — try “analyze this posting”, “review my resume”, or “my applications”. Switch to Gemini in the top bar for open-ended chat."
+              : "Ask anything about your resume, this posting, or your job search."}
           </Box>
         ) : (
           chatMessages.map((m, i) => (
@@ -353,7 +394,11 @@ export default function ChatPanel({
             size="small"
             multiline
             maxRows={4}
-            placeholder="Message AI Help… (drop files anywhere here)"
+            placeholder={
+              isEmbedded
+                ? "Message the offline assistant… (drop files anywhere here)"
+                : "Message AI Help… (drop files anywhere here)"
+            }
             value={chatInput}
             inputRef={chatInputRef}
             onChange={(e) => setChatInput(e.target.value)}
