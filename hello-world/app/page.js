@@ -6,6 +6,7 @@ import JobDescriptionTab from "./components/JobDescriptionTab";
 import PostingUrlTab from "./components/PostingUrlTab";
 import ScreenshotTab from "./components/ScreenshotTab";
 import ApplyingControls from "./components/ApplyingControls";
+import NavTabs from "./components/NavTabs";
 import TrackingTab from "./components/TrackingTab";
 import LiveFeedTab from "./components/LiveFeedTab";
 import LibraryEditor from "./components/LibraryEditor";
@@ -4423,43 +4424,18 @@ export default function Home() {
           </Box>
         </Box>
 
-        <div className={styles.mainTabs}>
-          <button
-            type="button"
-            className={mainTab === "applying" ? styles.mainTabActive : styles.mainTab}
-            onClick={() => setMainTab("applying")}
-          >
-            Materials
-          </button>
-          <button
-            type="button"
-            className={mainTab === "manualApplying" ? styles.mainTabActive : styles.mainTab}
-            onClick={() => setMainTab("manualApplying")}
-          >
-            Manual Applying
-          </button>
-          <button
-            type="button"
-            className={mainTab === "feed" ? styles.mainTabActive : styles.mainTab}
-            onClick={() => setMainTab("feed")}
-          >
-            Auto Applying
-          </button>
-          <button
-            type="button"
-            className={mainTab === "interviewing" ? styles.mainTabActive : styles.mainTab}
-            onClick={() => setMainTab("interviewing")}
-          >
-            Tracking
-          </button>
-          <button
-            type="button"
-            className={mainTab === "library" ? styles.mainTabActive : styles.mainTab}
-            onClick={() => setMainTab("library")}
-          >
-            Library
-          </button>
-        </div>
+        <NavTabs
+          size="main"
+          value={mainTab}
+          onChange={setMainTab}
+          tabs={[
+            { value: "applying", label: "Materials" },
+            { value: "manualApplying", label: "Manual Applying" },
+            { value: "feed", label: "Auto Applying" },
+            { value: "interviewing", label: "Tracking" },
+            { value: "library", label: "Library" },
+          ]}
+        />
 
         {mainTab === "applying" && (
           <>
@@ -4537,29 +4513,16 @@ export default function Home() {
 
         {mainTab === "manualApplying" && (
           <>
-        <div className={styles.sectionTabs}>
-          <button
-            type="button"
-            className={activeSection === "url" ? styles.sectionTabActive : styles.sectionTab}
-            onClick={() => setActiveSection("url")}
-          >
-            Posting URL
-          </button>
-          <button
-            type="button"
-            className={activeSection === "manual" ? styles.sectionTabActive : styles.sectionTab}
-            onClick={() => setActiveSection("manual")}
-          >
-            Job Description
-          </button>
-          <button
-            type="button"
-            className={activeSection === "screenshots" ? styles.sectionTabActive : styles.sectionTab}
-            onClick={() => setActiveSection("screenshots")}
-          >
-            Screenshots
-          </button>
-        </div>
+        <NavTabs
+          size="section"
+          value={activeSection}
+          onChange={setActiveSection}
+          tabs={[
+            { value: "url", label: "Posting URL" },
+            { value: "manual", label: "Job Description" },
+            { value: "screenshots", label: "Screenshots" },
+          ]}
+        />
 
         {activeSection === "manual" ? (
           <JobDescriptionTab
