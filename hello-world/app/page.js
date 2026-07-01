@@ -38,6 +38,7 @@ import { weaveSources } from "../lib/document/coverLetterWeave";
 import { parseEmploymentHistory } from "../lib/resume/parseEmployment";
 import { useProfileEntries } from "./hooks/useProfileEntries";
 import { useScreenshots } from "./hooks/useScreenshots";
+import { useCompanyResearch } from "./hooks/useCompanyResearch";
 import {
   REFERENCE_CONFIG,
   EDUCATION_CONFIG,
@@ -103,25 +104,6 @@ export default function Home() {
     notice: "",
     error: "",
   });
-  // Company-research modal: recent positive articles to weave into the cover
-  // letter. Ephemeral (session only). `companyResearchByJob` keeps each job's
-  // chosen references for the preview's copyable-suggestions panel.
-  const [companyResearch, setCompanyResearch] = useState({
-    open: false,
-    jobId: null,
-    company: "",
-    jobTitle: "",
-    posting: "",
-    busy: false,
-  });
-  // Per-job research results, fetched in the background when a preview opens so
-  // the "Research company" button can show them immediately (or a loader while
-  // still in flight). Keyed by jobId: { loading, articles, warnings, error,
-  // needsCompany }.
-  const [researchByJob, setResearchByJob] = useState({});
-  // Job ids whose background research has already been kicked off (dedupe).
-  const researchStartedRef = useRef(new Set());
-  const [companyResearchByJob, setCompanyResearchByJob] = useState({});
   // Bumped to force the open preview to reload after research is woven in.
   const [previewReloadKey, setPreviewReloadKey] = useState(0);
   const [batchTailorState, setBatchTailorState] = useState({
@@ -239,6 +221,9 @@ export default function Home() {
     handleTailorJob,
     updateTailoringJob,
   });
+
+  // Per-job company research (warmed behind the preview; woven into the cover).
+  const research = useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewReloadKey });
 
   // Supplementary materials locker (transcripts etc.). Each item:
   // { name, size, source: "remote"|"local", file? }. Persisted to Supabase for
@@ -2230,7 +2215,7 @@ export default function Home() {
     // Warm company research as soon as the preview opens (only when a cover
     // letter exists — that's where the references are used).
     if (previewScopeAvailable(t, "cover")) {
-      startBackgroundResearch({
+      research.startBackgroundResearch({
         jobId: job.id,
         company: job.company || "",
         jobTitle: t.generatedJobTitle || job.title || "",
@@ -2424,149 +2409,6 @@ export default function Home() {
     }
   }
 
-  // --- Company research (recent positive articles for the cover letter) ------
-  // Fetch recent positive coverage for a job's company and stash it under
-  // researchByJob[jobId], so the preview's "Research company" button shows
-  // results immediately (or a loader while this is still in flight).
-  async function fetchResearchInto({ jobId, company, jobTitle, posting }) {
-    if (!jobId || !company) return;
-    researchStartedRef.current.add(jobId);
-    setResearchByJob((m) => ({
-      ...m,
-      [jobId]: { loading: true, articles: [], warnings: [], error: "", needsCompany: false },
-    }));
-    try {
-      const res = await fetch("/api/company-research", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ company, jobTitle: jobTitle || "", posting: posting || "" }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.status === 503) {
-        setResearchByJob((m) => ({
-          ...m,
-          [jobId]: {
-            loading: false, articles: [], warnings: [], needsCompany: false,
-            error: data?.error || "Company research is unavailable (Gemini key not configured).",
-          },
-        }));
-        return;
-      }
-      if (!res.ok) throw new Error(data?.error || "Company research failed.");
-      setResearchByJob((m) => ({
-        ...m,
-        [jobId]: {
-          loading: false, needsCompany: false, error: "",
-          articles: Array.isArray(data.articles) ? data.articles : [],
-          warnings: Array.isArray(data.warnings) ? data.warnings : [],
-        },
-      }));
-    } catch (err) {
-      setResearchByJob((m) => ({
-        ...m,
-        [jobId]: { loading: false, articles: [], warnings: [], needsCompany: false, error: err.message || "Company research failed." },
-      }));
-    }
-  }
-
-  // Warm research for a job once (deduped). With no company yet, mark needsCompany
-  // so the dialog prompts for one instead of spinning forever.
-  function startBackgroundResearch({ jobId, company, jobTitle, posting }) {
-    if (!jobId || researchStartedRef.current.has(jobId)) return;
-    const co = String(company || "").trim();
-    if (!co) {
-      researchStartedRef.current.add(jobId);
-      setResearchByJob((m) =>
-        m[jobId] ? m : { ...m, [jobId]: { loading: false, articles: [], warnings: [], error: "", needsCompany: true } },
-      );
-      return;
-    }
-    fetchResearchInto({ jobId, company: co, jobTitle, posting });
-  }
-
-  // Fetch + summarize a user-pasted article URL into a source card, appended to
-  // the job's research results.
-  async function addResearchUrl(url) {
-    const jobId = companyResearch.jobId;
-    if (!jobId) return;
-    try {
-      const res = await fetch("/api/company-research", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, company: companyResearch.company, jobTitle: companyResearch.jobTitle }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setResearchByJob((m) => ({ ...m, [jobId]: { ...(m[jobId] || {}), error: data?.error || "Couldn't add that URL." } }));
-        return;
-      }
-      const added = (data.articles || []).map((a, i) => ({ ...a, id: `url-${Date.now()}-${i}` }));
-      setResearchByJob((m) => {
-        const cur = m[jobId] || { articles: [], warnings: [] };
-        return {
-          ...m,
-          [jobId]: {
-            ...cur,
-            loading: false,
-            needsCompany: false,
-            error: "",
-            articles: [...(cur.articles || []), ...added],
-            warnings: [...(cur.warnings || []), ...(data.warnings || [])],
-          },
-        };
-      });
-    } catch (err) {
-      setResearchByJob((m) => ({ ...m, [jobId]: { ...(m[jobId] || {}), error: err.message || "Couldn't add that URL." } }));
-    }
-  }
-
-  // Open the research dialog over the preview, ensuring the job's research has
-  // been kicked off (it usually already was, when the preview opened).
-  function openCompanyResearch(job) {
-    if (!job) return;
-    const t = tailoringMap[job.id] || {};
-    const company = (job.company || "").trim();
-    const jobTitle = t.generatedJobTitle || job.title || "";
-    const posting = job.description || t.jobDescription || "";
-    setCompanyResearch({ open: true, jobId: job.id, company, jobTitle, posting, busy: false });
-    startBackgroundResearch({ jobId: job.id, company, jobTitle, posting });
-  }
-
-  // The user typed a company in the dialog's input (when none was known).
-  function researchTypedCompany(name) {
-    const company = String(name || "").trim();
-    if (!company || !companyResearch.jobId) return;
-    setCompanyResearch((prev) => ({ ...prev, company }));
-    fetchResearchInto({ jobId: companyResearch.jobId, company, jobTitle: companyResearch.jobTitle, posting: companyResearch.posting });
-  }
-
-  // Apply chosen references at their chosen placements: weave them into the cover
-  // letter and refresh the open preview so the woven version shows.
-  function applyCompanyResearch(placements) {
-    const jobId = companyResearch.jobId;
-    const picks = Array.isArray(placements) ? placements.filter((c) => c?.suggestion?.trim()) : [];
-    setCompanyResearch((prev) => ({ ...prev, open: false }));
-    if (!jobId || picks.length === 0) return;
-    setCompanyResearchByJob((m) => ({ ...m, [jobId]: picks }));
-    const wovenLines = weaveSources(tailoringMap[jobId]?.coverLetterResultLines || [], picks);
-    setTailoringMap((current) => ({
-      ...current,
-      [jobId]: {
-        ...(current[jobId] || {}),
-        coverLetterResultLines: wovenLines,
-        coverLetterPreviewHtml: undefined,
-        coverLetterDocxB64: undefined,
-        edited: true,
-      },
-    }));
-    setPreviewReloadKey((k) => k + 1);
-  }
-
-  // Close the research dialog (the preview stays open underneath).
-  function closeCompanyResearch() {
-    setCompanyResearch((prev) => ({ ...prev, open: false }));
-  }
-
   // Called by the Generate flows once the resume + cover letter exist: open the
   // preview modal (cover tab when there's a cover letter) and warm company
   // research in the background so it's ready behind the "Research company" button.
@@ -2587,7 +2429,7 @@ export default function Home() {
       notice: "",
       error: "",
     });
-    if (hasCover) startBackgroundResearch({ jobId, company, jobTitle, posting });
+    if (hasCover) research.startBackgroundResearch({ jobId, company, jobTitle, posting });
   }
 
 
@@ -3904,7 +3746,7 @@ export default function Home() {
         handleIgnoreJob={handleIgnoreJob}
         handleUntrackJob={handleUntrackJob}
         openResumePreview={openResumePreview}
-        openCompanyResearch={openCompanyResearch}
+        openCompanyResearch={research.openCompanyResearch}
       />
 
       <DocumentPreviewDialog
@@ -3932,38 +3774,38 @@ export default function Home() {
         onResubmit={resubmitDocumentPreview}
         onDownload={downloadDocumentPreview}
         onResearchCompany={() =>
-          openCompanyResearch({
+          research.openCompanyResearch({
             id: resumePreview.jobId,
             title: resumePreview.title,
             company: resumePreview.company,
             description: tailoringMap[resumePreview.jobId]?.jobDescription || "",
           })
         }
-        researchLoading={!!researchByJob[resumePreview.jobId]?.loading}
-        researchCount={(researchByJob[resumePreview.jobId]?.articles || []).length}
-        companyReferences={companyResearchByJob[resumePreview.jobId] || []}
+        researchLoading={!!research.researchByJob[resumePreview.jobId]?.loading}
+        researchCount={(research.researchByJob[resumePreview.jobId]?.articles || []).length}
+        companyReferences={research.companyResearchByJob[resumePreview.jobId] || []}
         busy={resumePreview.busy}
         notice={resumePreview.notice}
         error={resumePreview.error}
       />
 
       <CompanyResearchDialog
-        open={companyResearch.open}
-        company={companyResearch.company}
+        open={research.companyResearch.open}
+        company={research.companyResearch.company}
         needsCompany={
-          !!researchByJob[companyResearch.jobId]?.needsCompany &&
-          (researchByJob[companyResearch.jobId]?.articles || []).length === 0
+          !!research.researchByJob[research.companyResearch.jobId]?.needsCompany &&
+          (research.researchByJob[research.companyResearch.jobId]?.articles || []).length === 0
         }
-        loading={!!researchByJob[companyResearch.jobId]?.loading}
-        error={researchByJob[companyResearch.jobId]?.error || ""}
-        articles={researchByJob[companyResearch.jobId]?.articles || []}
-        warnings={researchByJob[companyResearch.jobId]?.warnings || []}
-        busy={companyResearch.busy}
-        coverLetterLines={tailoringMap[companyResearch.jobId]?.coverLetterResultLines || []}
-        onClose={closeCompanyResearch}
-        onApply={applyCompanyResearch}
-        onResearch={researchTypedCompany}
-        onAddUrl={addResearchUrl}
+        loading={!!research.researchByJob[research.companyResearch.jobId]?.loading}
+        error={research.researchByJob[research.companyResearch.jobId]?.error || ""}
+        articles={research.researchByJob[research.companyResearch.jobId]?.articles || []}
+        warnings={research.researchByJob[research.companyResearch.jobId]?.warnings || []}
+        busy={research.companyResearch.busy}
+        coverLetterLines={tailoringMap[research.companyResearch.jobId]?.coverLetterResultLines || []}
+        onClose={research.closeCompanyResearch}
+        onApply={research.applyCompanyResearch}
+        onResearch={research.researchTypedCompany}
+        onAddUrl={research.addResearchUrl}
       />
 
       <SlotReviewDialog
