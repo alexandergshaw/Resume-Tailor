@@ -1,14 +1,16 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { jsonRequest } from "../../../test/helpers/supabaseMock.js";
 
 vi.mock("@/lib/config/env", () => ({ getServerEnv: vi.fn() }));
 vi.mock("@/lib/llm/geminiClient", () => ({ getGeminiClient: vi.fn() }));
 vi.mock("@/lib/scrape/fetchUrlContent", () => ({ fetchUrlContent: vi.fn() }));
+vi.mock("@/lib/scrape/webSearch", () => ({ searchPostingUrls: vi.fn(async () => []) }));
 
 import { POST, parseArticles, extractGroundingSources } from "./route.js";
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { fetchUrlContent } from "@/lib/scrape/fetchUrlContent";
+import { searchPostingUrls } from "@/lib/scrape/webSearch";
 
 const ARTICLES_JSON = JSON.stringify({
   articles: [
@@ -32,7 +34,14 @@ function mockGemini({ text = ARTICLES_JSON, grounded = true } = {}) {
   });
 }
 
-beforeEach(() => vi.clearAllMocks());
+// Default the aux-feature engine to Gemini by making a key present; the Gemini
+// tests below don't pass an engine, and without a key wantsEmbedded would pick
+// the embedded path. The embedded suite passes engine:"embedded" explicitly.
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.stubEnv("Gemini_LLM_API_Key", "test-key");
+});
+afterEach(() => vi.unstubAllEnvs());
 
 describe("parseArticles", () => {
   it("parses {articles:[...]} and bare arrays, dropping malformed entries", () => {
@@ -195,6 +204,76 @@ describe("POST /api/company-research (custom URL mode)", () => {
     });
     fetchUrlContent.mockResolvedValue({ error: "Failed to fetch URL (status 403)." });
     const res = await POST(jsonRequest({ url: "https://blocked.example/x" }));
+    expect(res.status).toBe(502);
+  });
+});
+
+describe("POST /api/company-research (embedded engine)", () => {
+  it("finds articles via keyless search + scraping — no Gemini", async () => {
+    searchPostingUrls.mockResolvedValue([
+      "https://technews.example/acme-raises-50m",
+      "https://www.linkedin.com/feed/acme", // filtered as non-news
+      "https://bizweekly.example/acme-award",
+    ]);
+    fetchUrlContent.mockImplementation(async (url) => ({
+      title: url.includes("award") ? "Acme wins best workplace" : "Acme raises $50M",
+      description: "Acme announced major news today. The company continues to grow quickly.",
+      publishedDate: "March 2026",
+      finalUrl: url,
+    }));
+
+    const res = await POST(jsonRequest({ company: "Acme", jobTitle: "Engineer", engine: "embedded" }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.articles.length).toBeGreaterThanOrEqual(1);
+    expect(data.articles.every((a) => !a.url.includes("linkedin.com"))).toBe(true);
+    expect(data.articles[0].summary).toContain("Acme");
+    expect(data.articles[0].suggestion).toContain("Acme");
+    expect(data.warnings.length).toBeGreaterThan(0);
+    expect(getGeminiClient).not.toHaveBeenCalled();
+  });
+
+  it("works with no Gemini key configured", async () => {
+    vi.unstubAllEnvs(); // no key at all
+    searchPostingUrls.mockResolvedValue(["https://technews.example/acme"]);
+    fetchUrlContent.mockResolvedValue({
+      title: "Acme grows",
+      description: "Acme is expanding into new markets this year.",
+      finalUrl: "https://technews.example/acme",
+    });
+    const res = await POST(jsonRequest({ company: "Acme", engine: "embedded" }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.articles).toHaveLength(1);
+  });
+
+  it("502s when no articles could be gathered", async () => {
+    searchPostingUrls.mockResolvedValue([]);
+    const res = await POST(jsonRequest({ company: "Nobody Inc", engine: "embedded" }));
+    expect(res.status).toBe(502);
+  });
+
+  it("summarizes a pasted URL on-device in URL mode", async () => {
+    fetchUrlContent.mockResolvedValue({
+      title: "Acme opens new lab",
+      description: "Acme opened a research lab in Boston. It will focus on AI.",
+    });
+    const res = await POST(
+      jsonRequest({ url: "https://news.example/acme-lab", company: "Acme", engine: "embedded" }),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.articles).toHaveLength(1);
+    expect(data.articles[0].url).toBe("https://news.example/acme-lab");
+    expect(data.articles[0].summary).toContain("Acme");
+    expect(getGeminiClient).not.toHaveBeenCalled();
+  });
+
+  it("502s in URL mode when the page can't be read", async () => {
+    fetchUrlContent.mockResolvedValue({ error: "Failed to fetch URL (status 403)." });
+    const res = await POST(
+      jsonRequest({ url: "https://blocked.example/x", company: "Acme", engine: "embedded" }),
+    );
     expect(res.status).toBe(502);
   });
 });

@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { weaveSources } from "../../lib/document/coverLetterWeave";
+import { readEngine } from "../settings/engine";
 
 // Per-job company research: warmed in the background when a preview opens, shown
 // behind the preview's "Research company" button, and (on apply) woven into the
@@ -33,7 +34,7 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
       const res = await fetch("/api/company-research", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ company, jobTitle: jobTitle || "", posting: posting || "" }),
+        body: JSON.stringify({ company, jobTitle: jobTitle || "", posting: posting || "", engine: readEngine() }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 503) {
@@ -87,7 +88,7 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
       const res = await fetch("/api/company-research", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, company: companyResearch.company, jobTitle: companyResearch.jobTitle }),
+        body: JSON.stringify({ url, company: companyResearch.company, jobTitle: companyResearch.jobTitle, engine: readEngine() }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {

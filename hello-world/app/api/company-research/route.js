@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { getServerEnv } from "@/lib/config/env";
 import { fetchUrlContent } from "@/lib/scrape/fetchUrlContent";
+import { wantsEmbedded } from "@/lib/llm/featureEngine";
+import { researchCompanyLocal, researchUrlLocal } from "@/lib/research/companyResearchLocal";
 
 export const runtime = "nodejs";
 
@@ -272,17 +274,35 @@ export async function POST(request) {
   const jobTitle = typeof body?.jobTitle === "string" ? body.jobTitle.trim() : "";
   const posting = typeof body?.posting === "string" ? body.posting : "";
   const url = typeof body?.url === "string" ? body.url.trim() : "";
+  const embedded = wantsEmbedded(body?.engine);
 
   // Custom-URL mode: the user pasted an article they found.
   if (url) {
     if (!/^https?:\/\//i.test(url)) {
       return NextResponse.json({ error: "Enter a valid http(s) article URL." }, { status: 400 });
     }
+    if (embedded) {
+      const result = await researchUrlLocal({ url, company });
+      if (result.error) return NextResponse.json({ error: result.error }, { status: result.status || 502 });
+      return NextResponse.json(result);
+    }
     return researchUrl({ url, company, jobTitle });
   }
 
   if (!company) {
     return NextResponse.json({ error: "A company name is required to research." }, { status: 400 });
+  }
+
+  // Embedded engine: keyless web search + page scraping, no LLM.
+  if (embedded) {
+    const result = await researchCompanyLocal({ company, jobTitle });
+    if (result.articles.length === 0) {
+      return NextResponse.json(
+        { error: "No recent articles were found for that company. Try a different name or add a URL." },
+        { status: 502 },
+      );
+    }
+    return NextResponse.json(result);
   }
 
   let model;
