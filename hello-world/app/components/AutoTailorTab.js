@@ -104,7 +104,7 @@ export default function AutoTailorTab({
                                   const n = Number.parseInt(e.target.value, 10);
                                   if (Number.isFinite(n)) setSavedSearchAutoTailor(entry.id, { autoTailorDailyCap: n });
                                 }}
-                                inputProps={{ min: 1, max: 100, style: { padding: "2px 4px", width: 52, fontSize: "0.75rem" } }}
+                                slotProps={{ htmlInput: { min: 1, max: 100, style: { padding: "2px 4px", width: 52, fontSize: "0.75rem" } } }}
                                 sx={{ "& .MuiOutlinedInput-root": { borderRadius: 1 } }}
                               />
                               <span>per run</span>

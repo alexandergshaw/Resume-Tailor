@@ -102,10 +102,17 @@ describe("wiring", () => {
     expect(src).toContain("suppressHydrationWarning");
   });
 
-  it("layout.js mounts the engine picker and settings menu in the bar", () => {
+  it("layout.js mounts the app header", () => {
     const src = read(join(APP_DIR, "layout.js"));
+    expect(src).toContain("AppHeader");
+  });
+
+  it("AppHeader carries the engine picker + settings menu and hides on auth routes", () => {
+    const src = read(join(COMPONENTS_DIR, "AppHeader.js"));
     expect(src).toContain("EngineSelect");
     expect(src).toContain("SettingsMenu");
+    expect(src).toContain("usePathname");
+    expect(src).toMatch(/\/login/);
   });
 
   it("Providers wires the color mode into the MUI theme", () => {
@@ -119,7 +126,7 @@ describe("wiring", () => {
     const src = read(join(COMPONENTS_DIR, "SettingsMenu.js"));
     expect(src).toContain("useColorMode");
     expect(src).toContain("GmailButton");
-    expect(src).toContain("AuthButton");
+    expect(src).toContain("AccountSection");
     expect(src).toMatch(/aria-label/);
   });
 

@@ -991,7 +991,7 @@ export default function LiveFeedTab({
                                   notifyEmail: e.target.value.trim(),
                                 })
                               }
-                              inputProps={{ style: { padding: "4px 6px", fontSize: "0.75rem" } }}
+                              slotProps={{ htmlInput: { style: { padding: "4px 6px", fontSize: "0.75rem" } } }}
                               sx={{ "& .MuiOutlinedInput-root": { borderRadius: 1 } }}
                             />
                           )}

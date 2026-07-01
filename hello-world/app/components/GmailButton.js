@@ -1,14 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import Typography from "@mui/material/Typography";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 
+// Gmail connection control for the settings menu: connect when disconnected, or
+// show the connected state with a disconnect action.
 export default function GmailButton() {
   const [connected, setConnected] = useState(null); // null = loading
   const [isDisconnecting, setIsDisconnecting] = useState(false);
 
   useEffect(() => {
     fetch("/api/gmail/status")
-      .then((r) => r.ok ? r.json() : null)
+      .then((r) => (r.ok ? r.json() : null))
       .then((data) => setConnected(data?.connected ?? false))
       .catch(() => setConnected(false));
   }, []);
@@ -23,48 +29,42 @@ export default function GmailButton() {
     }
   }
 
-  // Still checking — render nothing to avoid layout shift
-  if (connected === null) return null;
+  if (connected === null) {
+    return (
+      <Typography sx={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>Checking…</Typography>
+    );
+  }
 
   if (!connected) {
     return (
-      <a href="/api/gmail/connect" style={styles.btn}>
+      <Button
+        href="/api/gmail/connect"
+        variant="outlined"
+        size="small"
+        fullWidth
+        sx={{ textTransform: "none", justifyContent: "flex-start", borderColor: "var(--border-strong)", color: "var(--text-primary)" }}
+      >
         Connect Gmail
-      </a>
+      </Button>
     );
   }
 
   return (
-    <div style={styles.row}>
-      <span style={styles.label}>Gmail connected</span>
-      <button
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+        <CheckCircleIcon fontSize="small" sx={{ color: "var(--success)" }} />
+        <Typography sx={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>Gmail connected</Typography>
+      </Box>
+      <Button
         onClick={handleDisconnect}
         disabled={isDisconnecting}
-        style={{ ...styles.btn, ...styles.outlineBtn }}
+        variant="text"
+        size="small"
+        color="inherit"
+        sx={{ textTransform: "none", justifyContent: "flex-start", color: "var(--text-secondary)" }}
       >
         {isDisconnecting ? "Disconnecting…" : "Disconnect Gmail"}
-      </button>
-    </div>
+      </Button>
+    </Box>
   );
 }
-
-const styles = {
-  row: { display: "flex", alignItems: "center", gap: 10 },
-  label: { fontSize: 13, color: "var(--text-secondary)" },
-  btn: {
-    fontSize: 13,
-    fontWeight: 600,
-    padding: "6px 14px",
-    borderRadius: 6,
-    border: "none",
-    background: "var(--accent)",
-    color: "var(--accent-contrast)",
-    cursor: "pointer",
-    textDecoration: "none",
-  },
-  outlineBtn: {
-    background: "transparent",
-    border: "1px solid var(--border-strong)",
-    color: "var(--text-primary)",
-  },
-};

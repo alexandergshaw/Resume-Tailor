@@ -13,7 +13,7 @@ import LightModeIcon from "@mui/icons-material/LightMode";
 import DarkModeIcon from "@mui/icons-material/DarkMode";
 import { useColorMode } from "@/app/theme/colorMode";
 import GmailButton from "./GmailButton";
-import AuthButton from "./AuthButton";
+import AccountSection from "./AccountSection";
 
 // Section wrapper: an uppercase label above its control(s).
 function Section({ label, children }) {
@@ -102,7 +102,7 @@ export default function SettingsMenu() {
           </Section>
           <Divider />
           <Section label="Account">
-            <AuthButton />
+            <AccountSection />
           </Section>
         </Box>
       </Popover>

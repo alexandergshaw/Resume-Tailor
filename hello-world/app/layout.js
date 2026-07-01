@@ -1,8 +1,7 @@
 import "./globals.css";
 import { Manrope, Source_Serif_4 } from "next/font/google";
 import Providers from "@/app/components/Providers";
-import EngineSelect from "@/app/components/EngineSelect";
-import SettingsMenu from "@/app/components/SettingsMenu";
+import AppHeader from "@/app/components/AppHeader";
 import { themeCssText, noFlashScript } from "@/app/theme";
 
 const manrope = Manrope({
@@ -34,50 +33,7 @@ export default function RootLayout({ children }) {
       </head>
       <body className={`${manrope.variable} ${sourceSerif.variable}`}>
         <Providers>
-          <header
-            style={{
-              position: "sticky",
-              top: 0,
-              zIndex: 1100,
-              display: "flex",
-              alignItems: "center",
-              gap: "10px",
-              padding: "10px clamp(12px, 4vw, 24px)",
-              borderBottom: "1px solid var(--border)",
-              background: "var(--bg-surface)",
-              boxShadow: "var(--shadow-soft)",
-              flexWrap: "wrap",
-            }}
-          >
-            <span
-              style={{
-                marginRight: "auto",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "8px",
-                fontFamily: "var(--font-source-serif), Georgia, serif",
-                fontWeight: 600,
-                fontSize: "1.15rem",
-                letterSpacing: "-0.01em",
-                color: "var(--text-primary)",
-                whiteSpace: "nowrap",
-              }}
-            >
-              <span
-                aria-hidden="true"
-                style={{
-                  width: 9,
-                  height: 9,
-                  borderRadius: "50%",
-                  background: "var(--accent)",
-                  flexShrink: 0,
-                }}
-              />
-              Resume Tailor
-            </span>
-            <EngineSelect />
-            <SettingsMenu />
-          </header>
+          <AppHeader />
           {children}
         </Providers>
       </body>
