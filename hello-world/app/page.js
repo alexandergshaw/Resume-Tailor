@@ -37,6 +37,7 @@ import { parseDocxToModel, linesToModel } from "../lib/document/docxPreview";
 import { weaveSources } from "../lib/document/coverLetterWeave";
 import { parseEmploymentHistory } from "../lib/resume/parseEmployment";
 import { useProfileEntries } from "./hooks/useProfileEntries";
+import { useScreenshots } from "./hooks/useScreenshots";
 import {
   REFERENCE_CONFIG,
   EDUCATION_CONFIG,
@@ -123,14 +124,6 @@ export default function Home() {
   const [companyResearchByJob, setCompanyResearchByJob] = useState({});
   // Bumped to force the open preview to reload after research is woven in.
   const [previewReloadKey, setPreviewReloadKey] = useState(0);
-  // Screenshot → posting pipeline: each item is { id, name, previewUrl, file,
-  // status: "pending"|"processing"|"done"|"error", statusLabel, jobTitle,
-  // company, url, error, jobId }.
-  const [screenshotItems, setScreenshotItems] = useState([]);
-  const [screenshotProcessing, setScreenshotProcessing] = useState(false);
-  const [screenshotError, setScreenshotError] = useState("");
-  // Guards the auto-runner against overlapping/re-entrant processing passes.
-  const screenshotBusyRef = useRef(false);
   const [batchTailorState, setBatchTailorState] = useState({
     running: false,
     total: 0,
@@ -235,6 +228,17 @@ export default function Home() {
   const employmentCtl = useProfileEntries(EMPLOYMENT_CONFIG);
   // Status of the "import from résumé" action on the Employment History section.
   const [employmentImport, setEmploymentImport] = useState({ loading: false, error: "", message: "" });
+
+  // Screenshots → tailored-documents pipeline (Manual Applying › Screenshots).
+  const screenshots = useScreenshots({
+    resumeFile,
+    tailoringMap,
+    openResumePreview,
+    previewScopeAvailable,
+    setTrackedJobs,
+    handleTailorJob,
+    updateTailoringJob,
+  });
 
   // Supplementary materials locker (transcripts etc.). Each item:
   // { name, size, source: "remote"|"local", file? }. Persisted to Supabase for
@@ -2586,211 +2590,6 @@ export default function Home() {
     if (hasCover) startBackgroundResearch({ jobId, company, jobTitle, posting });
   }
 
-  // --- Screenshots → tailored documents --------------------------------------
-  function updateScreenshotItem(id, patch) {
-    setScreenshotItems((items) => items.map((it) => (it.id === id ? { ...it, ...patch } : it)));
-  }
-
-  function addScreenshotFiles(files) {
-    const imgs = (files || []).filter((f) => f && /^image\/(png|jpe?g|webp)$/i.test(f.type || ""));
-    if (imgs.length === 0) {
-      setScreenshotError("Only PNG, JPG, or WebP screenshots are supported.");
-      return;
-    }
-    setScreenshotError("");
-    const added = imgs.map((file, i) => ({
-      id: `shot-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
-      name: file.name,
-      file,
-      previewUrl: typeof URL !== "undefined" ? URL.createObjectURL(file) : "",
-      status: "pending",
-      statusLabel: "",
-      jobTitle: "",
-      company: "",
-      url: "",
-      error: "",
-      jobId: null,
-    }));
-    setScreenshotItems((items) => [...items, ...added]);
-  }
-
-  function removeScreenshotItem(id) {
-    setScreenshotItems((items) => {
-      const target = items.find((it) => it.id === id);
-      if (target?.previewUrl) {
-        try { URL.revokeObjectURL(target.previewUrl); } catch { /* ignore */ }
-      }
-      return items.filter((it) => it.id !== id);
-    });
-  }
-
-  function clearScreenshots() {
-    setScreenshotItems((items) => {
-      for (const it of items) {
-        if (it.previewUrl) {
-          try { URL.revokeObjectURL(it.previewUrl); } catch { /* ignore */ }
-        }
-      }
-      return [];
-    });
-    setScreenshotError("");
-  }
-
-  function previewScreenshotItem(item) {
-    if (!item?.jobId) return;
-    const t = tailoringMap[item.jobId] || {};
-    openResumePreview(
-      {
-        id: item.jobId,
-        title: item.jobTitle || t.generatedJobTitle || "",
-        company: item.company || "",
-        description: t.jobDescription || "",
-      },
-      { tab: previewScopeAvailable(t, "cover") ? "cover" : "resume" },
-    );
-  }
-
-  // Downscale + re-encode a screenshot before upload so the request stays well
-  // under the serverless body limit (~4.5MB) and OCR/vision run faster. Falls
-  // back to the original file if the browser can't process it.
-  async function compressScreenshot(file, maxDim = 1600, quality = 0.85) {
-    try {
-      if (typeof createImageBitmap !== "function" || typeof document === "undefined") {
-        return { blob: file, name: file.name };
-      }
-      const bitmap = await createImageBitmap(file);
-      const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
-      const w = Math.max(1, Math.round(bitmap.width * scale));
-      const h = Math.max(1, Math.round(bitmap.height * scale));
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(bitmap, 0, 0, w, h);
-      bitmap.close?.();
-      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
-      if (blob && blob.size > 0 && blob.size < file.size) {
-        return { blob, name: file.name.replace(/\.[^.]+$/, "") + ".jpg" };
-      }
-    } catch {
-      /* fall through to the original file */
-    }
-    return { blob: file, name: file.name };
-  }
-
-  // Process each screenshot one by one: read it, find the live posting URL, pull
-  // the posting, and tailor a resume (+ cover letter) into a tracked job.
-  async function processScreenshots() {
-    if (screenshotBusyRef.current) return;
-    if (!resumeFile) {
-      setScreenshotError("Upload a resume first so each screenshot can be tailored.");
-      return;
-    }
-    const queue = screenshotItems.filter((it) => it.status === "pending");
-    if (queue.length === 0) return;
-    setScreenshotError("");
-    screenshotBusyRef.current = true;
-    setScreenshotProcessing(true);
-    try {
-      for (const item of queue) {
-        updateScreenshotItem(item.id, { status: "processing", statusLabel: "Reading screenshot…", error: "" });
-        let data;
-        try {
-          const upload = await compressScreenshot(item.file);
-          const fd = new FormData();
-          fd.append("image", upload.blob, upload.name);
-          const res = await fetch("/api/posting-from-image", { method: "POST", body: fd });
-          data = await res.json().catch(() => ({}));
-          if (!res.ok) {
-            updateScreenshotItem(item.id, {
-              status: "error",
-              statusLabel: "",
-              error:
-                data?.error ||
-                (res.status === 503
-                  ? "Screenshot reading is unavailable (Gemini key not configured)."
-                  : res.status === 413
-                    ? "That screenshot is too large to upload — try a smaller crop."
-                    : "Couldn't read that screenshot."),
-            });
-            continue;
-          }
-        } catch (err) {
-          // A bare "Failed to fetch" means no response came back — usually an
-          // oversized upload, a timeout, or the server being unreachable.
-          const networkish =
-            err?.name === "TypeError" || /failed to fetch|networkerror|load failed/i.test(err?.message || "");
-          updateScreenshotItem(item.id, {
-            status: "error",
-            statusLabel: "",
-            error: networkish
-              ? "Couldn't reach the server — the screenshot may be too large or the request timed out. Try a smaller screenshot."
-              : err.message || "Couldn't read that screenshot.",
-          });
-          continue;
-        }
-
-        if (!data?.found) {
-          updateScreenshotItem(item.id, {
-            status: "error",
-            statusLabel: "",
-            jobTitle: data?.jobTitle || "",
-            company: data?.company || "",
-            url: data?.url || "",
-            error: data?.reason || "Couldn't find the live posting URL for this screenshot.",
-          });
-          continue;
-        }
-
-        updateScreenshotItem(item.id, {
-          status: "processing",
-          statusLabel: "Tailoring…",
-          jobTitle: data.jobTitle || "",
-          company: data.company || "",
-          url: data.url || "",
-        });
-
-        const job = {
-          id: item.id,
-          title: data.jobTitle || "Untitled role",
-          company: data.company || "",
-          url: data.url || "",
-          description: data.postingText || "",
-        };
-        setTrackedJobs((prev) => (prev.some((j) => j.id === job.id) ? prev : [...prev, job]));
-        const result = await handleTailorJob(job, { skipDownload: true });
-        if (result?.ok) {
-          // Name the files from the screenshot's own clean title/company. The
-          // tailor engine can re-derive a noisier title (salary, location), so
-          // pin the title we read from the posting.
-          if (data.jobTitle) updateTailoringJob(job.id, { generatedJobTitle: data.jobTitle });
-          updateScreenshotItem(item.id, { status: "done", statusLabel: "", jobId: job.id });
-        } else {
-          updateScreenshotItem(item.id, { status: "error", statusLabel: "", error: result?.error || "Tailoring failed." });
-        }
-      }
-    } finally {
-      screenshotBusyRef.current = false;
-      setScreenshotProcessing(false);
-    }
-  }
-
-  // Kick off processing automatically as soon as screenshots are added — no
-  // Generate click. Reruns when new pending items appear (more uploads, or a
-  // retry that resets an item to pending), once any in-flight pass finishes.
-  useEffect(() => {
-    if (screenshotProcessing || !resumeFile) return;
-    if (!screenshotItems.some((it) => it.status === "pending")) return;
-    processScreenshots();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [screenshotItems, screenshotProcessing, resumeFile]);
-
-  // Reset failed items to pending so the auto-runner retries them.
-  function retryFailedScreenshots() {
-    setScreenshotItems((items) =>
-      items.map((it) => (it.status === "error" ? { ...it, status: "pending", statusLabel: "", error: "" } : it)),
-    );
-  }
 
   // "Apply" action for an auto-tailored row: download the tailored resume,
   // open the posting in a new tab, and bump the application status from
@@ -3869,15 +3668,15 @@ export default function Home() {
           />
         ) : activeSection === "screenshots" ? (
           <ScreenshotTab
-            items={screenshotItems}
-            onAddFiles={addScreenshotFiles}
-            onRemoveItem={removeScreenshotItem}
-            onClear={clearScreenshots}
-            onRetry={retryFailedScreenshots}
-            onPreview={previewScreenshotItem}
-            processing={screenshotProcessing}
+            items={screenshots.items}
+            onAddFiles={screenshots.addFiles}
+            onRemoveItem={screenshots.removeItem}
+            onClear={screenshots.clear}
+            onRetry={screenshots.retry}
+            onPreview={screenshots.previewItem}
+            processing={screenshots.processing}
             resumeReady={!!resumeFile}
-            error={screenshotError}
+            error={screenshots.error}
           />
         ) : (
           <PostingUrlTab
