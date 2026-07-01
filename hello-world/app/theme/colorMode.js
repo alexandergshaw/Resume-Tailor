@@ -10,20 +10,26 @@ import { THEME_STORAGE_KEY } from "./tokens";
 
 const listeners = new Set();
 
-function currentMode() {
-  if (typeof document === "undefined") return "light";
-  const attr = document.documentElement.getAttribute("data-theme");
-  return attr === "dark" ? "dark" : "light";
+// Coerce any input to a valid mode; anything that isn't "dark" is "light".
+export function normalizeMode(value) {
+  return value === "dark" ? "dark" : "light";
 }
 
-function subscribe(callback) {
+// Read the current mode from <html data-theme>. Returns "light" during SSR
+// (no document) so the client hydrates against a stable value.
+export function readMode() {
+  if (typeof document === "undefined") return "light";
+  return normalizeMode(document.documentElement.getAttribute("data-theme"));
+}
+
+export function subscribe(callback) {
   listeners.add(callback);
   return () => listeners.delete(callback);
 }
 
 // Persist + apply the mode, then notify subscribers so every consumer re-reads.
 export function setMode(next) {
-  const mode = next === "dark" ? "dark" : "light";
+  const mode = normalizeMode(next);
   try {
     document.documentElement.setAttribute("data-theme", mode);
     localStorage.setItem(THEME_STORAGE_KEY, mode);
@@ -34,7 +40,7 @@ export function setMode(next) {
 }
 
 export function useColorMode() {
-  const mode = useSyncExternalStore(subscribe, currentMode, () => "light");
+  const mode = useSyncExternalStore(subscribe, readMode, () => "light");
   return {
     mode,
     setMode,
