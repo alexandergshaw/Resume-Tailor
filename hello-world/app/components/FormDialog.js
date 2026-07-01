@@ -28,6 +28,7 @@ export default function FormDialog({
   submitDisabled = false,
   cancelLabel = "Cancel",
   contentSx,
+  actionsSx,
   dividers = true,
   actions,
   allowCloseWhileBusy = false,
@@ -54,9 +55,9 @@ export default function FormDialog({
           <FieldError sx={{ mt: 1.5 }}>{error}</FieldError>
         </DialogContent>
         {actions !== undefined ? (
-          actions ? <DialogActions>{actions}</DialogActions> : null
+          actions ? <DialogActions sx={actionsSx}>{actions}</DialogActions> : null
         ) : (
-          <DialogActions>
+          <DialogActions sx={actionsSx}>
             <Button onClick={requestClose} disabled={busy}>
               {cancelLabel}
             </Button>

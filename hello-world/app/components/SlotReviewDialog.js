@@ -1,15 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import Dialog from "@mui/material/Dialog";
-import DialogTitle from "@mui/material/DialogTitle";
-import DialogContent from "@mui/material/DialogContent";
-import DialogActions from "@mui/material/DialogActions";
 import Button from "@mui/material/Button";
 import TextField from "@mui/material/TextField";
 import Box from "@mui/material/Box";
 import CircularProgress from "@mui/material/CircularProgress";
-import { useIsMobile } from "../hooks/useResponsive";
+import FormDialog from "./FormDialog";
+import FieldError from "./FieldError";
 
 // Review/override the external Resume Tailor API's proposed slot values, then
 // generate the .docx with the edited values. Slots arrive asynchronously after
@@ -23,7 +20,6 @@ export default function SlotReviewDialog({
   onGenerate,
   busy = false,
 }) {
-  const isMobile = useIsMobile();
   const [draft, setDraft] = useState({});
   const [prevSlots, setPrevSlots] = useState(slots);
 
@@ -39,15 +35,35 @@ export default function SlotReviewDialog({
   const setValue = (key, value) => setDraft((prev) => ({ ...prev, [key]: value }));
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth fullScreen={isMobile}>
-      <DialogTitle sx={{ pb: 1 }}>Review fields</DialogTitle>
-      <DialogContent dividers>
+    <FormDialog
+      open={open}
+      onClose={onClose}
+      title="Review fields"
+      maxWidth="md"
+      actionsSx={{ flexWrap: "wrap", gap: 1, px: 2, py: 1.5 }}
+      actions={
+        <>
+          <Button onClick={onClose} sx={{ textTransform: "none" }}>
+            Cancel
+          </Button>
+          <Box sx={{ flex: 1 }} />
+          <Button
+            variant="contained"
+            onClick={() => onGenerate(draft)}
+            disabled={busy || loading || slots.length === 0}
+            sx={{ textTransform: "none" }}
+          >
+            {busy ? "Generating…" : "Generate with these fields"}
+          </Button>
+        </>
+      }
+    >
         {loading ? (
           <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
             <CircularProgress />
           </Box>
         ) : error ? (
-          <Box sx={{ color: "var(--danger)", fontSize: "0.9rem" }}>{error}</Box>
+          <FieldError sx={{ fontSize: "0.9rem" }}>{error}</FieldError>
         ) : slots.length === 0 ? (
           <Box sx={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>
             No fields to review for this posting.
@@ -83,21 +99,6 @@ export default function SlotReviewDialog({
             ))}
           </Box>
         )}
-      </DialogContent>
-      <DialogActions sx={{ flexWrap: "wrap", gap: 1, px: 2, py: 1.5 }}>
-        <Button onClick={onClose} sx={{ textTransform: "none" }}>
-          Cancel
-        </Button>
-        <Box sx={{ flex: 1 }} />
-        <Button
-          variant="contained"
-          onClick={() => onGenerate(draft)}
-          disabled={busy || loading || slots.length === 0}
-          sx={{ textTransform: "none" }}
-        >
-          {busy ? "Generating…" : "Generate with these fields"}
-        </Button>
-      </DialogActions>
-    </Dialog>
+    </FormDialog>
   );
 }

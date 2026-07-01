@@ -3,11 +3,7 @@
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Checkbox from "@mui/material/Checkbox";
-import Dialog from "@mui/material/Dialog";
-import DialogActions from "@mui/material/DialogActions";
-import DialogContent from "@mui/material/DialogContent";
-import DialogTitle from "@mui/material/DialogTitle";
-import { useIsMobile } from "../hooks/useResponsive";
+import FormDialog from "./FormDialog";
 
 export default function BatchTailorDialog({
   batchTailorDialog,
@@ -15,23 +11,35 @@ export default function BatchTailorDialog({
   batchTailorState,
   startBatchTailor,
 }) {
-  const isMobile = useIsMobile();
+  const close = () => setBatchTailorDialog({ open: false, candidates: [], selectedIds: [] });
+  const running = batchTailorState.running;
+  const noneSelected = batchTailorDialog.selectedIds.length === 0;
+
   return (
-    <Dialog
+    <FormDialog
       open={batchTailorDialog.open}
-      onClose={() => {
-        if (batchTailorState.running) return;
-        setBatchTailorDialog({ open: false, candidates: [], selectedIds: [] });
-      }}
-      maxWidth="sm"
-      fullWidth
-      fullScreen={isMobile}
+      onClose={close}
+      busy={running}
+      title={
+        <>
+          Tailor {batchTailorDialog.selectedIds.length} of {batchTailorDialog.candidates.length} job
+          {batchTailorDialog.candidates.length === 1 ? "" : "s"}?
+        </>
+      }
+      actions={
+        <>
+          <Button onClick={close} disabled={running}>
+            Cancel
+          </Button>
+          <Button onClick={() => startBatchTailor(true)} disabled={running || noneSelected}>
+            Tailor only (no download)
+          </Button>
+          <Button variant="contained" onClick={() => startBatchTailor(false)} disabled={running || noneSelected}>
+            Tailor &amp; download
+          </Button>
+        </>
+      }
     >
-      <DialogTitle>
-        Tailor {batchTailorDialog.selectedIds.length} of {batchTailorDialog.candidates.length} job
-        {batchTailorDialog.candidates.length === 1 ? "" : "s"}?
-      </DialogTitle>
-      <DialogContent dividers>
         <Box sx={{ fontSize: 13, color: "var(--text-secondary)", mb: 1 }}>
           Each selected job will be tracked, run through the LLM, and the
           tailored resume saved to your library. Choose whether to also
@@ -104,28 +112,6 @@ export default function BatchTailorDialog({
             );
           })}
         </Box>
-      </DialogContent>
-      <DialogActions>
-        <Button
-          onClick={() => setBatchTailorDialog({ open: false, candidates: [], selectedIds: [] })}
-          disabled={batchTailorState.running}
-        >
-          Cancel
-        </Button>
-        <Button
-          onClick={() => startBatchTailor(true)}
-          disabled={batchTailorState.running || batchTailorDialog.selectedIds.length === 0}
-        >
-          Tailor only (no download)
-        </Button>
-        <Button
-          variant="contained"
-          onClick={() => startBatchTailor(false)}
-          disabled={batchTailorState.running || batchTailorDialog.selectedIds.length === 0}
-        >
-          Tailor &amp; download
-        </Button>
-      </DialogActions>
-    </Dialog>
+    </FormDialog>
   );
 }

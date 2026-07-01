@@ -3,15 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import Dialog from "@mui/material/Dialog";
-import DialogActions from "@mui/material/DialogActions";
-import DialogContent from "@mui/material/DialogContent";
-import DialogTitle from "@mui/material/DialogTitle";
 import Link from "@mui/material/Link";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
-import { useIsMobile } from "../hooks/useResponsive";
+import FormDialog from "./FormDialog";
 
 import { AUTOFILL_FIELDS, buildBookmarklet, profileHasValues } from "@/lib/autofill/buildBookmarklet";
 
@@ -25,7 +20,6 @@ const EMPTY_PROFILE = AUTOFILL_FIELDS.reduce((acc, f) => {
 // bookmarks bar is a one-time setup; clicking "Auto Fill" on a card opens the
 // posting and copies the same bookmarklet to the clipboard for quick use.
 export default function AutofillProfileDialog({ open, onClose, profile, onSaved }) {
-  const isMobile = useIsMobile();
   const [draft, setDraft] = useState(EMPTY_PROFILE);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -69,9 +63,15 @@ export default function AutofillProfileDialog({ open, onClose, profile, onSaved 
   };
 
   return (
-    <Dialog open={open} onClose={() => (saving ? null : onClose())} maxWidth="sm" fullWidth fullScreen={isMobile}>
-      <DialogTitle>Autofill profile</DialogTitle>
-      <DialogContent dividers sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 2 }}>
+    <FormDialog
+      open={open}
+      onClose={onClose}
+      title="Autofill profile"
+      contentSx={{ display: "flex", flexDirection: "column", gap: 2, pt: 2 }}
+      busy={saving}
+      onSubmit={handleSave}
+      submitLabel="Save"
+    >
         <Typography variant="body2" color="text.secondary">
           These values are used by <strong>Auto Fill</strong> to populate application forms on a
           posting page. Drag the button below to your bookmarks bar once; then on any posting click
@@ -131,15 +131,6 @@ export default function AutofillProfileDialog({ open, onClose, profile, onSaved 
               : "Add at least one field above to enable the bookmarklet."}
           </Typography>
         </Box>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose} disabled={saving} sx={{ textTransform: "none" }}>
-          Cancel
-        </Button>
-        <Button onClick={handleSave} variant="contained" disabled={saving} sx={{ textTransform: "none" }}>
-          {saving ? "Saving…" : "Save"}
-        </Button>
-      </DialogActions>
-    </Dialog>
+    </FormDialog>
   );
 }
