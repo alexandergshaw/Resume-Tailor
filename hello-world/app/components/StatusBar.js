@@ -259,12 +259,14 @@ export default function StatusBar({
       <Menu anchorEl={menu.anchorEl} open={Boolean(menu.anchorEl)} onClose={closeMenu}>
         {menuJob && menuFlags
           ? [
-              menuFlags.status === "done" && previewable(menuFlags.tailoring).hasAny ? (
-                <MenuItem key="preview" onClick={() => runAndClose(() => openResumePreview?.(menuJob))}>
-                  Preview / edit documents
-                </MenuItem>
-              ) : null,
-              menuFlags.status === "done" && previewable(menuFlags.tailoring).hasCover ? (
+              <MenuItem
+                key="preview"
+                disabled={!previewable(menuFlags.tailoring).hasAny}
+                onClick={() => runAndClose(() => openResumePreview?.(menuJob))}
+              >
+                Preview / edit résumé & cover letter
+              </MenuItem>,
+              previewable(menuFlags.tailoring).hasCover ? (
                 <MenuItem key="preview-cover" onClick={() => runAndClose(() => openResumePreview?.(menuJob, { tab: "cover" }))}>
                   Preview cover letter
                 </MenuItem>
