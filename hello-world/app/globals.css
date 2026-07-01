@@ -24,11 +24,17 @@ html {
 }
 
 body {
-  min-height: 100%;
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
   color: var(--text-primary);
+  /* Pin the radial backdrop to the viewport. Without this, on tall pages the
+     body-box background propagates to the (taller) canvas and tiles down the
+     page — the visible "repeat". Fixed + no-repeat keeps one stable backdrop. */
   background: var(--app-background);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+  background-size: cover;
   font-family: var(--font-manrope), "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
