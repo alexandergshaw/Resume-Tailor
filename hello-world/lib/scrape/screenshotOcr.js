@@ -106,6 +106,32 @@ function guessCompany(lines, title) {
   return "";
 }
 
+// "City, ST" (best signal for URL search — disambiguates same-named employers)
+// and remote/hybrid work-mode markers. City must look like a proper noun and
+// the state must be a real USPS code, so "Inc, CA" noise doesn't match.
+const US_STATES =
+  "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC";
+const STATE_SET = new Set(US_STATES.split(" "));
+const CITY_STATE_RE = /\b([A-Z][a-z]+(?:[ .-][A-Z][a-z]+){0,3}),\s*([A-Z]{2})\b/;
+const REMOTE_RE = /\b(remote|hybrid|work from home|wfh)\b/i;
+
+// Best-effort location from OCR lines, preferring lines near the title (job
+// boards put "Company · City, ST · 2 days ago" right under it). Returns
+// "City, ST", else "Remote" when only a work-mode marker is present, else "".
+export function extractLocation(lines, title) {
+  const ti = lines.indexOf(title);
+  const near = ti >= 0 ? [lines[ti], lines[ti + 1], lines[ti + 2], lines[ti - 1]].filter(Boolean) : [];
+  const ordered = [...near, ...lines];
+  for (const l of ordered) {
+    const m = l.match(CITY_STATE_RE);
+    if (m && STATE_SET.has(m[2])) return `${m[1]}, ${m[2]}`;
+  }
+  for (const l of ordered) {
+    if (REMOTE_RE.test(l)) return "Remote";
+  }
+  return "";
+}
+
 // Derive the reader contract from already-extracted OCR text (e.g. OCR done in
 // the browser): { jobTitle, company, location, postingText, searchQuery }.
 // extractPostingMeta is tuned for clean pasted postings and tends to latch onto
@@ -129,12 +155,16 @@ export function fieldsFromText(text) {
     company = guessCompany(lines, jobTitle) || (isChromeLine(company) ? "" : company);
   }
 
+  // Location disambiguates same-named employers when searching for the live
+  // posting URL (the vision path extracts it; now the OCR path does too).
+  const location = extractLocation(lines, jobTitle);
+
   return {
     jobTitle: jobTitle || "",
     company: company || "",
-    location: "",
+    location,
     postingText: body,
-    searchQuery: [jobTitle, company].filter(Boolean).join(" "),
+    searchQuery: [jobTitle, company, location].filter(Boolean).join(" "),
   };
 }
 

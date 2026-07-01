@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fieldsFromText } from "./screenshotOcr.js";
+import { fieldsFromText, extractLocation } from "./screenshotOcr.js";
 
 describe("fieldsFromText", () => {
   it("builds the reader contract from OCR text", () => {
@@ -7,8 +7,10 @@ describe("fieldsFromText", () => {
     expect(out.postingText).toContain("Senior Software Engineer");
     expect(typeof out.jobTitle).toBe("string");
     expect(typeof out.company).toBe("string");
-    // searchQuery is just the (non-empty) title + company joined.
-    expect(out.searchQuery).toBe([out.jobTitle, out.company].filter(Boolean).join(" "));
+    // searchQuery is the (non-empty) title + company + location joined.
+    expect(out.searchQuery).toBe(
+      [out.jobTitle, out.company, out.location].filter(Boolean).join(" "),
+    );
   });
 
   it("handles empty input", () => {
@@ -37,5 +39,28 @@ describe("fieldsFromText", () => {
     const out = fieldsFromText(text);
     expect(out.jobTitle).toBe("Senior Product Manager - Remote (US)");
     expect(out.company).toBe("GitHub");
+    expect(out.location).toBe("Remote");
+  });
+
+  it("extracts a City, ST location and includes it in the search query", () => {
+    const text = "Building Inspector\nDouglas County · Omaha, NE · 3 days ago\nApply now\nInspect residential construction.";
+    const out = fieldsFromText(text);
+    expect(out.location).toBe("Omaha, NE");
+    expect(out.searchQuery).toContain("Omaha, NE");
+  });
+});
+
+describe("extractLocation", () => {
+  it("finds City, ST near the title and validates the state code", () => {
+    expect(extractLocation(["Engineer", "Acme · Salt Lake City, UT · today"], "Engineer")).toBe(
+      "Salt Lake City, UT",
+    );
+    // "XX" is not a USPS state code — not a location.
+    expect(extractLocation(["Widgets Ltd, XX"], "")).toBe("");
+  });
+
+  it("falls back to Remote when only a work-mode marker exists", () => {
+    expect(extractLocation(["Engineer", "Fully remote position"], "Engineer")).toBe("Remote");
+    expect(extractLocation(["Engineer", "No location anywhere"], "Engineer")).toBe("");
   });
 });
