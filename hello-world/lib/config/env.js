@@ -12,6 +12,10 @@ export function getServerEnv() {
   return {
     geminiApiKey: process.env.Gemini_LLM_API_Key,
     geminiModel: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+    // Deepgram powers the interview copilot's real-time speech-to-text. Optional
+    // so the rest of the app still boots without it; the /copilot token route
+    // returns a clear 503 when it's unset.
+    deepgramApiKey: process.env.DEEPGRAM_API_KEY || null,
     kvRestApiUrl: process.env.KV_REST_API_URL || null,
     kvRestApiToken: process.env.KV_REST_API_TOKEN || null,
     rapidApiKey: process.env.RAPID_API_KEY,
