@@ -30,8 +30,6 @@ import { useTheme } from "@mui/material/styles";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
-import DownloadIcon from "@mui/icons-material/CloudDownload";
-import HelpIcon from "@mui/icons-material/Help";
 
 async function api(path, method, body) {
   const res = await fetch(path, {
@@ -136,9 +134,9 @@ function EditDialog({ open, title, schema, draft, setDraft, onClose, onSave, sav
           ))}
         </Stack>
       </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose} disabled={saving}>Cancel</Button>
-        <Button variant="contained" onClick={onSave} disabled={saving}>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button onClick={onClose} disabled={saving} sx={{ textTransform: "none" }}>Cancel</Button>
+        <Button variant="contained" size="small" disableElevation onClick={onSave} disabled={saving} sx={{ textTransform: "none", borderRadius: 1.5 }}>
           {saving ? "Saving…" : "Save"}
         </Button>
       </DialogActions>
@@ -216,49 +214,65 @@ function EntityTab({ title, description, rows, schema, endpoint, idField = "id",
 
   return (
     <Box>
-      <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1} sx={{ mb: 1.5 }}>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1} sx={{ mb: 2 }}>
         <Box>
-          <Typography variant="h6">{title}s</Typography>
-          {description ? <Typography variant="body2" color="text.secondary">{description}</Typography> : null}
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, lineHeight: 1.2 }}>{title}s</Typography>
+          {description ? <Typography variant="caption" color="text.secondary">{description}</Typography> : null}
         </Box>
-        <Button startIcon={<AddIcon />} variant="contained" onClick={openAdd} sx={{ alignSelf: { xs: "flex-start", sm: "auto" } }}>Add {title.toLowerCase()}</Button>
+        <Button startIcon={<AddIcon sx={{ fontSize: 18 }} />} variant="contained" size="small" disableElevation onClick={openAdd} sx={{ whiteSpace: "nowrap", textTransform: "none", borderRadius: 1.5 }}>Add</Button>
       </Stack>
       {warnings?.length ? <Alert severity="warning" sx={{ mb: 1 }} onClose={() => setWarnings([])}>{warnings.join(" ")}</Alert> : null}
 
       {rows.length === 0 ? (
-        <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>None yet — add one to get started.</Typography>
+        <Box sx={{ border: "1px dashed var(--border)", borderRadius: 1.5, py: 5, textAlign: "center" }}>
+          <Typography variant="body2" color="text.secondary">Nothing here yet.</Typography>
+        </Box>
       ) : isMobile ? (
         // Mobile: stacked cards
         <Stack spacing={1}>
           {rows.map((row) => (
-            <Box key={row[idField]} sx={{ border: "1px solid var(--border)", borderRadius: 1.5, p: 1.5 }}>
-              <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-                <Typography variant="subtitle2" sx={{ wordBreak: "break-word" }}>{cellText(schema[0], row[schema[0].key])}</Typography>
+            <Box key={row[idField]} sx={{ border: "1px solid var(--border)", borderRadius: 1.5, p: 1.75 }}>
+              <Stack direction="row" justifyContent="space-between" alignItems="flex-start" spacing={1}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 600, wordBreak: "break-word" }}>{cellText(schema[0], row[schema[0].key])}</Typography>
                 {actions(row)}
               </Stack>
-              {schema.slice(1).map((f) => (
-                <Box key={f.key} sx={{ display: "flex", justifyContent: "space-between", gap: 1, mt: 0.5 }}>
-                  <Typography variant="caption" color="text.secondary">{f.label || f.key}</Typography>
-                  <Typography variant="body2" sx={{ textAlign: "right", wordBreak: "break-word" }}>{cellText(f, row[f.key]) || "—"}</Typography>
-                </Box>
-              ))}
+              {schema.slice(1).map((f) => {
+                const text = cellText(f, row[f.key]);
+                if (!text) return null;
+                return (
+                  <Box key={f.key} sx={{ display: "flex", justifyContent: "space-between", gap: 2, mt: 0.75 }}>
+                    <Typography variant="caption" color="text.secondary" sx={{ textTransform: "uppercase", letterSpacing: "0.04em", fontSize: 10.5, flexShrink: 0, pt: 0.15 }}>{f.label || f.key}</Typography>
+                    <Typography variant="body2" sx={{ textAlign: "right", wordBreak: "break-word" }}>{text}</Typography>
+                  </Box>
+                );
+              })}
             </Box>
           ))}
         </Stack>
       ) : (
-        // Desktop: table with tooltip'd column headers
-        <Box sx={{ overflowX: "auto" }}>
-          <Box component="table" sx={{ width: "100%", borderCollapse: "collapse", "& td, & th": { borderBottom: "1px solid var(--border)", p: 1, textAlign: "left", fontSize: 14, verticalAlign: "top" } }}>
+        // Desktop: clean table with tooltip'd column headers
+        <Box sx={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 1.5 }}>
+          <Box
+            component="table"
+            sx={{
+              width: "100%",
+              borderCollapse: "collapse",
+              "& thead th": { textTransform: "uppercase", fontSize: 10.5, letterSpacing: "0.06em", color: "text.secondary", fontWeight: 700, textAlign: "left", py: 1.25, px: 1.75, borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" },
+              "& tbody td": { fontSize: 13.5, py: 1.25, px: 1.75, borderBottom: "1px solid var(--border)", verticalAlign: "top" },
+              "& tbody tr:last-of-type td": { borderBottom: "none" },
+              "& tbody tr:hover td": { backgroundColor: "rgba(127,127,127,0.06)" },
+            }}
+          >
             <thead>
               <tr>
                 {schema.map((f) => (
                   <th key={f.key}>
-                    <Tooltip title={f.help || ""} arrow disableHoverListener={!f.help}>
-                      <span style={{ borderBottom: f.help ? "1px dotted var(--border)" : "none", cursor: f.help ? "help" : "default" }}>{f.label || f.key}</span>
+                    <Tooltip title={f.help || ""} arrow disableHoverListener={!f.help} enterTouchDelay={0}>
+                      <span style={{ cursor: f.help ? "help" : "default" }}>{f.label || f.key}</span>
                     </Tooltip>
                   </th>
                 ))}
-                <th style={{ width: 90 }} />
+                <th style={{ width: 84 }} aria-label="actions" />
               </tr>
             </thead>
             <tbody>
@@ -315,8 +329,8 @@ function ProfileTab({ profile, onChanged }) {
 
   return (
     <Box>
-      <Typography variant="h6" sx={{ mb: 0.5 }}>Profile values</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+      <Typography variant="subtitle1" sx={{ fontWeight: 600, lineHeight: 1.2 }}>Profile values</Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 2 }}>
         Static placeholder values the posting can&apos;t supply (name, rank, scale figures, skills-row headings).
       </Typography>
       {error ? <Alert severity="error" sx={{ mb: 1 }}>{error}</Alert> : null}
@@ -337,7 +351,7 @@ function ProfileTab({ profile, onChanged }) {
         <Typography variant="subtitle2" sx={{ mb: 1 }}>Default teaching subjects</Typography>
         <ChipsInput label="Subjects" value={subjects} onChange={setSubjects} helperText="Drive the adjunct emphasis when no focus area matches a teaching posting." />
       </Box>
-      <Button variant="contained" sx={{ mt: 3 }} onClick={save} disabled={saving}>{saving ? "Saving…" : "Save profile"}</Button>
+      <Button variant="contained" size="small" disableElevation sx={{ mt: 3, textTransform: "none", borderRadius: 1.5 }} onClick={save} disabled={saving}>{saving ? "Saving…" : "Save profile"}</Button>
     </Box>
   );
 }
@@ -371,12 +385,12 @@ function PreviewTab() {
 
   return (
     <Box>
-      <Typography variant="h6" sx={{ mb: 0.5 }}>Preview</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+      <Typography variant="subtitle1" sx={{ fontWeight: 600, lineHeight: 1.2 }}>Preview</Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 2 }}>
         Paste a posting and render the résumé + cover letter against your current library — verify an edit without AI.
       </Typography>
       <TextField fullWidth multiline minRows={6} label="Job posting" value={posting} onChange={(e) => setPosting(e.target.value)} />
-      <Button variant="contained" sx={{ mt: 2 }} onClick={run} disabled={running || !posting.trim()}>
+      <Button variant="contained" size="small" disableElevation sx={{ mt: 2, textTransform: "none", borderRadius: 1.5 }} onClick={run} disabled={running || !posting.trim()}>
         {running ? "Rendering…" : "Render preview"}
       </Button>
       {error ? <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert> : null}
@@ -474,7 +488,7 @@ function ImportDialog({ open, onClose, onChanged }) {
         ) : (
           <TextField fullWidth multiline minRows={5} label="Paste the job posting" value={value} onChange={(e) => setValue(e.target.value)} />
         )}
-        <Button variant="contained" startIcon={<DownloadIcon />} sx={{ mt: 1.5 }} onClick={analyze} disabled={analyzing || !value.trim()}>
+        <Button variant="contained" size="small" disableElevation sx={{ mt: 1.5, textTransform: "none", borderRadius: 1.5 }} onClick={analyze} disabled={analyzing || !value.trim()}>
           {analyzing ? "Analyzing…" : "Analyze posting"}
         </Button>
         {error ? <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert> : null}
@@ -530,10 +544,10 @@ function ImportDialog({ open, onClose, onChanged }) {
           </Box>
         ) : null}
       </DialogContent>
-      <DialogActions>
-        <Button onClick={close}>{importResult ? "Done" : "Cancel"}</Button>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button onClick={close} sx={{ textTransform: "none" }}>{importResult ? "Done" : "Cancel"}</Button>
         {result && !importResult ? (
-          <Button variant="contained" onClick={doImport} disabled={importing || selectedCount === 0}>
+          <Button variant="contained" size="small" disableElevation onClick={doImport} disabled={importing || selectedCount === 0} sx={{ textTransform: "none", borderRadius: 1.5 }}>
             {importing ? "Adding…" : `Add ${selectedCount} to library`}
           </Button>
         ) : null}
@@ -615,27 +629,37 @@ export default function LibraryEditor() {
   const categories = data?.categories || [];
 
   return (
-    <Box sx={{ maxWidth: 1100, mx: "auto", p: { xs: 1.5, md: 3 } }}>
-      <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "flex-start" }} spacing={1.5} sx={{ mb: 1.5 }}>
+    <Box sx={{ width: "100%", maxWidth: 1080, minWidth: 0, mx: "auto", p: { xs: 2, md: 4 } }}>
+      <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={2} sx={{ mb: 3 }}>
         <Box>
-          <Typography variant="h4" sx={{ mb: 0.5 }}>Tailoring Library</Typography>
-          <Typography variant="body2" color="text.secondary">
-            The buzzwords, focus areas, skills, and fragments the deterministic engine uses. Changes apply to your next tailoring run.
+          <Typography variant="h5" sx={{ fontWeight: 600, letterSpacing: "-0.01em" }}>Tailoring Library</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+            The terms, focus areas, and skills the engine uses. Changes apply on your next tailoring run.
           </Typography>
         </Box>
-        <Button variant="outlined" startIcon={<DownloadIcon />} onClick={() => setImportOpen(true)} sx={{ whiteSpace: "nowrap", alignSelf: { xs: "flex-start", sm: "auto" } }}>
+        <Button variant="outlined" size="small" onClick={() => setImportOpen(true)} sx={{ whiteSpace: "nowrap", textTransform: "none", borderRadius: 1.5, alignSelf: { xs: "flex-start", sm: "auto" } }}>
           Import from posting
         </Button>
       </Stack>
 
-      <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile sx={{ mb: 2, borderBottom: "1px solid var(--border)" }}>
+      <Tabs
+        value={tab}
+        onChange={(_, v) => setTab(v)}
+        variant="scrollable"
+        scrollButtons="auto"
+        allowScrollButtonsMobile
+        sx={{
+          mb: 3,
+          minHeight: 40,
+          borderBottom: "1px solid var(--border)",
+          "& .MuiTab-root": { minHeight: 40, textTransform: "none", fontSize: 14, fontWeight: 500, px: 2, minWidth: 0 },
+          "& .MuiTabs-indicator": { height: 2 },
+        }}
+      >
         {TABS.map((t) => (
           <Tab
             key={t.label}
-            iconPosition="end"
-            icon={<Tooltip title={t.help} arrow enterTouchDelay={0}><HelpIcon sx={{ fontSize: 15, opacity: 0.6 }} /></Tooltip>}
-            label={t.label}
-            sx={{ minHeight: 48, textTransform: "none" }}
+            label={<Tooltip title={t.help} arrow enterTouchDelay={0} placement="bottom"><span>{t.label}</span></Tooltip>}
           />
         ))}
       </Tabs>
