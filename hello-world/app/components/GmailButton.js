@@ -58,7 +58,7 @@ const styles = {
     borderRadius: 6,
     border: "none",
     background: "var(--accent)",
-    color: "var(--bg-surface)",
+    color: "var(--accent-contrast)",
     cursor: "pointer",
     textDecoration: "none",
   },

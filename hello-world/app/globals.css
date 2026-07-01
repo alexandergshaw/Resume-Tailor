@@ -14,6 +14,12 @@ html {
 html,
 body {
   max-width: 100vw;
+}
+
+/* Clip horizontal overflow at the document root only. Keeping this off <body>
+   leaves <body> a normal block (not a scroll container), so the sticky header
+   pins to the viewport instead of scrolling away with the page. */
+html {
   overflow-x: hidden;
 }
 
