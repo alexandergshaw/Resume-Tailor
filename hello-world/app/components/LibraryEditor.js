@@ -5,12 +5,14 @@ import Alert from "@mui/material/Alert";
 import Autocomplete from "@mui/material/Autocomplete";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import Checkbox from "@mui/material/Checkbox";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
+import Divider from "@mui/material/Divider";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import IconButton from "@mui/material/IconButton";
 import MenuItem from "@mui/material/MenuItem";
@@ -19,10 +21,17 @@ import Switch from "@mui/material/Switch";
 import Tab from "@mui/material/Tab";
 import Tabs from "@mui/material/Tabs";
 import TextField from "@mui/material/TextField";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+import useMediaQuery from "@mui/material/useMediaQuery";
+import { useTheme } from "@mui/material/styles";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
+import DownloadIcon from "@mui/icons-material/CloudDownload";
+import HelpIcon from "@mui/icons-material/Help";
 
 async function api(path, method, body) {
   const res = await fetch(path, {
@@ -38,12 +47,18 @@ async function api(path, method, body) {
   return data;
 }
 
+function useIsMobile() {
+  const theme = useTheme();
+  return useMediaQuery(theme.breakpoints.down("sm"));
+}
+
 // --- A freeSolo tag input for string-array fields ---------------------------
 function ChipsInput({ label, value, onChange, helperText }) {
   return (
     <Autocomplete
       multiple
       freeSolo
+      size="small"
       options={[]}
       value={value || []}
       onChange={(_, next) => onChange(next.map((s) => String(s).trim()).filter(Boolean))}
@@ -81,7 +96,7 @@ function FieldInput({ field, value, onChange, categories }) {
   }
   if (field.type === "select") {
     return (
-      <TextField select fullWidth label={field.label || field.key} value={value || ""} onChange={(e) => onChange(e.target.value)}>
+      <TextField select fullWidth size="small" label={field.label || field.key} value={value || ""} helperText={field.help} onChange={(e) => onChange(e.target.value)}>
         {(categories || []).map((c) => (
           <MenuItem key={c} value={c}>{c}</MenuItem>
         ))}
@@ -91,6 +106,7 @@ function FieldInput({ field, value, onChange, categories }) {
   return (
     <TextField
       fullWidth
+      size="small"
       multiline={field.type === "textarea"}
       minRows={field.type === "textarea" ? 2 : undefined}
       label={field.label || field.key}
@@ -101,14 +117,14 @@ function FieldInput({ field, value, onChange, categories }) {
   );
 }
 
-function EditDialog({ open, title, schema, draft, setDraft, onClose, onSave, saving, error, warnings, categories }) {
+function EditDialog({ open, title, schema, draft, setDraft, onClose, onSave, saving, error, categories }) {
+  const isMobile = useIsMobile();
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm" fullScreen={isMobile}>
       <DialogTitle>{title}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
           {error ? <Alert severity="error">{error}</Alert> : null}
-          {warnings?.length ? <Alert severity="warning">{warnings.join(" ")}</Alert> : null}
           {schema.map((field) => (
             <FieldInput
               key={field.key}
@@ -140,8 +156,9 @@ function cellText(field, value) {
   return String(value ?? "");
 }
 
-// --- Generic CRUD tab for the four row tables -------------------------------
+// --- Generic CRUD tab for the four row tables (responsive) -------------------
 function EntityTab({ title, description, rows, schema, endpoint, idField = "id", categories, onChanged }) {
+  const isMobile = useIsMobile();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(() => blankDraft(schema));
   const [editingId, setEditingId] = useState(null);
@@ -153,7 +170,6 @@ function EntityTab({ title, description, rows, schema, endpoint, idField = "id",
     setDraft(blankDraft(schema));
     setEditingId(null);
     setError("");
-    setWarnings([]);
     setOpen(true);
   };
   const openEdit = (row) => {
@@ -162,7 +178,6 @@ function EntityTab({ title, description, rows, schema, endpoint, idField = "id",
     setDraft(d);
     setEditingId(row[idField]);
     setError("");
-    setWarnings([]);
     setOpen(true);
   };
 
@@ -192,40 +207,75 @@ function EntityTab({ title, description, rows, schema, endpoint, idField = "id",
     }
   };
 
+  const actions = (row) => (
+    <Box sx={{ whiteSpace: "nowrap" }}>
+      <IconButton size="small" onClick={() => openEdit(row)} aria-label="edit"><EditIcon fontSize="small" /></IconButton>
+      <IconButton size="small" onClick={() => remove(row)} aria-label="delete"><DeleteIcon fontSize="small" /></IconButton>
+    </Box>
+  );
+
   return (
     <Box>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+      <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1} sx={{ mb: 1.5 }}>
         <Box>
-          <Typography variant="h6">{title}</Typography>
+          <Typography variant="h6">{title}s</Typography>
           {description ? <Typography variant="body2" color="text.secondary">{description}</Typography> : null}
         </Box>
-        <Button startIcon={<AddIcon />} variant="contained" onClick={openAdd}>Add</Button>
+        <Button startIcon={<AddIcon />} variant="contained" onClick={openAdd} sx={{ alignSelf: { xs: "flex-start", sm: "auto" } }}>Add {title.toLowerCase()}</Button>
       </Stack>
       {warnings?.length ? <Alert severity="warning" sx={{ mb: 1 }} onClose={() => setWarnings([])}>{warnings.join(" ")}</Alert> : null}
-      <Box component="table" sx={{ width: "100%", borderCollapse: "collapse", "& td, & th": { borderBottom: "1px solid var(--border)", p: 1, textAlign: "left", fontSize: 14, verticalAlign: "top" } }}>
-        <thead>
-          <tr>
-            {schema.map((f) => <th key={f.key}>{f.label || f.key}</th>)}
-            <th style={{ width: 90 }} />
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length === 0 ? (
-            <tr><td colSpan={schema.length + 1}><Typography variant="body2" color="text.secondary">None yet.</Typography></td></tr>
-          ) : rows.map((row) => (
-            <tr key={row[idField]}>
-              {schema.map((f) => <td key={f.key}>{cellText(f, row[f.key])}</td>)}
-              <td>
-                <IconButton size="small" onClick={() => openEdit(row)} aria-label="edit"><EditIcon fontSize="small" /></IconButton>
-                <IconButton size="small" onClick={() => remove(row)} aria-label="delete"><DeleteIcon fontSize="small" /></IconButton>
-              </td>
-            </tr>
+
+      {rows.length === 0 ? (
+        <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>None yet — add one to get started.</Typography>
+      ) : isMobile ? (
+        // Mobile: stacked cards
+        <Stack spacing={1}>
+          {rows.map((row) => (
+            <Box key={row[idField]} sx={{ border: "1px solid var(--border)", borderRadius: 1.5, p: 1.5 }}>
+              <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
+                <Typography variant="subtitle2" sx={{ wordBreak: "break-word" }}>{cellText(schema[0], row[schema[0].key])}</Typography>
+                {actions(row)}
+              </Stack>
+              {schema.slice(1).map((f) => (
+                <Box key={f.key} sx={{ display: "flex", justifyContent: "space-between", gap: 1, mt: 0.5 }}>
+                  <Typography variant="caption" color="text.secondary">{f.label || f.key}</Typography>
+                  <Typography variant="body2" sx={{ textAlign: "right", wordBreak: "break-word" }}>{cellText(f, row[f.key]) || "—"}</Typography>
+                </Box>
+              ))}
+            </Box>
           ))}
-        </tbody>
-      </Box>
+        </Stack>
+      ) : (
+        // Desktop: table with tooltip'd column headers
+        <Box sx={{ overflowX: "auto" }}>
+          <Box component="table" sx={{ width: "100%", borderCollapse: "collapse", "& td, & th": { borderBottom: "1px solid var(--border)", p: 1, textAlign: "left", fontSize: 14, verticalAlign: "top" } }}>
+            <thead>
+              <tr>
+                {schema.map((f) => (
+                  <th key={f.key}>
+                    <Tooltip title={f.help || ""} arrow disableHoverListener={!f.help}>
+                      <span style={{ borderBottom: f.help ? "1px dotted var(--border)" : "none", cursor: f.help ? "help" : "default" }}>{f.label || f.key}</span>
+                    </Tooltip>
+                  </th>
+                ))}
+                <th style={{ width: 90 }} />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row[idField]}>
+                  {schema.map((f) => <td key={f.key}>{cellText(f, row[f.key])}</td>)}
+                  <td>{actions(row)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </Box>
+        </Box>
+      )}
+
       <EditDialog
         open={open}
-        title={editingId ? `Edit ${title}` : `Add ${title}`}
+        title={editingId ? `Edit ${title.toLowerCase()}` : `Add ${title.toLowerCase()}`}
         schema={schema}
         draft={draft}
         setDraft={setDraft}
@@ -233,7 +283,6 @@ function EntityTab({ title, description, rows, schema, endpoint, idField = "id",
         onSave={save}
         saving={saving}
         error={error}
-        warnings={warnings}
         categories={categories}
       />
     </Box>
@@ -248,9 +297,6 @@ function ProfileTab({ profile, onChanged }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
-
-  // The buffer is initialized from props on mount; the parent passes a `key` tied
-  // to the profile's updated_at, so a save+reload remounts this tab with fresh data.
 
   const save = async () => {
     setSaving(true);
@@ -269,7 +315,7 @@ function ProfileTab({ profile, onChanged }) {
 
   return (
     <Box>
-      <Typography variant="h6" sx={{ mb: 1 }}>Profile values</Typography>
+      <Typography variant="h6" sx={{ mb: 0.5 }}>Profile values</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Static placeholder values the posting can&apos;t supply (name, rank, scale figures, skills-row headings).
       </Typography>
@@ -283,7 +329,7 @@ function ProfileTab({ profile, onChanged }) {
           </Stack>
         ))}
       </Stack>
-      <Stack direction="row" spacing={1} sx={{ mt: 2 }} alignItems="center">
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ mt: 2 }} alignItems={{ xs: "stretch", sm: "center" }}>
         <TextField label="New key" value={newKey} onChange={(e) => setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]+/g, "_"))} size="small" />
         <Button onClick={() => { if (newKey && !(newKey in values)) { setValues((v) => ({ ...v, [newKey]: "" })); setNewKey(""); } }}>Add key</Button>
       </Stack>
@@ -308,8 +354,7 @@ function PreviewTab() {
     setError("");
     setResult(null);
     try {
-      const data = await api("/api/library/preview", "POST", { posting });
-      setResult(data);
+      setResult(await api("/api/library/preview", "POST", { posting }));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -326,7 +371,7 @@ function PreviewTab() {
 
   return (
     <Box>
-      <Typography variant="h6" sx={{ mb: 1 }}>Preview</Typography>
+      <Typography variant="h6" sx={{ mb: 0.5 }}>Preview</Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Paste a posting and render the résumé + cover letter against your current library — verify an edit without AI.
       </Typography>
@@ -357,41 +402,189 @@ function PreviewTab() {
   );
 }
 
+// --- Import from a posting (URL or paste) -----------------------------------
+function ImportDialog({ open, onClose, onChanged }) {
+  const isMobile = useIsMobile();
+  const [mode, setMode] = useState("url");
+  const [value, setValue] = useState("");
+  const [analyzing, setAnalyzing] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+  const [buzz, setBuzz] = useState([]);
+  const [fa, setFa] = useState({ include: false });
+  const [sg, setSg] = useState({ include: false });
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
+
+  const reset = () => {
+    setValue(""); setResult(null); setError(""); setBuzz([]);
+    setFa({ include: false }); setSg({ include: false }); setImportResult(null);
+  };
+  const close = () => { reset(); onClose(); };
+
+  const analyze = async () => {
+    setAnalyzing(true); setError(""); setResult(null); setImportResult(null);
+    try {
+      const payload = mode === "url" ? { url: value.trim() } : { posting: value };
+      const data = await api("/api/library/extract", "POST", payload);
+      setResult(data);
+      setBuzz(data.buzzwords.map((b) => ({ ...b, selected: !!b.category })));
+      setFa({ include: false, ...data.suggestedFocusArea });
+      setSg({ include: false, ...data.suggestedSkillGroup });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const doImport = async () => {
+    const taxonomy = buzz.filter((b) => b.selected && b.category).map((b) => ({ canonical: b.canonical, category: b.category, aliases: [] }));
+    const focusAreas = fa.include ? [{ name: fa.name, match: fa.match, subjects: fa.subjects, job_emphases: fa.job_emphases, technical_capabilities: fa.technical_capabilities, domain_capabilities: fa.domain_capabilities }] : [];
+    const skillGroups = sg.include ? [{ heading: sg.heading, categories: sg.categories, keywords: sg.keywords, conditional: false }] : [];
+    if (!taxonomy.length && !focusAreas.length && !skillGroups.length) {
+      setError("Select at least one item to add (buzzwords need a category).");
+      return;
+    }
+    setImporting(true); setError("");
+    try {
+      const res = await api("/api/library/import", "POST", { taxonomy, focusAreas, skillGroups });
+      setImportResult(res);
+      await onChanged();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const categories = result?.categories || [];
+  const selectedCount = buzz.filter((b) => b.selected && b.category).length + (fa.include ? 1 : 0) + (sg.include ? 1 : 0);
+
+  return (
+    <Dialog open={open} onClose={close} fullWidth maxWidth="md" fullScreen={isMobile}>
+      <DialogTitle>Import from a job posting</DialogTitle>
+      <DialogContent dividers>
+        <ToggleButtonGroup exclusive size="small" value={mode} onChange={(_, m) => m && setMode(m)} sx={{ mb: 1.5 }}>
+          <ToggleButton value="url">Fetch a URL</ToggleButton>
+          <ToggleButton value="paste">Paste text</ToggleButton>
+        </ToggleButtonGroup>
+        {mode === "url" ? (
+          <TextField fullWidth size="small" label="Job posting URL" value={value} onChange={(e) => setValue(e.target.value)} placeholder="https://…" />
+        ) : (
+          <TextField fullWidth multiline minRows={5} label="Paste the job posting" value={value} onChange={(e) => setValue(e.target.value)} />
+        )}
+        <Button variant="contained" startIcon={<DownloadIcon />} sx={{ mt: 1.5 }} onClick={analyze} disabled={analyzing || !value.trim()}>
+          {analyzing ? "Analyzing…" : "Analyze posting"}
+        </Button>
+        {error ? <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert> : null}
+
+        {result ? (
+          <Box sx={{ mt: 2 }}>
+            {result.title ? <Typography variant="subtitle2" sx={{ mb: 1 }}>Detected: {result.title}{result.company ? ` @ ${result.company}` : ""}</Typography> : null}
+
+            <Typography variant="subtitle2" sx={{ mt: 1 }}>New buzzwords ({buzz.length})</Typography>
+            <Typography variant="caption" color="text.secondary">Terms not already in your library. Assign a category to include one.</Typography>
+            <Stack spacing={0.5} sx={{ mt: 1, maxHeight: 260, overflow: "auto", pr: 1 }}>
+              {buzz.length === 0 ? <Typography variant="body2" color="text.secondary">Nothing new — your library already covers this posting.</Typography> : null}
+              {buzz.map((b, i) => (
+                <Stack key={`${b.canonical}-${i}`} direction="row" spacing={1} alignItems="center">
+                  <Checkbox size="small" checked={b.selected} onChange={(e) => setBuzz((arr) => arr.map((x, j) => j === i ? { ...x, selected: e.target.checked } : x))} sx={{ p: 0.5 }} />
+                  <Typography variant="body2" sx={{ flex: 1, wordBreak: "break-word" }}>{b.canonical}</Typography>
+                  <TextField select size="small" value={b.category} onChange={(e) => setBuzz((arr) => arr.map((x, j) => j === i ? { ...x, category: e.target.value, selected: true } : x))} sx={{ minWidth: 150 }}>
+                    <MenuItem value=""><em>(pick category)</em></MenuItem>
+                    {categories.map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
+                  </TextField>
+                </Stack>
+              ))}
+            </Stack>
+
+            <Divider sx={{ my: 2 }} />
+            <FormControlLabel control={<Checkbox checked={!!fa.include} onChange={(e) => setFa((f) => ({ ...f, include: e.target.checked }))} />} label="Add a focus area from this posting" />
+            {fa.include ? (
+              <Stack spacing={1.5} sx={{ mt: 1, mb: 1 }}>
+                <TextField size="small" label="Name" value={fa.name || ""} onChange={(e) => setFa((f) => ({ ...f, name: e.target.value }))} />
+                <ChipsInput label="Match terms" value={fa.match} onChange={(v) => setFa((f) => ({ ...f, match: v }))} helperText="Discriminative phrases that activate this area." />
+                <ChipsInput label="Subjects" value={fa.subjects} onChange={(v) => setFa((f) => ({ ...f, subjects: v }))} />
+                <ChipsInput label="Job emphases" value={fa.job_emphases} onChange={(v) => setFa((f) => ({ ...f, job_emphases: v }))} />
+                <ChipsInput label="Technical capabilities" value={fa.technical_capabilities} onChange={(v) => setFa((f) => ({ ...f, technical_capabilities: v }))} />
+                <ChipsInput label="Domain capabilities" value={fa.domain_capabilities} onChange={(v) => setFa((f) => ({ ...f, domain_capabilities: v }))} />
+              </Stack>
+            ) : null}
+
+            <Divider sx={{ my: 2 }} />
+            <FormControlLabel control={<Checkbox checked={!!sg.include} onChange={(e) => setSg((s) => ({ ...s, include: e.target.checked }))} />} label="Add a skill group from this posting" />
+            {sg.include ? (
+              <Stack spacing={1.5} sx={{ mt: 1, mb: 1 }}>
+                <TextField size="small" label="Heading" value={sg.heading || ""} onChange={(e) => setSg((s) => ({ ...s, heading: e.target.value }))} />
+                <ChipsInput label="Keywords" value={sg.keywords} onChange={(v) => setSg((s) => ({ ...s, keywords: v }))} />
+              </Stack>
+            ) : null}
+
+            {importResult ? (
+              <Alert severity="success" sx={{ mt: 2 }}>
+                Added {importResult.added.taxonomy} buzzword(s), {importResult.added.focusAreas} focus area(s), {importResult.added.skillGroups} skill group(s).
+                {importResult.skipped?.length ? ` Skipped: ${importResult.skipped.length}.` : ""}
+              </Alert>
+            ) : null}
+          </Box>
+        ) : null}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={close}>{importResult ? "Done" : "Cancel"}</Button>
+        {result && !importResult ? (
+          <Button variant="contained" onClick={doImport} disabled={importing || selectedCount === 0}>
+            {importing ? "Adding…" : `Add ${selectedCount} to library`}
+          </Button>
+        ) : null}
+      </DialogActions>
+    </Dialog>
+  );
+}
+
 const TAXONOMY_SCHEMA = (categories) => [
-  { key: "canonical", type: "text", label: "Canonical", help: "Display text inserted/surfaced." },
-  { key: "category", type: "select", label: "Category", options: categories },
-  { key: "aliases", type: "chips", label: "Aliases", help: "Synonyms matched in the posting (lowercased)." },
-  { key: "match_canonical", type: "switch", label: "Match canonical", default: true },
+  { key: "canonical", type: "text", label: "Canonical", help: "The display text inserted/surfaced in the résumé & cover letter." },
+  { key: "category", type: "select", label: "Category", options: categories, help: "How the term is grouped (technology, domain, soft_skill, …)." },
+  { key: "aliases", type: "chips", label: "Aliases", help: "Synonyms matched in the posting (lowercased). Avoid ultra-generic single words." },
+  { key: "match_canonical", type: "switch", label: "Match canonical", default: true, help: "Whether the canonical text itself is matched, or only the aliases." },
 ];
 const FOCUS_SCHEMA = [
-  { key: "name", type: "text", label: "Name" },
-  { key: "match", type: "chips", label: "Match terms", help: "Discriminative phrases that activate this area." },
-  { key: "subjects", type: "chips", label: "Subjects" },
-  { key: "job_emphases", type: "chips", label: "Job emphases" },
-  { key: "technical_capabilities", type: "chips", label: "Technical capabilities" },
-  { key: "domain_capabilities", type: "chips", label: "Domain capabilities" },
+  { key: "name", type: "text", label: "Name", help: "A label for the area (e.g. 'Solution Architecture')." },
+  { key: "match", type: "chips", label: "Match terms", help: "Discriminative role/discipline phrases that activate this area when a posting names them." },
+  { key: "subjects", type: "chips", label: "Subjects", help: "Lead the skills row + summary when the area is active." },
+  { key: "job_emphases", type: "chips", label: "Job emphases", help: "The per-role parenthetical emphases on the résumé." },
+  { key: "technical_capabilities", type: "chips", label: "Technical capabilities", help: "Tech shown in the opening 'hands-on work with …' line." },
+  { key: "domain_capabilities", type: "chips", label: "Domain capabilities", help: "Domain expertise shown in the cover letter + summary." },
 ];
 const SKILLGROUP_SCHEMA = [
-  { key: "heading", type: "text", label: "Heading" },
-  { key: "categories", type: "chips", label: "Categories" },
-  { key: "keywords", type: "chips", label: "Keywords" },
-  { key: "conditional", type: "switch", label: "Conditional (only when posting asks)" },
+  { key: "heading", type: "text", label: "Heading", help: "The group's name (used for ranking, not shown verbatim)." },
+  { key: "categories", type: "chips", label: "Categories", help: "Fallback category membership used for ranking." },
+  { key: "keywords", type: "chips", label: "Keywords", help: "Your exact skill strings — kept verbatim, nothing invented." },
+  { key: "conditional", type: "switch", label: "Conditional", help: "If on, these only surface when the posting asks for them." },
 ];
 const CONTENT_SCHEMA = [
-  { key: "frag_id", type: "text", label: "Fragment id" },
-  { key: "slots", type: "chips", label: "Slots" },
-  { key: "text", type: "textarea", label: "Text" },
-  { key: "tags", type: "chips", label: "Tags" },
-  { key: "fabricated", type: "switch", label: "Fabricated (high-aggressiveness only)" },
+  { key: "frag_id", type: "text", label: "Fragment id", help: "A unique slug id for this fragment." },
+  { key: "slots", type: "chips", label: "Slots", help: "The placeholder slot names this fragment can fill." },
+  { key: "text", type: "textarea", label: "Text", help: "Inserted verbatim — keep it grammatical for the sentence." },
+  { key: "tags", type: "chips", label: "Tags", help: "Taxonomy terms; the best-tagged fragment wins per posting." },
+  { key: "fabricated", type: "switch", label: "Fabricated", help: "Invented metrics/spin — only used at high aggressiveness." },
 ];
 
-const TAB_LABELS = ["Buzzwords", "Focus Areas", "Skill Groups", "Content Library", "Profile", "Preview"];
+const TABS = [
+  { label: "Buzzwords", help: "The taxonomy — canonical terms and the aliases matched in postings. This is what the engine recognizes and surfaces." },
+  { label: "Focus Areas", help: "Per-role retargeting. When a posting's match terms clear the threshold, the area reframes the résumé + cover letter." },
+  { label: "Skill Groups", help: "Your skills, grouped. Conditional groups only surface when a posting asks for them." },
+  { label: "Content Library", help: "Tagged accomplishment/bullet fragments the engine slots into the résumé." },
+  { label: "Profile", help: "Static placeholder values (name, rank, scale figures, skills-row headings) the posting can't supply." },
+  { label: "Preview", help: "Render the résumé + cover letter from a pasted posting against your current library — verify edits without AI." },
+];
 
 export default function LibraryEditor() {
   const [tab, setTab] = useState(0);
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [importOpen, setImportOpen] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -422,28 +615,39 @@ export default function LibraryEditor() {
   const categories = data?.categories || [];
 
   return (
-    <Box sx={{ maxWidth: 1100, mx: "auto", p: { xs: 2, md: 3 } }}>
-      <Typography variant="h4" sx={{ mb: 0.5 }}>Tailoring Library</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Manage the buzzwords, focus areas, skills, and fragments the deterministic engine uses. Changes apply to your next tailoring run.
-      </Typography>
-      <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="scrollable" scrollButtons="auto" sx={{ mb: 2, borderBottom: "1px solid var(--border)" }}>
-        {TAB_LABELS.map((l) => <Tab key={l} label={l} />)}
+    <Box sx={{ maxWidth: 1100, mx: "auto", p: { xs: 1.5, md: 3 } }}>
+      <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "flex-start" }} spacing={1.5} sx={{ mb: 1.5 }}>
+        <Box>
+          <Typography variant="h4" sx={{ mb: 0.5 }}>Tailoring Library</Typography>
+          <Typography variant="body2" color="text.secondary">
+            The buzzwords, focus areas, skills, and fragments the deterministic engine uses. Changes apply to your next tailoring run.
+          </Typography>
+        </Box>
+        <Button variant="outlined" startIcon={<DownloadIcon />} onClick={() => setImportOpen(true)} sx={{ whiteSpace: "nowrap", alignSelf: { xs: "flex-start", sm: "auto" } }}>
+          Import from posting
+        </Button>
+      </Stack>
+
+      <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="scrollable" scrollButtons="auto" allowScrollButtonsMobile sx={{ mb: 2, borderBottom: "1px solid var(--border)" }}>
+        {TABS.map((t) => (
+          <Tab
+            key={t.label}
+            iconPosition="end"
+            icon={<Tooltip title={t.help} arrow enterTouchDelay={0}><HelpIcon sx={{ fontSize: 15, opacity: 0.6 }} /></Tooltip>}
+            label={t.label}
+            sx={{ minHeight: 48, textTransform: "none" }}
+          />
+        ))}
       </Tabs>
-      {tab === 0 && (
-        <EntityTab title="Buzzword" description="The taxonomy: canonical terms, their categories, and the aliases matched in postings." rows={data.taxonomy} schema={TAXONOMY_SCHEMA(categories)} endpoint="/api/library/taxonomy" categories={categories} onChanged={reload} />
-      )}
-      {tab === 1 && (
-        <EntityTab title="Focus Area" description="Per-role retargeting: when a posting's match terms clear the threshold, this area drives the framing." rows={data.focusAreas} schema={FOCUS_SCHEMA} endpoint="/api/library/focus-areas" onChanged={reload} />
-      )}
-      {tab === 2 && (
-        <EntityTab title="Skill Group" description="Your skills, grouped. Conditional groups only surface when the posting asks for them." rows={data.skillGroups} schema={SKILLGROUP_SCHEMA} endpoint="/api/library/skill-groups" onChanged={reload} />
-      )}
-      {tab === 3 && (
-        <EntityTab title="Fragment" description="Tagged accomplishment/bullet fragments the engine slots into the résumé." rows={data.contentLibrary} schema={CONTENT_SCHEMA} endpoint="/api/library/content-library" onChanged={reload} />
-      )}
+
+      {tab === 0 && <EntityTab title="Buzzword" description="The taxonomy: canonical terms, their categories, and the aliases matched in postings." rows={data.taxonomy} schema={TAXONOMY_SCHEMA(categories)} endpoint="/api/library/taxonomy" categories={categories} onChanged={reload} />}
+      {tab === 1 && <EntityTab title="Focus Area" description="When a posting's match terms clear the threshold, this area drives the framing." rows={data.focusAreas} schema={FOCUS_SCHEMA} endpoint="/api/library/focus-areas" onChanged={reload} />}
+      {tab === 2 && <EntityTab title="Skill Group" description="Your skills, grouped. Conditional groups only surface when the posting asks for them." rows={data.skillGroups} schema={SKILLGROUP_SCHEMA} endpoint="/api/library/skill-groups" onChanged={reload} />}
+      {tab === 3 && <EntityTab title="Fragment" description="Tagged accomplishment/bullet fragments the engine slots into the résumé." rows={data.contentLibrary} schema={CONTENT_SCHEMA} endpoint="/api/library/content-library" onChanged={reload} />}
       {tab === 4 && <ProfileTab key={data.profile?.updated_at || "profile"} profile={data.profile} onChanged={reload} />}
       {tab === 5 && <PreviewTab />}
+
+      <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} onChanged={reload} />
     </Box>
   );
 }
