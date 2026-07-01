@@ -132,7 +132,9 @@ export function useDocumentPreview({
   }
 
   // Save edits back to the tailoring entry so this becomes the document the
-  // posting's chip uses for download / drag this session.
+  // posting's chip uses for download / drag this session. Called continuously by
+  // the preview's auto-save, so it stays quiet — the dialog shows its own inline
+  // "saved" indicator rather than a notice banner here.
   function saveDocumentPreview(scope, payload) {
     const jobId = resumePreview.jobId;
     if (!jobId) return;
@@ -147,11 +149,19 @@ export function useDocumentPreview({
           : { ...entry, result: text, resultLines: lines, resumePreviewHtml: html, edited: true };
       return { ...current, [jobId]: { ...next, status: entry.status || "done" } };
     });
-    setResumePreview((prev) => ({
-      ...prev,
-      notice: `Saved — this is now the ${scope === "cover" ? "cover letter" : "resume"} for this posting.`,
-      error: "",
-    }));
+  }
+
+  // Persist a user-typed download file name (base, no extension) for a scope so
+  // downloads use it in place of the derived "<Company> - <Position> - …" name.
+  function renameDocument(scope, name) {
+    const jobId = resumePreview.jobId;
+    if (!jobId) return;
+    const clean = String(name || "").trim();
+    setTailoringMap((current) => {
+      const entry = current[jobId] || {};
+      const key = scope === "cover" ? "coverLetterFileName" : "resumeFileName";
+      return { ...current, [jobId]: { ...entry, [key]: clean } };
+    });
   }
 
   async function downloadDocumentPreview(scope, payload) {
@@ -172,10 +182,12 @@ export function useDocumentPreview({
     };
     if (scope === "cover") {
       args.coverLetterResultLines = lines;
+      args.coverLetterFileName = entry.coverLetterFileName || "";
       if (serveFinished && typeof entry.coverLetterDocxB64 === "string") args.coverLetterDocxB64 = entry.coverLetterDocxB64;
     } else {
       args.result = text;
       args.resultLines = lines;
+      args.resumeFileName = entry.resumeFileName || "";
       if (serveFinished && typeof entry.docxB64 === "string") args.docxB64 = entry.docxB64;
     }
     const err = await downloadDocxFiles(args);
@@ -301,6 +313,7 @@ export function useDocumentPreview({
     closeResumePreview,
     loadPreviewModel,
     saveDocumentPreview,
+    renameDocument,
     downloadDocumentPreview,
     resubmitDocumentPreview,
     finishByOpeningPreview,

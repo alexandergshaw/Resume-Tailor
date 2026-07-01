@@ -27,6 +27,7 @@ import {
   buildTemplateLinesForUpload,
   buildDocxFromUploadedTemplate,
   getDownloadFileNameForTitle,
+  getDownloadCoverLetterFileNameForTitle,
   createDocumentDownloaders,
   extractResumeTextLines,
   triggerBlobDownload,
@@ -2981,11 +2982,17 @@ export default function Home() {
             available: preview.previewScopeAvailable(tailoringMap[preview.resumePreview.jobId], "resume"),
             text: tailoringMap[preview.resumePreview.jobId]?.result || "",
             html: tailoringMap[preview.resumePreview.jobId]?.resumePreviewHtml,
+            fileName:
+              tailoringMap[preview.resumePreview.jobId]?.resumeFileName ||
+              getDownloadFileNameForTitle(preview.resumePreview.title, preview.resumePreview.company).replace(/\.docx$/i, ""),
           },
           cover: {
             available: preview.previewScopeAvailable(tailoringMap[preview.resumePreview.jobId], "cover"),
             text: (tailoringMap[preview.resumePreview.jobId]?.coverLetterResultLines || []).join("\n"),
             html: tailoringMap[preview.resumePreview.jobId]?.coverLetterPreviewHtml,
+            fileName:
+              tailoringMap[preview.resumePreview.jobId]?.coverLetterFileName ||
+              getDownloadCoverLetterFileNameForTitle(preview.resumePreview.title, preview.resumePreview.company).replace(/\.docx$/i, ""),
           },
         }}
         engine={tailorEngine}
@@ -2993,6 +3000,7 @@ export default function Home() {
         reloadKey={previewReloadKey}
         onClose={preview.closeResumePreview}
         onSave={preview.saveDocumentPreview}
+        onRenameFile={preview.renameDocument}
         onResubmit={preview.resubmitDocumentPreview}
         onDownload={preview.downloadDocumentPreview}
         onResearchCompany={() =>

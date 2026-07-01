@@ -15,8 +15,10 @@ import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Select from "@mui/material/Select";
 import MenuItem from "@mui/material/MenuItem";
 import TextField from "@mui/material/TextField";
+import InputAdornment from "@mui/material/InputAdornment";
 import CircularProgress from "@mui/material/CircularProgress";
 import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import DescriptionIcon from "@mui/icons-material/Description";
 import FormatBoldIcon from "@mui/icons-material/FormatBold";
 import FormatItalicIcon from "@mui/icons-material/FormatItalic";
@@ -79,6 +81,7 @@ export default function DocumentPreviewDialog({
   loadModel,
   reloadKey = 0,
   onSave,
+  onRenameFile,
   onResubmit,
   onDownload,
   onClose,
@@ -100,11 +103,41 @@ export default function DocumentPreviewDialog({
   const [resubmitting, setResubmitting] = useState(false);
   const [prevOpen, setPrevOpen] = useState(open);
   const [prevReloadKey, setPrevReloadKey] = useState(reloadKey);
+  // Auto-save: edits commit on a short debounce; this drives the inline status.
+  const [saveStatus, setSaveStatus] = useState("saved"); // "saved" | "saving"
+  // Editable download file name (base, no extension) for the active scope.
+  const [fileNameDraft, setFileNameDraft] = useState("");
+  const [fileNameTab, setFileNameTab] = useState(initialTab);
   const editorRef = useRef(null);
   const draftHtmlRef = useRef({}); // scope -> edited innerHTML (uncommitted)
   const savedRangeRef = useRef(null); // selection captured before a control steals focus
+  const saveTimerRef = useRef(null); // pending auto-save debounce timer
 
   const available = (scope) => !!scopes[scope]?.available;
+
+  // Commit the editor's current content to the parent (the actual save). Clears
+  // any pending debounce so a flush-on-close can't double-fire.
+  const commitDraft = () => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    if (mode !== "edit" || !editorRef.current) return;
+    const html = editorRef.current.innerHTML;
+    draftHtmlRef.current[tab] = html;
+    onSave?.(tab, { text: editorRef.current.innerText, html });
+    setSaveStatus("saved");
+  };
+
+  // Called on every edit: show "Saving…" and debounce the actual commit.
+  const scheduleAutoSave = () => {
+    setSaveStatus("saving");
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null;
+      commitDraft();
+    }, 600);
+  };
 
   // (Re)seed when the dialog transitions to open.
   if (open !== prevOpen) {
@@ -116,6 +149,9 @@ export default function DocumentPreviewDialog({
       setDocState({});
       draftHtmlRef.current = {};
       setSteerText("");
+      setSaveStatus("saved");
+      setFileNameTab(startTab);
+      setFileNameDraft(scopes[startTab]?.fileName || "");
     }
   }
 
@@ -126,6 +162,16 @@ export default function DocumentPreviewDialog({
     setDocState({});
     draftHtmlRef.current = {};
     setMode("view");
+    setSaveStatus("saved");
+    // A resubmit can change the derived file name (new job title) — reseed it.
+    setFileNameTab(tab);
+    setFileNameDraft(scopes[tab]?.fileName || "");
+  }
+
+  // Reseed the file-name field when the active scope changes.
+  if (tab !== fileNameTab) {
+    setFileNameTab(tab);
+    setFileNameDraft(scopes[tab]?.fileName || "");
   }
 
   // Load (parse) the active document's model into HTML on demand.
@@ -156,6 +202,9 @@ export default function DocumentPreviewDialog({
     editorRef.current.focus();
   }, [mode, tab, docState]);
 
+  // Never leave a debounce timer running after unmount.
+  useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); }, []);
+
   // Remember the editor's current selection so a control that steals focus (e.g.
   // the font-size dropdown) can restore it before applying a format.
   const saveSelection = () => {
@@ -178,6 +227,7 @@ export default function DocumentPreviewDialog({
     document.execCommand(command, false, value);
     editorRef.current?.focus();
     if (editorRef.current) draftHtmlRef.current[tab] = editorRef.current.innerHTML;
+    scheduleAutoSave();
   };
 
   const applyFontSize = (pt) => {
@@ -194,6 +244,7 @@ export default function DocumentPreviewDialog({
       }
     }
     if (editorRef.current) draftHtmlRef.current[tab] = editorRef.current.innerHTML;
+    scheduleAutoSave();
   };
 
   // Turn the caret's block into a heading or normal paragraph. Restores the
@@ -203,6 +254,7 @@ export default function DocumentPreviewDialog({
     restoreSelection();
     document.execCommand("formatBlock", false, tag);
     if (editorRef.current) draftHtmlRef.current[tab] = editorRef.current.innerHTML;
+    scheduleAutoSave();
   };
 
   const copyText = (text) => {
@@ -220,12 +272,13 @@ export default function DocumentPreviewDialog({
       restoreSelection();
       document.execCommand("insertHTML", false, `<p>${text.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))}</p>`);
       draftHtmlRef.current[tab] = editorRef.current.innerHTML;
+      scheduleAutoSave();
     } else {
       copyText(text);
     }
   };
 
-  // The plain text + html of the active document, for save/download.
+  // The plain text + html of the active document, for download.
   const activePayload = () => {
     if (mode === "edit" && editorRef.current) {
       return { text: editorRef.current.innerText, html: editorRef.current.innerHTML };
@@ -233,12 +286,17 @@ export default function DocumentPreviewDialog({
     return { text: scopes[tab]?.text || "", html: scopes[tab]?.html || docState[tab]?.html || "" };
   };
 
-  const handleSave = () => {
-    const payload = activePayload();
-    if (payload.html) setDocState((s) => ({ ...s, [tab]: { loading: false, html: payload.html } }));
-    onSave?.(tab, payload);
+  // Commit any pending edit, then download the active document.
+  const handleDownload = () => { commitDraft(); onDownload?.(tab, activePayload()); };
+
+  // Flush pending edits, then close.
+  const handleClose = () => { commitDraft(); onClose?.(); };
+
+  // Commit the file-name field to the parent when the user finishes editing it.
+  const commitFileName = () => {
+    const next = fileNameDraft.trim();
+    if (next !== (scopes[tab]?.fileName || "")) onRenameFile?.(tab, next);
   };
-  const handleDownload = () => onDownload?.(tab, activePayload());
 
   // Resubmit the active document to Gemini with the typed steering instructions.
   // The parent re-runs the tailor and refreshes the preview; on success we clear
@@ -262,13 +320,13 @@ export default function DocumentPreviewDialog({
   const steeringEnabled = engine === "gemini" && available(tab) && typeof onResubmit === "function";
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth fullScreen={isMobile}>
+    <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth fullScreen={isMobile}>
       <DialogTitle sx={{ pb: 0.5 }}>
         Tailored documents{heading ? ` — ${heading}` : ""}
       </DialogTitle>
 
       <Box sx={{ px: 2, display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", borderBottom: "1px solid var(--border)" }}>
-        <Tabs value={tab} onChange={(_e, v) => { setTab(v); setMode("view"); }} sx={{ minHeight: 40 }}>
+        <Tabs value={tab} onChange={(_e, v) => { commitDraft(); setTab(v); setMode("view"); }} sx={{ minHeight: 40 }}>
           {SCOPES.map((scope) => (
             <Tab
               key={scope}
@@ -299,7 +357,7 @@ export default function DocumentPreviewDialog({
             size="small"
             exclusive
             value={mode}
-            onChange={(_e, v) => v && setMode(v)}
+            onChange={(_e, v) => { if (!v) return; if (v === "view") commitDraft(); setMode(v); }}
             sx={{ my: 0.5 }}
           >
             <ToggleButton value="view" sx={{ textTransform: "none", px: 1.5 }}>Preview</ToggleButton>
@@ -307,6 +365,41 @@ export default function DocumentPreviewDialog({
           </ToggleButtonGroup>
         ) : null}
       </Box>
+
+      {available(tab) ? (
+        <Box sx={{ px: 2, py: 0.75, display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", borderBottom: "1px solid var(--border)" }}>
+          <Box component="span" sx={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+            File name
+          </Box>
+          <TextField
+            size="small"
+            value={fileNameDraft}
+            onChange={(e) => setFileNameDraft(e.target.value)}
+            onBlur={commitFileName}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); } }}
+            placeholder={SCOPE_LABEL[tab]}
+            InputProps={{
+              endAdornment: <InputAdornment position="end" sx={{ color: "var(--text-muted)" }}>.docx</InputAdornment>,
+            }}
+            sx={{ flex: 1, minWidth: 200, maxWidth: 460, bgcolor: "var(--bg-surface)", borderRadius: 1 }}
+          />
+          {mode === "edit" ? (
+            <Box sx={{ ml: "auto", display: "flex", alignItems: "center", gap: 0.5, fontSize: "0.75rem", color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+              {saveStatus === "saving" ? (
+                <>
+                  <CircularProgress size={13} sx={{ color: "var(--text-muted)" }} />
+                  Saving…
+                </>
+              ) : (
+                <>
+                  <CheckCircleIcon sx={{ fontSize: 15, color: "var(--success)" }} />
+                  Saved
+                </>
+              )}
+            </Box>
+          ) : null}
+        </Box>
+      ) : null}
 
       {mode === "edit" && available(tab) ? (
         <Box sx={{ px: 2, py: 0.75, display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap", borderBottom: "1px solid var(--border)" }}>
@@ -386,10 +479,10 @@ export default function DocumentPreviewDialog({
             ref={editorRef}
             contentEditable
             suppressContentEditableWarning
-            onInput={(e) => { draftHtmlRef.current[tab] = e.currentTarget.innerHTML; saveSelection(); }}
+            onInput={(e) => { draftHtmlRef.current[tab] = e.currentTarget.innerHTML; saveSelection(); scheduleAutoSave(); }}
             onKeyUp={saveSelection}
             onMouseUp={saveSelection}
-            onBlur={saveSelection}
+            onBlur={() => { saveSelection(); commitDraft(); }}
             sx={{ ...pageSx, outline: "none", "&:focus": { boxShadow: "0 0 0 2px var(--accent)" } }}
           />
         ) : (
@@ -445,7 +538,7 @@ export default function DocumentPreviewDialog({
       ) : null}
 
       <DialogActions sx={{ flexWrap: "wrap", gap: 1, px: 2, py: 1.5 }}>
-        <Button onClick={onClose} sx={{ textTransform: "none" }}>Close</Button>
+        <Button onClick={handleClose} sx={{ textTransform: "none" }}>Close</Button>
         <Box sx={{ flex: 1 }} />
         <Tooltip title={`Download the ${SCOPE_LABEL[tab].toLowerCase()} as .docx`}>
           <span>
@@ -453,21 +546,13 @@ export default function DocumentPreviewDialog({
               onClick={handleDownload}
               disabled={!available(tab) || busy}
               startIcon={<DescriptionIcon />}
-              variant="outlined"
+              variant="contained"
               sx={{ textTransform: "none" }}
             >
               Download .docx
             </Button>
           </span>
         </Tooltip>
-        <Button
-          onClick={handleSave}
-          disabled={!available(tab) || busy || mode !== "edit"}
-          variant="contained"
-          sx={{ textTransform: "none" }}
-        >
-          {busy ? "Saving…" : "Save"}
-        </Button>
       </DialogActions>
     </Dialog>
   );

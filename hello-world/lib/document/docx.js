@@ -57,6 +57,15 @@ export function getDownloadCoverLetterFileNameForTitle(jobTitle, company) {
   return buildDocumentFileName(jobTitle, company, "CL");
 }
 
+// Resolve the download file name for a document, honoring an optional user
+// override. The override is a base name (no extension) the user typed in the
+// preview; we sanitize it and append ".docx". Falls back to the derived
+// "<Company> - <Position> - <kind>.docx" name when there's no override.
+export function resolveDocumentFileName(override, jobTitle, company, kind) {
+  const base = sanitizeFileNamePart(String(override || "")).slice(0, 150);
+  return base ? `${base}.docx` : buildDocumentFileName(jobTitle, company, kind);
+}
+
 export function isDocxResume(file) {
   return file?.name?.toLowerCase().endsWith(".docx");
 }
@@ -418,20 +427,20 @@ export function createDocumentDownloaders(deps) {
     docxB64,
     coverLetterDocxB64,
     docxPath,
+    resumeFileName,
+    coverLetterFileName,
   }) {
+    // Download names honor an optional user override typed in the preview.
+    const resumeName = resolveDocumentFileName(resumeFileName, jobTitle, company, "Resume");
+    const coverName = resolveDocumentFileName(coverLetterFileName, jobTitle, company, "CL");
+
     // External engine returns finished documents — serve them directly rather
     // than re-filling the user's template.
     if (docxB64) {
       try {
-        triggerBlobDownload(
-          base64ToDocxBlob(docxB64),
-          getDownloadFileNameForTitle(jobTitle, company),
-        );
+        triggerBlobDownload(base64ToDocxBlob(docxB64), resumeName);
         if (coverLetterDocxB64) {
-          triggerBlobDownload(
-            base64ToDocxBlob(coverLetterDocxB64),
-            getDownloadCoverLetterFileNameForTitle(jobTitle, company),
-          );
+          triggerBlobDownload(base64ToDocxBlob(coverLetterDocxB64), coverName);
         }
         return null;
       } catch (err) {
@@ -445,7 +454,7 @@ export function createDocumentDownloaders(deps) {
         const supabase = createClient();
         const { data, error } = await supabase.storage.from("resumes").download(docxPath);
         if (!error && data) {
-          triggerBlobDownload(data, getDownloadFileNameForTitle(jobTitle, company));
+          triggerBlobDownload(data, resumeName);
           return null;
         }
       } catch {
@@ -462,17 +471,14 @@ export function createDocumentDownloaders(deps) {
     ) {
       try {
         if (coverLetterDocxB64) {
-          triggerBlobDownload(
-            base64ToDocxBlob(coverLetterDocxB64),
-            getDownloadCoverLetterFileNameForTitle(jobTitle, company),
-          );
+          triggerBlobDownload(base64ToDocxBlob(coverLetterDocxB64), coverName);
         } else if (isDocxResume(coverLetterFile)) {
           const clBlob = await buildDocxFromUploadedTemplate(
             coverLetterFile,
             coverLetterResultLines.join("\n"),
             coverLetterResultLines,
           );
-          triggerBlobDownload(clBlob, getDownloadCoverLetterFileNameForTitle(jobTitle, company));
+          triggerBlobDownload(clBlob, coverName);
         } else {
           return "Upload your cover letter template (.docx) to download it.";
         }
@@ -487,14 +493,7 @@ export function createDocumentDownloaders(deps) {
 
     try {
       const blob = await buildDocxFromUploadedTemplate(resumeFile, result, resultLines);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = getDownloadFileNameForTitle(jobTitle, company);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      triggerBlobDownload(blob, resumeName);
 
       if (
         coverLetterFile &&
@@ -507,14 +506,7 @@ export function createDocumentDownloaders(deps) {
           coverLetterResultLines.join("\n"),
           coverLetterResultLines,
         );
-        const clUrl = URL.createObjectURL(clBlob);
-        const clLink = document.createElement("a");
-        clLink.href = clUrl;
-        clLink.download = getDownloadCoverLetterFileNameForTitle(jobTitle, company);
-        document.body.appendChild(clLink);
-        clLink.click();
-        clLink.remove();
-        URL.revokeObjectURL(clUrl);
+        triggerBlobDownload(clBlob, coverName);
       }
       return null;
     } catch (err) {
@@ -606,6 +598,8 @@ export function createDocumentDownloaders(deps) {
       docxB64,
       coverLetterDocxB64,
       docxPath,
+      resumeFileName: tailoring.resumeFileName || "",
+      coverLetterFileName: tailoring.coverLetterFileName || "",
     });
   }
 
