@@ -8,11 +8,13 @@ import {
   buildTemplateLinesForUpload,
 } from "../../lib/document/docx";
 import { parseDocxToModel, linesToModel } from "../../lib/document/docxPreview";
+import { readEngine } from "../settings/engine";
 
 // Resume/cover-letter preview + edit modal (opened from the status-bar chips and
 // at the end of a Generate flow). Renders the faithful .docx (or a plain-text
-// fallback), lets the user edit/save/download, and can re-run Gemini with
-// free-text steering instructions.
+// fallback), lets the user edit/save/download, and can re-run the selected
+// engine with free-text steering instructions (Gemini rewrites freely; the
+// embedded engine applies them as emphasize/avoid/aggressiveness directives).
 //
 // Depends on the parent's tailoring map (+ setters), the uploaded files and
 // tailoring inputs, the docx downloader, the company-research warm-up, and the
@@ -229,7 +231,9 @@ export function useDocumentPreview({
       else formData.append("jobPostingUrl", url);
       formData.append("additionalContext", additionalContext);
       formData.append("aggressiveness", String(aggressiveness));
-      formData.append("engine", "gemini");
+      // Revise with the engine the user selected — the embedded engine now
+      // honors steering deterministically, so don't silently switch to Gemini.
+      formData.append("engine", readEngine());
       formData.append("steeringInstructions", text);
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));

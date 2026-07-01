@@ -94,11 +94,15 @@ export default function DocumentPreviewDialog({
   error = "",
 }) {
   const isMobile = useIsMobile();
+  // The revise box re-runs the selected engine (the `engine` prop), so its copy
+  // reflects which one: Gemini rewrites freely; Embedded applies
+  // emphasize/avoid/tone directives deterministically.
+  const isEmbedded = engine === "embedded";
   const [tab, setTab] = useState(initialTab);
   const [mode, setMode] = useState("view"); // "view" | "edit"
   // Per-scope render state: { loading, html, error }.
   const [docState, setDocState] = useState({});
-  // Steering box: free-text instructions to re-run the Gemini tailor with.
+  // Steering box: free-text instructions to re-run the selected engine with.
   const [steerText, setSteerText] = useState("");
   const [resubmitting, setResubmitting] = useState(false);
   const [prevOpen, setPrevOpen] = useState(open);
@@ -298,9 +302,9 @@ export default function DocumentPreviewDialog({
     if (next !== (scopes[tab]?.fileName || "")) onRenameFile?.(tab, next);
   };
 
-  // Resubmit the active document to Gemini with the typed steering instructions.
-  // The parent re-runs the tailor and refreshes the preview; on success we clear
-  // the box. Only available for the Gemini engine (see steeringEnabled below).
+  // Resubmit the active document to the selected engine with the typed steering
+  // instructions. The parent re-runs the tailor and refreshes the preview; on
+  // success we clear the box (see steeringEnabled below for which engines).
   const submitSteer = async () => {
     const text = steerText.trim();
     if (!text || resubmitting || busy) return;
@@ -316,8 +320,11 @@ export default function DocumentPreviewDialog({
   const heading = [company, jobTitle].filter(Boolean).join(" · ");
   const state = docState[tab] || {};
   const hasContent = SCOPES.some(available);
-  // Steering is a Gemini-only feature: only Gemini re-tailors from instructions.
-  const steeringEnabled = engine === "gemini" && available(tab) && typeof onResubmit === "function";
+  // Steering re-tailors from instructions: Gemini rewrites freely, and the
+  // embedded engine applies emphasize/avoid/tone directives offline. The
+  // external engine has no steering path, so the box stays hidden there.
+  const steeringEnabled =
+    (engine === "gemini" || isEmbedded) && available(tab) && typeof onResubmit === "function";
 
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth fullScreen={isMobile}>
@@ -499,7 +506,9 @@ export default function DocumentPreviewDialog({
       {steeringEnabled ? (
         <Box sx={{ px: 2, pt: 1.25, pb: 0.5, borderTop: "1px solid var(--border)", bgcolor: "var(--accent-soft)" }}>
           <Box sx={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary)", mb: 0.75 }}>
-            Ask Gemini to revise this {SCOPE_LABEL[tab].toLowerCase()}
+            {isEmbedded
+              ? `Revise this ${SCOPE_LABEL[tab].toLowerCase()} offline (no AI)`
+              : `Ask Gemini to revise this ${SCOPE_LABEL[tab].toLowerCase()}`}
           </Box>
           <Box sx={{ display: "flex", alignItems: "flex-start", gap: 1 }}>
             <TextField
@@ -517,7 +526,11 @@ export default function DocumentPreviewDialog({
                   submitSteer();
                 }
               }}
-              placeholder="e.g. Emphasize leadership, shorten the summary, and call out my Python experience"
+              placeholder={
+                isEmbedded
+                  ? "e.g. Emphasize React and Kubernetes, remove Java, tone it down"
+                  : "e.g. Emphasize leadership, shorten the summary, and call out my Python experience"
+              }
               disabled={resubmitting || busy}
               sx={{ bgcolor: "var(--bg-surface)", borderRadius: 1 }}
             />
@@ -532,7 +545,9 @@ export default function DocumentPreviewDialog({
             </Button>
           </Box>
           <Box sx={{ fontSize: "0.7rem", color: "var(--text-muted)", mt: 0.5 }}>
-            Regenerates this document with Gemini using your instructions. Enter to submit, Shift+Enter for a new line.
+            {isEmbedded
+              ? "Regenerates on-device, applying emphasize / remove / tone-it-down directives. Enter to submit, Shift+Enter for a new line."
+              : "Regenerates this document with Gemini using your instructions. Enter to submit, Shift+Enter for a new line."}
           </Box>
         </Box>
       ) : null}

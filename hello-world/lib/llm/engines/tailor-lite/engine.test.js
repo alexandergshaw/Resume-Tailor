@@ -119,6 +119,65 @@ describe("embeddedEngine.tailorResume", () => {
   });
 });
 
+describe("embeddedEngine steering (the revise box, offline)", () => {
+  it("emphasize/avoid directives change the document and are reported", async () => {
+    const base = await embeddedEngine.tailorResume({ jobPosting: POSTING });
+    const steered = await embeddedEngine.tailorResume({
+      jobPosting: POSTING,
+      steeringInstructions: "Emphasize SQL. Remove React.",
+    });
+    // The directives actually changed what was generated (engine is
+    // deterministic, so any byte difference is attributable to steering).
+    expect(steered.docxB64).not.toBe(base.docxB64);
+    expect(steered.report.meta.steering.emphasized).toContain("SQL");
+    expect(steered.report.meta.steering.avoided).toContain("React");
+    expect(steered.warnings).toEqual([]);
+    expect(steered.result).not.toContain("{{");
+  });
+
+  it("steering is deterministic too", async () => {
+    const args = { jobPosting: POSTING, steeringInstructions: "emphasize SQL" };
+    const a = await embeddedEngine.tailorResume(args);
+    const b = await embeddedEngine.tailorResume(args);
+    expect(a.docxB64).toBe(b.docxB64);
+  });
+
+  it("'tone it down' nudges the effective aggressiveness down", async () => {
+    const res = await embeddedEngine.tailorResume({
+      jobPosting: POSTING,
+      aggressiveness: 5,
+      steeringInstructions: "tone it down",
+    });
+    expect(res.report.meta.steering.aggressiveness).toBe(4);
+  });
+
+  it("warns honestly when a note has no parseable directives", async () => {
+    const res = await embeddedEngine.tailorResume({
+      jobPosting: POSTING,
+      steeringInstructions: "make it generally nicer somehow",
+    });
+    expect(res.warnings.length).toBe(1);
+    expect(res.warnings[0]).toMatch(/emphasi|avoid|directives/i);
+    expect(res.report.meta.steering).toBeUndefined();
+  });
+
+  it("cover letters honor steering as well", async () => {
+    const base = await embeddedEngine.tailorCoverLetter({
+      jobPosting: POSTING,
+      jobTitle: "Staff Engineer",
+      companyName: "Initech",
+    });
+    const steered = await embeddedEngine.tailorCoverLetter({
+      jobPosting: POSTING,
+      jobTitle: "Staff Engineer",
+      companyName: "Initech",
+      steeringInstructions: "emphasize SQL, drop React",
+    });
+    expect(steered.docxB64).not.toBe(base.docxB64);
+    expect(steered.report.meta.steering.emphasized).toContain("SQL");
+  });
+});
+
 describe("embeddedEngine.tailorCoverLetter", () => {
   it("renders an industry cover letter (no teaching framing) for a non-teaching posting", async () => {
     const res = await embeddedEngine.tailorCoverLetter({

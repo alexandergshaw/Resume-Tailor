@@ -25,6 +25,7 @@ import { extractKeywords } from "./keywords.js";
 import { mapSlots } from "./strategy.js";
 import { parsePosting } from "./parser.js";
 import { research } from "./researcher.js";
+import { parseSteering, applySteering, steerAggressiveness } from "./steering.js";
 import { extractPostingMeta, cleanPostingTitle } from "../../postingMeta.js";
 import { fetchUrlContent } from "../../../scrape/fetchUrlContent.js";
 import { defaultLibraryData } from "./library/defaults.js";
@@ -157,12 +158,15 @@ function resolveCoverFacts({ posting, company, data }) {
 
 // Scan a template, resolve keywords (legacy/composed), map placeholders.
 // `aggressiveness` (1..5) drives how much gap-keyword insertion the strategy does.
-async function buildProposal(buffer, posting, aggressiveness, maxKeywords, serialAnd, data = DEFAULT_DATA) {
+async function buildProposal(buffer, posting, aggressiveness, maxKeywords, serialAnd, data = DEFAULT_DATA, steering = null) {
   const doc = await loadDocx(buffer);
   const rawSlots = scanPlaceholders(doc);
   const kw = resolveKeywords(posting, data);
-  const slots = mapSlots(rawSlots, kw.keywords, data, { aggressiveness, maxKeywords, serialAnd, posting });
-  return { doc, slots, keywords: kw.keywords, emphases: kw.emphases };
+  // Steering (the preview's "revise" box) boosts/removes canonicals before slot
+  // mapping, so "emphasize React" actually changes what the document leads with.
+  const keywords = steering?.hasDirectives ? applySteering(kw.keywords, steering) : kw.keywords;
+  const slots = mapSlots(rawSlots, keywords, data, { aggressiveness, maxKeywords, serialAnd, posting });
+  return { doc, slots, keywords, emphases: kw.emphases };
 }
 
 // Resolve final values and fill a template. `overrides` map slot keys to text;
@@ -170,8 +174,8 @@ async function buildProposal(buffer, posting, aggressiveness, maxKeywords, seria
 // `maxKeywords` caps comma-joined capability lists (the cover letter reads better
 // with shorter lists than the résumé). An empty final value leaves the
 // {{placeholder}} visible (counts as unfilled).
-async function render(buffer, posting, { overrides = {}, seedByName = {}, aggressiveness, maxKeywords, serialAnd, data = DEFAULT_DATA } = {}) {
-  const proposal = await buildProposal(buffer, posting, aggressiveness, maxKeywords, serialAnd, data);
+async function render(buffer, posting, { overrides = {}, seedByName = {}, aggressiveness, maxKeywords, serialAnd, data = DEFAULT_DATA, steering = null } = {}) {
+  const proposal = await buildProposal(buffer, posting, aggressiveness, maxKeywords, serialAnd, data, steering);
   const finalValues = {};
   const unfilled = [];
   const reportSlots = proposal.slots.map((slot) => {
@@ -195,6 +199,38 @@ async function render(buffer, posting, { overrides = {}, seedByName = {}, aggres
     unfilled,
     keywords: proposal.keywords,
     emphases: proposal.emphases,
+  };
+}
+
+// Resolve a free-text steering note into directives + the effective
+// aggressiveness, plus the report/warning payloads that tell the user what the
+// engine actually did with the note (or that it couldn't parse it).
+function resolveSteering(steeringInstructions, taxonomy, aggressiveness) {
+  const note = String(steeringInstructions || "").trim();
+  if (!note) return { steering: null, aggressiveness, warnings: [], meta: {} };
+  const steering = parseSteering(note, taxonomy);
+  const eff = steerAggressiveness(aggressiveness, steering);
+  if (!steering.hasDirectives) {
+    return {
+      steering: null,
+      aggressiveness,
+      warnings: [
+        'The embedded engine applies revision notes as emphasize/avoid/aggressiveness directives, and couldn\'t find any in your note — try wording like "emphasize React", "remove Java", or "tone it down".',
+      ],
+      meta: {},
+    };
+  }
+  return {
+    steering,
+    aggressiveness: eff,
+    warnings: [],
+    meta: {
+      steering: {
+        emphasized: steering.emphasize.map((t) => t.canonical),
+        avoided: steering.avoid.map((t) => t.canonical),
+        aggressiveness: eff ?? null,
+      },
+    },
   };
 }
 
@@ -242,11 +278,17 @@ export const embeddedEngine = {
     return out;
   },
 
-  async tailorResume({ jobPosting, jobPostingUrl, values, aggressiveness, userId }) {
+  async tailorResume({ jobPosting, jobPostingUrl, values, aggressiveness, userId, steeringInstructions }) {
     const { text: posting, meta: scrapedMeta } = await resolvePostingText({ jobPosting, jobPostingUrl });
     const overrides = values && typeof values === "object" ? values : {};
     const data = toData(await loadLibrary({ userId }));
-    const r = await render(await getDefaultTemplateBuffer(), posting, { overrides, aggressiveness, data });
+    const steered = resolveSteering(steeringInstructions, data.taxonomy, aggressiveness);
+    const r = await render(await getDefaultTemplateBuffer(), posting, {
+      overrides,
+      aggressiveness: steered.aggressiveness,
+      data,
+      steering: steered.steering,
+    });
     // Advisory research is excluded from the document — report only.
     const advisory = resolveAdvisory({ posting, company: "", data });
     // Best-effort title/company so the saved file is named after the posting
@@ -267,16 +309,18 @@ export const embeddedEngine = {
         unfilled: r.unfilled,
         keywords: r.keywords,
         advisory,
+        extraMeta: steered.meta,
       }),
-      warnings: [],
+      warnings: steered.warnings,
       degraded: false,
     };
   },
 
-  async tailorCoverLetter({ jobPosting, jobPostingUrl, jobTitle, companyName, values, aggressiveness, userId }) {
+  async tailorCoverLetter({ jobPosting, jobPostingUrl, jobTitle, companyName, values, aggressiveness, userId, steeringInstructions }) {
     const { text: posting, meta: scrapedMeta } = await resolvePostingText({ jobPosting, jobPostingUrl }, { required: false });
     const overrides = values && typeof values === "object" ? values : {};
     const data = toData(await loadLibrary({ userId }));
+    const steered = resolveSteering(steeringInstructions, data.taxonomy, aggressiveness);
     // Fall back to title/company from the scrape (URL) or parsed from the posting
     // when the caller didn't supply them (e.g. the manual paste flow), so the cover
     // letter is addressed correctly and its file is named like the résumé.
@@ -298,10 +342,11 @@ export const embeddedEngine = {
     const r = await render(await getCoverLetterTemplateBuffer({ teaching: isTeachingPosting(posting) }), posting, {
       overrides,
       seedByName,
-      aggressiveness,
+      aggressiveness: steered.aggressiveness,
       maxKeywords: 4, // keep capability lists keyword-rich but not a wall
       serialAnd: true, // prose lists read "A, B, and C", not "A, B, C"
       data,
+      steering: steered.steering,
     });
 
     return {
@@ -316,9 +361,9 @@ export const embeddedEngine = {
         reportSlots: r.reportSlots,
         unfilled: r.unfilled,
         keywords: r.keywords,
-        extraMeta: { document: "cover_letter" },
+        extraMeta: { document: "cover_letter", ...steered.meta },
       }),
-      warnings: [],
+      warnings: steered.warnings,
       degraded: false,
     };
   },
