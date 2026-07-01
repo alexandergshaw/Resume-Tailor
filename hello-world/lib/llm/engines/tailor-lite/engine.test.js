@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { embeddedEngine } from "./engine.js";
+import { embeddedEngine, isTeachingPosting } from "./engine.js";
 import { fetchUrlContent } from "../../../scrape/fetchUrlContent.js";
 
 vi.mock("../../../scrape/fetchUrlContent.js", () => ({ fetchUrlContent: vi.fn() }));
@@ -10,6 +10,32 @@ const POSTING = [
   "React, JavaScript, TypeScript, SQL, PostgreSQL, REST APIs, Agile, leadership.",
   "Nice to have: Kubernetes, Docker.",
 ].join("\n");
+
+describe("isTeachingPosting", () => {
+  it("detects genuine teaching roles via a strong signal", () => {
+    expect(isTeachingPosting("Adjunct Faculty to teach undergraduate courses.")).toBe(true);
+    expect(isTeachingPosting("Lecturer developing graduate-level coursework and course materials.")).toBe(true);
+    expect(isTeachingPosting("Assistant Professor, tenure-track, in Computer Science.")).toBe(true);
+  });
+
+  it("does NOT treat industry 'experience through coursework' as teaching (MassMutual AI Engineer)", () => {
+    // "coursework" alone is a candidate-background phrase in industry postings, not a
+    // teaching duty — it must not flip the letter to the adjunct framing.
+    const posting =
+      "AI Engineer. You have demonstrated machine learning and AI engineering concepts " +
+      "through coursework, research, internships, co-ops, capstone projects, and personal projects.";
+    expect(isTeachingPosting(posting)).toBe(false);
+  });
+
+  it("requires a second signal for weak terms (coursework needs corroboration)", () => {
+    expect(isTeachingPosting("Software Engineer. Relevant experience via coursework or projects.")).toBe(false);
+    expect(isTeachingPosting("Develop coursework and support students each term.")).toBe(true);
+  });
+
+  it("keeps industry roles at academic employers as industry", () => {
+    expect(isTeachingPosting("Web developer to help the department with strategic web initiatives.")).toBe(false);
+  });
+});
 
 describe("embeddedEngine.getProposals", () => {
   it("returns the template's slots plus keywords", async () => {

@@ -105,13 +105,17 @@ function postingMetaFor(posting, scrapedMeta) {
 // postings for non-teaching roles routinely include "About <University>" boilerplate
 // ("world-renowned faculty", "extraordinary students"), which must not flip framing.
 // Only teaching-ROLE phrases ("faculty position", "teaching faculty") count.
+// "coursework" is likewise NOT strong: industry postings say the candidate gained
+// experience "through coursework, internships, projects", whereas teaching postings
+// say they "develop coursework" — so it is only a weak (needs-corroboration) signal.
 const TEACHING_STRONG_RE =
-  /\b(?:adjunct|lecturer|professor|instructor|tenure[ -]?track|curriculum|syllab(?:us|i)|coursework|course materials|pedagog\w*|teaching (?:position|faculty|load)|faculty (?:position|appointment))\b/i;
+  /\b(?:adjunct|lecturer|professor|instructor|tenure[ -]?track|curriculum|syllab(?:us|i)|course materials|pedagog\w*|teaching (?:position|faculty|load)|faculty (?:position|appointment))\b/i;
 const TEACHING_WEAK_RES = [
   /\bteach(?:es|ing)?\b/i,
   /\bstudents?\b/i,
   /\bstudent body\b/i,
   /\bcourses?\b/i,
+  /\bcoursework\b/i,
   /\bclassroom\b/i,
   /\bsemester\b/i,
   /\blearners?\b/i,
