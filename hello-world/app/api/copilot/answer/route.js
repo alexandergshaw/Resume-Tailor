@@ -2,6 +2,8 @@ import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { parseModelJson } from "@/lib/llm/extractEmployment";
 import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
+import { wantsEmbedded } from "@/lib/llm/featureEngine";
+import { draftAnswerLocal } from "@/lib/copilot/answerLocal";
 
 const SYSTEM = [
   "You are an interview coach helping a candidate answer questions during a LIVE interview.",
@@ -38,8 +40,6 @@ function buildPrompt(question, context, profile) {
 
 export async function POST(request) {
   try {
-    const { geminiModel } = getServerEnv();
-
     const supabase = await createSupabaseServerClient();
     const {
       data: { user } = {},
@@ -59,6 +59,16 @@ export async function POST(request) {
     const context = (body?.context ?? "").toString().slice(0, MAX_CONTEXT_CHARS);
     const profile = (body?.profile ?? "").toString().slice(0, MAX_PROFILE_CHARS);
 
+    // Embedded engine: assemble grounded talking points on-device — no LLM.
+    if (wantsEmbedded(body?.engine)) {
+      const { points, type } = draftAnswerLocal({ question, profile });
+      if (points.length === 0) {
+        return Response.json({ error: "Could not generate an answer." }, { status: 502 });
+      }
+      return Response.json({ points, type });
+    }
+
+    const { geminiModel } = getServerEnv();
     const client = getGeminiClient();
     const response = await client.models.generateContent({
       model: geminiModel,
