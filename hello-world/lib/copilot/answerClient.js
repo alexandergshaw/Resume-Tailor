@@ -1,9 +1,9 @@
 // Thin client for the /api/copilot/answer route. Returns { points, type }.
-export async function draftAnswer({ question, context }) {
+export async function draftAnswer({ question, context, profile }) {
   const res = await fetch("/api/copilot/answer", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, context }),
+    body: JSON.stringify({ question, context, profile }),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {

@@ -14,9 +14,11 @@ import { confirmQuestion } from "@/lib/copilot/detectClient";
 import { draftAnswer } from "@/lib/copilot/answerClient";
 import TranscriptView from "./TranscriptView";
 import QuestionFeed from "./QuestionFeed";
+import PrepContext from "./PrepContext";
 
 const CONTEXT_TURNS = 12;
 const MIN_WORDS_FOR_LLM = 4;
+const PREP_STORAGE_KEY = "copilot-prep-context";
 
 function fmtClock(ms) {
   const total = Math.max(0, Math.floor(ms / 1000));
@@ -37,6 +39,7 @@ export default function CopilotClient() {
   const [interims, setInterims] = useState({ them: "", you: "" });
   const [questions, setQuestions] = useState([]);
   const [autoDraft, setAutoDraft] = useState(true);
+  const [profile, setProfile] = useState("");
   const [startedAt, setStartedAt] = useState(null);
   const [now, setNow] = useState(0);
   const [showConsent, setShowConsent] = useState(true);
@@ -49,6 +52,8 @@ export default function CopilotClient() {
   const lastQNormRef = useRef(""); // dedupe back-to-back identical questions
   const questionsRef = useRef([]);
   const autoDraftRef = useRef(true);
+  const profileRef = useRef("");
+  const answerCacheRef = useRef(new Map()); // normalized question -> { points, type }
 
   useEffect(() => {
     questionsRef.current = questions;
@@ -56,6 +61,50 @@ export default function CopilotClient() {
   useEffect(() => {
     autoDraftRef.current = autoDraft;
   }, [autoDraft]);
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
+
+  // Seed prep context: prefer what's saved in this browser, otherwise fall back
+  // to the user's saved "additional context" from the main app.
+  useEffect(() => {
+    let cancelled = false;
+    let local = null;
+    try {
+      local = window.localStorage.getItem(PREP_STORAGE_KEY);
+    } catch {
+      local = null;
+    }
+    if (local) {
+      setProfile(local);
+      return undefined;
+    }
+    (async () => {
+      try {
+        const res = await fetch("/api/user-context");
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!cancelled && json?.additionalContext) setProfile(json.additionalContext);
+      } catch {
+        // best effort — the field just stays empty
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const onProfileChange = useCallback((val) => {
+    setProfile(val);
+    // Prior answers were grounded in the old background — drop them so future
+    // drafts reflect the edit.
+    answerCacheRef.current.clear();
+    try {
+      window.localStorage.setItem(PREP_STORAGE_KEY, val);
+    } catch {
+      // ignore quota / privacy-mode errors
+    }
+  }, []);
 
   const live = status === "live" || status === "connecting";
 
@@ -84,12 +133,41 @@ export default function CopilotClient() {
   );
 
   const runDraft = useCallback(
-    async (id, question) => {
+    async (id, question, { force = false } = {}) => {
+      const norm = normalizeQuestion(question);
+      // Reuse a prior answer for the same (normalized) question — interviewers
+      // often circle back or rephrase — unless the user explicitly redrafts.
+      if (!force) {
+        const cached = answerCacheRef.current.get(norm);
+        if (cached) {
+          setQuestions((prev) =>
+            prev.map((it) =>
+              it.id === id
+                ? {
+                    ...it,
+                    status: "done",
+                    points: cached.points,
+                    type: it.type || cached.type,
+                    cached: true,
+                  }
+                : it,
+            ),
+          );
+          return;
+        }
+      }
       setQuestions((prev) =>
-        prev.map((it) => (it.id === id ? { ...it, status: "loading", error: "" } : it)),
+        prev.map((it) =>
+          it.id === id ? { ...it, status: "loading", error: "", cached: false } : it,
+        ),
       );
       try {
-        const { points, type } = await draftAnswer({ question, context: buildContext() });
+        const { points, type } = await draftAnswer({
+          question,
+          context: buildContext(),
+          profile: profileRef.current,
+        });
+        answerCacheRef.current.set(norm, { points, type });
         setQuestions((prev) =>
           prev.map((it) =>
             it.id === id ? { ...it, status: "done", points, type: it.type || type } : it,
@@ -174,6 +252,7 @@ export default function CopilotClient() {
     recentRef.current = [];
     pendingRef.current = [];
     lastQNormRef.current = "";
+    answerCacheRef.current.clear();
     setStatus("connecting");
     try {
       const session = new CopilotSession({
@@ -218,7 +297,9 @@ export default function CopilotClient() {
   const onDraft = useCallback(
     (id) => {
       const q = questionsRef.current.find((it) => it.id === id);
-      if (q) runDraft(id, q.question);
+      // "Redraft" (already answered) forces a fresh generation; the first draft
+      // may reuse a cached answer.
+      if (q) runDraft(id, q.question, { force: q.status === "done" });
     },
     [runDraft],
   );
@@ -271,6 +352,8 @@ export default function CopilotClient() {
           {warning}
         </Alert>
       ) : null}
+
+      <PrepContext value={profile} onChange={onProfileChange} />
 
       <Stack
         direction="row"

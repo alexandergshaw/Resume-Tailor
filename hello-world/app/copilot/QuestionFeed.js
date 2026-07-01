@@ -69,6 +69,14 @@ function QuestionCard({ q, onDraft }) {
         <Typography sx={{ flex: 1, fontWeight: 600, color: "var(--text-primary)" }}>
           {q.question}
         </Typography>
+        {done && q.cached ? (
+          <Typography
+            variant="caption"
+            sx={{ color: "var(--text-muted)", whiteSpace: "nowrap", pt: 0.25 }}
+          >
+            reused
+          </Typography>
+        ) : null}
         {done && q.type ? (
           <Chip
             size="small"
