@@ -2,6 +2,9 @@ import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { parseModelJson } from "@/lib/llm/extractEmployment";
 import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
+import { wantsEmbedded } from "@/lib/llm/featureEngine";
+import { detectQuestion } from "@/lib/copilot/questions";
+import { classifyQuestionType } from "@/lib/copilot/questionType";
 
 const SYSTEM = [
   "You classify the interviewer's latest utterance during a LIVE job interview.",
@@ -31,8 +34,6 @@ function buildPrompt(utterance, context) {
 
 export async function POST(request) {
   try {
-    const { geminiModel } = getServerEnv();
-
     const supabase = await createSupabaseServerClient();
     const {
       data: { user } = {},
@@ -51,6 +52,16 @@ export async function POST(request) {
     }
     const context = (body?.context ?? "").toString().slice(0, MAX_CONTEXT_CHARS);
 
+    // Embedded engine: classify with the zero-cost heuristic detector — no LLM.
+    if (wantsEmbedded(body?.engine)) {
+      const det = detectQuestion(utterance);
+      const isQuestion = !!det.isQuestion && !!det.question;
+      const question = isQuestion ? det.question.trim() : "";
+      const type = isQuestion ? classifyQuestionType(question) : "general";
+      return Response.json({ isQuestion: isQuestion && !!question, question, type });
+    }
+
+    const { geminiModel } = getServerEnv();
     const client = getGeminiClient();
     const response = await client.models.generateContent({
       model: geminiModel,
