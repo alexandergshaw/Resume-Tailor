@@ -2,25 +2,36 @@ import { describe, it, expect, vi } from "vitest";
 import {
   researchCompanyLocal,
   researchUrlLocal,
-  firstSentences,
+  articleSummary,
   hostOf,
   suggestionFor,
 } from "./companyResearchLocal.js";
 
-describe("firstSentences", () => {
-  it("takes the first couple of sentences, clamped", () => {
-    expect(firstSentences("One. Two. Three.", 100, 2)).toBe("One. Two.");
-    expect(firstSentences("   ")).toBe("");
-    const long = "a".repeat(300);
-    expect(firstSentences(long, 240).endsWith("…")).toBe(true);
+describe("articleSummary", () => {
+  it("extracts the informative sentences, not merely the first", () => {
+    const text =
+      "Please accept our cookies. Sign in for more content today. Acme announced a $50M funding round to expand its data platform.";
+    const out = articleSummary(text, { company: "Acme" });
+    // The later, on-topic funding sentence is selected over low-value filler.
+    expect(out).toContain("funding");
+    expect(out).not.toContain("Sign in");
+    expect(articleSummary("", {})).toBe("");
   });
 });
 
 describe("hostOf / suggestionFor", () => {
-  it("strips www and builds a sincere opener", () => {
+  it("strips www and builds a sincere, article-specific opener", () => {
     expect(hostOf("https://www.technews.example/x")).toBe("technews.example");
-    expect(suggestionFor({ company: "Acme", title: "Acme raises $50M" })).toContain("Acme");
+    expect(suggestionFor({ company: "Acme", title: "Acme raises $50M", seed: "u1" })).toContain("Acme");
+    expect(suggestionFor({ company: "Acme", title: "Acme raises $50M", seed: "u1" })).toContain("$50M");
     expect(suggestionFor({ company: "", title: "" })).toContain("your team");
+  });
+
+  it("varies the opener across different articles (seeds)", () => {
+    const seeds = ["u1", "u2", "u3", "u4", "u5"].map((s) =>
+      suggestionFor({ company: "Acme", title: "Acme wins award", seed: s }),
+    );
+    expect(new Set(seeds).size).toBeGreaterThan(1);
   });
 });
 

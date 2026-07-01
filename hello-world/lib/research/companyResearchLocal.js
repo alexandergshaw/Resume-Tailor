@@ -7,10 +7,12 @@
 
 import { searchPostingUrls } from "@/lib/scrape/webSearch";
 import { fetchUrlContent } from "@/lib/scrape/fetchUrlContent";
+import { summarize } from "@/lib/text/summarize";
+import { pick } from "@/lib/text/phrasing";
 
 const WANT = 3;
 const MAX_CANDIDATES = 8;
-const SUMMARY_CHARS = 240;
+const SUMMARY_CHARS = 260;
 
 // Hosts that aren't news: job boards, ATS, social, and search engines. We want
 // press/coverage, and these either gate content or aren't articles.
@@ -36,26 +38,36 @@ function isNewsUrl(url) {
   return !NON_NEWS_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
 }
 
-// First 1-2 sentences of a scraped page body, clamped, for the card summary.
-export function firstSentences(text, maxChars = SUMMARY_CHARS, maxSentences = 2) {
-  const clean = String(text || "").replace(/\s+/g, " ").trim();
-  if (!clean) return "";
-  const sentences = clean.match(/[^.!?]+[.!?]+/g) || [clean];
-  let out = "";
-  for (const s of sentences.slice(0, maxSentences)) {
-    if (out && (out + s).length > maxChars) break;
-    out += s;
-  }
-  out = out.trim() || clean.slice(0, maxChars);
+// The most informative 1-2 sentences of a scraped page body (not merely the
+// first, which is often nav/boilerplate), steered toward the company/role and
+// positive coverage, then clamped for the card summary.
+export function articleSummary(text, { company = "", jobTitle = "" } = {}, maxChars = SUMMARY_CHARS) {
+  const query = `${company} ${jobTitle} funding launch award growth expansion milestone hiring product`;
+  const out = summarize(text, { maxSentences: 2, query }).trim();
+  if (!out) return "";
   return out.length > maxChars ? `${out.slice(0, maxChars).trim()}…` : out;
 }
 
-// A sincere first-person opener the user can drop into a cover letter and adjust.
-export function suggestionFor({ company, title }) {
+// Sincere first-person openers the user can drop into a cover letter. `seed`
+// (the article URL) varies the phrasing so cards don't all read identically,
+// while staying stable for a given article.
+const SUGGESTION_OPENERS = [
+  (co, title) => `I was glad to see ${co}'s recent news — "${title}" — and it's part of what draws me to this role.`,
+  (co, title) => `${co}'s "${title}" caught my attention, and it's a big reason I'm excited about this opportunity.`,
+  (co, title) => `Reading "${title}" reinforced why I'd want to contribute to ${co}.`,
+  (co, title) => `I've been following ${co}, and "${title}" is exactly the kind of momentum I'd want to be part of.`,
+];
+const SUGGESTION_OPENERS_NOTITLE = [
+  (co) => `I've been following ${co}'s recent progress, and it's part of what draws me to this role.`,
+  (co) => `${co}'s recent momentum is a big reason I'm excited about this opportunity.`,
+  (co) => `What ${co} has been building lately is exactly the kind of work I'd want to contribute to.`,
+];
+
+export function suggestionFor({ company, title, seed = "" }) {
   const co = String(company || "").trim() || "your team";
-  return title
-    ? `I noticed ${co}'s recent news — "${title}" — and it's part of what draws me to this role.`
-    : `I've been following ${co}'s recent progress, and it's part of what draws me to this role.`;
+  const t = String(title || "").trim();
+  if (t) return pick(seed || t, SUGGESTION_OPENERS)(co, t);
+  return pick(seed || co, SUGGESTION_OPENERS_NOTITLE)(co);
 }
 
 function card({ url, title, date, summary, company, idx }) {
@@ -68,7 +80,7 @@ function card({ url, title, date, summary, company, idx }) {
     date: date || "",
     url,
     summary,
-    suggestion: suggestionFor({ company, title: finalTitle }),
+    suggestion: suggestionFor({ company, title: title ? finalTitle : "", seed: url }),
   };
 }
 
@@ -125,7 +137,7 @@ export async function researchCompanyLocal(
       scraped = { error: "unreadable" };
     }
     if (!scraped || scraped.error) continue;
-    const summary = firstSentences(scraped.description);
+    const summary = articleSummary(scraped.description, { company: co, jobTitle });
     if (!summary) continue;
     articles.push(
       card({
@@ -166,7 +178,7 @@ export async function researchUrlLocal(
     return { error: `Couldn't read that URL (${scraped?.error || "unreadable"}).`, status: 502 };
   }
   const title = scraped.title || hostOf(url) || "Article";
-  const summary = firstSentences(scraped.description);
+  const summary = articleSummary(scraped.description, { company });
   const article = card({
     url,
     title,
