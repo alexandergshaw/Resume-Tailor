@@ -10,6 +10,7 @@ import NavTabs from "./components/NavTabs";
 import TrackingTab from "./components/TrackingTab";
 import LiveFeedTab from "./components/LiveFeedTab";
 import LibraryEditor from "./components/LibraryEditor";
+import CopilotClient from "./copilot/CopilotClient";
 import ChatPanel from "./components/ChatPanel";
 import StatusBar from "./components/StatusBar";
 import BatchTailorDialog from "./components/BatchTailorDialog";
@@ -1338,7 +1339,7 @@ export default function Home() {
       const { data: appRows, error: appErr } = await supabase
         .from("applications")
         .select(`
-          id, status, applied_at, tracked_at, application_url, resume_used_id,
+          id, status, applied_at, tracked_at, application_url, resume_used_id, cover_letter_id,
           positions ( id, external_id, title, company, description, url, posted_at )
         `)
         .eq("user_id", currentUser.id)
@@ -1370,9 +1371,26 @@ export default function Home() {
         }
       }
 
+      // Step 2b: fetch the linked cover letters so restored chips can preview
+      // and download them (they mirror generated_resumes, linked via cover_letter_id).
+      const coverIds = (appRows || []).map((r) => r.cover_letter_id).filter(Boolean);
+      let coverMap = {};
+      if (coverIds.length > 0) {
+        const { data: coverRows, error: coverErr } = await supabase
+          .from("generated_cover_letters")
+          .select("id, content, content_lines")
+          .in("id", coverIds);
+        if (coverErr) {
+          console.warn("[loadApplications] cover letter fetch failed (non-fatal):", coverErr);
+        } else {
+          coverMap = Object.fromEntries((coverRows || []).map((r) => [r.id, r]));
+        }
+      }
+
       const merged = (appRows || []).map((app) => ({
         ...app,
         generated_resumes: app.resume_used_id ? (resumeMap[app.resume_used_id] ?? null) : null,
+        generated_cover_letters: app.cover_letter_id ? (coverMap[app.cover_letter_id] ?? null) : null,
       }));
 
       const appIds = merged.map((app) => app.id).filter(Boolean);
@@ -1499,11 +1517,13 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mainTab, activeSection, autoTailoredPostings]);
 
-  // Backfill chip statuses for tracked jobs from Supabase. Any tracked job
-  // whose position has a matching application with a saved generated_resumes
-  // row is treated as "done" so the floating toolbar chip is colored green
-  // after a reload even if the slim localStorage status wasn't written by
-  // the previous session.
+  // Backfill tracked-job chips from Supabase after a reload. localStorage only
+  // persists a slim status per chip, so any tracked job whose position has a
+  // matching application with a saved resume/cover letter is rehydrated here:
+  // status "done" (green chip) plus the full tailored content, so the preview /
+  // edit modal, drag-to-upload, and downloads all work without regenerating.
+  // In-session content (possibly edited) stays authoritative and is never
+  // clobbered; chips still generating are left alone.
   useEffect(() => {
     if (!Array.isArray(applicationData) || applicationData.length === 0) return;
     if (!Array.isArray(trackedJobs) || trackedJobs.length === 0) return;
@@ -1517,16 +1537,37 @@ export default function Home() {
       const next = { ...current };
       for (const job of trackedJobs) {
         const existing = next[job.id];
-        if (existing && existing.status) continue;
+        // Keep freshly generated / edited in-memory content authoritative.
+        if (existing?.result || existing?.status === "tailoring") continue;
         const app = externalIdToApp.get(String(job.id));
         if (!app) continue;
-        if (!app.generated_resumes?.content) continue;
+        const gen = app.generated_resumes;
+        const cover = app.generated_cover_letters;
+        const resumeText = typeof gen?.content === "string" ? gen.content : "";
+        const resumeLines =
+          Array.isArray(gen?.content_lines) && gen.content_lines.length > 0
+            ? gen.content_lines
+            : resumeText
+              ? resumeText.split("\n")
+              : [];
+        const coverLines =
+          Array.isArray(cover?.content_lines) && cover.content_lines.length > 0
+            ? cover.content_lines
+            : typeof cover?.content === "string" && cover.content
+              ? cover.content.split("\n")
+              : [];
+        if (!resumeText && coverLines.length === 0) continue;
         next[job.id] = {
           ...(existing || {}),
           status: "done",
           downloaded: true,
           generatedJobTitle:
             existing?.generatedJobTitle || app.positions?.title || job.title || "",
+          result: resumeText,
+          resultLines: resumeLines,
+          coverLetterResultLines: coverLines,
+          // Preserve the faithful docx for the chip download's storage fallback.
+          docxPath: typeof gen?.docx_path === "string" ? gen.docx_path : "",
           error: "",
         };
         changed = true;
@@ -2668,6 +2709,7 @@ export default function Home() {
             { value: "manualApplying", label: "Manual Applying" },
             { value: "feed", label: "Auto Applying" },
             { value: "interviewing", label: "Tracking" },
+            { value: "copilot", label: "Interview Copilot" },
             { value: "library", label: "Library" },
           ]}
         />
@@ -2848,6 +2890,7 @@ export default function Home() {
           />
         )}
 
+        {mainTab === "copilot" && <CopilotClient />}
         {mainTab === "library" && <LibraryEditor />}
 
         {/* Always-mounted dialogs (not gated by active main tab). */}
