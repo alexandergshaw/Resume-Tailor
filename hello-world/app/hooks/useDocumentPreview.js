@@ -10,7 +10,7 @@ import {
 import { parseDocxToModel, linesToModel } from "../../lib/document/docxPreview";
 import { addedEditText, editFingerprint } from "../../lib/tailor/editMining";
 import { deriveEditRules } from "../../lib/tailor/editRules";
-import { recordSteering, steeringHabitHint, recordEditRules } from "../../lib/tailor/localSignals";
+import { recordSteering, steeringHabitHint, recordEditRules, promotedEditRules } from "../../lib/tailor/localSignals";
 import { readEngine } from "../settings/engine";
 
 // Resume/cover-letter preview + edit modal (opened from the status-bar chips and
@@ -289,7 +289,12 @@ export function useDocumentPreview({
       formData.append("aggressiveness", String(aggressiveness));
       // Revise with the engine the user selected — the embedded engine now
       // honors steering deterministically, so don't silently switch to Gemini.
-      formData.append("engine", readEngine());
+      const engine = readEngine();
+      formData.append("engine", engine);
+      if (engine === "embedded") {
+        const editRules = promotedEditRules();
+        if (editRules.length > 0) formData.append("editRules", JSON.stringify(editRules));
+      }
       formData.append("steeringInstructions", text);
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));

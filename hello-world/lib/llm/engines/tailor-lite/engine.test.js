@@ -119,6 +119,57 @@ describe("embeddedEngine.tailorResume", () => {
   });
 });
 
+describe("embeddedEngine edit rules (recurring hand-edits applied automatically)", () => {
+  it("rewrites slot-filled text document-wide, reported and warned", async () => {
+    const rules = [{ before: "team of 5", after: "team of 8" }];
+    const base = await embeddedEngine.tailorResume({ jobPosting: POSTING });
+    const res = await embeddedEngine.tailorResume({ jobPosting: POSTING, editRules: rules });
+    // The fact appears in the summary AND a bullet — both occurrences rewritten.
+    expect(res.result).toContain("team of 8");
+    expect(res.result).not.toContain("team of 5");
+    expect(res.docxB64).not.toBe(base.docxB64);
+    expect(res.report.meta.editRules.applied).toEqual([{ before: "team of 5", after: "team of 8" }]);
+    expect(res.warnings.some((w) => /recurring edit/.test(w))).toBe(true);
+    expect(res.result).not.toContain("{{");
+  });
+
+  it("rewrites static template text too (formatting-style edits)", async () => {
+    const res = await embeddedEngine.tailorCoverLetter({
+      jobPosting: POSTING,
+      jobTitle: "Staff Engineer",
+      companyName: "Initech",
+      editRules: [{ before: "Alex Shaw", after: "Alexander G. Shaw" }],
+    });
+    expect(res.result).toContain("Alexander G. Shaw");
+    expect(res.result).not.toContain("Alex Shaw");
+  });
+
+  it("supports deletion rules (after is empty)", async () => {
+    const res = await embeddedEngine.tailorResume({
+      jobPosting: POSTING,
+      editRules: [{ before: " cross-functional", after: "" }],
+    });
+    expect(res.result).toContain("a team of 5");
+    expect(res.result).not.toContain("cross-functional team");
+  });
+
+  it("is deterministic and inert when rules match nothing", async () => {
+    const args = { jobPosting: POSTING, editRules: [{ before: "team of 5", after: "team of 8" }] };
+    const a = await embeddedEngine.tailorResume(args);
+    const b = await embeddedEngine.tailorResume(args);
+    expect(a.docxB64).toBe(b.docxB64);
+
+    const base = await embeddedEngine.tailorResume({ jobPosting: POSTING });
+    const inert = await embeddedEngine.tailorResume({
+      jobPosting: POSTING,
+      editRules: [{ before: "text that appears nowhere at all", after: "x" }],
+    });
+    expect(inert.docxB64).toBe(base.docxB64);
+    expect(inert.report.meta.editRules).toBeUndefined();
+    expect(inert.warnings).toEqual([]);
+  });
+});
+
 describe("embeddedEngine steering (the revise box, offline)", () => {
   it("emphasize/avoid directives change the document and are reported", async () => {
     const base = await embeddedEngine.tailorResume({ jobPosting: POSTING });

@@ -3,6 +3,7 @@ import mammoth from "mammoth";
 import { getEngine, resolveEngineName } from "@/lib/llm/engines";
 import { combineMatches } from "@/lib/llm/engines/tailor-lite/matchReport";
 import { buildLibrarySuggestions } from "@/lib/llm/engines/tailor-lite/library/suggest";
+import { sanitizeEditRules } from "@/lib/tailor/editRules";
 import { getServerEnv } from "@/lib/config/env";
 import { fetchUrlContent } from "@/lib/scrape/fetchUrlContent";
 import { extractPostingMeta } from "@/lib/llm/postingMeta";
@@ -171,6 +172,9 @@ export async function POST(request) {
     const coverLetterFile = formData.get("coverLetter");
     // Optional external-engine slot overrides (from the review-then-generate UI).
     const values = parseJsonObject(formData.get("values"));
+    // Promoted recurring hand-edits (device-local, sent by the client) that the
+    // embedded engine applies document-wide after slot filling.
+    const editRules = sanitizeEditRules(formData.get("editRules")?.toString() || "");
 
     // Select the document-generation engine: per-request override falls back to
     // the server default (RESUME_ENGINE). Unknown names degrade to "gemini".
@@ -266,6 +270,7 @@ export async function POST(request) {
       contextDocuments,
       values,
       steeringInstructions,
+      editRules,
       userId,
     };
 
@@ -311,6 +316,7 @@ export async function POST(request) {
           additionalContext,
           contextDocuments,
           steeringInstructions,
+          editRules,
           userId,
         });
         coverLetterResultLines = coverDraft.resultLines;

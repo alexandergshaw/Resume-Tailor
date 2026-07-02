@@ -300,6 +300,58 @@ export function fillDocx(doc, values) {
   }
 }
 
+// Apply text rewrite rules ({ before, after }[]) document-wide, AFTER slot
+// filling — the mechanism behind "recurring hand-edits update the template".
+// Case-sensitive exact matching over each paragraph's concatenated run text,
+// spans replaced right-to-left with the same run-splicing as fillDocx (so the
+// serialized .docx and documentLines stay in lockstep). Matches are computed
+// against the ORIGINAL paragraph text only — one rule's output can never
+// trigger another rule (no cascades). Overlapping matches: the later-starting
+// span wins; the overlapped one is skipped. Mutates doc; returns the rules
+// that actually applied somewhere.
+export function applyTextEdits(doc, rules) {
+  const list = (rules || []).filter(
+    (r) => r && typeof r.before === "string" && r.before.length > 0 && typeof r.after === "string",
+  );
+  if (list.length === 0) return [];
+
+  const applied = new Map();
+  for (const part of doc.parts) {
+    let result = "";
+    let lastIndex = 0;
+    PARAGRAPH_RE.lastIndex = 0;
+    let pm;
+    while ((pm = PARAGRAPH_RE.exec(part.xml)) !== null) {
+      result += part.xml.slice(lastIndex, pm.index);
+      let block = pm[0];
+      const text = paragraphText(block);
+
+      const spans = [];
+      for (const rule of list) {
+        let idx = text.indexOf(rule.before);
+        while (idx !== -1) {
+          spans.push({ start: idx, end: idx + rule.before.length, rule });
+          idx = text.indexOf(rule.before, idx + rule.before.length);
+        }
+      }
+      spans.sort((a, b) => b.start - a.start);
+      let appliedMin = Infinity;
+      for (const span of spans) {
+        if (span.end > appliedMin) continue; // overlaps an already-applied span
+        block = replaceSpanInBlock(block, span.start, span.end, span.rule.after);
+        applied.set(`${span.rule.before}→${span.rule.after}`, span.rule);
+        appliedMin = span.start;
+      }
+
+      result += block;
+      lastIndex = pm.index + pm[0].length;
+    }
+    result += part.xml.slice(lastIndex);
+    part.xml = result;
+  }
+  return [...applied.values()];
+}
+
 // The plain-text lines of the (filled) document body, in order, non-empty —
 // used to populate the app's preview/result fields without a mammoth round-trip.
 export function documentLines(doc) {

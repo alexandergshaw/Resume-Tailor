@@ -18,6 +18,7 @@ import {
   loadDocx,
   scanPlaceholders,
   fillDocx,
+  applyTextEdits,
   documentLines,
   serializeDocx,
 } from "./docxModel.js";
@@ -175,7 +176,7 @@ async function buildProposal(buffer, posting, aggressiveness, maxKeywords, seria
 // `maxKeywords` caps comma-joined capability lists (the cover letter reads better
 // with shorter lists than the résumé). An empty final value leaves the
 // {{placeholder}} visible (counts as unfilled).
-async function render(buffer, posting, { overrides = {}, seedByName = {}, aggressiveness, maxKeywords, serialAnd, data = DEFAULT_DATA, steering = null } = {}) {
+async function render(buffer, posting, { overrides = {}, seedByName = {}, aggressiveness, maxKeywords, serialAnd, data = DEFAULT_DATA, steering = null, editRules = [] } = {}) {
   const proposal = await buildProposal(buffer, posting, aggressiveness, maxKeywords, serialAnd, data, steering);
   const finalValues = {};
   const unfilled = [];
@@ -193,6 +194,9 @@ async function render(buffer, posting, { overrides = {}, seedByName = {}, aggres
   });
 
   fillDocx(proposal.doc, finalValues);
+  // Promoted recurring hand-edits — the user's "effective template" — applied
+  // document-wide after slot filling, so lines and .docx stay in lockstep.
+  const appliedEdits = editRules.length > 0 ? applyTextEdits(proposal.doc, editRules) : [];
   return {
     docxB64: await serializeDocx(proposal.doc),
     resultLines: documentLines(proposal.doc),
@@ -200,6 +204,22 @@ async function render(buffer, posting, { overrides = {}, seedByName = {}, aggres
     unfilled,
     keywords: proposal.keywords,
     emphases: proposal.emphases,
+    appliedEdits,
+  };
+}
+
+// Applied-edit-rule payloads for the report/warnings, so automatic rewrites
+// are always visible rather than silent.
+function editRuleOutputs(appliedEdits) {
+  if (!appliedEdits || appliedEdits.length === 0) return { meta: {}, warnings: [] };
+  const shown = appliedEdits
+    .slice(0, 3)
+    .map((r) => `"${r.before}" → ${r.after ? `"${r.after}"` : "(removed)"}`)
+    .join(", ");
+  const more = appliedEdits.length > 3 ? ` (+${appliedEdits.length - 3} more)` : "";
+  return {
+    meta: { editRules: { applied: appliedEdits.map((r) => ({ before: r.before, after: r.after })) } },
+    warnings: [`Applied your recurring edit${appliedEdits.length === 1 ? "" : "s"}: ${shown}${more}.`],
   };
 }
 
@@ -279,7 +299,7 @@ export const embeddedEngine = {
     return out;
   },
 
-  async tailorResume({ jobPosting, jobPostingUrl, values, aggressiveness, userId, steeringInstructions }) {
+  async tailorResume({ jobPosting, jobPostingUrl, values, aggressiveness, userId, steeringInstructions, editRules }) {
     const { text: posting, meta: scrapedMeta } = await resolvePostingText({ jobPosting, jobPostingUrl });
     const overrides = values && typeof values === "object" ? values : {};
     const data = toData(await loadLibrary({ userId }));
@@ -289,7 +309,9 @@ export const embeddedEngine = {
       aggressiveness: steered.aggressiveness,
       data,
       steering: steered.steering,
+      editRules: Array.isArray(editRules) ? editRules : [],
     });
+    const edits = editRuleOutputs(r.appliedEdits);
     // Advisory research is excluded from the document — report only.
     const advisory = resolveAdvisory({ posting, company: "", data });
     // Best-effort title/company so the saved file is named after the posting
@@ -306,7 +328,7 @@ export const embeddedEngine = {
       unfilled: r.unfilled,
       keywords: r.keywords,
       advisory,
-      extraMeta: steered.meta,
+      extraMeta: { ...steered.meta, ...edits.meta },
     });
     report.match = match;
 
@@ -318,12 +340,12 @@ export const embeddedEngine = {
       companyName: meta.companyName,
       docxB64: r.docxB64,
       report,
-      warnings: steered.warnings,
+      warnings: [...steered.warnings, ...edits.warnings],
       degraded: false,
     };
   },
 
-  async tailorCoverLetter({ jobPosting, jobPostingUrl, jobTitle, companyName, values, aggressiveness, userId, steeringInstructions }) {
+  async tailorCoverLetter({ jobPosting, jobPostingUrl, jobTitle, companyName, values, aggressiveness, userId, steeringInstructions, editRules }) {
     const { text: posting, meta: scrapedMeta } = await resolvePostingText({ jobPosting, jobPostingUrl }, { required: false });
     const overrides = values && typeof values === "object" ? values : {};
     const data = toData(await loadLibrary({ userId }));
@@ -354,7 +376,9 @@ export const embeddedEngine = {
       serialAnd: true, // prose lists read "A, B, and C", not "A, B, C"
       data,
       steering: steered.steering,
+      editRules: Array.isArray(editRules) ? editRules : [],
     });
+    const edits = editRuleOutputs(r.appliedEdits);
 
     return {
       engine: "embedded",
@@ -369,14 +393,14 @@ export const embeddedEngine = {
           reportSlots: r.reportSlots,
           unfilled: r.unfilled,
           keywords: r.keywords,
-          extraMeta: { document: "cover_letter", ...steered.meta },
+          extraMeta: { document: "cover_letter", ...steered.meta, ...edits.meta },
         });
         // Cover letters are prose, not keyword walls — the score naturally runs
         // lower than the résumé's; the combined response uses the weakest doc.
         report.match = computeMatch(posting, r.resultLines.join("\n"), data.taxonomy);
         return report;
       })(),
-      warnings: steered.warnings,
+      warnings: [...steered.warnings, ...edits.warnings],
       degraded: false,
     };
   },

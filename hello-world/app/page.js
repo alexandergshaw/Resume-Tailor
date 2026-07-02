@@ -39,7 +39,7 @@ import { parseDocxToModel, linesToModel } from "../lib/document/docxPreview";
 import { weaveSources } from "../lib/document/coverLetterWeave";
 import { parseEmploymentHistory } from "../lib/resume/parseEmployment";
 import { editFingerprint } from "../lib/tailor/editMining";
-import { recordMatchGaps, annotateAndRank } from "../lib/tailor/localSignals";
+import { recordMatchGaps, annotateAndRank, promotedEditRules } from "../lib/tailor/localSignals";
 import { useProfileEntries } from "./hooks/useProfileEntries";
 import { useScreenshots } from "./hooks/useScreenshots";
 import { useCompanyResearch } from "./hooks/useCompanyResearch";
@@ -2090,6 +2090,12 @@ export default function Home() {
       formData.append("additionalContext", additionalContext);
       formData.append("aggressiveness", String(aggressiveness));
       formData.append("engine", tailorEngine);
+      // Promoted recurring hand-edits (localStorage) — the embedded engine
+      // applies them document-wide so consistent fixes are pre-made.
+      if (tailorEngine === "embedded") {
+        const editRules = promotedEditRules();
+        if (editRules.length > 0) formData.append("editRules", JSON.stringify(editRules));
+      }
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
       contextFiles.forEach((file) => formData.append("contextFiles", file));
@@ -2353,6 +2359,12 @@ export default function Home() {
       formData.append("additionalContext", additionalContext);
       formData.append("aggressiveness", String(aggressiveness));
       formData.append("engine", tailorEngine);
+      // Promoted recurring hand-edits (localStorage) — the embedded engine
+      // applies them document-wide so consistent fixes are pre-made.
+      if (tailorEngine === "embedded") {
+        const editRules = promotedEditRules();
+        if (editRules.length > 0) formData.append("editRules", JSON.stringify(editRules));
+      }
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
       contextFiles.forEach((file) => formData.append("contextFiles", file));
@@ -2533,6 +2545,12 @@ export default function Home() {
       formData.append("additionalContext", additionalContext);
       formData.append("aggressiveness", String(aggressiveness));
       formData.append("engine", tailorEngine);
+      // Promoted recurring hand-edits (localStorage) — the embedded engine
+      // applies them document-wide so consistent fixes are pre-made.
+      if (tailorEngine === "embedded") {
+        const editRules = promotedEditRules();
+        if (editRules.length > 0) formData.append("editRules", JSON.stringify(editRules));
+      }
       if (opts.values && typeof opts.values === "object") {
         formData.append("values", JSON.stringify(opts.values));
       }
@@ -2672,6 +2690,12 @@ export default function Home() {
       formData.append("additionalContext", additionalContext);
       formData.append("aggressiveness", String(aggressiveness));
       formData.append("engine", tailorEngine);
+      // Promoted recurring hand-edits (localStorage) — the embedded engine
+      // applies them document-wide so consistent fixes are pre-made.
+      if (tailorEngine === "embedded") {
+        const editRules = promotedEditRules();
+        if (editRules.length > 0) formData.append("editRules", JSON.stringify(editRules));
+      }
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
       contextFiles.forEach((file) => formData.append("contextFiles", file));
