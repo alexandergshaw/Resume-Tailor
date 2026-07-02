@@ -211,6 +211,28 @@ function capabilityPool(keywords, byCat, cats, universe, allowGaps, avoid, taxon
   return out;
 }
 
+// Order a focus area's curated list by THIS posting's emphasis: members the
+// posting itself names (canonical match against the extracted keywords,
+// alias-aware) come first, strongest first; the rest keep their curated order.
+// Deterministic — ties break on curated position.
+function rankAreaList(list, keywords, taxonomy) {
+  if (!Array.isArray(list) || list.length < 2) return list || [];
+  const scoreByCanon = new Map();
+  for (const items of Object.values(keywords || {})) {
+    for (const it of items || []) {
+      const low = String(it.canonical).toLowerCase();
+      scoreByCanon.set(low, Math.max(scoreByCanon.get(low) || 0, it.score || 0));
+    }
+  }
+  return list
+    .map((term, idx) => {
+      const canon = (canonicalize(term, taxonomy) || term).toLowerCase();
+      return { term, idx, score: scoreByCanon.get(canon) ?? scoreByCanon.get(term.toLowerCase()) ?? 0 };
+    })
+    .sort((a, b) => b.score - a.score || a.idx - b.idx)
+    .map((x) => x.term);
+}
+
 // A k-item capability line drawn from the pool at a sliding `offset`. With
 // offset 0 this is the top-k (so a slot's first occurrence is unchanged);
 // repeated slots pass their occurrence index so each repeat surfaces a distinct,
@@ -473,11 +495,18 @@ function mapOne(slot, keywords, data, state) {
   if (KEYWORD_JOIN[name]) {
     const { cats, k, avoid, areaField } = KEYWORD_JOIN[name];
     const limit = state.maxKeywords ? Math.min(k, state.maxKeywords) : k;
-    // On a resolved teaching posting, a slot mapped to an area field is REPLACED by
-    // that area's curated list (the subjects taught, or its data/domain capability
-    // lines), so the cover letter, summary, and job bullets read for the subject area.
+    // On a resolved posting, a slot mapped to an area field is REPLACED by that
+    // area's curated list (the subjects taught, or its tech/domain capability
+    // lines) — but ORDERED by this posting's own emphasis: members the posting
+    // names come first (strongest first), the rest keep their curated order. So
+    // "hands-on work with {{TECHNICAL_CAPABILITIES}}" leads with the skills THIS
+    // posting asks for, not whatever the list happens to start with.
     if (state.focusArea && areaField) {
-      const list = (state.focusArea[areaField] || []).filter((s) => typeof s === "string" && s.trim());
+      const list = rankAreaList(
+        (state.focusArea[areaField] || []).filter((s) => typeof s === "string" && s.trim()),
+        keywords,
+        state.taxonomy,
+      );
       if (list.length) {
         return make("keywords", emphasisSlice(list, limit, occurrence, state.serialAnd), `Focus area (${state.focusArea.name}.${areaField})`);
       }

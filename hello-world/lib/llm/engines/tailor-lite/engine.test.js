@@ -429,6 +429,28 @@ describe("embeddedEngine.tailorCoverLetter", () => {
     expect(res.result).not.toContain("{{");
   });
 
+  it("fills the hands-on tech sentence from the focus area, ranked by THIS posting", async () => {
+    // GSW regression: with the wrong focus resolved, this sentence read
+    // "Cloud Computing, CI/CD, Docker, and Microservices". With Web Development
+    // pinned, it must draw from that area's technical_capabilities — and lead
+    // with what the posting itself names (CMS), not the curated list order.
+    const staffPosting =
+      "Web Specialist at Georgia Southwestern State University. Serving students on a vibrant campus with faculty and staff. " +
+      "Maintain the university website in the content management system, improve accessibility and SEO.";
+    const res = await embeddedEngine.tailorCoverLetter({
+      jobPosting: staffPosting,
+      jobTitle: "Web Specialist",
+      companyName: "Georgia Southwestern State University",
+      focusArea: "Web Development",
+    });
+    const handsOn = res.result.match(/hands-on work with ([^.]+)\./)?.[1] || "";
+    // Posting-named member first, then the curated web stack — no generic
+    // engineering-platform stack.
+    expect(handsOn.startsWith("Content Management Systems")).toBe(true);
+    expect(handsOn).toMatch(/HTML/);
+    expect(handsOn).not.toMatch(/Cloud Computing|Docker|Microservices|CI\/CD/);
+  });
+
   it("reports the selected cover variant", async () => {
     const industry = await embeddedEngine.tailorCoverLetter({
       jobPosting: POSTING,

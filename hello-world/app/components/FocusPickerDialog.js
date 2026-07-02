@@ -14,8 +14,14 @@ import Checkbox from "@mui/material/Checkbox";
 import Chip from "@mui/material/Chip";
 import TextField from "@mui/material/TextField";
 import CircularProgress from "@mui/material/CircularProgress";
+import profileData from "@/lib/llm/engines/tailor-lite/data/profile.json";
 
 const AUTO = "__auto__";
+
+// Bundled default focus areas (13KB JSON — safe to ship to the client). Users
+// whose library was seeded before a default was added won't have it in their
+// rows; the picker offers those and adds the chosen one to the library on apply.
+const DEFAULT_AREAS = Array.isArray(profileData.focus_areas) ? profileData.focus_areas : [];
 
 // Categories whose extracted keywords are worth toggling (matches the skill
 // categories the slot mapper actually consumes).
@@ -108,7 +114,21 @@ export default function FocusPickerDialog({
     };
   }, [open]);
 
-  const chosenArea = choice !== AUTO ? (areas || []).find((a) => a.name === choice) : null;
+  // The pickable list: the user's library areas plus bundled defaults their
+  // seeded library predates (marked, and added to the library on apply).
+  const pickable = useMemo(() => {
+    if (areas === null) return null;
+    const have = new Set(areas.map((a) => String(a.name || "").toLowerCase()));
+    return [
+      ...areas.map((a) => ({ ...a, isDefault: false })),
+      ...DEFAULT_AREAS.filter((d) => !have.has(String(d.name || "").toLowerCase())).map((d) => ({
+        ...d,
+        isDefault: true,
+      })),
+    ];
+  }, [areas]);
+
+  const chosenArea = choice !== AUTO ? (pickable || []).find((a) => a.name === choice) : null;
   const title = String(postingTitle || "").trim();
   const canRemember = !!chosenArea && !!title && !(chosenArea.match || []).some(
     (t) => String(t).toLowerCase() === title.toLowerCase(),
@@ -138,9 +158,31 @@ export default function FocusPickerDialog({
     setBusy(true);
     setError("");
     try {
-      // Teach the library first (explicit opt-in only): add the posting title
-      // to the area's match terms so similar postings auto-select this focus.
-      if (remember && canRemember) {
+      if (chosenArea?.isDefault) {
+        // A bundled default the user's library predates: add it to the library
+        // now (with the posting title folded into its match terms when the
+        // remember box is ticked), so the engine can resolve it by name.
+        const { isDefault, ...fields } = chosenArea;
+        void isDefault;
+        const res = await fetch("/api/library/focus-areas", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...fields,
+            match: remember && canRemember ? [...(fields.match || []), title] : fields.match || [],
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(
+            res.status === 401
+              ? "Sign in to add this focus area to your library."
+              : data?.error || "Couldn't add the focus area to your library.",
+          );
+        }
+      } else if (remember && canRemember) {
+        // Teach the library (explicit opt-in only): add the posting title to
+        // the area's match terms so similar postings auto-select this focus.
         const res = await fetch("/api/library/focus-areas", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -186,12 +228,33 @@ export default function FocusPickerDialog({
               control={<Radio size="small" />}
               label={<Box sx={{ fontSize: "0.9rem" }}>Auto-detect from the posting</Box>}
             />
-            {(areas || []).map((a) => (
+            {(pickable || []).map((a) => (
               <FormControlLabel
                 key={a.id || a.name}
                 value={a.name}
                 control={<Radio size="small" />}
-                label={<Box sx={{ fontSize: "0.9rem" }}>{a.name}</Box>}
+                label={
+                  <Box sx={{ fontSize: "0.9rem", display: "flex", alignItems: "center", gap: 0.75 }}>
+                    {a.name}
+                    {a.isDefault ? (
+                      <Box
+                        component="span"
+                        title="A bundled default your library doesn't have yet — applying adds it to your library."
+                        sx={{
+                          fontSize: "0.65rem",
+                          fontWeight: 700,
+                          color: "var(--accent)",
+                          backgroundColor: "var(--accent-soft)",
+                          borderRadius: 1,
+                          px: 0.5,
+                          py: 0.1,
+                        }}
+                      >
+                        default — adds to library
+                      </Box>
+                    ) : null}
+                  </Box>
+                }
               />
             ))}
           </RadioGroup>
@@ -199,7 +262,7 @@ export default function FocusPickerDialog({
         {loadError ? (
           <Box sx={{ mt: 1, fontSize: "0.8rem", color: "var(--danger)" }}>{loadError}</Box>
         ) : null}
-        {areas !== null && areas.length === 0 && !loadError ? (
+        {pickable !== null && pickable.length === 0 && !loadError ? (
           <Box sx={{ mt: 1, fontSize: "0.8rem", color: "var(--text-secondary)" }}>
             Your library has no focus areas yet — add them in /library.
           </Box>
