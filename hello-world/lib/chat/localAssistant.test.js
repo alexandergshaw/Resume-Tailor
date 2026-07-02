@@ -276,6 +276,35 @@ describe("conversation memory (continuation and non-repetition)", () => {
     expect(reply).toMatch(/quantify|tailor|requirement|mirror/i);
   });
 
+  it("answers both halves of a compound ask", () => {
+    const reply = localChatReply({
+      ...userMsg("review my resume and tell me if I'm a good fit"),
+      pinnedContext: { label: "Backend", content: POSTING },
+      resumeText: RESUME,
+    });
+    expect(reply).toMatch(/\b(strong|reasonable|stretch)\b/i); // fit verdict
+    expect(reply).toMatch(/strongest on|bullets/i); // resume review
+    expect(reply).toContain("\n\n"); // two answers, separated
+  });
+
+  it("ends first-level answers with a context-aware next-step offer", () => {
+    const analysis = localChatReply({
+      ...userMsg("what should I emphasize for this posting?"),
+      pinnedContext: { label: "Backend", content: POSTING },
+    });
+    expect(analysis).toMatch(/ask/i); // an offer is present
+    // Follow-ups going deeper don't nag with offers.
+    const deeper = localChatReply({
+      messages: [
+        { role: "user", content: "what should I emphasize for this posting?" },
+        { role: "assistant", content: analysis },
+        { role: "user", content: "tell me more" },
+      ],
+      pinnedContext: { label: "Backend", content: POSTING },
+    });
+    expect(deeper).not.toMatch(/Ask me to review your resume against it next|am I a good fit\?"/);
+  });
+
   it("is deterministic: the same conversation yields the same reply", () => {
     const convo = {
       messages: [

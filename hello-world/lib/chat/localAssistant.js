@@ -351,20 +351,51 @@ const RE = {
   posting: /\b(this (job|role|posting|position|description)|requirements?|qualifications?|responsibilities|what skills|tailor|emphasi[sz]e)\b/i,
 };
 
-// Classify a message's intent by the same RE table the dispatcher uses, in the
-// same precedence order. Returns an intent key or null (greetings/chatter).
-export function classifyIntent(text) {
+const INTENT_ORDER = [
+  ["summarize", RE.summarize],
+  ["fit", RE.fit],
+  ["salary", RE.salary],
+  ["coverLetter", RE.coverLetter],
+  ["resume", RE.resume],
+  ["applications", RE.applications],
+  ["interview", RE.interview],
+  ["posting", RE.posting],
+];
+
+// ALL intents a message matches, in precedence order — compound asks ("review
+// my resume and check my fit") legitimately carry more than one.
+export function classifyIntents(text) {
   const t = String(text || "");
-  if (!t.trim()) return null;
-  if (RE.summarize.test(t)) return "summarize";
-  if (RE.fit.test(t)) return "fit";
-  if (RE.salary.test(t)) return "salary";
-  if (RE.coverLetter.test(t)) return "coverLetter";
-  if (RE.resume.test(t)) return "resume";
-  if (RE.applications.test(t)) return "applications";
-  if (RE.interview.test(t)) return "interview";
-  if (RE.posting.test(t)) return "posting";
-  return null;
+  if (!t.trim()) return [];
+  return INTENT_ORDER.filter(([, re]) => re.test(t)).map(([key]) => key);
+}
+
+// The primary intent (first by precedence), or null for greetings/chatter.
+export function classifyIntent(text) {
+  return classifyIntents(text)[0] || null;
+}
+
+// A short, context-aware closing offer — the way an LLM ends with "want me
+// to…?". One sentence, varied deterministically, only on first-level answers
+// (follow-ups going deeper shouldn't nag), and never stacked onto a reply that
+// already ends with a question.
+const NEXT_STEPS = {
+  qa: ["Ask for the full posting analysis if you want the bigger picture.", 'For how you stack up against it, ask "am I a good fit?"'],
+  posting: ['Want to know how you stack up? Ask "am I a good fit?"', "Ask me to review your resume against it next."],
+  summarize: ['If you want the comparison, ask "am I a good fit for this?"', "Ask what skills to emphasize and I'll break the posting down."],
+  fit: ["Ask for interview prep when you're ready — I'll predict likely questions from this posting.", "Ask me to review your resume next and I'll flag the weakest bullets."],
+  resume: ["When it's polished, ask how you fit the pinned posting.", "Ask for interview prep next if you have one coming up."],
+  applications: ["Ask for interview prep for any of these and I'll help you get ready."],
+  interview: ["Want cover letter help for this one too? Just ask."],
+  coverLetter: ["Ask me to summarize the posting if you want concrete points to reference."],
+  salary: [],
+};
+
+function withOffer(reply, intent, ctx) {
+  const options = NEXT_STEPS[intent] || [];
+  if (options.length === 0) return reply;
+  if (/\?\s*$/.test(reply)) return reply;
+  return `${reply} ${pick(`${ctx.text}:${intent}`, options)}`;
 }
 
 // What was this conversation about before the current message? Walks the prior
@@ -465,24 +496,39 @@ export function localChatReply({
   // not-found — before any of the coaching intents below can hijack them.
   if (subject) {
     const qa = extractiveAnswer(text, subject);
-    if (qa?.type === "answer") return qa.text;
+    if (qa?.type === "answer") return withOffer(qa.text, "qa", ctx);
     if (qa?.type === "not-found") {
       const base = `The posting text doesn't mention ${qa.label}.`;
       return qa.topic === "salary" ? `${base} ${salaryGuidance(text)}` : base;
     }
   }
 
-  // Explicit intents; a repeat of the same ask goes deeper instead of
-  // repeating the previous answer verbatim.
-  const intent = classifyIntent(text);
+  // Compound asks ("review my resume and check my fit") answer BOTH parts.
+  // "posting" is excluded — it's the generic fallback and pairs spuriously.
+  const intents = classifyIntents(text).filter((i) => i !== "posting");
+  if (intents.length >= 2) {
+    const answers = intents
+      .slice(0, 2)
+      .map((i) => answerIntent(i, ctx, countPriorIntent(messages, i)))
+      .filter(Boolean);
+    if (answers.length === 2) return withOffer(answers.join("\n\n"), intents[1], ctx);
+  }
+
+  // Single explicit intent; a repeat of the same ask goes deeper instead of
+  // repeating the previous answer verbatim (offers only on first answers).
+  const intent = intents[0] || classifyIntent(text);
   if (intent && intent !== "posting") {
-    return answerIntent(intent, ctx, countPriorIntent(messages, intent));
+    const depth = countPriorIntent(messages, intent);
+    const reply = answerIntent(intent, ctx, depth);
+    return depth === 0 ? withOffer(reply, intent, ctx) : reply;
   }
   if (!intent && RE.greeting.test(text)) return capabilities();
 
   // A posting is the subject → analyze it (the common "Ask AI on this job" flow).
   if (subject && (intent === "posting" || pinnedContext || fetchedUrls.some((u) => u && !u.error))) {
-    return analyzePosting(subject, resumeText, countPriorIntent(messages, "posting"));
+    const depth = countPriorIntent(messages, "posting");
+    const reply = analyzePosting(subject, resumeText, depth);
+    return depth === 0 ? withOffer(reply, "posting", ctx) : reply;
   }
   if (intent === "posting" && !subject) {
     return answerIntent("posting", ctx, 0);
