@@ -2016,6 +2016,42 @@ export default function Home() {
     }
   }
 
+  // Manual "Scan posting" from the document previewer: run the buzzword scrape
+  // on the previewed job's posting and open the review dialog (same permission
+  // flow as the automatic prompts — nothing is saved without approval).
+  // Returns { ok, message? } for inline feedback; message is set only when the
+  // dialog does NOT open (nothing new, signed out, or a failure).
+  async function scrapePreviewPosting() {
+    const { jobId, posting, url } = preview.resumePreview;
+    const body = {};
+    if (posting && posting.trim()) body.posting = posting;
+    else if (url) body.url = url;
+    else return { ok: false, message: "No posting is attached to this document." };
+    try {
+      const res = await fetch("/api/library/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (res.status === 401) return { ok: false, message: "Sign in to scan postings into your library." };
+      const data = await res.json().catch(() => null);
+      if (!res.ok) return { ok: false, message: data?.error || "Couldn't scan the posting." };
+      if (!data?.buzzwords?.length) {
+        return { ok: true, message: "Your library already covers this posting's vocabulary — nothing new to add." };
+      }
+      setLibraryPrompt({
+        promptId: `manual-${Date.now()}`,
+        jobId,
+        match: null,
+        suggestions: { ...data, buzzwords: annotateAndRank(data.buzzwords) },
+        source: "manual",
+      });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, message: err?.message || "Couldn't scan the posting." };
+    }
+  }
+
   // Offer the library-update prompt when a tailor response carries suggestions
   // (embedded engine, match below threshold, signed in). Once per job. Every
   // run's gaps are counted locally first, so terms that recur across DIFFERENT
@@ -3162,6 +3198,9 @@ export default function Home() {
         onRenameFile={preview.renameDocument}
         onResubmit={preview.resubmitDocumentPreview}
         onDownload={preview.downloadDocumentPreview}
+        onScrapePosting={
+          preview.resumePreview.posting || preview.resumePreview.url ? scrapePreviewPosting : null
+        }
         onResearchCompany={() =>
           research.openCompanyResearch({
             id: preview.resumePreview.jobId,

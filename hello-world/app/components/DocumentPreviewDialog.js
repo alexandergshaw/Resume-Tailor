@@ -29,6 +29,7 @@ import FormatAlignRightIcon from "@mui/icons-material/FormatAlignRight";
 import FormatListBulletedIcon from "@mui/icons-material/FormatListBulleted";
 import FormatListNumberedIcon from "@mui/icons-material/FormatListNumbered";
 import TravelExploreIcon from "@mui/icons-material/TravelExplore";
+import ManageSearchIcon from "@mui/icons-material/ManageSearch";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import { renderModelToHtml } from "@/lib/document/docxPreview";
 import { useIsMobile } from "../hooks/useResponsive";
@@ -86,6 +87,7 @@ export default function DocumentPreviewDialog({
   onDownload,
   onClose,
   onResearchCompany,
+  onScrapePosting,
   researchLoading = false,
   researchCount = 0,
   companyReferences = [],
@@ -105,6 +107,11 @@ export default function DocumentPreviewDialog({
   // Steering box: free-text instructions to re-run the selected engine with.
   const [steerText, setSteerText] = useState("");
   const [resubmitting, setResubmitting] = useState(false);
+  // Manual posting scrape ("Scan posting" button): busy flag + inline feedback.
+  // The result opens the library-update dialog; nothing is saved without the
+  // user's approval there.
+  const [scraping, setScraping] = useState(false);
+  const [scrapeNote, setScrapeNote] = useState(null); // { ok, message } | null
   const [prevOpen, setPrevOpen] = useState(open);
   const [prevReloadKey, setPrevReloadKey] = useState(reloadKey);
   // Auto-save: edits commit on a short debounce; this drives the inline status.
@@ -302,6 +309,23 @@ export default function DocumentPreviewDialog({
     if (next !== (scopes[tab]?.fileName || "")) onRenameFile?.(tab, next);
   };
 
+  // Kick off the posting buzzword scrape. The parent scans the posting and, when
+  // there's vocabulary the library lacks, opens the review dialog on top of this
+  // one; here we only track busy state and surface the outcome inline.
+  const submitScrape = async () => {
+    if (scraping || typeof onScrapePosting !== "function") return;
+    setScraping(true);
+    setScrapeNote(null);
+    try {
+      const res = await onScrapePosting();
+      if (res && res.message) setScrapeNote({ ok: !!res.ok, message: res.message });
+    } catch (err) {
+      setScrapeNote({ ok: false, message: err?.message || "Couldn't scan the posting." });
+    } finally {
+      setScraping(false);
+    }
+  };
+
   // Resubmit the active document to the selected engine with the typed steering
   // instructions. The parent re-runs the tailor and refreshes the preview; on
   // success we clear the box (see steeringEnabled below for which engines).
@@ -345,6 +369,21 @@ export default function DocumentPreviewDialog({
           ))}
         </Tabs>
         <Box sx={{ flex: 1 }} />
+        {onScrapePosting ? (
+          <Tooltip title="Scrape this posting for buzzwords your tailoring library doesn't know yet. You review the results — nothing is saved without your approval.">
+            <span>
+              <Button
+                size="small"
+                startIcon={scraping ? <CircularProgress size={14} /> : <ManageSearchIcon fontSize="small" />}
+                onClick={submitScrape}
+                disabled={scraping || busy}
+                sx={{ textTransform: "none", my: 0.5 }}
+              >
+                {scraping ? "Scanning…" : "Scan posting"}
+              </Button>
+            </span>
+          </Tooltip>
+        ) : null}
         {tab === "cover" && onResearchCompany ? (
           <Button
             size="small"
@@ -372,6 +411,20 @@ export default function DocumentPreviewDialog({
           </ToggleButtonGroup>
         ) : null}
       </Box>
+
+      {scrapeNote ? (
+        <Box
+          sx={{
+            px: 2,
+            py: 0.5,
+            fontSize: "0.8rem",
+            color: scrapeNote.ok ? "var(--text-secondary)" : "var(--danger)",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          {scrapeNote.message}
+        </Box>
+      ) : null}
 
       {available(tab) ? (
         <Box sx={{ px: 2, py: 0.75, display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", borderBottom: "1px solid var(--border)" }}>

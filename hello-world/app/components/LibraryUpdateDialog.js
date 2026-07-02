@@ -46,6 +46,11 @@ export default function LibraryUpdateDialog({ prompt, onClose, onCommit }) {
   const selected = rows.filter((r) => r.checked);
   const scorePct = Math.round((prompt?.match?.score ?? 0) * 100);
   const fromEdit = prompt?.source === "edit";
+  const fromManual = prompt?.source === "manual";
+  // Re-tailoring is only offered on match-sourced prompts (fresh generations):
+  // edit- and manual-sourced prompts may follow hand edits, and regenerating
+  // would overwrite them.
+  const canRetailor = prompt?.source === "match";
 
   function setRow(i, patch) {
     setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
@@ -73,7 +78,9 @@ export default function LibraryUpdateDialog({ prompt, onClose, onCommit }) {
         <Box sx={{ fontSize: "0.9rem", color: "var(--text-secondary)", lineHeight: 1.5, mb: 1.5 }}>
           {fromEdit
             ? "Your edits added wording the tailoring library doesn't know yet — adding it teaches the engine to produce it on its own next time. Check the terms worth keeping — nothing is saved until you confirm."
-            : `The generated documents covered only ${scorePct}% of this posting's key terms, so the posting was scanned for vocabulary your library doesn't know yet. Check the terms worth keeping — nothing is saved until you confirm.`}
+            : fromManual
+              ? "Here's what the scan found: posting vocabulary your tailoring library doesn't know yet. Check the terms worth keeping — nothing is saved until you confirm."
+              : `The generated documents covered only ${scorePct}% of this posting's key terms, so the posting was scanned for vocabulary your library doesn't know yet. Check the terms worth keeping — nothing is saved until you confirm.`}
         </Box>
         <Box sx={{ display: "flex", flexDirection: "column", gap: 0.25, maxHeight: 320, overflowY: "auto" }}>
           {rows.map((r, i) => (
@@ -143,15 +150,13 @@ export default function LibraryUpdateDialog({ prompt, onClose, onCommit }) {
         <Button
           onClick={() => commit(false)}
           disabled={busy || selected.length === 0}
-          variant={fromEdit ? "contained" : "outlined"}
-          startIcon={fromEdit && busy ? <CircularProgress size={14} color="inherit" /> : null}
+          variant={canRetailor ? "outlined" : "contained"}
+          startIcon={!canRetailor && busy ? <CircularProgress size={14} color="inherit" /> : null}
           sx={{ textTransform: "none" }}
         >
           Add {selected.length || ""} to library
         </Button>
-        {/* Re-tailoring after a hand-edit would overwrite the user's edits, so
-            the edit-sourced prompt only offers the plain library add. */}
-        {!fromEdit ? (
+        {canRetailor ? (
           <Button
             onClick={() => commit(true)}
             disabled={busy || selected.length === 0}
