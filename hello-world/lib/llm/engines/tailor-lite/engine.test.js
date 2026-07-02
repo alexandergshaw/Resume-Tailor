@@ -170,6 +170,57 @@ describe("embeddedEngine edit rules (recurring hand-edits applied automatically)
   });
 });
 
+describe("embeddedEngine focus-area override (the previewer's wrong-focus flag)", () => {
+  it("pins the named library focus area and reports it as an override", async () => {
+    const base = await embeddedEngine.tailorResume({ jobPosting: POSTING });
+    const res = await embeddedEngine.tailorResume({
+      jobPosting: POSTING,
+      focusArea: "Engineering Leadership",
+    });
+    expect(res.report.meta.focus).toEqual({
+      name: "Engineering Leadership",
+      source: "override",
+      requested: "Engineering Leadership",
+    });
+    // The pinned focus actually changes what the documents emphasize.
+    expect(res.docxB64).not.toBe(base.docxB64);
+    expect(res.warnings).toEqual([]);
+    expect(res.result).not.toContain("{{");
+  });
+
+  it("override is case-insensitive and deterministic", async () => {
+    const a = await embeddedEngine.tailorResume({ jobPosting: POSTING, focusArea: "engineering leadership" });
+    const b = await embeddedEngine.tailorResume({ jobPosting: POSTING, focusArea: "Engineering Leadership" });
+    expect(a.docxB64).toBe(b.docxB64);
+    expect(a.report.meta.focus.source).toBe("override");
+  });
+
+  it("warns and falls back to auto-detection for an unknown focus name", async () => {
+    const res = await embeddedEngine.tailorResume({ jobPosting: POSTING, focusArea: "Underwater Basket Weaving" });
+    expect(res.warnings.some((w) => /isn't in your library/.test(w))).toBe(true);
+    expect(res.report.meta.focus.source).not.toBe("override");
+    expect(res.report.meta.focus.requested).toBe("Underwater Basket Weaving");
+  });
+
+  it("auto-detects the Web Development focus for a web posting and reports it", async () => {
+    const webPosting =
+      "Web Specialist. Maintain the university website in the content management system (Drupal), improve accessibility and SEO, and manage web content strategy.";
+    const res = await embeddedEngine.tailorResume({ jobPosting: webPosting });
+    expect(res.report.meta.focus).toEqual({ name: "Web Development", source: "auto" });
+  });
+
+  it("cover letters honor the same override", async () => {
+    const res = await embeddedEngine.tailorCoverLetter({
+      jobPosting: POSTING,
+      jobTitle: "Staff Engineer",
+      companyName: "Initech",
+      focusArea: "Engineering Leadership",
+    });
+    expect(res.report.meta.focus.source).toBe("override");
+    expect(res.report.meta.focus.name).toBe("Engineering Leadership");
+  });
+});
+
 describe("embeddedEngine steering (the revise box, offline)", () => {
   it("emphasize/avoid directives change the document and are reported", async () => {
     const base = await embeddedEngine.tailorResume({ jobPosting: POSTING });

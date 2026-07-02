@@ -175,6 +175,9 @@ export async function POST(request) {
     // Promoted recurring hand-edits (device-local, sent by the client) that the
     // embedded engine applies document-wide after slot filling.
     const editRules = sanitizeEditRules(formData.get("editRules")?.toString() || "");
+    // User-pinned focus area (the previewer's "wrong focus" flag) — the embedded
+    // engine uses this library focus area instead of auto-detecting one.
+    const focusArea = formData.get("focusArea")?.toString().trim().slice(0, 120) || "";
 
     // Select the document-generation engine: per-request override falls back to
     // the server default (RESUME_ENGINE). Unknown names degrade to "gemini".
@@ -271,6 +274,7 @@ export async function POST(request) {
       values,
       steeringInstructions,
       editRules,
+      focusArea,
       userId,
     };
 
@@ -317,6 +321,7 @@ export async function POST(request) {
           contextDocuments,
           steeringInstructions,
           editRules,
+          focusArea,
           userId,
         });
         coverLetterResultLines = coverDraft.resultLines;

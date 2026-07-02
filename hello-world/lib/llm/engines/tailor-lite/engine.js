@@ -23,7 +23,7 @@ import {
   serializeDocx,
 } from "./docxModel.js";
 import { extractKeywords } from "./keywords.js";
-import { mapSlots } from "./strategy.js";
+import { mapSlotsDetailed } from "./strategy.js";
 import { parsePosting } from "./parser.js";
 import { research } from "./researcher.js";
 import { parseSteering, applySteering, steerAggressiveness } from "./steering.js";
@@ -160,15 +160,21 @@ function resolveCoverFacts({ posting, company, data }) {
 
 // Scan a template, resolve keywords (legacy/composed), map placeholders.
 // `aggressiveness` (1..5) drives how much gap-keyword insertion the strategy does.
-async function buildProposal(buffer, posting, aggressiveness, maxKeywords, serialAnd, data = DEFAULT_DATA, steering = null) {
+async function buildProposal(buffer, posting, aggressiveness, maxKeywords, serialAnd, data = DEFAULT_DATA, steering = null, focusAreaName = "") {
   const doc = await loadDocx(buffer);
   const rawSlots = scanPlaceholders(doc);
   const kw = resolveKeywords(posting, data);
   // Steering (the preview's "revise" box) boosts/removes canonicals before slot
   // mapping, so "emphasize React" actually changes what the document leads with.
   const keywords = steering?.hasDirectives ? applySteering(kw.keywords, steering) : kw.keywords;
-  const slots = mapSlots(rawSlots, keywords, data, { aggressiveness, maxKeywords, serialAnd, posting });
-  return { doc, slots, keywords, emphases: kw.emphases };
+  const mapped = mapSlotsDetailed(rawSlots, keywords, data, {
+    aggressiveness,
+    maxKeywords,
+    serialAnd,
+    posting,
+    focusAreaName,
+  });
+  return { doc, slots: mapped.slots, keywords, emphases: kw.emphases, focusArea: mapped.focusArea };
 }
 
 // Resolve final values and fill a template. `overrides` map slot keys to text;
@@ -176,8 +182,8 @@ async function buildProposal(buffer, posting, aggressiveness, maxKeywords, seria
 // `maxKeywords` caps comma-joined capability lists (the cover letter reads better
 // with shorter lists than the résumé). An empty final value leaves the
 // {{placeholder}} visible (counts as unfilled).
-async function render(buffer, posting, { overrides = {}, seedByName = {}, aggressiveness, maxKeywords, serialAnd, data = DEFAULT_DATA, steering = null, editRules = [] } = {}) {
-  const proposal = await buildProposal(buffer, posting, aggressiveness, maxKeywords, serialAnd, data, steering);
+async function render(buffer, posting, { overrides = {}, seedByName = {}, aggressiveness, maxKeywords, serialAnd, data = DEFAULT_DATA, steering = null, editRules = [], focusAreaName = "" } = {}) {
+  const proposal = await buildProposal(buffer, posting, aggressiveness, maxKeywords, serialAnd, data, steering, focusAreaName);
   const finalValues = {};
   const unfilled = [];
   const reportSlots = proposal.slots.map((slot) => {
@@ -205,7 +211,29 @@ async function render(buffer, posting, { overrides = {}, seedByName = {}, aggres
     keywords: proposal.keywords,
     emphases: proposal.emphases,
     appliedEdits,
+    focusArea: proposal.focusArea,
   };
+}
+
+// Focus-selection payloads for the report/warnings: which area drove the
+// tailoring, whether the user pinned it, and an honest warning when a pinned
+// name isn't in the library (auto-detection was used instead).
+function focusOutputs(requestedName, chosenArea) {
+  const requested = String(requestedName || "").trim();
+  const chosen = chosenArea?.name || null;
+  const overrideApplied = !!(requested && chosen && chosen.toLowerCase() === requested.toLowerCase());
+  const meta = {
+    focus: {
+      name: chosen,
+      source: overrideApplied ? "override" : chosen ? "auto" : "none",
+      ...(requested ? { requested } : {}),
+    },
+  };
+  const warnings =
+    requested && !overrideApplied
+      ? [`Focus area "${requested}" isn't in your library — auto-detection was used instead.`]
+      : [];
+  return { meta, warnings };
 }
 
 // Applied-edit-rule payloads for the report/warnings, so automatic rewrites
@@ -299,7 +327,7 @@ export const embeddedEngine = {
     return out;
   },
 
-  async tailorResume({ jobPosting, jobPostingUrl, values, aggressiveness, userId, steeringInstructions, editRules }) {
+  async tailorResume({ jobPosting, jobPostingUrl, values, aggressiveness, userId, steeringInstructions, editRules, focusArea }) {
     const { text: posting, meta: scrapedMeta } = await resolvePostingText({ jobPosting, jobPostingUrl });
     const overrides = values && typeof values === "object" ? values : {};
     const data = toData(await loadLibrary({ userId }));
@@ -310,8 +338,10 @@ export const embeddedEngine = {
       data,
       steering: steered.steering,
       editRules: Array.isArray(editRules) ? editRules : [],
+      focusAreaName: focusArea,
     });
     const edits = editRuleOutputs(r.appliedEdits);
+    const focus = focusOutputs(focusArea, r.focusArea);
     // Advisory research is excluded from the document — report only.
     const advisory = resolveAdvisory({ posting, company: "", data });
     // Best-effort title/company so the saved file is named after the posting
@@ -328,7 +358,7 @@ export const embeddedEngine = {
       unfilled: r.unfilled,
       keywords: r.keywords,
       advisory,
-      extraMeta: { ...steered.meta, ...edits.meta },
+      extraMeta: { ...steered.meta, ...edits.meta, ...focus.meta },
     });
     report.match = match;
 
@@ -340,12 +370,12 @@ export const embeddedEngine = {
       companyName: meta.companyName,
       docxB64: r.docxB64,
       report,
-      warnings: [...steered.warnings, ...edits.warnings],
+      warnings: [...steered.warnings, ...edits.warnings, ...focus.warnings],
       degraded: false,
     };
   },
 
-  async tailorCoverLetter({ jobPosting, jobPostingUrl, jobTitle, companyName, values, aggressiveness, userId, steeringInstructions, editRules }) {
+  async tailorCoverLetter({ jobPosting, jobPostingUrl, jobTitle, companyName, values, aggressiveness, userId, steeringInstructions, editRules, focusArea }) {
     const { text: posting, meta: scrapedMeta } = await resolvePostingText({ jobPosting, jobPostingUrl }, { required: false });
     const overrides = values && typeof values === "object" ? values : {};
     const data = toData(await loadLibrary({ userId }));
@@ -377,8 +407,10 @@ export const embeddedEngine = {
       data,
       steering: steered.steering,
       editRules: Array.isArray(editRules) ? editRules : [],
+      focusAreaName: focusArea,
     });
     const edits = editRuleOutputs(r.appliedEdits);
+    const focus = focusOutputs(focusArea, r.focusArea);
 
     return {
       engine: "embedded",
@@ -393,14 +425,14 @@ export const embeddedEngine = {
           reportSlots: r.reportSlots,
           unfilled: r.unfilled,
           keywords: r.keywords,
-          extraMeta: { document: "cover_letter", ...steered.meta, ...edits.meta },
+          extraMeta: { document: "cover_letter", ...steered.meta, ...edits.meta, ...focus.meta },
         });
         // Cover letters are prose, not keyword walls — the score naturally runs
         // lower than the résumé's; the combined response uses the weakest doc.
         report.match = computeMatch(posting, r.resultLines.join("\n"), data.taxonomy);
         return report;
       })(),
-      warnings: [...steered.warnings, ...edits.warnings],
+      warnings: [...steered.warnings, ...edits.warnings, ...focus.warnings],
       degraded: false,
     };
   },

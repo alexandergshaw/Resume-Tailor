@@ -82,6 +82,14 @@
       "domain_capabilities": ["Systems Engineering", "Distributed Systems", "Systems Architecture", "Modeling and Simulation", "Complex Systems"]
     },
     {
+      "name": "Web Development",
+      "match": ["Web Developer", "Web Development", "Web Specialist", "Webmaster", "Web Designer", "Front-End Developer", "Frontend Developer", "Website", "Web Content", "Content Management System", "CMS", "Drupal", "WordPress", "Web Manager", "Digital Content"],
+      "subjects": ["Web Development", "Web Content Management", "Content Strategy", "Accessibility", "Responsive Design", "Search Engine Optimization"],
+      "job_emphases": ["Web Development", "Content Management Systems", "Web Content Strategy", "Accessibility", "SEO", "Responsive Design", "Web Analytics"],
+      "technical_capabilities": ["HTML", "CSS", "JavaScript", "React", "Content Management Systems", "Responsive Design", "Web Analytics"],
+      "domain_capabilities": ["Web Development", "Web Content Management", "Accessibility", "SEO", "User Experience", "Content Strategy"]
+    },
+    {
       "name": "UX Engineering",
       "match": ["UX Engineer", "UX Engineering", "Design System", "Design Systems", "Component Library", "Component Libraries", "Design Engineer", "UI Engineer", "Design Systems Engineer", "Storybook"],
       "subjects": ["Design Systems", "Frontend Engineering", "User Interface Design", "Interaction Design", "Accessibility", "Component Libraries"],

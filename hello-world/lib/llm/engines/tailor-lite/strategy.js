@@ -87,7 +87,15 @@ function matchStrength(term, ctx, postingLower, taxonomy) {
   return count;
 }
 
-function resolveFocusArea(areas, ctx, posting, taxonomy) {
+function resolveFocusArea(areas, ctx, posting, taxonomy, overrideName) {
+  // A user-pinned focus (the previewer's "wrong focus" flag) wins outright —
+  // no scoring, no threshold. Unknown names fall through to auto-detection so
+  // a stale override degrades instead of failing.
+  const wanted = String(overrideName || "").trim().toLowerCase();
+  if (wanted) {
+    const hit = (areas || []).find((a) => String(a.name || "").toLowerCase() === wanted);
+    if (hit) return hit;
+  }
   const postingLower = String(posting || "").toLowerCase();
   if (!postingLower) return null;
   let best = null;
@@ -510,7 +518,10 @@ function mapOne(slot, keywords, data, state) {
 // Enrich every scanned slot with a value. Processed in document order so the
 // skill-row categories, area-of-emphasis indexing, and phrase cursors are
 // deterministic.
-export function mapSlots(slots, keywords, data, options = {}) {
+// Like mapSlots, but also reports WHICH focus area drove the mapping so the
+// engine can surface it (report.meta.focus) and honor a user override
+// (`options.focusAreaName`, from the previewer's focus picker).
+export function mapSlotsDetailed(slots, keywords, data, options = {}) {
   const ctx = buildContext(keywords);
   const aggressiveness = clampAggressiveness(options.aggressiveness);
   // The library the rest of the mapper reads from. `data.taxonomy`/`data.skillGroups`
@@ -522,8 +533,14 @@ export function mapSlots(slots, keywords, data, options = {}) {
   const universe = options.universe || candidateUniverse(skillGroups, taxonomy);
   const byCat = candidateSkillsByCategory(skillGroups, taxonomy);
   // The posting's resolved focus area (or null) drives every area-specific
-  // tailoring decision below.
-  const focusArea = resolveFocusArea(data.profile?.focus_areas, ctx, options.posting, taxonomy);
+  // tailoring decision below; a user override (by name) beats auto-detection.
+  const focusArea = resolveFocusArea(
+    data.profile?.focus_areas,
+    ctx,
+    options.posting,
+    taxonomy,
+    options.focusAreaName,
+  );
   const skillRows = buildSkillRows(keywords, byCat, ctx, universe, GAP_BUDGET[aggressiveness] || 0, focusArea, taxonomy, skillGroups);
   const allowGaps = aggressiveness >= 3;
   const maxKeywords = Number.isInteger(options.maxKeywords) ? options.maxKeywords : null;
@@ -543,5 +560,13 @@ export function mapSlots(slots, keywords, data, options = {}) {
     // Serial "and" before the last list item (prose lists; cover letter only).
     serialAnd: !!options.serialAnd,
   };
-  return slots.map((slot) => ({ ...slot, ...mapOne(slot, keywords, data, state) }));
+  return {
+    slots: slots.map((slot) => ({ ...slot, ...mapOne(slot, keywords, data, state) })),
+    focusArea,
+  };
+}
+
+// Original slots-only interface (tests and older callers).
+export function mapSlots(slots, keywords, data, options = {}) {
+  return mapSlotsDetailed(slots, keywords, data, options).slots;
 }
