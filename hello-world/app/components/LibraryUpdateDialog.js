@@ -37,6 +37,7 @@ export default function LibraryUpdateDialog({ prompt, onClose, onCommit }) {
       checked: true,
       aliases: Array.isArray(b.aliases) ? b.aliases : [],
       matchCanonical: b.match_canonical !== false,
+      seenCount: b.seenCount || 0,
     })),
   );
   const [busy, setBusy] = useState(false);
@@ -84,8 +85,29 @@ export default function LibraryUpdateDialog({ prompt, onClose, onCommit }) {
                 sx={{ p: 0.5 }}
               />
               <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Box sx={{ fontSize: "0.9rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {r.canonical}
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, minWidth: 0 }}>
+                  <Box sx={{ fontSize: "0.9rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {r.canonical}
+                  </Box>
+                  {r.seenCount >= 2 ? (
+                    <Box
+                      component="span"
+                      title="This term has been a coverage gap in multiple postings you've tailored — it's systematically missing, not a one-off."
+                      sx={{
+                        flexShrink: 0,
+                        fontSize: "0.65rem",
+                        fontWeight: 700,
+                        color: "var(--accent)",
+                        backgroundColor: "var(--accent-soft)",
+                        borderRadius: 1,
+                        px: 0.5,
+                        py: 0.1,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      seen in {r.seenCount} postings
+                    </Box>
+                  ) : null}
                 </Box>
                 {r.aliases.length > 0 ? (
                   <Box sx={{ fontSize: "0.7rem", color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

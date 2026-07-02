@@ -39,6 +39,7 @@ import { parseDocxToModel, linesToModel } from "../lib/document/docxPreview";
 import { weaveSources } from "../lib/document/coverLetterWeave";
 import { parseEmploymentHistory } from "../lib/resume/parseEmployment";
 import { editFingerprint } from "../lib/tailor/editMining";
+import { recordMatchGaps, annotateAndRank } from "../lib/tailor/localSignals";
 import { useProfileEntries } from "./hooks/useProfileEntries";
 import { useScreenshots } from "./hooks/useScreenshots";
 import { useCompanyResearch } from "./hooks/useCompanyResearch";
@@ -2003,15 +2004,24 @@ export default function Home() {
       if (!res.ok) return;
       const data = await res.json().catch(() => null);
       if (!data?.buzzwords?.length) return;
-      setLibraryPrompt({ promptId: `edit-${Date.now()}`, jobId, match: null, suggestions: data, source: "edit" });
+      setLibraryPrompt({
+        promptId: `edit-${Date.now()}`,
+        jobId,
+        match: null,
+        suggestions: { ...data, buzzwords: annotateAndRank(data.buzzwords) },
+        source: "edit",
+      });
     } catch {
       // best-effort only
     }
   }
 
   // Offer the library-update prompt when a tailor response carries suggestions
-  // (embedded engine, match below threshold, signed in). Once per job.
+  // (embedded engine, match below threshold, signed in). Once per job. Every
+  // run's gaps are counted locally first, so terms that recur across DIFFERENT
+  // postings rank first in the prompt with a "seen in N postings" badge.
   function maybeOfferLibraryUpdate(payload, jobId) {
+    if (payload?.match) recordMatchGaps(payload.match);
     if (!payload?.librarySuggestions?.buzzwords?.length) return;
     if (libraryPromptSeenRef.current.has(jobId)) return;
     libraryPromptSeenRef.current.add(jobId);
@@ -2019,7 +2029,10 @@ export default function Home() {
       promptId: `match-${jobId}`,
       jobId,
       match: payload.match || null,
-      suggestions: payload.librarySuggestions,
+      suggestions: {
+        ...payload.librarySuggestions,
+        buzzwords: annotateAndRank(payload.librarySuggestions.buzzwords),
+      },
       source: "match",
     });
   }
