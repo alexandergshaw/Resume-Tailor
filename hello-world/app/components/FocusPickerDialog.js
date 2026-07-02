@@ -14,8 +14,11 @@ import Checkbox from "@mui/material/Checkbox";
 import Chip from "@mui/material/Chip";
 import TextField from "@mui/material/TextField";
 import CircularProgress from "@mui/material/CircularProgress";
+import Select from "@mui/material/Select";
+import MenuItem from "@mui/material/MenuItem";
 import profileData from "@/lib/llm/engines/tailor-lite/data/profile.json";
 import { focusOverrideHint, buzzwordEditCounts } from "@/lib/tailor/localSignals";
+import { TAXONOMY_CATEGORIES } from "@/lib/llm/engines/tailor-lite/library/validate";
 
 const AUTO = "__auto__";
 
@@ -93,6 +96,15 @@ export default function FocusPickerDialog({
   );
   const [boosts, setBoosts] = useState(() => [...(keywordEdits?.boost || [])]);
   const [addText, setAddText] = useState("");
+  // "" = emphasize on this posting only; a category = also add the term to the
+  // library's taxonomy so the engine recognizes it from now on.
+  const [addCategory, setAddCategory] = useState("");
+  const [addBusy, setAddBusy] = useState(false);
+  const [addNote, setAddNote] = useState(null); // { ok, message } | null
+  // New focus area (name-only scaffold; flesh it out in /library).
+  const [newAreaName, setNewAreaName] = useState("");
+  const [newAreaBusy, setNewAreaBusy] = useState(false);
+  const [newAreaNote, setNewAreaNote] = useState(null); // { ok, message } | null
   // Cover-letter framing (teaching/staff/industry, "" = auto-detect).
   const [variantChoice, setVariantChoice] = useState(() => coverVariantOverride || "");
 
@@ -165,13 +177,87 @@ export default function FocusPickerDialog({
     });
   }
 
-  function addBoost() {
+  // Add a buzzword: always emphasized on this posting; with a category chosen,
+  // it's ALSO added to the library's taxonomy first so the engine recognizes it
+  // from now on (a per-posting boost of an unknown term can't apply otherwise).
+  async function addBoost() {
     const name = addText.trim();
-    if (!name) return;
+    if (!name || addBusy) return;
+    setAddNote(null);
+    if (addCategory) {
+      setAddBusy(true);
+      try {
+        const res = await fetch("/api/library/taxonomy", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ canonical: name, category: addCategory, aliases: [] }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(
+            res.status === 401
+              ? "Sign in to add buzzwords to your library."
+              : data?.error || (Array.isArray(data?.errors) ? data.errors.join(" ") : "Couldn't add the buzzword."),
+          );
+        }
+        setAddNote({ ok: true, message: `“${name}” added to your library (${addCategory.replace(/_/g, " ")}).` });
+      } catch (err) {
+        setAddNote({ ok: false, message: err?.message || "Couldn't add the buzzword." });
+        setAddBusy(false);
+        return;
+      }
+      setAddBusy(false);
+    }
     setBoosts((prev) =>
       prev.some((b) => b.toLowerCase() === name.toLowerCase()) ? prev : [...prev, name],
     );
     setAddText("");
+  }
+
+  // Create a minimal focus area (name + itself as a match term) in the library,
+  // select it, and point at /library for fleshing out its capability lists.
+  async function addFocusArea() {
+    const name = newAreaName.trim();
+    if (!name || newAreaBusy) return;
+    if ((pickable || []).some((a) => String(a.name).toLowerCase() === name.toLowerCase())) {
+      setNewAreaNote({ ok: false, message: `“${name}” already exists — select it above.` });
+      return;
+    }
+    setNewAreaBusy(true);
+    setNewAreaNote(null);
+    try {
+      const res = await fetch("/api/library/focus-areas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          match: [name],
+          subjects: [],
+          job_emphases: [],
+          technical_capabilities: [],
+          domain_capabilities: [],
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          res.status === 401
+            ? "Sign in to add focus areas to your library."
+            : data?.error || (Array.isArray(data?.errors) ? data.errors.join(" ") : "Couldn't add the focus area."),
+        );
+      }
+      setAreas((prev) => [...(prev || []), data.row || { name }]);
+      setChoice(name);
+      setNewAreaName("");
+      setNewAreaNote({
+        ok: true,
+        message: `“${name}” added and selected. It starts empty — fill in its emphases and capabilities in /library.`,
+      });
+    } catch (err) {
+      setNewAreaNote({ ok: false, message: err?.message || "Couldn't add the focus area." });
+    } finally {
+      setNewAreaBusy(false);
+    }
   }
 
   async function apply() {
@@ -333,6 +419,38 @@ export default function FocusPickerDialog({
           />
         ) : null}
 
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1 }}>
+          <TextField
+            size="small"
+            fullWidth
+            placeholder="New focus area (e.g. Data Engineering) — added to your library"
+            value={newAreaName}
+            onChange={(e) => setNewAreaName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                addFocusArea();
+              }
+            }}
+            disabled={newAreaBusy}
+          />
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={addFocusArea}
+            disabled={!newAreaName.trim() || newAreaBusy || areas === null}
+            startIcon={newAreaBusy ? <CircularProgress size={12} /> : null}
+            sx={{ textTransform: "none", whiteSpace: "nowrap" }}
+          >
+            Add area
+          </Button>
+        </Box>
+        {newAreaNote ? (
+          <Box sx={{ mt: 0.5, fontSize: "0.78rem", color: newAreaNote.ok ? "var(--text-secondary)" : "var(--danger)" }}>
+            {newAreaNote.message}
+          </Box>
+        ) : null}
+
         <Box sx={{ mt: 2, pt: 1.5, borderTop: "1px solid var(--border)" }}>
           <Box sx={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text-primary)" }}>
             Cover letter framing
@@ -367,15 +485,15 @@ export default function FocusPickerDialog({
           </RadioGroup>
         </Box>
 
-        {listed.length > 0 ? (
-          <Box sx={{ mt: 2, pt: 1.5, borderTop: "1px solid var(--border)" }}>
-            <Box sx={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text-primary)" }}>
-              Buzzwords for this posting
-            </Box>
-            <Box sx={{ fontSize: "0.78rem", color: "var(--text-secondary)", lineHeight: 1.4, mt: 0.25, mb: 0.75 }}>
-              Uncheck a term to remove it from both documents (it also comes out of the focus
-              area&apos;s emphasis lists). Add a term to make the documents lead with it.
-            </Box>
+        <Box sx={{ mt: 2, pt: 1.5, borderTop: "1px solid var(--border)" }}>
+          <Box sx={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text-primary)" }}>
+            Buzzwords for this posting
+          </Box>
+          <Box sx={{ fontSize: "0.78rem", color: "var(--text-secondary)", lineHeight: 1.4, mt: 0.25, mb: 0.75 }}>
+            Uncheck a term to remove it from both documents (it also comes out of the focus
+            area&apos;s emphasis lists). Add a term to make the documents lead with it.
+          </Box>
+          {listed.length > 0 ? (
             <Box
               sx={{
                 display: "grid",
@@ -422,11 +540,12 @@ export default function FocusPickerDialog({
                 </Box>
               ))}
             </Box>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1 }}>
+          ) : null}
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 1 }}>
               <TextField
                 size="small"
                 fullWidth
-                placeholder="Add a buzzword to emphasize (must be in your library's taxonomy)"
+                placeholder="Add a buzzword to emphasize"
                 value={addText}
                 onChange={(e) => setAddText(e.target.value)}
                 onKeyDown={(e) => {
@@ -435,10 +554,45 @@ export default function FocusPickerDialog({
                     addBoost();
                   }
                 }}
+                disabled={addBusy}
               />
-              <Button size="small" variant="outlined" onClick={addBoost} disabled={!addText.trim()} sx={{ textTransform: "none" }}>
+              <Select
+                size="small"
+                value={addCategory}
+                onChange={(e) => setAddCategory(e.target.value)}
+                displayEmpty
+                disabled={addBusy}
+                title="Choose a category to ALSO add this term to your library's taxonomy — required for terms the engine doesn't know yet."
+                sx={{ fontSize: "0.8rem", minWidth: 150, flexShrink: 0 }}
+              >
+                <MenuItem value="" sx={{ fontSize: "0.8rem" }}>
+                  emphasize only
+                </MenuItem>
+                {TAXONOMY_CATEGORIES.map((c) => (
+                  <MenuItem key={c} value={c} sx={{ fontSize: "0.8rem" }}>
+                    + library: {c.replace(/_/g, " ")}
+                  </MenuItem>
+                ))}
+              </Select>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={addBoost}
+                disabled={!addText.trim() || addBusy}
+                startIcon={addBusy ? <CircularProgress size={12} /> : null}
+                sx={{ textTransform: "none" }}
+              >
                 Add
               </Button>
+            </Box>
+            {addNote ? (
+              <Box sx={{ mt: 0.5, fontSize: "0.78rem", color: addNote.ok ? "var(--text-secondary)" : "var(--danger)" }}>
+                {addNote.message}
+              </Box>
+            ) : null}
+            <Box sx={{ mt: 0.5, fontSize: "0.72rem", color: "var(--text-muted)", lineHeight: 1.4 }}>
+              “Emphasize only” works for terms your library already knows; pick a category to add a
+              new term to the library so the engine recognizes it from now on.
             </Box>
             {boosts.length > 0 ? (
               <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mt: 1 }}>
@@ -452,8 +606,7 @@ export default function FocusPickerDialog({
                 ))}
               </Box>
             ) : null}
-          </Box>
-        ) : null}
+        </Box>
 
         {error ? <Box sx={{ mt: 1, fontSize: "0.85rem", color: "var(--danger)" }}>{error}</Box> : null}
       </DialogContent>
