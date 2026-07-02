@@ -221,6 +221,71 @@ describe("embeddedEngine focus-area override (the previewer's wrong-focus flag)"
   });
 });
 
+describe("embeddedEngine keyword edits (the previewer's buzzword toggles)", () => {
+  const WEB_POSTING =
+    "Web Specialist. Maintain the university website in the content management system (Drupal), improve accessibility and SEO, and manage web content strategy.";
+
+  it("excluding a buzzword removes it everywhere, alias-aware, in both documents", async () => {
+    const base = await embeddedEngine.tailorResume({ jobPosting: WEB_POSTING });
+    expect(base.result).toContain("SEO"); // present without edits
+    const res = await embeddedEngine.tailorResume({
+      jobPosting: WEB_POSTING,
+      keywordEdits: { boost: [], exclude: ["SEO"] },
+    });
+    // Gone from keyword-driven lists AND the focus area's own emphasis lists.
+    expect(res.result).not.toContain("SEO");
+    expect(res.result).not.toContain("Search Engine Optimization");
+    expect(res.report.meta.keywordEdits).toEqual({ boosted: [], excluded: ["SEO"] });
+    expect(res.result).not.toContain("{{");
+
+    const cover = await embeddedEngine.tailorCoverLetter({
+      jobPosting: WEB_POSTING,
+      jobTitle: "Web Specialist",
+      companyName: "GSW",
+      keywordEdits: { boost: [], exclude: ["SEO"] },
+    });
+    expect(cover.result).not.toContain("SEO");
+  });
+
+  it("exclusion works through aliases (excluding 'search engine optimization' kills SEO)", async () => {
+    const res = await embeddedEngine.tailorResume({
+      jobPosting: WEB_POSTING,
+      keywordEdits: { boost: [], exclude: ["search engine optimization"] },
+    });
+    expect(res.result).not.toContain("SEO");
+  });
+
+  it("boosting a taxonomy term changes the document and is reported", async () => {
+    const base = await embeddedEngine.tailorResume({ jobPosting: POSTING });
+    const res = await embeddedEngine.tailorResume({
+      jobPosting: POSTING,
+      keywordEdits: { boost: ["GraphQL"], exclude: [] },
+    });
+    expect(res.docxB64).not.toBe(base.docxB64);
+    expect(res.report.meta.keywordEdits.boosted).toContain("GraphQL");
+    expect(res.warnings).toEqual([]);
+  });
+
+  it("warns honestly when a boost isn't in the taxonomy", async () => {
+    const res = await embeddedEngine.tailorResume({
+      jobPosting: POSTING,
+      keywordEdits: { boost: ["Underwater Basket Weaving"], exclude: [] },
+    });
+    expect(res.warnings.some((w) => /Can't emphasize .*Underwater Basket Weaving/.test(w))).toBe(true);
+  });
+
+  it("an exclusion beats a boost of the same term, and edits stay deterministic", async () => {
+    const args = {
+      jobPosting: WEB_POSTING,
+      keywordEdits: { boost: ["SEO"], exclude: ["SEO"] },
+    };
+    const a = await embeddedEngine.tailorResume(args);
+    const b = await embeddedEngine.tailorResume(args);
+    expect(a.result).not.toContain("SEO");
+    expect(a.docxB64).toBe(b.docxB64);
+  });
+});
+
 describe("embeddedEngine steering (the revise box, offline)", () => {
   it("emphasize/avoid directives change the document and are reported", async () => {
     const base = await embeddedEngine.tailorResume({ jobPosting: POSTING });

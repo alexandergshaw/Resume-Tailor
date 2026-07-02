@@ -109,6 +109,26 @@ function parseAggressiveness(rawAggressiveness) {
   return Math.min(MAX_AGGRESSIVENESS, Math.max(MIN_AGGRESSIVENESS, parsed));
 }
 
+// Parse the previewer's buzzword toggles: { boost: string[], exclude: string[] }.
+// Defensive — arrays of short strings only, capped, anything else dropped.
+function parseKeywordEdits(raw) {
+  if (!raw) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw.toString());
+  } catch {
+    return null;
+  }
+  const clean = (list) =>
+    (Array.isArray(list) ? list : [])
+      .map((s) => String(s || "").trim())
+      .filter((s) => s.length > 0 && s.length <= 60)
+      .slice(0, 40);
+  const boost = clean(parsed?.boost);
+  const exclude = clean(parsed?.exclude);
+  return boost.length > 0 || exclude.length > 0 ? { boost, exclude } : null;
+}
+
 // Parse a JSON object field (e.g. external-engine slot `values`) defensively.
 function parseJsonObject(raw) {
   if (!raw) return null;
@@ -178,6 +198,9 @@ export async function POST(request) {
     // User-pinned focus area (the previewer's "wrong focus" flag) — the embedded
     // engine uses this library focus area instead of auto-detecting one.
     const focusArea = formData.get("focusArea")?.toString().trim().slice(0, 120) || "";
+    // Buzzword toggles from the previewer's focus modal: boost/exclude specific
+    // terms for this posting.
+    const keywordEdits = parseKeywordEdits(formData.get("keywordEdits"));
 
     // Select the document-generation engine: per-request override falls back to
     // the server default (RESUME_ENGINE). Unknown names degrade to "gemini".
@@ -275,6 +298,7 @@ export async function POST(request) {
       steeringInstructions,
       editRules,
       focusArea,
+      keywordEdits,
       userId,
     };
 
@@ -322,6 +346,7 @@ export async function POST(request) {
           steeringInstructions,
           editRules,
           focusArea,
+          keywordEdits,
           userId,
         });
         coverLetterResultLines = coverDraft.resultLines;

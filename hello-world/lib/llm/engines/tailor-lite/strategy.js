@@ -534,13 +534,32 @@ export function mapSlotsDetailed(slots, keywords, data, options = {}) {
   const byCat = candidateSkillsByCategory(skillGroups, taxonomy);
   // The posting's resolved focus area (or null) drives every area-specific
   // tailoring decision below; a user override (by name) beats auto-detection.
-  const focusArea = resolveFocusArea(
+  let focusArea = resolveFocusArea(
     data.profile?.focus_areas,
     ctx,
     options.posting,
     taxonomy,
     options.focusAreaName,
   );
+  // User-excluded buzzwords must vanish from the documents entirely, and the
+  // focus area's own emphasis lists are a second source of terms beyond the
+  // keyword map — filter them alias-aware (excluding "SEO" also removes
+  // "Search Engine Optimization") without mutating the library object.
+  const excluded = options.excludeCanonicals;
+  if (focusArea && excluded && excluded.size > 0) {
+    const keep = (term) => {
+      const t = String(term || "");
+      const canon = canonicalize(t, taxonomy) || t;
+      return !excluded.has(canon.toLowerCase()) && !excluded.has(t.toLowerCase());
+    };
+    focusArea = {
+      ...focusArea,
+      subjects: (focusArea.subjects || []).filter(keep),
+      job_emphases: (focusArea.job_emphases || []).filter(keep),
+      technical_capabilities: (focusArea.technical_capabilities || []).filter(keep),
+      domain_capabilities: (focusArea.domain_capabilities || []).filter(keep),
+    };
+  }
   const skillRows = buildSkillRows(keywords, byCat, ctx, universe, GAP_BUDGET[aggressiveness] || 0, focusArea, taxonomy, skillGroups);
   const allowGaps = aggressiveness >= 3;
   const maxKeywords = Number.isInteger(options.maxKeywords) ? options.maxKeywords : null;

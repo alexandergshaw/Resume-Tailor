@@ -22,7 +22,7 @@ import {
   documentLines,
   serializeDocx,
 } from "./docxModel.js";
-import { extractKeywords } from "./keywords.js";
+import { extractKeywords, canonicalize, categorize } from "./keywords.js";
 import { mapSlotsDetailed } from "./strategy.js";
 import { parsePosting } from "./parser.js";
 import { research } from "./researcher.js";
@@ -160,12 +160,13 @@ function resolveCoverFacts({ posting, company, data }) {
 
 // Scan a template, resolve keywords (legacy/composed), map placeholders.
 // `aggressiveness` (1..5) drives how much gap-keyword insertion the strategy does.
-async function buildProposal(buffer, posting, aggressiveness, maxKeywords, serialAnd, data = DEFAULT_DATA, steering = null, focusAreaName = "") {
+async function buildProposal(buffer, posting, aggressiveness, maxKeywords, serialAnd, data = DEFAULT_DATA, steering = null, focusAreaName = "", excludeCanonicals = null) {
   const doc = await loadDocx(buffer);
   const rawSlots = scanPlaceholders(doc);
   const kw = resolveKeywords(posting, data);
-  // Steering (the preview's "revise" box) boosts/removes canonicals before slot
-  // mapping, so "emphasize React" actually changes what the document leads with.
+  // Steering (the preview's "revise" box) and buzzword toggles boost/remove
+  // canonicals before slot mapping, so "emphasize React" actually changes what
+  // the document leads with.
   const keywords = steering?.hasDirectives ? applySteering(kw.keywords, steering) : kw.keywords;
   const mapped = mapSlotsDetailed(rawSlots, keywords, data, {
     aggressiveness,
@@ -173,6 +174,7 @@ async function buildProposal(buffer, posting, aggressiveness, maxKeywords, seria
     serialAnd,
     posting,
     focusAreaName,
+    excludeCanonicals,
   });
   return { doc, slots: mapped.slots, keywords, emphases: kw.emphases, focusArea: mapped.focusArea };
 }
@@ -182,8 +184,8 @@ async function buildProposal(buffer, posting, aggressiveness, maxKeywords, seria
 // `maxKeywords` caps comma-joined capability lists (the cover letter reads better
 // with shorter lists than the résumé). An empty final value leaves the
 // {{placeholder}} visible (counts as unfilled).
-async function render(buffer, posting, { overrides = {}, seedByName = {}, aggressiveness, maxKeywords, serialAnd, data = DEFAULT_DATA, steering = null, editRules = [], focusAreaName = "" } = {}) {
-  const proposal = await buildProposal(buffer, posting, aggressiveness, maxKeywords, serialAnd, data, steering, focusAreaName);
+async function render(buffer, posting, { overrides = {}, seedByName = {}, aggressiveness, maxKeywords, serialAnd, data = DEFAULT_DATA, steering = null, editRules = [], focusAreaName = "", excludeCanonicals = null } = {}) {
+  const proposal = await buildProposal(buffer, posting, aggressiveness, maxKeywords, serialAnd, data, steering, focusAreaName, excludeCanonicals);
   const finalValues = {};
   const unfilled = [];
   const reportSlots = proposal.slots.map((slot) => {
@@ -283,6 +285,75 @@ function resolveSteering(steeringInstructions, taxonomy, aggressiveness) {
   };
 }
 
+// Resolve the previewer's buzzword toggles into steering-shaped directives plus
+// the exclusion set for focus-area lists. Boosts need a taxonomy category to be
+// applicable (the mapper ranks by category), so unknown boost names warn
+// honestly; exclusions work for any name — they filter by canonical (alias-
+// aware) or raw match.
+function resolveKeywordEdits(keywordEdits, taxonomy) {
+  const boostNames = Array.isArray(keywordEdits?.boost) ? keywordEdits.boost : [];
+  const excludeNames = Array.isArray(keywordEdits?.exclude) ? keywordEdits.exclude : [];
+  if (boostNames.length === 0 && excludeNames.length === 0) {
+    return { emphasize: [], avoid: [], excludeCanonicals: null, warnings: [], meta: {} };
+  }
+
+  const emphasize = [];
+  const unknown = [];
+  for (const raw of boostNames) {
+    const name = String(raw || "").trim();
+    if (!name) continue;
+    const canonical = canonicalize(name, taxonomy);
+    const category = canonical ? categorize(name, taxonomy) : null;
+    if (canonical && category) emphasize.push({ canonical, category });
+    else unknown.push(name);
+  }
+
+  const avoid = [];
+  const excludeCanonicals = new Set();
+  for (const raw of excludeNames) {
+    const name = String(raw || "").trim();
+    if (!name) continue;
+    const canonical = canonicalize(name, taxonomy) || name;
+    avoid.push({ canonical });
+    excludeCanonicals.add(canonical.toLowerCase());
+    excludeCanonicals.add(name.toLowerCase());
+  }
+
+  const warnings = unknown.length
+    ? [
+        `Can't emphasize ${unknown.map((n) => `"${n}"`).join(", ")} — not in your library's taxonomy. Scan the posting or add ${unknown.length === 1 ? "it" : "them"} in /library first.`,
+      ]
+    : [];
+  const applied = emphasize.length > 0 || avoid.length > 0;
+  return {
+    emphasize,
+    avoid,
+    excludeCanonicals: excludeCanonicals.size > 0 ? excludeCanonicals : null,
+    warnings,
+    meta: applied
+      ? {
+          keywordEdits: {
+            boosted: emphasize.map((e) => e.canonical),
+            excluded: [...new Set(avoid.map((a) => a.canonical))],
+          },
+        }
+      : {},
+  };
+}
+
+// Fold the buzzword toggles into the (possibly null) parsed steering so both
+// ride the same applySteering pass; an exclusion beats a boost of the same term.
+function mergeDirectives(steering, kwEdits) {
+  if (kwEdits.emphasize.length === 0 && kwEdits.avoid.length === 0) return steering;
+  const base = steering || { emphasize: [], avoid: [], aggressivenessDelta: 0, hasDirectives: false };
+  const avoid = [...base.avoid, ...kwEdits.avoid];
+  const avoided = new Set(avoid.map((t) => t.canonical.toLowerCase()));
+  const emphasize = [...base.emphasize, ...kwEdits.emphasize].filter(
+    (t) => !avoided.has(t.canonical.toLowerCase()),
+  );
+  return { ...base, emphasize, avoid, hasDirectives: true };
+}
+
 function buildReport({ workflow, reportSlots, unfilled, keywords, advisory, extraMeta = {} }) {
   const report = {
     engine_version: ENGINE_VERSION,
@@ -327,18 +398,20 @@ export const embeddedEngine = {
     return out;
   },
 
-  async tailorResume({ jobPosting, jobPostingUrl, values, aggressiveness, userId, steeringInstructions, editRules, focusArea }) {
+  async tailorResume({ jobPosting, jobPostingUrl, values, aggressiveness, userId, steeringInstructions, editRules, focusArea, keywordEdits }) {
     const { text: posting, meta: scrapedMeta } = await resolvePostingText({ jobPosting, jobPostingUrl });
     const overrides = values && typeof values === "object" ? values : {};
     const data = toData(await loadLibrary({ userId }));
     const steered = resolveSteering(steeringInstructions, data.taxonomy, aggressiveness);
+    const kwEdits = resolveKeywordEdits(keywordEdits, data.taxonomy);
     const r = await render(await getDefaultTemplateBuffer(), posting, {
       overrides,
       aggressiveness: steered.aggressiveness,
       data,
-      steering: steered.steering,
+      steering: mergeDirectives(steered.steering, kwEdits),
       editRules: Array.isArray(editRules) ? editRules : [],
       focusAreaName: focusArea,
+      excludeCanonicals: kwEdits.excludeCanonicals,
     });
     const edits = editRuleOutputs(r.appliedEdits);
     const focus = focusOutputs(focusArea, r.focusArea);
@@ -358,7 +431,7 @@ export const embeddedEngine = {
       unfilled: r.unfilled,
       keywords: r.keywords,
       advisory,
-      extraMeta: { ...steered.meta, ...edits.meta, ...focus.meta },
+      extraMeta: { ...steered.meta, ...edits.meta, ...focus.meta, ...kwEdits.meta },
     });
     report.match = match;
 
@@ -370,16 +443,17 @@ export const embeddedEngine = {
       companyName: meta.companyName,
       docxB64: r.docxB64,
       report,
-      warnings: [...steered.warnings, ...edits.warnings, ...focus.warnings],
+      warnings: [...steered.warnings, ...edits.warnings, ...focus.warnings, ...kwEdits.warnings],
       degraded: false,
     };
   },
 
-  async tailorCoverLetter({ jobPosting, jobPostingUrl, jobTitle, companyName, values, aggressiveness, userId, steeringInstructions, editRules, focusArea }) {
+  async tailorCoverLetter({ jobPosting, jobPostingUrl, jobTitle, companyName, values, aggressiveness, userId, steeringInstructions, editRules, focusArea, keywordEdits }) {
     const { text: posting, meta: scrapedMeta } = await resolvePostingText({ jobPosting, jobPostingUrl }, { required: false });
     const overrides = values && typeof values === "object" ? values : {};
     const data = toData(await loadLibrary({ userId }));
     const steered = resolveSteering(steeringInstructions, data.taxonomy, aggressiveness);
+    const kwEdits = resolveKeywordEdits(keywordEdits, data.taxonomy);
     // Fall back to title/company from the scrape (URL) or parsed from the posting
     // when the caller didn't supply them (e.g. the manual paste flow), so the cover
     // letter is addressed correctly and its file is named like the résumé.
@@ -405,9 +479,10 @@ export const embeddedEngine = {
       maxKeywords: 4, // keep capability lists keyword-rich but not a wall
       serialAnd: true, // prose lists read "A, B, and C", not "A, B, C"
       data,
-      steering: steered.steering,
+      steering: mergeDirectives(steered.steering, kwEdits),
       editRules: Array.isArray(editRules) ? editRules : [],
       focusAreaName: focusArea,
+      excludeCanonicals: kwEdits.excludeCanonicals,
     });
     const edits = editRuleOutputs(r.appliedEdits);
     const focus = focusOutputs(focusArea, r.focusArea);
@@ -425,14 +500,14 @@ export const embeddedEngine = {
           reportSlots: r.reportSlots,
           unfilled: r.unfilled,
           keywords: r.keywords,
-          extraMeta: { document: "cover_letter", ...steered.meta, ...edits.meta, ...focus.meta },
+          extraMeta: { document: "cover_letter", ...steered.meta, ...edits.meta, ...focus.meta, ...kwEdits.meta },
         });
         // Cover letters are prose, not keyword walls — the score naturally runs
         // lower than the résumé's; the combined response uses the weakest doc.
         report.match = computeMatch(posting, r.resultLines.join("\n"), data.taxonomy);
         return report;
       })(),
-      warnings: [...steered.warnings, ...edits.warnings, ...focus.warnings],
+      warnings: [...steered.warnings, ...edits.warnings, ...focus.warnings, ...kwEdits.warnings],
       degraded: false,
     };
   },
