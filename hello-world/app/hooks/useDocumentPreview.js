@@ -9,6 +9,7 @@ import {
 } from "../../lib/document/docx";
 import { parseDocxToModel, linesToModel } from "../../lib/document/docxPreview";
 import { addedEditText } from "../../lib/tailor/editMining";
+import { recordSteering, steeringHabitHint } from "../../lib/tailor/localSignals";
 import { readEngine } from "../settings/engine";
 
 // Resume/cover-letter preview + edit modal (opened from the status-bar chips and
@@ -310,11 +311,22 @@ export function useDocumentPreview({
       }
 
       setPreviewReloadKey((k) => k + 1);
+
+      // Count the applied embedded steering directives locally; when the same
+      // term is steered revision after revision, hint that it belongs in the
+      // library instead (the counters never modify the library themselves).
+      let habitHint = "";
+      const steeringMeta = payload.report?.meta?.steering;
+      if (steeringMeta) {
+        recordSteering(steeringMeta);
+        habitHint = steeringHabitHint(steeringMeta);
+      }
+
       setResumePreview((prev) => ({
         ...prev,
         busy: false,
         error: "",
-        notice: `Revised the ${applyCover ? "cover letter" : "resume"} with your instructions.`,
+        notice: `Revised the ${applyCover ? "cover letter" : "resume"} with your instructions.${habitHint ? ` ${habitHint}` : ""}`,
       }));
       return true;
     } catch (err) {

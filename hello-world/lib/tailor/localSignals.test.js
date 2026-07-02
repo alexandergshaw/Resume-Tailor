@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { readSignals, recordMatchGaps, annotateAndRank } from "./localSignals.js";
+import {
+  readSignals,
+  recordMatchGaps,
+  annotateAndRank,
+  recordSteering,
+  steeringHabitHint,
+} from "./localSignals.js";
 
 function fakeStorage() {
   const map = new Map();
@@ -50,6 +56,44 @@ describe("recordMatchGaps", () => {
     storage.setItem("tailorLocalSignals", "{not json");
     recordMatchGaps(MATCH_A, { storage, now: 1 });
     expect(readSignals(storage).gaps.kubernetes.count).toBe(1);
+  });
+});
+
+describe("recordSteering / steeringHabitHint", () => {
+  it("hints only once a term has been steered threshold times", () => {
+    const storage = fakeStorage();
+    const meta = { avoided: ["Java"], emphasized: [] };
+    recordSteering(meta, { storage, now: 1 });
+    recordSteering(meta, { storage, now: 2 });
+    expect(steeringHabitHint(meta, { storage })).toBe(""); // 2 < 3
+    recordSteering(meta, { storage, now: 3 });
+    const hint = steeringHabitHint(meta, { storage });
+    expect(hint).toContain("Java");
+    expect(hint).toContain("3 revisions");
+    expect(hint).toContain("/library");
+  });
+
+  it("hints on recurring emphasis too, with pin phrasing", () => {
+    const storage = fakeStorage();
+    const meta = { avoided: [], emphasized: ["React"] };
+    for (let i = 0; i < 3; i += 1) recordSteering(meta, { storage, now: i });
+    expect(steeringHabitHint(meta, { storage })).toContain("emphasized React");
+  });
+
+  it("only hints about terms in THIS revise, not old habits", () => {
+    const storage = fakeStorage();
+    for (let i = 0; i < 5; i += 1) recordSteering({ avoided: ["Java"] }, { storage, now: i });
+    // Current revise steers a different term — stay quiet about Java.
+    expect(steeringHabitHint({ avoided: ["Perl"] }, { storage })).toBe("");
+  });
+
+  it("coexists with gap counters in the same store", () => {
+    const storage = fakeStorage();
+    recordMatchGaps(MATCH_A, { storage, now: 1 });
+    recordSteering({ avoided: ["Java"] }, { storage, now: 2 });
+    const s = readSignals(storage);
+    expect(s.gaps.kubernetes.count).toBe(1);
+    expect(s.steering.avoided.java.count).toBe(1);
   });
 });
 
