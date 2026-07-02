@@ -90,6 +90,7 @@ export default function DocumentPreviewDialog({
   onResearchCompany,
   onScrapePosting,
   focus = null,
+  coverVariant = null,
   keywordEditsCount = 0,
   onOpenFocusPicker,
   researchLoading = false,
@@ -374,18 +375,21 @@ export default function DocumentPreviewDialog({
         </Tabs>
         <Box sx={{ flex: 1 }} />
         {isEmbedded && onOpenFocusPicker ? (
-          <Tooltip title="Wrong focus? Pick which of your library's focus areas drives these documents.">
+          <Tooltip title="Wrong focus or letter framing? Pick the focus area, toggle the teaching/staff/industry letter, and adjust buzzwords — both documents regenerate.">
             <span>
               <Button
                 size="small"
                 startIcon={<TrackChangesIcon fontSize="small" />}
                 onClick={onOpenFocusPicker}
                 disabled={busy}
-                sx={{ textTransform: "none", my: 0.5, maxWidth: 220 }}
+                sx={{ textTransform: "none", my: 0.5, maxWidth: 300 }}
               >
                 <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   Focus: {focus?.name || "auto"}
                   {focus?.source === "override" ? " (pinned)" : ""}
+                  {coverVariant?.name
+                    ? ` · letter: ${coverVariant.name}${coverVariant.source === "override" ? " (pinned)" : ""}`
+                    : ""}
                   {keywordEditsCount > 0 ? ` · ${keywordEditsCount} buzzword edit${keywordEditsCount === 1 ? "" : "s"}` : ""}
                 </Box>
               </Button>

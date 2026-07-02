@@ -30,6 +30,7 @@ export function readSignals(storage = defaultStorage()) {
     editRules: {},
     focusOverrides: {},
     buzzwordEdits: { exclude: {}, boost: {} },
+    variantOverrides: {},
   };
   if (!storage) return empty;
   try {
@@ -46,6 +47,8 @@ export function readSignals(storage = defaultStorage()) {
       editRules: parsed.editRules && typeof parsed.editRules === "object" ? parsed.editRules : {},
       focusOverrides:
         parsed.focusOverrides && typeof parsed.focusOverrides === "object" ? parsed.focusOverrides : {},
+      variantOverrides:
+        parsed.variantOverrides && typeof parsed.variantOverrides === "object" ? parsed.variantOverrides : {},
       buzzwordEdits: {
         exclude:
           parsed.buzzwordEdits?.exclude && typeof parsed.buzzwordEdits.exclude === "object"
@@ -187,6 +190,39 @@ export function focusOverrideHint(detected, { storage = defaultStorage(), thresh
   return from
     ? `You've switched the focus from ${best.detected} to ${best.chosen} on ${best.count} postings — edit their match terms in /library so detection gets it right.`
     : `You've picked the ${best.chosen} focus on ${best.count} postings where nothing was detected — add match terms to it in /library so it auto-selects.`;
+}
+
+// Record a cover-letter framing correction (auto-detected variant → the one
+// the user chose in the previewer's teaching/staff/industry toggle). Recurring
+// pairs mean the teaching/higher-ed detectors keep misreading a class of
+// posting. Returns the pair's new count.
+export function recordVariantOverride({ detected, chosen }, { storage = defaultStorage(), now = Date.now() } = {}) {
+  const from = String(detected || "").trim().toLowerCase();
+  const to = String(chosen || "").trim().toLowerCase();
+  if (!to || from === to) return 0;
+  const signals = readSignals(storage);
+  const key = `${from || "(none)"}→${to}`;
+  const cur = signals.variantOverrides[key] || { detected: from, chosen: to, count: 0 };
+  signals.variantOverrides[key] = { ...cur, count: cur.count + 1, lastSeen: now };
+  prune(signals.variantOverrides);
+  writeSignals(signals, storage);
+  return signals.variantOverrides[key].count;
+}
+
+// A one-line hint when the SAME framing correction keeps recurring for the
+// framing currently detected. Local counters only — detection itself doesn't
+// change, but the user learns their postings need the toggle (or a report).
+export function variantOverrideHint(detected, { storage = defaultStorage(), threshold = 3 } = {}) {
+  const from = String(detected || "").trim().toLowerCase();
+  if (!from) return "";
+  const signals = readSignals(storage);
+  let best = null;
+  for (const [key, rec] of Object.entries(signals.variantOverrides)) {
+    if (!key.startsWith(`${from}→`)) continue;
+    if (rec.count >= threshold && (!best || rec.count > best.count)) best = rec;
+  }
+  if (!best) return "";
+  return `You've switched the letter from ${best.detected} to ${best.chosen} framing on ${best.count} postings — detection keeps misreading these, so keep an eye on the framing toggle for similar roles.`;
 }
 
 // Record the buzzword toggles the user applied (once per posting — the caller

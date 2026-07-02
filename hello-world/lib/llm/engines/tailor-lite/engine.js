@@ -481,7 +481,7 @@ export const embeddedEngine = {
     };
   },
 
-  async tailorCoverLetter({ jobPosting, jobPostingUrl, jobTitle, companyName, values, aggressiveness, userId, steeringInstructions, editRules, focusArea, keywordEdits }) {
+  async tailorCoverLetter({ jobPosting, jobPostingUrl, jobTitle, companyName, values, aggressiveness, userId, steeringInstructions, editRules, focusArea, keywordEdits, coverVariant: requestedVariant }) {
     const { text: posting, meta: scrapedMeta } = await resolvePostingText({ jobPosting, jobPostingUrl }, { required: false });
     const overrides = values && typeof values === "object" ? values : {};
     const data = toData(await loadLibrary({ userId }));
@@ -505,14 +505,19 @@ export const embeddedEngine = {
       LEADERSHIP_CAPABILITIES: "technical leadership and cross-functional collaboration",
       DELIVERY_PRACTICES: "Agile delivery",
     };
-    // Pick the letter framing: teaching roles keep the adjunct letter; staff
-    // roles at higher-ed institutions get the campus-service variant; everything
-    // else gets the industry rewrite.
-    const coverVariant = isTeachingPosting(posting)
+    // Pick the letter framing: a user override (the previewer's teaching/staff/
+    // industry toggle) wins outright; otherwise teaching roles keep the adjunct
+    // letter, staff roles at higher-ed institutions get the campus-service
+    // variant, and everything else gets the industry rewrite.
+    const VALID_VARIANTS = ["teaching", "staff", "industry"];
+    const override = VALID_VARIANTS.includes(requestedVariant) ? requestedVariant : "";
+    const detectedVariant = isTeachingPosting(posting)
       ? "teaching"
       : isHigherEdPosting(posting)
         ? "staff"
         : "industry";
+    const coverVariant = override || detectedVariant;
+    const coverVariantSource = override ? "override" : "auto";
     const r = await render(await getCoverLetterTemplateBuffer({ variant: coverVariant }), posting, {
       overrides,
       seedByName,
@@ -541,7 +546,16 @@ export const embeddedEngine = {
           reportSlots: r.reportSlots,
           unfilled: r.unfilled,
           keywords: r.keywords,
-          extraMeta: { document: "cover_letter", coverVariant, ...steered.meta, ...edits.meta, ...focus.meta, ...kwEdits.meta },
+          extraMeta: {
+            document: "cover_letter",
+            coverVariant,
+            coverVariantSource,
+            coverVariantDetected: detectedVariant,
+            ...steered.meta,
+            ...edits.meta,
+            ...focus.meta,
+            ...kwEdits.meta,
+          },
         });
         // Cover letters are prose, not keyword walls — the score naturally runs
         // lower than the résumé's; the combined response uses the weakest doc.

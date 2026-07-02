@@ -2069,6 +2069,7 @@ export default function Home() {
       updateTailoringJob(jobId, {
         focusInfo: payload.report.meta?.focus || null,
         keywordsInfo: payload.report.keywords || null,
+        ...(payload.coverVariant !== undefined ? { coverVariantInfo: payload.coverVariant || null } : {}),
       });
     }
     if (payload?.match) recordMatchGaps(payload.match);
@@ -2153,6 +2154,8 @@ export default function Home() {
         if (kwEdits && (kwEdits.boost?.length || kwEdits.exclude?.length)) {
           formData.append("keywordEdits", JSON.stringify(kwEdits));
         }
+        const variantOverride = tailoringMap[job.id]?.coverVariantOverride;
+        if (variantOverride) formData.append("coverVariant", variantOverride);
       }
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
@@ -3224,6 +3227,7 @@ export default function Home() {
           preview.resumePreview.posting || preview.resumePreview.url ? scrapePreviewPosting : null
         }
         focus={tailoringMap[preview.resumePreview.jobId]?.focusInfo || null}
+        coverVariant={tailoringMap[preview.resumePreview.jobId]?.coverVariantInfo || null}
         keywordEditsCount={
           (tailoringMap[preview.resumePreview.jobId]?.keywordEditsOverride?.boost?.length || 0) +
           (tailoringMap[preview.resumePreview.jobId]?.keywordEditsOverride?.exclude?.length || 0)
@@ -3288,6 +3292,8 @@ export default function Home() {
         override={tailoringMap[preview.resumePreview.jobId]?.focusAreaOverride || ""}
         keywords={tailoringMap[preview.resumePreview.jobId]?.keywordsInfo || null}
         keywordEdits={tailoringMap[preview.resumePreview.jobId]?.keywordEditsOverride || null}
+        coverVariant={tailoringMap[preview.resumePreview.jobId]?.coverVariantInfo || null}
+        coverVariantOverride={tailoringMap[preview.resumePreview.jobId]?.coverVariantOverride || ""}
         postingTitle={preview.resumePreview.title}
         onClose={() => setFocusPickerOpen(false)}
         onApply={preview.applyFocusArea}

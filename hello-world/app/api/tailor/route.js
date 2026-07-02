@@ -201,6 +201,10 @@ export async function POST(request) {
     // Buzzword toggles from the previewer's focus modal: boost/exclude specific
     // terms for this posting.
     const keywordEdits = parseKeywordEdits(formData.get("keywordEdits"));
+    // Cover-letter framing override (the previewer's teaching/staff/industry
+    // toggle). Whitelisted; anything else means auto-detect.
+    const rawVariant = formData.get("coverVariant")?.toString().trim().toLowerCase() || "";
+    const coverVariant = ["teaching", "staff", "industry"].includes(rawVariant) ? rawVariant : "";
 
     // Select the document-generation engine: per-request override falls back to
     // the server default (RESUME_ENGINE). Unknown names degrade to "gemini".
@@ -326,6 +330,7 @@ export async function POST(request) {
     let coverLetterError = "";
     let coverLetterDocxB64 = "";
     let coverLetterMatch = null;
+    let coverVariantUsed = null;
     if (!(coverLetterFile instanceof File)) {
       // No cover letter file uploaded — that's fine, just skip silently.
     } else if (coverLetterTemplateLines.length === 0) {
@@ -347,12 +352,22 @@ export async function POST(request) {
           editRules,
           focusArea,
           keywordEdits,
+          coverVariant,
           userId,
         });
         coverLetterResultLines = coverDraft.resultLines;
         coverLetterResult = coverDraft.result;
         coverLetterDocxB64 = typeof coverDraft.docxB64 === "string" ? coverDraft.docxB64 : "";
         coverLetterMatch = coverDraft.report?.match || null;
+        // Which framing was used (teaching/staff/industry) and whether the user
+        // pinned it — the previewer's letter-framing control reads this.
+        coverVariantUsed = coverDraft.report?.meta?.coverVariant
+          ? {
+              name: coverDraft.report.meta.coverVariant,
+              source: coverDraft.report.meta.coverVariantSource || "auto",
+              detected: coverDraft.report.meta.coverVariantDetected || coverDraft.report.meta.coverVariant,
+            }
+          : null;
       } catch (err) {
         console.error("Error generating tailored cover letter:", err);
         coverLetterError = `Cover letter generation failed: ${err.message || "unknown error"}`;
@@ -392,6 +407,7 @@ export async function POST(request) {
       coverLetterDocxB64,
       report: result.report || null,
       match,
+      coverVariant: coverVariantUsed,
       librarySuggestions,
       warnings,
       degraded: !!result.degraded,

@@ -458,6 +458,50 @@ describe("embeddedEngine.tailorCoverLetter", () => {
       companyName: "Initech",
     });
     expect(industry.report.meta.coverVariant).toBe("industry");
+    expect(industry.report.meta.coverVariantSource).toBe("auto");
+  });
+
+  it("honors the user's framing toggle over detection (teaching posting → industry letter)", async () => {
+    const teachingPosting =
+      "Adjunct Faculty position to teach undergraduate courses and provide quality instruction to students each term.";
+    const res = await embeddedEngine.tailorCoverLetter({
+      jobPosting: teachingPosting,
+      jobTitle: "Adjunct Faculty",
+      companyName: "Community College",
+      coverVariant: "industry",
+    });
+    expect(res.report.meta.coverVariant).toBe("industry");
+    expect(res.report.meta.coverVariantSource).toBe("override");
+    expect(res.report.meta.coverVariantDetected).toBe("teaching");
+    // The teaching paragraphs are gone despite the teaching posting.
+    expect(res.result).not.toContain("I also teach");
+    expect(res.result).not.toContain("adjunct professor");
+    expect(res.result).not.toContain("{{");
+  });
+
+  it("forces the teaching letter onto a staff posting when toggled", async () => {
+    const staffPosting =
+      "Web Specialist at Georgia Southwestern State University. Serving students on a vibrant campus with faculty and staff. Maintain the university website.";
+    const res = await embeddedEngine.tailorCoverLetter({
+      jobPosting: staffPosting,
+      jobTitle: "Web Specialist",
+      companyName: "GSW",
+      coverVariant: "teaching",
+    });
+    expect(res.report.meta.coverVariant).toBe("teaching");
+    expect(res.report.meta.coverVariantDetected).toBe("staff");
+    expect(res.result).toContain("designing and revamping eight project-based courses");
+  });
+
+  it("ignores an invalid framing value and falls back to detection", async () => {
+    const res = await embeddedEngine.tailorCoverLetter({
+      jobPosting: POSTING,
+      jobTitle: "Staff Engineer",
+      companyName: "Initech",
+      coverVariant: "interpretive-dance",
+    });
+    expect(res.report.meta.coverVariant).toBe("industry");
+    expect(res.report.meta.coverVariantSource).toBe("auto");
   });
 
   it("keeps the adjunct-teaching framing for a teaching posting", async () => {

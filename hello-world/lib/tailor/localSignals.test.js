@@ -9,6 +9,8 @@ import {
   promotedEditRules,
   recordFocusOverride,
   focusOverrideHint,
+  recordVariantOverride,
+  variantOverrideHint,
   recordBuzzwordEdits,
   buzzwordEditHints,
   buzzwordEditCounts,
@@ -179,6 +181,28 @@ describe("recordFocusOverride / focusOverrideHint", () => {
     expect(recordFocusOverride({ detected: "Web Development", chosen: "Web Development" }, { storage })).toBe(0);
     expect(recordFocusOverride({ detected: "X", chosen: "" }, { storage })).toBe(0);
     expect(readSignals(storage).focusOverrides).toEqual({});
+  });
+});
+
+describe("recordVariantOverride / variantOverrideHint", () => {
+  it("counts framing corrections and hints at the threshold for the current detection", () => {
+    const storage = fakeStorage();
+    for (let i = 0; i < 3; i += 1) {
+      recordVariantOverride({ detected: "teaching", chosen: "staff" }, { storage, now: i });
+    }
+    const hint = variantOverrideHint("teaching", { storage });
+    expect(hint).toContain("teaching");
+    expect(hint).toContain("staff");
+    expect(hint).toContain("3 postings");
+    // Different current detection stays quiet.
+    expect(variantOverrideHint("industry", { storage })).toBe("");
+  });
+
+  it("ignores no-op toggles", () => {
+    const storage = fakeStorage();
+    expect(recordVariantOverride({ detected: "staff", chosen: "staff" }, { storage })).toBe(0);
+    expect(recordVariantOverride({ detected: "teaching", chosen: "" }, { storage })).toBe(0);
+    expect(readSignals(storage).variantOverrides).toEqual({});
   });
 });
 

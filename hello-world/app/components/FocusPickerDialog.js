@@ -38,12 +38,21 @@ const MAX_LISTED = 24;
 //
 // Render with a `key` that changes per open so each opening remounts fresh —
 // state initializes from props, no reset effects needed.
+const VARIANT_OPTIONS = [
+  { value: "", label: "Auto-detect" },
+  { value: "teaching", label: "Teaching (adjunct framing)" },
+  { value: "staff", label: "University staff" },
+  { value: "industry", label: "Industry" },
+];
+
 export default function FocusPickerDialog({
   open,
   currentFocus,
   override,
   keywords,
   keywordEdits,
+  coverVariant,
+  coverVariantOverride,
   postingTitle,
   onClose,
   onApply,
@@ -84,6 +93,8 @@ export default function FocusPickerDialog({
   );
   const [boosts, setBoosts] = useState(() => [...(keywordEdits?.boost || [])]);
   const [addText, setAddText] = useState("");
+  // Cover-letter framing (teaching/staff/industry, "" = auto-detect).
+  const [variantChoice, setVariantChoice] = useState(() => coverVariantOverride || "");
 
   // Cross-posting learning signals (device-local), read fresh per open (the
   // dialog remounts via its key): recurring exclusion counts badge the
@@ -207,7 +218,7 @@ export default function FocusPickerDialog({
         .filter((i) => excluded.has(i.canonical.toLowerCase()))
         .map((i) => i.canonical);
       const edits = boosts.length > 0 || exclude.length > 0 ? { boost: boosts, exclude } : null;
-      const ok = await onApply(choice === AUTO ? "" : choice, edits);
+      const ok = await onApply(choice === AUTO ? "" : choice, edits, variantChoice);
       if (ok === false) throw new Error("Couldn't regenerate with those settings.");
       onClose();
     } catch (err) {
@@ -321,6 +332,40 @@ export default function FocusPickerDialog({
             }
           />
         ) : null}
+
+        <Box sx={{ mt: 2, pt: 1.5, borderTop: "1px solid var(--border)" }}>
+          <Box sx={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text-primary)" }}>
+            Cover letter framing
+          </Box>
+          <Box sx={{ fontSize: "0.78rem", color: "var(--text-secondary)", lineHeight: 1.4, mt: 0.25 }}>
+            {coverVariant?.name
+              ? `Currently ${coverVariant.name}${
+                  coverVariant.source === "override"
+                    ? " (pinned by you)"
+                    : coverVariant.detected && coverVariant.detected !== coverVariant.name
+                      ? ` (detected as ${coverVariant.detected})`
+                      : " (auto-detected)"
+                }.`
+              : "Pick how the letter frames you — or leave it to detection."}{" "}
+            Teaching keeps the adjunct paragraphs; university staff swaps them for campus-service
+            prose; industry pitches a product team.
+          </Box>
+          <RadioGroup
+            row
+            value={variantChoice}
+            onChange={(e) => setVariantChoice(e.target.value)}
+            sx={{ mt: 0.5 }}
+          >
+            {VARIANT_OPTIONS.map((o) => (
+              <FormControlLabel
+                key={o.value || "auto"}
+                value={o.value}
+                control={<Radio size="small" />}
+                label={<Box sx={{ fontSize: "0.85rem" }}>{o.label}</Box>}
+              />
+            ))}
+          </RadioGroup>
+        </Box>
 
         {listed.length > 0 ? (
           <Box sx={{ mt: 2, pt: 1.5, borderTop: "1px solid var(--border)" }}>

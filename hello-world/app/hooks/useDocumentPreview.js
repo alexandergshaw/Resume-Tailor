@@ -19,6 +19,8 @@ import {
   focusOverrideHint,
   recordBuzzwordEdits,
   buzzwordEditHints,
+  recordVariantOverride,
+  variantOverrideHint,
 } from "../../lib/tailor/localSignals";
 import { readEngine } from "../settings/engine";
 
@@ -319,6 +321,11 @@ export function useDocumentPreview({
       if (engine === "embedded" && kwEdits && (kwEdits.boost?.length || kwEdits.exclude?.length)) {
         formData.append("keywordEdits", JSON.stringify(kwEdits));
       }
+      // Cover-letter framing (teaching/staff/industry): the one being applied
+      // now, or the job's stored override; "" means auto-detect.
+      const variantOverride =
+        focusChange && typeof opts.coverVariant === "string" ? opts.coverVariant : entry.coverVariantOverride || "";
+      if (engine === "embedded" && variantOverride) formData.append("coverVariant", variantOverride);
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
       contextFiles.forEach((file) => formData.append("contextFiles", file));
@@ -369,12 +376,20 @@ export function useDocumentPreview({
         });
       }
 
-      // Remember which focus and keywords drove this generation (and the pinned
-      // overrides on a focus change) so the previewer's controls stay truthful.
+      // Remember which focus, keywords, and letter framing drove this generation
+      // (and the pinned overrides on a focus change) so the previewer's
+      // controls stay truthful.
       updateTailoringJob(jobId, {
         focusInfo: payload.report?.meta?.focus || null,
         keywordsInfo: payload.report?.keywords || null,
-        ...(focusChange ? { focusAreaOverride: opts.focusArea, keywordEditsOverride: kwEdits } : {}),
+        ...(payload.coverVariant !== undefined ? { coverVariantInfo: payload.coverVariant || null } : {}),
+        ...(focusChange
+          ? {
+              focusAreaOverride: opts.focusArea,
+              keywordEditsOverride: kwEdits,
+              ...(typeof opts.coverVariant === "string" ? { coverVariantOverride: opts.coverVariant } : {}),
+            }
+          : {}),
       });
 
       setPreviewReloadKey((k) => k + 1);
@@ -400,6 +415,16 @@ export function useDocumentPreview({
           if (opts.focusArea && prevFocus?.source !== "override") {
             const count = recordFocusOverride({ detected: prevFocus?.name || "", chosen: opts.focusArea });
             if (count >= 3) workflowHints.push(focusOverrideHint(prevFocus?.name || ""));
+          }
+          if (typeof opts.coverVariant === "string" && opts.coverVariant) {
+            const prevVariant = entry.coverVariantInfo || null;
+            if (prevVariant?.source !== "override" && prevVariant?.detected !== opts.coverVariant) {
+              const count = recordVariantOverride({
+                detected: prevVariant?.detected || "",
+                chosen: opts.coverVariant,
+              });
+              if (count >= 3) workflowHints.push(variantOverrideHint(prevVariant?.detected || ""));
+            }
           }
           if (kwEdits && (kwEdits.boost?.length || kwEdits.exclude?.length)) {
             const seenKey = (t, dir) => `${jobId}:${dir}:${String(t).toLowerCase()}`;
@@ -431,10 +456,14 @@ export function useDocumentPreview({
   }
 
   // The previewer's focus picker: pin a library focus area (or "" for
-  // auto-detect) plus per-posting buzzword toggles, and regenerate both
-  // documents with them.
-  function applyFocusArea(name, keywordEdits = null) {
-    return resubmitDocumentPreview("resume", "", { focusArea: String(name ?? ""), keywordEdits });
+  // auto-detect), per-posting buzzword toggles, and the letter framing
+  // (teaching/staff/industry, "" = auto), then regenerate both documents.
+  function applyFocusArea(name, keywordEdits = null, coverVariant = "") {
+    return resubmitDocumentPreview("resume", "", {
+      focusArea: String(name ?? ""),
+      keywordEdits,
+      coverVariant: String(coverVariant ?? ""),
+    });
   }
 
   // Called by the Generate flows once the resume + cover letter exist: open the
