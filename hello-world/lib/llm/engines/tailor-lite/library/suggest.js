@@ -8,6 +8,8 @@
 // /api/tailor (the automatic low-match prompt).
 
 import { extractKeywords } from "../keywords.js";
+import { mineSkillPhrases } from "../skillMiner.js";
+import { isNoiseTopic } from "../topicNoise.js";
 import { defaultLibraryData } from "./defaults.js";
 import { loadLibrary } from "./loadLibrary.js";
 import { extractPostingMeta, cleanPostingTitle } from "../../../postingMeta.js";
@@ -104,13 +106,35 @@ export async function buildLibrarySuggestions(
       }
     }
   }
-  // RAKE phrases the taxonomy missed -> uncategorized new-buzzword candidates,
-  // with deterministic alias candidates so they match more than their spelling.
-  for (const t of (kw.topic || []).slice(0, MAX_TOPIC_CANDIDATES)) {
-    if (!have.has(String(t.canonical).toLowerCase())) {
-      const canonical = titleCase(t.canonical);
-      buzzwords.push({ canonical, category: "", score: t.score, aliases: aliasCandidates(canonical) });
-    }
+  const seen = new Set(buzzwords.map((b) => b.canonical.toLowerCase()));
+
+  // RAKE phrases the taxonomy missed, noise-filtered (URLs, policy references,
+  // hiring boilerplate, sentence shrapnel).
+  const topics = (kw.topic || []).filter((x) => !isNoiseTopic(x.canonical)).slice(0, MAX_TOPIC_CANDIDATES);
+  const maxTopicScore = topics.reduce((m, t) => Math.max(m, t.score), 0);
+
+  // Skills the posting states in prose ("Knowledge of X", "Experience with Y")
+  // that the taxonomy doesn't know — the highest-value unrecognized candidates,
+  // scored above every RAKE topic so they always rank first among the new terms.
+  for (const m of mineSkillPhrases(body, defaultLibraryData.taxonomy)) {
+    const canonical = titleCase(m.phrase);
+    const key = canonical.toLowerCase();
+    if (have.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    buzzwords.push({
+      canonical,
+      category: "",
+      score: maxTopicScore + 1 + m.count,
+      aliases: aliasCandidates(canonical),
+    });
+  }
+
+  for (const t of topics) {
+    const canonical = titleCase(t.canonical);
+    const key = canonical.toLowerCase();
+    if (have.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    buzzwords.push({ canonical, category: "", score: t.score, aliases: aliasCandidates(canonical) });
   }
   buzzwords.sort((a, b) => b.score - a.score);
 

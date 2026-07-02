@@ -257,6 +257,26 @@
     { "canonical": "Trigonometry", "category": "subject", "aliases": ["trigonometry", "trig"] },
     { "canonical": "Calculus", "category": "subject", "aliases": ["calculus", "differential calculus", "integral calculus"] },
     { "canonical": "Statistics", "category": "subject", "aliases": ["statistics", "elementary statistics", "introductory statistics", "probability and statistics"] },
-    { "canonical": "Mathematics", "category": "subject", "aliases": ["mathematics", "math", "quantitative reasoning", "quantitative literacy", "developmental mathematics", "developmental math"] }
+    { "canonical": "Mathematics", "category": "subject", "aliases": ["mathematics", "math", "quantitative reasoning", "quantitative literacy", "developmental mathematics", "developmental math"] },
+
+    { "canonical": "Content Strategy", "category": "domain", "aliases": ["web content strategy", "content planning", "content governance", "content strategy methods"] },
+    { "canonical": "Web Content Management", "category": "domain", "aliases": ["web management", "website management", "web publishing", "website maintenance"] },
+    { "canonical": "Digital Media", "category": "domain", "aliases": ["digital content", "multimedia content"] },
+    { "canonical": "Copywriting", "category": "domain", "aliases": ["copy writing", "content writing", "writing for the web", "web writing", "content creation"] },
+    { "canonical": "Editing", "category": "subject", "aliases": ["proofreading", "copyediting", "copy editing", "editing and proofreading"] },
+    { "canonical": "Web Forms", "category": "technology", "aliases": ["digital forms", "online forms", "form builder", "web form"] },
+    { "canonical": "Web Analytics", "category": "domain", "aliases": ["site analytics", "website analytics", "web traffic analysis"] },
+    { "canonical": "Information Architecture", "category": "domain", "aliases": ["site architecture", "site structure", "site navigation"] },
+    { "canonical": "Usability Testing", "category": "methodology", "aliases": ["user testing", "usability studies", "usability evaluation"] },
+    { "canonical": "Digital Marketing", "category": "domain", "aliases": ["online marketing", "digital advertising"] },
+    { "canonical": "Social Media", "category": "domain", "aliases": ["social media management", "social media marketing", "social media strategy", "social media content"] },
+    { "canonical": "Email Marketing", "category": "domain", "aliases": ["email campaigns", "email newsletters", "e-newsletters"] },
+    { "canonical": "Public Relations", "category": "domain", "aliases": ["media relations", "press releases"] },
+    { "canonical": "Journalism", "category": "domain", "aliases": ["news writing", "reporting and writing"] },
+    { "canonical": "Section 508", "category": "domain", "aliases": ["508 compliance", "section 508 compliance"] },
+    { "canonical": "CRM", "category": "tool_platform", "aliases": ["customer relationship management", "crm systems"] },
+    { "canonical": "Adobe Creative Suite", "category": "tool_platform", "aliases": ["adobe creative cloud", "creative suite", "creative cloud", "adobe suite"] },
+    { "canonical": "Cascade CMS", "category": "tool_platform", "aliases": ["cascade server", "hannon hill"] },
+    { "canonical": "Modern Campus", "category": "tool_platform", "aliases": ["omni cms", "omniupdate", "modern campus cms"] }
   ]
 }

@@ -15,6 +15,7 @@
 // not the engine — is the bottleneck for this posting.
 
 import { extractKeywords } from "./keywords.js";
+import { isNoiseTopic } from "./topicNoise.js";
 
 // Below this weighted coverage the mismatch is noticeable enough to offer a
 // library update. Calibrated against the posting fixtures: in-vocabulary
@@ -59,10 +60,11 @@ export function computeMatch(posting, documentText, taxonomy) {
 
   // RAKE topics the taxonomy has no entry for — invisible to the engine. Not
   // part of the coverage denominator (the engine can't cover what it can't
-  // see), but reported so the caller can grow the library.
+  // see), but reported so the caller can grow the library. Noise-filtered so
+  // policy references and hiring boilerplate never count as vocabulary gaps.
   const docText = String(documentText || "").toLowerCase();
   const unrecognized = (postingKw.topic || [])
-    .filter((t) => !docText.includes(String(t.canonical).toLowerCase()))
+    .filter((t) => !isNoiseTopic(t.canonical) && !docText.includes(String(t.canonical).toLowerCase()))
     .map((t) => ({ term: t.canonical, score: t.score }))
     .slice(0, MAX_TERMS);
 

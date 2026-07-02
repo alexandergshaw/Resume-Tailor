@@ -88,6 +88,59 @@ describe("buildLibrarySuggestions", () => {
   });
 });
 
+describe("buildLibrarySuggestions on a content/web posting (regression: the GSW Web Specialist scan)", () => {
+  const WEB_POSTING = [
+    "The Web Specialist develops and manages the overall web content strategy for the university website.",
+    "Experience with content management systems, search engine optimization best practices, and analytics.",
+    "Knowledge of web management principles and practices. Knowledge of content strategy methods and analytics.",
+    "Skill in grammar, editing, and proofreading. Build and manage digital forms across campus.",
+    "More details in USG Board Policy 8.2.18.1.2 at https://www.usg.edu/policymanual/section8/C224.",
+    "Offers are contingent upon a criminal background check demonstrating eligibility.",
+  ].join("\n");
+
+  // A library seeded before the web/content taxonomy additions — the real
+  // situation for existing users.
+  const olderLib = async () => ({
+    taxonomy: {
+      entries: ["SEO", "Content Management System", "Accessibility", "User Experience"].map((c) => ({ canonical: c })),
+    },
+  });
+
+  it("surfaces the posting's actual focus as categorized suggestions", async () => {
+    const out = await buildLibrarySuggestions(
+      { posting: WEB_POSTING, userId: "u1" },
+      { loadLibraryImpl: olderLib },
+    );
+    const byName = Object.fromEntries(out.buzzwords.map((b) => [b.canonical, b]));
+    expect(byName["Content Strategy"]?.category).toBe("domain");
+    expect(byName["Web Content Management"]?.category).toBe("domain");
+    expect(byName["Editing"]?.category).toBe("subject");
+    expect(byName["Web Forms"]?.category).toBe("technology"); // via "digital forms" alias
+  });
+
+  it("suggests zero policy/boilerplate junk", async () => {
+    const out = await buildLibrarySuggestions(
+      { posting: WEB_POSTING, userId: "u1" },
+      { loadLibraryImpl: olderLib },
+    );
+    const joined = out.buzzwords.map((b) => b.canonical.toLowerCase()).join(" | ");
+    expect(joined).not.toMatch(/polic|board|criminal|background|usg|www\.|section/);
+    // Every suggestion is a short phrase, not sentence shrapnel.
+    for (const b of out.buzzwords) {
+      expect(b.canonical.split(/\s+/).length).toBeLessThanOrEqual(4);
+    }
+  });
+
+  it("mined prose skills rank above generic RAKE topics", async () => {
+    const out = await buildLibrarySuggestions(
+      { posting: "Knowledge of chaos engineering. Some generic filler phrases repeat here, generic filler phrases indeed.", userId: "u1" },
+      { loadLibraryImpl: olderLib },
+    );
+    const uncategorized = out.buzzwords.filter((b) => b.category === "");
+    expect(uncategorized[0].canonical.toLowerCase()).toBe("chaos engineering");
+  });
+});
+
 describe("aliasCandidates", () => {
   it("builds an acronym for clean multi-word phrases", () => {
     expect(aliasCandidates("Care Plan Documentation")).toContain("cpd");
