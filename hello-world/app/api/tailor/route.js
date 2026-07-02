@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import mammoth from "mammoth";
 import { getEngine, resolveEngineName } from "@/lib/llm/engines";
+import { combineMatches } from "@/lib/llm/engines/tailor-lite/matchReport";
 import { getServerEnv } from "@/lib/config/env";
 import { fetchUrlContent } from "@/lib/scrape/fetchUrlContent";
 import { extractPostingMeta } from "@/lib/llm/postingMeta";
@@ -290,6 +291,7 @@ export async function POST(request) {
     let coverLetterResult = "";
     let coverLetterError = "";
     let coverLetterDocxB64 = "";
+    let coverLetterMatch = null;
     if (!(coverLetterFile instanceof File)) {
       // No cover letter file uploaded — that's fine, just skip silently.
     } else if (coverLetterTemplateLines.length === 0) {
@@ -313,6 +315,7 @@ export async function POST(request) {
         coverLetterResultLines = coverDraft.resultLines;
         coverLetterResult = coverDraft.result;
         coverLetterDocxB64 = typeof coverDraft.docxB64 === "string" ? coverDraft.docxB64 : "";
+        coverLetterMatch = coverDraft.report?.match || null;
       } catch (err) {
         console.error("Error generating tailored cover letter:", err);
         coverLetterError = `Cover letter generation failed: ${err.message || "unknown error"}`;
@@ -321,12 +324,23 @@ export async function POST(request) {
 
     const warnings = [...engineWarnings, ...(Array.isArray(result.warnings) ? result.warnings : [])];
 
+    // Posting↔output match (embedded engine attaches report.match per document).
+    // The weakest document drives the response-level score; below the threshold
+    // the client offers a library update from the reported vocabulary gaps.
+    const match = combineMatches([result.report?.match, coverLetterMatch]);
+    if (match?.belowThreshold) {
+      warnings.push(
+        `The generated documents cover ${Math.round(match.score * 100)}% of this posting's key terms — the library may be missing this posting's vocabulary.`,
+      );
+    }
+
     return NextResponse.json({
       ...result,
       engine: result.engine || engineName,
       docxB64: typeof result.docxB64 === "string" ? result.docxB64 : "",
       coverLetterDocxB64,
       report: result.report || null,
+      match,
       warnings,
       degraded: !!result.degraded,
       jobTitle: result.jobTitle || scrapedJobTitle || postingMeta.jobTitle,

@@ -26,6 +26,7 @@ import { mapSlots } from "./strategy.js";
 import { parsePosting } from "./parser.js";
 import { research } from "./researcher.js";
 import { parseSteering, applySteering, steerAggressiveness } from "./steering.js";
+import { computeMatch } from "./matchReport.js";
 import { extractPostingMeta, cleanPostingTitle } from "../../postingMeta.js";
 import { fetchUrlContent } from "../../../scrape/fetchUrlContent.js";
 import { defaultLibraryData } from "./library/defaults.js";
@@ -295,6 +296,19 @@ export const embeddedEngine = {
     // ("<Company> - <Position> - Resume.docx") instead of falling back to a
     // generic default.
     const meta = postingMetaFor(posting, scrapedMeta);
+    // How much of the posting's vocabulary the generated document actually
+    // covers (report-only; drives the library-update prompt downstream).
+    const match = computeMatch(posting, r.resultLines.join("\n"), data.taxonomy);
+
+    const report = buildReport({
+      workflow: getWorkflow(),
+      reportSlots: r.reportSlots,
+      unfilled: r.unfilled,
+      keywords: r.keywords,
+      advisory,
+      extraMeta: steered.meta,
+    });
+    report.match = match;
 
     return {
       engine: "embedded",
@@ -303,14 +317,7 @@ export const embeddedEngine = {
       jobTitle: meta.jobTitle,
       companyName: meta.companyName,
       docxB64: r.docxB64,
-      report: buildReport({
-        workflow: getWorkflow(),
-        reportSlots: r.reportSlots,
-        unfilled: r.unfilled,
-        keywords: r.keywords,
-        advisory,
-        extraMeta: steered.meta,
-      }),
+      report,
       warnings: steered.warnings,
       degraded: false,
     };
@@ -356,13 +363,19 @@ export const embeddedEngine = {
       jobTitle: role,
       companyName: organization,
       docxB64: r.docxB64,
-      report: buildReport({
-        workflow: getWorkflow(),
-        reportSlots: r.reportSlots,
-        unfilled: r.unfilled,
-        keywords: r.keywords,
-        extraMeta: { document: "cover_letter", ...steered.meta },
-      }),
+      report: (() => {
+        const report = buildReport({
+          workflow: getWorkflow(),
+          reportSlots: r.reportSlots,
+          unfilled: r.unfilled,
+          keywords: r.keywords,
+          extraMeta: { document: "cover_letter", ...steered.meta },
+        });
+        // Cover letters are prose, not keyword walls — the score naturally runs
+        // lower than the résumé's; the combined response uses the weakest doc.
+        report.match = computeMatch(posting, r.resultLines.join("\n"), data.taxonomy);
+        return report;
+      })(),
       warnings: steered.warnings,
       degraded: false,
     };
