@@ -2062,10 +2062,14 @@ export default function Home() {
   // postings rank first in the prompt with a "seen in N postings" badge.
   function maybeOfferLibraryUpdate(payload, jobId) {
     // Shared post-tailor hook (all four generate flows call it): record which
-    // focus area drove this generation so the previewer's focus chip is
-    // truthful, and count coverage gaps for the cross-posting memory.
-    if (payload?.report?.meta?.focus !== undefined) {
-      updateTailoringJob(jobId, { focusInfo: payload.report.meta.focus || null });
+    // focus area and extracted keywords drove this generation so the
+    // previewer's focus/buzzword controls are truthful, and count coverage
+    // gaps for the cross-posting memory.
+    if (payload?.report) {
+      updateTailoringJob(jobId, {
+        focusInfo: payload.report.meta?.focus || null,
+        keywordsInfo: payload.report.keywords || null,
+      });
     }
     if (payload?.match) recordMatchGaps(payload.match);
     if (!payload?.librarySuggestions?.buzzwords?.length) return;
@@ -2141,10 +2145,14 @@ export default function Home() {
       if (tailorEngine === "embedded") {
         const editRules = promotedEditRules();
         if (editRules.length > 0) formData.append("editRules", JSON.stringify(editRules));
-        // A focus area the user pinned for this job (the previewer's
-        // wrong-focus flag) sticks across re-tailors.
+        // A focus area and buzzword toggles the user pinned for this job (the
+        // previewer's focus modal) stick across re-tailors.
         const focusOverride = tailoringMap[job.id]?.focusAreaOverride;
         if (focusOverride) formData.append("focusArea", focusOverride);
+        const kwEdits = tailoringMap[job.id]?.keywordEditsOverride;
+        if (kwEdits && (kwEdits.boost?.length || kwEdits.exclude?.length)) {
+          formData.append("keywordEdits", JSON.stringify(kwEdits));
+        }
       }
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
@@ -3216,6 +3224,10 @@ export default function Home() {
           preview.resumePreview.posting || preview.resumePreview.url ? scrapePreviewPosting : null
         }
         focus={tailoringMap[preview.resumePreview.jobId]?.focusInfo || null}
+        keywordEditsCount={
+          (tailoringMap[preview.resumePreview.jobId]?.keywordEditsOverride?.boost?.length || 0) +
+          (tailoringMap[preview.resumePreview.jobId]?.keywordEditsOverride?.exclude?.length || 0)
+        }
         onOpenFocusPicker={() => setFocusPickerOpen(true)}
         onResearchCompany={() =>
           research.openCompanyResearch({
@@ -3274,6 +3286,8 @@ export default function Home() {
         open={focusPickerOpen}
         currentFocus={tailoringMap[preview.resumePreview.jobId]?.focusInfo || null}
         override={tailoringMap[preview.resumePreview.jobId]?.focusAreaOverride || ""}
+        keywords={tailoringMap[preview.resumePreview.jobId]?.keywordsInfo || null}
+        keywordEdits={tailoringMap[preview.resumePreview.jobId]?.keywordEditsOverride || null}
         postingTitle={preview.resumePreview.title}
         onClose={() => setFocusPickerOpen(false)}
         onApply={preview.applyFocusArea}

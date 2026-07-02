@@ -299,10 +299,14 @@ export function useDocumentPreview({
         if (editRules.length > 0) formData.append("editRules", JSON.stringify(editRules));
       }
       if (text) formData.append("steeringInstructions", text);
-      // Pinned focus area: the one being applied now, or the job's stored
-      // override so plain revises keep the user's chosen focus.
+      // Pinned focus area + buzzword toggles: the ones being applied now, or
+      // the job's stored overrides so plain revises keep the user's choices.
       const focusOverride = focusChange ? opts.focusArea : entry.focusAreaOverride || "";
       if (engine === "embedded" && focusOverride) formData.append("focusArea", focusOverride);
+      const kwEdits = focusChange ? opts.keywordEdits || null : entry.keywordEditsOverride || null;
+      if (engine === "embedded" && kwEdits && (kwEdits.boost?.length || kwEdits.exclude?.length)) {
+        formData.append("keywordEdits", JSON.stringify(kwEdits));
+      }
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
       contextFiles.forEach((file) => formData.append("contextFiles", file));
@@ -353,11 +357,12 @@ export function useDocumentPreview({
         });
       }
 
-      // Remember which focus drove this generation (and the pinned override on
-      // a focus change) so the previewer's focus chip stays truthful.
+      // Remember which focus and keywords drove this generation (and the pinned
+      // overrides on a focus change) so the previewer's controls stay truthful.
       updateTailoringJob(jobId, {
         focusInfo: payload.report?.meta?.focus || null,
-        ...(focusChange ? { focusAreaOverride: opts.focusArea } : {}),
+        keywordsInfo: payload.report?.keywords || null,
+        ...(focusChange ? { focusAreaOverride: opts.focusArea, keywordEditsOverride: kwEdits } : {}),
       });
 
       setPreviewReloadKey((k) => k + 1);
@@ -385,9 +390,10 @@ export function useDocumentPreview({
   }
 
   // The previewer's focus picker: pin a library focus area (or "" for
-  // auto-detect) and regenerate both documents with it.
-  function applyFocusArea(name) {
-    return resubmitDocumentPreview("resume", "", { focusArea: String(name ?? "") });
+  // auto-detect) plus per-posting buzzword toggles, and regenerate both
+  // documents with them.
+  function applyFocusArea(name, keywordEdits = null) {
+    return resubmitDocumentPreview("resume", "", { focusArea: String(name ?? ""), keywordEdits });
   }
 
   // Called by the Generate flows once the resume + cover letter exist: open the

@@ -90,6 +90,7 @@ export default function DocumentPreviewDialog({
   onResearchCompany,
   onScrapePosting,
   focus = null,
+  keywordEditsCount = 0,
   onOpenFocusPicker,
   researchLoading = false,
   researchCount = 0,
@@ -385,6 +386,7 @@ export default function DocumentPreviewDialog({
                 <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   Focus: {focus?.name || "auto"}
                   {focus?.source === "override" ? " (pinned)" : ""}
+                  {keywordEditsCount > 0 ? ` · ${keywordEditsCount} buzzword edit${keywordEditsCount === 1 ? "" : "s"}` : ""}
                 </Box>
               </Button>
             </span>
