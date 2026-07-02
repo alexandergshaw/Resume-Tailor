@@ -16,6 +16,7 @@ import StatusBar from "./components/StatusBar";
 import BatchTailorDialog from "./components/BatchTailorDialog";
 import DocumentPreviewDialog from "./components/DocumentPreviewDialog";
 import CompanyResearchDialog from "./components/CompanyResearchDialog";
+import LibraryUpdateDialog from "./components/LibraryUpdateDialog";
 import SlotReviewDialog from "./components/SlotReviewDialog";
 import {
   buildJobContextString,
@@ -158,6 +159,11 @@ export default function Home() {
   const [fabPos, setFabPos] = useState({ right: 24, bottom: 24 });
   const [fabDragging, setFabDragging] = useState(false);
   const fabDragStartRef = useRef(null);
+  // Library-update prompt: when an embedded tailor covers too little of the
+  // posting, /api/tailor returns the buzzwords the user's library lacks and this
+  // dialog asks permission before any of them are committed. Deduped per job.
+  const [libraryPrompt, setLibraryPrompt] = useState(null);
+  const libraryPromptSeenRef = useRef(new Set());
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
   const [aggressiveness, setAggressiveness] = useState(3);
   // Document-generation engine ("gemini" | "external" | "embedded"). Owned by a
@@ -1978,6 +1984,40 @@ export default function Home() {
     }
   }
 
+  // Offer the library-update prompt when a tailor response carries suggestions
+  // (embedded engine, match below threshold, signed in). Once per job.
+  function maybeOfferLibraryUpdate(payload, jobId) {
+    if (!payload?.librarySuggestions?.buzzwords?.length) return;
+    if (libraryPromptSeenRef.current.has(jobId)) return;
+    libraryPromptSeenRef.current.add(jobId);
+    setLibraryPrompt({ jobId, match: payload.match || null, suggestions: payload.librarySuggestions });
+  }
+
+  // The user approved some suggested buzzwords: commit them to the per-user
+  // library via the existing import endpoint, then optionally re-tailor the job
+  // so the new vocabulary immediately improves the documents.
+  async function commitLibrarySuggestions(entries, { retailor = false } = {}) {
+    let data;
+    try {
+      const res = await fetch("/api/library/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ taxonomy: entries }),
+      });
+      data = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, error: data?.error || "Couldn't save to your library." };
+    } catch (err) {
+      return { ok: false, error: err.message || "Couldn't save to your library." };
+    }
+    const jobId = libraryPrompt?.jobId;
+    setLibraryPrompt(null);
+    if (retailor && jobId) {
+      const job = trackedJobs.find((j) => j.id === jobId);
+      if (job) handleTailorJob(job, { skipDownload: true });
+    }
+    return { ok: true, added: data?.added };
+  }
+
   async function handleTailorJob(job, opts = {}) {
     const { skipDownload = false, scope = "both" } = opts;
     const applyResume = scope !== "cover";
@@ -2021,6 +2061,7 @@ export default function Home() {
       const payload = await response.json();
 
       if (!response.ok) throw new Error(payload.error || "Failed to generate.");
+      maybeOfferLibraryUpdate(payload, job.id);
 
       const result = payload.result?.trim() || "";
       const resultLines = Array.isArray(payload.resultLines) ? payload.resultLines : [];
@@ -2283,6 +2324,7 @@ export default function Home() {
       const payload = await response.json();
 
       if (!response.ok) throw new Error(payload.error || "Failed to generate a response.");
+      maybeOfferLibraryUpdate(payload, syntheticJobId);
 
       const nextResult = payload.result?.trim() || "No output returned from Gemini.";
       const nextResultLines = Array.isArray(payload.resultLines) ? payload.resultLines : [];
@@ -2465,6 +2507,7 @@ export default function Home() {
       const payload = await response.json();
 
       if (!response.ok) throw new Error(payload.error || "Failed to generate a response.");
+      maybeOfferLibraryUpdate(payload, syntheticJobId);
 
       const nextResult = payload.result?.trim() || "No output returned from Gemini.";
       const nextResultLines = Array.isArray(payload.resultLines) ? payload.resultLines : [];
@@ -2600,6 +2643,7 @@ export default function Home() {
       const payload = await response.json();
 
       if (!response.ok) throw new Error(payload.error || "Failed to generate a response.");
+      maybeOfferLibraryUpdate(payload, syntheticJobId);
 
       const nextResult = payload.result?.trim() || "No output returned from Gemini.";
       const nextResultLines = Array.isArray(payload.resultLines) ? payload.resultLines : [];
@@ -3093,6 +3137,13 @@ export default function Home() {
         onClose={closeSlotReview}
         onGenerate={generateWithReviewedValues}
         busy={manualIsSubmitting}
+      />
+
+      <LibraryUpdateDialog
+        key={libraryPrompt?.jobId || "library-prompt-idle"}
+        prompt={libraryPrompt}
+        onClose={() => setLibraryPrompt(null)}
+        onCommit={commitLibrarySuggestions}
       />
     </div>
   );
