@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import mammoth from "mammoth";
 import { getEngine, resolveEngineName } from "@/lib/llm/engines";
 import { combineMatches } from "@/lib/llm/engines/tailor-lite/matchReport";
+import { buildLibrarySuggestions } from "@/lib/llm/engines/tailor-lite/library/suggest";
 import { getServerEnv } from "@/lib/config/env";
 import { fetchUrlContent } from "@/lib/scrape/fetchUrlContent";
 import { extractPostingMeta } from "@/lib/llm/postingMeta";
@@ -334,6 +335,20 @@ export async function POST(request) {
       );
     }
 
+    // Low match on the embedded engine: automatically scrape this posting for
+    // buzzwords the user's library lacks. Read-only — the client shows them and
+    // commits only what the user approves (via /api/library/import). Requires a
+    // signed-in user (there is no per-user library to grow otherwise).
+    let librarySuggestions = null;
+    if (match?.belowThreshold && engineName === "embedded" && userId) {
+      try {
+        const suggestions = await buildLibrarySuggestions({ posting: effectiveJobPosting, userId });
+        if (suggestions.buzzwords.length > 0) librarySuggestions = suggestions;
+      } catch (err) {
+        console.error("Library suggestion scrape failed:", err);
+      }
+    }
+
     return NextResponse.json({
       ...result,
       engine: result.engine || engineName,
@@ -341,6 +356,7 @@ export async function POST(request) {
       coverLetterDocxB64,
       report: result.report || null,
       match,
+      librarySuggestions,
       warnings,
       degraded: !!result.degraded,
       jobTitle: result.jobTitle || scrapedJobTitle || postingMeta.jobTitle,
