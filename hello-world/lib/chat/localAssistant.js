@@ -12,6 +12,7 @@ import { defaultLibraryData } from "@/lib/llm/engines/tailor-lite/library/defaul
 import { summarize } from "@/lib/text/summarize";
 import { pick, pickDistinct } from "@/lib/text/phrasing";
 import { critiqueResume, renderCritique } from "@/lib/resume/critique";
+import { extractiveAnswer } from "./extractiveQa.js";
 
 const SKILL_CATEGORIES = ["technology", "tool_platform", "domain", "methodology"];
 
@@ -304,6 +305,18 @@ export function localChatReply({
   // short messages so "tell me more about the salary" still routes to salary.
   if (prevAssistant && isBriefFollowUp && RE.shorten.test(text)) return condense(prevAssistant);
   if (prevAssistant && isBriefFollowUp && RE.more.test(text)) return moreTips(text);
+
+  // Direct questions about the pinned posting ("is it remote?", "what does it
+  // pay?") get answered FROM the posting — quoted verbatim, or an honest
+  // not-found — before any of the coaching intents below can hijack them.
+  if (subject) {
+    const qa = extractiveAnswer(text, subject);
+    if (qa?.type === "answer") return qa.text;
+    if (qa?.type === "not-found") {
+      const base = `The posting text doesn't mention ${qa.label}.`;
+      return qa.topic === "salary" ? `${base} ${salaryGuidance(text)}` : base;
+    }
+  }
 
   // Explicit intents, most specific to least.
   if (RE.summarize.test(text)) return summarizeSubject(subject, resumeText);

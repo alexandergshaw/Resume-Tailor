@@ -89,6 +89,30 @@ describe("localChatReply intents", () => {
     expect(reply).toMatch(/offline assistant/i);
   });
 
+  it("answers posting questions from the posting itself, not with generic coaching", () => {
+    const posting = `${POSTING}\nThis is a hybrid role. The salary range is $150,000 per year.`;
+    const pay = localChatReply({
+      ...userMsg("what does it pay?"),
+      pinnedContext: { label: "Backend Engineer", content: posting },
+    });
+    expect(pay).toMatch(/^From the posting:/);
+    expect(pay).toContain("$150,000");
+    const remote = localChatReply({
+      ...userMsg("is it remote?"),
+      pinnedContext: { label: "Backend Engineer", content: posting },
+    });
+    expect(remote).toContain("hybrid");
+  });
+
+  it("admits when the posting lacks the asked fact, with negotiation help for salary", () => {
+    const reply = localChatReply({
+      ...userMsg("what does it pay?"),
+      pinnedContext: { label: "Backend Engineer", content: POSTING },
+    });
+    expect(reply).toMatch(/doesn't mention compensation/i);
+    expect(reply).toMatch(/range|offer|negotiat|total comp/i); // salary tail appended
+  });
+
   it("summarizes the pinned posting on request", () => {
     const reply = localChatReply({
       ...userMsg("can you summarize this posting?"),
