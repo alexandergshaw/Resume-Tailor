@@ -38,6 +38,7 @@ import {
 import { parseDocxToModel, linesToModel } from "../lib/document/docxPreview";
 import { weaveSources } from "../lib/document/coverLetterWeave";
 import { parseEmploymentHistory } from "../lib/resume/parseEmployment";
+import { editFingerprint } from "../lib/tailor/editMining";
 import { useProfileEntries } from "./hooks/useProfileEntries";
 import { useScreenshots } from "./hooks/useScreenshots";
 import { useCompanyResearch } from "./hooks/useCompanyResearch";
@@ -1697,6 +1698,7 @@ export default function Home() {
     downloadDocxFiles,
     startBackgroundResearch: research.startBackgroundResearch,
     setPreviewReloadKey,
+    onDocumentEdited: handleDocumentEdited,
   });
 
   // Screenshots → tailored-documents pipeline (Manual Applying › Screenshots).
@@ -1984,13 +1986,42 @@ export default function Home() {
     }
   }
 
+  // The user hand-edited a generated document and closed the preview: scan the
+  // ADDED text for vocabulary their library lacks and offer it through the same
+  // permission dialog. Deduped per distinct edit, silent on any failure (signed
+  // out, empty scan, network) — learning must never interrupt the edit flow.
+  async function handleDocumentEdited({ jobId, addedText }) {
+    const fingerprint = `edit:${jobId}:${editFingerprint(addedText)}`;
+    if (libraryPromptSeenRef.current.has(fingerprint)) return;
+    libraryPromptSeenRef.current.add(fingerprint);
+    try {
+      const res = await fetch("/api/library/extract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ posting: addedText }),
+      });
+      if (!res.ok) return;
+      const data = await res.json().catch(() => null);
+      if (!data?.buzzwords?.length) return;
+      setLibraryPrompt({ promptId: `edit-${Date.now()}`, jobId, match: null, suggestions: data, source: "edit" });
+    } catch {
+      // best-effort only
+    }
+  }
+
   // Offer the library-update prompt when a tailor response carries suggestions
   // (embedded engine, match below threshold, signed in). Once per job.
   function maybeOfferLibraryUpdate(payload, jobId) {
     if (!payload?.librarySuggestions?.buzzwords?.length) return;
     if (libraryPromptSeenRef.current.has(jobId)) return;
     libraryPromptSeenRef.current.add(jobId);
-    setLibraryPrompt({ jobId, match: payload.match || null, suggestions: payload.librarySuggestions });
+    setLibraryPrompt({
+      promptId: `match-${jobId}`,
+      jobId,
+      match: payload.match || null,
+      suggestions: payload.librarySuggestions,
+      source: "match",
+    });
   }
 
   // The user approved some suggested buzzwords: commit them to the per-user
@@ -3140,7 +3171,7 @@ export default function Home() {
       />
 
       <LibraryUpdateDialog
-        key={libraryPrompt?.jobId || "library-prompt-idle"}
+        key={libraryPrompt?.promptId || "library-prompt-idle"}
         prompt={libraryPrompt}
         onClose={() => setLibraryPrompt(null)}
         onCommit={commitLibrarySuggestions}

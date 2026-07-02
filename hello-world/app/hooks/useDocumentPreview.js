@@ -8,6 +8,7 @@ import {
   buildTemplateLinesForUpload,
 } from "../../lib/document/docx";
 import { parseDocxToModel, linesToModel } from "../../lib/document/docxPreview";
+import { addedEditText } from "../../lib/tailor/editMining";
 import { readEngine } from "../settings/engine";
 
 // Resume/cover-letter preview + edit modal (opened from the status-bar chips and
@@ -31,6 +32,7 @@ export function useDocumentPreview({
   downloadDocxFiles,
   startBackgroundResearch,
   setPreviewReloadKey,
+  onDocumentEdited,
 }) {
   const [resumePreview, setResumePreview] = useState({
     open: false,
@@ -83,6 +85,27 @@ export function useDocumentPreview({
   }
 
   function closeResumePreview() {
+    // The edit session is over — mine what the user ADDED by hand (vs. the
+    // pristine generated text snapshotted on first edit). Added vocabulary is
+    // the engine's richest learning signal; the parent runs it through the
+    // buzzword scrape and asks permission before anything is saved.
+    const jobId = resumePreview.jobId;
+    const entry = jobId ? tailoringMap[jobId] : null;
+    if (entry?.edited && typeof onDocumentEdited === "function") {
+      const added = [
+        entry.pristineResumeLines ? addedEditText(entry.pristineResumeLines, entry.resultLines) : "",
+        entry.pristineCoverLines ? addedEditText(entry.pristineCoverLines, entry.coverLetterResultLines) : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      if (added.trim().length >= 12) {
+        try {
+          onDocumentEdited({ jobId, addedText: added });
+        } catch {
+          // Mining must never block closing the preview.
+        }
+      }
+    }
     setResumePreview((prev) => ({ ...prev, open: false }));
   }
 
@@ -145,10 +168,18 @@ export function useDocumentPreview({
     const lines = text.split("\n");
     setTailoringMap((current) => {
       const entry = current[jobId] || {};
+      // First edit after a (re)generation: snapshot the pristine generated
+      // lines so edit-mining on close can diff what the user added by hand.
+      const pristine = entry.edited
+        ? {}
+        : {
+            pristineResumeLines: Array.isArray(entry.resultLines) ? entry.resultLines : [],
+            pristineCoverLines: Array.isArray(entry.coverLetterResultLines) ? entry.coverLetterResultLines : [],
+          };
       const next =
         scope === "cover"
-          ? { ...entry, coverLetterResultLines: lines, coverLetterPreviewHtml: html, edited: true }
-          : { ...entry, result: text, resultLines: lines, resumePreviewHtml: html, edited: true };
+          ? { ...entry, ...pristine, coverLetterResultLines: lines, coverLetterPreviewHtml: html, edited: true }
+          : { ...entry, ...pristine, result: text, resultLines: lines, resumePreviewHtml: html, edited: true };
       return { ...current, [jobId]: { ...next, status: entry.status || "done" } };
     });
   }
