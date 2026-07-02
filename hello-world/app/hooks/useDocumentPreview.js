@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   base64ToDocxBlob,
   isDocxResume,
@@ -8,8 +8,9 @@ import {
   buildTemplateLinesForUpload,
 } from "../../lib/document/docx";
 import { parseDocxToModel, linesToModel } from "../../lib/document/docxPreview";
-import { addedEditText } from "../../lib/tailor/editMining";
-import { recordSteering, steeringHabitHint } from "../../lib/tailor/localSignals";
+import { addedEditText, editFingerprint } from "../../lib/tailor/editMining";
+import { deriveEditRules } from "../../lib/tailor/editRules";
+import { recordSteering, steeringHabitHint, recordEditRules } from "../../lib/tailor/localSignals";
 import { readEngine } from "../settings/engine";
 
 // Resume/cover-letter preview + edit modal (opened from the status-bar chips and
@@ -85,25 +86,48 @@ export function useDocumentPreview({
     }
   }
 
+  // One record per distinct edit session — reopening and closing the preview
+  // without new edits must not re-count the same rules toward promotion.
+  const editSessionsSeenRef = useRef(new Set());
+
   function closeResumePreview() {
-    // The edit session is over — mine what the user ADDED by hand (vs. the
-    // pristine generated text snapshotted on first edit). Added vocabulary is
-    // the engine's richest learning signal; the parent runs it through the
-    // buzzword scrape and asks permission before anything is saved.
+    // The edit session is over — mine what the user changed (vs. the pristine
+    // generated text snapshotted on first edit). Added lines feed the buzzword
+    // scrape (permission-gated); MODIFIED lines are distilled into rewrite
+    // rules and counted across sessions — resume and cover letter edits feed
+    // the same counters, and consistent rules get auto-applied at render time.
     const jobId = resumePreview.jobId;
     const entry = jobId ? tailoringMap[jobId] : null;
-    if (entry?.edited && typeof onDocumentEdited === "function") {
-      const added = [
-        entry.pristineResumeLines ? addedEditText(entry.pristineResumeLines, entry.resultLines) : "",
-        entry.pristineCoverLines ? addedEditText(entry.pristineCoverLines, entry.coverLetterResultLines) : "",
-      ]
-        .filter(Boolean)
-        .join("\n");
-      if (added.trim().length >= 12) {
-        try {
-          onDocumentEdited({ jobId, addedText: added });
-        } catch {
-          // Mining must never block closing the preview.
+    if (entry?.edited) {
+      try {
+        for (const [doc, pristine, current] of [
+          ["resume", entry.pristineResumeLines, entry.resultLines],
+          ["cover", entry.pristineCoverLines, entry.coverLetterResultLines],
+        ]) {
+          if (!pristine) continue;
+          const rules = deriveEditRules(pristine, current);
+          if (rules.length === 0) continue;
+          const sessionKey = `${jobId}:${doc}:${editFingerprint(JSON.stringify(rules))}`;
+          if (editSessionsSeenRef.current.has(sessionKey)) continue;
+          editSessionsSeenRef.current.add(sessionKey);
+          recordEditRules(rules, { doc });
+        }
+      } catch {
+        // Rule tracking must never block closing the preview.
+      }
+      if (typeof onDocumentEdited === "function") {
+        const added = [
+          entry.pristineResumeLines ? addedEditText(entry.pristineResumeLines, entry.resultLines) : "",
+          entry.pristineCoverLines ? addedEditText(entry.pristineCoverLines, entry.coverLetterResultLines) : "",
+        ]
+          .filter(Boolean)
+          .join("\n");
+        if (added.trim().length >= 12) {
+          try {
+            onDocumentEdited({ jobId, addedText: added });
+          } catch {
+            // Mining must never block closing the preview.
+          }
         }
       }
     }

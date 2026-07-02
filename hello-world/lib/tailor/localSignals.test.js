@@ -5,6 +5,8 @@ import {
   annotateAndRank,
   recordSteering,
   steeringHabitHint,
+  recordEditRules,
+  promotedEditRules,
 } from "./localSignals.js";
 
 function fakeStorage() {
@@ -94,6 +96,49 @@ describe("recordSteering / steeringHabitHint", () => {
     const s = readSignals(storage);
     expect(s.gaps.kubernetes.count).toBe(1);
     expect(s.steering.avoided.java.count).toBe(1);
+  });
+});
+
+describe("recordEditRules / promotedEditRules", () => {
+  const RULE = { before: "of 5 through", after: "of 8 through" };
+
+  it("accumulates across sessions and documents into one counter", () => {
+    const storage = fakeStorage();
+    recordEditRules([RULE], { doc: "resume", storage, now: 1 });
+    recordEditRules([RULE], { doc: "cover", storage, now: 2 });
+    const rec = readSignals(storage).editRules["of 5 through→of 8 through"];
+    expect(rec.count).toBe(2);
+    expect(rec.docs).toEqual({ resume: 1, cover: 1 });
+  });
+
+  it("promotes only at the threshold, most-recent first", () => {
+    const storage = fakeStorage();
+    recordEditRules([RULE], { doc: "resume", storage, now: 1 });
+    recordEditRules([RULE], { doc: "resume", storage, now: 2 });
+    expect(promotedEditRules({ storage })).toEqual([]);
+    recordEditRules([RULE], { doc: "cover", storage, now: 3 });
+    expect(promotedEditRules({ storage })).toEqual([RULE]);
+  });
+
+  it("self-heals: one reversing edit deletes the rule and is not itself recorded", () => {
+    const storage = fakeStorage();
+    for (let i = 0; i < 3; i += 1) recordEditRules([RULE], { doc: "resume", storage, now: i });
+    expect(promotedEditRules({ storage })).toHaveLength(1);
+    // The user edits "of 8 through" back to "of 5 through" — an undo.
+    recordEditRules([{ before: "of 8 through", after: "of 5 through" }], { doc: "resume", storage, now: 9 });
+    const s = readSignals(storage);
+    expect(promotedEditRules({ storage })).toEqual([]);
+    expect(s.editRules["of 8 through→of 5 through"]).toBeUndefined();
+  });
+
+  it("conflicting targets for the same before compete — only the strongest fires", () => {
+    const storage = fakeStorage();
+    const other = { before: "of 5 through", after: "of 9 through" };
+    for (let i = 0; i < 3; i += 1) recordEditRules([RULE], { doc: "resume", storage, now: i });
+    for (let i = 0; i < 4; i += 1) recordEditRules([other], { doc: "resume", storage, now: 10 + i });
+    const promoted = promotedEditRules({ storage });
+    expect(promoted).toHaveLength(1);
+    expect(promoted[0].after).toBe("of 9 through");
   });
 });
 

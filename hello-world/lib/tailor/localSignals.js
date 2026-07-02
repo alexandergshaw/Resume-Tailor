@@ -24,7 +24,7 @@ function defaultStorage() {
 }
 
 export function readSignals(storage = defaultStorage()) {
-  const empty = { gaps: {}, steering: { avoided: {}, emphasized: {} } };
+  const empty = { gaps: {}, steering: { avoided: {}, emphasized: {} }, editRules: {} };
   if (!storage) return empty;
   try {
     const parsed = JSON.parse(storage.getItem(STORAGE_KEY) || "");
@@ -37,6 +37,7 @@ export function readSignals(storage = defaultStorage()) {
         emphasized:
           parsed.steering?.emphasized && typeof parsed.steering.emphasized === "object" ? parsed.steering.emphasized : {},
       },
+      editRules: parsed.editRules && typeof parsed.editRules === "object" ? parsed.editRules : {},
     };
   } catch {
     return empty;
@@ -131,6 +132,69 @@ export function steeringHabitHint(steeringMeta, { storage = defaultStorage(), th
     }
   }
   return "";
+}
+
+const EDIT_RULE_THRESHOLD = 3;
+const MAX_PROMOTED_RULES = 20;
+
+function ruleKey(rule) {
+  return `${String(rule.before).toLowerCase()}→${String(rule.after).toLowerCase()}`;
+}
+
+// Record one edit session's derived rewrite rules ({before, after}[], from
+// deriveEditRules) for one document kind ("resume" | "cover"). Both kinds feed
+// the SAME counter per rule — a fix made across resumes and cover letters is
+// the same fix. Counts once per call (= per session; the deriver de-dupes
+// within a session).
+//
+// Self-healing: a rule that exactly REVERSES a tracked one means the user
+// undid that change (most likely one we auto-applied). The reversed rule is
+// deleted outright and the undo itself is NOT recorded — one undo kills the
+// automation, it doesn't start a competing habit.
+export function recordEditRules(rules, { doc = "resume", storage = defaultStorage(), now = Date.now() } = {}) {
+  const list = (rules || []).filter((r) => r && r.before && typeof r.after === "string");
+  if (list.length === 0) return readSignals(storage);
+
+  const signals = readSignals(storage);
+  for (const rule of list) {
+    const reverseKey = `${String(rule.after).toLowerCase()}→${String(rule.before).toLowerCase()}`;
+    if (signals.editRules[reverseKey]) {
+      delete signals.editRules[reverseKey];
+      continue;
+    }
+    const key = ruleKey(rule);
+    const cur = signals.editRules[key] || { before: rule.before, after: rule.after, count: 0, docs: {} };
+    signals.editRules[key] = {
+      ...cur,
+      count: cur.count + 1,
+      lastSeen: now,
+      docs: { ...cur.docs, [doc]: (cur.docs?.[doc] || 0) + 1 },
+    };
+  }
+  prune(signals.editRules);
+  writeSignals(signals, storage);
+  return signals;
+}
+
+// Rules consistent enough to auto-apply at render time: seen in
+// EDIT_RULE_THRESHOLD+ edit sessions. When the same `before` maps to several
+// `after`s, only the strongest (count, then recency) survives — conflicting
+// habits compete instead of both firing. Most-recent first, capped.
+export function promotedEditRules({ storage = defaultStorage(), threshold = EDIT_RULE_THRESHOLD } = {}) {
+  const signals = readSignals(storage);
+  const byBefore = new Map();
+  for (const rec of Object.values(signals.editRules)) {
+    if (!rec || rec.count < threshold) continue;
+    const key = String(rec.before).toLowerCase();
+    const cur = byBefore.get(key);
+    if (!cur || rec.count > cur.count || (rec.count === cur.count && (rec.lastSeen || 0) > (cur.lastSeen || 0))) {
+      byBefore.set(key, rec);
+    }
+  }
+  return [...byBefore.values()]
+    .sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0))
+    .slice(0, MAX_PROMOTED_RULES)
+    .map((r) => ({ before: r.before, after: r.after }));
 }
 
 // Annotate suggestion buzzwords with how often each term has been a gap across
