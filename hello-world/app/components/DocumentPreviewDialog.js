@@ -30,6 +30,7 @@ import FormatListBulletedIcon from "@mui/icons-material/FormatListBulleted";
 import FormatListNumberedIcon from "@mui/icons-material/FormatListNumbered";
 import TravelExploreIcon from "@mui/icons-material/TravelExplore";
 import ManageSearchIcon from "@mui/icons-material/ManageSearch";
+import TrackChangesIcon from "@mui/icons-material/TrackChanges";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import { renderModelToHtml } from "@/lib/document/docxPreview";
 import { useIsMobile } from "../hooks/useResponsive";
@@ -88,6 +89,8 @@ export default function DocumentPreviewDialog({
   onClose,
   onResearchCompany,
   onScrapePosting,
+  focus = null,
+  onOpenFocusPicker,
   researchLoading = false,
   researchCount = 0,
   companyReferences = [],
@@ -369,6 +372,24 @@ export default function DocumentPreviewDialog({
           ))}
         </Tabs>
         <Box sx={{ flex: 1 }} />
+        {isEmbedded && onOpenFocusPicker ? (
+          <Tooltip title="Wrong focus? Pick which of your library's focus areas drives these documents.">
+            <span>
+              <Button
+                size="small"
+                startIcon={<TrackChangesIcon fontSize="small" />}
+                onClick={onOpenFocusPicker}
+                disabled={busy}
+                sx={{ textTransform: "none", my: 0.5, maxWidth: 220 }}
+              >
+                <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  Focus: {focus?.name || "auto"}
+                  {focus?.source === "override" ? " (pinned)" : ""}
+                </Box>
+              </Button>
+            </span>
+          </Tooltip>
+        ) : null}
         {onScrapePosting ? (
           <Tooltip title="Scrape this posting for buzzwords your tailoring library doesn't know yet. You review the results — nothing is saved without your approval.">
             <span>

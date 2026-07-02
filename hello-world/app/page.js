@@ -17,6 +17,7 @@ import BatchTailorDialog from "./components/BatchTailorDialog";
 import DocumentPreviewDialog from "./components/DocumentPreviewDialog";
 import CompanyResearchDialog from "./components/CompanyResearchDialog";
 import LibraryUpdateDialog from "./components/LibraryUpdateDialog";
+import FocusPickerDialog from "./components/FocusPickerDialog";
 import SlotReviewDialog from "./components/SlotReviewDialog";
 import {
   buildJobContextString,
@@ -166,6 +167,9 @@ export default function Home() {
   // dialog asks permission before any of them are committed. Deduped per job.
   const [libraryPrompt, setLibraryPrompt] = useState(null);
   const libraryPromptSeenRef = useRef(new Set());
+  // The previewer's "wrong focus" flag: opens a picker of the library's focus
+  // areas; applying one re-tailors the previewed job with that focus pinned.
+  const [focusPickerOpen, setFocusPickerOpen] = useState(false);
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
   const [aggressiveness, setAggressiveness] = useState(3);
   // Document-generation engine ("gemini" | "external" | "embedded"). Owned by a
@@ -2057,6 +2061,12 @@ export default function Home() {
   // run's gaps are counted locally first, so terms that recur across DIFFERENT
   // postings rank first in the prompt with a "seen in N postings" badge.
   function maybeOfferLibraryUpdate(payload, jobId) {
+    // Shared post-tailor hook (all four generate flows call it): record which
+    // focus area drove this generation so the previewer's focus chip is
+    // truthful, and count coverage gaps for the cross-posting memory.
+    if (payload?.report?.meta?.focus !== undefined) {
+      updateTailoringJob(jobId, { focusInfo: payload.report.meta.focus || null });
+    }
     if (payload?.match) recordMatchGaps(payload.match);
     if (!payload?.librarySuggestions?.buzzwords?.length) return;
     if (libraryPromptSeenRef.current.has(jobId)) return;
@@ -2131,6 +2141,10 @@ export default function Home() {
       if (tailorEngine === "embedded") {
         const editRules = promotedEditRules();
         if (editRules.length > 0) formData.append("editRules", JSON.stringify(editRules));
+        // A focus area the user pinned for this job (the previewer's
+        // wrong-focus flag) sticks across re-tailors.
+        const focusOverride = tailoringMap[job.id]?.focusAreaOverride;
+        if (focusOverride) formData.append("focusArea", focusOverride);
       }
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
@@ -3201,6 +3215,8 @@ export default function Home() {
         onScrapePosting={
           preview.resumePreview.posting || preview.resumePreview.url ? scrapePreviewPosting : null
         }
+        focus={tailoringMap[preview.resumePreview.jobId]?.focusInfo || null}
+        onOpenFocusPicker={() => setFocusPickerOpen(true)}
         onResearchCompany={() =>
           research.openCompanyResearch({
             id: preview.resumePreview.jobId,
@@ -3251,6 +3267,16 @@ export default function Home() {
         prompt={libraryPrompt}
         onClose={() => setLibraryPrompt(null)}
         onCommit={commitLibrarySuggestions}
+      />
+
+      <FocusPickerDialog
+        key={focusPickerOpen ? `focus-${preview.resumePreview.jobId}` : "focus-idle"}
+        open={focusPickerOpen}
+        currentFocus={tailoringMap[preview.resumePreview.jobId]?.focusInfo || null}
+        override={tailoringMap[preview.resumePreview.jobId]?.focusAreaOverride || ""}
+        postingTitle={preview.resumePreview.title}
+        onClose={() => setFocusPickerOpen(false)}
+        onApply={preview.applyFocusArea}
       />
     </div>
   );

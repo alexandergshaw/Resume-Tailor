@@ -263,10 +263,13 @@ export function useDocumentPreview({
   // so the fresh draft renders, and refreshes the open preview. Returns true on
   // success so the dialog can clear its input. Gemini-only by design — the
   // offline engines don't read steering instructions.
-  async function resubmitDocumentPreview(scope, instructions) {
+  async function resubmitDocumentPreview(scope, instructions, opts = {}) {
     const jobId = resumePreview.jobId;
     const text = String(instructions || "").trim();
-    if (!jobId || !text) return false;
+    // A focus change re-tailors with a pinned library focus area instead of
+    // steering text, and refreshes BOTH documents (they share the wrong focus).
+    const focusChange = typeof opts.focusArea === "string";
+    if (!jobId || (!text && !focusChange)) return false;
     if (!resumeFile) {
       setResumePreview((prev) => ({ ...prev, error: "Upload a resume first to revise it.", notice: "" }));
       return false;
@@ -278,7 +281,7 @@ export function useDocumentPreview({
       setResumePreview((prev) => ({ ...prev, error: "Couldn't find the job posting to revise against.", notice: "" }));
       return false;
     }
-    const applyCover = scope === "cover";
+    const applyCover = scope === "cover" && !focusChange;
 
     setResumePreview((prev) => ({ ...prev, busy: true, notice: "", error: "" }));
     try {
@@ -295,13 +298,19 @@ export function useDocumentPreview({
         const editRules = promotedEditRules();
         if (editRules.length > 0) formData.append("editRules", JSON.stringify(editRules));
       }
-      formData.append("steeringInstructions", text);
+      if (text) formData.append("steeringInstructions", text);
+      // Pinned focus area: the one being applied now, or the job's stored
+      // override so plain revises keep the user's chosen focus.
+      const focusOverride = focusChange ? opts.focusArea : entry.focusAreaOverride || "";
+      if (engine === "embedded" && focusOverride) formData.append("focusArea", focusOverride);
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
       contextFiles.forEach((file) => formData.append("contextFiles", file));
       formData.append("resume", resumeFile);
-      // Only regenerate the cover letter when that's the document being revised.
-      if (applyCover && coverLetterFile) {
+      // Regenerate the cover letter when it's the document being revised, or on
+      // a focus change (both documents carry the focus).
+      const regenCover = (applyCover || focusChange) && coverLetterFile;
+      if (regenCover) {
         const coverLetterTemplateLines = await buildTemplateLinesForUpload(coverLetterFile);
         formData.append("coverLetterTemplateLines", JSON.stringify(coverLetterTemplateLines));
         formData.append("coverLetter", coverLetterFile);
@@ -311,22 +320,27 @@ export function useDocumentPreview({
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Failed to revise the document.");
 
-      if (applyCover) {
+      if (applyCover || regenCover) {
         const lines = Array.isArray(payload.coverLetterResultLines) ? payload.coverLetterResultLines : [];
         const coverErr = typeof payload.coverLetterError === "string" ? payload.coverLetterError : "";
-        if (coverErr) throw new Error(coverErr);
-        if (lines.length === 0) throw new Error("Gemini returned an empty cover letter.");
-        updateTailoringJob(jobId, {
-          coverLetterResultLines: lines,
-          coverLetterDocxB64: typeof payload.coverLetterDocxB64 === "string" ? payload.coverLetterDocxB64 : "",
-          coverLetterPreviewHtml: undefined,
-          edited: false,
-          status: "done",
-        });
-      } else {
+        // Cover failures are fatal for a cover-scoped revise, soft on a focus
+        // change (the resume result below still applies).
+        if (coverErr && applyCover) throw new Error(coverErr);
+        if (lines.length === 0 && applyCover) throw new Error("The engine returned an empty cover letter.");
+        if (!coverErr && lines.length > 0) {
+          updateTailoringJob(jobId, {
+            coverLetterResultLines: lines,
+            coverLetterDocxB64: typeof payload.coverLetterDocxB64 === "string" ? payload.coverLetterDocxB64 : "",
+            coverLetterPreviewHtml: undefined,
+            edited: false,
+            status: "done",
+          });
+        }
+      }
+      if (!applyCover) {
         const result = payload.result?.trim() || "";
         const lines = Array.isArray(payload.resultLines) ? payload.resultLines : [];
-        if (!result) throw new Error("Gemini returned an empty resume.");
+        if (!result) throw new Error("The engine returned an empty resume.");
         const nextTitle = typeof payload.jobTitle === "string" ? payload.jobTitle.trim() : "";
         updateTailoringJob(jobId, {
           result,
@@ -338,6 +352,13 @@ export function useDocumentPreview({
           status: "done",
         });
       }
+
+      // Remember which focus drove this generation (and the pinned override on
+      // a focus change) so the previewer's focus chip stays truthful.
+      updateTailoringJob(jobId, {
+        focusInfo: payload.report?.meta?.focus || null,
+        ...(focusChange ? { focusAreaOverride: opts.focusArea } : {}),
+      });
 
       setPreviewReloadKey((k) => k + 1);
 
@@ -351,17 +372,22 @@ export function useDocumentPreview({
         habitHint = steeringHabitHint(steeringMeta);
       }
 
-      setResumePreview((prev) => ({
-        ...prev,
-        busy: false,
-        error: "",
-        notice: `Revised the ${applyCover ? "cover letter" : "resume"} with your instructions.${habitHint ? ` ${habitHint}` : ""}`,
-      }));
+      const focusWarning = (payload.warnings || []).find((w) => /focus area/i.test(w)) || "";
+      const notice = focusChange
+        ? `Regenerated with the ${opts.focusArea ? `“${opts.focusArea}”` : "auto-detected"} focus.${focusWarning ? ` ${focusWarning}` : ""}`
+        : `Revised the ${applyCover ? "cover letter" : "resume"} with your instructions.${habitHint ? ` ${habitHint}` : ""}`;
+      setResumePreview((prev) => ({ ...prev, busy: false, error: "", notice }));
       return true;
     } catch (err) {
       setResumePreview((prev) => ({ ...prev, busy: false, error: err?.message || "Couldn't revise the document.", notice: "" }));
       return false;
     }
+  }
+
+  // The previewer's focus picker: pin a library focus area (or "" for
+  // auto-detect) and regenerate both documents with it.
+  function applyFocusArea(name) {
+    return resubmitDocumentPreview("resume", "", { focusArea: String(name ?? "") });
   }
 
   // Called by the Generate flows once the resume + cover letter exist: open the
@@ -397,6 +423,7 @@ export function useDocumentPreview({
     renameDocument,
     downloadDocumentPreview,
     resubmitDocumentPreview,
+    applyFocusArea,
     finishByOpeningPreview,
   };
 }
