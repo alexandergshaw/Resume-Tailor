@@ -2,9 +2,36 @@
 // job title / company with the same deterministic parser the tailor route uses.
 // Returns the same shape as the AI vision reader so the endpoint can swap them.
 
+import { createRequire } from "module";
+import path from "path";
+import fs from "fs";
 import { extractPostingMeta } from "@/lib/llm/postingMeta";
 
-// One worker, reused across requests — creating it downloads the wasm core and
+// Tesseract worker options that make OCR fully deterministic and offline:
+// - langPath points at the version-pinned `@tesseract.js-data/eng` npm package
+//   (the SAME bytes tesseract.js would fetch from its CDN — that default URL is
+//   literally this package served via jsdelivr), so no network is needed and
+//   the model can never drift under us. `4.0.0_best_int` matches the library's
+//   LSTM-only default, keeping OCR output identical to the previous behavior.
+// - cacheMethod "none" stops the library writing eng.traineddata (~15MB) into
+//   the process cwd, which is read-only on serverless and litters it locally.
+// If bundling/tracing excluded the data file from a deploy, fall back to the
+// default CDN download (same bytes) rather than failing OCR outright.
+export function tessdataConfig() {
+  try {
+    const require_ = createRequire(import.meta.url);
+    const pkgDir = path.dirname(require_.resolve("@tesseract.js-data/eng/package.json"));
+    const langDir = path.join(pkgDir, "4.0.0_best_int");
+    if (fs.existsSync(path.join(langDir, "eng.traineddata.gz"))) {
+      return { langPath: langDir, gzip: true, cacheMethod: "none" };
+    }
+  } catch {
+    // fall through to the CDN default below
+  }
+  return { cacheMethod: "none" };
+}
+
+// One worker, reused across requests — creating it loads the wasm core and
 // English language data, which we only want to pay once.
 let workerPromise = null;
 
@@ -12,13 +39,27 @@ async function getWorker() {
   if (!workerPromise) {
     workerPromise = (async () => {
       const { createWorker } = await import("tesseract.js");
-      return createWorker("eng");
+      return createWorker("eng", undefined, tessdataConfig());
     })().catch((err) => {
       workerPromise = null; // let the next call retry a fresh worker
       throw err;
     });
   }
   return workerPromise;
+}
+
+// Tear down the shared worker (tests use this so worker threads don't keep the
+// process alive; production workers live for the process lifetime).
+export async function terminateOcrWorker() {
+  if (!workerPromise) return;
+  const p = workerPromise;
+  workerPromise = null;
+  try {
+    const worker = await p;
+    await worker.terminate();
+  } catch {
+    // worker never came up — nothing to tear down
+  }
 }
 
 // Plain-text OCR of an image buffer. Exposed for testing/seam injection.

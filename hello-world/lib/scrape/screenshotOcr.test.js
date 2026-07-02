@@ -1,5 +1,74 @@
-import { describe, it, expect } from "vitest";
-import { fieldsFromText, extractLocation } from "./screenshotOcr.js";
+import { describe, it, expect, afterAll } from "vitest";
+import fs from "fs";
+import path from "path";
+import zlib from "zlib";
+import {
+  fieldsFromText,
+  extractLocation,
+  tessdataConfig,
+  ocrImage,
+  terminateOcrWorker,
+} from "./screenshotOcr.js";
+
+afterAll(async () => {
+  await terminateOcrWorker();
+});
+
+// Minimal grayscale PNG encoder — enough to hand Tesseract a valid image
+// without a canvas dependency.
+function crc32(buf) {
+  let crc = ~0;
+  for (const b of buf) {
+    crc ^= b;
+    for (let k = 0; k < 8; k += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return ~crc >>> 0;
+}
+
+function pngChunk(type, data) {
+  const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(body));
+  return Buffer.concat([len, body, crc]);
+}
+
+function whitePng(width, height) {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 0; // grayscale
+  const raw = Buffer.alloc(height * (width + 1), 255);
+  for (let y = 0; y < height; y += 1) raw[y * (width + 1)] = 0; // filter byte per row
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", zlib.deflateSync(raw)),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+describe("tessdataConfig", () => {
+  it("resolves the version-pinned local language data — no CDN, no cache writes", () => {
+    const cfg = tessdataConfig();
+    expect(cfg.cacheMethod).toBe("none");
+    expect(cfg.langPath).toBeTruthy();
+    expect(cfg.langPath).toContain("4.0.0_best_int");
+    expect(fs.existsSync(path.join(cfg.langPath, "eng.traineddata.gz"))).toBe(true);
+    expect(cfg.gzip).toBe(true);
+  });
+});
+
+describe("ocrImage (offline smoke test)", () => {
+  it("boots the worker from local data and OCRs an image without the network", async () => {
+    // A blank image proves the whole pipeline (wasm core + local traineddata +
+    // recognize) runs; the recognized text is simply empty.
+    const text = await ocrImage(whitePng(120, 40));
+    expect(text).toBe("");
+  }, 60000);
+});
 
 describe("fieldsFromText", () => {
   it("builds the reader contract from OCR text", () => {

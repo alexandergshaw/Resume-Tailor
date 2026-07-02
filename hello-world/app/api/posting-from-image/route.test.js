@@ -359,4 +359,58 @@ describe("POST /api/posting-from-image (embedded engine)", () => {
     expect(data.found).toBe(false);
     expect(searchPostingUrls).not.toHaveBeenCalled();
   });
+
+  it("tailors from OCR text when the URL search finds nothing — fully offline", async () => {
+    readScreenshotOffline.mockResolvedValue({ ...OFFLINE_FIELDS });
+    searchPostingUrls.mockResolvedValue([]); // no providers / offline / no hits
+    const res = await POST(imageRequest(pngFile(), "embedded"));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.found).toBe(true);
+    expect(data.url).toBe("");
+    expect(data.jobTitle).toBe("Senior Engineer");
+    expect(data.postingText).toBe(OFFLINE_FIELDS.postingText);
+    expect(fetchUrlContent).not.toHaveBeenCalled();
+    expect(getGeminiClient).not.toHaveBeenCalled();
+  });
+
+  it("tailors from OCR text when even the search itself throws", async () => {
+    readScreenshotOffline.mockResolvedValue({ ...OFFLINE_FIELDS });
+    searchPostingUrls.mockRejectedValue(new Error("network down"));
+    const res = await POST(imageRequest(pngFile(), "embedded"));
+    const data = await res.json();
+    expect(data.found).toBe(true);
+    expect(data.url).toBe("");
+    expect(data.postingText).toBe(OFFLINE_FIELDS.postingText);
+  });
+
+  it("tailors from OCR text when candidates exist but none resolve to a real page", async () => {
+    readScreenshotOffline.mockResolvedValue({ ...OFFLINE_FIELDS });
+    searchPostingUrls.mockResolvedValue(["https://stale.example/jobs/123"]);
+    // The only candidate redirects to the homepage — excluded by resolvePosting.
+    fetchUrlContent.mockResolvedValue({
+      title: "Site",
+      description: "H".repeat(500),
+      finalUrl: "https://stale.example/",
+    });
+    const res = await POST(imageRequest(pngFile(), "embedded"));
+    const data = await res.json();
+    expect(data.found).toBe(true);
+    expect(data.url).toBe("");
+    expect(data.postingText).toBe(OFFLINE_FIELDS.postingText);
+  });
+
+  it("still reports not-found with no URL when OCR text is too thin to tailor from", async () => {
+    readScreenshotOffline.mockResolvedValue({
+      jobTitle: "Eng",
+      company: "Acme",
+      location: "",
+      postingText: "Short snippet only.",
+      searchQuery: "Acme Eng",
+    });
+    searchPostingUrls.mockResolvedValue([]);
+    const res = await POST(imageRequest(pngFile(), "embedded"));
+    const data = await res.json();
+    expect(data.found).toBe(false);
+  });
 });

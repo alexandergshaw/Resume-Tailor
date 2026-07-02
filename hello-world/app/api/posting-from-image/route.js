@@ -322,7 +322,23 @@ export async function POST(request) {
   }
   const candidates = rankCandidates([...new Set(found.filter(Boolean))]);
 
+  // The URL search is a best-effort enhancement on the embedded path: OCR
+  // already read the posting off the screenshot, so when search comes up empty
+  // (offline, rate-limited, obscure employer) tailor from that text instead of
+  // failing — the pipeline completes with zero network beyond the upload.
+  const embeddedTextFallback = () =>
+    NextResponse.json({
+      found: true,
+      url: "",
+      jobTitle: tidyField(fields.jobTitle),
+      company: tidyField(fields.company),
+      location: fields.location,
+      postingText: fields.postingText,
+    });
+  const canFallBackToOcrText = embedded && fields.postingText.trim().length > 80;
+
   if (candidates.length === 0) {
+    if (canFallBackToOcrText) return embeddedTextFallback();
     return NextResponse.json(
       {
         found: false,
@@ -352,7 +368,7 @@ export async function POST(request) {
 
   // A real posting URL was located but we couldn't scrape it (WAF 403 / thin
   // SPA). validUrl is never a homepage-bouncing link — tailor from the posting
-  // text Gemini already read off the screenshot, keeping the working URL.
+  // text already read off the screenshot, keeping the working URL.
   if (validUrl && fields.postingText.length > 80) {
     return NextResponse.json({
       found: true,
@@ -363,6 +379,10 @@ export async function POST(request) {
       postingText: fields.postingText,
     });
   }
+
+  // Embedded: candidates existed but none survived resolution — same OCR-text
+  // fallback as when the search found nothing at all.
+  if (canFallBackToOcrText) return embeddedTextFallback();
 
   return NextResponse.json(
     {
