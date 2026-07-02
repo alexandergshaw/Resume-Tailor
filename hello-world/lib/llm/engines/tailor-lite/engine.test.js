@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { embeddedEngine, isTeachingPosting } from "./engine.js";
+import { embeddedEngine, isTeachingPosting, isHigherEdPosting } from "./engine.js";
 import { fetchUrlContent } from "../../../scrape/fetchUrlContent.js";
 
 vi.mock("../../../scrape/fetchUrlContent.js", () => ({ fetchUrlContent: vi.fn() }));
@@ -34,6 +34,30 @@ describe("isTeachingPosting", () => {
 
   it("keeps industry roles at academic employers as industry", () => {
     expect(isTeachingPosting("Web developer to help the department with strategic web initiatives.")).toBe(false);
+  });
+
+  it("does NOT flag higher-ed STAFF postings whose 'students'/'courses' are ambient (GSW Web Specialist)", () => {
+    // Real regression: "population of students" + "a course of study related to
+    // the field" are campus/degree boilerplate, not teaching duties.
+    const staffPosting =
+      "Web Specialist. Serving a diverse population of students on a vibrant campus. " +
+      "Maintain the university website, improve accessibility and SEO. " +
+      "Baccalaureate degree in a course of study related to the field required. " +
+      "Train student web developer intern (when applicable).";
+    expect(isTeachingPosting(staffPosting)).toBe(false);
+  });
+});
+
+describe("isHigherEdPosting", () => {
+  it("detects a university employer from multiple campus signals", () => {
+    expect(
+      isHigherEdPosting("Web Specialist at Georgia Southwestern State University, working across campus with faculty and staff."),
+    ).toBe(true);
+  });
+
+  it("does not flip on a lone 'college degree required' in a corporate posting", () => {
+    expect(isHigherEdPosting("Software Engineer at Initech. College degree required.")).toBe(false);
+    expect(isHigherEdPosting(POSTING)).toBe(false);
   });
 });
 
@@ -378,6 +402,40 @@ describe("embeddedEngine.tailorCoverLetter", () => {
     // (languages/frameworks), not just collaboration tools.
     expect(res.result).toMatch(/hands-on work with [^.]*\b(React|TypeScript|JavaScript|PostgreSQL|SQL)\b/);
     expect(res.report.meta.document).toBe("cover_letter");
+  });
+
+  it("uses the campus-staff variant for a non-teaching role at a university", async () => {
+    const staffPosting =
+      "Web Specialist at Georgia Southwestern State University. Serving a diverse population of students on a vibrant campus, working with faculty and staff. " +
+      "Maintain the university website in the content management system, improve accessibility and SEO. " +
+      "Baccalaureate degree in a course of study related to the field required.";
+    const res = await embeddedEngine.tailorCoverLetter({
+      jobPosting: staffPosting,
+      jobTitle: "Web Specialist",
+      companyName: "Georgia Southwestern State University",
+    });
+    expect(res.report.meta.coverVariant).toBe("staff");
+    // No adjunct/teaching framing…
+    expect(res.result).not.toContain("I also teach");
+    expect(res.result).not.toContain("adjunct professor");
+    expect(res.result).not.toContain("students and courses");
+    expect(res.result).not.toContain("rubrics");
+    expect(res.result).not.toContain("instructional team");
+    // …campus-service framing instead of the pure product-team pitch.
+    expect(res.result).toContain("faculty, staff, and campus partners");
+    expect(res.result).toContain("community it serves");
+    // The standing leadership fact still surfaces, and nothing leaks.
+    expect(res.result).toContain("I lead an engineering team of five");
+    expect(res.result).not.toContain("{{");
+  });
+
+  it("reports the selected cover variant", async () => {
+    const industry = await embeddedEngine.tailorCoverLetter({
+      jobPosting: POSTING,
+      jobTitle: "Staff Engineer",
+      companyName: "Initech",
+    });
+    expect(industry.report.meta.coverVariant).toBe("industry");
   });
 
   it("keeps the adjunct-teaching framing for a teaching posting", async () => {

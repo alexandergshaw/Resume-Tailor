@@ -128,15 +128,65 @@ const INDUSTRY_PATCHES = [
 // loadDocx(), with every zip entry's timestamp pinned so the output base64 is
 // deterministic. `teaching` (default true) selects the framing: the bundled
 // adjunct-teaching letter, or the industry rewrite for a non-teaching posting.
-export async function getCoverLetterTemplateBuffer({ teaching = true } = {}) {
-  const key = teaching ? "teaching" : "industry";
+
+// For a NON-teaching staff role at a university/college (web specialist,
+// administrator, analyst…) the teaching paragraphs are a mismatch, but so is
+// the industry variant's pure product-team framing — the audience is a campus
+// community, not a software org. Same raw-template `from` strings as
+// INDUSTRY_PATCHES, rewritten toward institutional service: stakeholders are
+// departments/faculty/staff, and the close is about serving the community.
+const STAFF_PATCHES = [
+  // Same broad, posting-matched technical-skills sentence added to paragraph 2.
+  [
+    "to {{ACTION_RESULT}} across {{DOMAIN_CAPABILITIES}}.",
+    "to {{ACTION_RESULT}} across {{DOMAIN_CAPABILITIES}}. My technical toolkit for this kind of work spans {{ROLE_RELEVANT_STACK}}.",
+  ],
+  // Intro: industry scale and dependability, no teaching framing.
+  [
+    "As a {{RANK}} {{PRIMARY_FUNCTION}} with {{YEARS_OF_EXPERIENCE}}+ years in industry and several years teaching as an adjunct professor, I bring both genuine technical depth and a real enthusiasm for helping students learn. My background spans hands-on work with {{TECHNICAL_CAPABILITIES}}, domain expertise in {{DOMAIN_CAPABILITIES}}, and leadership in {{LEADERSHIP_CAPABILITIES}}, alongside the higher-education instruction that maps directly to this role.",
+    "I am a {{RANK}} {{PRIMARY_FUNCTION}} with {{YEARS_OF_EXPERIENCE}}+ years building systems that support 10,000 daily users and 75,000 daily service hits. I bring genuine technical depth and a track record of building reliable services that whole organizations depend on. My background spans hands-on work with {{TECHNICAL_CAPABILITIES}}. I pair that with domain expertise in {{DOMAIN_CAPABILITIES}} and experience in {{LEADERSHIP_CAPABILITIES}}.",
+  ],
+  // Replace the teaching paragraph with an institutional-service paragraph.
+  [
+    "I also teach, and it's work I genuinely enjoy. As an adjunct professor, I've taught {{AREA_OF_EMPHASIS}} and {{AREA_OF_EMPHASIS}}, building project-based courses around {{LIST OF 4 COURSE TOPICS RELEVANT TO JOB POSTING - PRIORITIZE TECHNOLOGIES, PEOPLE SKILLS}} and giving clear, constructive feedback to more than 100 students each term. Those terms taught me how to explain complex technical concepts simply, assess student work fairly and consistently, and meet learners wherever they are.",
+    "Beyond shipping features, I care about the work that keeps an institution's digital presence healthy: {{AREAS_OF_EMPHASIS}}. I treat websites and shared systems as a product — building reusable building blocks, holding a high bar for accessibility and consistency, and paying down technical debt before it slows anyone down. I rely on {{DELIVERY_PRACTICES}} to keep that work disciplined, partnering closely with {{SCOPE_OR_STAKEHOLDERS}} across departments to turn requirements into reliable services.",
+  ],
+  // Replace the "mix of industry and classroom / support students" paragraph
+  // with campus collaboration (faculty and staff as partners, not pupils).
+  [
+    "That mix of industry and classroom is exactly what draws me to {{TARGET_ORGANIZATION}}. I'd be glad to support students across {{AREAS_OF_EMPHASIS}}, pairing that subject-matter depth with strengths in {{LEADERSHIP_CAPABILITIES}} to give timely, useful feedback while working closely with the instructional team. I'm careful to apply rubrics consistently, keep feedback objective and value-neutral, and meet the team's turnaround times.",
+    "{{TARGET_ORGANIZATION}}'s mission is exactly the kind of work I want to support. I would bring that same focus on {{AREAS_OF_EMPHASIS}}, pairing technical depth with strengths in {{LEADERSHIP_CAPABILITIES}} to collaborate with faculty, staff, and campus partners, resolve ambiguity early, and deliver consistent, high-quality work for the university community.",
+  ],
+  // Closing: serve the institution and its community, not "students and courses".
+  [
+    "I'd welcome the chance to talk about how my experience across {{DOMAIN_CAPABILITIES}} and higher-education instruction could support {{TARGET_ORGANIZATION}}'s students and courses. Thank you for your time and consideration.",
+    "I would welcome the chance to talk about how my experience across {{DOMAIN_CAPABILITIES}} could support {{TARGET_ORGANIZATION}} and the community it serves. Thank you for your time and consideration.",
+  ],
+  // Formality: the only contraction left in the staff variant is the opening.
+  ["I'm excited to apply", "I am excited to apply"],
+];
+
+const VARIANT_PATCHES = {
+  teaching: TEACHING_PATCHES,
+  industry: INDUSTRY_PATCHES,
+  staff: STAFF_PATCHES,
+};
+
+// Assemble (and cache per variant) the cover-letter template as a Node Buffer
+// for loadDocx(), with every zip entry's timestamp pinned so the output base64
+// is deterministic. `variant` selects the framing: "teaching" (the bundled
+// adjunct-teaching letter), "staff" (non-teaching role at a higher-ed
+// institution), or "industry". The legacy `teaching` boolean is still honored
+// when no valid variant is given.
+export async function getCoverLetterTemplateBuffer({ variant, teaching = true } = {}) {
+  const key = VARIANT_PATCHES[variant] ? variant : teaching ? "teaching" : "industry";
   const cached = cache.get(key);
   if (cached) return cached;
   const zip = await JSZip.loadAsync(Buffer.from(COVER_LETTER_TEMPLATE_BASE64, "base64"));
   const docFile = zip.file("word/document.xml");
   if (docFile) {
     let xml = await docFile.async("string");
-    for (const [from, to] of [...SHARED_PATCHES, ...(teaching ? TEACHING_PATCHES : INDUSTRY_PATCHES)]) {
+    for (const [from, to] of [...SHARED_PATCHES, ...VARIANT_PATCHES[key]]) {
       xml = xml.split(from).join(to);
     }
     zip.file("word/document.xml", xml, { date: FIXED_ENTRY_DATE });

@@ -113,23 +113,56 @@ function postingMetaFor(posting, scrapedMeta) {
 // say they "develop coursework" — so it is only a weak (needs-corroboration) signal.
 const TEACHING_STRONG_RE =
   /\b(?:adjunct|lecturer|professor|instructor|tenure[ -]?track|curriculum|syllab(?:us|i)|course materials|pedagog\w*|teaching (?:position|faculty|load)|faculty (?:position|appointment))\b/i;
-const TEACHING_WEAK_RES = [
+// Weak signals split in two tiers. CORE terms describe the act of teaching;
+// SUPPORT terms (students, courses) are ambient in EVERY higher-ed posting —
+// a university web-specialist role "serving a diverse population of students"
+// with a degree in "a course of study related to the field" is staff, not
+// faculty. Weak detection therefore requires at least one CORE hit; support
+// terms only corroborate.
+const TEACHING_WEAK_CORE_RES = [
   /\bteach(?:es|ing)?\b/i,
-  /\bstudents?\b/i,
-  /\bstudent body\b/i,
-  /\bcourses?\b/i,
   /\bcoursework\b/i,
   /\bclassroom\b/i,
   /\bsemester\b/i,
   /\blearners?\b/i,
   /\blectures?\b/i,
 ];
+const TEACHING_WEAK_SUPPORT_RES = [
+  /\bstudents?\b/i,
+  /\bstudent body\b/i,
+  /\bcourses?\b/i,
+];
 export function isTeachingPosting(posting) {
   const text = String(posting || "");
   if (!text.trim()) return false;
   if (TEACHING_STRONG_RE.test(text)) return true;
+  let coreHits = 0;
+  for (const re of TEACHING_WEAK_CORE_RES) if (re.test(text)) coreHits += 1;
+  if (coreHits === 0) return false;
+  let supportHits = 0;
+  for (const re of TEACHING_WEAK_SUPPORT_RES) if (re.test(text)) supportHits += 1;
+  return coreHits + supportHits >= 2;
+}
+
+// A higher-education employer (university/college staff context) — used to pick
+// the campus-staff cover letter framing for non-teaching roles at institutions.
+// Requires two distinct signals so "college degree required" alone in a
+// corporate posting doesn't flip it.
+const HIGHERED_SIGNAL_RES = [
+  /\buniversit\w+\b/i,
+  /\bcampus\b/i,
+  /\bhigher education\b/i,
+  /\bfaculty\b/i,
+  /\bprovost\b/i,
+  /\bacademic (?:affairs|programs|departments?)\b/i,
+  /\bstudent affairs\b/i,
+  /\bcommunity college\b/i,
+];
+export function isHigherEdPosting(posting) {
+  const text = String(posting || "");
+  if (!text.trim()) return false;
   let hits = 0;
-  for (const re of TEACHING_WEAK_RES) {
+  for (const re of HIGHERED_SIGNAL_RES) {
     if (re.test(text)) hits += 1;
     if (hits >= 2) return true;
   }
@@ -472,7 +505,15 @@ export const embeddedEngine = {
       LEADERSHIP_CAPABILITIES: "technical leadership and cross-functional collaboration",
       DELIVERY_PRACTICES: "Agile delivery",
     };
-    const r = await render(await getCoverLetterTemplateBuffer({ teaching: isTeachingPosting(posting) }), posting, {
+    // Pick the letter framing: teaching roles keep the adjunct letter; staff
+    // roles at higher-ed institutions get the campus-service variant; everything
+    // else gets the industry rewrite.
+    const coverVariant = isTeachingPosting(posting)
+      ? "teaching"
+      : isHigherEdPosting(posting)
+        ? "staff"
+        : "industry";
+    const r = await render(await getCoverLetterTemplateBuffer({ variant: coverVariant }), posting, {
       overrides,
       seedByName,
       aggressiveness: steered.aggressiveness,
@@ -500,7 +541,7 @@ export const embeddedEngine = {
           reportSlots: r.reportSlots,
           unfilled: r.unfilled,
           keywords: r.keywords,
-          extraMeta: { document: "cover_letter", ...steered.meta, ...edits.meta, ...focus.meta, ...kwEdits.meta },
+          extraMeta: { document: "cover_letter", coverVariant, ...steered.meta, ...edits.meta, ...focus.meta, ...kwEdits.meta },
         });
         // Cover letters are prose, not keyword walls — the score naturally runs
         // lower than the résumé's; the combined response uses the weakest doc.
