@@ -35,6 +35,8 @@ export default function LibraryUpdateDialog({ prompt, onClose, onCommit }) {
       category: b.category || DEFAULT_CATEGORY,
       recognized: !!b.category,
       checked: true,
+      aliases: Array.isArray(b.aliases) ? b.aliases : [],
+      matchCanonical: b.match_canonical !== false,
     })),
   );
   const [busy, setBusy] = useState(false);
@@ -52,7 +54,12 @@ export default function LibraryUpdateDialog({ prompt, onClose, onCommit }) {
     if (selected.length === 0 || busy) return;
     setBusy(true);
     setError("");
-    const entries = selected.map((r) => ({ canonical: r.canonical, category: r.category }));
+    const entries = selected.map((r) => ({
+      canonical: r.canonical,
+      category: r.category,
+      aliases: r.aliases,
+      ...(r.matchCanonical === false ? { match_canonical: false } : {}),
+    }));
     const result = await onCommit(entries, { retailor });
     setBusy(false);
     if (!result?.ok) setError(result?.error || "Couldn't save to your library.");
@@ -76,8 +83,15 @@ export default function LibraryUpdateDialog({ prompt, onClose, onCommit }) {
                 onChange={(e) => setRow(i, { checked: e.target.checked })}
                 sx={{ p: 0.5 }}
               />
-              <Box sx={{ flex: 1, fontSize: "0.9rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {r.canonical}
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Box sx={{ fontSize: "0.9rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {r.canonical}
+                </Box>
+                {r.aliases.length > 0 ? (
+                  <Box sx={{ fontSize: "0.7rem", color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    also matches: {r.aliases.join(", ")}
+                  </Box>
+                ) : null}
               </Box>
               <Select
                 size="small"

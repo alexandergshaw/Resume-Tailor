@@ -20,6 +20,41 @@ function titleCase(s) {
   return String(s).replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1));
 }
 
+// Words too generic to be safe standalone aliases (the "next" → "next level"
+// false-match class the validators also warn about).
+const GENERIC_ALIAS = new Set([
+  "next", "data", "web", "app", "api", "team", "lead", "cloud", "ai", "ml", "go", "code", "test", "design",
+]);
+const ACRONYM_SKIP_WORDS = new Set(["of", "and", "the", "for", "in", "to", "with", "a", "an"]);
+
+// Deterministic alias candidates for a NEW (scraped) canonical, so an approved
+// term matches more future postings than its literal spelling:
+//   - acronym of multi-word phrases ("care plan documentation" → "cpd"-style,
+//     only when 3-5 letters and not a generic word)
+//   - hyphen/slash ↔ space variants
+//   - "&" ↔ "and" variants
+// Conservative by design — a wrong alias causes silent mis-matches forever.
+export function aliasCandidates(canonical) {
+  const c = String(canonical || "").trim();
+  if (!c) return [];
+  const out = new Set();
+  const lower = c.toLowerCase();
+
+  const words = lower.split(/[\s/-]+/).filter((w) => w && !ACRONYM_SKIP_WORDS.has(w));
+  if (words.length >= 2 && words.length <= 5 && words.every((w) => /^[a-z][a-z0-9.]*$/.test(w))) {
+    const acronym = words.map((w) => w[0]).join("");
+    if (acronym.length >= 3 && acronym.length <= 5 && !GENERIC_ALIAS.has(acronym)) {
+      out.add(acronym);
+    }
+  }
+  if (/[-/]/.test(lower)) out.add(lower.replace(/[-/]+/g, " ").replace(/\s+/g, " ").trim());
+  if (/\s&\s/.test(lower)) out.add(lower.replace(/\s&\s/g, " and "));
+  else if (/\sand\s/.test(lower)) out.add(lower.replace(/\sand\s/g, " & "));
+
+  out.delete(lower);
+  return [...out];
+}
+
 // Analyze a posting and suggest library additions the user's taxonomy lacks.
 // Returns { title, company, excerpt, categories, buzzwords, suggestedFocusArea,
 // suggestedSkillGroup }. `loadLibraryImpl` is injectable for tests.
@@ -44,6 +79,13 @@ export async function buildLibrarySuggestions(
   const lib = await loadLibraryImpl({ userId });
   const have = new Set((lib.taxonomy?.entries || []).map((e) => String(e.canonical).toLowerCase()));
 
+  // Bundled taxonomy entries by canonical, so recognized suggestions carry
+  // their full alias web into the import ("Kubernetes" without "k8s"/"eks"
+  // would match far fewer future postings than the bundled entry does).
+  const bundled = new Map(
+    (defaultLibraryData.taxonomy?.entries || []).map((e) => [String(e.canonical).toLowerCase(), e]),
+  );
+
   const byCat = {};
   const buzzwords = [];
   for (const cat of TAXONOMY_CATEGORIES) {
@@ -51,14 +93,23 @@ export async function buildLibrarySuggestions(
     byCat[cat] = items.map((i) => i.canonical);
     for (const it of items) {
       if (!have.has(it.canonical.toLowerCase())) {
-        buzzwords.push({ canonical: it.canonical, category: cat, score: it.score });
+        const entry = bundled.get(it.canonical.toLowerCase());
+        buzzwords.push({
+          canonical: it.canonical,
+          category: cat,
+          score: it.score,
+          aliases: Array.isArray(entry?.aliases) ? entry.aliases : [],
+          ...(entry?.match_canonical === false ? { match_canonical: false } : {}),
+        });
       }
     }
   }
-  // RAKE phrases the taxonomy missed -> uncategorized new-buzzword candidates.
+  // RAKE phrases the taxonomy missed -> uncategorized new-buzzword candidates,
+  // with deterministic alias candidates so they match more than their spelling.
   for (const t of (kw.topic || []).slice(0, MAX_TOPIC_CANDIDATES)) {
     if (!have.has(String(t.canonical).toLowerCase())) {
-      buzzwords.push({ canonical: titleCase(t.canonical), category: "", score: t.score });
+      const canonical = titleCase(t.canonical);
+      buzzwords.push({ canonical, category: "", score: t.score, aliases: aliasCandidates(canonical) });
     }
   }
   buzzwords.sort((a, b) => b.score - a.score);
