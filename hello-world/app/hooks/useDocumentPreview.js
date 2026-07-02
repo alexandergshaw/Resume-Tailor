@@ -10,7 +10,16 @@ import {
 import { parseDocxToModel, linesToModel } from "../../lib/document/docxPreview";
 import { addedEditText, editFingerprint } from "../../lib/tailor/editMining";
 import { deriveEditRules } from "../../lib/tailor/editRules";
-import { recordSteering, steeringHabitHint, recordEditRules, promotedEditRules } from "../../lib/tailor/localSignals";
+import {
+  recordSteering,
+  steeringHabitHint,
+  recordEditRules,
+  promotedEditRules,
+  recordFocusOverride,
+  focusOverrideHint,
+  recordBuzzwordEdits,
+  buzzwordEditHints,
+} from "../../lib/tailor/localSignals";
 import { readEngine } from "../settings/engine";
 
 // Resume/cover-letter preview + edit modal (opened from the status-bar chips and
@@ -89,6 +98,9 @@ export function useDocumentPreview({
   // One record per distinct edit session — reopening and closing the preview
   // without new edits must not re-count the same rules toward promotion.
   const editSessionsSeenRef = useRef(new Set());
+  // Buzzword toggles count once per job toward the cross-posting counters, so
+  // re-applying the same exclusions on one job doesn't inflate "N postings".
+  const buzzwordSeenRef = useRef(new Set());
 
   function closeResumePreview() {
     // The edit session is over — mine what the user changed (vs. the pristine
@@ -377,9 +389,38 @@ export function useDocumentPreview({
         habitHint = steeringHabitHint(steeringMeta);
       }
 
+      // Learning signals for the focus/buzzword workflow (device-local, like
+      // the other counters): count the focus correction and the newly-applied
+      // buzzword toggles, and surface fix-it-in-/library hints when the same
+      // correction keeps recurring across postings.
+      const workflowHints = [];
+      if (focusChange) {
+        try {
+          const prevFocus = entry.focusInfo || null;
+          if (opts.focusArea && prevFocus?.source !== "override") {
+            const count = recordFocusOverride({ detected: prevFocus?.name || "", chosen: opts.focusArea });
+            if (count >= 3) workflowHints.push(focusOverrideHint(prevFocus?.name || ""));
+          }
+          if (kwEdits && (kwEdits.boost?.length || kwEdits.exclude?.length)) {
+            const seenKey = (t, dir) => `${jobId}:${dir}:${String(t).toLowerCase()}`;
+            const fresh = {
+              boost: (kwEdits.boost || []).filter((t) => !buzzwordSeenRef.current.has(seenKey(t, "boost"))),
+              exclude: (kwEdits.exclude || []).filter((t) => !buzzwordSeenRef.current.has(seenKey(t, "exclude"))),
+            };
+            for (const t of fresh.boost) buzzwordSeenRef.current.add(seenKey(t, "boost"));
+            for (const t of fresh.exclude) buzzwordSeenRef.current.add(seenKey(t, "exclude"));
+            recordBuzzwordEdits(fresh);
+            workflowHints.push(...buzzwordEditHints(kwEdits));
+          }
+        } catch {
+          // Signal tracking must never break the regenerate flow.
+        }
+      }
+      const hintTail = workflowHints.filter(Boolean).join(" ");
+
       const focusWarning = (payload.warnings || []).find((w) => /focus area/i.test(w)) || "";
       const notice = focusChange
-        ? `Regenerated with the ${opts.focusArea ? `“${opts.focusArea}”` : "auto-detected"} focus.${focusWarning ? ` ${focusWarning}` : ""}`
+        ? `Regenerated with the ${opts.focusArea ? `“${opts.focusArea}”` : "auto-detected"} focus.${focusWarning ? ` ${focusWarning}` : ""}${hintTail ? ` ${hintTail}` : ""}`
         : `Revised the ${applyCover ? "cover letter" : "resume"} with your instructions.${habitHint ? ` ${habitHint}` : ""}`;
       setResumePreview((prev) => ({ ...prev, busy: false, error: "", notice }));
       return true;

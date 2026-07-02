@@ -24,7 +24,13 @@ function defaultStorage() {
 }
 
 export function readSignals(storage = defaultStorage()) {
-  const empty = { gaps: {}, steering: { avoided: {}, emphasized: {} }, editRules: {} };
+  const empty = {
+    gaps: {},
+    steering: { avoided: {}, emphasized: {} },
+    editRules: {},
+    focusOverrides: {},
+    buzzwordEdits: { exclude: {}, boost: {} },
+  };
   if (!storage) return empty;
   try {
     const parsed = JSON.parse(storage.getItem(STORAGE_KEY) || "");
@@ -38,6 +44,18 @@ export function readSignals(storage = defaultStorage()) {
           parsed.steering?.emphasized && typeof parsed.steering.emphasized === "object" ? parsed.steering.emphasized : {},
       },
       editRules: parsed.editRules && typeof parsed.editRules === "object" ? parsed.editRules : {},
+      focusOverrides:
+        parsed.focusOverrides && typeof parsed.focusOverrides === "object" ? parsed.focusOverrides : {},
+      buzzwordEdits: {
+        exclude:
+          parsed.buzzwordEdits?.exclude && typeof parsed.buzzwordEdits.exclude === "object"
+            ? parsed.buzzwordEdits.exclude
+            : {},
+        boost:
+          parsed.buzzwordEdits?.boost && typeof parsed.buzzwordEdits.boost === "object"
+            ? parsed.buzzwordEdits.boost
+            : {},
+      },
     };
   } catch {
     return empty;
@@ -132,6 +150,103 @@ export function steeringHabitHint(steeringMeta, { storage = defaultStorage(), th
     }
   }
   return "";
+}
+
+// Record a focus-area correction from the previewer's picker: what auto-
+// detection said (or "" for none) vs. what the user chose. A recurring
+// detected→chosen pair means the library's match terms are steering detection
+// wrong — surfaced as a fix-it-in-/library hint. Counted once per call (the
+// picker records once per applied correction). Returns the pair's new count.
+export function recordFocusOverride({ detected, chosen }, { storage = defaultStorage(), now = Date.now() } = {}) {
+  const from = String(detected || "").trim();
+  const to = String(chosen || "").trim();
+  if (!to || from.toLowerCase() === to.toLowerCase()) return 0;
+  const signals = readSignals(storage);
+  const key = `${from.toLowerCase() || "(none)"}→${to.toLowerCase()}`;
+  const cur = signals.focusOverrides[key] || { detected: from, chosen: to, count: 0 };
+  signals.focusOverrides[key] = { ...cur, count: cur.count + 1, lastSeen: now };
+  prune(signals.focusOverrides);
+  writeSignals(signals, storage);
+  return signals.focusOverrides[key].count;
+}
+
+// A one-line hint when auto-detection keeps getting corrected the same way
+// (threshold+ postings). `detected` is what auto-detection currently says for
+// the posting at hand ("" for none) — the hint only fires for THAT situation,
+// so it never nags about unrelated history.
+export function focusOverrideHint(detected, { storage = defaultStorage(), threshold = 3 } = {}) {
+  const from = String(detected || "").trim();
+  const signals = readSignals(storage);
+  const fromKey = from.toLowerCase() || "(none)";
+  let best = null;
+  for (const [key, rec] of Object.entries(signals.focusOverrides)) {
+    if (!key.startsWith(`${fromKey}→`)) continue;
+    if (rec.count >= threshold && (!best || rec.count > best.count)) best = rec;
+  }
+  if (!best) return "";
+  return from
+    ? `You've switched the focus from ${best.detected} to ${best.chosen} on ${best.count} postings — edit their match terms in /library so detection gets it right.`
+    : `You've picked the ${best.chosen} focus on ${best.count} postings where nothing was detected — add match terms to it in /library so it auto-selects.`;
+}
+
+// Record the buzzword toggles the user applied (once per posting — the caller
+// de-dupes repeat applies on the same job). Terms excluded or boosted across
+// DIFFERENT postings are library facts waiting to be edited in /library.
+export function recordBuzzwordEdits(
+  { boost = [], exclude = [] } = {},
+  { storage = defaultStorage(), now = Date.now() } = {},
+) {
+  if (boost.length === 0 && exclude.length === 0) return readSignals(storage);
+  const signals = readSignals(storage);
+  const bump = (bucket, term) => {
+    const name = String(term || "").trim();
+    if (!name) return;
+    const key = name.toLowerCase();
+    const cur = bucket[key] || { term: name, count: 0 };
+    bucket[key] = { ...cur, count: cur.count + 1, lastSeen: now };
+  };
+  for (const t of exclude) bump(signals.buzzwordEdits.exclude, t);
+  for (const t of boost) bump(signals.buzzwordEdits.boost, t);
+  prune(signals.buzzwordEdits.exclude);
+  prune(signals.buzzwordEdits.boost);
+  writeSignals(signals, storage);
+  return signals;
+}
+
+// Hints for the CURRENT edit set: terms the user keeps excluding (or boosting)
+// posting after posting belong in the library, not in per-posting toggles.
+export function buzzwordEditHints({ boost = [], exclude = [] } = {}, { storage = defaultStorage(), threshold = 3 } = {}) {
+  const signals = readSignals(storage);
+  const hints = [];
+  for (const t of exclude) {
+    const rec = signals.buzzwordEdits.exclude[String(t).toLowerCase()];
+    if (rec && rec.count >= threshold) {
+      hints.push(`You've excluded ${rec.term} on ${rec.count} postings — remove or re-categorize it in /library to make that permanent.`);
+      break; // one hint per apply, not a lecture
+    }
+  }
+  if (hints.length === 0) {
+    for (const t of boost) {
+      const rec = signals.buzzwordEdits.boost[String(t).toLowerCase()];
+      if (rec && rec.count >= threshold) {
+        hints.push(`You've emphasized ${rec.term} on ${rec.count} postings — add it to a focus area's capabilities in /library so it surfaces on its own.`);
+        break;
+      }
+    }
+  }
+  return hints;
+}
+
+// Per-term counts for the focus modal's checklist badges ("excluded on N
+// postings"). Returns { exclude: Map<lower,count>, boost: Map<lower,count> }.
+export function buzzwordEditCounts({ storage = defaultStorage() } = {}) {
+  const signals = readSignals(storage);
+  const toMap = (bucket) => {
+    const m = new Map();
+    for (const [key, rec] of Object.entries(bucket)) m.set(key, rec.count || 0);
+    return m;
+  };
+  return { exclude: toMap(signals.buzzwordEdits.exclude), boost: toMap(signals.buzzwordEdits.boost) };
 }
 
 const EDIT_RULE_THRESHOLD = 3;

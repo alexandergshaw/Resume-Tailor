@@ -7,6 +7,11 @@ import {
   steeringHabitHint,
   recordEditRules,
   promotedEditRules,
+  recordFocusOverride,
+  focusOverrideHint,
+  recordBuzzwordEdits,
+  buzzwordEditHints,
+  buzzwordEditCounts,
 } from "./localSignals.js";
 
 function fakeStorage() {
@@ -139,6 +144,74 @@ describe("recordEditRules / promotedEditRules", () => {
     const promoted = promotedEditRules({ storage });
     expect(promoted).toHaveLength(1);
     expect(promoted[0].after).toBe("of 9 through");
+  });
+});
+
+describe("recordFocusOverride / focusOverrideHint", () => {
+  it("counts detected→chosen corrections and hints at the threshold, for THAT detection only", () => {
+    const storage = fakeStorage();
+    recordFocusOverride({ detected: "Engineering Leadership", chosen: "Web Development" }, { storage, now: 1 });
+    recordFocusOverride({ detected: "Engineering Leadership", chosen: "Web Development" }, { storage, now: 2 });
+    expect(focusOverrideHint("Engineering Leadership", { storage })).toBe(""); // 2 < 3
+    const count = recordFocusOverride(
+      { detected: "Engineering Leadership", chosen: "Web Development" },
+      { storage, now: 3 },
+    );
+    expect(count).toBe(3);
+    const hint = focusOverrideHint("Engineering Leadership", { storage });
+    expect(hint).toContain("Engineering Leadership");
+    expect(hint).toContain("Web Development");
+    expect(hint).toContain("/library");
+    // A different current detection stays quiet about this history.
+    expect(focusOverrideHint("Mathematics", { storage })).toBe("");
+  });
+
+  it("handles the nothing-detected case with add-match-terms phrasing", () => {
+    const storage = fakeStorage();
+    for (let i = 0; i < 3; i += 1) recordFocusOverride({ detected: "", chosen: "Web Development" }, { storage, now: i });
+    const hint = focusOverrideHint("", { storage });
+    expect(hint).toMatch(/nothing was detected/i);
+    expect(hint).toContain("Web Development");
+  });
+
+  it("ignores no-op corrections (same area, or clearing to auto)", () => {
+    const storage = fakeStorage();
+    expect(recordFocusOverride({ detected: "Web Development", chosen: "Web Development" }, { storage })).toBe(0);
+    expect(recordFocusOverride({ detected: "X", chosen: "" }, { storage })).toBe(0);
+    expect(readSignals(storage).focusOverrides).toEqual({});
+  });
+});
+
+describe("recordBuzzwordEdits / buzzwordEditHints / buzzwordEditCounts", () => {
+  it("counts per-term toggles across postings and badges the counts", () => {
+    const storage = fakeStorage();
+    recordBuzzwordEdits({ exclude: ["Business Intelligence"], boost: ["Web Analytics"] }, { storage, now: 1 });
+    recordBuzzwordEdits({ exclude: ["Business Intelligence", "Journalism"] }, { storage, now: 2 });
+    const counts = buzzwordEditCounts({ storage });
+    expect(counts.exclude.get("business intelligence")).toBe(2);
+    expect(counts.exclude.get("journalism")).toBe(1);
+    expect(counts.boost.get("web analytics")).toBe(1);
+  });
+
+  it("hints only for terms in the CURRENT edit set that crossed the threshold, one hint per apply", () => {
+    const storage = fakeStorage();
+    for (let i = 0; i < 3; i += 1) recordBuzzwordEdits({ exclude: ["Business Intelligence"] }, { storage, now: i });
+    expect(buzzwordEditHints({ exclude: ["Business Intelligence"] }, { storage })).toEqual([
+      expect.stringMatching(/excluded Business Intelligence on 3 postings.*\/library/),
+    ]);
+    // Recurring history, but the current apply doesn't touch that term: quiet.
+    expect(buzzwordEditHints({ exclude: ["Journalism"] }, { storage })).toEqual([]);
+  });
+
+  it("coexists with the other signal buckets", () => {
+    const storage = fakeStorage();
+    recordMatchGaps(MATCH_A, { storage, now: 1 });
+    recordBuzzwordEdits({ exclude: ["SEO"] }, { storage, now: 2 });
+    recordFocusOverride({ detected: "", chosen: "Web Development" }, { storage, now: 3 });
+    const s = readSignals(storage);
+    expect(s.gaps.kubernetes.count).toBe(1);
+    expect(s.buzzwordEdits.exclude.seo.count).toBe(1);
+    expect(Object.keys(s.focusOverrides)).toHaveLength(1);
   });
 });
 

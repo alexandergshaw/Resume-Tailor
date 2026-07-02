@@ -15,6 +15,7 @@ import Chip from "@mui/material/Chip";
 import TextField from "@mui/material/TextField";
 import CircularProgress from "@mui/material/CircularProgress";
 import profileData from "@/lib/llm/engines/tailor-lite/data/profile.json";
+import { focusOverrideHint, buzzwordEditCounts } from "@/lib/tailor/localSignals";
 
 const AUTO = "__auto__";
 
@@ -83,6 +84,15 @@ export default function FocusPickerDialog({
   );
   const [boosts, setBoosts] = useState(() => [...(keywordEdits?.boost || [])]);
   const [addText, setAddText] = useState("");
+
+  // Cross-posting learning signals (device-local), read fresh per open (the
+  // dialog remounts via its key): recurring exclusion counts badge the
+  // checklist, and a recurring focus correction for THIS detected area
+  // surfaces as an edit-your-library insight.
+  const [editCounts] = useState(() => buzzwordEditCounts());
+  const [detectionInsight] = useState(() =>
+    currentFocus?.source === "override" ? "" : focusOverrideHint(currentFocus?.name || ""),
+  );
 
   // Load the library's focus areas when the dialog opens (they're small, and
   // the user may have edited /library since the last open).
@@ -211,12 +221,41 @@ export default function FocusPickerDialog({
     <Dialog open={open} onClose={busy ? undefined : onClose} maxWidth="sm" fullWidth>
       <DialogTitle sx={{ pb: 0.5 }}>Set document focus &amp; buzzwords</DialogTitle>
       <DialogContent>
-        <Box sx={{ fontSize: "0.85rem", color: "var(--text-secondary)", lineHeight: 1.5, mb: 1 }}>
-          {currentFocus?.name
-            ? `These documents were tailored with the “${currentFocus.name}” focus (${currentFocus.source === "override" ? "pinned by you" : "auto-detected"}).`
-            : "No focus area was detected for this posting, so the documents got generic emphasis."}{" "}
-          Pick the focus they should have — both documents regenerate with it.
+        <Box sx={{ display: "flex", alignItems: "flex-start", gap: 1, mb: 1 }}>
+          <Box sx={{ flex: 1, fontSize: "0.85rem", color: "var(--text-secondary)", lineHeight: 1.5 }}>
+            {currentFocus?.name
+              ? `These documents were tailored with the “${currentFocus.name}” focus (${currentFocus.source === "override" ? "pinned by you" : "auto-detected"}).`
+              : "No focus area was detected for this posting, so the documents got generic emphasis."}{" "}
+            Pick the focus they should have — both documents regenerate with it.
+          </Box>
+          <Button
+            component="a"
+            href="/library"
+            target="_blank"
+            rel="noopener noreferrer"
+            size="small"
+            sx={{ textTransform: "none", whiteSpace: "nowrap", flexShrink: 0, fontSize: "0.78rem" }}
+            title="Open the library editor in a new tab to change which focus areas and buzzwords exist."
+          >
+            Edit in /library ↗
+          </Button>
         </Box>
+        {detectionInsight ? (
+          <Box
+            sx={{
+              mb: 1,
+              px: 1,
+              py: 0.75,
+              fontSize: "0.8rem",
+              lineHeight: 1.4,
+              color: "var(--text-primary)",
+              backgroundColor: "var(--accent-soft)",
+              borderRadius: 1,
+            }}
+          >
+            {detectionInsight}
+          </Box>
+        ) : null}
         {areas === null ? (
           <Box sx={{ display: "flex", justifyContent: "center", py: 2 }}>
             <CircularProgress size={22} />
@@ -264,7 +303,8 @@ export default function FocusPickerDialog({
         ) : null}
         {pickable !== null && pickable.length === 0 && !loadError ? (
           <Box sx={{ mt: 1, fontSize: "0.8rem", color: "var(--text-secondary)" }}>
-            Your library has no focus areas yet — add them in /library.
+            Your library has no focus areas yet — add them in{" "}
+            <a href="/library" target="_blank" rel="noopener noreferrer">/library</a>.
           </Box>
         ) : null}
         {canRemember ? (
@@ -314,6 +354,24 @@ export default function FocusPickerDialog({
                   {item.category ? (
                     <Box sx={{ flexShrink: 0, fontSize: "0.65rem", color: "var(--text-muted)" }}>
                       {item.category.replace(/_/g, " ")}
+                    </Box>
+                  ) : null}
+                  {(editCounts.exclude.get(item.canonical.toLowerCase()) || 0) >= 2 ? (
+                    <Box
+                      component="span"
+                      title="You've excluded this term on multiple postings — consider removing or re-categorizing it in /library."
+                      sx={{
+                        flexShrink: 0,
+                        fontSize: "0.6rem",
+                        fontWeight: 700,
+                        color: "var(--accent)",
+                        backgroundColor: "var(--accent-soft)",
+                        borderRadius: 1,
+                        px: 0.4,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      excluded on {editCounts.exclude.get(item.canonical.toLowerCase())} postings
                     </Box>
                   ) : null}
                 </Box>
