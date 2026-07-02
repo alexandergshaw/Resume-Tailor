@@ -9,7 +9,7 @@
 
 import { extractKeywords } from "@/lib/llm/engines/tailor-lite/keywords";
 import { defaultLibraryData } from "@/lib/llm/engines/tailor-lite/library/defaults";
-import { summarize } from "@/lib/text/summarize";
+import { summarize, rankSentences } from "@/lib/text/summarize";
 import { pick, pickDistinct } from "@/lib/text/phrasing";
 import { critiqueResume, renderCritique } from "@/lib/resume/critique";
 import { extractiveAnswer } from "./extractiveQa.js";
@@ -77,13 +77,20 @@ function subjectText({ pinnedContext, fetchedUrls, attachedFiles }) {
   return file ? file.content.trim() : "";
 }
 
-function analyzePosting(subject, resumeText) {
-  const terms = topTerms(subject, 8);
+function analyzePosting(subject, resumeText, depth = 0) {
+  // Depth pages through term tiers so "tell me more" goes deeper, not louder.
+  const terms = topTerms(subject, 8 * (depth + 1)).slice(8 * depth);
   if (terms.length === 0) {
-    return "I couldn't pull clear requirements out of that posting text. If you paste the responsibilities or qualifications section, I can point out the key skills to emphasize.";
+    return depth > 0
+      ? "That covers every significant term I can pull from this posting — the rest is boilerplate. Ask about your fit, or for interview prep against it."
+      : "I couldn't pull clear requirements out of that posting text. If you paste the responsibilities or qualifications section, I can point out the key skills to emphasize.";
   }
   const parts = [];
-  parts.push(`This posting leans most on: ${list(terms)}.`);
+  parts.push(
+    depth > 0
+      ? `Beyond the headline skills, the posting also mentions: ${list(terms)}.`
+      : `This posting leans most on: ${list(terms)}.`,
+  );
   const resumeTerms = new Set(topTerms(resumeText, 40).map((t) => t.toLowerCase()));
   if (resumeText && resumeText.trim()) {
     const gaps = terms.filter((t) => !resumeTerms.has(t.toLowerCase()));
@@ -91,28 +98,37 @@ function analyzePosting(subject, resumeText) {
       parts.push(
         `Your uploaded resume doesn't clearly mention: ${list(gaps)}. If you have that experience, work those exact terms into your bullets.`,
       );
-    } else {
+    } else if (depth === 0) {
       parts.push("Your resume already covers those terms well — make sure they appear near the top.");
     }
   }
-  parts.push(
-    "To tailor: mirror the posting's wording where it's genuinely true for you, lead each bullet with a result or metric, and cut experience that isn't relevant to this role.",
-  );
+  if (depth === 0) {
+    parts.push(
+      "To tailor: mirror the posting's wording where it's genuinely true for you, lead each bullet with a result or metric, and cut experience that isn't relevant to this role.",
+    );
+  }
   return parts.join(" ");
 }
 
-function reviewResume(resumeText) {
+function reviewResume(resumeText, depth = 0) {
   if (!resumeText || !resumeText.trim()) {
     return "Upload your resume (the Resume box on the left) and I'll point out the strengths it's leading with and where to tighten it.";
   }
-  const terms = topTerms(resumeText, 8);
   const parts = [];
-  if (terms.length > 0) parts.push(`Your resume reads strongest on: ${list(terms)}.`);
+  if (depth === 0) {
+    const terms = topTerms(resumeText, 8);
+    if (terms.length > 0) parts.push(`Your resume reads strongest on: ${list(terms)}.`);
+  }
   // Bullet-level critique of the candidate's actual experience lines — the part
-  // an LLM reviewer does that generic advice can't.
-  const critique = renderCritique(critiqueResume(resumeText));
+  // an LLM reviewer does that generic advice can't. Depth pages through the
+  // flagged bullets so a repeat ask reviews the NEXT ones.
+  const critique = renderCritique(critiqueResume(resumeText), { offset: depth * 3 });
   if (critique) {
-    parts.push(critique);
+    parts.push(depth > 0 ? `Continuing down the list: ${critique}` : critique);
+  } else if (depth > 0) {
+    parts.push(
+      "That covers every bullet I'd flag — the rest read well. Next lever: reorder so the most posting-relevant bullets sit first under each role.",
+    );
   } else {
     parts.push(
       "A few quick wins: start every bullet with an action verb and a concrete outcome (numbers beat adjectives), keep it to the experience most relevant to the roles you're targeting, and mirror the exact keywords from each posting you apply to.",
@@ -121,10 +137,18 @@ function reviewResume(resumeText) {
   return parts.join(" ");
 }
 
-function summarizeApplications(applications) {
+function summarizeApplications(applications, depth = 0) {
   const apps = Array.isArray(applications) ? applications : [];
   if (apps.length === 0) {
     return "You don't have any tracked applications yet. Once you tailor and track jobs, I can summarize your pipeline and flag upcoming interviews here.";
+  }
+  // Depth: the follow-up gets the per-application breakdown, not the totals again.
+  if (depth > 0) {
+    const lines = apps
+      .slice(0, 10)
+      .map((a) => `${a.company || "Unknown company"}${a.role ? ` (${a.role})` : ""} — ${a.status || "status unknown"}`);
+    const more = apps.length > 10 ? ` …and ${apps.length - 10} more.` : "";
+    return `Here's each one: ${lines.join("; ")}.${more}`;
   }
   const byStatus = {};
   for (const a of apps) {
@@ -158,12 +182,13 @@ const TECH_QUESTION_TEMPLATES = [
 ];
 
 // Likely questions for a specific posting, derived from its dominant terms.
-export function likelyQuestions(subject, { limit = 3 } = {}) {
-  const terms = topTerms(subject, limit + 1);
-  return terms.slice(0, limit).map((t) => pick(t, TECH_QUESTION_TEMPLATES)(t));
+// `offset` pages into deeper terms so a follow-up asks about NEW topics.
+export function likelyQuestions(subject, { limit = 3, offset = 0 } = {}) {
+  const terms = topTerms(subject, offset + limit + 1).slice(offset, offset + limit);
+  return terms.map((t) => pick(t, TECH_QUESTION_TEMPLATES)(t));
 }
 
-function interviewPrep(applications, subject) {
+function interviewPrep(applications, subject, depth = 0) {
   const apps = Array.isArray(applications) ? applications : [];
   const upcoming = [];
   for (const a of apps) {
@@ -174,28 +199,43 @@ function interviewPrep(applications, subject) {
   const parts = [];
   // When a posting is pinned, predict what they'll actually ask about.
   if (subject && subject.trim()) {
-    const questions = likelyQuestions(subject);
+    const questions = likelyQuestions(subject, { limit: 3, offset: depth * 3 });
     if (questions.length > 0) {
       parts.push(
-        `Based on this posting, expect questions like: ${questions.join(" ")} Have one concrete story or example ready for each.`,
+        depth > 0
+          ? `A few more they could ask: ${questions.join(" ")}`
+          : `Based on this posting, expect questions like: ${questions.join(" ")} Have one concrete story or example ready for each.`,
+      );
+    } else if (depth > 0) {
+      parts.push(
+        "That exhausts the posting's technical topics — spend the remaining prep on your three or four flexible stories and on questions to ask THEM.",
       );
     }
   }
-  parts.push(
-    "For behavioral questions, answer in STAR order: Situation, Task, Action, Result — and end on a number or clear outcome. Prepare three or four stories you can flex across questions (a conflict, a failure, a win, a leadership moment).",
-    "For technical questions, restate the problem and constraints first, think out loud, and call out trade-offs before you commit to an approach.",
-  );
+  if (depth === 0) {
+    parts.push(
+      "For behavioral questions, answer in STAR order: Situation, Task, Action, Result — and end on a number or clear outcome. Prepare three or four stories you can flex across questions (a conflict, a failure, a win, a leadership moment).",
+      "For technical questions, restate the problem and constraints first, think out loud, and call out trade-offs before you commit to an approach.",
+    );
+  } else if (parts.length === 0) {
+    parts.push(
+      "Beyond rehearsal: prepare two questions to ask them (one about the team's biggest problem, one about how success is measured), and have your salary range ready in case it comes up.",
+    );
+  }
   if (upcoming.length > 0) {
     parts.push(`You have interviews coming up for: ${upcoming.slice(0, 5).join(", ")} — rehearse a story tied to each role.`);
   }
   return parts.join(" ");
 }
 
-function coverLetterHelp(pinnedContext) {
+function coverLetterHelp(pinnedContext, depth = 0) {
   const co =
     pinnedContext && typeof pinnedContext.label === "string" && pinnedContext.label.trim()
       ? pinnedContext.label.trim()
       : "the company";
+  if (depth > 0) {
+    return "Second-pass polish: cut every sentence that could appear in anyone else's letter, name the team or product you'd be working on, and end by proposing the next step rather than thanking them for their time. Read it aloud once — anything you stumble on, rewrite.";
+  }
   return `Keep a cover letter to three short paragraphs: why this role and ${co} specifically, one story that proves you can do the job (with a result), and a confident close. Avoid restating your resume — pick the single most relevant accomplishment and go deep on it. Reference something concrete and recent about the company so it doesn't read as a template.`;
 }
 
@@ -206,10 +246,21 @@ function capabilities() {
 // "Summarize this" over whatever the user is looking at — the pinned posting /
 // fetched article, else the resume — using the extractive summarizer plus the
 // salient terms. A real multi-sentence summary, not a keyword dump.
-function summarizeSubject(subject, resumeText) {
+function summarizeSubject(subject, resumeText, depth = 0) {
   const body = subject || resumeText || "";
   if (!body.trim()) {
     return "Pin a posting (use “Ask AI” on a job), paste some text, or upload your resume, and I'll summarize the key points.";
+  }
+  // Depth pages through the ranked sentences: the follow-up summary continues
+  // with the NEXT most informative sentences instead of repeating the gist.
+  if (depth > 0) {
+    const next = rankSentences(body)
+      .slice(depth * 4, depth * 4 + 4)
+      .sort((a, b) => a.idx - b.idx)
+      .map((r) => r.sentence);
+    return next.length > 0
+      ? `Going deeper: ${next.join(" ")}`
+      : "That's the whole text summarized — nothing substantial left to add. Ask about your fit against it if you want the comparison.";
   }
   const gist = summarize(body, { maxSentences: 4 });
   const terms = topTerms(body, 6);
@@ -219,7 +270,20 @@ function summarizeSubject(subject, resumeText) {
 }
 
 // Keyword-based fit estimate between the pinned posting and the uploaded resume.
-function fitAssessment(subject, resumeText) {
+function fitAssessment(subject, resumeText, depth = 0) {
+  // The follow-up turns the verdict into an action plan for the gaps.
+  if (depth > 0 && subject && subject.trim() && resumeText && resumeText.trim()) {
+    const postingTerms = topTerms(subject, 8);
+    const have = new Set(topTerms(resumeText, 40).map((t) => t.toLowerCase()));
+    const gaps = postingTerms.filter((t) => !have.has(t.toLowerCase()));
+    if (gaps.length === 0) {
+      return "Nothing more to close on keywords — your edge now is framing: put the overlapping skills in your top three bullets and quantify each one.";
+    }
+    return `To close the gap, work on it in this order: ${gaps
+      .slice(0, 3)
+      .map((g, i) => `${i + 1}) add a truthful bullet showing ${g}`)
+      .join("; ")}. If you don't have that experience, name the closest adjacent thing you HAVE done — adjacency beats omission.`;
+  }
   if (!subject || !subject.trim()) {
     return "Pin the posting (use “Ask AI” on a job) so I can compare it against your resume and estimate your fit.";
   }
@@ -251,9 +315,10 @@ const SALARY_TIPS = [
   "Negotiate total comp — base, bonus, equity, sign-on, PTO — not just salary.",
   "Get the offer in writing before you counter, and counter once, confidently, with a specific number and a short reason.",
 ];
-function salaryGuidance(seed) {
-  const [a, b] = pickDistinct(seed, SALARY_TIPS, 2);
-  return `A few principles: ${a} ${b || ""}`.trim();
+function salaryGuidance(seed, depth = 0) {
+  // Depth rotates through the tip bank so a follow-up gets different advice.
+  const [a, b] = pickDistinct(`${seed}:${depth}`, SALARY_TIPS, 2);
+  return `${depth > 0 ? "More on that:" : "A few principles:"} ${a} ${b || ""}`.trim();
 }
 
 // Shorten the previous answer on request (a common follow-up).
@@ -286,6 +351,86 @@ const RE = {
   posting: /\b(this (job|role|posting|position|description)|requirements?|qualifications?|responsibilities|what skills|tailor|emphasi[sz]e)\b/i,
 };
 
+// Classify a message's intent by the same RE table the dispatcher uses, in the
+// same precedence order. Returns an intent key or null (greetings/chatter).
+export function classifyIntent(text) {
+  const t = String(text || "");
+  if (!t.trim()) return null;
+  if (RE.summarize.test(t)) return "summarize";
+  if (RE.fit.test(t)) return "fit";
+  if (RE.salary.test(t)) return "salary";
+  if (RE.coverLetter.test(t)) return "coverLetter";
+  if (RE.resume.test(t)) return "resume";
+  if (RE.applications.test(t)) return "applications";
+  if (RE.interview.test(t)) return "interview";
+  if (RE.posting.test(t)) return "posting";
+  return null;
+}
+
+// What was this conversation about before the current message? Walks the prior
+// user turns newest-first: brief "more" follow-ups add depth (each one already
+// went a level deeper), and the first classifiable message names the intent.
+// Falls back to intent null (with depth) when earlier turns were unclassifiable
+// — the caller can still continue a subject-driven analysis.
+function conversationFocus(messages) {
+  const users = (messages || [])
+    .filter((m) => m && m.role !== "assistant" && typeof m.content === "string" && m.content.trim())
+    .map((m) => m.content.trim());
+  users.pop(); // the current message
+  let depth = 0;
+  let sawAnyUser = false;
+  for (let i = users.length - 1; i >= 0; i -= 1) {
+    const t = users[i];
+    sawAnyUser = true;
+    if (wordCount(t) <= 5 && RE.more.test(t)) {
+      depth += 1;
+      continue;
+    }
+    const intent = classifyIntent(t);
+    if (!intent) continue;
+    let repeats = 0;
+    for (let j = i - 1; j >= 0; j -= 1) if (classifyIntent(users[j]) === intent) repeats += 1;
+    return { intent, depth: depth + repeats };
+  }
+  return sawAnyUser ? { intent: null, depth } : null;
+}
+
+// How many times the user already asked this same intent earlier in the
+// conversation — a repeat ask should go deeper, never repeat itself.
+function countPriorIntent(messages, intent) {
+  const users = (messages || [])
+    .filter((m) => m && m.role !== "assistant" && typeof m.content === "string" && m.content.trim())
+    .map((m) => m.content.trim());
+  users.pop();
+  return users.filter((t) => classifyIntent(t) === intent).length;
+}
+
+// Route one intent to its handler at a given depth.
+function answerIntent(intent, ctx, depth = 0) {
+  const { text, subject, resumeText, applications, pinnedContext } = ctx;
+  switch (intent) {
+    case "summarize":
+      return summarizeSubject(subject, resumeText, depth);
+    case "fit":
+      return fitAssessment(subject, resumeText, depth);
+    case "salary":
+      return salaryGuidance(text, depth);
+    case "coverLetter":
+      return coverLetterHelp(pinnedContext, depth);
+    case "resume":
+      return reviewResume(resumeText, depth);
+    case "applications":
+      return summarizeApplications(applications, depth);
+    case "interview":
+      return interviewPrep(applications, subject, depth);
+    case "posting":
+      if (subject) return analyzePosting(subject, resumeText, depth);
+      return "Pin a posting (use “Ask AI” on a job) or paste the description, and I'll flag the key skills to emphasize and how to tailor for it.";
+    default:
+      return "";
+  }
+}
+
 // Produce a single assistant reply for the embedded engine. Returns a plain
 // string (never empty).
 export function localChatReply({
@@ -300,11 +445,20 @@ export function localChatReply({
   const subject = subjectText({ pinnedContext, fetchedUrls, attachedFiles });
   const prevAssistant = lastAssistantText(messages);
   const isBriefFollowUp = wordCount(text) <= 5;
+  const ctx = { text, subject, resumeText, applications, pinnedContext };
 
   // Conversational follow-ups that operate on the previous answer. Guarded to
   // short messages so "tell me more about the salary" still routes to salary.
   if (prevAssistant && isBriefFollowUp && RE.shorten.test(text)) return condense(prevAssistant);
-  if (prevAssistant && isBriefFollowUp && RE.more.test(text)) return moreTips(text);
+  if (prevAssistant && isBriefFollowUp && RE.more.test(text)) {
+    // Continue the conversation's actual topic one level deeper, instead of a
+    // canned generic tip. The subject-driven analyze flow (pin → "Ask AI")
+    // continues too, even though its opener classifies to no intent.
+    const focus = conversationFocus(messages);
+    if (focus?.intent) return answerIntent(focus.intent, ctx, focus.depth + 1);
+    if (focus && subject) return answerIntent("posting", ctx, focus.depth + 1);
+    return moreTips(text);
+  }
 
   // Direct questions about the pinned posting ("is it remote?", "what does it
   // pay?") get answered FROM the posting — quoted verbatim, or an honest
@@ -318,22 +472,20 @@ export function localChatReply({
     }
   }
 
-  // Explicit intents, most specific to least.
-  if (RE.summarize.test(text)) return summarizeSubject(subject, resumeText);
-  if (RE.fit.test(text)) return fitAssessment(subject, resumeText);
-  if (RE.salary.test(text)) return salaryGuidance(text);
-  if (RE.coverLetter.test(text)) return coverLetterHelp(pinnedContext);
-  if (RE.resume.test(text)) return reviewResume(resumeText);
-  if (RE.applications.test(text)) return summarizeApplications(applications);
-  if (RE.interview.test(text)) return interviewPrep(applications, subject);
-  if (RE.greeting.test(text)) return capabilities();
+  // Explicit intents; a repeat of the same ask goes deeper instead of
+  // repeating the previous answer verbatim.
+  const intent = classifyIntent(text);
+  if (intent && intent !== "posting") {
+    return answerIntent(intent, ctx, countPriorIntent(messages, intent));
+  }
+  if (!intent && RE.greeting.test(text)) return capabilities();
 
   // A posting is the subject → analyze it (the common "Ask AI on this job" flow).
-  if (subject && (RE.posting.test(text) || pinnedContext || fetchedUrls.some((u) => u && !u.error))) {
-    return analyzePosting(subject, resumeText);
+  if (subject && (intent === "posting" || pinnedContext || fetchedUrls.some((u) => u && !u.error))) {
+    return analyzePosting(subject, resumeText, countPriorIntent(messages, "posting"));
   }
-  if (RE.posting.test(text) && !subject) {
-    return "Pin a posting (use “Ask AI” on a job) or paste the description, and I'll flag the key skills to emphasize and how to tailor for it.";
+  if (intent === "posting" && !subject) {
+    return answerIntent("posting", ctx, 0);
   }
 
   // Fallback: rather than a canned capabilities blurb, try to be useful from

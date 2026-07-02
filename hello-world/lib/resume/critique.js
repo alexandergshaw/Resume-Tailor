@@ -87,21 +87,28 @@ export function critiqueResume(resumeText) {
 }
 
 // Render the critique as short plain prose for the chat (no markdown emphasis).
-// Returns "" when there was nothing bullet-shaped to critique.
-export function renderCritique(critique, { maxExamples = 3 } = {}) {
+// `offset` skips already-shown bullets so a follow-up ("tell me more") surfaces
+// the NEXT ones instead of repeating. Returns "" when there was nothing
+// bullet-shaped to critique, or nothing left past the offset.
+export function renderCritique(critique, { maxExamples = 3, offset = 0 } = {}) {
   const c = critique || {};
   if (!c.total) return "";
+  const shownBullets = (c.bullets || []).slice(offset, offset + maxExamples);
+  if (offset > 0 && shownBullets.length === 0) return "";
   const parts = [];
-  parts.push(
-    `${c.withMetrics} of your ${c.total} experience bullets ${c.withMetrics === 1 ? "has" : "have"} a number in ${c.withMetrics === 1 ? "it" : "them"} — quantified bullets are what reviewers remember.`,
-  );
-  for (const b of (c.bullets || []).slice(0, maxExamples)) {
+  if (offset === 0) {
+    parts.push(
+      `${c.withMetrics} of your ${c.total} experience bullets ${c.withMetrics === 1 ? "has" : "have"} a number in ${c.withMetrics === 1 ? "it" : "them"} — quantified bullets are what reviewers remember.`,
+    );
+  }
+  for (const b of shownBullets) {
     const excerpt = b.text.length > 60 ? `${b.text.slice(0, 60).trim()}…` : b.text;
     const advice = b.issues.map((i) => i.advice).join("; ");
     parts.push(`"${excerpt}" — ${advice}.`);
   }
-  if (c.flagged > maxExamples) {
-    parts.push(`${c.flagged - maxExamples} more bullet${c.flagged - maxExamples === 1 ? "" : "s"} could use the same treatment.`);
+  const remaining = c.flagged - (offset + shownBullets.length);
+  if (remaining > 0) {
+    parts.push(`${remaining} more bullet${remaining === 1 ? "" : "s"} could use the same treatment.`);
   }
   return parts.join(" ");
 }

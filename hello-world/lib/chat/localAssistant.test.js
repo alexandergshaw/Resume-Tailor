@@ -182,3 +182,109 @@ describe("localChatReply intents", () => {
     expect(reply).not.toMatch(/offline assistant/i);
   });
 });
+
+describe("conversation memory (continuation and non-repetition)", () => {
+  const WEAK_RESUME = [
+    "EXPERIENCE",
+    "Software Engineer, Acme Corp",
+    "Jan 2020 – Present",
+    "- Responsible for maintaining the reporting dashboards for stakeholders",
+    "- Worked on internal tooling for various engineering teams",
+    "- Helped with the migration of legacy services to the cloud",
+    "- Involved in planning meetings and roadmap discussions with the team",
+  ].join("\n");
+
+  function pinned(content = POSTING) {
+    return { label: "Backend Engineer", content };
+  }
+
+  it("'tell me more' continues the posting analysis with the NEXT tier of terms", () => {
+    const first = localChatReply({
+      messages: [{ role: "user", content: "what does this posting emphasize?" }],
+      pinnedContext: pinned(),
+    });
+    const more = localChatReply({
+      messages: [
+        { role: "user", content: "what does this posting emphasize?" },
+        { role: "assistant", content: first },
+        { role: "user", content: "tell me more" },
+      ],
+      pinnedContext: pinned(),
+    });
+    expect(more).not.toBe(first);
+    expect(more).toMatch(/also mentions|every significant term/i);
+  });
+
+  it("repeating a resume review surfaces the NEXT flagged bullets, not the same ones", () => {
+    const ask = { role: "user", content: "review my resume" };
+    const first = localChatReply({ messages: [ask], resumeText: WEAK_RESUME });
+    const second = localChatReply({
+      messages: [ask, { role: "assistant", content: first }, ask],
+      resumeText: WEAK_RESUME,
+    });
+    expect(second).not.toBe(first);
+    expect(second).toMatch(/continuing down the list|covers every bullet/i);
+    // The first review's opening bullet isn't re-critiqued.
+    const firstBullet = first.match(/"([^"]+)"/)?.[1];
+    if (firstBullet) expect(second).not.toContain(firstBullet);
+  });
+
+  it("'more' after an applications summary gives the per-application breakdown", () => {
+    const apps = [
+      { company: "Acme", role: "Backend Engineer", status: "applied", stages: [] },
+      { company: "Globex", status: "interviewing", stages: [] },
+    ];
+    const first = localChatReply({
+      messages: [{ role: "user", content: "how many applications do I have?" }],
+      applications: apps,
+    });
+    const more = localChatReply({
+      messages: [
+        { role: "user", content: "how many applications do I have?" },
+        { role: "assistant", content: first },
+        { role: "user", content: "more" },
+      ],
+      applications: apps,
+    });
+    expect(more).toMatch(/here's each one/i);
+    expect(more).toContain("Acme");
+    expect(more).toContain("Globex");
+  });
+
+  it("chained 'more' keeps going deeper until it honestly runs out", () => {
+    const ask = { role: "user", content: "help me prep for the interview" };
+    const msgs = [ask];
+    const replies = [];
+    for (let i = 0; i < 4; i += 1) {
+      const reply = localChatReply({ messages: msgs, pinnedContext: pinned() });
+      replies.push(reply);
+      msgs.push({ role: "assistant", content: reply }, { role: "user", content: "tell me more" });
+    }
+    // No two consecutive replies identical; eventually admits exhaustion.
+    for (let i = 1; i < replies.length; i += 1) expect(replies[i]).not.toBe(replies[i - 1]);
+    expect(replies[replies.length - 1]).toMatch(/exhausts|questions to ask|beyond rehearsal/i);
+  });
+
+  it("still gives generic tips on 'more' when there was no prior topic", () => {
+    const reply = localChatReply({
+      messages: [
+        { role: "user", content: "ok" },
+        { role: "assistant", content: "Hello." },
+        { role: "user", content: "tell me more" },
+      ],
+    });
+    expect(reply).toMatch(/quantify|tailor|requirement|mirror/i);
+  });
+
+  it("is deterministic: the same conversation yields the same reply", () => {
+    const convo = {
+      messages: [
+        { role: "user", content: "review my resume" },
+        { role: "assistant", content: "..." },
+        { role: "user", content: "tell me more" },
+      ],
+      resumeText: WEAK_RESUME,
+    };
+    expect(localChatReply(convo)).toBe(localChatReply(convo));
+  });
+});
