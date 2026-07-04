@@ -30,6 +30,7 @@ import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import FilterAltOffIcon from "@mui/icons-material/FilterAltOff";
 import Collapse from "@mui/material/Collapse";
 import Snackbar from "@mui/material/Snackbar";
+import TabHeader from "./TabHeader";
 import styles from "../page.module.css";
 import JobFilterControls from "./JobFilterControls";
 import SavedSearchStrip from "./SavedSearchStrip";
@@ -649,146 +650,146 @@ export default function LiveFeedTab({
 
   return (
     <section className={styles.tabPanel}>
-      {/* Header band: status + filters toggle */}
-      <Box
-        sx={{
-          display: "flex",
-          flexWrap: "wrap",
-          alignItems: "center",
-          gap: 1.5,
-          py: 1,
-          mb: 1.5,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-        }}
-      >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mr: "auto" }}>
-          <Tooltip title="Refresh now">
-            <span>
-              <IconButton
-                onClick={handleManualRefresh}
-                disabled={refreshing}
-                size="small"
-                color="primary"
-              >
-                {refreshing ? <CircularProgress size={18} /> : <RefreshIcon />}
-              </IconButton>
-            </span>
-          </Tooltip>
-          {/* Freshness indicator dot */}
+      <TabHeader
+        title="Auto applying"
+        description="A live job feed from your saved searches, with auto-tailored applications."
+        actions={
           <Box
             sx={{
-              width: 8,
-              height: 8,
-              borderRadius: "50%",
-              flexShrink: 0,
-              bgcolor: !lastUpdatedAt
-                ? "grey.400"
-                : isStale
-                  ? "warning.main"
-                  : "success.main",
-              boxShadow: (theme) =>
-                !lastUpdatedAt
-                  ? "none"
-                  : `0 0 0 3px ${
-                      isStale
-                        ? "var(--warning-soft)"
-                        : "var(--success-soft)"
-                    }`,
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: 1,
             }}
-          />
-          <Typography variant="body2" color="text.secondary">
-            {lastUpdatedAt
-              ? `Updated ${lastUpdatedLabel}`
-              : "Awaiting first ingest"}
-          </Typography>
-          {sourceHealth?.greenhouse?.failures > 0 && (
-            <Tooltip
-              title={`${sourceHealth.greenhouse.failures} source(s) failed on the last ingest`}
-            >
-              <Chip
-                size="small"
-                color="warning"
-                variant="outlined"
-                label={`${sourceHealth.greenhouse.failures} src errors`}
-              />
+          >
+            <Tooltip title="Refresh now">
+              <span>
+                <IconButton
+                  onClick={handleManualRefresh}
+                  disabled={refreshing}
+                  size="small"
+                  color="primary"
+                >
+                  {refreshing ? <CircularProgress size={18} /> : <RefreshIcon />}
+                </IconButton>
+              </span>
             </Tooltip>
-          )}
-        </Box>
 
-        {/* Feed vs. Auto-Apply Queue toggle */}
-        <Box
-          sx={{
-            display: "inline-flex",
-            borderRadius: 1.5,
-            border: "1px solid",
-            borderColor: "divider",
-            overflow: "hidden",
-          }}
-        >
-          <Button
-            size="small"
-            disableElevation
-            variant={view === "feed" ? "contained" : "text"}
-            color={view === "feed" ? "primary" : "inherit"}
-            onClick={() => setView("feed")}
-            sx={{ textTransform: "none", fontWeight: 600, borderRadius: 0, px: 1.75 }}
-          >
-            Feed
-          </Button>
-          <Button
-            size="small"
-            disableElevation
-            variant={view === "queue" ? "contained" : "text"}
-            color={view === "queue" ? "primary" : "inherit"}
-            onClick={() => setView("queue")}
-            sx={{ textTransform: "none", fontWeight: 600, borderRadius: 0, px: 1.75 }}
-          >
+            {/* Freshness indicator dot */}
+            <Box
+              sx={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                flexShrink: 0,
+                bgcolor: !lastUpdatedAt
+                  ? "grey.400"
+                  : isStale
+                    ? "warning.main"
+                    : "success.main",
+                boxShadow: (theme) =>
+                  !lastUpdatedAt
+                    ? "none"
+                    : `0 0 0 3px ${
+                        isStale
+                          ? "var(--warning-soft)"
+                          : "var(--success-soft)"
+                      }`,
+              }}
+            />
+            <Typography variant="caption" color="text.secondary">
+              {lastUpdatedAt
+                ? `Updated ${lastUpdatedLabel}`
+                : "Awaiting first ingest"}
+            </Typography>
+            {sourceHealth?.greenhouse?.failures > 0 && (
+              <Tooltip
+                title={`${sourceHealth.greenhouse.failures} source(s) failed on the last ingest`}
+              >
+                <Chip
+                  size="small"
+                  color="warning"
+                  variant="outlined"
+                  label={`${sourceHealth.greenhouse.failures} src errors`}
+                />
+              </Tooltip>
+            )}
+
+            {/* Feed vs. Auto-Apply Queue toggle */}
+            <Box
+              sx={{
+                display: "inline-flex",
+                borderRadius: 1.5,
+                border: "1px solid",
+                borderColor: "divider",
+                overflow: "hidden",
+              }}
+            >
+              <Button
+                size="small"
+                disableElevation
+                variant={view === "feed" ? "contained" : "text"}
+                color={view === "feed" ? "primary" : "inherit"}
+                onClick={() => setView("feed")}
+                sx={{ textTransform: "none", fontWeight: 600, borderRadius: 0, px: 1.75 }}
+              >
+                Feed
+              </Button>
+              <Button
+                size="small"
+                disableElevation
+                variant={view === "queue" ? "contained" : "text"}
+                color={view === "queue" ? "primary" : "inherit"}
+                onClick={() => setView("queue")}
+                sx={{ textTransform: "none", fontWeight: 600, borderRadius: 0, px: 1.75 }}
+              >
+                <Badge
+                  badgeContent={queueCount}
+                  color="secondary"
+                  sx={{ "& .MuiBadge-badge": { right: -10, top: -2 } }}
+                >
+                  Queue
+                </Badge>
+              </Button>
+            </Box>
+
             <Badge
-              badgeContent={queueCount}
-              color="secondary"
-              sx={{ "& .MuiBadge-badge": { right: -10, top: -2 } }}
+              badgeContent={activeFilterCount}
+              color="primary"
+              overlap="rectangular"
+              sx={{ "& .MuiBadge-badge": { right: 4, top: 4 } }}
             >
-              Auto-Apply Queue
+              <Button
+                size="small"
+                variant={advancedOpen || activeFilterCount > 0 ? "contained" : "outlined"}
+                color={activeFilterCount > 0 ? "primary" : "inherit"}
+                disableElevation
+                startIcon={<TuneIcon />}
+                endIcon={advancedOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                onClick={() => setAdvancedOpen((v) => !v)}
+                sx={{ textTransform: "none", fontWeight: 600, px: 1.75 }}
+              >
+                Filters
+              </Button>
             </Badge>
-          </Button>
-        </Box>
 
-        <Badge
-          badgeContent={activeFilterCount}
-          color="primary"
-          overlap="rectangular"
-          sx={{ "& .MuiBadge-badge": { right: 4, top: 4 } }}
-        >
-          <Button
-            size="small"
-            variant={advancedOpen || activeFilterCount > 0 ? "contained" : "outlined"}
-            color={activeFilterCount > 0 ? "primary" : "inherit"}
-            disableElevation
-            startIcon={<TuneIcon />}
-            endIcon={advancedOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-            onClick={() => setAdvancedOpen((v) => !v)}
-            sx={{ textTransform: "none", fontWeight: 600, px: 1.75 }}
-          >
-            Filters
-          </Button>
-        </Badge>
-
-        {currentUser && (
-          <Tooltip title="Edit the profile used by Auto Fill and get your bookmarklet">
-            <Button
-              size="small"
-              variant="outlined"
-              color="inherit"
-              disableElevation
-              onClick={() => setAutofillDialogOpen(true)}
-              sx={{ textTransform: "none", fontWeight: 600, px: 1.75 }}
-            >
-              Autofill profile
-            </Button>
-          </Tooltip>
-        )}
-      </Box>
+            {currentUser && (
+              <Tooltip title="Edit the profile used by Auto Fill and get your bookmarklet">
+                <Button
+                  size="small"
+                  variant="outlined"
+                  color="inherit"
+                  disableElevation
+                  onClick={() => setAutofillDialogOpen(true)}
+                  sx={{ textTransform: "none", fontWeight: 600, px: 1.75 }}
+                >
+                  Autofill profile
+                </Button>
+              </Tooltip>
+            )}
+          </Box>
+        }
+      />
 
       {/* Collapsible advanced filters + saved searches (ported from Job Search) */}
       <Collapse in={advancedOpen} unmountOnExit>

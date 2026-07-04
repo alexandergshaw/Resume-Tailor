@@ -502,13 +502,23 @@ function mapOne(slot, keywords, data, state) {
     // "hands-on work with {{TECHNICAL_CAPABILITIES}}" leads with the skills THIS
     // posting asks for, not whatever the list happens to start with.
     if (state.focusArea && areaField) {
+      const nonEmpty = (v) => Array.isArray(v) && v.some((s) => typeof s === "string" && s.trim());
+      // A non-technical focus area (curated with domain/leadership capabilities but
+      // no tech stack) must NOT fall back to the candidate's technologies for the
+      // technical-capabilities line — that's what makes a culture-change / program
+      // resume still advertise React and Kubernetes. Draw the tech line from the
+      // area's domain capabilities instead, so it leads with relevant expertise.
+      const sourceField =
+        areaField === "technical_capabilities" && !nonEmpty(state.focusArea.technical_capabilities) && nonEmpty(state.focusArea.domain_capabilities)
+          ? "domain_capabilities"
+          : areaField;
       const list = rankAreaList(
-        (state.focusArea[areaField] || []).filter((s) => typeof s === "string" && s.trim()),
+        (state.focusArea[sourceField] || []).filter((s) => typeof s === "string" && s.trim()),
         keywords,
         state.taxonomy,
       );
       if (list.length) {
-        return make("keywords", emphasisSlice(list, limit, occurrence, state.serialAnd), `Focus area (${state.focusArea.name}.${areaField})`);
+        return make("keywords", emphasisSlice(list, limit, occurrence, state.serialAnd), `Focus area (${state.focusArea.name}.${sourceField})`);
       }
     }
     return make("keywords", capabilityJoin(keywords, state.byCat, cats, limit, state.universe, state.allowGaps, avoid, occurrence, state.serialAnd, state.taxonomy, state.skillGroups), `Top ${cats.join("+")} keywords`);

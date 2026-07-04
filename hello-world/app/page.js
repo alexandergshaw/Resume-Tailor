@@ -6,6 +6,7 @@ import JobDescriptionTab from "./components/JobDescriptionTab";
 import PostingUrlTab from "./components/PostingUrlTab";
 import ScreenshotTab from "./components/ScreenshotTab";
 import ApplyingControls from "./components/ApplyingControls";
+import TabHeader from "./components/TabHeader";
 import NavTabs from "./components/NavTabs";
 import TrackingTab from "./components/TrackingTab";
 import LiveFeedTab from "./components/LiveFeedTab";
@@ -2928,6 +2929,11 @@ export default function Home() {
 
         {mainTab === "manualApplying" && (
           <>
+        <TabHeader
+          title="Tailor to a posting"
+          description="Paste a posting URL, a job description, or screenshots to generate a tailored resume and cover letter."
+        />
+
         <NavTabs
           size="section"
           value={activeSection}
@@ -3228,11 +3234,38 @@ export default function Home() {
         }
         focus={tailoringMap[preview.resumePreview.jobId]?.focusInfo || null}
         coverVariant={tailoringMap[preview.resumePreview.jobId]?.coverVariantInfo || null}
+        persona={tailoringMap[preview.resumePreview.jobId]?.personaInfo || null}
         keywordEditsCount={
           (tailoringMap[preview.resumePreview.jobId]?.keywordEditsOverride?.boost?.length || 0) +
           (tailoringMap[preview.resumePreview.jobId]?.keywordEditsOverride?.exclude?.length || 0)
         }
-        onOpenFocusPicker={() => setFocusPickerOpen(true)}
+        onOpenFocusPicker={() => setFocusPickerOpen((v) => !v)}
+        focusControls={
+          <FocusPickerDialog
+            embedded
+            key={focusPickerOpen ? `focus-${preview.resumePreview.jobId}` : "focus-idle"}
+            open={focusPickerOpen}
+            currentFocus={tailoringMap[preview.resumePreview.jobId]?.focusInfo || null}
+            override={tailoringMap[preview.resumePreview.jobId]?.focusAreaOverride || ""}
+            keywords={tailoringMap[preview.resumePreview.jobId]?.keywordsInfo || null}
+            keywordEdits={tailoringMap[preview.resumePreview.jobId]?.keywordEditsOverride || null}
+            coverVariant={tailoringMap[preview.resumePreview.jobId]?.coverVariantInfo || null}
+            coverVariantOverride={tailoringMap[preview.resumePreview.jobId]?.coverVariantOverride || ""}
+            persona={tailoringMap[preview.resumePreview.jobId]?.personaInfo || null}
+            personaOverride={tailoringMap[preview.resumePreview.jobId]?.personaOverride || ""}
+            postingTitle={preview.resumePreview.title}
+            onClose={() => setFocusPickerOpen(false)}
+            onApply={preview.applyFocusArea}
+          />
+        }
+        onSetFraming={(variant) =>
+          preview.applyFocusArea(
+            tailoringMap[preview.resumePreview.jobId]?.focusAreaOverride || "",
+            tailoringMap[preview.resumePreview.jobId]?.keywordEditsOverride || null,
+            variant,
+            tailoringMap[preview.resumePreview.jobId]?.personaOverride || "",
+          )
+        }
         onResearchCompany={() =>
           research.openCompanyResearch({
             id: preview.resumePreview.jobId,
@@ -3283,20 +3316,6 @@ export default function Home() {
         prompt={libraryPrompt}
         onClose={() => setLibraryPrompt(null)}
         onCommit={commitLibrarySuggestions}
-      />
-
-      <FocusPickerDialog
-        key={focusPickerOpen ? `focus-${preview.resumePreview.jobId}` : "focus-idle"}
-        open={focusPickerOpen}
-        currentFocus={tailoringMap[preview.resumePreview.jobId]?.focusInfo || null}
-        override={tailoringMap[preview.resumePreview.jobId]?.focusAreaOverride || ""}
-        keywords={tailoringMap[preview.resumePreview.jobId]?.keywordsInfo || null}
-        keywordEdits={tailoringMap[preview.resumePreview.jobId]?.keywordEditsOverride || null}
-        coverVariant={tailoringMap[preview.resumePreview.jobId]?.coverVariantInfo || null}
-        coverVariantOverride={tailoringMap[preview.resumePreview.jobId]?.coverVariantOverride || ""}
-        postingTitle={preview.resumePreview.title}
-        onClose={() => setFocusPickerOpen(false)}
-        onApply={preview.applyFocusArea}
       />
     </div>
   );

@@ -10,6 +10,7 @@ import Tab from "@mui/material/Tab";
 import Tabs from "@mui/material/Tabs";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
+import TabHeader from "./TabHeader";
 import EntityTab from "./library/EntityTab";
 import ProfileTab from "./library/ProfileTab";
 import PreviewTab from "./library/PreviewTab";
@@ -21,6 +22,7 @@ import {
   CONTENT_SCHEMA,
   TABS,
 } from "./library/schemas";
+import PersonaTab from "./library/PersonaTab";
 
 export default function LibraryEditor() {
   const [tab, setTab] = useState(0);
@@ -59,17 +61,15 @@ export default function LibraryEditor() {
 
   return (
     <Box sx={{ width: "100%", maxWidth: 1080, minWidth: 0, mx: "auto", p: { xs: 2, md: 4 } }}>
-      <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ mb: 3, justifyContent: "space-between", alignItems: { xs: "stretch", sm: "center" } }}>
-        <Box>
-          <Typography variant="h5" sx={{ fontWeight: 600, letterSpacing: "-0.01em" }}>Tailoring Library</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-            The terms, focus areas, and skills the engine uses. Changes apply on your next tailoring run.
-          </Typography>
-        </Box>
-        <Button variant="outlined" size="small" onClick={() => setImportOpen(true)} sx={{ flexShrink: 0, alignSelf: { xs: "flex-start", sm: "center" }, whiteSpace: "nowrap", textTransform: "none", borderRadius: 1.5 }}>
-          Import from posting
-        </Button>
-      </Stack>
+      <TabHeader
+        title="Tailoring library"
+        description="Manage the buzzwords, focus areas, skill groups, and content the tailoring engine uses."
+        actions={
+          <Button variant="outlined" size="small" onClick={() => setImportOpen(true)} sx={{ flexShrink: 0, whiteSpace: "nowrap", textTransform: "none", borderRadius: 1.5 }}>
+            Import from posting
+          </Button>
+        }
+      />
 
       <Tabs
         value={tab}
@@ -98,7 +98,8 @@ export default function LibraryEditor() {
       {tab === 2 && <EntityTab title="Skill Group" description="Your skills, grouped. Conditional groups only surface when the posting asks for them." rows={data.skillGroups} schema={SKILLGROUP_SCHEMA} endpoint="/api/library/skill-groups" onChanged={reload} />}
       {tab === 3 && <EntityTab title="Fragment" description="Tagged accomplishment/bullet fragments the engine slots into the résumé." rows={data.contentLibrary} schema={CONTENT_SCHEMA} endpoint="/api/library/content-library" onChanged={reload} />}
       {tab === 4 && <ProfileTab key={data.profile?.updated_at || "profile"} profile={data.profile} onChanged={reload} />}
-      {tab === 5 && <PreviewTab />}
+      {tab === 5 && <PersonaTab personas={data.personas || []} focusAreas={data.focusAreas || []} onChanged={reload} />}
+      {tab === 6 && <PreviewTab />}
 
       <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} onChanged={reload} />
     </Box>

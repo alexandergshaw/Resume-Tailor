@@ -201,10 +201,12 @@ export async function POST(request) {
     // Buzzword toggles from the previewer's focus modal: boost/exclude specific
     // terms for this posting.
     const keywordEdits = parseKeywordEdits(formData.get("keywordEdits"));
+    // Saved persona name (a named profile-reframing identity).
+    const persona = formData.get("persona")?.toString().trim().slice(0, 120) || "";
     // Cover-letter framing override (the previewer's teaching/staff/industry
     // toggle). Whitelisted; anything else means auto-detect.
     const rawVariant = formData.get("coverVariant")?.toString().trim().toLowerCase() || "";
-    const coverVariant = ["teaching", "staff", "industry"].includes(rawVariant) ? rawVariant : "";
+    const coverVariant = ["teaching", "staff", "industry", "nontechnical"].includes(rawVariant) ? rawVariant : "";
 
     // Select the document-generation engine: per-request override falls back to
     // the server default (RESUME_ENGINE). Unknown names degrade to "gemini".
@@ -303,6 +305,7 @@ export async function POST(request) {
       editRules,
       focusArea,
       keywordEdits,
+      persona,
       userId,
     };
 
@@ -353,6 +356,7 @@ export async function POST(request) {
           focusArea,
           keywordEdits,
           coverVariant,
+          persona,
           userId,
         });
         coverLetterResultLines = coverDraft.resultLines;

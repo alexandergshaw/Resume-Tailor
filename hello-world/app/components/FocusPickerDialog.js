@@ -16,11 +16,25 @@ import TextField from "@mui/material/TextField";
 import CircularProgress from "@mui/material/CircularProgress";
 import Select from "@mui/material/Select";
 import MenuItem from "@mui/material/MenuItem";
+import IconButton from "@mui/material/IconButton";
+import CloseIcon from "@mui/icons-material/Close";
 import profileData from "@/lib/llm/engines/tailor-lite/data/profile.json";
 import { focusOverrideHint, buzzwordEditCounts } from "@/lib/tailor/localSignals";
 import { TAXONOMY_CATEGORIES } from "@/lib/llm/engines/tailor-lite/library/validate";
+import { isNoiseTopic } from "@/lib/llm/engines/tailor-lite/topicNoise";
 
 const AUTO = "__auto__";
+
+// Title-case a RAKE phrase for display/storage ("culture change" -> "Culture
+// Change"), keeping minor connectors lowercase unless they lead.
+const MINOR_WORDS = new Set(["and", "or", "of", "the", "a", "an", "to", "for", "with", "in", "on", "at", "by"]);
+function titleCasePhrase(text) {
+  return String(text || "")
+    .trim()
+    .split(/\s+/)
+    .map((w, i) => (i > 0 && MINOR_WORDS.has(w.toLowerCase()) ? w.toLowerCase() : w ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(" ");
+}
 
 // Bundled default focus areas (13KB JSON — safe to ship to the client). Users
 // whose library was seeded before a default was added won't have it in their
@@ -31,6 +45,26 @@ const DEFAULT_AREAS = Array.isArray(profileData.focus_areas) ? profileData.focus
 // categories the slot mapper actually consumes).
 const SKILL_CATS = ["technology", "tool_platform", "domain", "methodology", "soft_skill", "certification", "subject"];
 const MAX_LISTED = 24;
+// Extra multiword "topic" phrases (RAKE) shown beyond the taxonomy hits. For
+// soft-skill / non-technical roles the taxonomy barely fires, so these phrases
+// ("culture change", "stakeholder engagement") ARE the vocabulary to save.
+const MAX_TOPICS = 12;
+
+// When a brand-new focus area is created from the previewer, seed its capability
+// lists straight from the posting's own extracted buzzwords — grouped the way the
+// strategy maps taxonomy categories onto area fields (see strategy.js SLOTS):
+// tech/tools become technical capabilities, domains become domain capabilities,
+// methodologies become job emphases, and subjects seed the teaching-subject row.
+const CATEGORY_TO_AREA_FIELD = {
+  technology: "technical_capabilities",
+  tool_platform: "technical_capabilities",
+  domain: "domain_capabilities",
+  methodology: "job_emphases",
+  subject: "subjects",
+};
+// Uncategorized RAKE phrases (soft-skill / non-technical vocabulary) seed the
+// area's domain capabilities — where a non-technical focus surfaces them.
+const TOPIC_AREA_FIELD = "domain_capabilities";
 
 // The previewer's "wrong focus" modal: pick which library focus area should
 // drive this posting's documents, AND pick-and-choose the buzzwords applied —
@@ -43,29 +77,36 @@ const MAX_LISTED = 24;
 // state initializes from props, no reset effects needed.
 const VARIANT_OPTIONS = [
   { value: "", label: "Auto-detect" },
+  { value: "industry", label: "Technical (industry)" },
+  { value: "nontechnical", label: "Non-technical (leadership)" },
   { value: "teaching", label: "Teaching (adjunct framing)" },
   { value: "staff", label: "University staff" },
-  { value: "industry", label: "Industry" },
 ];
 
 export default function FocusPickerDialog({
   open,
+  embedded = false,
   currentFocus,
   override,
   keywords,
   keywordEdits,
   coverVariant,
   coverVariantOverride,
+  persona,
+  personaOverride,
   postingTitle,
   onClose,
   onApply,
 }) {
   const [areas, setAreas] = useState(null); // null = loading, [] = none/failed
+  const [personas, setPersonas] = useState(null); // null = loading, [] = none/failed
   const [loadError, setLoadError] = useState("");
   const [choice, setChoice] = useState(() => override || currentFocus?.name || AUTO);
   const [remember, setRemember] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // Persona selector state: "" = base profile
+  const [personaChoice, setPersonaChoice] = useState(() => personaOverride || "");
 
   // Buzzword toggles: everything the engine extracted for this posting, plus
   // any previously-excluded terms (kept visible so they can be re-enabled).
@@ -82,6 +123,20 @@ export default function FocusPickerDialog({
     }
     items.sort((a, b) => b.score - a.score);
     const top = items.slice(0, MAX_LISTED);
+    // Multiword phrases the taxonomy missed (RAKE "topic") — the bulk of the
+    // useful vocabulary for soft-skill / non-technical roles. Noise-filtered and
+    // title-cased so they're selectable and savable alongside the taxonomy hits.
+    let topicCount = 0;
+    for (const it of keywords?.topic || []) {
+      if (topicCount >= MAX_TOPICS) break;
+      if (isNoiseTopic(it.canonical)) continue;
+      const display = titleCasePhrase(it.canonical);
+      const key = display.toLowerCase();
+      if (!display || seen.has(key)) continue;
+      seen.add(key);
+      top.push({ canonical: display, category: "phrase", score: it.score || 0 });
+      topicCount += 1;
+    }
     for (const name of keywordEdits?.exclude || []) {
       const key = String(name).toLowerCase();
       if (!top.some((i) => i.canonical.toLowerCase() === key)) {
@@ -117,7 +172,7 @@ export default function FocusPickerDialog({
     currentFocus?.source === "override" ? "" : focusOverrideHint(currentFocus?.name || ""),
   );
 
-  // Load the library's focus areas when the dialog opens (they're small, and
+  // Load the library's focus areas and personas when the dialog opens (they're small, and
   // the user may have edited /library since the last open).
   useEffect(() => {
     if (!open) return;
@@ -128,16 +183,21 @@ export default function FocusPickerDialog({
         if (res.status === 401) {
           if (!cancelled) {
             setAreas([]);
-            setLoadError("Sign in to use your library's focus areas.");
+            setPersonas([]);
+            setLoadError("Sign in to use your library's focus areas and personas.");
           }
           return;
         }
         const data = await res.json().catch(() => null);
         if (!res.ok) throw new Error(data?.error || "Couldn't load your library.");
-        if (!cancelled) setAreas(Array.isArray(data?.focusAreas) ? data.focusAreas : []);
+        if (!cancelled) {
+          setAreas(Array.isArray(data?.focusAreas) ? data.focusAreas : []);
+          setPersonas(Array.isArray(data?.personas) ? data.personas : []);
+        }
       } catch (err) {
         if (!cancelled) {
           setAreas([]);
+          setPersonas([]);
           setLoadError(err?.message || "Couldn't load your library.");
         }
       }
@@ -214,8 +274,39 @@ export default function FocusPickerDialog({
     setAddText("");
   }
 
-  // Create a minimal focus area (name + itself as a match term) in the library,
-  // select it, and point at /library for fleshing out its capability lists.
+  // Group this posting's extracted buzzwords into the shape a focus area stores,
+  // so a newly-created area starts pre-populated from the posting instead of
+  // empty. Skips terms the user unchecked above, dedupes across fields, and keeps
+  // the highest-scoring terms first within each field.
+  function postingWordsForArea() {
+    const fields = { subjects: [], job_emphases: [], technical_capabilities: [], domain_capabilities: [] };
+    const pairs = [];
+    for (const [cat, field] of Object.entries(CATEGORY_TO_AREA_FIELD)) {
+      for (const it of keywords?.[cat] || []) {
+        pairs.push({ field, canonical: String(it.canonical || "").trim(), score: it.score || 0 });
+      }
+    }
+    // Include the RAKE "topic" phrases (the soft-skill vocabulary the taxonomy
+    // misses) so a non-technical focus is seeded with real content, not left bare.
+    for (const it of keywords?.topic || []) {
+      if (isNoiseTopic(it.canonical)) continue;
+      const display = titleCasePhrase(it.canonical);
+      if (display) pairs.push({ field: TOPIC_AREA_FIELD, canonical: display, score: it.score || 0 });
+    }
+    pairs.sort((a, b) => b.score - a.score);
+    const seen = new Set();
+    for (const { field, canonical } of pairs) {
+      const key = canonical.toLowerCase();
+      if (!canonical || seen.has(key) || excluded.has(key)) continue;
+      seen.add(key);
+      fields[field].push(canonical);
+    }
+    const count = Object.values(fields).reduce((n, arr) => n + arr.length, 0);
+    return { fields, count };
+  }
+
+  // Create a focus area in the library, seeded with this posting's applicable
+  // buzzwords, then select it. Point at /library for further refinement.
   async function addFocusArea() {
     const name = newAreaName.trim();
     if (!name || newAreaBusy) return;
@@ -225,18 +316,12 @@ export default function FocusPickerDialog({
     }
     setNewAreaBusy(true);
     setNewAreaNote(null);
+    const { fields, count } = postingWordsForArea();
     try {
       const res = await fetch("/api/library/focus-areas", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          match: [name],
-          subjects: [],
-          job_emphases: [],
-          technical_capabilities: [],
-          domain_capabilities: [],
-        }),
+        body: JSON.stringify({ name, match: [name], ...fields }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -246,12 +331,15 @@ export default function FocusPickerDialog({
             : data?.error || (Array.isArray(data?.errors) ? data.errors.join(" ") : "Couldn't add the focus area."),
         );
       }
-      setAreas((prev) => [...(prev || []), data.row || { name }]);
+      setAreas((prev) => [...(prev || []), data.row || { name, match: [name], ...fields }]);
       setChoice(name);
       setNewAreaName("");
       setNewAreaNote({
         ok: true,
-        message: `“${name}” added and selected. It starts empty — fill in its emphases and capabilities in /library.`,
+        message:
+          count > 0
+            ? `“${name}” added and selected — seeded with ${count} word${count === 1 ? "" : "s"} pulled from this posting. Refine it in /library.`
+            : `“${name}” added and selected. No posting buzzwords to pull yet — flesh it out in /library.`,
       });
     } catch (err) {
       setNewAreaNote({ ok: false, message: err?.message || "Couldn't add the focus area." });
@@ -304,7 +392,7 @@ export default function FocusPickerDialog({
         .filter((i) => excluded.has(i.canonical.toLowerCase()))
         .map((i) => i.canonical);
       const edits = boosts.length > 0 || exclude.length > 0 ? { boost: boosts, exclude } : null;
-      const ok = await onApply(choice === AUTO ? "" : choice, edits, variantChoice);
+      const ok = await onApply(choice === AUTO ? "" : choice, edits, variantChoice, personaChoice);
       if (ok === false) throw new Error("Couldn't regenerate with those settings.");
       onClose();
     } catch (err) {
@@ -314,10 +402,8 @@ export default function FocusPickerDialog({
     }
   }
 
-  return (
-    <Dialog open={open} onClose={busy ? undefined : onClose} maxWidth="sm" fullWidth>
-      <DialogTitle sx={{ pb: 0.5 }}>Set document focus &amp; buzzwords</DialogTitle>
-      <DialogContent>
+  const body = (
+    <>
         <Box sx={{ display: "flex", alignItems: "flex-start", gap: 1, mb: 1 }}>
           <Box sx={{ flex: 1, fontSize: "0.85rem", color: "var(--text-secondary)", lineHeight: 1.5 }}>
             {currentFocus?.name
@@ -423,7 +509,7 @@ export default function FocusPickerDialog({
           <TextField
             size="small"
             fullWidth
-            placeholder="New focus area (e.g. Data Engineering) — added to your library"
+            placeholder="New focus area (e.g. Data Engineering) — seeded from this posting"
             value={newAreaName}
             onChange={(e) => setNewAreaName(e.target.value)}
             onKeyDown={(e) => {
@@ -449,7 +535,45 @@ export default function FocusPickerDialog({
           <Box sx={{ mt: 0.5, fontSize: "0.78rem", color: newAreaNote.ok ? "var(--text-secondary)" : "var(--danger)" }}>
             {newAreaNote.message}
           </Box>
-        ) : null}
+        ) : (
+          <Box sx={{ mt: 0.5, fontSize: "0.72rem", color: "var(--text-muted)", lineHeight: 1.4 }}>
+            The new area is pre-filled with this posting&apos;s buzzwords (the checked ones above) as
+            its technical, domain, and subject capabilities — tune it later in /library.
+          </Box>
+        )}
+
+        <Box sx={{ mt: 2, pt: 1.5, borderTop: "1px solid var(--border)" }}>
+          <Box sx={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text-primary)" }}>
+            Positioning (persona)
+          </Box>
+          <Box sx={{ fontSize: "0.78rem", color: "var(--text-secondary)", lineHeight: 1.4, mt: 0.25, mb: 1 }}>
+            Reframe the whole résumé + letter as a saved identity (manage in{" "}
+            <a href="/library" target="_blank" rel="noopener noreferrer">/library</a>).
+          </Box>
+          {personas === null ? (
+            <Box sx={{ display: "flex", justifyContent: "center", py: 1 }}>
+              <CircularProgress size={20} />
+            </Box>
+          ) : (
+            <Select
+              size="small"
+              fullWidth
+              value={personaChoice}
+              onChange={(e) => setPersonaChoice(e.target.value)}
+              displayEmpty
+              sx={{ fontSize: "0.85rem", mb: 1.5 }}
+            >
+              <MenuItem value="" sx={{ fontSize: "0.85rem" }}>
+                Base profile
+              </MenuItem>
+              {(personas || []).map((p) => (
+                <MenuItem key={p.id || p.name} value={p.name || ""} sx={{ fontSize: "0.85rem" }}>
+                  {p.name || ""}
+                </MenuItem>
+              ))}
+            </Select>
+          )}
+        </Box>
 
         <Box sx={{ mt: 2, pt: 1.5, borderTop: "1px solid var(--border)" }}>
           <Box sx={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text-primary)" }}>
@@ -465,8 +589,9 @@ export default function FocusPickerDialog({
                       : " (auto-detected)"
                 }.`
               : "Pick how the letter frames you — or leave it to detection."}{" "}
-            Teaching keeps the adjunct paragraphs; university staff swaps them for campus-service
-            prose; industry pitches a product team.
+            Technical (industry) pitches a product team; non-technical (leadership) leads with
+            change and stakeholder work; teaching keeps the adjunct paragraphs; university staff
+            swaps them for campus-service prose.
           </Box>
           <RadioGroup
             row
@@ -609,22 +734,62 @@ export default function FocusPickerDialog({
         </Box>
 
         {error ? <Box sx={{ mt: 1, fontSize: "0.85rem", color: "var(--danger)" }}>{error}</Box> : null}
-      </DialogContent>
-      <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button onClick={onClose} disabled={busy} sx={{ textTransform: "none" }}>
-          Cancel
-        </Button>
-        <Box sx={{ flex: 1 }} />
-        <Button
-          onClick={apply}
-          disabled={busy || areas === null}
-          variant="contained"
-          startIcon={busy ? <CircularProgress size={14} color="inherit" /> : null}
-          sx={{ textTransform: "none" }}
-        >
-          Apply &amp; regenerate
-        </Button>
-      </DialogActions>
+    </>
+  );
+
+  const actions = (
+    <>
+      <Button onClick={onClose} disabled={busy} sx={{ textTransform: "none" }}>
+        {embedded ? "Close" : "Cancel"}
+      </Button>
+      <Box sx={{ flex: 1 }} />
+      <Button
+        onClick={apply}
+        disabled={busy || areas === null}
+        variant="contained"
+        startIcon={busy ? <CircularProgress size={14} color="inherit" /> : null}
+        sx={{ textTransform: "none" }}
+      >
+        Apply &amp; regenerate
+      </Button>
+    </>
+  );
+
+  // Embedded: render the same controls as an inline panel inside the preview/edit
+  // modal (no separate Dialog), collapsible via the header's close button.
+  if (embedded) {
+    if (!open) return null;
+    return (
+      <Box
+        sx={{
+          mx: { xs: 1.25, sm: 2 },
+          my: 1,
+          p: { xs: 1.5, sm: 2 },
+          border: "1px solid var(--border)",
+          borderRadius: 1,
+          bgcolor: "var(--bg-surface)",
+        }}
+      >
+        <Box sx={{ display: "flex", alignItems: "center", mb: 1 }}>
+          <Box sx={{ fontWeight: 700, fontSize: "0.95rem" }}>Set document focus &amp; buzzwords</Box>
+          <Box sx={{ flex: 1 }} />
+          <IconButton size="small" onClick={onClose} disabled={busy} aria-label="Collapse focus controls">
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </Box>
+        {body}
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 2, pt: 1.5, borderTop: "1px solid var(--border)" }}>
+          {actions}
+        </Box>
+      </Box>
+    );
+  }
+
+  return (
+    <Dialog open={open} onClose={busy ? undefined : onClose} maxWidth="sm" fullWidth>
+      <DialogTitle sx={{ pb: 0.5 }}>Set document focus &amp; buzzwords</DialogTitle>
+      <DialogContent>{body}</DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>{actions}</DialogActions>
     </Dialog>
   );
 }

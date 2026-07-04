@@ -9,6 +9,7 @@ function reassemble(rows) {
     focusAreaRows: rows.focusAreas,
     skillGroupRows: rows.skillGroups,
     contentLibraryRows: rows.contentLibrary,
+    personaRows: rows.personas || [],
     profileRow: rows.profile,
   });
 }
@@ -45,6 +46,24 @@ describe("library assemble converters", () => {
     expect(lib.contentLibrary.entries).toEqual([]);
   });
 
+  it("maps edit-rule rows into before/after pairs ordered by sort_order", () => {
+    const lib = rowsToLibrary({
+      taxonomyRows: [{ canonical: "A", category: "domain", aliases: [], sort_order: 0 }],
+      editRuleRows: [
+        { before: "team of 5", after: "team of 8", sort_order: 1 },
+        { before: "cross-functional ", after: "", sort_order: 0 },
+      ],
+    });
+    expect(lib.editRules).toEqual([
+      { before: "cross-functional ", after: "" },
+      { before: "team of 5", after: "team of 8" },
+    ]);
+  });
+
+  it("defaults edit rules to an empty list when none are supplied", () => {
+    expect(rowsToLibrary().editRules).toEqual([]);
+  });
+
   it("orders rows by sort_order regardless of input order", () => {
     const lib = rowsToLibrary({
       taxonomyRows: [
@@ -53,5 +72,63 @@ describe("library assemble converters", () => {
       ],
     });
     expect(lib.taxonomy.entries.map((e) => e.canonical)).toEqual(["A", "B"]);
+  });
+
+  it("maps persona rows into complete persona objects ordered by sort_order", () => {
+    const lib = rowsToLibrary({
+      taxonomyRows: [{ canonical: "A", category: "domain", aliases: [], sort_order: 0 }],
+      personaRows: [
+        {
+          name: "Finance Educator",
+          values: { RANK: "Senior", SPECIALIZATION: "Finance" },
+          default_teaching_subjects: ["Economics"],
+          focus_area: "Teaching",
+          cover_variant: "teaching",
+          sort_order: 1,
+        },
+        {
+          name: "Industry",
+          values: { RANK: "Lead" },
+          default_teaching_subjects: [],
+          focus_area: "",
+          cover_variant: "industry",
+          sort_order: 0,
+        },
+      ],
+    });
+    expect(lib.personas).toHaveLength(2);
+    expect(lib.personas[0].name).toBe("Industry");
+    expect(lib.personas[1].name).toBe("Finance Educator");
+    expect(lib.personas[0].values).toEqual({ RANK: "Lead" });
+    expect(lib.personas[1].default_teaching_subjects).toEqual(["Economics"]);
+  });
+
+  it("defaults personas to an empty list when none are supplied", () => {
+    expect(rowsToLibrary().personas).toEqual([]);
+  });
+
+  it("tolerates persona rows with missing or null values", () => {
+    const lib = rowsToLibrary({
+      taxonomyRows: [{ canonical: "A", category: "domain", aliases: [], sort_order: 0 }],
+      personaRows: [
+        {
+          name: "P1",
+          values: null,
+          default_teaching_subjects: null,
+          focus_area: null,
+          cover_variant: null,
+          sort_order: 0,
+        },
+      ],
+    });
+    expect(lib.personas).toEqual([
+      {
+        name: "P1",
+        values: {},
+        default_teaching_subjects: [],
+        focus_area: "",
+        cover_variant: "",
+      },
+    ]);
   });
 });

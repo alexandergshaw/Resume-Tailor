@@ -47,6 +47,51 @@ function toData(bundle) {
     skillGroups: bundle.skillGroups,
     taxonomy: bundle.taxonomy,
     stopwords: bundle.stopwords,
+    // The user's persisted "template" edits (recurring hand-edits promoted to the
+    // library); applied at render alongside any client-sent request rules.
+    editRules: Array.isArray(bundle.editRules) ? bundle.editRules : [],
+    // Named personas: profile-reframing identities selectable per posting.
+    personas: Array.isArray(bundle.personas) ? bundle.personas : [],
+  };
+}
+
+// Merge two edit-rule lists into one, de-duplicated by the exact (case-sensitive)
+// before->after pair — so a rule persisted in the library AND still sent from the
+// client's local overlay is applied once, not twice.
+export function mergeEditRules(...lists) {
+  const seen = new Set();
+  const out = [];
+  for (const list of lists) {
+    for (const r of list || []) {
+      if (!r || typeof r.before !== "string" || typeof r.after !== "string" || r.before.length === 0) continue;
+      const key = `${r.before}→${r.after}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ before: r.before, after: r.after });
+    }
+  }
+  return out;
+}
+
+// Apply a saved persona to the data, merging its profile values and teaching subjects
+// into the base profile. The persona's values override the profile's; teaching subjects
+// are replaced when the persona provides them (empty list in persona means use base).
+export function applyPersona(data, personaName) {
+  const name = String(personaName || "").trim().toLowerCase();
+  if (!name) return { data, persona: null };
+  const persona = (data.personas || []).find((p) => String(p.name || "").toLowerCase() === name);
+  if (!persona) return { data, persona: null };
+  const values = { ...(data.profile?.values || {}), ...(persona.values || {}) };
+  const subjects =
+    Array.isArray(persona.default_teaching_subjects) && persona.default_teaching_subjects.length
+      ? persona.default_teaching_subjects
+      : data.profile?.default_teaching_subjects || [];
+  return {
+    data: {
+      ...data,
+      profile: { ...data.profile, values, default_teaching_subjects: subjects },
+    },
+    persona,
   };
 }
 
@@ -169,6 +214,45 @@ export function isHigherEdPosting(posting) {
   return false;
 }
 
+// Engineering / technical-domain vocabulary. A posting that names any of this is a
+// technical role even when it's leadership-heavy — an "engineering manager" whose
+// tech shows up as architecture/cloud/CI rather than raw languages — so it must NOT
+// be treated as non-technical just because few bare technology tokens were tagged.
+const TECH_DOMAIN_RE =
+  /\b(software|engineer(?:s|ing)?|developer|programm(?:ing|er)|architect(?:ure)?|cloud|devops|kubernetes|docker|database|back-?end|front-?end|full-?stack|microservices|cyber ?security|data (?:science|engineering|scientist)|machine learning|artificial intelligence|web development|coding)\b/i;
+
+// A posting reads as non-technical when there's NO engineering/technical-domain
+// signal, the technical taxonomy barely fires, and there's real leadership /
+// people / process signal — a culture-change director, program manager, or
+// consultant, not a software role. `posting` is optional (the keyword-only form is
+// kept for callers that don't have the text); when given, the domain guard runs.
+// Deterministic — reads only the extracted keywords and the posting text.
+export function isNonTechnicalPosting(keywords, posting = "") {
+  if (TECH_DOMAIN_RE.test(String(posting || ""))) return false;
+  const sum = (cat) => (keywords?.[cat] || []).reduce((n, k) => n + (k.score || 0), 0);
+  const technical = sum("technology") + sum("tool_platform");
+  const human = sum("soft_skill") + sum("methodology") + sum("domain");
+  return technical <= 2 && human >= 4;
+}
+
+// Whether a focus area is "non-technical": curated with domain/leadership content
+// but no tech stack, which makes the résumé's technical line lead with domain
+// capabilities (see strategy.js) instead of the candidate's technologies.
+function isNonTechnicalArea(area) {
+  const nonEmpty = (v) => Array.isArray(v) && v.some((s) => typeof s === "string" && s.trim());
+  return !!area && !nonEmpty(area.technical_capabilities) && nonEmpty(area.domain_capabilities);
+}
+
+// Guidance (never a silent document change) when a non-technical posting is being
+// tailored with a technical — or no — focus, so the user knows how to stop the
+// résumé leading with an irrelevant tech stack.
+function nonTechnicalWarning(keywords, resolvedArea, posting = "") {
+  if (!isNonTechnicalPosting(keywords, posting) || isNonTechnicalArea(resolvedArea)) return [];
+  return [
+    "This role reads as non-technical. Use the focus picker to pin (or create) a focus area with its technical capabilities left empty — the résumé and cover letter then lead with leadership and domain expertise instead of your tech stack.",
+  ];
+}
+
 // Keywords for the posting. Both workflows are local; composed uses the in-house
 // parser (taxonomy extraction + emphases). Deterministic, never degraded.
 function resolveKeywords(posting, data) {
@@ -236,8 +320,11 @@ async function render(buffer, posting, { overrides = {}, seedByName = {}, aggres
 
   fillDocx(proposal.doc, finalValues);
   // Promoted recurring hand-edits — the user's "effective template" — applied
-  // document-wide after slot filling, so lines and .docx stay in lockstep.
-  const appliedEdits = editRules.length > 0 ? applyTextEdits(proposal.doc, editRules) : [];
+  // document-wide after slot filling, so lines and .docx stay in lockstep. Rules
+  // persisted in the library (data.editRules) are the durable, cross-device
+  // template edits; the request rules are the client's not-yet-persisted overlay.
+  const allEditRules = mergeEditRules(data.editRules, editRules);
+  const appliedEdits = allEditRules.length > 0 ? applyTextEdits(proposal.doc, allEditRules) : [];
   return {
     docxB64: await serializeDocx(proposal.doc),
     resultLines: documentLines(proposal.doc),
@@ -431,32 +518,37 @@ export const embeddedEngine = {
     return out;
   },
 
-  async tailorResume({ jobPosting, jobPostingUrl, values, aggressiveness, userId, steeringInstructions, editRules, focusArea, keywordEdits }) {
+  async tailorResume({ jobPosting, jobPostingUrl, values, aggressiveness, userId, steeringInstructions, editRules, focusArea, keywordEdits, persona }) {
     const { text: posting, meta: scrapedMeta } = await resolvePostingText({ jobPosting, jobPostingUrl });
     const overrides = values && typeof values === "object" ? values : {};
-    const data = toData(await loadLibrary({ userId }));
-    const steered = resolveSteering(steeringInstructions, data.taxonomy, aggressiveness);
-    const kwEdits = resolveKeywordEdits(keywordEdits, data.taxonomy);
+    const baseData = toData(await loadLibrary({ userId }));
+    const { data: pdata, persona: appliedPersona } = applyPersona(baseData, persona);
+    const steered = resolveSteering(steeringInstructions, pdata.taxonomy, aggressiveness);
+    const kwEdits = resolveKeywordEdits(keywordEdits, pdata.taxonomy);
+    const effectiveFocus = focusArea && focusArea.trim() ? focusArea : appliedPersona?.focus_area || "";
     const r = await render(await getDefaultTemplateBuffer(), posting, {
       overrides,
       aggressiveness: steered.aggressiveness,
-      data,
+      data: pdata,
       steering: mergeDirectives(steered.steering, kwEdits),
       editRules: Array.isArray(editRules) ? editRules : [],
-      focusAreaName: focusArea,
+      focusAreaName: effectiveFocus,
       excludeCanonicals: kwEdits.excludeCanonicals,
     });
     const edits = editRuleOutputs(r.appliedEdits);
-    const focus = focusOutputs(focusArea, r.focusArea);
+    const focus = focusOutputs(effectiveFocus, r.focusArea);
     // Advisory research is excluded from the document — report only.
-    const advisory = resolveAdvisory({ posting, company: "", data });
+    const advisory = resolveAdvisory({ posting, company: "", data: pdata });
     // Best-effort title/company so the saved file is named after the posting
     // ("<Company> - <Position> - Resume.docx") instead of falling back to a
     // generic default.
     const meta = postingMetaFor(posting, scrapedMeta);
     // How much of the posting's vocabulary the generated document actually
     // covers (report-only; drives the library-update prompt downstream).
-    const match = computeMatch(posting, r.resultLines.join("\n"), data.taxonomy);
+    const match = computeMatch(posting, r.resultLines.join("\n"), pdata.taxonomy);
+
+    const extraMeta = { ...steered.meta, ...edits.meta, ...focus.meta, ...kwEdits.meta };
+    if (appliedPersona) extraMeta.persona = { name: appliedPersona.name };
 
     const report = buildReport({
       workflow: getWorkflow(),
@@ -464,7 +556,7 @@ export const embeddedEngine = {
       unfilled: r.unfilled,
       keywords: r.keywords,
       advisory,
-      extraMeta: { ...steered.meta, ...edits.meta, ...focus.meta, ...kwEdits.meta },
+      extraMeta,
     });
     report.match = match;
 
@@ -476,17 +568,24 @@ export const embeddedEngine = {
       companyName: meta.companyName,
       docxB64: r.docxB64,
       report,
-      warnings: [...steered.warnings, ...edits.warnings, ...focus.warnings, ...kwEdits.warnings],
+      warnings: [
+        ...steered.warnings,
+        ...edits.warnings,
+        ...focus.warnings,
+        ...kwEdits.warnings,
+        ...nonTechnicalWarning(r.keywords, r.focusArea, posting),
+      ],
       degraded: false,
     };
   },
 
-  async tailorCoverLetter({ jobPosting, jobPostingUrl, jobTitle, companyName, values, aggressiveness, userId, steeringInstructions, editRules, focusArea, keywordEdits, coverVariant: requestedVariant }) {
+  async tailorCoverLetter({ jobPosting, jobPostingUrl, jobTitle, companyName, values, aggressiveness, userId, steeringInstructions, editRules, focusArea, keywordEdits, coverVariant: requestedVariant, persona }) {
     const { text: posting, meta: scrapedMeta } = await resolvePostingText({ jobPosting, jobPostingUrl }, { required: false });
     const overrides = values && typeof values === "object" ? values : {};
-    const data = toData(await loadLibrary({ userId }));
-    const steered = resolveSteering(steeringInstructions, data.taxonomy, aggressiveness);
-    const kwEdits = resolveKeywordEdits(keywordEdits, data.taxonomy);
+    const baseData = toData(await loadLibrary({ userId }));
+    const { data: pdata, persona: appliedPersona } = applyPersona(baseData, persona);
+    const steered = resolveSteering(steeringInstructions, pdata.taxonomy, aggressiveness);
+    const kwEdits = resolveKeywordEdits(keywordEdits, pdata.taxonomy);
     // Fall back to title/company from the scrape (URL) or parsed from the posting
     // when the caller didn't supply them (e.g. the manual paste flow), so the cover
     // letter is addressed correctly and its file is named like the résumé.
@@ -495,7 +594,7 @@ export const embeddedEngine = {
     const organization = String(companyName || "").trim() || meta.companyName;
     // Composed: structured facts from the Researcher; otherwise neutral fallbacks
     // so a slot never shows raw braces.
-    const facts = resolveCoverFacts({ posting, company: organization, data });
+    const facts = resolveCoverFacts({ posting, company: organization, data: pdata });
     const seedByName = {
       TARGET_ROLE: role || "the role",
       TARGET_ORGANIZATION: organization || "your organization",
@@ -506,32 +605,51 @@ export const embeddedEngine = {
       DELIVERY_PRACTICES: "Agile delivery",
     };
     // Pick the letter framing: a user override (the previewer's teaching/staff/
-    // industry toggle) wins outright; otherwise teaching roles keep the adjunct
-    // letter, staff roles at higher-ed institutions get the campus-service
-    // variant, and everything else gets the industry rewrite.
-    const VALID_VARIANTS = ["teaching", "staff", "industry"];
+    // industry toggle) wins outright; otherwise persona's cover_variant provides a
+    // default, then teaching roles keep the adjunct letter, a non-technical
+    // (leadership / change / consulting) role gets the leadership rewrite, staff
+    // roles at higher-ed institutions get the campus-service variant, and
+    // everything else gets the industry rewrite. Non-technical is checked before
+    // staff so a non-technical role at a campus (e.g. a culture-change director)
+    // gets leadership framing, not campus-service.
+    const VALID_VARIANTS = ["teaching", "staff", "industry", "nontechnical"];
     const override = VALID_VARIANTS.includes(requestedVariant) ? requestedVariant : "";
     const detectedVariant = isTeachingPosting(posting)
       ? "teaching"
-      : isHigherEdPosting(posting)
-        ? "staff"
-        : "industry";
-    const coverVariant = override || detectedVariant;
-    const coverVariantSource = override ? "override" : "auto";
+      : isNonTechnicalPosting(extractKeywords(posting, pdata.taxonomy), posting)
+        ? "nontechnical"
+        : isHigherEdPosting(posting)
+          ? "staff"
+          : "industry";
+    const coverVariant = override || appliedPersona?.cover_variant || detectedVariant;
+    const coverVariantSource = override ? "override" : appliedPersona?.cover_variant ? "persona" : "auto";
+    const effectiveFocus = focusArea && focusArea.trim() ? focusArea : appliedPersona?.focus_area || "";
     const r = await render(await getCoverLetterTemplateBuffer({ variant: coverVariant }), posting, {
       overrides,
       seedByName,
       aggressiveness: steered.aggressiveness,
       maxKeywords: 4, // keep capability lists keyword-rich but not a wall
       serialAnd: true, // prose lists read "A, B, and C", not "A, B, C"
-      data,
+      data: pdata,
       steering: mergeDirectives(steered.steering, kwEdits),
       editRules: Array.isArray(editRules) ? editRules : [],
-      focusAreaName: focusArea,
+      focusAreaName: effectiveFocus,
       excludeCanonicals: kwEdits.excludeCanonicals,
     });
     const edits = editRuleOutputs(r.appliedEdits);
-    const focus = focusOutputs(focusArea, r.focusArea);
+    const focus = focusOutputs(effectiveFocus, r.focusArea);
+
+    const extraMeta = {
+      document: "cover_letter",
+      coverVariant,
+      coverVariantSource,
+      coverVariantDetected: detectedVariant,
+      ...steered.meta,
+      ...edits.meta,
+      ...focus.meta,
+      ...kwEdits.meta,
+    };
+    if (appliedPersona) extraMeta.persona = { name: appliedPersona.name };
 
     return {
       engine: "embedded",
@@ -546,20 +664,11 @@ export const embeddedEngine = {
           reportSlots: r.reportSlots,
           unfilled: r.unfilled,
           keywords: r.keywords,
-          extraMeta: {
-            document: "cover_letter",
-            coverVariant,
-            coverVariantSource,
-            coverVariantDetected: detectedVariant,
-            ...steered.meta,
-            ...edits.meta,
-            ...focus.meta,
-            ...kwEdits.meta,
-          },
+          extraMeta,
         });
         // Cover letters are prose, not keyword walls — the score naturally runs
         // lower than the résumé's; the combined response uses the weakest doc.
-        report.match = computeMatch(posting, r.resultLines.join("\n"), data.taxonomy);
+        report.match = computeMatch(posting, r.resultLines.join("\n"), pdata.taxonomy);
         return report;
       })(),
       warnings: [...steered.warnings, ...edits.warnings, ...focus.warnings, ...kwEdits.warnings],

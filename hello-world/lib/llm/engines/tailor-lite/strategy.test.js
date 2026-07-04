@@ -64,6 +64,42 @@ describe("mapSlots (template strategies)", () => {
   });
 });
 
+describe("mapSlots non-technical focus area (empty tech stack)", () => {
+  const kws = {
+    technology: [{ canonical: "React", score: 9, count: 1 }],
+    tool_platform: [{ canonical: "Figma", score: 7, count: 1 }],
+    domain: [{ canonical: "Change Management", score: 8, count: 1 }],
+    soft_skill: [{ canonical: "Leadership", score: 6, count: 1 }],
+  };
+  const area = {
+    name: "Culture Change",
+    match: ["culture change"],
+    subjects: [],
+    job_emphases: ["Stakeholder Engagement"],
+    technical_capabilities: [], // the non-technical signal
+    domain_capabilities: ["Culture Change", "Change Management", "Organizational Development"],
+  };
+  const dataWithArea = { profile: { values: {}, focus_areas: [area] } };
+  const val = mapSlots([slot("TECHNICAL_CAPABILITIES")], kws, dataWithArea, {
+    focusAreaName: "Culture Change",
+  })[0].value;
+
+  it("draws the technical line from domain capabilities, not the candidate tech stack", () => {
+    expect(val).toContain("Change Management"); // a domain capability surfaced
+    expect(val).not.toContain("React"); // candidate technologies suppressed
+    expect(val).not.toContain("Figma");
+  });
+
+  it("still uses the area's technical_capabilities when it HAS them (no regression)", () => {
+    const techArea = { ...area, technical_capabilities: ["Kubernetes", "Terraform"] };
+    const techVal = mapSlots([slot("TECHNICAL_CAPABILITIES")], kws, { profile: { values: {}, focus_areas: [techArea] } }, {
+      focusAreaName: "Culture Change",
+    })[0].value;
+    expect(techVal).toContain("Kubernetes");
+    expect(techVal).not.toContain("Change Management");
+  });
+});
+
 describe("mapSlots capability lines vary per occurrence", () => {
   // A capability category with more skills than the line shows, so repeats can
   // slide to distinct slices.

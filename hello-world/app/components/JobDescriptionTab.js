@@ -1,8 +1,10 @@
 "use client";
 
+import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import TextField from "@mui/material/TextField";
+import Typography from "@mui/material/Typography";
 
 import styles from "../page.module.css";
 
@@ -18,6 +20,10 @@ export default function JobDescriptionTab({
 }) {
   return (
     <section className={styles.tabPanel}>
+      <Typography sx={{ color: "text.secondary", fontSize: "0.85rem" }}>
+        Paste a full job description to generate a tailored resume and cover letter.
+      </Typography>
+
       <form
         className={styles.form}
         onSubmit={handleManualSubmit}
@@ -34,13 +40,12 @@ export default function JobDescriptionTab({
           value={jobPosting}
           onChange={(e) => setJobPosting(e.target.value)}
         />
-        <Box>
+        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
           <Button type="submit" variant="contained" disabled={manualIsSubmitting}>
             {manualIsSubmitting ? "Generating..." : "Generate"}
           </Button>
           <Button
             variant="outlined"
-            sx={{ ml: 1 }}
             disabled={!jobPosting.trim()}
             onClick={() =>
               askAiAbout({
@@ -54,7 +59,6 @@ export default function JobDescriptionTab({
           {tailorEngine === "external" && onReviewFields ? (
             <Button
               variant="outlined"
-              sx={{ ml: 1 }}
               disabled={!jobPosting.trim() || manualIsSubmitting}
               onClick={onReviewFields}
             >
@@ -64,7 +68,7 @@ export default function JobDescriptionTab({
         </Box>
       </form>
 
-      {manualError ? <p className={styles.error}>{manualError}</p> : null}
+      {manualError ? <Alert severity="error">{manualError}</Alert> : null}
     </section>
   );
 }

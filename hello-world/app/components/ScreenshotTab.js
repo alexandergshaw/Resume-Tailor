@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef } from "react";
+import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import IconButton from "@mui/material/IconButton";
@@ -10,6 +11,7 @@ import CloseIcon from "@mui/icons-material/Close";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import AddPhotoAlternateIcon from "@mui/icons-material/AddPhotoAlternate";
+import EmptyState from "./EmptyState";
 
 import styles from "../page.module.css";
 
@@ -130,14 +132,14 @@ export default function ScreenshotTab({
             sx={{
               border: "1px dashed var(--border)",
               borderRadius: 1,
-              p: 3,
-              textAlign: "center",
-              color: "var(--text-secondary)",
-              fontSize: "0.85rem",
               cursor: "pointer",
             }}
           >
-            No screenshots yet — click to add. Processing starts automatically.
+            <EmptyState
+              icon={<AddPhotoAlternateIcon />}
+              title="No screenshots yet"
+              message="Click to add screenshots — processing starts automatically."
+            />
           </Box>
         ) : (
           <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
@@ -226,7 +228,7 @@ export default function ScreenshotTab({
           </Box>
         ) : null}
 
-        {error ? <p className={styles.error}>{error}</p> : null}
+        {error ? <Alert severity="error">{error}</Alert> : null}
       </Box>
     </section>
   );

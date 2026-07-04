@@ -18,9 +18,25 @@ export function rowsToLibrary({
   focusAreaRows = [],
   skillGroupRows = [],
   contentLibraryRows = [],
+  editRuleRows = [],
+  personaRows = [],
   profileRow = null,
 } = {}) {
   return {
+    // Persistent recurring hand-edits (the user's "template" edits), applied
+    // document-wide at render. Case-sensitive { before -> after } pairs.
+    editRules: [...editRuleRows]
+      .sort(bySortOrder)
+      .map((r) => ({ before: r.before, after: typeof r.after === "string" ? r.after : "" })),
+    // Named personas: profile-reframing identities (values, teaching subjects,
+    // focus area, cover variant) that reframe the résumé/letter per posting.
+    personas: [...personaRows].sort(bySortOrder).map((r) => ({
+      name: r.name,
+      values: (r.values && typeof r.values === "object") ? r.values : {},
+      default_teaching_subjects: r.default_teaching_subjects || [],
+      focus_area: r.focus_area || "",
+      cover_variant: r.cover_variant || "",
+    })),
     taxonomy: {
       entries: [...taxonomyRows].sort(bySortOrder).map((r) => {
         const entry = { canonical: r.canonical, category: r.category, aliases: r.aliases || [] };

@@ -14,10 +14,15 @@ import contentLibrary from "../data/content_library.json";
 // The shape every consumer expects: { taxonomy, stopwords, profile, skillGroups, contentLibrary }.
 // `contentLibrary` is the bundle's name for what engine.js historically called `library`
 // (content_library.json) — kept distinct here to avoid the overloaded word "library".
+// `editRules` (persistent per-user "template" edits) has no bundled default —
+// it starts empty and grows only as a user's recurring hand-edits get promoted.
+// `personas` (named profile-reframing identities) likewise starts empty per user.
 export const defaultLibraryData = Object.freeze({
   taxonomy,
   stopwords,
   profile,
   skillGroups,
   contentLibrary,
+  editRules: [],
+  personas: [],
 });

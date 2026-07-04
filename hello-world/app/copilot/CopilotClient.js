@@ -12,6 +12,7 @@ import { CopilotSession } from "@/lib/copilot/session";
 import { detectQuestion, normalizeQuestion } from "@/lib/copilot/questions";
 import { confirmQuestion } from "@/lib/copilot/detectClient";
 import { draftAnswer } from "@/lib/copilot/answerClient";
+import TabHeader from "@/app/components/TabHeader";
 import TranscriptView from "./TranscriptView";
 import QuestionFeed from "./QuestionFeed";
 import PrepContext from "./PrepContext";
@@ -324,9 +325,10 @@ export default function CopilotClient() {
 
   return (
     <Box sx={{ maxWidth: 1180, mx: "auto", p: 3 }}>
-      <Typography variant="h5" sx={{ mb: 0.5, fontWeight: 700 }}>
-        Interview Copilot
-      </Typography>
+      <TabHeader
+        title="Interview copilot"
+        description="Live transcription, question detection, and suggested answers during interviews."
+      />
       <Typography variant="body2" sx={{ color: "var(--text-secondary)", mb: 2 }}>
         Share the meeting tab (with &quot;Share tab audio&quot; enabled) and allow
         your mic. Both sides of the call are transcribed live; the interviewer&apos;s

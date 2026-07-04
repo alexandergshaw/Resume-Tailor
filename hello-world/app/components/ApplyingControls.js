@@ -6,6 +6,7 @@ import AccordionSummary from "@mui/material/AccordionSummary";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Slider from "@mui/material/Slider";
+import TabHeader from "./TabHeader";
 
 import { createClient } from "../../lib/supabase/client";
 import styles from "../page.module.css";
@@ -60,6 +61,11 @@ export default function ApplyingControls({
 }) {
   return (
     <>
+      <TabHeader
+        title="Materials"
+        description="Your resume, cover letter, and supporting context used to tailor each application."
+      />
+
       <div className={styles.fieldGroup}>
         <label htmlFor="resume" className={styles.label}>
           Resume

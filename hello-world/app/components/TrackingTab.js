@@ -1,5 +1,6 @@
 "use client";
 
+import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import TextField from "@mui/material/TextField";
@@ -13,7 +14,10 @@ import TableRow from "@mui/material/TableRow";
 import TableCell from "@mui/material/TableCell";
 import TableHead from "@mui/material/TableHead";
 import TableSortLabel from "@mui/material/TableSortLabel";
+import Typography from "@mui/material/Typography";
 import DescriptionIcon from "@mui/icons-material/Description";
+import TabHeader from "./TabHeader";
+import EmptyState from "./EmptyState";
 import styles from "../page.module.css";
 import { useIsTablet } from "../hooks/useResponsive";
 import {
@@ -96,38 +100,50 @@ export default function TrackingTab({
   const isCompact = useIsTablet();
   return (
     <section className={styles.tabPanel}>
+      <TabHeader
+        title="Application tracking"
+        description="Track applications, interview stages, and communications across your pipeline."
+        actions={
+          applicationData.length > 0 ? (
+            <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
+              <TextField
+                label="Search company or role"
+                value={interviewSearch}
+                onChange={(e) => setInterviewSearch(e.target.value)}
+                size="small"
+                placeholder="e.g. Stripe or frontend"
+                sx={{ maxWidth: 380, flex: 1, minWidth: 220 }}
+              />
+              <Button variant="outlined" size="small" onClick={openAddApplicationDialog}>
+                + Add Row
+              </Button>
+            </Box>
+          ) : (
+            <Button variant="outlined" size="small" onClick={openAddApplicationDialog}>
+              + Add Row
+            </Button>
+          )
+        }
+      />
+
       {!currentUser ? (
-        <p style={{ color: "var(--text-secondary)" }}>Sign in to see your applications.</p>
+        <EmptyState
+          title="Sign in to get started"
+          message="Sign in to see your applications and track your job search progress."
+        />
       ) : applicationLoading ? (
         <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
           <CircularProgress />
         </Box>
       ) : applicationError ? (
-        <p style={{ color: "var(--danger)" }}>Error loading applications: {applicationError}</p>
+        <Alert severity="error">Error loading applications: {applicationError}</Alert>
       ) : applicationData.length === 0 ? (
-        <>
-          <Box sx={{ mb: 2 }}>
-            <Button variant="outlined" size="small" onClick={openAddApplicationDialog}>
-              + Add Row
-            </Button>
-          </Box>
-          <p style={{ color: "var(--text-secondary)" }}>No applications yet. Apply to jobs in the Applying tab, or add your own row.</p>
-        </>
+        <EmptyState
+          title="No applications yet"
+          message="Apply to jobs in the Applying tab, or add your own row to track manually."
+        />
       ) : (
         <>
-          <Box sx={{ mb: 2.5, display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
-            <TextField
-              label="Search company or role"
-              value={interviewSearch}
-              onChange={(e) => setInterviewSearch(e.target.value)}
-              size="small"
-              placeholder="e.g. Stripe or frontend"
-              sx={{ maxWidth: 380, flex: 1, minWidth: 220 }}
-            />
-            <Button variant="outlined" size="small" onClick={openAddApplicationDialog}>
-              + Add Row
-            </Button>
-          </Box>
           {isCompact ? (
             <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
               {visibleApplicationData.map((app) => {

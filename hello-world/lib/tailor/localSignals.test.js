@@ -7,6 +7,9 @@ import {
   steeringHabitHint,
   recordEditRules,
   promotedEditRules,
+  persistedEditRules,
+  newlyPromotableEditRules,
+  markEditRulePersisted,
   recordFocusOverride,
   focusOverrideHint,
   recordVariantOverride,
@@ -146,6 +149,40 @@ describe("recordEditRules / promotedEditRules", () => {
     const promoted = promotedEditRules({ storage });
     expect(promoted).toHaveLength(1);
     expect(promoted[0].after).toBe("of 9 through");
+  });
+});
+
+describe("template-edit persistence (newlyPromotableEditRules / markEditRulePersisted)", () => {
+  const RULE = { before: "of 5 through", after: "of 8 through" };
+
+  it("offers a rule to persist only once it clears the threshold", () => {
+    const storage = fakeStorage();
+    recordEditRules([RULE], { doc: "resume", storage, now: 1 });
+    recordEditRules([RULE], { doc: "resume", storage, now: 2 });
+    expect(newlyPromotableEditRules({ storage })).toEqual([]); // 2 < 3
+    recordEditRules([RULE], { doc: "resume", storage, now: 3 });
+    expect(newlyPromotableEditRules({ storage })).toEqual([RULE]);
+  });
+
+  it("stops offering a rule once it's marked persisted, and tracks it as persisted", () => {
+    const storage = fakeStorage();
+    for (let i = 0; i < 3; i += 1) recordEditRules([RULE], { doc: "resume", storage, now: i });
+    expect(persistedEditRules({ storage })).toEqual([]);
+    markEditRulePersisted(RULE, { storage });
+    expect(persistedEditRules({ storage })).toEqual([RULE]);
+    expect(newlyPromotableEditRules({ storage })).toEqual([]);
+    // Auto-apply is unchanged — a persisted rule still promotes (server dedupes).
+    expect(promotedEditRules({ storage })).toEqual([RULE]);
+  });
+
+  it("an undo that self-heals a persisted rule drops it from the persisted set", () => {
+    const storage = fakeStorage();
+    for (let i = 0; i < 3; i += 1) recordEditRules([RULE], { doc: "resume", storage, now: i });
+    markEditRulePersisted(RULE, { storage });
+    expect(persistedEditRules({ storage })).toEqual([RULE]);
+    // The user edits it back — recordEditRules deletes the rule (and its flag).
+    recordEditRules([{ before: "of 8 through", after: "of 5 through" }], { doc: "resume", storage, now: 9 });
+    expect(persistedEditRules({ storage })).toEqual([]);
   });
 });
 

@@ -15,6 +15,8 @@ import {
   steeringHabitHint,
   recordEditRules,
   promotedEditRules,
+  persistedEditRules,
+  newlyPromotableEditRules,
   recordFocusOverride,
   focusOverrideHint,
   recordBuzzwordEdits,
@@ -22,6 +24,7 @@ import {
   recordVariantOverride,
   variantOverrideHint,
 } from "../../lib/tailor/localSignals";
+import { syncTemplateEdits } from "../../lib/tailor/templateEdits";
 import { readEngine } from "../settings/engine";
 
 // Resume/cover-letter preview + edit modal (opened from the status-bar chips and
@@ -114,6 +117,10 @@ export function useDocumentPreview({
     const entry = jobId ? tailoringMap[jobId] : null;
     if (entry?.edited) {
       try {
+        // Snapshot which rules are already saved to the template, so an undo that
+        // deletes one (recordEditRules self-heal) can be un-saved from it too.
+        const persistedBefore = persistedEditRules();
+        let recorded = false;
         for (const [doc, pristine, current] of [
           ["resume", entry.pristineResumeLines, entry.resultLines],
           ["cover", entry.pristineCoverLines, entry.coverLetterResultLines],
@@ -125,6 +132,22 @@ export function useDocumentPreview({
           if (editSessionsSeenRef.current.has(sessionKey)) continue;
           editSessionsSeenRef.current.add(sessionKey);
           recordEditRules(rules, { doc });
+          recorded = true;
+        }
+        // Auto-apply is unchanged (promotedEditRules keeps applying these). What's
+        // new: once a rule has recurred enough, save it to the server-side library
+        // so it becomes a permanent part of the template — applied on every future
+        // generation and across devices, not just replayed from this one. And a
+        // rule an undo just removed gets un-saved from the template.
+        if (recorded) {
+          const key = (r) => `${r.before}→${r.after}`;
+          const add = newlyPromotableEditRules();
+          const stillPersisted = new Set(persistedEditRules().map(key));
+          const remove = persistedBefore.filter((r) => !stillPersisted.has(key(r)));
+          if (add.length > 0 || remove.length > 0) {
+            // Fire-and-forget: persistence must never block closing the preview.
+            void syncTemplateEdits({ add, remove });
+          }
         }
       } catch {
         // Rule tracking must never block closing the preview.
@@ -326,6 +349,11 @@ export function useDocumentPreview({
       const variantOverride =
         focusChange && typeof opts.coverVariant === "string" ? opts.coverVariant : entry.coverVariantOverride || "";
       if (engine === "embedded" && variantOverride) formData.append("coverVariant", variantOverride);
+      // Persona (saved profile-reframing identity): the one being applied now,
+      // or the job's stored override; "" means base profile.
+      const personaOverride =
+        focusChange && typeof opts.persona === "string" ? opts.persona : entry.personaOverride || "";
+      if (engine === "embedded" && personaOverride) formData.append("persona", personaOverride);
       const templateLines = await buildTemplateLinesForUpload(resumeFile);
       formData.append("templateLines", JSON.stringify(templateLines));
       contextFiles.forEach((file) => formData.append("contextFiles", file));
@@ -376,18 +404,20 @@ export function useDocumentPreview({
         });
       }
 
-      // Remember which focus, keywords, and letter framing drove this generation
+      // Remember which focus, keywords, letter framing, and persona drove this generation
       // (and the pinned overrides on a focus change) so the previewer's
       // controls stay truthful.
       updateTailoringJob(jobId, {
         focusInfo: payload.report?.meta?.focus || null,
         keywordsInfo: payload.report?.keywords || null,
         ...(payload.coverVariant !== undefined ? { coverVariantInfo: payload.coverVariant || null } : {}),
+        ...(payload.report?.meta?.persona !== undefined ? { personaInfo: payload.report?.meta?.persona || null } : {}),
         ...(focusChange
           ? {
               focusAreaOverride: opts.focusArea,
               keywordEditsOverride: kwEdits,
               ...(typeof opts.coverVariant === "string" ? { coverVariantOverride: opts.coverVariant } : {}),
+              ...(typeof opts.persona === "string" ? { personaOverride: opts.persona } : {}),
             }
           : {}),
       });
@@ -456,13 +486,15 @@ export function useDocumentPreview({
   }
 
   // The previewer's focus picker: pin a library focus area (or "" for
-  // auto-detect), per-posting buzzword toggles, and the letter framing
-  // (teaching/staff/industry, "" = auto), then regenerate both documents.
-  function applyFocusArea(name, keywordEdits = null, coverVariant = "") {
+  // auto-detect), per-posting buzzword toggles, the letter framing
+  // (teaching/staff/industry, "" = auto), and persona (saved identity, "" = base profile),
+  // then regenerate both documents.
+  function applyFocusArea(name, keywordEdits = null, coverVariant = "", persona = "") {
     return resubmitDocumentPreview("resume", "", {
       focusArea: String(name ?? ""),
       keywordEdits,
       coverVariant: String(coverVariant ?? ""),
+      persona: String(persona ?? ""),
     });
   }
 

@@ -83,6 +83,24 @@ export function validateFocusArea(input = {}) {
   return { ok: errors.length === 0, errors, warnings, value };
 }
 
+// A persisted "template" edit rule: a case-sensitive { before -> after } text
+// replacement (after "" = a deletion). Bounds mirror the deriver/sanitizer in
+// lib/tailor/editRules.js so what promotes here is what the client tracks.
+const EDIT_RULE_MIN_BEFORE = 4;
+const EDIT_RULE_MAX_CHARS = 160;
+
+export function validateEditRule(input = {}) {
+  const errors = [];
+  const before = str(input.before);
+  const after = typeof input.after === "string" ? input.after.trim() : "";
+  if (!before) errors.push("before is required.");
+  else if (before.length < EDIT_RULE_MIN_BEFORE) errors.push(`before must be at least ${EDIT_RULE_MIN_BEFORE} characters.`);
+  else if (before.length > EDIT_RULE_MAX_CHARS) errors.push(`before must be at most ${EDIT_RULE_MAX_CHARS} characters.`);
+  if (after.length > EDIT_RULE_MAX_CHARS) errors.push(`after must be at most ${EDIT_RULE_MAX_CHARS} characters.`);
+  if (before && before === after) errors.push("before and after must differ.");
+  return { ok: errors.length === 0, errors, warnings: [], value: { before, after } };
+}
+
 export function validateSkillGroup(input = {}) {
   const errors = [];
   const heading = str(input.heading);
@@ -128,5 +146,54 @@ export function validateProfile(input = {}) {
     errors: [],
     warnings: [],
     value: { values, default_teaching_subjects: strArray(input.default_teaching_subjects) },
+  };
+}
+
+// A saved persona: a named identity that reframes the profile's values, teaching
+// subjects, focus area, and cover letter variant without changing the base profile.
+// `values` is a partial override map (any string key → string value); `cover_variant`
+// is whitelisted to one of the standard teaching/staff/industry/nontechnical variants.
+const PERSONA_VALUE_MAX = 200;
+const PERSONA_VALUES_MAX_KEYS = 40;
+const PERSONA_NAME_MAX = 120;
+const PERSONA_FOCUS_MAX = 120;
+
+export function validatePersona(input = {}) {
+  const errors = [];
+
+  const name = str(input.name);
+  if (!name) errors.push("name is required.");
+  else if (name.length > PERSONA_NAME_MAX) errors.push(`name must be at most ${PERSONA_NAME_MAX} characters.`);
+
+  const values = {};
+  if (input.values && typeof input.values === "object") {
+    let keyCount = 0;
+    for (const [k, v] of Object.entries(input.values)) {
+      if (typeof v === "string") {
+        const trimmed = v.trim();
+        if (trimmed.length > 0 && trimmed.length <= PERSONA_VALUE_MAX) {
+          values[k] = trimmed;
+          keyCount += 1;
+          if (keyCount >= PERSONA_VALUES_MAX_KEYS) break;
+        }
+      }
+    }
+  }
+
+  const default_teaching_subjects = strArray(input.default_teaching_subjects);
+
+  const focus_area = str(input.focus_area);
+  if (focus_area.length > PERSONA_FOCUS_MAX) {
+    errors.push(`focus_area must be at most ${PERSONA_FOCUS_MAX} characters.`);
+  }
+
+  const rawVariant = str(input.cover_variant).toLowerCase();
+  const cover_variant = ["teaching", "staff", "industry", "nontechnical"].includes(rawVariant) ? rawVariant : "";
+
+  return {
+    ok: errors.length === 0,
+    errors,
+    warnings: [],
+    value: { name, values, default_teaching_subjects, focus_area, cover_variant },
   };
 }

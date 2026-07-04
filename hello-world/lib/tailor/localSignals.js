@@ -348,6 +348,39 @@ export function promotedEditRules({ storage = defaultStorage(), threshold = EDIT
     .map((r) => ({ before: r.before, after: r.after }));
 }
 
+// The rules already written into the user's server-side library (their "template").
+// Snapshotted before recording a new session so the caller can detect which ones an
+// undo just removed (self-heal) and delete them from the template too.
+export function persistedEditRules({ storage = defaultStorage() } = {}) {
+  const signals = readSignals(storage);
+  return Object.values(signals.editRules)
+    .filter((r) => r && r.persisted)
+    .map((r) => ({ before: r.before, after: r.after }));
+}
+
+// Promoted rules not yet saved to the template — the ones to persist now. Reuses
+// promotedEditRules' threshold + conflict resolution, then drops any already saved
+// so each rule is POSTed once, not every session.
+export function newlyPromotableEditRules({ storage = defaultStorage(), threshold = EDIT_RULE_THRESHOLD } = {}) {
+  const signals = readSignals(storage);
+  return promotedEditRules({ storage, threshold }).filter((r) => {
+    const rec = signals.editRules[ruleKey(r)];
+    return rec && !rec.persisted;
+  });
+}
+
+// Mark a rule as saved to the template so newlyPromotableEditRules stops returning
+// it. A later undo deletes the record entirely (recordEditRules self-heal), which
+// clears this flag with it.
+export function markEditRulePersisted({ before, after }, { storage = defaultStorage() } = {}) {
+  const signals = readSignals(storage);
+  const key = ruleKey({ before, after });
+  const rec = signals.editRules[key];
+  if (!rec || rec.persisted) return;
+  signals.editRules[key] = { ...rec, persisted: true };
+  writeSignals(signals, storage);
+}
+
 // Annotate suggestion buzzwords with how often each term has been a gap across
 // postings (seenCount), and rank recurring ones first — a term missing from 3
 // different postings matters more than a fresh one, whatever its RAKE score.

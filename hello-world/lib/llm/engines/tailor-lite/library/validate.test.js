@@ -5,6 +5,7 @@ import {
   validateSkillGroup,
   validateContentFragment,
   validateProfile,
+  validatePersona,
 } from "./validate.js";
 
 describe("library validators", () => {
@@ -49,5 +50,49 @@ describe("library validators", () => {
     const v = validateProfile({ values: { RANK: "Senior", BAD: 5 }, default_teaching_subjects: ["Algebra", ""] });
     expect(v.value.values).toEqual({ RANK: "Senior" });
     expect(v.value.default_teaching_subjects).toEqual(["Algebra"]);
+  });
+
+  it("persona: requires name, filters values to string→string, whitelists cover_variant", () => {
+    const v = validatePersona({
+      name: "Finance Educator",
+      values: { RANK: "Senior", BAD: 5, EMPTY: "" },
+      default_teaching_subjects: ["Economics", "Finance"],
+      focus_area: "Teaching & Finance",
+      cover_variant: "teaching",
+    });
+    expect(v.ok).toBe(true);
+    expect(v.value.name).toBe("Finance Educator");
+    expect(v.value.values).toEqual({ RANK: "Senior" });
+    expect(v.value.default_teaching_subjects).toEqual(["Economics", "Finance"]);
+    expect(v.value.focus_area).toBe("Teaching & Finance");
+    expect(v.value.cover_variant).toBe("teaching");
+  });
+
+  it("persona: rejects empty name, caps value lengths, normalizes cover_variant", () => {
+    const v = validatePersona({
+      name: "",
+      values: { KEY: "x".repeat(300) },
+      cover_variant: "unknown",
+    });
+    expect(v.ok).toBe(false);
+    expect(v.errors.join(" ")).toMatch(/name is required/i);
+  });
+
+  it("persona: truncates long names and focus areas", () => {
+    const v = validatePersona({
+      name: "x".repeat(200),
+      focus_area: "y".repeat(200),
+    });
+    expect(v.ok).toBe(false);
+    expect(v.errors.length).toBe(2); // Both name and focus_area are too long
+  });
+
+  it("persona: accepts only whitelisted cover_variant values", () => {
+    expect(validatePersona({ name: "P1", cover_variant: "teaching" }).value.cover_variant).toBe("teaching");
+    expect(validatePersona({ name: "P1", cover_variant: "staff" }).value.cover_variant).toBe("staff");
+    expect(validatePersona({ name: "P1", cover_variant: "industry" }).value.cover_variant).toBe("industry");
+    expect(validatePersona({ name: "P1", cover_variant: "nontechnical" }).value.cover_variant).toBe("nontechnical");
+    expect(validatePersona({ name: "P1", cover_variant: "bad" }).value.cover_variant).toBe("");
+    expect(validatePersona({ name: "P1", cover_variant: "" }).value.cover_variant).toBe("");
   });
 });

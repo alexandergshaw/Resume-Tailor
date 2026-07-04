@@ -32,11 +32,23 @@ export const CONTENT_SCHEMA = [
   { key: "fabricated", type: "switch", label: "Fabricated", help: "Invented metrics/spin — only used at high aggressiveness." },
 ];
 
+export const PERSONA_VALUE_FIELDS = [
+  { key: "PRIMARY_FUNCTION", label: "Headline role (summary)", placeholder: "Finance Instructor" },
+  { key: "SPECIALIZATION", label: "Specialization (job titles)", placeholder: "Finance" },
+  { key: "FUNCTION", label: "Short function (job titles)", placeholder: "Instructor" },
+  { key: "SOLUTION_TYPES", label: "What you build / teach (summary)", placeholder: "online finance courses and curricula" },
+  { key: "SCALE_DESCRIPTOR", label: "Scale descriptor (summary)", placeholder: "rigorous, outcomes-based" },
+  { key: "ENVIRONMENT_TYPES", label: "Environment (summary)", placeholder: "online, higher-education" },
+  { key: "LEADERSHIP_SCOPE", label: "Leadership scope (summary)", placeholder: "adjunct faculty and students" },
+  { key: "YEARS_OF_EXPERIENCE", label: "Years of experience", placeholder: "7" },
+];
+
 export const TABS = [
   { label: "Buzzwords", help: "The taxonomy — canonical terms and the aliases matched in postings. This is what the engine recognizes and surfaces." },
   { label: "Focus Areas", help: "Per-role retargeting. When a posting's match terms clear the threshold, the area reframes the résumé + cover letter." },
   { label: "Skill Groups", help: "Your skills, grouped. Conditional groups only surface when a posting asks for them." },
   { label: "Content Library", help: "Tagged accomplishment/bullet fragments the engine slots into the résumé." },
   { label: "Profile", help: "Static placeholder values (name, rank, scale figures, skills-row headings) the posting can't supply." },
+  { label: "Personas", help: "Named identities that reframe the résumé + cover letter per posting — e.g. a 'Finance Educator' persona. Your base profile stays unchanged." },
   { label: "Preview", help: "Render the résumé + cover letter from a pasted posting against your current library — verify edits without AI." },
 ];

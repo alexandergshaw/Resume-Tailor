@@ -75,11 +75,33 @@ export async function loadLibrary({ userId, supabase } = {}) {
     // so fall back rather than tailor against an empty library.
     if (!taxonomy.data || taxonomy.data.length === 0) return defaultLibraryData;
 
+    // Persistent "template" edit rules — fetched separately and tolerantly: this
+    // table shipped after the others, so a not-yet-applied migration must degrade
+    // to "no persisted edits", never nuke the rest of the user's library.
+    let editRuleRows = [];
+    try {
+      const { data, error } = await client.from("tailor_edit_rules").select("*").eq("user_id", userId);
+      if (!error && Array.isArray(data)) editRuleRows = data;
+    } catch {
+      editRuleRows = [];
+    }
+
+    // Saved personas — fetched separately and tolerantly, like edit rules.
+    let personaRows = [];
+    try {
+      const { data, error } = await client.from("tailor_personas").select("*").eq("user_id", userId);
+      if (!error && Array.isArray(data)) personaRows = data;
+    } catch {
+      personaRows = [];
+    }
+
     const assembled = rowsToLibrary({
       taxonomyRows: taxonomy.data,
       focusAreaRows: focusAreas.data || [],
       skillGroupRows: skillGroups.data || [],
       contentLibraryRows: contentLibrary.data || [],
+      editRuleRows,
+      personaRows,
       profileRow,
     });
     await setCached(redisKey, assembled, LIBRARY_TTL_SECONDS);

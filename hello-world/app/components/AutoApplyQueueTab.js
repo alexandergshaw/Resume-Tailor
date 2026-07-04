@@ -8,10 +8,20 @@ import Chip from "@mui/material/Chip";
 import Divider from "@mui/material/Divider";
 import Paper from "@mui/material/Paper";
 import Typography from "@mui/material/Typography";
+import Alert from "@mui/material/Alert";
+import Skeleton from "@mui/material/Skeleton";
+import IconButton from "@mui/material/IconButton";
+import Tooltip from "@mui/material/Tooltip";
+import LinearProgress from "@mui/material/LinearProgress";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import DescriptionIcon from "@mui/icons-material/Description";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
+import RefreshIcon from "@mui/icons-material/Refresh";
+import InboxIcon from "@mui/icons-material/Inbox";
+import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
+import TabHeader from "./TabHeader";
+import EmptyState from "./EmptyState";
 
 import styles from "../page.module.css";
 import { openPostingBeside } from "@/lib/window/openPostingBeside";
@@ -212,114 +222,180 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
   if (!currentUser) {
     return (
       <section className={styles.tabPanel}>
-        <p style={{ color: "var(--text-secondary)" }}>
-          Sign in to view your auto-apply queue.
-        </p>
+        <TabHeader title="Auto-apply queue" />
+        <EmptyState
+          icon={<InboxIcon />}
+          title="Queue requires sign-in"
+          message="Sign in to view your auto-apply queue and manage tailored applications."
+        />
       </section>
     );
   }
 
   return (
     <section className={styles.tabPanel}>
-      <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
-        <Typography sx={{ fontWeight: 600, fontSize: "0.95rem" }}>Auto-apply queue</Typography>
-        <Chip size="small" label={items.length} color={items.length > 0 ? "primary" : "default"} />
-        <Box sx={{ flex: 1 }} />
-        <Button size="small" onClick={load} disabled={loading} sx={{ textTransform: "none" }}>
-          Refresh
-        </Button>
-        {items.length > 0 && !walking && (
-          <Button
-            size="small"
-            variant="contained"
-            startIcon={<PlayArrowIcon />}
-            onClick={() => setWalkIndex(0)}
-            sx={{ textTransform: "none" }}
-          >
-            Start auto-apply
-          </Button>
-        )}
-      </Box>
-      <Typography sx={{ color: "var(--text-secondary)", fontSize: "0.8rem", mb: 1.5 }}>
-        Jobs matched from your saved searches, auto-saved with a tailored resume and cover letter.
-        Work through them one at a time.
-      </Typography>
-
-      {error && <p style={{ color: "var(--danger)" }}>Error: {error}</p>}
-
-      {loading ? (
-        <Box sx={{ display: "flex", justifyContent: "center", py: 3 }}>
-          <CircularProgress size={24} />
-        </Box>
-      ) : items.length === 0 ? (
-        <Box sx={{ color: "var(--text-muted)", fontSize: "0.85rem", fontStyle: "italic" }}>
-          Nothing queued yet. Enable auto-tailor on a saved search and wait for the next run.
-        </Box>
-      ) : walking && current ? (
-        <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
-          <Box sx={{ display: "flex", alignItems: "center", mb: 1 }}>
-            <Typography variant="overline" color="text.secondary">{progressLabel}</Typography>
-            <Box sx={{ flex: 1 }} />
-            <Button size="small" onClick={() => setWalkIndex(-1)} sx={{ textTransform: "none" }}>
-              Exit
-            </Button>
-          </Box>
-          <Typography sx={{ fontWeight: 700, fontSize: "1.05rem" }}>
-            {current.positions?.title || "Untitled role"}
-          </Typography>
-          <Typography sx={{ color: "var(--text-secondary)", mb: 0.5 }}>
-            {current.positions?.company || "—"}
-            {current.positions?.location ? ` · ${current.positions.location}` : ""}
-          </Typography>
-          {originName(current) && (
-            <Chip size="small" variant="outlined" label={`From: ${originName(current)}`} sx={{ mb: 0.5 }} />
-          )}
-          {current.auto_apply_opened_at && (
+      <TabHeader
+        title="Auto-apply queue"
+        description="Jobs matched from your saved searches, auto-saved with a tailored resume and cover letter — work through them one at a time."
+        actions={
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
             <Chip
               size="small"
-              color="success"
-              variant="outlined"
-              label={`Opened ${new Date(current.auto_apply_opened_at).toLocaleString()}`}
-              sx={{ mb: 0.5, ml: originName(current) ? 0.5 : 0 }}
+              label={items.length}
+              color={items.length > 0 ? "primary" : "default"}
             />
-          )}
-          <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", my: 1.5 }}>
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={<DescriptionIcon />}
-              onClick={() => handleDownloadResume(current)}
-              disabled={!resumeFor(current)}
-              sx={{ textTransform: "none" }}
-            >
-              Résumé
-            </Button>
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={<DescriptionIcon />}
-              onClick={() => handleDownloadCover(current)}
-              disabled={!coverFor(current)}
-              sx={{ textTransform: "none" }}
-            >
-              Cover letter
-            </Button>
-            {current.positions?.url && (
+            <Tooltip title="Refresh queue">
+              <span>
+                <IconButton
+                  onClick={load}
+                  disabled={loading}
+                  size="small"
+                  color="primary"
+                >
+                  {loading ? <CircularProgress size={18} /> : <RefreshIcon />}
+                </IconButton>
+              </span>
+            </Tooltip>
+            {items.length > 0 && !walking && (
               <Button
                 size="small"
-                variant="outlined"
-                startIcon={<OpenInNewIcon />}
-                href={current.positions.url}
-                target="_blank"
-                rel="noopener noreferrer"
+                variant="contained"
+                startIcon={<PlayArrowIcon />}
+                onClick={() => setWalkIndex(0)}
                 sx={{ textTransform: "none" }}
               >
-                Open posting
+                Start auto-apply
               </Button>
             )}
           </Box>
+        }
+      />
+
+      {/* Error alert with retry action */}
+      {error && (
+        <Alert
+          severity="error"
+          onClose={() => setError("")}
+          action={
+            <Button
+              size="small"
+              color="inherit"
+              onClick={load}
+              sx={{ textTransform: "none" }}
+            >
+              Retry
+            </Button>
+          }
+          sx={{ mb: 1.5 }}
+        >
+          {error}
+        </Alert>
+      )}
+
+      {/* Loading state: table-shaped skeletons */}
+      {loading ? (
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} variant="rounded" height={64} />
+          ))}
+        </Box>
+      ) : items.length === 0 ? (
+        <EmptyState
+          icon={<InboxIcon />}
+          title="Nothing queued yet"
+          message="Enable auto-tailor on a saved search and wait for the next run."
+        />
+      ) : walking && current ? (
+        <Paper variant="outlined" sx={{ p: 2, borderRadius: 2 }}>
+          {/* Progress bar */}
+          <Box sx={{ mb: 2 }}>
+            <LinearProgress
+              variant="determinate"
+              value={items.length > 0 ? Math.min((walkIndex / items.length) * 100, 100) : 0}
+            />
+            <Typography
+              variant="caption"
+              sx={{ color: "text.secondary", display: "block", mt: 0.5, textAlign: "right" }}
+            >
+              {progressLabel}
+            </Typography>
+          </Box>
+
+          {/* Title and location (clear hierarchy) */}
+          <Typography sx={{ fontWeight: 700, fontSize: "1.1rem", mb: 0.25 }}>
+            {current.positions?.title || "Untitled role"}
+          </Typography>
+          <Typography sx={{ color: "var(--text-secondary)", fontSize: "0.95rem", mb: 1 }}>
+            {current.positions?.company || "—"}
+            {current.positions?.location ? ` · ${current.positions.location}` : ""}
+          </Typography>
+
+          {/* Metadata chips */}
+          <Box sx={{ display: "flex", gap: 0.75, flexWrap: "wrap", mb: 1.5 }}>
+            {originName(current) && (
+              <Chip size="small" variant="outlined" label={`From: ${originName(current)}`} />
+            )}
+            {current.auto_apply_opened_at && (
+              <Chip
+                size="small"
+                color="success"
+                icon={<CheckCircleOutlineIcon />}
+                label={`Opened ${new Date(current.auto_apply_opened_at).toLocaleString()}`}
+              />
+            )}
+          </Box>
+
+          {/* Document download buttons */}
+          <Box sx={{ display: "flex", gap: 0.75, flexWrap: "wrap", mb: 1.5 }}>
+            <Tooltip title="Download tailored résumé">
+              <span>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<DescriptionIcon />}
+                  onClick={() => handleDownloadResume(current)}
+                  disabled={!resumeFor(current)}
+                  sx={{ textTransform: "none" }}
+                >
+                  Résumé
+                </Button>
+              </span>
+            </Tooltip>
+            <Tooltip title="Download tailored cover letter">
+              <span>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<DescriptionIcon />}
+                  onClick={() => handleDownloadCover(current)}
+                  disabled={!coverFor(current)}
+                  sx={{ textTransform: "none" }}
+                >
+                  Cover letter
+                </Button>
+              </span>
+            </Tooltip>
+            {current.positions?.url && (
+              <Tooltip title="Open job posting in new window">
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<OpenInNewIcon />}
+                  href={current.positions.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  sx={{ textTransform: "none" }}
+                >
+                  Open posting
+                </Button>
+              </Tooltip>
+            )}
+          </Box>
+
           <Divider sx={{ my: 1.5 }} />
-          <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+
+          {/* Primary and secondary actions */}
+          <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
             <Button
               variant="contained"
               onClick={async () => {
@@ -345,70 +421,279 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
               Skip
             </Button>
             <Box sx={{ flex: 1 }} />
-            <Button
-              variant="text"
-              color="error"
-              startIcon={<DeleteOutlineIcon />}
-              onClick={async () => {
-                await handleRemove(current);
-              }}
-              disabled={busyId === current.id}
-              sx={{ textTransform: "none" }}
-            >
-              Remove
-            </Button>
+            <Tooltip title="Remove from queue">
+              <span>
+                <Button
+                  size="small"
+                  variant="text"
+                  color="error"
+                  startIcon={<DeleteOutlineIcon />}
+                  onClick={async () => {
+                    await handleRemove(current);
+                  }}
+                  disabled={busyId === current.id}
+                  sx={{ textTransform: "none" }}
+                >
+                  Remove
+                </Button>
+              </span>
+            </Tooltip>
           </Box>
-          <Typography sx={{ color: "var(--border-strong)", fontSize: "0.72rem", mt: 1 }}>
+
+          {/* Informational footnote */}
+          <Typography sx={{ color: "var(--text-muted)", fontSize: "0.72rem", mt: 1 }}>
             Jobs stay in the queue until you change their status in the Tracking tab.
           </Typography>
         </Paper>
       ) : (
-        <Box sx={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 1 }}>
+        /* List/table view with consistent row padding, hover state, truncation */
+        <Box
+          sx={{
+            overflowX: "auto",
+            border: "1px solid var(--border)",
+            borderRadius: 1,
+            bgcolor: "var(--bg-surface)",
+          }}
+        >
           <Box component="table" sx={{ width: "100%", borderCollapse: "collapse", fontSize: "0.85rem" }}>
+            {/* Table header */}
             <Box component="thead" sx={{ bgcolor: "var(--bg-soft)" }}>
               <Box component="tr">
-                <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid var(--border)", fontWeight: 600 }}>Saved</Box>
-                <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid var(--border)", fontWeight: 600 }}>From</Box>
-                <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid var(--border)", fontWeight: 600 }}>Company</Box>
-                <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid var(--border)", fontWeight: 600 }}>Title</Box>
-                <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid var(--border)", fontWeight: 600 }}>Docs</Box>
-                <Box component="th" sx={{ textAlign: "left", p: 1, borderBottom: "1px solid var(--border)", fontWeight: 600 }}>Actions</Box>
+                <Box
+                  component="th"
+                  sx={{
+                    textAlign: "left",
+                    p: 1.25,
+                    borderBottom: "1px solid var(--border)",
+                    fontWeight: 600,
+                    color: "text.secondary",
+                  }}
+                >
+                  Saved
+                </Box>
+                <Box
+                  component="th"
+                  sx={{
+                    textAlign: "left",
+                    p: 1.25,
+                    borderBottom: "1px solid var(--border)",
+                    fontWeight: 600,
+                    color: "text.secondary",
+                  }}
+                >
+                  From
+                </Box>
+                <Box
+                  component="th"
+                  sx={{
+                    textAlign: "left",
+                    p: 1.25,
+                    borderBottom: "1px solid var(--border)",
+                    fontWeight: 600,
+                    color: "text.secondary",
+                  }}
+                >
+                  Company
+                </Box>
+                <Box
+                  component="th"
+                  sx={{
+                    textAlign: "left",
+                    p: 1.25,
+                    borderBottom: "1px solid var(--border)",
+                    fontWeight: 600,
+                    color: "text.secondary",
+                  }}
+                >
+                  Title
+                </Box>
+                <Box
+                  component="th"
+                  sx={{
+                    textAlign: "left",
+                    p: 1.25,
+                    borderBottom: "1px solid var(--border)",
+                    fontWeight: 600,
+                    color: "text.secondary",
+                  }}
+                >
+                  Docs
+                </Box>
+                <Box
+                  component="th"
+                  sx={{
+                    textAlign: "left",
+                    p: 1.25,
+                    borderBottom: "1px solid var(--border)",
+                    fontWeight: 600,
+                    color: "text.secondary",
+                  }}
+                >
+                  Actions
+                </Box>
               </Box>
             </Box>
+
+            {/* Table body */}
             <Box component="tbody">
               {items.map((row) => {
                 const pos = row.positions || {};
                 const dateLabel = row.auto_saved_at ? new Date(row.auto_saved_at).toLocaleString() : "—";
                 return (
-                  <Box component="tr" key={row.id} sx={{ "&:hover": { bgcolor: "var(--bg-soft)" } }}>
-                    <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)", whiteSpace: "nowrap" }}>{dateLabel}</Box>
-                    <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)" }}>{originName(row) || "—"}</Box>
-                    <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)" }}>{pos.company || "—"}</Box>
-                    <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)" }}>{pos.title || "—"}</Box>
-                    <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)", whiteSpace: "nowrap" }}>
-                      <Button size="small" onClick={() => handleDownloadResume(row)} disabled={!resumeFor(row)} sx={{ textTransform: "none", minWidth: 0, px: 0.75 }}>Résumé</Button>
-                      <Button size="small" onClick={() => handleDownloadCover(row)} disabled={!coverFor(row)} sx={{ textTransform: "none", minWidth: 0, px: 0.75 }}>Cover</Button>
+                  <Box
+                    component="tr"
+                    key={row.id}
+                    sx={{
+                      "&:hover": { bgcolor: "var(--bg-soft)" },
+                      transition: "background-color 150ms ease",
+                    }}
+                  >
+                    {/* Saved date */}
+                    <Box
+                      component="td"
+                      sx={{
+                        p: 1.25,
+                        borderBottom: "1px solid var(--border)",
+                        whiteSpace: "nowrap",
+                        fontSize: "0.8rem",
+                        color: "text.secondary",
+                      }}
+                    >
+                      {dateLabel}
                     </Box>
-                    <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)", whiteSpace: "nowrap" }}>
-                      <Button
-                        size="small"
-                        variant={row.auto_apply_opened_at ? "outlined" : "contained"}
-                        color={row.auto_apply_opened_at ? "success" : "primary"}
-                        onClick={() => handleApply(row)}
-                        disabled={busyId === row.id || !pos.url}
-                        sx={{ textTransform: "none", py: 0.25, px: 1, fontSize: "0.75rem" }}
+
+                    {/* From (saved search) */}
+                    <Box
+                      component="td"
+                      sx={{
+                        p: 1.25,
+                        borderBottom: "1px solid var(--border)",
+                        maxWidth: 150,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {originName(row) || "—"}
+                    </Box>
+
+                    {/* Company */}
+                    <Box
+                      component="td"
+                      sx={{
+                        p: 1.25,
+                        borderBottom: "1px solid var(--border)",
+                        maxWidth: 180,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {pos.company || "—"}
+                    </Box>
+
+                    {/* Title */}
+                    <Box
+                      component="td"
+                      sx={{
+                        p: 1.25,
+                        borderBottom: "1px solid var(--border)",
+                        maxWidth: 200,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {pos.title || "—"}
+                    </Box>
+
+                    {/* Document actions (icon buttons) */}
+                    <Box
+                      component="td"
+                      sx={{
+                        p: 1.25,
+                        borderBottom: "1px solid var(--border)",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      <Tooltip title="Download résumé">
+                        <span>
+                          <IconButton
+                            size="small"
+                            onClick={() => handleDownloadResume(row)}
+                            disabled={!resumeFor(row)}
+                            sx={{ color: "primary.main" }}
+                          >
+                            <DescriptionIcon fontSize="small" />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                      <Tooltip title="Download cover letter">
+                        <span>
+                          <IconButton
+                            size="small"
+                            onClick={() => handleDownloadCover(row)}
+                            disabled={!coverFor(row)}
+                            sx={{ color: "primary.main" }}
+                          >
+                            <DescriptionIcon fontSize="small" />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                    </Box>
+
+                    {/* Primary action + remove */}
+                    <Box
+                      component="td"
+                      sx={{
+                        p: 1.25,
+                        borderBottom: "1px solid var(--border)",
+                        whiteSpace: "nowrap",
+                        display: "flex",
+                        gap: 0.5,
+                        alignItems: "center",
+                      }}
+                    >
+                      <Tooltip
+                        title={
+                          !pos.url
+                            ? "No posting URL available"
+                            : row.auto_apply_opened_at
+                              ? "Re-open posting and re-download docs"
+                              : "Open posting and mark applied"
+                        }
                       >
-                        {row.auto_apply_opened_at ? "Re-open" : "Apply"}
-                      </Button>
-                      <Button
-                        size="small"
-                        color="error"
-                        onClick={() => handleRemove(row)}
-                        disabled={busyId === row.id}
-                        sx={{ textTransform: "none", py: 0.25, px: 1, fontSize: "0.75rem", minWidth: 0, ml: 0.5 }}
-                      >
-                        Remove
-                      </Button>
+                        <span>
+                          <Button
+                            size="small"
+                            variant={row.auto_apply_opened_at ? "outlined" : "contained"}
+                            color={row.auto_apply_opened_at ? "success" : "primary"}
+                            startIcon={row.auto_apply_opened_at ? <CheckCircleOutlineIcon /> : null}
+                            onClick={() => handleApply(row)}
+                            disabled={busyId === row.id || !pos.url}
+                            sx={{
+                              textTransform: "none",
+                              fontSize: "0.75rem",
+                              py: 0.5,
+                              px: 1,
+                            }}
+                          >
+                            {busyId === row.id ? "…" : row.auto_apply_opened_at ? "Re-open" : "Apply"}
+                          </Button>
+                        </span>
+                      </Tooltip>
+                      <Tooltip title="Remove from queue">
+                        <span>
+                          <IconButton
+                            size="small"
+                            onClick={() => handleRemove(row)}
+                            disabled={busyId === row.id}
+                            sx={{ color: "error.main" }}
+                          >
+                            <DeleteOutlineIcon fontSize="small" />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
                     </Box>
                   </Box>
                 );

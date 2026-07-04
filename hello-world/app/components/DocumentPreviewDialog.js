@@ -6,6 +6,7 @@ import DialogTitle from "@mui/material/DialogTitle";
 import DialogContent from "@mui/material/DialogContent";
 import DialogActions from "@mui/material/DialogActions";
 import Button from "@mui/material/Button";
+import IconButton from "@mui/material/IconButton";
 import Box from "@mui/material/Box";
 import Tabs from "@mui/material/Tabs";
 import Tab from "@mui/material/Tab";
@@ -32,7 +33,11 @@ import TravelExploreIcon from "@mui/icons-material/TravelExplore";
 import ManageSearchIcon from "@mui/icons-material/ManageSearch";
 import TrackChangesIcon from "@mui/icons-material/TrackChanges";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import CloseIcon from "@mui/icons-material/Close";
+import LibraryBooksIcon from "@mui/icons-material/LibraryBooks";
 import { renderModelToHtml } from "@/lib/document/docxPreview";
+import { downloadCombinedDocuments } from "@/lib/document/combineDocuments";
+import { sanitizeFileNamePart } from "@/lib/document/docx";
 import { useIsMobile } from "../hooks/useResponsive";
 
 const SCOPES = ["resume", "cover"];
@@ -45,6 +50,17 @@ const BLOCK_STYLES = [
   { tag: "H2", label: "Heading 2" },
   { tag: "H3", label: "Heading 3" },
 ];
+// Cover-letter framing options for the in-preview control. "" = auto-detect; the
+// rest pin the framing — the technical/non-technical axis the user controls, plus
+// teaching and university-staff. Mirrors the focus picker's VARIANT_OPTIONS.
+const FRAMING_OPTIONS = [
+  { value: "", label: "Auto" },
+  { value: "industry", label: "Technical" },
+  { value: "nontechnical", label: "Non-technical" },
+  { value: "teaching", label: "Teaching" },
+  { value: "staff", label: "University staff" },
+];
+const FRAMING_LABEL = Object.fromEntries(FRAMING_OPTIONS.map((o) => [o.value, o.label]));
 
 // A page-like surface so the preview reads like the printed document. The
 // "paper" stays white with dark ink in both themes (it mirrors a printed page).
@@ -54,7 +70,7 @@ const pageSx = {
   fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
   fontSize: "11pt",
   lineHeight: 1.3,
-  px: { xs: 2.5, sm: 5 },
+  px: { xs: 2, sm: 5 },
   py: { xs: 2.5, sm: 4 },
   mx: "auto",
   maxWidth: 720,
@@ -69,6 +85,11 @@ const pageSx = {
   "& ul, & ol": { margin: "3pt 0", paddingLeft: "1.5em" },
   "& li": { margin: "1pt 0" },
 };
+
+// Format-toolbar buttons: bigger tap targets on phones, and never shrink so the
+// bar stays a single swipeable row on narrow screens.
+const fmtBtnSx = { minWidth: { xs: 40, sm: 36 }, minHeight: { xs: 40, sm: 32 }, flexShrink: 0 };
+const fmtGapSx = { width: 8, flexShrink: 0 };
 
 // Preview + edit the tailored résumé and cover letter for a posting. Renders the
 // SAME .docx the download produces so formatting matches; supports flipping
@@ -91,8 +112,11 @@ export default function DocumentPreviewDialog({
   onScrapePosting,
   focus = null,
   coverVariant = null,
+  persona = null,
   keywordEditsCount = 0,
   onOpenFocusPicker,
+  focusControls = null,
+  onSetFraming,
   researchLoading = false,
   researchCount = 0,
   companyReferences = [],
@@ -124,6 +148,12 @@ export default function DocumentPreviewDialog({
   // Editable download file name (base, no extension) for the active scope.
   const [fileNameDraft, setFileNameDraft] = useState("");
   const [fileNameTab, setFileNameTab] = useState(initialTab);
+  // "Combine both documents" control: output format + busy/error, shown when a
+  // résumé AND a cover letter both exist. Engine-agnostic (works off the render
+  // models, not the engine's finished doc).
+  const [combineFormat, setCombineFormat] = useState("docx"); // "docx" | "pdf"
+  const [combining, setCombining] = useState(false);
+  const [combineError, setCombineError] = useState("");
   const editorRef = useRef(null);
   const draftHtmlRef = useRef({}); // scope -> edited innerHTML (uncommitted)
   const savedRangeRef = useRef(null); // selection captured before a control steals focus
@@ -168,6 +198,7 @@ export default function DocumentPreviewDialog({
       setSaveStatus("saved");
       setFileNameTab(startTab);
       setFileNameDraft(scopes[startTab]?.fileName || "");
+      setCombineError("");
     }
   }
 
@@ -305,6 +336,32 @@ export default function DocumentPreviewDialog({
   // Commit any pending edit, then download the active document.
   const handleDownload = () => { commitDraft(); onDownload?.(tab, activePayload()); };
 
+  // Combine the résumé + cover letter into one .docx or .pdf. Loads BOTH render
+  // models (engine-agnostic — they come from the finished doc or the edited text
+  // via the parent's loadModel), then builds a single page-broken document. The
+  // .pdf path prints the same HTML the preview shows (browser "Save as PDF").
+  const combinedFileBase = () => {
+    const base = [sanitizeFileNamePart(company || ""), sanitizeFileNamePart(jobTitle || "")]
+      .filter(Boolean)
+      .join(" - ");
+    return (base ? `${base} - ` : "") + "Application";
+  };
+  const handleCombine = async () => {
+    if (combining || typeof loadModel !== "function") return;
+    commitDraft();
+    setCombining(true);
+    setCombineError("");
+    try {
+      const models = await Promise.all(SCOPES.filter(available).map((scope) => loadModel(scope)));
+      const err = await downloadCombinedDocuments({ models, format: combineFormat, fileBase: combinedFileBase() });
+      if (err) setCombineError(err);
+    } catch (e) {
+      setCombineError(e?.message || "Unable to build the combined document.");
+    } finally {
+      setCombining(false);
+    }
+  };
+
   // Flush pending edits, then close.
   const handleClose = () => { commitDraft(); onClose?.(); };
 
@@ -349,6 +406,8 @@ export default function DocumentPreviewDialog({
   const heading = [company, jobTitle].filter(Boolean).join(" · ");
   const state = docState[tab] || {};
   const hasContent = SCOPES.some(available);
+  // "Combine both" is offered only when a résumé AND a cover letter both exist.
+  const canCombine = SCOPES.every(available) && typeof loadModel === "function";
   // Steering re-tailors from instructions: Gemini rewrites freely, and the
   // embedded engine applies emphasize/avoid/tone directives offline. The
   // external engine has no steering path, so the box stays hidden there.
@@ -357,12 +416,28 @@ export default function DocumentPreviewDialog({
 
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth fullScreen={isMobile}>
-      <DialogTitle sx={{ pb: 0.5 }}>
+      <DialogTitle
+        sx={{
+          pb: 0.5,
+          pr: isMobile ? 6 : 3,
+          position: "relative",
+          fontSize: { xs: "1.05rem", sm: "1.25rem" },
+        }}
+      >
         Tailored documents{heading ? ` — ${heading}` : ""}
+        {isMobile ? (
+          <IconButton
+            aria-label="Close"
+            onClick={handleClose}
+            sx={{ position: "absolute", right: 8, top: 8, color: "var(--text-secondary)" }}
+          >
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        ) : null}
       </DialogTitle>
 
-      <Box sx={{ px: 2, display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", borderBottom: "1px solid var(--border)" }}>
-        <Tabs value={tab} onChange={(_e, v) => { commitDraft(); setTab(v); setMode("view"); }} sx={{ minHeight: 40 }}>
+      <Box sx={{ px: { xs: 1, sm: 2 }, display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", borderBottom: "1px solid var(--border)" }}>
+        <Tabs value={tab} onChange={(_e, v) => { commitDraft(); setTab(v); setMode("view"); }} sx={{ minHeight: 40, width: { xs: "100%", sm: "auto" } }}>
           {SCOPES.map((scope) => (
             <Tab
               key={scope}
@@ -373,7 +448,16 @@ export default function DocumentPreviewDialog({
             />
           ))}
         </Tabs>
-        <Box sx={{ flex: 1 }} />
+        <Box sx={{ flex: 1, display: { xs: "none", sm: "block" } }} />
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: { xs: 0.5, sm: 1 },
+            flexWrap: "wrap",
+            width: { xs: "100%", sm: "auto" },
+          }}
+        >
         {isEmbedded && onOpenFocusPicker ? (
           <Tooltip title="Wrong focus or letter framing? Pick the focus area, toggle the teaching/staff/industry letter, and adjust buzzwords — both documents regenerate.">
             <span>
@@ -387,12 +471,35 @@ export default function DocumentPreviewDialog({
                 <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   Focus: {focus?.name || "auto"}
                   {focus?.source === "override" ? " (pinned)" : ""}
+                  {persona?.name ? ` · persona: ${persona.name}` : ""}
                   {coverVariant?.name
                     ? ` · letter: ${coverVariant.name}${coverVariant.source === "override" ? " (pinned)" : ""}`
                     : ""}
                   {keywordEditsCount > 0 ? ` · ${keywordEditsCount} buzzword edit${keywordEditsCount === 1 ? "" : "s"}` : ""}
                 </Box>
               </Button>
+            </span>
+          </Tooltip>
+        ) : null}
+        {isEmbedded && onSetFraming ? (
+          <Tooltip title="Frame the documents technically (product / engineering) or non-technically (leadership / change) — or auto-detect. Regenerates the cover letter with the matching framing.">
+            <span>
+              <Select
+                size="small"
+                value={coverVariant?.source === "override" ? coverVariant?.name || "" : ""}
+                onChange={(e) => onSetFraming(e.target.value)}
+                disabled={busy}
+                displayEmpty
+                renderValue={(v) => `Framing: ${FRAMING_LABEL[v] ?? "Auto"}`}
+                MenuProps={{ disableAutoFocusItem: true }}
+                sx={{ height: 32, fontSize: "0.8rem", my: 0.5, maxWidth: 220 }}
+              >
+                {FRAMING_OPTIONS.map((o) => (
+                  <MenuItem key={o.value || "auto"} value={o.value} sx={{ fontSize: "0.85rem" }}>
+                    {o.label}
+                  </MenuItem>
+                ))}
+              </Select>
             </span>
           </Tooltip>
         ) : null}
@@ -437,12 +544,15 @@ export default function DocumentPreviewDialog({
             <ToggleButton value="edit" sx={{ textTransform: "none", px: 1.5 }}>Edit</ToggleButton>
           </ToggleButtonGroup>
         ) : null}
+        </Box>
       </Box>
+
+      {focusControls}
 
       {scrapeNote ? (
         <Box
           sx={{
-            px: 2,
+            px: { xs: 1.25, sm: 2 },
             py: 0.5,
             fontSize: "0.8rem",
             color: scrapeNote.ok ? "var(--text-secondary)" : "var(--danger)",
@@ -454,7 +564,7 @@ export default function DocumentPreviewDialog({
       ) : null}
 
       {available(tab) ? (
-        <Box sx={{ px: 2, py: 0.75, display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", borderBottom: "1px solid var(--border)" }}>
+        <Box sx={{ px: { xs: 1.25, sm: 2 }, py: 0.75, display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", borderBottom: "1px solid var(--border)" }}>
           <Box component="span" sx={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
             File name
           </Box>
@@ -489,25 +599,37 @@ export default function DocumentPreviewDialog({
       ) : null}
 
       {mode === "edit" && available(tab) ? (
-        <Box sx={{ px: 2, py: 0.75, display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap", borderBottom: "1px solid var(--border)" }}>
-          <Tooltip title="Bold"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("bold"); }} sx={{ minWidth: 36 }}><FormatBoldIcon fontSize="small" /></Button></Tooltip>
-          <Tooltip title="Italic"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("italic"); }} sx={{ minWidth: 36 }}><FormatItalicIcon fontSize="small" /></Button></Tooltip>
-          <Tooltip title="Underline"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("underline"); }} sx={{ minWidth: 36 }}><FormatUnderlinedIcon fontSize="small" /></Button></Tooltip>
-          <Box sx={{ width: 8 }} />
-          <Tooltip title="Align left"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("justifyLeft"); }} sx={{ minWidth: 36 }}><FormatAlignLeftIcon fontSize="small" /></Button></Tooltip>
-          <Tooltip title="Align center"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("justifyCenter"); }} sx={{ minWidth: 36 }}><FormatAlignCenterIcon fontSize="small" /></Button></Tooltip>
-          <Tooltip title="Align right"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("justifyRight"); }} sx={{ minWidth: 36 }}><FormatAlignRightIcon fontSize="small" /></Button></Tooltip>
-          <Box sx={{ width: 8 }} />
-          <Tooltip title="Bulleted list"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("insertUnorderedList"); }} sx={{ minWidth: 36 }}><FormatListBulletedIcon fontSize="small" /></Button></Tooltip>
-          <Tooltip title="Numbered list"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("insertOrderedList"); }} sx={{ minWidth: 36 }}><FormatListNumberedIcon fontSize="small" /></Button></Tooltip>
-          <Box sx={{ width: 8 }} />
+        <Box
+          sx={{
+            px: { xs: 1, sm: 2 },
+            py: 0.75,
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+            flexWrap: { xs: "nowrap", sm: "wrap" },
+            overflowX: { xs: "auto", sm: "visible" },
+            WebkitOverflowScrolling: "touch",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          <Tooltip title="Bold"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("bold"); }} sx={fmtBtnSx}><FormatBoldIcon fontSize="small" /></Button></Tooltip>
+          <Tooltip title="Italic"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("italic"); }} sx={fmtBtnSx}><FormatItalicIcon fontSize="small" /></Button></Tooltip>
+          <Tooltip title="Underline"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("underline"); }} sx={fmtBtnSx}><FormatUnderlinedIcon fontSize="small" /></Button></Tooltip>
+          <Box sx={fmtGapSx} />
+          <Tooltip title="Align left"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("justifyLeft"); }} sx={fmtBtnSx}><FormatAlignLeftIcon fontSize="small" /></Button></Tooltip>
+          <Tooltip title="Align center"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("justifyCenter"); }} sx={fmtBtnSx}><FormatAlignCenterIcon fontSize="small" /></Button></Tooltip>
+          <Tooltip title="Align right"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("justifyRight"); }} sx={fmtBtnSx}><FormatAlignRightIcon fontSize="small" /></Button></Tooltip>
+          <Box sx={fmtGapSx} />
+          <Tooltip title="Bulleted list"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("insertUnorderedList"); }} sx={fmtBtnSx}><FormatListBulletedIcon fontSize="small" /></Button></Tooltip>
+          <Tooltip title="Numbered list"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("insertOrderedList"); }} sx={fmtBtnSx}><FormatListNumberedIcon fontSize="small" /></Button></Tooltip>
+          <Box sx={fmtGapSx} />
           <Select
             size="small"
             displayEmpty
             value=""
             onChange={(e) => applyBlockFormat(e.target.value)}
             renderValue={() => "Style"}
-            sx={{ height: 32, fontSize: "0.8rem", minWidth: 92 }}
+            sx={{ height: { xs: 40, sm: 32 }, fontSize: "0.8rem", minWidth: 92, flexShrink: 0 }}
             MenuProps={{ disableAutoFocusItem: true }}
           >
             {BLOCK_STYLES.map((b) => (
@@ -520,7 +642,7 @@ export default function DocumentPreviewDialog({
             value=""
             onChange={(e) => applyFontSize(e.target.value)}
             renderValue={() => "Size"}
-            sx={{ height: 32, fontSize: "0.8rem" }}
+            sx={{ height: { xs: 40, sm: 32 }, fontSize: "0.8rem", minWidth: 76, flexShrink: 0 }}
             MenuProps={{ disableAutoFocusItem: true }}
           >
             {FONT_SIZES.map((pt) => (
@@ -531,7 +653,7 @@ export default function DocumentPreviewDialog({
       ) : null}
 
       {tab === "cover" && companyReferences.length > 0 ? (
-        <Box sx={{ px: 2, py: 1, borderBottom: "1px solid var(--border)", bgcolor: "var(--accent-soft)" }}>
+        <Box sx={{ px: { xs: 1.25, sm: 2 }, py: 1, borderBottom: "1px solid var(--border)", bgcolor: "var(--accent-soft)" }}>
           <Box sx={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary)", mb: 0.5 }}>
             Company references {mode === "edit" ? "(Insert at cursor)" : "(switch to Edit to insert, or copy)"}
           </Box>
@@ -548,7 +670,7 @@ export default function DocumentPreviewDialog({
         </Box>
       ) : null}
 
-      <DialogContent dividers sx={{ bgcolor: "var(--surface-2)" }}>
+      <DialogContent dividers sx={{ bgcolor: "var(--surface-2)", px: { xs: 1.25, sm: 3 } }}>
         {!hasContent ? (
           <Box sx={{ p: 4, textAlign: "center", color: "var(--text-muted)" }}>
             Nothing generated yet for this posting.
@@ -584,7 +706,7 @@ export default function DocumentPreviewDialog({
       </DialogContent>
 
       {steeringEnabled ? (
-        <Box sx={{ px: 2, pt: 1.25, pb: 0.5, borderTop: "1px solid var(--border)", bgcolor: "var(--accent-soft)" }}>
+        <Box sx={{ px: { xs: 1.25, sm: 2 }, pt: 1.25, pb: 0.5, borderTop: "1px solid var(--border)", bgcolor: "var(--accent-soft)" }}>
           <Box sx={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary)", mb: 0.75 }}>
             {isEmbedded
               ? `Revise this ${SCOPE_LABEL[tab].toLowerCase()} offline (no AI)`
@@ -632,9 +754,46 @@ export default function DocumentPreviewDialog({
         </Box>
       ) : null}
 
-      <DialogActions sx={{ flexWrap: "wrap", gap: 1, px: 2, py: 1.5 }}>
+      <DialogActions sx={{ flexWrap: "wrap", gap: 1, px: { xs: 1.25, sm: 2 }, py: 1.5 }}>
         <Button onClick={handleClose} sx={{ textTransform: "none" }}>Close</Button>
         <Box sx={{ flex: 1 }} />
+        {combineError ? (
+          <Box sx={{ width: "100%", fontSize: "0.8rem", color: "var(--danger)", textAlign: "right" }}>{combineError}</Box>
+        ) : null}
+        {canCombine ? (
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+            <Select
+              size="small"
+              value={combineFormat}
+              onChange={(e) => setCombineFormat(e.target.value)}
+              disabled={combining || busy}
+              sx={{ height: 36, fontSize: "0.8rem" }}
+              MenuProps={{ disableAutoFocusItem: true }}
+            >
+              <MenuItem value="docx" sx={{ fontSize: "0.85rem" }}>.docx</MenuItem>
+              <MenuItem value="pdf" sx={{ fontSize: "0.85rem" }}>.pdf</MenuItem>
+            </Select>
+            <Tooltip
+              title={
+                combineFormat === "pdf"
+                  ? "Combine your résumé and cover letter into one PDF — opens your browser's print dialog, where you choose “Save as PDF”."
+                  : "Combine your résumé and cover letter into a single .docx (résumé first, cover letter on a new page)."
+              }
+            >
+              <span>
+                <Button
+                  onClick={handleCombine}
+                  disabled={combining || busy}
+                  startIcon={combining ? <CircularProgress size={14} /> : <LibraryBooksIcon />}
+                  variant="outlined"
+                  sx={{ textTransform: "none" }}
+                >
+                  {combining ? "Combining…" : "Download combined"}
+                </Button>
+              </span>
+            </Tooltip>
+          </Box>
+        ) : null}
         <Tooltip title={`Download the ${SCOPE_LABEL[tab].toLowerCase()} as .docx`}>
           <span>
             <Button

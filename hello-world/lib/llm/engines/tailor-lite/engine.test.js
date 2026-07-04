@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { embeddedEngine, isTeachingPosting, isHigherEdPosting } from "./engine.js";
+import { embeddedEngine, isTeachingPosting, isHigherEdPosting, isNonTechnicalPosting, mergeEditRules, applyPersona } from "./engine.js";
 import { fetchUrlContent } from "../../../scrape/fetchUrlContent.js";
 
 vi.mock("../../../scrape/fetchUrlContent.js", () => ({ fetchUrlContent: vi.fn() }));
@@ -191,6 +191,82 @@ describe("embeddedEngine edit rules (recurring hand-edits applied automatically)
     expect(inert.docxB64).toBe(base.docxB64);
     expect(inert.report.meta.editRules).toBeUndefined();
     expect(inert.warnings).toEqual([]);
+  });
+});
+
+describe("isNonTechnicalPosting", () => {
+  it("flags soft-skill leadership roles with little technical signal", () => {
+    // Almost no tech; strong leadership / process / domain signal.
+    const keywords = {
+      soft_skill: [{ canonical: "Leadership", score: 6 }, { canonical: "Communication", score: 4 }],
+      methodology: [{ canonical: "Change Management", score: 5 }],
+      domain: [{ canonical: "Higher Education", score: 4 }],
+      technology: [],
+    };
+    expect(isNonTechnicalPosting(keywords)).toBe(true);
+  });
+
+  it("does not flag a technical posting", () => {
+    const keywords = {
+      technology: [{ canonical: "React", score: 9 }, { canonical: "TypeScript", score: 8 }],
+      tool_platform: [{ canonical: "Kubernetes", score: 6 }],
+      soft_skill: [{ canonical: "Leadership", score: 4 }],
+    };
+    expect(isNonTechnicalPosting(keywords)).toBe(false);
+  });
+
+  it("is quiet when there's no real signal either way", () => {
+    expect(isNonTechnicalPosting({})).toBe(false);
+    expect(isNonTechnicalPosting({ soft_skill: [{ canonical: "Teamwork", score: 1 }] })).toBe(false);
+  });
+});
+
+describe("embeddedEngine non-technical guidance", () => {
+  const SOFT_POSTING = [
+    "Director of Campus Culture Change.",
+    "Lead large-scale organizational change and culture transformation initiatives.",
+    "Core competencies: leadership, communication, facilitation, stakeholder engagement,",
+    "relationship-building, strategic planning, and change management.",
+  ].join("\n");
+
+  it("warns a non-technical posting to pin a focus with no tech stack", async () => {
+    const res = await embeddedEngine.tailorResume({ jobPosting: SOFT_POSTING });
+    expect(res.warnings.some((w) => /reads as non-technical/i.test(w))).toBe(true);
+  });
+
+  it("stays quiet for a clearly technical posting", async () => {
+    const res = await embeddedEngine.tailorResume({ jobPosting: POSTING });
+    expect(res.warnings.some((w) => /reads as non-technical/i.test(w))).toBe(false);
+  });
+});
+
+describe("mergeEditRules (persisted template edits + client overlay)", () => {
+  it("concatenates lists and de-dupes the exact before->after pair once", () => {
+    const persisted = [{ before: "team of 5", after: "team of 8" }];
+    const overlay = [
+      { before: "team of 5", after: "team of 8" }, // duplicate of persisted
+      { before: "Alex Shaw", after: "Alexander G. Shaw" },
+    ];
+    expect(mergeEditRules(persisted, overlay)).toEqual([
+      { before: "team of 5", after: "team of 8" },
+      { before: "Alex Shaw", after: "Alexander G. Shaw" },
+    ]);
+  });
+
+  it("keeps case-different targets distinct and drops malformed/empty-before rules", () => {
+    const merged = mergeEditRules(
+      [{ before: "Go", after: "Golang" }], // before too short is fine here; merge only shape-checks
+      [
+        { before: "go", after: "golang" }, // different case → distinct
+        { before: "", after: "x" }, // empty before → dropped
+        { before: "ok", after: 5 }, // non-string after → dropped
+        null,
+      ],
+    );
+    expect(merged).toEqual([
+      { before: "Go", after: "Golang" },
+      { before: "go", after: "golang" },
+    ]);
   });
 });
 
@@ -518,6 +594,61 @@ describe("embeddedEngine.tailorCoverLetter", () => {
     expect(res.result).not.toContain("{{");
     expect(res.result).not.toMatch(/\b(?:I'm|I've|I'd|it's)\b/i);
   });
+
+  const NONTECH_POSTING =
+    "Director of Campus Culture Change. Lead large-scale organizational change and culture transformation initiatives. " +
+    "Core competencies: leadership, communication, facilitation, stakeholder engagement, relationship-building, strategic planning, " +
+    "and change management. Manage client relationships and consulting engagements.";
+
+  it("auto-detects a non-technical role and uses the leadership framing", async () => {
+    const res = await embeddedEngine.tailorCoverLetter({
+      jobPosting: NONTECH_POSTING,
+      jobTitle: "Director of Campus Culture Change",
+      companyName: "Constructive Dialogue Institute",
+    });
+    expect(res.report.meta.coverVariant).toBe("nontechnical");
+    expect(res.report.meta.coverVariantSource).toBe("auto");
+    // Leadership framing, not the product/engineering pitch.
+    expect(res.result).toContain("leading teams and complex, cross-functional initiatives");
+    expect(res.result).toContain("guide change that lasts");
+    expect(res.result).not.toContain("track record of shipping production-quality software");
+    expect(res.result).not.toContain("technical toolkit");
+    // Paragraph 2 no longer advertises a hands-on tech stack or "ship software".
+    expect(res.result).not.toContain("work hands-on with");
+    expect(res.result).not.toContain("ship reliable software");
+    // The standing leadership fact drops the "engineering" label for this variant.
+    expect(res.result).toContain("I lead a team of five");
+    expect(res.result).not.toContain("engineering team of five");
+    // No teaching framing, no unfilled placeholders.
+    expect(res.result).not.toMatch(/\bstudents?\b/i);
+    expect(res.result).not.toContain("{{");
+  });
+
+  it("honors an explicit non-technical framing override on a technical posting", async () => {
+    const res = await embeddedEngine.tailorCoverLetter({
+      jobPosting: POSTING, // clearly technical
+      jobTitle: "Staff Engineer",
+      companyName: "Initech",
+      coverVariant: "nontechnical",
+    });
+    expect(res.report.meta.coverVariant).toBe("nontechnical");
+    expect(res.report.meta.coverVariantSource).toBe("override");
+    expect(res.report.meta.coverVariantDetected).toBe("industry");
+    expect(res.result).not.toContain("engineering team of five");
+    expect(res.result).not.toContain("{{");
+  });
+
+  it("still auto-detects campus STAFF (technical) roles as staff, not non-technical", async () => {
+    const staffPosting =
+      "Web Specialist at Georgia Southwestern State University. Serving students on a vibrant campus with faculty and staff. " +
+      "Maintain the university website in the content management system, improve accessibility and SEO.";
+    const res = await embeddedEngine.tailorCoverLetter({
+      jobPosting: staffPosting,
+      jobTitle: "Web Specialist",
+      companyName: "GSW",
+    });
+    expect(res.report.meta.coverVariant).toBe("staff");
+  });
 });
 
 describe("embeddedEngine composed workflow (in-house)", () => {
@@ -549,5 +680,164 @@ describe("embeddedEngine composed workflow (in-house)", () => {
     // A full, multi-paragraph letter (not a stub) — written as natural prose
     // rather than keyword lists, so a few hundred words rather than a wall.
     expect(res.result.split(/\s+/).filter(Boolean).length).toBeGreaterThan(180);
+  });
+});
+
+describe("applyPersona: persona-driven profile reframing", () => {
+  it("merges persona values into profile.values (persona wins on conflict)", () => {
+    const data = {
+      personas: [
+        {
+          name: "Finance Educator",
+          values: { SPECIALIZATION: "Finance Education", RANK: "Associate" },
+          default_teaching_subjects: ["Economics"],
+          focus_area: "Teaching",
+          cover_variant: "teaching",
+        },
+      ],
+      profile: {
+        values: { RANK: "Senior", PRIMARY_FUNCTION: "Software Engineer" },
+        default_teaching_subjects: [],
+      },
+    };
+    const result = applyPersona(data, "Finance Educator");
+    expect(result.persona.name).toBe("Finance Educator");
+    expect(result.data.profile.values).toEqual({
+      RANK: "Associate", // persona override
+      PRIMARY_FUNCTION: "Software Engineer", // base preserved
+      SPECIALIZATION: "Finance Education", // persona addition
+    });
+  });
+
+  it("replaces teaching subjects when persona provides them", () => {
+    const data = {
+      personas: [
+        {
+          name: "P1",
+          values: {},
+          default_teaching_subjects: ["Algebra", "Geometry"],
+          focus_area: "",
+          cover_variant: "",
+        },
+      ],
+      profile: {
+        values: {},
+        default_teaching_subjects: ["Economics", "Statistics"],
+      },
+    };
+    const result = applyPersona(data, "P1");
+    expect(result.data.profile.default_teaching_subjects).toEqual(["Algebra", "Geometry"]);
+  });
+
+  it("keeps base teaching subjects when persona's are empty", () => {
+    const data = {
+      personas: [
+        { name: "P1", values: {}, default_teaching_subjects: [], focus_area: "", cover_variant: "" },
+      ],
+      profile: { values: {}, default_teaching_subjects: ["Economics"] },
+    };
+    const result = applyPersona(data, "P1");
+    expect(result.data.profile.default_teaching_subjects).toEqual(["Economics"]);
+  });
+
+  it("returns { data, persona: null } for an unknown/empty persona name", () => {
+    const data = { personas: [], profile: { values: {}, default_teaching_subjects: [] } };
+    const result = applyPersona(data, "Unknown");
+    expect(result.persona).toBeNull();
+    expect(result.data).toBe(data); // data unmodified
+  });
+
+  it("is case-insensitive on persona name lookup", () => {
+    const data = {
+      personas: [
+        {
+          name: "Finance Educator",
+          values: { RANK: "Senior" },
+          default_teaching_subjects: [],
+          focus_area: "",
+          cover_variant: "",
+        },
+      ],
+      profile: { values: {}, default_teaching_subjects: [] },
+    };
+    const result = applyPersona(data, "finance educator");
+    expect(result.persona.name).toBe("Finance Educator");
+  });
+
+  it("handles whitespace trimming and empty name gracefully", () => {
+    const data = { personas: [], profile: { values: {}, default_teaching_subjects: [] } };
+    expect(applyPersona(data, "  ").persona).toBeNull();
+    expect(applyPersona(data, null).persona).toBeNull();
+  });
+
+  it("persona values override profile values in the merged data", () => {
+    const base = {
+      profile: {
+        values: { PRIMARY_FUNCTION: "Software Engineer", SOLUTION_TYPES: "web applications" },
+        default_teaching_subjects: ["Web Development"],
+      },
+      personas: [
+        {
+          name: "Finance Educator",
+          values: { PRIMARY_FUNCTION: "Finance Instructor", SOLUTION_TYPES: "online finance courses and curricula" },
+          default_teaching_subjects: ["Corporate Finance"],
+          focus_area: "",
+          cover_variant: "",
+        },
+      ],
+      taxonomy: [],
+      skillGroups: [],
+      contentLibrary: [],
+      stopwords: [],
+      editRules: [],
+    };
+    // Apply the persona — this merges persona values into the profile
+    const { data, persona } = applyPersona(base, "Finance Educator");
+    expect(persona.name).toBe("Finance Educator");
+    expect(data.profile.values.PRIMARY_FUNCTION).toBe("Finance Instructor");
+    expect(data.profile.values.SOLUTION_TYPES).toBe("online finance courses and curricula");
+    expect(data.profile.default_teaching_subjects).toEqual(["Corporate Finance"]);
+    // Verify base profile is unchanged
+    expect(base.profile.values.PRIMARY_FUNCTION).toBe("Software Engineer");
+    expect(base.profile.values.SOLUTION_TYPES).toBe("web applications");
+  });
+
+  it("a persona reframes both a profile value and a summary fragment descriptor at the SLOT level", async () => {
+    const { mapSlots } = await import("./strategy.js");
+    const base = {
+      profile: {
+        // Only PRIMARY_FUNCTION exists in the base profile; the persona adds SOLUTION_TYPES.
+        values: { PRIMARY_FUNCTION: "Software Engineer" },
+        default_teaching_subjects: ["Web Development"],
+      },
+      personas: [
+        {
+          name: "Finance Educator",
+          values: { PRIMARY_FUNCTION: "Finance Instructor", SOLUTION_TYPES: "online finance courses and curricula" },
+          default_teaching_subjects: ["Corporate Finance"],
+          focus_area: "",
+          cover_variant: "",
+        },
+      ],
+    };
+    // Case-insensitive persona lookup, then map the profile-driven slots.
+    const { data, persona } = applyPersona(base, "finance educator");
+    expect(persona.name).toBe("Finance Educator");
+
+    const mapped = mapSlots(
+      [
+        { key: "PRIMARY_FUNCTION::0", name: "PRIMARY_FUNCTION", occurrence: 0 },
+        { key: "SOLUTION_TYPES::0", name: "SOLUTION_TYPES", occurrence: 0 },
+      ],
+      { technology: [{ canonical: "React", score: 5, count: 1 }] },
+      data,
+    );
+    const byKey = Object.fromEntries(mapped.map((s) => [s.key, s.value]));
+    // The persona overrides the profile value…
+    expect(byKey["PRIMARY_FUNCTION::0"]).toBe("Finance Instructor");
+    // …and supplies the summary's fragment descriptor the base profile lacked.
+    expect(byKey["SOLUTION_TYPES::0"]).toBe("online finance courses and curricula");
+    // The persona's teaching subjects rode along too.
+    expect(data.profile.default_teaching_subjects).toEqual(["Corporate Finance"]);
   });
 });
