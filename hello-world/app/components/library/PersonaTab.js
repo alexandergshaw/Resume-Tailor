@@ -10,9 +10,12 @@ import Select from "@mui/material/Select";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
+import Collapse from "@mui/material/Collapse";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
 import AddIcon from "@mui/icons-material/Add";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import { api } from "./libraryApi";
 import ChipsInput from "./ChipsInput";
 import { PERSONA_VALUE_FIELDS } from "./schemas";
@@ -30,6 +33,18 @@ export default function PersonaTab({ personas = [], focusAreas = [], onChanged }
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [showMore, setShowMore] = useState(false);
+
+  // The headline role (PRIMARY_FUNCTION) is the one field most personas set, so
+  // it's shown by default; the rest of the identity overrides + custom keys hide
+  // behind a disclosure to keep the form light.
+  const primaryField = PERSONA_VALUE_FIELDS[0];
+  const secondaryFields = PERSONA_VALUE_FIELDS.slice(1);
+  const customKeys = Object.keys(editingValues)
+    .filter((k) => !PERSONA_VALUE_FIELDS.find((f) => f.key === k))
+    .sort();
+  // Auto-expand when editing a persona that already uses the advanced fields.
+  const hasAdvanced = secondaryFields.some((f) => editingValues[f.key]) || customKeys.length > 0;
 
   const startAdd = () => {
     setEditingId(null);
@@ -40,6 +55,7 @@ export default function PersonaTab({ personas = [], focusAreas = [], onChanged }
     setEditingCoverVariant("");
     setNewKey("");
     setError("");
+    setShowMore(false);
     setFormOpen(true);
   };
 
@@ -52,6 +68,11 @@ export default function PersonaTab({ personas = [], focusAreas = [], onChanged }
     setEditingCoverVariant(persona.cover_variant || "");
     setNewKey("");
     setError("");
+    // Open the advanced section straight away if this persona uses it.
+    setShowMore(
+      PERSONA_VALUE_FIELDS.slice(1).some((f) => persona.values?.[f.key]) ||
+        Object.keys(persona.values || {}).some((k) => !PERSONA_VALUE_FIELDS.find((f) => f.key === k)),
+    );
     setFormOpen(true);
   };
 
@@ -154,67 +175,82 @@ export default function PersonaTab({ personas = [], focusAreas = [], onChanged }
               placeholder="e.g., Finance Educator"
             />
 
-            {/* Identity values: pre-offered fields */}
+            {/* Headline role: the one identity value most personas set. */}
+            <TextField
+              label={primaryField.label}
+              value={editingValues[primaryField.key] || ""}
+              onChange={(e) => setEditingValues((v) => ({ ...v, [primaryField.key]: e.target.value }))}
+              size="small"
+              fullWidth
+              placeholder={primaryField.placeholder}
+            />
+
+            {/* Everything else: hidden behind a disclosure to keep the form light. */}
             <Box>
-              <Typography variant="caption" sx={{ display: "block", mb: 1, fontWeight: 500 }}>
-                Identity values (optional overrides)
-              </Typography>
-              <Stack spacing={1}>
-                {PERSONA_VALUE_FIELDS.map((field) => (
-                  <TextField
-                    key={field.key}
-                    label={field.label}
-                    value={editingValues[field.key] || ""}
-                    onChange={(e) => setEditingValues((v) => ({ ...v, [field.key]: e.target.value }))}
-                    size="small"
-                    fullWidth
-                    placeholder={field.placeholder}
-                  />
-                ))}
-              </Stack>
-            </Box>
-
-            {/* Additional custom keys */}
-            {Object.keys(editingValues)
-              .filter((k) => !PERSONA_VALUE_FIELDS.find((f) => f.key === k))
-              .sort()
-              .map((k) => (
-                <Stack direction="row" spacing={1} key={k} sx={{ alignItems: "center" }}>
-                  <TextField
-                    label={k}
-                    value={editingValues[k]}
-                    onChange={(e) => setEditingValues((v) => ({ ...v, [k]: e.target.value }))}
-                    sx={{ flex: 1 }}
-                    size="small"
-                  />
-                  <IconButton
-                    aria-label="remove"
-                    onClick={() => setEditingValues((v) => { const n = { ...v }; delete n[k]; return n; })}
-                  >
-                    <DeleteIcon fontSize="small" />
-                  </IconButton>
-                </Stack>
-              ))}
-
-            {/* Add custom key */}
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ alignItems: { xs: "stretch", sm: "center" } }}>
-              <TextField
-                label="New key"
-                value={newKey}
-                onChange={(e) => setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]+/g, "_"))}
-                size="small"
-              />
               <Button
-                onClick={() => {
-                  if (newKey && !(newKey in editingValues)) {
-                    setEditingValues((v) => ({ ...v, [newKey]: "" }));
-                    setNewKey("");
-                  }
-                }}
+                onClick={() => setShowMore((s) => !s)}
+                startIcon={showMore ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+                size="small"
+                sx={{ textTransform: "none", pl: 0 }}
               >
-                Add key
+                {showMore ? "Fewer identity overrides" : "More identity overrides"}
+                {!showMore && hasAdvanced ? " (in use)" : ""}
               </Button>
-            </Stack>
+              <Collapse in={showMore} unmountOnExit>
+                <Stack spacing={1} sx={{ mt: 1 }}>
+                  {secondaryFields.map((field) => (
+                    <TextField
+                      key={field.key}
+                      label={field.label}
+                      value={editingValues[field.key] || ""}
+                      onChange={(e) => setEditingValues((v) => ({ ...v, [field.key]: e.target.value }))}
+                      size="small"
+                      fullWidth
+                      placeholder={field.placeholder}
+                    />
+                  ))}
+
+                  {/* Additional custom keys */}
+                  {customKeys.map((k) => (
+                    <Stack direction="row" spacing={1} key={k} sx={{ alignItems: "center" }}>
+                      <TextField
+                        label={k}
+                        value={editingValues[k]}
+                        onChange={(e) => setEditingValues((v) => ({ ...v, [k]: e.target.value }))}
+                        sx={{ flex: 1 }}
+                        size="small"
+                      />
+                      <IconButton
+                        aria-label="remove"
+                        onClick={() => setEditingValues((v) => { const n = { ...v }; delete n[k]; return n; })}
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </Stack>
+                  ))}
+
+                  {/* Add custom key */}
+                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ alignItems: { xs: "stretch", sm: "center" } }}>
+                    <TextField
+                      label="New key"
+                      value={newKey}
+                      onChange={(e) => setNewKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]+/g, "_"))}
+                      size="small"
+                    />
+                    <Button
+                      onClick={() => {
+                        if (newKey && !(newKey in editingValues)) {
+                          setEditingValues((v) => ({ ...v, [newKey]: "" }));
+                          setNewKey("");
+                        }
+                      }}
+                    >
+                      Add key
+                    </Button>
+                  </Stack>
+                </Stack>
+              </Collapse>
+            </Box>
 
             {/* Teaching subjects */}
             <Box>

@@ -163,6 +163,15 @@ export default function FocusPickerDialog({
   // Cover-letter framing (teaching/staff/industry, "" = auto-detect).
   const [variantChoice, setVariantChoice] = useState(() => coverVariantOverride || "");
 
+  // New persona (created inline, no /library trip): name + an optional headline
+  // role, seeded from this posting. Only `name` is required by the API; a bare
+  // persona just passes the base profile through until refined in /library.
+  const [newPersonaName, setNewPersonaName] = useState("");
+  const [newPersonaHeadline, setNewPersonaHeadline] = useState(() => String(postingTitle || "").trim());
+  const [newPersonaBusy, setNewPersonaBusy] = useState(false);
+  const [newPersonaNote, setNewPersonaNote] = useState(null); // { ok, message } | null
+  const [addingPersona, setAddingPersona] = useState(false);
+
   // Cross-posting learning signals (device-local), read fresh per open (the
   // dialog remounts via its key): recurring exclusion counts badge the
   // checklist, and a recurring focus correction for THIS detected area
@@ -177,7 +186,10 @@ export default function FocusPickerDialog({
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    (async () => {
+    // silent = a background refresh (e.g. window regained focus after editing
+    // /library in another tab): don't blank the lists back to their loading
+    // spinner, just fold in any newly-saved rows.
+    const load = async ({ silent } = {}) => {
       try {
         const res = await fetch("/api/library");
         if (res.status === 401) {
@@ -193,17 +205,24 @@ export default function FocusPickerDialog({
         if (!cancelled) {
           setAreas(Array.isArray(data?.focusAreas) ? data.focusAreas : []);
           setPersonas(Array.isArray(data?.personas) ? data.personas : []);
+          setLoadError("");
         }
       } catch (err) {
-        if (!cancelled) {
+        if (!cancelled && !silent) {
           setAreas([]);
           setPersonas([]);
           setLoadError(err?.message || "Couldn't load your library.");
         }
       }
-    })();
+    };
+    load();
+    // Re-pull when the tab regains focus so a persona/area added over in the
+    // /library tab shows up here without closing and reopening the picker.
+    const onFocus = () => load({ silent: true });
+    window.addEventListener("focus", onFocus);
     return () => {
       cancelled = true;
+      window.removeEventListener("focus", onFocus);
     };
   }, [open]);
 
@@ -222,6 +241,9 @@ export default function FocusPickerDialog({
   }, [areas]);
 
   const chosenArea = choice !== AUTO ? (pickable || []).find((a) => a.name === choice) : null;
+  const selectedPersona = personaChoice
+    ? (personas || []).find((p) => String(p.name || "") === personaChoice)
+    : null;
   const title = String(postingTitle || "").trim();
   const canRemember = !!chosenArea && !!title && !(chosenArea.match || []).some(
     (t) => String(t).toLowerCase() === title.toLowerCase(),
@@ -345,6 +367,61 @@ export default function FocusPickerDialog({
       setNewAreaNote({ ok: false, message: err?.message || "Couldn't add the focus area." });
     } finally {
       setNewAreaBusy(false);
+    }
+  }
+
+  // Create a persona in the library inline, then select it — no /library round
+  // trip. Seeds the headline role (PRIMARY_FUNCTION) from the entered headline
+  // (defaulted to the posting title) and the specialization from the posting's
+  // top domain/subject buzzword, so the persona starts plausible, not empty.
+  // Everything else can be refined later in /library.
+  async function addPersona() {
+    const name = newPersonaName.trim();
+    if (!name || newPersonaBusy) return;
+    if ((personas || []).some((p) => String(p.name).toLowerCase() === name.toLowerCase())) {
+      setNewPersonaNote({ ok: false, message: `“${name}” already exists — select it above.` });
+      return;
+    }
+    setNewPersonaBusy(true);
+    setNewPersonaNote(null);
+    // Seed values from the posting (only non-empty ones are kept by the API).
+    const headline = newPersonaHeadline.trim();
+    const topDomain =
+      (keywords?.domain || [])[0]?.canonical || (keywords?.subject || [])[0]?.canonical || "";
+    const values = {};
+    if (headline) values.PRIMARY_FUNCTION = headline;
+    if (topDomain) values.SPECIALIZATION = topDomain;
+    try {
+      const res = await fetch("/api/library/personas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, values }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          res.status === 401
+            ? "Sign in to add personas to your library."
+            : data?.error || (Array.isArray(data?.errors) ? data.errors.join(" ") : "Couldn't add the persona."),
+        );
+      }
+      const row = data.row || { name, values };
+      setPersonas((prev) => [...(prev || []), row]);
+      setPersonaChoice(name);
+      setNewPersonaName("");
+      setNewPersonaHeadline(String(postingTitle || "").trim());
+      const seeded = Object.keys(values).length;
+      setNewPersonaNote({
+        ok: true,
+        message:
+          seeded > 0
+            ? `“${name}” added and selected — seeded from this posting. Refine the full identity in /library.`
+            : `“${name}” added and selected. Flesh out its identity in /library.`,
+      });
+    } catch (err) {
+      setNewPersonaNote({ ok: false, message: err?.message || "Couldn't add the persona." });
+    } finally {
+      setNewPersonaBusy(false);
     }
   }
 
@@ -555,23 +632,104 @@ export default function FocusPickerDialog({
               <CircularProgress size={20} />
             </Box>
           ) : (
-            <Select
-              size="small"
-              fullWidth
-              value={personaChoice}
-              onChange={(e) => setPersonaChoice(e.target.value)}
-              displayEmpty
-              sx={{ fontSize: "0.85rem", mb: 1.5 }}
-            >
-              <MenuItem value="" sx={{ fontSize: "0.85rem" }}>
-                Base profile
-              </MenuItem>
-              {(personas || []).map((p) => (
-                <MenuItem key={p.id || p.name} value={p.name || ""} sx={{ fontSize: "0.85rem" }}>
-                  {p.name || ""}
+            <>
+              <Select
+                size="small"
+                fullWidth
+                value={personaChoice}
+                onChange={(e) => setPersonaChoice(e.target.value)}
+                displayEmpty
+                sx={{ fontSize: "0.85rem", mb: 1 }}
+              >
+                <MenuItem value="" sx={{ fontSize: "0.85rem" }}>
+                  Base profile
                 </MenuItem>
-              ))}
-            </Select>
+                {(personas || []).map((p) => (
+                  <MenuItem key={p.id || p.name} value={p.name || ""} sx={{ fontSize: "0.85rem" }}>
+                    {p.name || ""}
+                  </MenuItem>
+                ))}
+              </Select>
+              {/* Selected persona's inherited defaults (#4): the engine falls back
+                  to these unless the focus / framing controls below override them. */}
+              {selectedPersona && (selectedPersona.focus_area || selectedPersona.cover_variant) ? (
+                <Box sx={{ fontSize: "0.72rem", color: "var(--text-muted)", lineHeight: 1.4, mb: 1 }}>
+                  <>“{selectedPersona.name}” defaults to</>
+                  {selectedPersona.focus_area ? (
+                    <> the “{selectedPersona.focus_area}” focus{choice !== AUTO ? " (overridden below)" : ""}</>
+                  ) : null}
+                  {selectedPersona.focus_area && selectedPersona.cover_variant ? " and" : null}
+                  {selectedPersona.cover_variant ? (
+                    <> {selectedPersona.cover_variant} framing{variantChoice ? " (overridden below)" : ""}</>
+                  ) : null}
+                  .
+                </Box>
+              ) : null}
+              <Button
+                onClick={() => setAddingPersona((s) => !s)}
+                size="small"
+                sx={{ textTransform: "none", pl: 0, fontSize: "0.8rem" }}
+              >
+                {addingPersona ? "Cancel new persona" : "+ New persona"}
+              </Button>
+              {/* Inline create (#1/#2): add a persona without leaving for /library. */}
+              {addingPersona ? (
+                <>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1, mt: 0.5 }}>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      placeholder="New persona (e.g. Finance Educator) — seeded from this posting"
+                      value={newPersonaName}
+                      onChange={(e) => setNewPersonaName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addPersona();
+                        }
+                      }}
+                      disabled={newPersonaBusy}
+                    />
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={addPersona}
+                      disabled={!newPersonaName.trim() || newPersonaBusy}
+                      startIcon={newPersonaBusy ? <CircularProgress size={12} /> : null}
+                      sx={{ textTransform: "none", whiteSpace: "nowrap" }}
+                    >
+                      Add persona
+                    </Button>
+                  </Box>
+                  {newPersonaName.trim() ? (
+                    <TextField
+                      size="small"
+                      fullWidth
+                      placeholder="Headline role (optional, e.g. Finance Instructor)"
+                      value={newPersonaHeadline}
+                      onChange={(e) => setNewPersonaHeadline(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addPersona();
+                        }
+                      }}
+                      disabled={newPersonaBusy}
+                      sx={{ mt: 1 }}
+                    />
+                  ) : null}
+                  {newPersonaNote ? (
+                    <Box sx={{ mt: 0.5, fontSize: "0.78rem", color: newPersonaNote.ok ? "var(--text-secondary)" : "var(--danger)" }}>
+                      {newPersonaNote.message}
+                    </Box>
+                  ) : (
+                    <Box sx={{ mt: 0.5, mb: 0.5, fontSize: "0.72rem", color: "var(--text-muted)", lineHeight: 1.4 }}>
+                      Creates a saved persona and selects it here — refine its full identity later in /library.
+                    </Box>
+                  )}
+                </>
+              ) : null}
+            </>
           )}
         </Box>
 
