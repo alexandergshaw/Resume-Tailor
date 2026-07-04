@@ -19,7 +19,7 @@ import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutlined";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import InboxIcon from "@mui/icons-material/Inbox";
-import CheckCircleOutlineIcon from "@mui/icons-material/CheckCircleOutline";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import TabHeader from "./TabHeader";
 import EmptyState from "./EmptyState";
 
@@ -339,7 +339,7 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
               <Chip
                 size="small"
                 color="success"
-                icon={<CheckCircleOutlineIcon />}
+                icon={<CheckCircleIcon />}
                 label={`Opened ${new Date(current.auto_apply_opened_at).toLocaleString()}`}
               />
             )}
@@ -668,7 +668,7 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
                             size="small"
                             variant={row.auto_apply_opened_at ? "outlined" : "contained"}
                             color={row.auto_apply_opened_at ? "success" : "primary"}
-                            startIcon={row.auto_apply_opened_at ? <CheckCircleOutlineIcon /> : null}
+                            startIcon={row.auto_apply_opened_at ? <CheckCircleIcon /> : null}
                             onClick={() => handleApply(row)}
                             disabled={busyId === row.id || !pos.url}
                             sx={{
