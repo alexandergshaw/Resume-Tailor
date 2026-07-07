@@ -283,11 +283,22 @@ export async function buildDocxFromUploadedTemplate(file, generatedText, generat
     throw new Error("Uploaded DOCX template has no text paragraphs to update.");
   }
 
-  const fittedLines = fitLinesToTemplate(lines, editableParagraphs.length);
-
   editableParagraphs.forEach((paragraphNode, index) => {
-    setParagraphText(paragraphNode, fittedLines[index] || "", xmlDoc);
+    setParagraphText(paragraphNode, lines[index] || "", xmlDoc);
   });
+
+  if (lines.length > editableParagraphs.length) {
+    const lastEditable = editableParagraphs[editableParagraphs.length - 1];
+    let anchor = lastEditable;
+    for (let index = editableParagraphs.length; index < lines.length; index += 1) {
+      const line = lines[index];
+      if (!line) continue;
+      const clone = lastEditable.cloneNode(true);
+      setParagraphText(clone, line, xmlDoc);
+      anchor.parentNode.insertBefore(clone, anchor.nextSibling);
+      anchor = clone;
+    }
+  }
 
   const serializedXml = new XMLSerializer().serializeToString(xmlDoc);
   zip.file(documentXmlPath, serializedXml);
