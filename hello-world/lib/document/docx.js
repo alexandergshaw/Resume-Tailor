@@ -629,6 +629,9 @@ export function createDocumentDownloaders(deps) {
       docxPath,
       resumeFileName: tailoring.resumeFileName || "",
       coverLetterFileName: tailoring.coverLetterFileName || "",
+      templateDocxB64: typeof tailoring.docxB64 === "string" ? tailoring.docxB64 : "",
+      coverLetterTemplateDocxB64:
+        typeof tailoring.coverLetterDocxB64 === "string" ? tailoring.coverLetterDocxB64 : "",
     });
   }
 
