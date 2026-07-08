@@ -7,6 +7,7 @@ import Divider from "@mui/material/Divider";
 import DescriptionIcon from "@mui/icons-material/Description";
 import styles from "../page.module.css";
 import { useIsMobile } from "../hooks/useResponsive";
+import { resolveDocumentBlob } from "../../lib/document/docx";
 
 export default function StatusBar({
   trackedJobs,
@@ -21,7 +22,6 @@ export default function StatusBar({
   handleToolbarScroll,
   scrollToolbar,
   isDocxResume,
-  buildDocxFromUploadedTemplate,
   getDownloadFileNameForTitle,
   askAiAbout,
   buildJobContextString,
@@ -158,7 +158,15 @@ export default function StatusBar({
                   const text = typeof t.result === "string" ? t.result : "";
                   const lines = Array.isArray(t.resultLines) ? t.resultLines : [];
                   if (!text) return;
-                  const blob = await buildDocxFromUploadedTemplate(resumeFile, text, lines);
+                  const blob = await resolveDocumentBlob({
+                    engineDocxB64: typeof t.docxB64 === "string" ? t.docxB64 : "",
+                    docxPath: typeof t.docxPath === "string" ? t.docxPath : "",
+                    edited: !!t.edited,
+                    text,
+                    lines,
+                    uploadedTemplate: resumeFile,
+                  });
+                  if (!blob) return;
                   const fileName = getDownloadFileNameForTitle(t.generatedJobTitle || job.title, job.company);
                   const file = new File([blob], fileName, {
                     type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

@@ -2,11 +2,8 @@
 
 import { useRef, useState } from "react";
 import {
-  base64ToDocxBlob,
-  isDocxResume,
-  buildDocxFromUploadedTemplate,
   buildTemplateLinesForUpload,
-  docxFileFromBase64,
+  resolveDocumentBlob,
 } from "../../lib/document/docx";
 import { parseDocxToModel, linesToModel } from "../../lib/document/docxPreview";
 import { addedEditText, editFingerprint } from "../../lib/tailor/editMining";
@@ -172,38 +169,30 @@ export function useDocumentPreview({
     setResumePreview((prev) => ({ ...prev, open: false }));
   }
 
-  // The faithful .docx blob for a scope: serve the engine's finished doc when
-  // unedited, otherwise rebuild from the (edited) text through the user's
-  // template so formatting is preserved.
+  // The faithful .docx blob for a scope — delegates to the single document
+  // builder (resolveDocumentBlob) so preview render, drag, and download all
+  // produce identical output.
   async function buildPreviewBlob(scope) {
     const entry = tailoringMap[resumePreview.jobId] || {};
     if (scope === "cover") {
       const lines = Array.isArray(entry.coverLetterResultLines) ? entry.coverLetterResultLines : [];
-      if (!entry.edited && typeof entry.coverLetterDocxB64 === "string" && entry.coverLetterDocxB64) {
-        return base64ToDocxBlob(entry.coverLetterDocxB64);
-      }
-      // Edited: rebuild from the engine's finished docx (correct formatting)
-      // rather than the uploaded template, falling back to the upload only when
-      // there is no engine docx.
-      if (typeof entry.coverLetterDocxB64 === "string" && entry.coverLetterDocxB64) {
-        return buildDocxFromUploadedTemplate(docxFileFromBase64(entry.coverLetterDocxB64), lines.join("\n"), lines);
-      }
-      if (isDocxResume(coverLetterFile)) {
-        return buildDocxFromUploadedTemplate(coverLetterFile, lines.join("\n"), lines);
-      }
-      return null; // plain-text fallback handled by the loader
+      return resolveDocumentBlob({
+        engineDocxB64: typeof entry.coverLetterDocxB64 === "string" ? entry.coverLetterDocxB64 : "",
+        edited: !!entry.edited,
+        text: lines.join("\n"),
+        lines,
+        uploadedTemplate: coverLetterFile,
+      });
     }
     const lines = Array.isArray(entry.resultLines) ? entry.resultLines : [];
-    if (!entry.edited && typeof entry.docxB64 === "string" && entry.docxB64) {
-      return base64ToDocxBlob(entry.docxB64);
-    }
-    if (typeof entry.docxB64 === "string" && entry.docxB64) {
-      return buildDocxFromUploadedTemplate(docxFileFromBase64(entry.docxB64), entry.result || "", lines);
-    }
-    if (isDocxResume(resumeFile)) {
-      return buildDocxFromUploadedTemplate(resumeFile, entry.result || "", lines);
-    }
-    return null;
+    return resolveDocumentBlob({
+      engineDocxB64: typeof entry.docxB64 === "string" ? entry.docxB64 : "",
+      docxPath: typeof entry.docxPath === "string" ? entry.docxPath : "",
+      edited: !!entry.edited,
+      text: entry.result || lines.join("\n"),
+      lines,
+      uploadedTemplate: resumeFile,
+    });
   }
 
   // Parse the active document into a render model for the preview dialog. Falls

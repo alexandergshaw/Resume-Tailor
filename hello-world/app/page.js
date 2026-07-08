@@ -29,7 +29,6 @@ import {
   isDocxResume,
   isTextResume,
   buildTemplateLinesForUpload,
-  buildDocxFromUploadedTemplate,
   getDownloadFileNameForTitle,
   getDownloadCoverLetterFileNameForTitle,
   createDocumentDownloaders,
@@ -3012,7 +3011,6 @@ export default function Home() {
             setStageDialog={appDialogs.setStageDialog}
             isDocxResume={isDocxResume}
             downloadDocxFiles={downloadDocxFiles}
-            buildDocxFromUploadedTemplate={buildDocxFromUploadedTemplate}
             getDownloadFileNameForTitle={getDownloadFileNameForTitle}
             stageDialog={appDialogs.stageDialog}
             stageError={appDialogs.stageError}
@@ -3182,7 +3180,6 @@ export default function Home() {
         handleToolbarScroll={handleToolbarScroll}
         scrollToolbar={scrollToolbar}
         isDocxResume={isDocxResume}
-        buildDocxFromUploadedTemplate={buildDocxFromUploadedTemplate}
         getDownloadFileNameForTitle={getDownloadFileNameForTitle}
         askAiAbout={chat.askAiAbout}
         buildJobContextString={buildJobContextString}

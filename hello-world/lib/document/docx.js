@@ -433,6 +433,74 @@ export async function downloadMinimalistDocx({ title, fileName, entries, subtitl
   }
 }
 
+// Fetch a persisted .docx from Supabase storage (documents generated in a prior
+// session live there rather than in memory). Returns a Blob, or null on failure.
+async function fetchStoredDocxBlob(docxPath) {
+  try {
+    const supabase = createClient();
+    const { data, error } = await supabase.storage.from("resumes").download(docxPath);
+    if (!error && data) return data;
+  } catch {
+    // fall through
+  }
+  return null;
+}
+
+// THE single source of truth for turning a document (résumé or cover letter)
+// into its final .docx blob. Every preview render, drag, and download funnels
+// through here so there is exactly one code path.
+//
+// Preference order — the engine's own finished doc is ALWAYS the structural
+// template so formatting (bullets, sizes, sections) is correct; the user's
+// uploaded résumé is only a last resort when no engine doc exists at all:
+//   1. unedited + in-session engine doc  -> serve verbatim
+//   2. unedited + persisted storage doc  -> fetch and serve verbatim
+//   3. edited   + in-session engine doc  -> apply edited text onto it
+//   4. edited   + persisted storage doc  -> fetch, apply edited text onto it
+//   5. uploaded template                 -> apply edited text onto it (legacy)
+export async function resolveDocumentBlob({
+  engineDocxB64 = "",
+  docxPath = "",
+  edited = false,
+  text = "",
+  lines = [],
+  uploadedTemplate = null,
+}) {
+  const hasText = typeof text === "string" && text.trim().length > 0;
+
+  // Unedited: serve the finished doc verbatim.
+  if (!edited && engineDocxB64) return base64ToDocxBlob(engineDocxB64);
+  if (!edited && docxPath) {
+    const blob = await fetchStoredDocxBlob(docxPath);
+    if (blob) return blob;
+  }
+
+  // Nothing edited to apply — serve any finished doc we have.
+  if (!hasText) {
+    if (engineDocxB64) return base64ToDocxBlob(engineDocxB64);
+    if (docxPath) return (await fetchStoredDocxBlob(docxPath)) || null;
+    return null;
+  }
+
+  // Edited: rebuild the edited text onto the engine doc (correct formatting).
+  if (engineDocxB64) {
+    return buildDocxFromUploadedTemplate(docxFileFromBase64(engineDocxB64), text, lines);
+  }
+  if (docxPath) {
+    const blob = await fetchStoredDocxBlob(docxPath);
+    if (blob) {
+      const file = new File([blob], "engine-template.docx", { type: DOCX_MIME });
+      return buildDocxFromUploadedTemplate(file, text, lines);
+    }
+  }
+
+  // Last resort: the user's uploaded résumé/cover-letter template.
+  if (uploadedTemplate && isDocxResume(uploadedTemplate)) {
+    return buildDocxFromUploadedTemplate(uploadedTemplate, text, lines);
+  }
+  return null;
+}
+
 export function createDocumentDownloaders(deps) {
   const { resumeFile, coverLetterFile, tailoringMap, applicationData } = deps;
 
@@ -454,87 +522,45 @@ export function createDocumentDownloaders(deps) {
     const resumeName = resolveDocumentFileName(resumeFileName, jobTitle, company, "Resume");
     const coverName = resolveDocumentFileName(coverLetterFileName, jobTitle, company, "CL");
 
-    // External engine returns finished documents — serve them directly rather
-    // than re-filling the user's template.
-    if (docxB64) {
-      try {
-        triggerBlobDownload(base64ToDocxBlob(docxB64), resumeName);
-        if (coverLetterDocxB64) {
-          triggerBlobDownload(base64ToDocxBlob(coverLetterDocxB64), coverName);
-        }
-        return null;
-      } catch (err) {
-        return err.message || "Unable to download DOCX.";
-      }
+    const hasResume = !!result?.trim();
+    const hasCover = Array.isArray(coverLetterResultLines) && coverLetterResultLines.length > 0;
+    if (!hasResume && !hasCover && !coverLetterDocxB64 && !docxB64 && !docxPath) {
+      return "Nothing to download yet.";
     }
-
-    // A previously persisted external document (post-reload) lives in Storage.
-    if (docxPath) {
-      try {
-        const supabase = createClient();
-        const { data, error } = await supabase.storage.from("resumes").download(docxPath);
-        if (!error && data) {
-          triggerBlobDownload(data, resumeName);
-          return null;
-        }
-      } catch {
-        // Fall through to the template-fill path below.
-      }
-    }
-
-    // Cover-letter-only (a scoped cover-letter regenerate): no résumé content,
-    // but a finished or templated cover letter to serve.
-    if (
-      !result?.trim() &&
-      (coverLetterDocxB64 ||
-        (Array.isArray(coverLetterResultLines) && coverLetterResultLines.length > 0))
-    ) {
-      try {
-        if (coverLetterDocxB64) {
-          triggerBlobDownload(base64ToDocxBlob(coverLetterDocxB64), coverName);
-        } else if (isDocxResume(coverLetterFile)) {
-          const clBlob = await buildDocxFromUploadedTemplate(
-            coverLetterFile,
-            coverLetterResultLines.join("\n"),
-            coverLetterResultLines,
-          );
-          triggerBlobDownload(clBlob, coverName);
-        } else {
-          return "Upload your cover letter template (.docx) to download it.";
-        }
-        return null;
-      } catch (err) {
-        return err.message || "Unable to download DOCX.";
-      }
-    }
-
-    if (!result?.trim()) return "Nothing to download yet.";
-    // Prefer the engine's finished docx as the structural template so edited
-    // downloads keep the engine's correct formatting (bullets, sizes) instead of
-    // inheriting the uploaded résumé's mismatched paragraph slots.
-    const resumeTemplate = templateDocxB64 ? docxFileFromBase64(templateDocxB64) : resumeFile;
-    if (!isDocxResume(resumeTemplate)) return "Upload the source resume as .docx to download.";
 
     try {
-      const blob = await buildDocxFromUploadedTemplate(resumeTemplate, result, resultLines);
-      triggerBlobDownload(blob, resumeName);
-
-      const coverTemplate = coverLetterTemplateDocxB64
-        ? docxFileFromBase64(coverLetterTemplateDocxB64)
-        : coverLetterFile;
-      if (
-        coverTemplate &&
-        isDocxResume(coverTemplate) &&
-        Array.isArray(coverLetterResultLines) &&
-        coverLetterResultLines.length > 0
-      ) {
-        const clBlob = await buildDocxFromUploadedTemplate(
-          coverTemplate,
-          coverLetterResultLines.join("\n"),
-          coverLetterResultLines,
-        );
-        triggerBlobDownload(clBlob, coverName);
+      // Résumé — one path via resolveDocumentBlob. docxB64/docxPath are supplied
+      // only for an UNEDITED finished doc (served verbatim); templateDocxB64 is
+      // the engine doc that edited text is rebuilt onto.
+      if (hasResume || docxB64 || docxPath) {
+        const resumeBlob = await resolveDocumentBlob({
+          engineDocxB64: docxB64 || templateDocxB64 || "",
+          docxPath: docxPath || "",
+          edited: !docxB64 && !docxPath,
+          text: result || "",
+          lines: resultLines || [],
+          uploadedTemplate: resumeFile,
+        });
+        if (hasResume && !resumeBlob) return "Upload the source resume as .docx to download.";
+        if (resumeBlob) triggerBlobDownload(resumeBlob, resumeName);
       }
+
+      // Cover letter — same single path.
+      if (hasCover || coverLetterDocxB64) {
+        const coverBlob = await resolveDocumentBlob({
+          engineDocxB64: coverLetterDocxB64 || coverLetterTemplateDocxB64 || "",
+          docxPath: "",
+          edited: !coverLetterDocxB64,
+          text: hasCover ? coverLetterResultLines.join("\n") : "",
+          lines: coverLetterResultLines || [],
+          uploadedTemplate: coverLetterFile,
+        });
+        if (coverBlob) triggerBlobDownload(coverBlob, coverName);
+        else if (!hasResume && hasCover) {
+          return "Upload your cover letter template (.docx) to download it.";
+        }
+      }
+
       return null;
     } catch (err) {
       return err.message || "Unable to download DOCX.";

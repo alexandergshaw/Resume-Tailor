@@ -15,6 +15,7 @@ import TableCell from "@mui/material/TableCell";
 import TableHead from "@mui/material/TableHead";
 import TableSortLabel from "@mui/material/TableSortLabel";
 import Typography from "@mui/material/Typography";
+import { resolveDocumentBlob } from "../../lib/document/docx";
 import DescriptionIcon from "@mui/icons-material/Description";
 import TabHeader from "./TabHeader";
 import EmptyState from "./EmptyState";
@@ -61,7 +62,6 @@ export default function TrackingTab({
   setStageDialog,
   isDocxResume,
   downloadDocxFiles,
-  buildDocxFromUploadedTemplate,
   getDownloadFileNameForTitle,
   // Dialog props
   stageDialog,
@@ -588,7 +588,14 @@ export default function TrackingTab({
                                       const lines = Array.isArray(resume.content_lines) && resume.content_lines.length > 0
                                         ? resume.content_lines
                                         : (resume.content || "").split("\n");
-                                      const blob = await buildDocxFromUploadedTemplate(resumeFile, resume.content, lines);
+                                      const blob = await resolveDocumentBlob({
+                                        docxPath: resume.docx_path || "",
+                                        edited: false,
+                                        text: resume.content,
+                                        lines,
+                                        uploadedTemplate: resumeFile,
+                                      });
+                                      if (!blob) return;
                                       const file = new File([blob], getDownloadFileNameForTitle(pos?.title, pos?.company), { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
                                       e.dataTransfer.clearData();
                                       e.dataTransfer.effectAllowed = "copy";
