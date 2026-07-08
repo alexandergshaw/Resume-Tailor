@@ -6,6 +6,7 @@ import {
   isDocxResume,
   buildDocxFromUploadedTemplate,
   buildTemplateLinesForUpload,
+  docxFileFromBase64,
 } from "../../lib/document/docx";
 import { parseDocxToModel, linesToModel } from "../../lib/document/docxPreview";
 import { addedEditText, editFingerprint } from "../../lib/tailor/editMining";
@@ -181,6 +182,12 @@ export function useDocumentPreview({
       if (!entry.edited && typeof entry.coverLetterDocxB64 === "string" && entry.coverLetterDocxB64) {
         return base64ToDocxBlob(entry.coverLetterDocxB64);
       }
+      // Edited: rebuild from the engine's finished docx (correct formatting)
+      // rather than the uploaded template, falling back to the upload only when
+      // there is no engine docx.
+      if (typeof entry.coverLetterDocxB64 === "string" && entry.coverLetterDocxB64) {
+        return buildDocxFromUploadedTemplate(docxFileFromBase64(entry.coverLetterDocxB64), lines.join("\n"), lines);
+      }
       if (isDocxResume(coverLetterFile)) {
         return buildDocxFromUploadedTemplate(coverLetterFile, lines.join("\n"), lines);
       }
@@ -189,6 +196,9 @@ export function useDocumentPreview({
     const lines = Array.isArray(entry.resultLines) ? entry.resultLines : [];
     if (!entry.edited && typeof entry.docxB64 === "string" && entry.docxB64) {
       return base64ToDocxBlob(entry.docxB64);
+    }
+    if (typeof entry.docxB64 === "string" && entry.docxB64) {
+      return buildDocxFromUploadedTemplate(docxFileFromBase64(entry.docxB64), entry.result || "", lines);
     }
     if (isDocxResume(resumeFile)) {
       return buildDocxFromUploadedTemplate(resumeFile, entry.result || "", lines);
@@ -278,11 +288,13 @@ export function useDocumentPreview({
     if (scope === "cover") {
       args.coverLetterResultLines = lines;
       args.coverLetterFileName = entry.coverLetterFileName || "";
+      args.coverLetterTemplateDocxB64 = typeof entry.coverLetterDocxB64 === "string" ? entry.coverLetterDocxB64 : "";
       if (serveFinished && typeof entry.coverLetterDocxB64 === "string") args.coverLetterDocxB64 = entry.coverLetterDocxB64;
     } else {
       args.result = text;
       args.resultLines = lines;
       args.resumeFileName = entry.resumeFileName || "";
+      args.templateDocxB64 = typeof entry.docxB64 === "string" ? entry.docxB64 : "";
       if (serveFinished && typeof entry.docxB64 === "string") args.docxB64 = entry.docxB64;
       // Restored chips have no in-session docx blob but do carry the saved
       // storage path — serve that faithful copy when the text is unedited.

@@ -20,6 +20,13 @@ export function base64ToDocxBlob(base64) {
   return new Blob([bytes], { type: DOCX_MIME });
 }
 
+// Wrap a base64 .docx as a File so it can be used as a structural template
+// (isDocxResume checks the name/type) — used to rebuild edited documents from
+// the engine's finished docx instead of the user's uploaded résumé.
+export function docxFileFromBase64(base64) {
+  return new File([base64ToDocxBlob(base64)], "engine-template.docx", { type: DOCX_MIME });
+}
+
 // Trigger a browser download for a Blob under the given file name.
 export function triggerBlobDownload(blob, fileName) {
   const url = URL.createObjectURL(blob);
@@ -440,6 +447,8 @@ export function createDocumentDownloaders(deps) {
     docxPath,
     resumeFileName,
     coverLetterFileName,
+    templateDocxB64,
+    coverLetterTemplateDocxB64,
   }) {
     // Download names honor an optional user override typed in the preview.
     const resumeName = resolveDocumentFileName(resumeFileName, jobTitle, company, "Resume");
@@ -500,20 +509,27 @@ export function createDocumentDownloaders(deps) {
     }
 
     if (!result?.trim()) return "Nothing to download yet.";
-    if (!isDocxResume(resumeFile)) return "Upload the source resume as .docx to download.";
+    // Prefer the engine's finished docx as the structural template so edited
+    // downloads keep the engine's correct formatting (bullets, sizes) instead of
+    // inheriting the uploaded résumé's mismatched paragraph slots.
+    const resumeTemplate = templateDocxB64 ? docxFileFromBase64(templateDocxB64) : resumeFile;
+    if (!isDocxResume(resumeTemplate)) return "Upload the source resume as .docx to download.";
 
     try {
-      const blob = await buildDocxFromUploadedTemplate(resumeFile, result, resultLines);
+      const blob = await buildDocxFromUploadedTemplate(resumeTemplate, result, resultLines);
       triggerBlobDownload(blob, resumeName);
 
+      const coverTemplate = coverLetterTemplateDocxB64
+        ? docxFileFromBase64(coverLetterTemplateDocxB64)
+        : coverLetterFile;
       if (
-        coverLetterFile &&
-        isDocxResume(coverLetterFile) &&
+        coverTemplate &&
+        isDocxResume(coverTemplate) &&
         Array.isArray(coverLetterResultLines) &&
         coverLetterResultLines.length > 0
       ) {
         const clBlob = await buildDocxFromUploadedTemplate(
-          coverLetterFile,
+          coverTemplate,
           coverLetterResultLines.join("\n"),
           coverLetterResultLines,
         );
