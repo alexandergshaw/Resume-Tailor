@@ -38,6 +38,7 @@ export function useApplicationDialogs({
     company: "",
     role: "",
     body: "",
+    files: [],
   });
   const [communicationSaving, setCommunicationSaving] = useState(false);
   const [communicationError, setCommunicationError] = useState("");
@@ -178,20 +179,36 @@ export function useApplicationDialogs({
       company: app.positions?.company || "",
       role: app.positions?.title || "",
       body: "",
+      files: [],
     });
   }
 
   async function handleSaveCommunication() {
-    if (!currentUser || !addCommunicationDialog.applicationId || !addCommunicationDialog.body.trim()) return;
+    const body = addCommunicationDialog.body.trim();
+    const files = addCommunicationDialog.files || [];
+    if (!currentUser || !addCommunicationDialog.applicationId || (!body && files.length === 0)) return;
 
     setCommunicationSaving(true);
     setCommunicationError("");
 
     const supabase = createClient();
+    const { attachments, error: uploadErr } = await uploadCommunicationAttachments(supabase, {
+      files,
+      userId: currentUser.id,
+      applicationId: addCommunicationDialog.applicationId,
+    });
+
+    if (uploadErr) {
+      setCommunicationError(uploadErr);
+      setCommunicationSaving(false);
+      return;
+    }
+
     const { error } = await createRecruiterCommunication(supabase, {
       userId: currentUser.id,
       applicationId: addCommunicationDialog.applicationId,
-      body: addCommunicationDialog.body.trim(),
+      body,
+      attachments,
     });
 
     if (error) {
@@ -201,7 +218,7 @@ export function useApplicationDialogs({
     }
 
     const applicationId = addCommunicationDialog.applicationId;
-    setAddCommunicationDialog({ open: false, applicationId: null, company: "", role: "", body: "" });
+    setAddCommunicationDialog({ open: false, applicationId: null, company: "", role: "", body: "", files: [] });
     setCommunicationSaving(false);
 
     if (communicationsDialog.applicationId === applicationId) {
@@ -285,6 +302,37 @@ export function useApplicationDialogs({
     }
 
     return { error: null };
+  }
+
+  async function uploadCommunicationAttachments(supabase, { files, userId, applicationId }) {
+    if (!files || files.length === 0) {
+      return { attachments: [], error: null };
+    }
+
+    const attachments = [];
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i];
+      const sanitized = file.name.replace(/[^A-Za-z0-9._-]+/g, "_");
+      const path = `${userId}/communications/${applicationId}/${Date.now()}-${i}-${sanitized}`;
+
+      const { error: uploadErr } = await supabase
+        .storage
+        .from("resumes")
+        .upload(path, file, { upsert: true, contentType: file.type || undefined });
+
+      if (uploadErr) {
+        return { attachments: [], error: uploadErr.message || "Failed to upload attachment." };
+      }
+
+      attachments.push({
+        name: file.name,
+        path,
+        type: file.type || "",
+        size: file.size || 0,
+      });
+    }
+
+    return { attachments, error: null };
   }
 
   async function handleSaveEditApplication() {

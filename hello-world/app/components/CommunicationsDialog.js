@@ -8,6 +8,9 @@ import Dialog from "@mui/material/Dialog";
 import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
+import Stack from "@mui/material/Stack";
+import { createClient } from "../../lib/supabase/client";
+import { triggerBlobDownload } from "../../lib/document/docx";
 import { useIsMobile } from "../hooks/useResponsive";
 import FieldError from "./FieldError";
 
@@ -16,6 +19,7 @@ export default function CommunicationsDialog({
   setCommunicationsDialog,
 }) {
   const isMobile = useIsMobile();
+
   const close = () =>
     setCommunicationsDialog({
       open: false,
@@ -26,6 +30,20 @@ export default function CommunicationsDialog({
       error: "",
       items: [],
     });
+
+  async function downloadAttachment(att) {
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase.storage.from("resumes").download(att.path);
+      if (error || !data) {
+        window.alert(error?.message || "Could not download attachment.");
+        return;
+      }
+      triggerBlobDownload(data, att.name || "attachment");
+    } catch (e) {
+      window.alert(e?.message || "Could not download attachment.");
+    }
+  }
 
   return (
     <Dialog
@@ -78,6 +96,25 @@ export default function CommunicationsDialog({
                 <Box sx={{ whiteSpace: "pre-wrap", lineHeight: 1.7, fontSize: 13.5 }}>
                   {item.body || "—"}
                 </Box>
+                {Array.isArray(item.attachments) && item.attachments.length > 0 && (
+                  <Box sx={{ mt: 1 }}>
+                    <Box sx={{ mb: 0.75, fontSize: 12, fontWeight: 500, color: "var(--text-secondary)" }}>
+                      Attachments:
+                    </Box>
+                    <Stack direction="row" spacing={0.75} sx={{ flexWrap: "wrap" }}>
+                      {item.attachments.map((att, idx) => (
+                        <Chip
+                          key={idx}
+                          label={att.name}
+                          onClick={() => downloadAttachment(att)}
+                          size="small"
+                          variant="outlined"
+                          sx={{ cursor: "pointer" }}
+                        />
+                      ))}
+                    </Stack>
+                  </Box>
+                )}
               </Box>
             ))}
           </Box>

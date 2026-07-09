@@ -39,6 +39,7 @@ export async function createRecruiterCommunication(supabase, {
   direction = "inbound",
   type = "email",
   communicatedAt,
+  attachments = [],
 }) {
   try {
     const payload = {
@@ -47,6 +48,7 @@ export async function createRecruiterCommunication(supabase, {
       body,
       direction,
       type,
+      attachments,
       communicated_at: communicatedAt || new Date().toISOString(),
     };
 
