@@ -4,6 +4,7 @@
 
 import JSZip from "jszip";
 import { createClient } from "../supabase/client";
+import { alignLinesToSlots } from "./alignLines";
 
 export const WORDPROCESSINGML_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -290,21 +291,40 @@ export async function buildDocxFromUploadedTemplate(file, generatedText, generat
     throw new Error("Uploaded DOCX template has no text paragraphs to update.");
   }
 
-  editableParagraphs.forEach((paragraphNode, index) => {
-    setParagraphText(paragraphNode, lines[index] || "", xmlDoc);
-  });
+  // Align edited lines to slots by content so an inserted/deleted line never
+  // shifts the formatting of the lines around it.
+  const templateTexts = editableParagraphs.map((p) => getParagraphPlainText(p));
+  const ops = alignLinesToSlots(templateTexts, lines);
 
-  if (lines.length > editableParagraphs.length) {
-    const lastEditable = editableParagraphs[editableParagraphs.length - 1];
-    let anchor = lastEditable;
-    for (let index = editableParagraphs.length; index < lines.length; index += 1) {
-      const line = lines[index];
-      if (!line) continue;
-      const clone = lastEditable.cloneNode(true);
-      setParagraphText(clone, line, xmlDoc);
-      anchor.parentNode.insertBefore(clone, anchor.nextSibling);
-      anchor = clone;
+  // Track the DOM node each insert should follow: the node of the previous
+  // fill/insert in document order (inserts after removed slots must attach to
+  // the surviving node before them).
+  let lastNode = null;
+  const toRemove = [];
+  for (const op of ops) {
+    if (op.type === "fill") {
+      setParagraphText(editableParagraphs[op.slot], op.text, xmlDoc);
+      lastNode = editableParagraphs[op.slot];
+    } else if (op.type === "remove") {
+      toRemove.push(editableParagraphs[op.slot]);
+    } else if (op.type === "insert") {
+      // Clone the nearest surviving slot's paragraph for formatting: prefer the
+      // node this insert follows, else the first editable paragraph.
+      const templateNode = lastNode || editableParagraphs[0];
+      const clone = templateNode.cloneNode(true);
+      setParagraphText(clone, op.text, xmlDoc);
+      const anchorNode = lastNode;
+      if (anchorNode && anchorNode.parentNode) {
+        anchorNode.parentNode.insertBefore(clone, anchorNode.nextSibling);
+      } else {
+        const first = editableParagraphs[0];
+        first.parentNode.insertBefore(clone, first);
+      }
+      lastNode = clone;
     }
+  }
+  for (const node of toRemove) {
+    if (node.parentNode) node.parentNode.removeChild(node);
   }
 
   const serializedXml = new XMLSerializer().serializeToString(xmlDoc);
