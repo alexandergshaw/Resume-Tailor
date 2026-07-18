@@ -1,5 +1,6 @@
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
+import { enforceCoverLetterLengths } from "@/lib/llm/coverLetterLengths";
 
 function buildTemplateLinesBlock(templateLines) {
   return templateLines
@@ -334,26 +335,6 @@ function buildCoverLetterPrompt({
     "Cover letter template — preserve line count and character budgets:",
     buildCoverLetterTemplateLinesBlock(templateLines),
   ].join("\n");
-}
-
-function enforceCoverLetterLengths(resultLines, templateLines) {
-  return resultLines.map((rawLine, idx) => {
-    const template = templateLines[idx] || "";
-    const targetLen = template.length;
-    const line = String(rawLine || "");
-
-    // Preserve blank slots so paragraph breaks survive.
-    if (targetLen === 0) return "";
-
-    // Cap to +15% to enforce the hard upper bound from the prompt.
-    const maxLen = Math.max(targetLen + 5, Math.ceil(targetLen * 1.15));
-    if (line.length <= maxLen) return line;
-
-    // Truncate at the last word boundary before the cap to avoid mid-word cuts.
-    const truncated = line.slice(0, maxLen);
-    const lastSpace = truncated.lastIndexOf(" ");
-    return lastSpace > maxLen * 0.6 ? truncated.slice(0, lastSpace) : truncated;
-  });
 }
 
 export async function generateTailoredCoverLetterDraft({
