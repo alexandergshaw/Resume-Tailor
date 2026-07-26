@@ -579,6 +579,11 @@ export const embeddedEngine = {
     };
   },
 
+  // `tailoredResume` (the freshly tailored résumé, added for the Gemini-only
+  // "ground the cover letter in the tailored résumé" feature) is accepted here
+  // too via the options object but intentionally left out of the destructure —
+  // this engine builds cover letters deterministically from the library and
+  // posting, not from freeform résumé text, so the value is simply ignored.
   async tailorCoverLetter({ jobPosting, jobPostingUrl, jobTitle, companyName, values, aggressiveness, userId, steeringInstructions, editRules, focusArea, keywordEdits, coverVariant: requestedVariant, persona }) {
     const { text: posting, meta: scrapedMeta } = await resolvePostingText({ jobPosting, jobPostingUrl }, { required: false });
     const overrides = values && typeof values === "object" ? values : {};

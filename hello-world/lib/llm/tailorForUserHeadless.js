@@ -95,6 +95,7 @@ export async function tailorResumeHeadless({
  * @param {{
  *   coverLetterBuffer: Buffer,
  *   resumeBuffer?: Buffer,
+ *   tailoredResume?: { result: string, resultLines: string[] },
  *   jobPosting: string,
  *   jobPostingUrl?: string,
  *   companyName?: string,
@@ -106,6 +107,7 @@ export async function tailorResumeHeadless({
 export async function tailorCoverLetterHeadless({
   coverLetterBuffer,
   resumeBuffer = null,
+  tailoredResume = null,
   jobPosting,
   jobPostingUrl = "",
   companyName = "",
@@ -132,6 +134,9 @@ export async function tailorCoverLetterHeadless({
 
   if (templateLines.length === 0) return null;
 
+  // Original-resume text is still passed as background grounding (see
+  // tailorResume.js); `tailoredResume` — when the caller has it, as
+  // tailorAndQueue.js does — takes over as the letter's primary content source.
   let resumeText = "";
   if (resumeBuffer && Buffer.isBuffer(resumeBuffer)) {
     try {
@@ -148,6 +153,7 @@ export async function tailorCoverLetterHeadless({
     companyName,
     jobTitle,
     resumeText,
+    tailoredResume,
     templateLines,
     additionalContext,
     contextDocuments: [],

@@ -188,6 +188,9 @@ export async function tailorAndQueueOne({
       const coverDraft = await tailorCoverLetterHeadless({
         coverLetterBuffer,
         resumeBuffer,
+        // Ground the letter in the résumé just tailored above for this
+        // posting, not a re-extraction of the original upload.
+        tailoredResume: { result: resumeDraft.result, resultLines: resumeDraft.resultLines },
         jobPosting: job.description || job.title || "",
         jobPostingUrl: job.url || "",
         companyName: job.company || "",

@@ -140,6 +140,22 @@ function parseJsonObject(raw) {
   }
 }
 
+// Selects which résumé lines/text ground the cover letter: the client's
+// stored (possibly hand-edited) tailored résumé lines when present, else the
+// résumé just tailored in this same request. Tolerates missing/malformed
+// inputs so it can be unit-tested in isolation.
+export function pickTailoredResume(clientLines, resumeResult) {
+  const lines = Array.isArray(clientLines) ? clientLines : [];
+  if (lines.length > 0) {
+    return { result: lines.join("\n").trim(), resultLines: lines };
+  }
+  const resume = resumeResult && typeof resumeResult === "object" ? resumeResult : {};
+  return {
+    result: typeof resume.result === "string" ? resume.result : "",
+    resultLines: Array.isArray(resume.resultLines) ? resume.resultLines : [],
+  };
+}
+
 function parseTemplateLines(rawTemplateLines) {
   if (!rawTemplateLines) {
     return [];
@@ -187,6 +203,13 @@ export async function POST(request) {
     );
     const coverLetterTemplateLines = parseTemplateLines(
       formData.get("coverLetterTemplateLines")?.toString() || "",
+    );
+    // Cover-only revises (the preview modal's cover scope) send the ALREADY-
+    // tailored résumé lines it has stored client-side — which may include the
+    // user's hand edits — so the cover letter is grounded in what's actually
+    // being kept, not a fresh (edit-unaware) resume rewrite from this request.
+    const tailoredResumeLines = parseTemplateLines(
+      formData.get("tailoredResumeLines")?.toString() || "",
     );
     const resumeFile = formData.get("resume");
     const coverLetterFile = formData.get("coverLetter");
@@ -334,6 +357,11 @@ export async function POST(request) {
     let coverLetterDocxB64 = "";
     let coverLetterMatch = null;
     let coverVariantUsed = null;
+    // The cover letter's content source: the client's stored (possibly hand-
+    // edited) tailored résumé lines when it sent them, otherwise the résumé
+    // just tailored above in this same request. Either way this is the
+    // TAILORED résumé, never the raw upload — see buildCoverLetterPrompt.
+    const tailoredResume = pickTailoredResume(tailoredResumeLines, result);
     if (!(coverLetterFile instanceof File)) {
       // No cover letter file uploaded — that's fine, just skip silently.
     } else if (coverLetterTemplateLines.length === 0) {
@@ -348,6 +376,7 @@ export async function POST(request) {
           companyName: scrapedCompany || result.companyName || postingMeta.companyName,
           jobTitle: result.jobTitle || scrapedJobTitle || postingMeta.jobTitle,
           resumeText,
+          tailoredResume,
           templateLines: coverLetterTemplateLines,
           additionalContext,
           contextDocuments,

@@ -359,6 +359,12 @@ export function useDocumentPreview({
       formData.append("templateLines", JSON.stringify(templateLines));
       contextFiles.forEach((file) => formData.append("contextFiles", file));
       formData.append("resume", resumeFile);
+      // Cover-only revise: send the résumé already tailored (and possibly
+      // hand-edited) for this job as the letter's content source, instead of
+      // letting the route ground it in a fresh, edit-unaware resume re-run.
+      if (applyCover && Array.isArray(entry.resultLines) && entry.resultLines.length > 0) {
+        formData.append("tailoredResumeLines", JSON.stringify(entry.resultLines));
+      }
       // Regenerate the cover letter when it's the document being revised, or on
       // a focus change (both documents carry the focus).
       const regenCover = (applyCover || focusChange) && coverLetterFile;

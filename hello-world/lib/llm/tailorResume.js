@@ -276,12 +276,28 @@ function buildCoverLetterTemplateLinesBlock(templateLines) {
     .join("\n");
 }
 
-function buildCoverLetterPrompt({
+// The freshly tailored resume ({ result, resultLines }) as flat text, or "" when
+// none was supplied / it carried no usable content — the caller falls back to
+// grounding on the original resume in that case.
+export function resolveTailoredResumeText(tailoredResume) {
+  if (!tailoredResume || typeof tailoredResume !== "object") return "";
+  if (typeof tailoredResume.result === "string" && tailoredResume.result.trim()) {
+    return tailoredResume.result.trim();
+  }
+  if (Array.isArray(tailoredResume.resultLines)) {
+    const joined = tailoredResume.resultLines.join("\n").trim();
+    if (joined) return joined;
+  }
+  return "";
+}
+
+export function buildCoverLetterPrompt({
   jobPosting,
   jobPostingUrl,
   companyName,
   jobTitle,
   resumeText,
+  tailoredResume,
   templateLines,
   additionalContext,
   contextDocuments,
@@ -300,6 +316,7 @@ function buildCoverLetterPrompt({
         "",
       ]
     : [];
+  const tailoredResumeText = resolveTailoredResumeText(tailoredResume);
 
   return [
     "You are an expert cover letter writer.",
@@ -326,8 +343,18 @@ function buildCoverLetterPrompt({
     "",
     `Additional context:\n${additionalContext || "None provided."}`,
     "",
-    "Source resume (for factual grounding only — do not copy phrasing wholesale):",
-    resumeText || "Not provided.",
+    ...(tailoredResumeText
+      ? [
+          "Tailored résumé (already tailored for this exact posting — draw the letter's substance, achievements, emphasis, and vocabulary from it, rendering it as flowing letter prose rather than résumé bullets):",
+          tailoredResumeText,
+          "",
+          "Original resume (background only, for additional factual grounding):",
+          resumeText || "Not provided.",
+        ]
+      : [
+          "Source resume (for factual grounding only — do not copy phrasing wholesale):",
+          resumeText || "Not provided.",
+        ]),
     "",
     "Supporting documents:",
     buildContextDocumentsBlock(contextDocuments),
@@ -343,6 +370,7 @@ export async function generateTailoredCoverLetterDraft({
   companyName,
   jobTitle,
   resumeText,
+  tailoredResume,
   templateLines,
   additionalContext,
   contextDocuments,
@@ -364,6 +392,7 @@ export async function generateTailoredCoverLetterDraft({
     companyName,
     jobTitle,
     resumeText,
+    tailoredResume,
     templateLines: normalizedTemplateLines,
     additionalContext,
     contextDocuments,
