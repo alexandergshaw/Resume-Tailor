@@ -283,6 +283,12 @@ const adjudicated = await parallel(
     ).then((votes) => {
       const cast = votes.filter(Boolean)
       const standing = cast.filter((v) => !v.refuted).length
+      // A majority confirms. But a SPLIT is not a dismissal: if even one
+      // reviewer personally reproduced the failure, it surfaces as disputed
+      // and holds the run red for the parent to judge. Silently dropping a
+      // reproduced defect because a second reviewer disagreed is the one
+      // failure mode a regression suite must never have.
+      const majority = cast.length > 0 && standing > cast.length / 2
       return {
         id: f.id,
         area: c ? c.area : '',
@@ -290,7 +296,8 @@ const adjudicated = await parallel(
         evidence: f.evidence,
         votesFor: standing,
         votesAgainst: cast.length - standing,
-        confirmed: cast.length > 0 && standing > cast.length / 2,
+        confirmed: majority,
+        disputed: !majority && standing > 0,
         reasons: cast.map((v) => `${v.reason}: ${v.detail}`),
       }
     })
@@ -299,17 +306,27 @@ const adjudicated = await parallel(
 
 const judged = adjudicated.filter(Boolean)
 const confirmed = judged.filter((j) => j.confirmed)
-const dismissed = judged.filter((j) => !j.confirmed)
+const disputed = judged.filter((j) => j.disputed)
+const dismissed = judged.filter((j) => !j.confirmed && !j.disputed)
+if (disputed.length > 0) {
+  log(`${disputed.length} failure(s) DISPUTED - at least one reviewer reproduced them. Parent must judge; not dismissed.`)
+}
 const unadjudicated = failures.slice(toAdjudicate.length).map((f) => ({ id: f.id, evidence: f.evidence }))
 
 return {
-  ok: confirmed.length === 0 && blocked.length === 0 && notRun.length === 0 && unadjudicated.length === 0,
+  ok:
+    confirmed.length === 0 &&
+    disputed.length === 0 &&
+    blocked.length === 0 &&
+    notRun.length === 0 &&
+    unadjudicated.length === 0,
   doc,
   total: allCases.length,
   automatable: runnable.length,
   passed: verdicts.filter((v) => v.status === 'pass').length,
   manualCases: manual.map((c) => ({ id: c.id, summary: c.summary, steps: c.steps })),
   confirmedRegressions: confirmed,
+  disputedFailures: disputed,
   dismissedFailures: dismissed.map((d) => ({ id: d.id, reasons: d.reasons })),
   unadjudicatedFailures: unadjudicated,
   blocked: blocked.map((b) => ({ id: b.id, evidence: b.evidence })),

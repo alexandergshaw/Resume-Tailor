@@ -121,6 +121,162 @@ from a fail without judgement calls.
 
 **Expected:** eslint reports zero errors and zero warnings. vitest reports at least 816 passing tests with zero failures. The build compiles successfully. Note `tsc --noEmit` is not applicable: this project has `jsconfig.json` and no `tsconfig.json`.
 
+### R-011 | area: preview-concurrency | parallel-safe: yes | automatable: yes
+
+**Summary:** Working on one document must not disable the other. This is the core of per-document concurrency.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/tailor/previewScopes.lockScopesFor.test.js lib/tailor/previewScopes.applyScopeFlags.test.js`.
+2. Read `app/components/DocumentPreviewDialog.js` and locate every `disabled=` guard.
+
+**Expected:** Tests pass. The per-scope download and revise controls are gated on `busyActive` (the active tab's own flag), NOT on `anyBusy`. Only the combined download and the both-document operations (focus picker, framing, scan posting) use `anyBusy`.
+
+### R-012 | area: preview-concurrency | parallel-safe: yes | automatable: yes
+
+**Summary:** A finishing operation on one document must not discard uncommitted edits on the other. This was a silent data-loss path.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/tailor/previewScopes.changedScopes.test.js`.
+2. Read the `reloadKey` handling block in `app/components/DocumentPreviewDialog.js`.
+
+**Expected:** Tests pass, including that a scope missing from the previous signatures counts as changed. The reload handler clears cached renders and `draftHtmlRef` only for scopes whose content signature actually changed, and only drops out of edit mode when the ACTIVE scope changed.
+
+### R-013 | area: preview-concurrency | parallel-safe: yes | automatable: yes
+
+**Summary:** busy, notice and error are per-scope objects, and no surviving code treats them as scalars. An object is always truthy, so a missed truthiness check would pin a banner open permanently.
+
+**Steps:**
+1. From `hello-world`, search `app/hooks/useDocumentPreview.js`, `app/page.js` and `app/components/DocumentPreviewDialog.js` for reads of `busy`, `notice` and `error`.
+
+**Expected:** Every consumer indexes by scope (for example `busy?.[tab]`, `notice?.[tab] || ""`). No bare truthiness test on the whole object exists anywhere.
+
+### R-014 | area: preview-concurrency | parallel-safe: yes | automatable: yes
+
+**Summary:** Re-entrancy guards are ref-based, not render-closure based, so a fast double-click cannot slip through.
+
+**Steps:**
+1. Read `resubmitDocumentPreview` and `downloadDocumentPreview` in `app/hooks/useDocumentPreview.js`.
+
+**Expected:** Both guard on `inFlightScopesRef` (a ref, always current), acquire before the first await, and release in a `finally`. Downloads use a `download:` prefixed key so a download and a revise on the same scope are tracked independently and never block each other.
+
+### R-015 | area: preview-ai | parallel-safe: yes | automatable: yes
+
+**Summary:** The Ask AI button opens a chat the user can actually see. ChatPanel sits at z-index 1100 and MUI dialogs default to 1300.
+
+**Steps:**
+1. Read the Ask AI handler in `app/components/DocumentPreviewDialog.js` and its wiring in `app/page.js`.
+
+**Expected:** The handler commits any pending edit, then closes the preview, then opens the chat. ChatPanel's z-index is NOT raised globally. The pinned context carries the company, role, which document, the document text, and `sourceJobId` so the existing refresh effect keeps it current.
+
+### R-016 | area: tailoring-metadata | parallel-safe: yes | automatable: yes
+
+**Summary:** A resume-only revise must not null out the cover letter's stored framing metadata. This was a pre-existing bug.
+
+**Steps:**
+1. Read the metadata write block near the end of `resubmitDocumentPreview` in `app/hooks/useDocumentPreview.js`.
+
+**Expected:** `focusInfo`, `keywordsInfo`, `personaInfo` and `coverVariantInfo` are each written only when the call actually touched that scope. A resume-only revise leaves `coverVariantInfo` untouched rather than overwriting it with null.
+
+### R-017 | area: persistence | parallel-safe: yes | automatable: yes
+
+**Summary:** Interactively generated cover letters persist. Previously only the automated queue ever wrote a cover letter row, so a browser-generated letter was lost on reload.
+
+**Steps:**
+1. Search the repo for callers of `saveGeneratedCoverLetter` and of `persistGeneratedDocuments`.
+
+**Expected:** Every interactive generate path in `app/page.js` persists the cover letter when one was generated, via the shared helper in `lib/supabase/persistGeneration.js`. The helper never writes `docx_path` for cover letters, because `generated_cover_letters` has no such column.
+
+### R-018 | area: persistence | parallel-safe: yes | automatable: yes
+
+**Summary:** Auto-save must never write database rows. It fires on a 600ms debounce while typing; persisting there would create hundreds of rows per session and make the version list unusable.
+
+**Steps:**
+1. Read `saveDocumentPreview` in `app/hooks/useDocumentPreview.js` in full.
+
+**Expected:** Its body contains no Supabase client creation, no await, and no call to any persistence helper. Only regenerations persist.
+
+### R-019 | area: persistence | parallel-safe: yes | automatable: yes
+
+**Summary:** The revise path must never write to the positions table. `upsertPosition` is a full-row upsert built for freshly scraped job objects and would null out location, salary, employment type, posted date and raw_data when called with partial preview data.
+
+**Steps:**
+1. Search `app/hooks/useDocumentPreview.js` for every access to the `positions` table.
+
+**Expected:** Position access from this hook is read-only (`.select("id").eq("external_id", ...)`). There is no `upsert`, `insert`, `update` or `delete` against `positions` anywhere in the hook, and `upsertPosition` is not imported by it. The four generate flows in `app/page.js` legitimately still call `upsertPosition`, because they hold a complete job object.
+
+### R-020 | area: version-history | parallel-safe: yes | automatable: yes
+
+**Summary:** Version history reads the append-only generation rows by position, newest first.
+
+**Steps:**
+1. Read `lib/supabase/documentVersions.js`.
+
+**Expected:** The query selects from `generated_resumes` or `generated_cover_letters` per scope, filters on `position_id`, orders by `created_at` descending, and is capped with the reason documented. It returns an empty array on any error and never throws.
+
+### R-021 | area: version-history | parallel-safe: yes | automatable: yes
+
+**Summary:** Selecting a version restores it as current content without losing in-progress typing, and the choice survives a reload.
+
+**Steps:**
+1. Read the version selection handler in `app/hooks/useDocumentPreview.js` and its `onSelect` wiring in `app/components/DocumentPreviewDialog.js`.
+
+**Expected:** The handler flushes the pending auto-save (`commitDraft`) BEFORE switching. Selecting writes the version's content and lines for that scope only, sets that scope's `edited` to false, invalidates only that scope's cached render, and best-effort updates `applications.resume_used_id` or `cover_letter_id` so a reload restores the chosen version. The control is disabled only while its own scope is busy.
+
+### R-022 | area: version-history | parallel-safe: yes | automatable: yes
+
+**Summary:** The version control degrades gracefully rather than showing an empty or broken selector.
+
+**Steps:**
+1. Read `app/components/preview/VersionControl.js`.
+
+**Expected:** It renders nothing when there are fewer than two versions. Signed-out and no-position cases resolve to an empty version list upstream without console errors.
+
+### R-023 | area: version-diff | parallel-safe: yes | automatable: yes
+
+**Summary:** Change classification is precise. Over-marking makes the highlight useless, so identical content must produce zero marks.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/document/versionDiff.classifyLineChanges.test.js lib/document/versionDiff.markChangedParagraphs.test.js lib/document/versionDiff.markVersionChanges.test.js`.
+
+**Expected:** All pass, including: identical inputs produce an empty result; an empty previous version produces an empty result (a first version must not mark everything); whitespace-only differences count as unchanged; an inserted line is marked without marking its neighbours; and the input render model is never mutated, with unaffected paragraphs returned by the same object reference.
+
+### R-024 | area: version-diff | parallel-safe: yes | automatable: yes
+
+**Summary:** The shared HTML renderer stays byte-identical for documents with no highlights. Every preview, the combined download and the PDF path all flow through it.
+
+**Steps:**
+1. Read the run-style assembly in `renderModelToHtml` in `lib/document/docxPreview.js`.
+
+**Expected:** The highlight entry is a conditional that yields an empty string when `mark` is absent, and the style array is filtered for falsy entries before joining. A model with no marks therefore produces exactly the previous output.
+
+### R-025 | area: version-diff | parallel-safe: yes | automatable: yes
+
+**Summary:** Highlighting never fails silently on hand-edited documents. Those render from saved HTML and bypass the model entirely, so an annotated model would never be built.
+
+**Steps:**
+1. Read the highlight enablement logic in `app/components/DocumentPreviewDialog.js` and `app/components/preview/HighlightToggle.js`.
+
+**Expected:** When a scope has saved edited HTML, the toggle is disabled and states why. It does not silently appear active while showing no highlights.
+
+### R-026 | area: file-size | parallel-safe: yes | automatable: yes
+
+**Summary:** The project's 1000-line-per-file cap holds for every file touched by this work.
+
+**Steps:**
+1. From the repo root, run a line count over `hello-world/app/components/DocumentPreviewDialog.js`, `hello-world/app/components/preview/*.js`, `hello-world/app/hooks/useDocumentPreview.js`, `hello-world/lib/document/versionDiff.js`, `hello-world/lib/supabase/documentVersions.js`, `hello-world/lib/supabase/persistGeneration.js` and `hello-world/lib/tailor/previewScopes.js`.
+
+**Expected:** Every one is under 1000 lines. Known pre-existing exception: `hello-world/app/page.js` is over 3000 lines and is being reduced by a separate consolidation effort; this work only added minimal prop wiring to it.
+
+### R-027 | area: preview-concurrency | parallel-safe: yes | automatable: yes
+
+**Summary:** Hand edits to one document survive a regeneration of the other. The `edited` flag was entry-wide, so editing the cover letter and then regenerating the resume silently made the cover letter download serve a stale pre-edit document while the preview still showed the edits.
+
+**Steps:**
+1. Search the whole repo (`app` and `lib`) for reads of `.edited`.
+2. Read the `editedForScope` helper and its callers in `app/hooks/useDocumentPreview.js`, `app/hooks/useCompanyResearch.js`, `app/page.js`, `lib/document/docx.js` and `app/components/StatusBar.js`.
+
+**Expected:** `edited` is a per-scope object `{ resume, cover }`. EVERY read is scope-indexed through a helper; no bare `if (entry.edited)` or `!entry.edited` survives anywhere, because an object is always truthy and a bare check would silently invert behavior. A resume regeneration clears only `edited.resume`; a cover-letter hand edit sets only `edited.cover`; the company-research weave sets only the cover scope. A legacy boolean value is tolerated and read as edited on both scopes, which is the safe direction because it forces a rebuild rather than a stale verbatim serve.
+
 ### R-010 | area: cover-letter-quality | parallel-safe: no | automatable: no
 
 **Summary:** End to end, a generated cover letter visibly reflects the tailored resume's emphasis and reads as letter prose rather than restated resume bullets.
