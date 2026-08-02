@@ -144,6 +144,10 @@ export function renderModelToHtml(model) {
             r.underline ? "text-decoration:underline" : "",
             r.sizePt ? `font-size:${r.sizePt}pt` : "",
             r.color ? `color:${r.color}` : "",
+            // Version-diff highlight (lib/document/versionDiff.js sets this on
+            // added/modified lines). Matches the app's existing highlight
+            // treatment (CompanyResearchDialog's inserted-text `mark`).
+            r.mark ? "background-color:rgba(255,213,79,0.55)" : "",
           ]
             .filter(Boolean)
             .join(";");

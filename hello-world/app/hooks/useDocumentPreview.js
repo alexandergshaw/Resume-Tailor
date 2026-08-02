@@ -1,11 +1,12 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   buildTemplateLinesForUpload,
   resolveDocumentBlob,
 } from "../../lib/document/docx";
-import { parseDocxToModel, linesToModel } from "../../lib/document/docxPreview";
+import { parseDocxToModel, linesToModel, modelToLines } from "../../lib/document/docxPreview";
+import { markVersionChanges } from "../../lib/document/versionDiff";
 import { addedEditText, editFingerprint } from "../../lib/tailor/editMining";
 import { deriveEditRules } from "../../lib/tailor/editRules";
 import {
@@ -23,7 +24,11 @@ import {
   variantOverrideHint,
 } from "../../lib/tailor/localSignals";
 import { syncTemplateEdits } from "../../lib/tailor/templateEdits";
+import { applyScopeFlags, lockScopesFor } from "../../lib/tailor/previewScopes";
 import { readEngine } from "../settings/engine";
+import { createClient } from "../../lib/supabase/client";
+import { persistGeneratedDocuments } from "../../lib/supabase/persistGeneration";
+import { fetchDocumentVersions, pointApplicationAtVersion } from "../../lib/supabase/documentVersions";
 
 // Resume/cover-letter preview + edit modal (opened from the status-bar chips and
 // at the end of a Generate flow). Renders the faithful .docx (or a plain-text
@@ -34,6 +39,36 @@ import { readEngine } from "../settings/engine";
 // Depends on the parent's tailoring map (+ setters), the uploaded files and
 // tailoring inputs, the docx downloader, the company-research warm-up, and the
 // preview reload key (kept in the parent so research can also bump it).
+//
+// busy/notice/error live per-scope ({ resume, cover }) so an operation on one
+// document (revise, download) never disables, or overwrites the notice/error
+// of, the other document's controls.
+const EMPTY_SCOPE_FLAGS = { resume: false, cover: false };
+const EMPTY_SCOPE_TEXT = { resume: "", cover: "" };
+const VERSION_SCOPES = ["resume", "cover"];
+
+// edited/*: the tailoring entry's hand-edit flag, per scope ({ resume, cover })
+// just like busy/notice/error above — so hand-editing one document never
+// marks the other "edited", and a regenerate of one document never clears
+// the other's edited flag (which would silently ship a stale pre-edit docx
+// on its next download). AC-2: an object is ALWAYS truthy, so every consumer
+// must read through editedForScope — never `if (entry.edited)` / `!entry.edited`.
+// AC-7: tolerates a missing field (treated as not edited) and a legacy plain
+// boolean carried by an entry from before this migration — a legacy `true`
+// is read as edited on BOTH scopes (the safe direction: it still forces a
+// rebuild instead of risking the stale-verbatim-serve bug this fixes), a
+// legacy `false`/undefined as neither.
+function editedForScope(entry, scope) {
+  const e = entry?.edited;
+  if (e && typeof e === "object") return !!e[scope];
+  return !!e;
+}
+function withEditedScope(entry, scope, value) {
+  const e = entry?.edited;
+  const base = e && typeof e === "object" ? e : { resume: !!e, cover: !!e };
+  return { ...base, [scope]: value };
+}
+
 export function useDocumentPreview({
   tailoringMap,
   setTailoringMap,
@@ -47,6 +82,7 @@ export function useDocumentPreview({
   startBackgroundResearch,
   setPreviewReloadKey,
   onDocumentEdited,
+  currentUser,
 }) {
   const [resumePreview, setResumePreview] = useState({
     open: false,
@@ -56,10 +92,53 @@ export function useDocumentPreview({
     tab: "resume",
     posting: "",
     url: "",
-    busy: false,
-    notice: "",
-    error: "",
+    busy: { ...EMPTY_SCOPE_FLAGS },
+    notice: { ...EMPTY_SCOPE_TEXT },
+    error: { ...EMPTY_SCOPE_TEXT },
   });
+
+  // Mirrors the tailoringMap prop so async handlers can read the LATEST map
+  // (not the one captured in their render closure) after an await — e.g. so a
+  // cover-scoped revise that finishes reads the freshest résumé lines, and a
+  // résumé revise finishing doesn't base its "previous value" hint tracking
+  // on data a concurrent cover revise already moved past.
+  const tailoringMapRef = useRef(tailoringMap);
+  useEffect(() => {
+    tailoringMapRef.current = tailoringMap;
+  }, [tailoringMap]);
+
+  // AC-5 re-entrancy guard: which scopes currently have a resubmit in flight.
+  // The disabled button is not the only thing preventing double-submission —
+  // this is the hook-level backstop. Different scopes run concurrently; the
+  // same scope is rejected.
+  const inFlightScopesRef = useRef(new Set());
+
+  // Version history (AC-2/AC-7): per-scope generation trail for the
+  // currently open job, newest first. Loaded in the background so opening
+  // the preview never waits on it, and left empty when the user is signed
+  // out, the job has no position row yet, or the fetch fails — the version
+  // control (VersionControl.js) simply stays hidden in all of those cases.
+  const [documentVersions, setDocumentVersions] = useState({ resume: [], cover: [] });
+  // Which version id is "current" per scope, for the control's selection:
+  // the newest fetched row right after a load or a regeneration, or
+  // whichever version the user explicitly picked (AC-4).
+  const [currentVersionId, setCurrentVersionId] = useState({ resume: null, cover: null });
+  // The open job's position row id, resolved alongside the version fetch
+  // and reused by the AC-6 pointer update so selecting a version doesn't
+  // repeat the external_id lookup.
+  const positionIdRef = useRef(null);
+  // Bumped on every open (and job switch) so a slow fetch for a job the
+  // user has since navigated away from is dropped instead of clobbering the
+  // now-current job's version state.
+  const versionsRequestIdRef = useRef(0);
+
+  // Functional update to busy/notice/error for one or more scopes, so two
+  // overlapping operations finishing out of order each touch only their own
+  // scope's flags — the first to finish never re-enables or clears the
+  // other's controls (AC-4).
+  function setScopeFlags(scopes, patch) {
+    setResumePreview((prev) => applyScopeFlags(prev, scopes, patch));
+  }
 
   // Does the tailoring entry have content for a given scope?
   function previewScopeAvailable(entry, scope) {
@@ -68,6 +147,134 @@ export function useDocumentPreview({
       return Array.isArray(entry.coverLetterResultLines) && entry.coverLetterResultLines.length > 0;
     }
     return typeof entry.result === "string" && entry.result.trim().length > 0;
+  }
+
+  // Resolve the position row backing a tracked job's external id. Returns
+  // null (never throws) when signed out or the job has no position row yet
+  // — both are normal, unremarkable states here (AC-7), not errors.
+  async function resolvePositionId(jobId) {
+    if (!currentUser?.id || !jobId) return null;
+    try {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("positions")
+        .select("id")
+        .eq("external_id", String(jobId))
+        .maybeSingle();
+      return data?.id || null;
+    } catch {
+      return null;
+    }
+  }
+
+  // (Re)load the version history for one or more scopes of `jobId` and
+  // merge it into state, guarded by `requestId` so a response for a job the
+  // user has since navigated away from is dropped rather than clobbering
+  // the current job's history. Pass a resolved `knownPositionId` to skip
+  // the external_id lookup when the caller already has it (e.g. right
+  // after a revise persists a new generation).
+  async function refreshDocumentVersions(jobId, scopesToLoad, requestId, knownPositionId = undefined) {
+    const positionId = knownPositionId !== undefined ? knownPositionId : await resolvePositionId(jobId);
+    if (versionsRequestIdRef.current !== requestId) return; // superseded by a newer open/switch
+    positionIdRef.current = positionId;
+    if (!positionId) {
+      setDocumentVersions((prev) => {
+        const next = { ...prev };
+        scopesToLoad.forEach((s) => { next[s] = []; });
+        return next;
+      });
+      setCurrentVersionId((prev) => {
+        const next = { ...prev };
+        scopesToLoad.forEach((s) => { next[s] = null; });
+        return next;
+      });
+      return;
+    }
+    const supabase = createClient();
+    const results = await Promise.all(
+      scopesToLoad.map((s) => fetchDocumentVersions(supabase, s, positionId)),
+    );
+    if (versionsRequestIdRef.current !== requestId) return; // superseded while the fetch was in flight
+    setDocumentVersions((prev) => {
+      const next = { ...prev };
+      scopesToLoad.forEach((s, i) => { next[s] = results[i]; });
+      return next;
+    });
+    setCurrentVersionId((prev) => {
+      const next = { ...prev };
+      scopesToLoad.forEach((s, i) => { next[s] = results[i][0]?.id || null; });
+      return next;
+    });
+  }
+
+  // Reset and kick off a background load of both scopes' version history
+  // for a newly opened job (AC-2). Fire-and-forget by every caller — this
+  // never blocks the preview from opening.
+  function loadVersionsForJob(jobId) {
+    const requestId = ++versionsRequestIdRef.current;
+    setDocumentVersions({ resume: [], cover: [] });
+    setCurrentVersionId({ resume: null, cover: null });
+    positionIdRef.current = null;
+    void refreshDocumentVersions(jobId, VERSION_SCOPES, requestId);
+  }
+
+  // AC-3/AC-4: switch the ACTIVE scope's displayed content to a specific
+  // saved generation. Writes its content/lines into the tailoring entry —
+  // the same entry the preview, download, and drag-to-upload all read from
+  // — marks the entry pristine (a stored generation isn't a hand-edit), and
+  // bumps the reload key so the dialog's existing cache-invalidation diff
+  // (changedScopes, keyed off each scope's own text) drops only this
+  // scope's cached render; the other document's signature is untouched, so
+  // its cache, draft, and edit mode survive (AC-4's "do not touch the other
+  // scope").
+  //
+  // AC-5 (flushing pending edits before switching) is the caller's job: the
+  // dialog calls commitDraft() immediately before invoking this, exactly
+  // like its existing tab-switch handler already does.
+  function selectDocumentVersion(scope, versionId) {
+    const jobId = resumePreview.jobId;
+    if (!jobId || resumePreview.busy?.[scope]) return; // AC-8 backstop
+    const versions = documentVersions[scope] || [];
+    const version = versions.find((v) => v.id === versionId);
+    if (!version) return;
+
+    const lines =
+      Array.isArray(version.content_lines) && version.content_lines.length > 0
+        ? version.content_lines
+        : typeof version.content === "string"
+          ? version.content.split("\n")
+          : [];
+
+    updateTailoringJob(jobId, (entry) => ({
+      ...entry,
+      ...(scope === "cover"
+        ? { coverLetterResultLines: lines, coverLetterPreviewHtml: undefined }
+        : {
+            result: typeof version.content === "string" ? version.content : lines.join("\n"),
+            resultLines: lines,
+            resumePreviewHtml: undefined,
+          }),
+      // AC-3: clears only THIS scope's edited flag — selecting a résumé
+      // version must never discard a hand-edited cover letter's edited
+      // state (and vice versa).
+      edited: withEditedScope(entry, scope, false),
+      status: entry.status || "done",
+    }));
+    setCurrentVersionId((prev) => ({ ...prev, [scope]: version.id }));
+    setPreviewReloadKey((k) => k + 1);
+
+    // AC-6: best-effort — a failure here must never surface to the user or
+    // undo the switch above, which has already taken effect.
+    const positionId = positionIdRef.current;
+    if (currentUser?.id && positionId) {
+      const supabase = createClient();
+      void pointApplicationAtVersion(supabase, {
+        scope,
+        versionId: version.id,
+        userId: currentUser.id,
+        positionId,
+      });
+    }
   }
 
   function openResumePreview(job, opts = {}) {
@@ -82,10 +289,11 @@ export function useDocumentPreview({
       tab: wantsCover ? "cover" : "resume",
       posting: t.jobDescription || job.description || "",
       url: job.url || "",
-      busy: false,
-      notice: "",
-      error: "",
+      busy: { ...EMPTY_SCOPE_FLAGS },
+      notice: { ...EMPTY_SCOPE_TEXT },
+      error: { ...EMPTY_SCOPE_TEXT },
     });
+    loadVersionsForJob(job.id);
     // Warm company research as soon as the preview opens (only when a cover
     // letter exists — that's where the references are used).
     if (previewScopeAvailable(t, "cover")) {
@@ -113,17 +321,21 @@ export function useDocumentPreview({
     // the same counters, and consistent rules get auto-applied at render time.
     const jobId = resumePreview.jobId;
     const entry = jobId ? tailoringMap[jobId] : null;
-    if (entry?.edited) {
+    // AC-6: edited is per-scope now — mine whichever document(s) were
+    // actually hand-edited, not both just because one of them was.
+    const resumeEdited = editedForScope(entry, "resume");
+    const coverEdited = editedForScope(entry, "cover");
+    if (entry && (resumeEdited || coverEdited)) {
       try {
         // Snapshot which rules are already saved to the template, so an undo that
         // deletes one (recordEditRules self-heal) can be un-saved from it too.
         const persistedBefore = persistedEditRules();
         let recorded = false;
-        for (const [doc, pristine, current] of [
-          ["resume", entry.pristineResumeLines, entry.resultLines],
-          ["cover", entry.pristineCoverLines, entry.coverLetterResultLines],
+        for (const [doc, wasEdited, pristine, current] of [
+          ["resume", resumeEdited, entry.pristineResumeLines, entry.resultLines],
+          ["cover", coverEdited, entry.pristineCoverLines, entry.coverLetterResultLines],
         ]) {
-          if (!pristine) continue;
+          if (!wasEdited || !pristine) continue;
           const rules = deriveEditRules(pristine, current);
           if (rules.length === 0) continue;
           const sessionKey = `${jobId}:${doc}:${editFingerprint(JSON.stringify(rules))}`;
@@ -152,8 +364,8 @@ export function useDocumentPreview({
       }
       if (typeof onDocumentEdited === "function") {
         const added = [
-          entry.pristineResumeLines ? addedEditText(entry.pristineResumeLines, entry.resultLines) : "",
-          entry.pristineCoverLines ? addedEditText(entry.pristineCoverLines, entry.coverLetterResultLines) : "",
+          resumeEdited && entry.pristineResumeLines ? addedEditText(entry.pristineResumeLines, entry.resultLines) : "",
+          coverEdited && entry.pristineCoverLines ? addedEditText(entry.pristineCoverLines, entry.coverLetterResultLines) : "",
         ]
           .filter(Boolean)
           .join("\n");
@@ -178,7 +390,7 @@ export function useDocumentPreview({
       const lines = Array.isArray(entry.coverLetterResultLines) ? entry.coverLetterResultLines : [];
       return resolveDocumentBlob({
         engineDocxB64: typeof entry.coverLetterDocxB64 === "string" ? entry.coverLetterDocxB64 : "",
-        edited: !!entry.edited,
+        edited: editedForScope(entry, "cover"),
         text: lines.join("\n"),
         lines,
         uploadedTemplate: coverLetterFile,
@@ -188,24 +400,51 @@ export function useDocumentPreview({
     return resolveDocumentBlob({
       engineDocxB64: typeof entry.docxB64 === "string" ? entry.docxB64 : "",
       docxPath: typeof entry.docxPath === "string" ? entry.docxPath : "",
-      edited: !!entry.edited,
+      edited: editedForScope(entry, "resume"),
       text: entry.result || lines.join("\n"),
       lines,
       uploadedTemplate: resumeFile,
     });
   }
 
+  // The saved generation immediately OLDER than the one currently shown for
+  // a scope (documentVersions is newest-first), or null when there isn't
+  // one — first generation, no version history loaded, or signed out all
+  // resolve here the same way (AC-6). The dialog independently derives the
+  // same "is there a previous version" boolean from its own
+  // documentVersions/currentVersionId props to show/hide the highlight
+  // toggle, so this stays internal rather than exported.
+  function previousVersionFor(scope) {
+    const versions = documentVersions[scope] || [];
+    const idx = versions.findIndex((v) => v.id === currentVersionId[scope]);
+    return idx >= 0 && idx + 1 < versions.length ? versions[idx + 1] : null;
+  }
+
   // Parse the active document into a render model for the preview dialog. Falls
   // back to a plain-text model when there is no .docx template to mirror.
-  async function loadPreviewModel(scope) {
+  // AC-3: when the caller asks for highlighting (opts.highlight) and a
+  // previous version exists for this scope, the model is annotated with
+  // versionDiff.js's line-level change map before it's returned.
+  async function loadPreviewModel(scope, opts = {}) {
     const entry = tailoringMap[resumePreview.jobId] || {};
     const blob = await buildPreviewBlob(scope);
-    if (blob) return parseDocxToModel(await blob.arrayBuffer());
-    const lines =
-      scope === "cover"
-        ? entry.coverLetterResultLines || []
-        : entry.resultLines || String(entry.result || "").split("\n");
-    return linesToModel(lines);
+    const model = blob
+      ? await parseDocxToModel(await blob.arrayBuffer())
+      : linesToModel(
+          scope === "cover"
+            ? entry.coverLetterResultLines || []
+            : entry.resultLines || String(entry.result || "").split("\n"),
+        );
+    if (!opts.highlight) return model;
+    const previous = previousVersionFor(scope);
+    if (!previous) return model;
+    const previousLines =
+      Array.isArray(previous.content_lines) && previous.content_lines.length > 0
+        ? previous.content_lines
+        : typeof previous.content === "string"
+          ? previous.content.split("\n")
+          : [];
+    return markVersionChanges(model, previousLines, modelToLines(model, { includeEmpty: true }));
   }
 
   // The text + line payload currently stored for a scope (seed for the editor).
@@ -229,18 +468,34 @@ export function useDocumentPreview({
     const lines = text.split("\n");
     setTailoringMap((current) => {
       const entry = current[jobId] || {};
-      // First edit after a (re)generation: snapshot the pristine generated
-      // lines so edit-mining on close can diff what the user added by hand.
-      const pristine = entry.edited
+      // First edit of THIS scope after a (re)generation: snapshot its
+      // pristine generated lines so edit-mining on close can diff what the
+      // user added by hand. AC-4: gated on this scope's own edited flag, so
+      // hand-editing the cover letter never disturbs (or is disturbed by) the
+      // résumé's pristine snapshot, and vice versa.
+      const alreadyEdited = editedForScope(entry, scope);
+      const pristine = alreadyEdited
         ? {}
-        : {
-            pristineResumeLines: Array.isArray(entry.resultLines) ? entry.resultLines : [],
-            pristineCoverLines: Array.isArray(entry.coverLetterResultLines) ? entry.coverLetterResultLines : [],
-          };
+        : scope === "cover"
+          ? { pristineCoverLines: Array.isArray(entry.coverLetterResultLines) ? entry.coverLetterResultLines : [] }
+          : { pristineResumeLines: Array.isArray(entry.resultLines) ? entry.resultLines : [] };
       const next =
         scope === "cover"
-          ? { ...entry, ...pristine, coverLetterResultLines: lines, coverLetterPreviewHtml: html, edited: true }
-          : { ...entry, ...pristine, result: text, resultLines: lines, resumePreviewHtml: html, edited: true };
+          ? {
+              ...entry,
+              ...pristine,
+              coverLetterResultLines: lines,
+              coverLetterPreviewHtml: html,
+              edited: withEditedScope(entry, "cover", true),
+            }
+          : {
+              ...entry,
+              ...pristine,
+              result: text,
+              resultLines: lines,
+              resumePreviewHtml: html,
+              edited: withEditedScope(entry, "resume", true),
+            };
       return { ...current, [jobId]: { ...next, status: entry.status || "done" } };
     });
   }
@@ -259,40 +514,54 @@ export function useDocumentPreview({
   }
 
   async function downloadDocumentPreview(scope, payload) {
+    // Re-entrancy backstop, ref-based like resubmitDocumentPreview's guard
+    // (AC-5) so it's immune to stale render-closure state — two clicks in the
+    // same render cycle both see resumePreview.busy[scope] as false, so that
+    // alone can't stop a double download. The "download:" prefix keeps this
+    // independent from resubmit's use of the same ref set, so a download and
+    // a revise on the same scope are tracked separately and never block
+    // each other.
+    const downloadKey = `download:${scope}`;
+    if (inFlightScopesRef.current.has(downloadKey)) return;
+    inFlightScopesRef.current.add(downloadKey);
     const text = typeof payload === "string" ? payload : payload?.text || "";
     const lines = text.split("\n");
-    setResumePreview((prev) => ({ ...prev, busy: true, error: "", notice: "" }));
-    const entry = tailoringMap[resumePreview.jobId] || {};
-    const unchanged = text === previewScopeText(entry, scope);
-    const serveFinished = !entry.edited && unchanged;
-    const args = {
-      jobTitle: resumePreview.title,
-      company: resumePreview.company,
-      result: "",
-      resultLines: [],
-      coverLetterResultLines: [],
-      docxB64: "",
-      coverLetterDocxB64: "",
-    };
-    if (scope === "cover") {
-      args.coverLetterResultLines = lines;
-      args.coverLetterFileName = entry.coverLetterFileName || "";
-      args.coverLetterTemplateDocxB64 = typeof entry.coverLetterDocxB64 === "string" ? entry.coverLetterDocxB64 : "";
-      if (serveFinished && typeof entry.coverLetterDocxB64 === "string") args.coverLetterDocxB64 = entry.coverLetterDocxB64;
-    } else {
-      args.result = text;
-      args.resultLines = lines;
-      args.resumeFileName = entry.resumeFileName || "";
-      args.templateDocxB64 = typeof entry.docxB64 === "string" ? entry.docxB64 : "";
-      if (serveFinished && typeof entry.docxB64 === "string") args.docxB64 = entry.docxB64;
-      // Restored chips have no in-session docx blob but do carry the saved
-      // storage path — serve that faithful copy when the text is unedited.
-      if (serveFinished && !entry.docxB64 && typeof entry.docxPath === "string" && entry.docxPath) {
-        args.docxPath = entry.docxPath;
+    setScopeFlags(scope, { busy: true, error: "", notice: "" });
+    try {
+      const entry = tailoringMapRef.current[resumePreview.jobId] || {};
+      const unchanged = text === previewScopeText(entry, scope);
+      const serveFinished = !editedForScope(entry, scope) && unchanged;
+      const args = {
+        jobTitle: resumePreview.title,
+        company: resumePreview.company,
+        result: "",
+        resultLines: [],
+        coverLetterResultLines: [],
+        docxB64: "",
+        coverLetterDocxB64: "",
+      };
+      if (scope === "cover") {
+        args.coverLetterResultLines = lines;
+        args.coverLetterFileName = entry.coverLetterFileName || "";
+        args.coverLetterTemplateDocxB64 = typeof entry.coverLetterDocxB64 === "string" ? entry.coverLetterDocxB64 : "";
+        if (serveFinished && typeof entry.coverLetterDocxB64 === "string") args.coverLetterDocxB64 = entry.coverLetterDocxB64;
+      } else {
+        args.result = text;
+        args.resultLines = lines;
+        args.resumeFileName = entry.resumeFileName || "";
+        args.templateDocxB64 = typeof entry.docxB64 === "string" ? entry.docxB64 : "";
+        if (serveFinished && typeof entry.docxB64 === "string") args.docxB64 = entry.docxB64;
+        // Restored chips have no in-session docx blob but do carry the saved
+        // storage path — serve that faithful copy when the text is unedited.
+        if (serveFinished && !entry.docxB64 && typeof entry.docxPath === "string" && entry.docxPath) {
+          args.docxPath = entry.docxPath;
+        }
       }
+      const err = await downloadDocxFiles(args);
+      setScopeFlags(scope, { busy: false, error: err || "" });
+    } finally {
+      inFlightScopesRef.current.delete(downloadKey);
     }
-    const err = await downloadDocxFiles(args);
-    setResumePreview((prev) => ({ ...prev, busy: false, error: err || "" }));
   }
 
   // Re-run the Gemini tailor for the previewed document using the free-text
@@ -308,20 +577,41 @@ export function useDocumentPreview({
     // steering text, and refreshes BOTH documents (they share the wrong focus).
     const focusChange = typeof opts.focusArea === "string";
     if (!jobId || (!text && !focusChange)) return false;
-    if (!resumeFile) {
-      setResumePreview((prev) => ({ ...prev, error: "Upload a resume first to revise it.", notice: "" }));
+    const applyCover = scope === "cover" && !focusChange;
+    // Which scope(s) this call touches: both on a focus change (it regenerates
+    // both documents), otherwise just the one being revised. Drives the
+    // re-entrancy guard and the busy/notice/error scoping below.
+    const lockScopes = lockScopesFor(scope, focusChange);
+    // AC-5 re-entrancy guard: reject a second in-flight call for the same
+    // scope inside the hook itself (the disabled button alone is bypassable).
+    if (lockScopes.some((s) => inFlightScopesRef.current.has(s))) return false;
+    // AC-8: a cover-scoped revise grounds the letter in entry.resultLines (the
+    // just-tailored résumé). If a résumé revise is already in flight, those
+    // lines are seconds from changing, so refuse rather than ground the
+    // letter in text that's about to go stale. The dialog also disables the
+    // cover revise control while the résumé is busy (with an explanatory
+    // tooltip) — this is the hook-level backstop for that same rule.
+    if (applyCover && inFlightScopesRef.current.has("resume")) {
+      setScopeFlags("cover", {
+        error: "Wait for the résumé revision to finish before revising the cover letter.",
+        notice: "",
+      });
       return false;
     }
-    const entry = tailoringMap[jobId] || {};
+    if (!resumeFile) {
+      setScopeFlags(lockScopes, { error: "Upload a resume first to revise it.", notice: "" });
+      return false;
+    }
+    const entry = tailoringMapRef.current[jobId] || {};
     const posting = (resumePreview.posting || entry.jobDescription || "").trim();
     const url = (resumePreview.url || "").trim();
     if (!posting && !url) {
-      setResumePreview((prev) => ({ ...prev, error: "Couldn't find the job posting to revise against.", notice: "" }));
+      setScopeFlags(lockScopes, { error: "Couldn't find the job posting to revise against.", notice: "" });
       return false;
     }
-    const applyCover = scope === "cover" && !focusChange;
 
-    setResumePreview((prev) => ({ ...prev, busy: true, notice: "", error: "" }));
+    lockScopes.forEach((s) => inFlightScopesRef.current.add(s));
+    setScopeFlags(lockScopes, { busy: true, notice: "", error: "" });
     try {
       const formData = new FormData();
       if (posting) formData.append("jobPosting", posting);
@@ -378,6 +668,12 @@ export function useDocumentPreview({
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "Failed to revise the document.");
 
+      // Captured below so the persistence step after both blocks (AC-3) saves
+      // exactly the document(s) this request actually regenerated, without
+      // re-deriving them from payload a second time.
+      let persistResume = null;
+      let persistCover = null;
+
       if (applyCover || regenCover) {
         const lines = Array.isArray(payload.coverLetterResultLines) ? payload.coverLetterResultLines : [];
         const coverErr = typeof payload.coverLetterError === "string" ? payload.coverLetterError : "";
@@ -386,13 +682,25 @@ export function useDocumentPreview({
         if (coverErr && applyCover) throw new Error(coverErr);
         if (lines.length === 0 && applyCover) throw new Error("The engine returned an empty cover letter.");
         if (!coverErr && lines.length > 0) {
-          updateTailoringJob(jobId, {
+          updateTailoringJob(jobId, (entry) => ({
+            ...entry,
             coverLetterResultLines: lines,
             coverLetterDocxB64: typeof payload.coverLetterDocxB64 === "string" ? payload.coverLetterDocxB64 : "",
             coverLetterPreviewHtml: undefined,
-            edited: false,
+            // AC-3: clears only the cover letter's edited flag. On a focus
+            // change the résumé block below clears its own flag separately,
+            // so both end up cleared without either write clobbering the
+            // other's scope.
+            edited: withEditedScope(entry, "cover", false),
             status: "done",
-          });
+          }));
+          persistCover = {
+            content:
+              typeof payload.coverLetterResult === "string" && payload.coverLetterResult
+                ? payload.coverLetterResult
+                : lines.join("\n"),
+            contentLines: lines,
+          };
         }
       }
       if (!applyCover) {
@@ -400,25 +708,101 @@ export function useDocumentPreview({
         const lines = Array.isArray(payload.resultLines) ? payload.resultLines : [];
         if (!result) throw new Error("The engine returned an empty resume.");
         const nextTitle = typeof payload.jobTitle === "string" ? payload.jobTitle.trim() : "";
-        updateTailoringJob(jobId, {
+        updateTailoringJob(jobId, (entry) => ({
+          ...entry,
           result,
           resultLines: lines,
           docxB64: typeof payload.docxB64 === "string" ? payload.docxB64 : "",
           resumePreviewHtml: undefined,
           ...(nextTitle ? { generatedJobTitle: nextTitle } : {}),
-          edited: false,
+          // AC-3: clears only the résumé's edited flag — a hand-edited cover
+          // letter must survive a résumé revise, version select, or the
+          // résumé side of a focus change.
+          edited: withEditedScope(entry, "resume", false),
           status: "done",
-        });
+        }));
+        persistResume = {
+          content: result,
+          contentLines: lines,
+          docxB64: typeof payload.docxB64 === "string" ? payload.docxB64 : "",
+        };
+      }
+
+      // AC-3: persist whichever document(s) this revise/focus-change just
+      // regenerated — the resume, the cover letter, or both — so the trail
+      // survives a reload the same way a fresh Generate run's output does.
+      // Best-effort: persistGeneratedDocuments never throws on its own, and
+      // this is wrapped anyway so a persistence failure can never break the
+      // revise flow or the preview (AC-6).
+      if (currentUser?.id && (persistResume || persistCover)) {
+        try {
+          const supabase = createClient();
+          // Look up the existing position by external id rather than
+          // upserting one: upsertPosition writes every column of a full job
+          // object unconditionally on conflict (location, salary, raw_data,
+          // etc.), and here we only have preview-derived title/company/url —
+          // upserting with that partial data would null out the real
+          // posting's fields and overwrite its title with the AI-generated
+          // one. A revise must not touch positions at all; it only needs the
+          // id to link the newly persisted documents.
+          const { data: posRow } = await supabase
+            .from("positions")
+            .select("id")
+            .eq("external_id", String(jobId))
+            .maybeSingle();
+          const positionId = posRow?.id || null;
+          await persistGeneratedDocuments(supabase, {
+            userId: currentUser.id,
+            positionId,
+            resume: persistResume,
+            coverLetter: persistCover,
+            sourceResumePath: `${currentUser.id}/resume`,
+            additionalContext: additionalContext || null,
+          });
+
+          // Keep the version control's count/selection accurate immediately
+          // after this call adds a new row to whichever scope(s) it just
+          // regenerated (AC-3) — otherwise it would keep showing the
+          // pre-revise history until the preview was closed and reopened.
+          const touchedVersionScopes = [
+            ...(persistResume ? ["resume"] : []),
+            ...(persistCover ? ["cover"] : []),
+          ];
+          if (positionId && touchedVersionScopes.length > 0) {
+            await refreshDocumentVersions(jobId, touchedVersionScopes, versionsRequestIdRef.current, positionId);
+          }
+        } catch {
+          // Never let a persistence failure break the revise flow.
+        }
       }
 
       // Remember which focus, keywords, letter framing, and persona drove this generation
       // (and the pinned overrides on a focus change) so the previewer's
       // controls stay truthful.
+      //
+      // AC-7: payload.report always reflects the résumé side of THIS request
+      // (the server retailors the résumé even on a cover-only revise), and
+      // payload.coverVariant is always present (possibly null) whether or not
+      // the cover was touched. Writing every key unconditionally would let a
+      // cover-only revise finishing later revert focus/keywords a concurrent
+      // résumé revise just wrote, or let a résumé-only revise silently null
+      // out the cover's coverVariantInfo — so only include a scope's metadata
+      // keys when this call actually touched that scope.
+      const touchedResume = !applyCover;
+      const touchedCover = applyCover || regenCover;
       updateTailoringJob(jobId, {
-        focusInfo: payload.report?.meta?.focus || null,
-        keywordsInfo: payload.report?.keywords || null,
-        ...(payload.coverVariant !== undefined ? { coverVariantInfo: payload.coverVariant || null } : {}),
-        ...(payload.report?.meta?.persona !== undefined ? { personaInfo: payload.report?.meta?.persona || null } : {}),
+        ...(touchedResume
+          ? {
+              focusInfo: payload.report?.meta?.focus || null,
+              keywordsInfo: payload.report?.keywords || null,
+              ...(payload.report?.meta?.persona !== undefined
+                ? { personaInfo: payload.report?.meta?.persona || null }
+                : {}),
+            }
+          : {}),
+        ...(touchedCover && payload.coverVariant !== undefined
+          ? { coverVariantInfo: payload.coverVariant || null }
+          : {}),
         ...(focusChange
           ? {
               focusAreaOverride: opts.focusArea,
@@ -448,13 +832,17 @@ export function useDocumentPreview({
       const workflowHints = [];
       if (focusChange) {
         try {
-          const prevFocus = entry.focusInfo || null;
+          // Read the freshest known entry (not the one captured before the
+          // await) so this "previous value" comparison reflects anything a
+          // concurrent operation on this job already wrote (AC-7).
+          const latestEntry = tailoringMapRef.current[jobId] || {};
+          const prevFocus = latestEntry.focusInfo || null;
           if (opts.focusArea && prevFocus?.source !== "override") {
             const count = recordFocusOverride({ detected: prevFocus?.name || "", chosen: opts.focusArea });
             if (count >= 3) workflowHints.push(focusOverrideHint(prevFocus?.name || ""));
           }
           if (typeof opts.coverVariant === "string" && opts.coverVariant) {
-            const prevVariant = entry.coverVariantInfo || null;
+            const prevVariant = latestEntry.coverVariantInfo || null;
             if (prevVariant?.source !== "override" && prevVariant?.detected !== opts.coverVariant) {
               const count = recordVariantOverride({
                 detected: prevVariant?.detected || "",
@@ -484,11 +872,13 @@ export function useDocumentPreview({
       const notice = focusChange
         ? `Regenerated with the ${opts.focusArea ? `“${opts.focusArea}”` : "auto-detected"} focus.${focusWarning ? ` ${focusWarning}` : ""}${hintTail ? ` ${hintTail}` : ""}`
         : `Revised the ${applyCover ? "cover letter" : "resume"} with your instructions.${habitHint ? ` ${habitHint}` : ""}`;
-      setResumePreview((prev) => ({ ...prev, busy: false, error: "", notice }));
+      setScopeFlags(lockScopes, { busy: false, error: "", notice });
       return true;
     } catch (err) {
-      setResumePreview((prev) => ({ ...prev, busy: false, error: err?.message || "Couldn't revise the document.", notice: "" }));
+      setScopeFlags(lockScopes, { busy: false, error: err?.message || "Couldn't revise the document.", notice: "" });
       return false;
+    } finally {
+      lockScopes.forEach((s) => inFlightScopesRef.current.delete(s));
     }
   }
 
@@ -521,10 +911,11 @@ export function useDocumentPreview({
       tab: hasCover ? "cover" : "resume",
       posting: posting || "",
       url: url || "",
-      busy: false,
-      notice: "",
-      error: "",
+      busy: { ...EMPTY_SCOPE_FLAGS },
+      notice: { ...EMPTY_SCOPE_TEXT },
+      error: { ...EMPTY_SCOPE_TEXT },
     });
+    loadVersionsForJob(jobId);
     if (hasCover) startBackgroundResearch({ jobId, company, jobTitle, posting });
   }
 
@@ -540,5 +931,8 @@ export function useDocumentPreview({
     resubmitDocumentPreview,
     applyFocusArea,
     finishByOpeningPreview,
+    documentVersions,
+    currentVersionId,
+    selectDocumentVersion,
   };
 }

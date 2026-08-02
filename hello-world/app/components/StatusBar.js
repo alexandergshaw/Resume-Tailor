@@ -9,6 +9,19 @@ import styles from "../page.module.css";
 import { useIsMobile } from "../hooks/useResponsive";
 import { resolveDocumentBlob } from "../../lib/document/docx";
 
+// edited/*: a tailoring entry's hand-edit flag, per scope ({ resume, cover }),
+// mirroring the helper in app/hooks/useDocumentPreview.js. An object is
+// ALWAYS truthy, so every read must go through this — never `!!entry.edited`.
+// Tolerates a missing field (treated as not edited) and a legacy plain
+// boolean from before this migration — a legacy `true` reads as edited on
+// BOTH scopes (the safe direction: it still forces a rebuild instead of
+// risking a stale verbatim-serve).
+function editedForScope(entry, scope) {
+  const e = entry?.edited;
+  if (e && typeof e === "object") return !!e[scope];
+  return !!e;
+}
+
 export default function StatusBar({
   trackedJobs,
   setTrackedJobs,
@@ -161,7 +174,7 @@ export default function StatusBar({
                   const blob = await resolveDocumentBlob({
                     engineDocxB64: typeof t.docxB64 === "string" ? t.docxB64 : "",
                     docxPath: typeof t.docxPath === "string" ? t.docxPath : "",
-                    edited: !!t.edited,
+                    edited: editedForScope(t, "resume"),
                     text,
                     lines,
                     uploadedTemplate: resumeFile,

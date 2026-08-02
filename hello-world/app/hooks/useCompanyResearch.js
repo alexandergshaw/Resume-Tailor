@@ -10,6 +10,18 @@ import { readEngine } from "../settings/engine";
 //
 // Depends on the parent's tailoring map (to read/weave the cover letter) and the
 // preview reload key (to refresh the open preview after weaving).
+
+// Sets one scope of the tailoring entry's per-scope edited flag ({ resume,
+// cover }) without disturbing the other, mirroring the same helper in
+// useDocumentPreview.js (AC-2/AC-7: an entry may carry no `edited` field yet,
+// or a legacy plain boolean from before this migration — normalize either
+// into the per-scope shape before overwriting the target scope).
+function withEditedScope(entry, scope, value) {
+  const e = entry?.edited;
+  const base = e && typeof e === "object" ? e : { resume: !!e, cover: !!e };
+  return { ...base, [scope]: value };
+}
+
 export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewReloadKey }) {
   const [companyResearch, setCompanyResearch] = useState({
     open: false,
@@ -151,7 +163,9 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
         coverLetterResultLines: wovenLines,
         coverLetterPreviewHtml: undefined,
         coverLetterDocxB64: undefined,
-        edited: true,
+        // AC-5: this action only touches the cover letter — clear/set just
+        // its edited flag so a hand-edited résumé's edited state survives.
+        edited: withEditedScope(current[jobId], "cover", true),
       },
     }));
     setPreviewReloadKey((k) => k + 1);

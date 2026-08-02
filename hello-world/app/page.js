@@ -77,8 +77,30 @@ import { GREENHOUSE_COMPANIES, COMPANY_CATEGORIES } from "../lib/greenhouse/comp
 import { createClient } from "../lib/supabase/client";
 import { upsertPosition } from "../lib/supabase/upsertPosition";
 import { upsertApplication, getPositionId } from "../lib/supabase/upsertApplication";
-import { saveGeneratedResume } from "../lib/supabase/saveGeneratedResume";
+import { persistGeneratedDocuments } from "../lib/supabase/persistGeneration";
 import { normalizeInterviewValue } from "../lib/tracking/stages";
+
+// Sets one scope of a tailoring entry's per-scope edited flag ({ resume,
+// cover }) without disturbing the other, mirroring the same helper in
+// app/hooks/useDocumentPreview.js. AC-2/AC-7: an entry may carry no `edited`
+// field yet, or a legacy plain boolean from before this migration — either
+// is normalized into the per-scope shape before the target scope is
+// overwritten, so a generate run that only produced one document never
+// wipes out the other document's hand-edit state.
+function withEditedScope(entry, scope, value) {
+  const e = entry?.edited;
+  const base = e && typeof e === "object" ? e : { resume: !!e, cover: !!e };
+  return { ...base, [scope]: value };
+}
+
+// Clears the edited flag for each listed scope on a tailoring entry, leaving
+// any scope NOT listed untouched — used by the generate flows below, which
+// (via opts.scope) may regenerate only the résumé, only the cover letter, or
+// both (AC-3: a résumé-only regenerate must never clear a hand-edited cover
+// letter's edited state, and vice versa).
+function withClearedEditedScopes(entry, scopes) {
+  return scopes.reduce((edited, scope) => withEditedScope({ edited }, scope, false), entry?.edited);
+}
 
 export default function Home() {
   const [resumeFile, setResumeFile] = useState(null);
@@ -1704,6 +1726,7 @@ export default function Home() {
     startBackgroundResearch: research.startBackgroundResearch,
     setPreviewReloadKey,
     onDocumentEdited: handleDocumentEdited,
+    currentUser,
   });
 
   // Screenshots → tailored-documents pipeline (Manual Applying › Screenshots).
@@ -1816,7 +1839,7 @@ export default function Home() {
     setJobSearchError("");
     setJobResults([]);
     // Drop tailoring entries for jobs that aren't currently tracked, so a
-    // fresh search doesn't show stale ✓ Ready badges on cards that no longer
+    // fresh search doesn't show stale "Ready" badges on cards that no longer
     // appear in the results — but preserve statuses for tracked jobs so the
     // floating toolbar chips don't lose their state.
     setTailoringMap((current) => {
@@ -2180,22 +2203,31 @@ export default function Home() {
       const coverLetterResultLines = Array.isArray(payload.coverLetterResultLines)
         ? payload.coverLetterResultLines
         : [];
+      const coverLetterResult =
+        typeof payload.coverLetterResult === "string" && payload.coverLetterResult
+          ? payload.coverLetterResult
+          : coverLetterResultLines.join("\n");
       const coverLetterError = typeof payload.coverLetterError === "string" ? payload.coverLetterError : "";
       const engineUsed = typeof payload.engine === "string" ? payload.engine : "";
       const docxB64 = typeof payload.docxB64 === "string" ? payload.docxB64 : "";
       const coverLetterDocxB64 = typeof payload.coverLetterDocxB64 === "string" ? payload.coverLetterDocxB64 : "";
 
-      updateTailoringJob(job.id, {
+      updateTailoringJob(job.id, (entry) => ({
+        ...entry,
         status: "done",
         generatedJobTitle,
         engine: engineUsed,
-        edited: false,
+        // AC-3: clear only the scope(s) this run actually regenerated.
+        edited: withClearedEditedScopes(entry, [
+          ...(applyResume ? ["resume"] : []),
+          ...(applyCover ? ["cover"] : []),
+        ]),
         error: coverLetterError || "",
         ...(applyResume ? { result, resultLines, docxB64 } : {}),
         ...(applyCover ? { coverLetterResultLines, coverLetterDocxB64 } : {}),
-      });
+      }));
 
-      // Persist the generated resume and link it to the application
+      // Persist the generated resume + cover letter and link them to the application.
       if (currentUser) {
         const supabase = createClient();
         // Use upsertPosition (not just getPositionId) so a position row is
@@ -2204,19 +2236,22 @@ export default function Home() {
         if (!positionId) {
           console.error("[handleTailorJob] upsertPosition returned null for job", job?.id, job?.title);
         }
-        const generatedResumeId = applyResume
-          ? await saveGeneratedResume(supabase, {
-              userId: currentUser.id,
-              positionId,
-              content: result,
-              contentLines: resultLines,
-              sourceResumePath: `${currentUser.id}/resume`,
-              additionalContext: additionalContext || null,
-              docxB64,
-            })
-          : null;
+        const { resumeId: generatedResumeId, coverLetterId: generatedCoverLetterId } = await persistGeneratedDocuments(supabase, {
+          userId: currentUser.id,
+          positionId,
+          resume: applyResume ? { content: result, contentLines: resultLines, docxB64 } : null,
+          coverLetter:
+            applyCover && coverLetterResultLines.length > 0
+              ? { content: coverLetterResult, contentLines: coverLetterResultLines }
+              : null,
+          sourceResumePath: `${currentUser.id}/resume`,
+          additionalContext: additionalContext || null,
+        });
         if (applyResume && !generatedResumeId) {
           console.error("[handleTailorJob] saveGeneratedResume returned null", { userId: currentUser.id, positionId });
+        }
+        if (applyCover && coverLetterResultLines.length > 0 && !generatedCoverLetterId) {
+          console.error("[handleTailorJob] saveGeneratedCoverLetter returned null", { userId: currentUser.id, positionId });
         }
         if (generatedResumeId && positionId) {
           // Make sure an application row exists for this (user, position) so
@@ -2230,13 +2265,6 @@ export default function Home() {
           if (!appId) {
             console.error("[handleTailorJob] upsertApplication returned null", { userId: currentUser.id, positionId });
           }
-          // Always link the freshly generated resume.
-          const { error: linkErr } = await supabase
-            .from("applications")
-            .update({ resume_used_id: generatedResumeId })
-            .eq("user_id", currentUser.id)
-            .eq("position_id", positionId);
-          if (linkErr) console.error("[handleTailorJob] link resume failed:", linkErr);
           // Upgrade status → tailored (or auto_tailored when this run came
           // from "Tailor all visible" / batch flow). The auto_tailored
           // status routes these rows to the dedicated Auto Tailor tab
@@ -2451,6 +2479,10 @@ export default function Home() {
       const nextCoverLetterResultLines = Array.isArray(payload.coverLetterResultLines)
         ? payload.coverLetterResultLines
         : [];
+      const nextCoverLetterResult =
+        typeof payload.coverLetterResult === "string" && payload.coverLetterResult
+          ? payload.coverLetterResult
+          : nextCoverLetterResultLines.join("\n");
       const nextCoverLetterError = typeof payload.coverLetterError === "string" ? payload.coverLetterError : "";
       const nextEngine = typeof payload.engine === "string" ? payload.engine : "";
       const nextDocxB64 = typeof payload.docxB64 === "string" ? payload.docxB64 : "";
@@ -2473,40 +2505,38 @@ export default function Home() {
             : j,
         ),
       );
-      updateTailoringJob(syntheticJobId, {
+      updateTailoringJob(syntheticJobId, (entry) => ({
+        ...entry,
         status: "done",
         generatedJobTitle: nextJobTitle,
         engine: nextEngine,
-        edited: false,
+        // AC-3: clear only the scope(s) this run actually regenerated.
+        edited: withClearedEditedScopes(entry, [
+          ...(applyResume ? ["resume"] : []),
+          ...(applyCover ? ["cover"] : []),
+        ]),
         ...(applyResume ? { result: nextResult, resultLines: nextResultLines, docxB64: nextDocxB64 } : {}),
         ...(applyCover ? { coverLetterResultLines: nextCoverLetterResultLines, coverLetterDocxB64: nextCoverLetterDocxB64 } : {}),
-      });
+      }));
 
-      // Persist the generated resume and link to an application
+      // Persist the generated resume + cover letter and link them to an application.
       if (currentUser) {
         const supabase = createClient();
         const positionId = await upsertPosition(supabase, syntheticJob);
-        const generatedResumeId = applyResume
-          ? await saveGeneratedResume(supabase, {
-              userId: currentUser.id,
-              positionId,
-              content: nextResult,
-              contentLines: nextResultLines,
-              sourceResumePath: `${currentUser.id}/resume`,
-              additionalContext: additionalContext || null,
-              docxB64: nextDocxB64,
-            })
-          : null;
         if (positionId) {
           await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "applied" });
-          if (generatedResumeId) {
-            await supabase
-              .from("applications")
-              .update({ resume_used_id: generatedResumeId })
-              .eq("user_id", currentUser.id)
-              .eq("position_id", positionId);
-          }
         }
+        await persistGeneratedDocuments(supabase, {
+          userId: currentUser.id,
+          positionId,
+          resume: applyResume ? { content: nextResult, contentLines: nextResultLines, docxB64: nextDocxB64 } : null,
+          coverLetter:
+            applyCover && nextCoverLetterResultLines.length > 0
+              ? { content: nextCoverLetterResult, contentLines: nextCoverLetterResultLines }
+              : null,
+          sourceResumePath: `${currentUser.id}/resume`,
+          additionalContext: additionalContext || null,
+        });
         setApplicationsRefreshKey((k) => k + 1);
       }
 
@@ -2637,6 +2667,10 @@ export default function Home() {
       const nextJobTitle = typeof payload.jobTitle === "string" ? payload.jobTitle.trim() : "";
       const nextCompany = typeof payload.company === "string" ? payload.company.trim() : "";
       const nextCoverLetterResultLines = Array.isArray(payload.coverLetterResultLines) ? payload.coverLetterResultLines : [];
+      const nextCoverLetterResult =
+        typeof payload.coverLetterResult === "string" && payload.coverLetterResult
+          ? payload.coverLetterResult
+          : nextCoverLetterResultLines.join("\n");
       const nextCoverLetterError = typeof payload.coverLetterError === "string" ? payload.coverLetterError : "";
       const nextEngine = typeof payload.engine === "string" ? payload.engine : "";
       const nextDocxB64 = typeof payload.docxB64 === "string" ? payload.docxB64 : "";
@@ -2659,40 +2693,38 @@ export default function Home() {
             : j,
         ),
       );
-      updateTailoringJob(syntheticJobId, {
+      updateTailoringJob(syntheticJobId, (entry) => ({
+        ...entry,
         status: "done",
         generatedJobTitle: nextJobTitle,
         engine: nextEngine,
-        edited: false,
+        // AC-3: clear only the scope(s) this run actually regenerated.
+        edited: withClearedEditedScopes(entry, [
+          ...(applyResume ? ["resume"] : []),
+          ...(applyCover ? ["cover"] : []),
+        ]),
         ...(applyResume ? { result: nextResult, resultLines: nextResultLines, docxB64: nextDocxB64 } : {}),
         ...(applyCover ? { coverLetterResultLines: nextCoverLetterResultLines, coverLetterDocxB64: nextCoverLetterDocxB64 } : {}),
-      });
+      }));
 
-      // Persist the generated resume and link to an application
+      // Persist the generated resume + cover letter and link them to an application.
       if (currentUser) {
         const supabase = createClient();
         const positionId = await upsertPosition(supabase, syntheticJob);
-        const generatedResumeId = applyResume
-          ? await saveGeneratedResume(supabase, {
-              userId: currentUser.id,
-              positionId,
-              content: nextResult,
-              contentLines: nextResultLines,
-              sourceResumePath: `${currentUser.id}/resume`,
-              additionalContext: additionalContext || null,
-              docxB64: nextDocxB64,
-            })
-          : null;
         if (positionId) {
           await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "applied" });
-          if (generatedResumeId) {
-            await supabase
-              .from("applications")
-              .update({ resume_used_id: generatedResumeId })
-              .eq("user_id", currentUser.id)
-              .eq("position_id", positionId);
-          }
         }
+        await persistGeneratedDocuments(supabase, {
+          userId: currentUser.id,
+          positionId,
+          resume: applyResume ? { content: nextResult, contentLines: nextResultLines, docxB64: nextDocxB64 } : null,
+          coverLetter:
+            applyCover && nextCoverLetterResultLines.length > 0
+              ? { content: nextCoverLetterResult, contentLines: nextCoverLetterResultLines }
+              : null,
+          sourceResumePath: `${currentUser.id}/resume`,
+          additionalContext: additionalContext || null,
+        });
       }
 
       preview.finishByOpeningPreview({
@@ -2782,6 +2814,10 @@ export default function Home() {
       const nextCoverLetterResultLines = Array.isArray(payload.coverLetterResultLines)
         ? payload.coverLetterResultLines
         : [];
+      const nextCoverLetterResult =
+        typeof payload.coverLetterResult === "string" && payload.coverLetterResult
+          ? payload.coverLetterResult
+          : nextCoverLetterResultLines.join("\n");
       const nextCoverLetterError = typeof payload.coverLetterError === "string" ? payload.coverLetterError : "";
       const nextEngine = typeof payload.engine === "string" ? payload.engine : "";
       const nextDocxB64 = typeof payload.docxB64 === "string" ? payload.docxB64 : "";
@@ -2810,32 +2846,39 @@ export default function Home() {
         engine: nextEngine,
         docxB64: nextDocxB64,
         coverLetterDocxB64: nextCoverLetterDocxB64,
-        edited: false,
+        // This call unconditionally overwrites both result/resultLines and
+        // coverLetterResultLines above (no applyResume/applyCover scoping
+        // here, see the comment below) — both scopes' content is genuinely
+        // fresh, so both edited flags are cleared.
+        edited: { resume: false, cover: false },
       });
 
-      // Persist the generated resume and link to an application.
+      // Persist the generated resume + cover letter and link them to an
+      // application. Unlike the other three generate sites, this one has no
+      // applyResume/applyCover scoping concept (handleTailorFeedPosting takes
+      // no `opts.scope`) — it always treats a produced resume as generated,
+      // and a cover letter as generated whenever the engine returned lines.
+      // This is safe: a Live Feed posting only ever reaches this handler via
+      // its single "tailor" action (onTailor below has no separate scoped
+      // regenerate entry point), so every call here is a first-time generate
+      // with no pre-existing partial-scope edit state to protect.
       if (currentUser) {
         const supabase = createClient();
         const positionId = await upsertPosition(supabase, syntheticJob);
-        const generatedResumeId = await saveGeneratedResume(supabase, {
-          userId: currentUser.id,
-          positionId,
-          content: nextResult,
-          contentLines: nextResultLines,
-          sourceResumePath: `${currentUser.id}/resume`,
-          additionalContext: additionalContext || null,
-          docxB64: nextDocxB64,
-        });
         if (positionId) {
           await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "applied" });
-          if (generatedResumeId) {
-            await supabase
-              .from("applications")
-              .update({ resume_used_id: generatedResumeId })
-              .eq("user_id", currentUser.id)
-              .eq("position_id", positionId);
-          }
         }
+        await persistGeneratedDocuments(supabase, {
+          userId: currentUser.id,
+          positionId,
+          resume: { content: nextResult, contentLines: nextResultLines, docxB64: nextDocxB64 },
+          coverLetter:
+            nextCoverLetterResultLines.length > 0
+              ? { content: nextCoverLetterResult, contentLines: nextCoverLetterResultLines }
+              : null,
+          sourceResumePath: `${currentUser.id}/resume`,
+          additionalContext: additionalContext || null,
+        });
         setApplicationsRefreshKey((k) => k + 1);
       }
 
@@ -3226,6 +3269,13 @@ export default function Home() {
         onRenameFile={preview.renameDocument}
         onResubmit={preview.resubmitDocumentPreview}
         onDownload={preview.downloadDocumentPreview}
+        onAskAi={(scope, payload) =>
+          chat.askAiAbout({
+            label: `${preview.resumePreview.company || "Job"}${preview.resumePreview.title ? ` · ${preview.resumePreview.title}` : ""} — ${scope === "cover" ? "Cover letter" : "Resume"}`,
+            content: payload?.text || "",
+            sourceJobId: preview.resumePreview.jobId,
+          })
+        }
         onScrapePosting={
           preview.resumePreview.posting || preview.resumePreview.url ? scrapePreviewPosting : null
         }
@@ -3277,6 +3327,9 @@ export default function Home() {
         busy={preview.resumePreview.busy}
         notice={preview.resumePreview.notice}
         error={preview.resumePreview.error}
+        documentVersions={preview.documentVersions}
+        currentVersionId={preview.currentVersionId}
+        onSelectVersion={preview.selectDocumentVersion}
       />
 
       <CompanyResearchDialog

@@ -18,38 +18,25 @@ import MenuItem from "@mui/material/MenuItem";
 import TextField from "@mui/material/TextField";
 import InputAdornment from "@mui/material/InputAdornment";
 import CircularProgress from "@mui/material/CircularProgress";
-import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import DescriptionIcon from "@mui/icons-material/Description";
-import FormatBoldIcon from "@mui/icons-material/FormatBold";
-import FormatItalicIcon from "@mui/icons-material/FormatItalic";
-import FormatUnderlinedIcon from "@mui/icons-material/FormatUnderlined";
-import FormatAlignLeftIcon from "@mui/icons-material/FormatAlignLeft";
-import FormatAlignCenterIcon from "@mui/icons-material/FormatAlignCenter";
-import FormatAlignRightIcon from "@mui/icons-material/FormatAlignRight";
-import FormatListBulletedIcon from "@mui/icons-material/FormatListBulleted";
-import FormatListNumberedIcon from "@mui/icons-material/FormatListNumbered";
 import TravelExploreIcon from "@mui/icons-material/TravelExplore";
 import ManageSearchIcon from "@mui/icons-material/ManageSearch";
 import TrackChangesIcon from "@mui/icons-material/TrackChanges";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import CloseIcon from "@mui/icons-material/Close";
-import LibraryBooksIcon from "@mui/icons-material/LibraryBooks";
+import SmartToyIcon from "@mui/icons-material/SmartToy";
 import { renderModelToHtml } from "@/lib/document/docxPreview";
-import { downloadCombinedDocuments } from "@/lib/document/combineDocuments";
-import { sanitizeFileNamePart } from "@/lib/document/docx";
+import { changedScopes as changedScopesOf } from "@/lib/tailor/previewScopes";
 import { useIsMobile } from "../hooks/useResponsive";
+import EditorToolbar from "./preview/EditorToolbar";
+import CombineDocumentsControl from "./preview/CombineDocumentsControl";
+import ReviseStrip from "./preview/ReviseStrip";
+import VersionControl from "./preview/VersionControl";
+import HighlightToggle from "./preview/HighlightToggle";
 
 const SCOPES = ["resume", "cover"];
 const SCOPE_LABEL = { resume: "Resume", cover: "Cover letter" };
-const FONT_SIZES = [8, 9, 10, 11, 12, 13, 14, 16, 18];
-// Block/paragraph styles for the header dropdown (execCommand formatBlock tags).
-const BLOCK_STYLES = [
-  { tag: "P", label: "Normal" },
-  { tag: "H1", label: "Heading 1" },
-  { tag: "H2", label: "Heading 2" },
-  { tag: "H3", label: "Heading 3" },
-];
 // Cover-letter framing options for the in-preview control. "" = auto-detect; the
 // rest pin the framing — the technical/non-technical axis the user controls, plus
 // teaching and university-staff. Mirrors the focus picker's VARIANT_OPTIONS.
@@ -86,11 +73,6 @@ const pageSx = {
   "& li": { margin: "1pt 0" },
 };
 
-// Format-toolbar buttons: bigger tap targets on phones, and never shrink so the
-// bar stays a single swipeable row on narrow screens.
-const fmtBtnSx = { minWidth: { xs: 40, sm: 36 }, minHeight: { xs: 40, sm: 32 }, flexShrink: 0 };
-const fmtGapSx = { width: 8, flexShrink: 0 };
-
 // Preview + edit the tailored résumé and cover letter for a posting. Renders the
 // SAME .docx the download produces so formatting matches; supports flipping
 // between documents and basic in-place format editing.
@@ -107,6 +89,7 @@ export default function DocumentPreviewDialog({
   onRenameFile,
   onResubmit,
   onDownload,
+  onAskAi,
   onClose,
   onResearchCompany,
   onScrapePosting,
@@ -120,9 +103,16 @@ export default function DocumentPreviewDialog({
   researchLoading = false,
   researchCount = 0,
   companyReferences = [],
-  busy = false,
-  notice = "",
-  error = "",
+  // Per-scope ({ resume, cover }) so an operation on one document never
+  // disables or overwrites the other document's controls/notice/error.
+  busy = {},
+  notice = {},
+  error = {},
+  // Version history (AC-2/AC-3): per-scope arrays of saved generations, and
+  // the id of the version currently selected per scope. See VersionControl.js.
+  documentVersions = {},
+  currentVersionId = {},
+  onSelectVersion,
 }) {
   const isMobile = useIsMobile();
   // The revise box re-runs the selected engine (the `engine` prop), so its copy
@@ -154,12 +144,67 @@ export default function DocumentPreviewDialog({
   const [combineFormat, setCombineFormat] = useState("docx"); // "docx" | "pdf"
   const [combining, setCombining] = useState(false);
   const [combineError, setCombineError] = useState("");
+  // AC-4: line-level version highlighting, per scope, defaulting OFF so the
+  // normal preview stays clean.
+  const [highlightOn, setHighlightOn] = useState({ resume: false, cover: false });
   const editorRef = useRef(null);
   const draftHtmlRef = useRef({}); // scope -> edited innerHTML (uncommitted)
   const savedRangeRef = useRef(null); // selection captured before a control steals focus
   const saveTimerRef = useRef(null); // pending auto-save debounce timer
+  // scope -> last text content this dialog has accounted for. Used to tell,
+  // on a reloadKey bump, which scope(s) actually got new content — a revise
+  // or research-weave on one document must not blow away the other's cached
+  // render, draft, or edit mode (AC-2).
+  const prevScopeSigRef = useRef({ resume: "", cover: "" });
 
   const available = (scope) => !!scopes[scope]?.available;
+  const scopeSig = (scope) => scopes[scope]?.text ?? "";
+  // AC-6: is there a previous saved generation to diff the active one
+  // against? Mirrors the hook's own previousVersionFor (useDocumentPreview.js)
+  // using the same documentVersions/currentVersionId props this dialog
+  // already receives — kept local rather than plumbed through another prop
+  // since it's a three-line array lookup, not diff logic.
+  const hasPreviousVersion = (scope) => {
+    const versions = documentVersions?.[scope] || [];
+    const idx = versions.findIndex((v) => v.id === currentVersionId?.[scope]);
+    return idx >= 0 && idx + 1 < versions.length;
+  };
+  // AC-5: a hand-edited scope's saved HTML is shown as-is (see ensureLoaded
+  // below) — there is no freshly parsed model to annotate for it.
+  const isHandEdited = (scope) => !!scopes[scope]?.html;
+  // The toggle's effective state: hand-edited always wins even if it was
+  // left on before the document became hand-edited.
+  const highlightEnabled = (scope) => !!highlightOn[scope] && !isHandEdited(scope);
+  // AC-4: flip the toggle for a scope and drop its cached render so
+  // ensureLoaded re-parses with the new setting — docState otherwise only
+  // reloads on open or a real content change.
+  const setHighlight = (scope, on) => {
+    setHighlightOn((prev) => ({ ...prev, [scope]: on }));
+    setDocState((s) => {
+      if (!(scope in s)) return s;
+      const next = { ...s };
+      delete next[scope];
+      return next;
+    });
+  };
+
+  // Per-scope busy/notice/error, derived once per render. `busyActive` gates
+  // the active tab's own controls (revise, download); `anyBusy` gates
+  // controls that touch BOTH documents (focus picker, framing, combined
+  // download); `activeNotice`/`activeError` keep a cover-letter error from
+  // showing while the user is on the resume tab, and vice versa (AC-3).
+  const busyResume = !!busy?.resume;
+  const busyCover = !!busy?.cover;
+  const busyActive = !!busy?.[tab];
+  const anyBusy = busyResume || busyCover;
+  const activeNotice = notice?.[tab] || "";
+  const activeError = error?.[tab] || "";
+  // AC-8: a cover revise grounds the letter in the résumé text that was just
+  // tailored. While a résumé revise is in flight that text is seconds from
+  // changing, so the cover revise stays disabled (with a tooltip explaining
+  // why) until the résumé settles, rather than grounding on text about to go
+  // stale.
+  const coverBlockedByResumeBusy = tab === "cover" && busyResume;
 
   // Commit the editor's current content to the parent (the actual save). Clears
   // any pending debounce so a flush-on-close can't double-fire.
@@ -170,8 +215,13 @@ export default function DocumentPreviewDialog({
     }
     if (mode !== "edit" || !editorRef.current) return;
     const html = editorRef.current.innerHTML;
+    const text = editorRef.current.innerText;
     draftHtmlRef.current[tab] = html;
-    onSave?.(tab, { text: editorRef.current.innerText, html });
+    onSave?.(tab, { text, html });
+    // Our own save just moved this scope's text — record it as the known
+    // baseline so a LATER reloadKey bump (from an unrelated revise) doesn't
+    // mistake this scope's own committed edit for external new content.
+    prevScopeSigRef.current[tab] = text;
     setSaveStatus("saved");
   };
 
@@ -199,20 +249,39 @@ export default function DocumentPreviewDialog({
       setFileNameTab(startTab);
       setFileNameDraft(scopes[startTab]?.fileName || "");
       setCombineError("");
+      setHighlightOn({ resume: false, cover: false });
+      prevScopeSigRef.current = { resume: scopeSig("resume"), cover: scopeSig("cover") };
     }
   }
 
-  // Drop cached renders when the parent bumps reloadKey (e.g. after research is
-  // woven into the cover letter) so the preview reflects the updated document.
+  // The parent bumps reloadKey after a revise, a focus change, or a company-
+  // research weave — any of which may touch just one scope or both. Rather
+  // than trusting a single shared counter to say WHICH scope changed (it
+  // doesn't carry that), diff each scope's actual text against what this
+  // dialog last saw: only a scope whose content really changed gets its
+  // cached render + draft dropped, and only if that's the ACTIVE scope do we
+  // kick out of edit mode / reseed the file name. A revise on the other
+  // document leaves this one's cache, draft, and mode untouched (AC-2).
   if (reloadKey !== prevReloadKey) {
     setPrevReloadKey(reloadKey);
-    setDocState({});
-    draftHtmlRef.current = {};
-    setMode("view");
-    setSaveStatus("saved");
-    // A resubmit can change the derived file name (new job title) — reseed it.
-    setFileNameTab(tab);
-    setFileNameDraft(scopes[tab]?.fileName || "");
+    const nextScopeSigs = Object.fromEntries(SCOPES.map((scope) => [scope, scopeSig(scope)]));
+    const changed = changedScopesOf(prevScopeSigRef.current, nextScopeSigs, SCOPES);
+    if (changed.length > 0) {
+      setDocState((s) => {
+        const next = { ...s };
+        changed.forEach((scope) => { delete next[scope]; });
+        return next;
+      });
+      changed.forEach((scope) => { delete draftHtmlRef.current[scope]; });
+      if (changed.includes(tab)) {
+        setMode("view");
+        setSaveStatus("saved");
+        // A resubmit can change the derived file name (new job title) — reseed it.
+        setFileNameTab(tab);
+        setFileNameDraft(scopes[tab]?.fileName || "");
+      }
+    }
+    SCOPES.forEach((scope) => { prevScopeSigRef.current[scope] = scopeSig(scope); });
   }
 
   // Reseed the file-name field when the active scope changes.
@@ -228,13 +297,16 @@ export default function DocumentPreviewDialog({
       setDocState((s) => (s[scope] ? s : { ...s, [scope]: { loading: true } }));
       try {
         const saved = scopes[scope]?.html;
-        const html = saved || renderModelToHtml(await loadModel(scope));
+        // AC-3/AC-5: a hand-edited scope always shows its saved HTML as-is
+        // (never re-annotated); otherwise ask the loader to annotate the
+        // model when this scope's highlight toggle is on (AC-4).
+        const html = saved || renderModelToHtml(await loadModel(scope, { highlight: highlightEnabled(scope) }));
         setDocState((s) => ({ ...s, [scope]: { loading: false, html } }));
       } catch (e) {
         setDocState((s) => ({ ...s, [scope]: { loading: false, error: e?.message || "Unable to render preview." } }));
       }
     },
-    [scopes, loadModel], // eslint-disable-line react-hooks/exhaustive-deps
+    [scopes, loadModel, highlightOn], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   useEffect(() => {
@@ -269,41 +341,6 @@ export default function DocumentPreviewDialog({
     return sel;
   };
 
-  const exec = (command, value) => {
-    document.execCommand("styleWithCSS", false, true);
-    document.execCommand(command, false, value);
-    editorRef.current?.focus();
-    if (editorRef.current) draftHtmlRef.current[tab] = editorRef.current.innerHTML;
-    scheduleAutoSave();
-  };
-
-  const applyFontSize = (pt) => {
-    editorRef.current?.focus();
-    const sel = restoreSelection();
-    if (sel && sel.rangeCount && !sel.isCollapsed) {
-      const span = document.createElement("span");
-      span.style.fontSize = `${pt}pt`;
-      try {
-        sel.getRangeAt(0).surroundContents(span);
-      } catch {
-        // Selection crosses element boundaries — fall back to wrapping the HTML.
-        document.execCommand("insertHTML", false, `<span style="font-size:${pt}pt">${sel.toString()}</span>`);
-      }
-    }
-    if (editorRef.current) draftHtmlRef.current[tab] = editorRef.current.innerHTML;
-    scheduleAutoSave();
-  };
-
-  // Turn the caret's block into a heading or normal paragraph. Restores the
-  // selection first because the dropdown steals focus.
-  const applyBlockFormat = (tag) => {
-    editorRef.current?.focus();
-    restoreSelection();
-    document.execCommand("formatBlock", false, tag);
-    if (editorRef.current) draftHtmlRef.current[tab] = editorRef.current.innerHTML;
-    scheduleAutoSave();
-  };
-
   const copyText = (text) => {
     try {
       navigator.clipboard?.writeText(text);
@@ -336,32 +373,6 @@ export default function DocumentPreviewDialog({
   // Commit any pending edit, then download the active document.
   const handleDownload = () => { commitDraft(); onDownload?.(tab, activePayload()); };
 
-  // Combine the résumé + cover letter into one .docx or .pdf. Loads BOTH render
-  // models (engine-agnostic — they come from the finished doc or the edited text
-  // via the parent's loadModel), then builds a single page-broken document. The
-  // .pdf path prints the same HTML the preview shows (browser "Save as PDF").
-  const combinedFileBase = () => {
-    const base = [sanitizeFileNamePart(company || ""), sanitizeFileNamePart(jobTitle || "")]
-      .filter(Boolean)
-      .join(" - ");
-    return (base ? `${base} - ` : "") + "Application";
-  };
-  const handleCombine = async () => {
-    if (combining || typeof loadModel !== "function") return;
-    commitDraft();
-    setCombining(true);
-    setCombineError("");
-    try {
-      const models = await Promise.all(SCOPES.filter(available).map((scope) => loadModel(scope)));
-      const err = await downloadCombinedDocuments({ models, format: combineFormat, fileBase: combinedFileBase() });
-      if (err) setCombineError(err);
-    } catch (e) {
-      setCombineError(e?.message || "Unable to build the combined document.");
-    } finally {
-      setCombining(false);
-    }
-  };
-
   // Flush pending edits, then close.
   const handleClose = () => { commitDraft(); onClose?.(); };
 
@@ -388,19 +399,17 @@ export default function DocumentPreviewDialog({
     }
   };
 
-  // Resubmit the active document to the selected engine with the typed steering
-  // instructions. The parent re-runs the tailor and refreshes the preview; on
-  // success we clear the box (see steeringEnabled below for which engines).
-  const submitSteer = async () => {
-    const text = steerText.trim();
-    if (!text || resubmitting || busy) return;
-    setResubmitting(true);
-    try {
-      const ok = await onResubmit?.(tab, text);
-      if (ok !== false) setSteerText("");
-    } finally {
-      setResubmitting(false);
-    }
+  // Ask AI about the active document: flush any pending auto-save so no edit
+  // is lost, then CLOSE this modal before opening the chat panel. ChatPanel
+  // renders at z-index 1100, below MUI's default Dialog z-index (1300) with
+  // no theme override, so opening it while this dialog is still open would
+  // put it behind the dialog, invisible — closing first is the fix.
+  const handleAskAi = () => {
+    if (!available(tab)) return;
+    commitDraft();
+    const payload = activePayload();
+    onClose?.();
+    onAskAi?.(tab, payload);
   };
 
   const heading = [company, jobTitle].filter(Boolean).join(" · ");
@@ -465,7 +474,7 @@ export default function DocumentPreviewDialog({
                 size="small"
                 startIcon={<TrackChangesIcon fontSize="small" />}
                 onClick={onOpenFocusPicker}
-                disabled={busy}
+                disabled={anyBusy}
                 sx={{ textTransform: "none", my: 0.5, maxWidth: 300 }}
               >
                 <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -488,7 +497,7 @@ export default function DocumentPreviewDialog({
                 size="small"
                 value={coverVariant?.source === "override" ? coverVariant?.name || "" : ""}
                 onChange={(e) => onSetFraming(e.target.value)}
-                disabled={busy}
+                disabled={anyBusy}
                 displayEmpty
                 renderValue={(v) => `Framing: ${FRAMING_LABEL[v] ?? "Auto"}`}
                 MenuProps={{ disableAutoFocusItem: true }}
@@ -510,7 +519,7 @@ export default function DocumentPreviewDialog({
                 size="small"
                 startIcon={scraping ? <CircularProgress size={14} /> : <ManageSearchIcon fontSize="small" />}
                 onClick={submitScrape}
-                disabled={scraping || busy}
+                disabled={scraping || anyBusy}
                 sx={{ textTransform: "none", my: 0.5 }}
               >
                 {scraping ? "Scanning…" : "Scan posting"}
@@ -531,6 +540,46 @@ export default function DocumentPreviewDialog({
                 ? `Research company (${researchCount})`
                 : "Research company"}
           </Button>
+        ) : null}
+        {onAskAi ? (
+          <Tooltip title={`Ask AI about this ${SCOPE_LABEL[tab].toLowerCase()}`}>
+            <span>
+              <Button
+                size="small"
+                startIcon={<SmartToyIcon fontSize="small" />}
+                onClick={handleAskAi}
+                disabled={!available(tab)}
+                sx={{ textTransform: "none", my: 0.5 }}
+              >
+                Ask AI
+              </Button>
+            </span>
+          </Tooltip>
+        ) : null}
+        {available(tab) ? (
+          <VersionControl
+            scope={tab}
+            versions={documentVersions?.[tab] || []}
+            currentVersionId={currentVersionId?.[tab] ?? null}
+            disabled={busyActive}
+            onSelect={(scope, versionId) => {
+              // AC-5: flush any pending auto-save before switching, exactly
+              // like the tab-switch handler above — a version switch must
+              // never silently discard typing.
+              commitDraft();
+              onSelectVersion?.(scope, versionId);
+            }}
+          />
+        ) : null}
+        {available(tab) ? (
+          <HighlightToggle
+            scope={tab}
+            on={highlightEnabled(tab)}
+            onToggle={(on) => setHighlight(tab, on)}
+            hasPrevious={hasPreviousVersion(tab)}
+            handEdited={isHandEdited(tab)}
+            disabled={busyActive}
+          />
         ) : null}
         {available(tab) ? (
           <ToggleButtonGroup
@@ -599,57 +648,13 @@ export default function DocumentPreviewDialog({
       ) : null}
 
       {mode === "edit" && available(tab) ? (
-        <Box
-          sx={{
-            px: { xs: 1, sm: 2 },
-            py: 0.75,
-            display: "flex",
-            alignItems: "center",
-            gap: 0.5,
-            flexWrap: { xs: "nowrap", sm: "wrap" },
-            overflowX: { xs: "auto", sm: "visible" },
-            WebkitOverflowScrolling: "touch",
-            borderBottom: "1px solid var(--border)",
-          }}
-        >
-          <Tooltip title="Bold"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("bold"); }} sx={fmtBtnSx}><FormatBoldIcon fontSize="small" /></Button></Tooltip>
-          <Tooltip title="Italic"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("italic"); }} sx={fmtBtnSx}><FormatItalicIcon fontSize="small" /></Button></Tooltip>
-          <Tooltip title="Underline"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("underline"); }} sx={fmtBtnSx}><FormatUnderlinedIcon fontSize="small" /></Button></Tooltip>
-          <Box sx={fmtGapSx} />
-          <Tooltip title="Align left"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("justifyLeft"); }} sx={fmtBtnSx}><FormatAlignLeftIcon fontSize="small" /></Button></Tooltip>
-          <Tooltip title="Align center"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("justifyCenter"); }} sx={fmtBtnSx}><FormatAlignCenterIcon fontSize="small" /></Button></Tooltip>
-          <Tooltip title="Align right"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("justifyRight"); }} sx={fmtBtnSx}><FormatAlignRightIcon fontSize="small" /></Button></Tooltip>
-          <Box sx={fmtGapSx} />
-          <Tooltip title="Bulleted list"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("insertUnorderedList"); }} sx={fmtBtnSx}><FormatListBulletedIcon fontSize="small" /></Button></Tooltip>
-          <Tooltip title="Numbered list"><Button size="small" onMouseDown={(e) => { e.preventDefault(); exec("insertOrderedList"); }} sx={fmtBtnSx}><FormatListNumberedIcon fontSize="small" /></Button></Tooltip>
-          <Box sx={fmtGapSx} />
-          <Select
-            size="small"
-            displayEmpty
-            value=""
-            onChange={(e) => applyBlockFormat(e.target.value)}
-            renderValue={() => "Style"}
-            sx={{ height: { xs: 40, sm: 32 }, fontSize: "0.8rem", minWidth: 92, flexShrink: 0 }}
-            MenuProps={{ disableAutoFocusItem: true }}
-          >
-            {BLOCK_STYLES.map((b) => (
-              <MenuItem key={b.tag} value={b.tag}>{b.label}</MenuItem>
-            ))}
-          </Select>
-          <Select
-            size="small"
-            displayEmpty
-            value=""
-            onChange={(e) => applyFontSize(e.target.value)}
-            renderValue={() => "Size"}
-            sx={{ height: { xs: 40, sm: 32 }, fontSize: "0.8rem", minWidth: 76, flexShrink: 0 }}
-            MenuProps={{ disableAutoFocusItem: true }}
-          >
-            {FONT_SIZES.map((pt) => (
-              <MenuItem key={pt} value={pt}>{pt} pt</MenuItem>
-            ))}
-          </Select>
-        </Box>
+        <EditorToolbar
+          editorRef={editorRef}
+          tab={tab}
+          draftHtmlRef={draftHtmlRef}
+          scheduleAutoSave={scheduleAutoSave}
+          restoreSelection={restoreSelection}
+        />
       ) : null}
 
       {tab === "cover" && companyReferences.length > 0 ? (
@@ -698,107 +703,50 @@ export default function DocumentPreviewDialog({
           <Box sx={pageSx} dangerouslySetInnerHTML={{ __html: state.html || "" }} />
         )}
 
-        {error ? (
-          <Box sx={{ mt: 1.5, color: "var(--danger)", fontSize: "0.85rem", textAlign: "center" }}>{error}</Box>
-        ) : notice ? (
-          <Box sx={{ mt: 1.5, color: "var(--success)", fontSize: "0.85rem", textAlign: "center" }}>{notice}</Box>
+        {activeError ? (
+          <Box sx={{ mt: 1.5, color: "var(--danger)", fontSize: "0.85rem", textAlign: "center" }}>{activeError}</Box>
+        ) : activeNotice ? (
+          <Box sx={{ mt: 1.5, color: "var(--success)", fontSize: "0.85rem", textAlign: "center" }}>{activeNotice}</Box>
         ) : null}
       </DialogContent>
 
       {steeringEnabled ? (
-        <Box sx={{ px: { xs: 1.25, sm: 2 }, pt: 1.25, pb: 0.5, borderTop: "1px solid var(--border)", bgcolor: "var(--accent-soft)" }}>
-          <Box sx={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary)", mb: 0.75 }}>
-            {isEmbedded
-              ? `Revise this ${SCOPE_LABEL[tab].toLowerCase()} offline (no AI)`
-              : `Ask Gemini to revise this ${SCOPE_LABEL[tab].toLowerCase()}`}
-          </Box>
-          <Box sx={{ display: "flex", alignItems: "flex-start", gap: 1 }}>
-            <TextField
-              multiline
-              minRows={1}
-              maxRows={4}
-              fullWidth
-              size="small"
-              value={steerText}
-              onChange={(e) => setSteerText(e.target.value)}
-              onKeyDown={(e) => {
-                // Enter submits; Shift+Enter inserts a newline.
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  submitSteer();
-                }
-              }}
-              placeholder={
-                isEmbedded
-                  ? "e.g. Emphasize React and Kubernetes, remove Java, tone it down"
-                  : "e.g. Emphasize leadership, shorten the summary, and call out my Python experience"
-              }
-              disabled={resubmitting || busy}
-              sx={{ bgcolor: "var(--bg-surface)", borderRadius: 1 }}
-            />
-            <Button
-              onClick={submitSteer}
-              disabled={!steerText.trim() || resubmitting || busy}
-              variant="contained"
-              startIcon={resubmitting ? <CircularProgress size={14} color="inherit" /> : <AutoFixHighIcon fontSize="small" />}
-              sx={{ textTransform: "none", whiteSpace: "nowrap", mt: 0.25 }}
-            >
-              {resubmitting ? "Revising…" : "Revise"}
-            </Button>
-          </Box>
-          <Box sx={{ fontSize: "0.7rem", color: "var(--text-muted)", mt: 0.5 }}>
-            {isEmbedded
-              ? "Regenerates on-device, applying emphasize / remove / tone-it-down directives. Enter to submit, Shift+Enter for a new line."
-              : "Regenerates this document with Gemini using your instructions. Enter to submit, Shift+Enter for a new line."}
-          </Box>
-        </Box>
+        <ReviseStrip
+          tab={tab}
+          isEmbedded={isEmbedded}
+          steerText={steerText}
+          setSteerText={setSteerText}
+          resubmitting={resubmitting}
+          setResubmitting={setResubmitting}
+          busyActive={busyActive}
+          coverBlockedByResumeBusy={coverBlockedByResumeBusy}
+          onResubmit={onResubmit}
+        />
       ) : null}
 
       <DialogActions sx={{ flexWrap: "wrap", gap: 1, px: { xs: 1.25, sm: 2 }, py: 1.5 }}>
         <Button onClick={handleClose} sx={{ textTransform: "none" }}>Close</Button>
         <Box sx={{ flex: 1 }} />
-        {combineError ? (
-          <Box sx={{ width: "100%", fontSize: "0.8rem", color: "var(--danger)", textAlign: "right" }}>{combineError}</Box>
-        ) : null}
-        {canCombine ? (
-          <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-            <Select
-              size="small"
-              value={combineFormat}
-              onChange={(e) => setCombineFormat(e.target.value)}
-              disabled={combining || busy}
-              sx={{ height: 36, fontSize: "0.8rem" }}
-              MenuProps={{ disableAutoFocusItem: true }}
-            >
-              <MenuItem value="docx" sx={{ fontSize: "0.85rem" }}>.docx</MenuItem>
-              <MenuItem value="pdf" sx={{ fontSize: "0.85rem" }}>.pdf</MenuItem>
-            </Select>
-            <Tooltip
-              title={
-                combineFormat === "pdf"
-                  ? "Combine your résumé and cover letter into one PDF — opens your browser's print dialog, where you choose “Save as PDF”."
-                  : "Combine your résumé and cover letter into a single .docx (résumé first, cover letter on a new page)."
-              }
-            >
-              <span>
-                <Button
-                  onClick={handleCombine}
-                  disabled={combining || busy}
-                  startIcon={combining ? <CircularProgress size={14} /> : <LibraryBooksIcon />}
-                  variant="outlined"
-                  sx={{ textTransform: "none" }}
-                >
-                  {combining ? "Combining…" : "Download combined"}
-                </Button>
-              </span>
-            </Tooltip>
-          </Box>
-        ) : null}
+        <CombineDocumentsControl
+          canCombine={canCombine}
+          scopes={scopes}
+          loadModel={loadModel}
+          commitDraft={commitDraft}
+          company={company}
+          jobTitle={jobTitle}
+          combineFormat={combineFormat}
+          setCombineFormat={setCombineFormat}
+          combining={combining}
+          setCombining={setCombining}
+          combineError={combineError}
+          setCombineError={setCombineError}
+          anyBusy={anyBusy}
+        />
         <Tooltip title={`Download the ${SCOPE_LABEL[tab].toLowerCase()} as .docx`}>
           <span>
             <Button
               onClick={handleDownload}
-              disabled={!available(tab) || busy}
+              disabled={!available(tab) || busyActive}
               startIcon={<DescriptionIcon />}
               variant="contained"
               sx={{ textTransform: "none" }}

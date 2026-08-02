@@ -521,6 +521,19 @@ export async function resolveDocumentBlob({
   return null;
 }
 
+// edited/*: a tailoring entry's hand-edit flag, per scope ({ resume, cover }),
+// mirroring the helper in app/hooks/useDocumentPreview.js. An object is
+// ALWAYS truthy, so every read must go through this — never `if
+// (entry.edited)` / `!entry.edited`. Tolerates a missing field (treated as
+// not edited) and a legacy plain boolean from before this migration — a
+// legacy `true` reads as edited on BOTH scopes (the safe direction: it still
+// forces a rebuild instead of risking a stale verbatim-serve).
+function editedForScope(entry, scope) {
+  const e = entry?.edited;
+  if (e && typeof e === "object") return !!e[scope];
+  return !!e;
+}
+
 export function createDocumentDownloaders(deps) {
   const { resumeFile, coverLetterFile, tailoringMap, applicationData } = deps;
 
@@ -630,9 +643,14 @@ export function createDocumentDownloaders(deps) {
     const tailoring = tailoringMap[job.id] || {};
     // External engine: an unedited finished doc can be served directly without
     // a .docx source resume. Edited resumes fall through to template fill.
-    const docxB64 = !tailoring.edited && typeof tailoring.docxB64 === "string" ? tailoring.docxB64 : "";
+    // AC-2: résumé and cover letter each consult their own scope, so hand
+    // editing one never forces a rebuild of the other's finished doc.
+    const docxB64 =
+      !editedForScope(tailoring, "resume") && typeof tailoring.docxB64 === "string" ? tailoring.docxB64 : "";
     const coverLetterDocxB64 =
-      !tailoring.edited && typeof tailoring.coverLetterDocxB64 === "string" ? tailoring.coverLetterDocxB64 : "";
+      !editedForScope(tailoring, "cover") && typeof tailoring.coverLetterDocxB64 === "string"
+        ? tailoring.coverLetterDocxB64
+        : "";
 
     let text = typeof tailoring.result === "string" ? tailoring.result : "";
     let lines = Array.isArray(tailoring.resultLines) ? tailoring.resultLines : [];
@@ -643,7 +661,8 @@ export function createDocumentDownloaders(deps) {
     let company = job.company || "";
     // A rehydrated chip (post-reload) carries the saved docx storage path so we
     // can serve the faithful document even without a re-uploaded template.
-    let docxPath = !tailoring.edited && typeof tailoring.docxPath === "string" ? tailoring.docxPath : "";
+    let docxPath =
+      !editedForScope(tailoring, "resume") && typeof tailoring.docxPath === "string" ? tailoring.docxPath : "";
 
     if (!docxB64 && !text) {
       // Fall back to the saved application row (post-reload case).
@@ -656,7 +675,7 @@ export function createDocumentDownloaders(deps) {
       lines = Array.isArray(gen.content_lines) ? gen.content_lines : [];
       jobTitle = jobTitle || app?.positions?.title || "";
       company = company || app?.positions?.company || "";
-      if (!tailoring.edited && gen.docx_path) docxPath = gen.docx_path;
+      if (!editedForScope(tailoring, "resume") && gen.docx_path) docxPath = gen.docx_path;
     }
 
     // Need a finished doc (in-session, or persisted) or a .docx source resume.
