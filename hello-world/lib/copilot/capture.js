@@ -30,10 +30,20 @@ const DISPLAY_AUDIO_CONSTRAINTS = {
 // granted track immediately — an unstopped video track keeps the browser's
 // "sharing this tab/screen" indicator lit — then throw a source-specific
 // message telling the user how to fix it.
-function requireAudioTrack(stream, errorMessage) {
+//
+// buildErrorMessage is a callback, not a plain string, because
+// captureSystemAudio's message depends on which surface the user actually
+// shared, and that can only be read off the still-live video track (see
+// readDisplaySurface below). Calling it here, before the stop() loop, is what
+// guarantees the read happens while the track is still live. captureTabAudio
+// doesn't need any of that, so its callback just returns its static string —
+// which keeps that path's message byte-identical to what it was before this
+// function took a callback instead of a string.
+function requireAudioTrack(stream, buildErrorMessage) {
   if (stream.getAudioTracks().length === 0) {
+    const message = buildErrorMessage(stream);
     stream.getTracks().forEach((t) => t.stop());
-    throw new Error(errorMessage);
+    throw new Error(message);
   }
   return stream;
 }
@@ -48,8 +58,63 @@ export async function captureTabAudio() {
 
   return requireAudioTrack(
     stream,
-    'No tab audio was captured. In the share dialog, pick a browser tab (not a window or your whole screen) and turn on "Share tab audio".',
+    () =>
+      'No tab audio was captured. In the share dialog, pick a browser tab (not a window or your whole screen) and turn on "Share tab audio".',
   );
+}
+
+// getSettings().displaySurface reports which surface the user actually chose
+// in the picker: "monitor" (whole screen), "window", or "browser" (a tab).
+// This must be read here, before requireAudioTrack stops the track — once a
+// track is stopped, browsers are free to clear or invalidate its settings.
+//
+// displaySurface in the getDisplayMedia() constraints below is only ADVISORY
+// ("The specified options can't be used to limit the choices available to the
+// user" — MDN): it pre-selects the Entire Screen pane, but the user remains
+// free to pick a window or a tab instead. That's the actual bug this guards
+// against — the old code assumed the "monitor" hint constrained the choice,
+// so every no-audio failure got the "Entire Screen" message even when the
+// user had picked a window or a tab, where that advice doesn't apply.
+//
+// getSettings can be missing on the track entirely, or can throw; the stream
+// might not carry a video track at all, or might not even implement
+// getVideoTracks (this project's own test doubles for other capture paths
+// don't need one, since they never fail this way). None of that should turn
+// a clear "no system audio" error into a TypeError, so every one of those
+// cases falls through to undefined here, which buildSystemAudioMessage below
+// treats the same as an explicit "monitor" reading.
+function readDisplaySurface(stream) {
+  try {
+    const videoTrack = stream.getVideoTracks?.()?.[0];
+    if (!videoTrack || typeof videoTrack.getSettings !== "function") {
+      return undefined;
+    }
+    return videoTrack.getSettings().displaySurface;
+  } catch {
+    return undefined;
+  }
+}
+
+// Per-surface wording for the "no system audio" failure. "monitor" keeps
+// today's message verbatim (turn on "Share system audio"), and so does any
+// surface value this app doesn't recognize, or couldn't read at all — see
+// readDisplaySurface above. "window" and "browser" get their own wording
+// because the fix is different, and telling a window/tab user to find a
+// "Share system audio" checkbox sends them looking for a control that Chrome
+// never shows them for those surfaces.
+const DEFAULT_SYSTEM_AUDIO_MESSAGE =
+  'No system audio was captured. In the share dialog, pick "Entire Screen" and turn on "Share system audio". Note: Chrome cannot capture system audio on macOS at all — on a Mac, sharing a browser tab is the only option.';
+
+const SYSTEM_AUDIO_MESSAGES_BY_SURFACE = {
+  window:
+    'No system audio was captured. You shared a window, and on Windows a window share carries no system audio at all — there is no checkbox to turn on for it. Pick "Entire Screen" instead.',
+  browser:
+    'No system audio was captured. You shared a browser tab. Use this app\'s "Browser tab" interviewer-audio option instead, or re-pick "Entire Screen" in the share dialog if you meant to share your screen.',
+};
+
+function buildSystemAudioMessage(stream) {
+  const surface = readDisplaySurface(stream);
+  return SYSTEM_AUDIO_MESSAGES_BY_SURFACE[surface] ?? DEFAULT_SYSTEM_AUDIO_MESSAGE;
 }
 
 export async function captureSystemAudio() {
@@ -64,10 +129,7 @@ export async function captureSystemAudio() {
     monitorTypeSurfaces: "include",
   });
 
-  return requireAudioTrack(
-    stream,
-    'No system audio was captured. In the share dialog, pick "Entire Screen" and turn on "Share system audio". Note: Chrome cannot capture system audio on macOS at all — on a Mac, sharing a browser tab is the only option.',
-  );
+  return requireAudioTrack(stream, () => buildSystemAudioMessage(stream));
 }
 
 export async function captureMicAudio() {

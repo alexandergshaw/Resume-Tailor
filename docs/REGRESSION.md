@@ -371,7 +371,7 @@ from a fail without judgement calls.
 1. Read `captureSystemAudio` in `hello-world/lib/copilot/capture.js`.
 2. Run `npx vitest run --no-file-parallelism lib/copilot/capture.test.js` from `hello-world/`.
 
-**Expected:** `getDisplayMedia` is called with `systemAudio: "include"`, `monitorTypeSurfaces: "include"`, and a `monitor` `displaySurface`, plus the shared raw-signal audio constraints (echoCancellation, noiseSuppression and autoGainControl all false). When the granted stream has no audio track, EVERY track is stopped before throwing, so no share indicator is left lit, and the thrown message names "Entire Screen" and "Share system audio" and states honestly that Chrome cannot capture system audio on macOS.
+**Expected:** `getDisplayMedia` is called with `systemAudio: "include"`, `monitorTypeSurfaces: "include"`, and a `monitor` `displaySurface`, plus the shared raw-signal audio constraints (echoCancellation, noiseSuppression and autoGainControl all false). When the granted stream has no audio track, EVERY track is stopped before throwing, so no share indicator is left lit. When the shared surface was the whole screen, the thrown message names "Entire Screen" and "Share system audio" and states honestly that Chrome cannot capture system audio on macOS. The other surfaces get their own wording -- see R-039.
 
 ### R-036 | area: copilot-audio | parallel-safe: yes | automatable: yes
 
@@ -402,3 +402,13 @@ from a fail without judgement calls.
 2. Run `npx vitest run --no-file-parallelism lib/copilot/session.test.js` from `hello-world/`.
 
 **Expected:** A failure of the "them" capture (tab or system) rejects out of `start()` and is fatal. A mic failure is soft: it reports through onError and the session continues with interviewer audio only. Each source still gets its own PcmPipeline and DeepgramStream, which is what provides speaker separation without diarization. The first audio track of every source still gets an "ended" listener so the browser's native "Stop sharing" tears the session down.
+
+### R-039 | area: copilot-audio | parallel-safe: yes | automatable: yes
+
+**Summary:** When system-audio capture yields no audio, the error names the mistake the user actually made. `displaySurface: "monitor"` is advisory per spec and cannot restrict the picker, so the user can still land on a window or a tab -- and the original message told every one of them to tick a "Share system audio" checkbox that Chrome never shows for those surfaces.
+
+**Steps:**
+1. Read `readDisplaySurface`, `buildSystemAudioMessage`, `SYSTEM_AUDIO_MESSAGES_BY_SURFACE` and `requireAudioTrack` in `hello-world/lib/copilot/capture.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/capture.test.js` from `hello-world/`.
+
+**Expected:** The video track's `getSettings().displaySurface` is read BEFORE any track is stopped, since a stopped track's settings may be cleared. A `window` surface produces a message saying a window share carries no system audio on Windows and to pick "Entire Screen" instead, and it must NOT tell the user to turn on a "Share system audio" checkbox. A `browser` surface produces a message pointing at this app's own "Browser tab" interviewer-audio option. A `monitor` surface, an unrecognized surface, a missing `getSettings`, a `getSettings` that throws, a stream with no video track, and a stream that does not implement `getVideoTracks` at all ALL fall back to the whole-screen wording rather than raising a TypeError. In every one of these failure cases every granted track still has `stop()` called exactly once.
