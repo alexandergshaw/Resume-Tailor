@@ -7,6 +7,8 @@ import Button from "@mui/material/Button";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import Stack from "@mui/material/Stack";
 import Switch from "@mui/material/Switch";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Typography from "@mui/material/Typography";
 import { CopilotSession } from "@/lib/copilot/session";
 import { detectQuestion, normalizeQuestion } from "@/lib/copilot/questions";
@@ -20,6 +22,7 @@ import PrepContext from "./PrepContext";
 const CONTEXT_TURNS = 12;
 const MIN_WORDS_FOR_LLM = 4;
 const PREP_STORAGE_KEY = "copilot-prep-context";
+const SOURCE_STORAGE_KEY = "copilot-audio-source";
 
 function fmtClock(ms) {
   const total = Math.max(0, Math.floor(ms / 1000));
@@ -41,6 +44,7 @@ export default function CopilotClient() {
   const [questions, setQuestions] = useState([]);
   const [autoDraft, setAutoDraft] = useState(true);
   const [profile, setProfile] = useState("");
+  const [source, setSource] = useState("tab"); // "tab" | "system" — the interviewer's audio source
   const [startedAt, setStartedAt] = useState(null);
   const [now, setNow] = useState(0);
   const [showConsent, setShowConsent] = useState(true);
@@ -102,6 +106,29 @@ export default function CopilotClient() {
     answerCacheRef.current.clear();
     try {
       window.localStorage.setItem(PREP_STORAGE_KEY, val);
+    } catch {
+      // ignore quota / privacy-mode errors
+    }
+  }, []);
+
+  // Seed the interviewer-audio-source choice from localStorage, wrapped in
+  // try/catch like the prep-context read above. A missing or unrecognized
+  // value just leaves the "tab" default from useState in place.
+  useEffect(() => {
+    let stored = null;
+    try {
+      stored = window.localStorage.getItem(SOURCE_STORAGE_KEY);
+    } catch {
+      stored = null;
+    }
+    if (stored === "tab" || stored === "system") setSource(stored);
+  }, []);
+
+  const onSourceChange = useCallback((val) => {
+    if (val !== "tab" && val !== "system") return;
+    setSource(val);
+    try {
+      window.localStorage.setItem(SOURCE_STORAGE_KEY, val);
     } catch {
       // ignore quota / privacy-mode errors
     }
@@ -258,6 +285,7 @@ export default function CopilotClient() {
     try {
       const session = new CopilotSession({
         withMic: true,
+        source,
         onStatus: (s) => {
           setStatus(s);
           if (s === "live") setStartedAt((prev) => prev || Date.now());
@@ -293,7 +321,7 @@ export default function CopilotClient() {
       setStatus("error");
       await stop();
     }
-  }, [stop, appendFinal, evaluateUtterance]);
+  }, [stop, appendFinal, evaluateUtterance, source]);
 
   const onDraft = useCallback(
     (id) => {
@@ -323,6 +351,13 @@ export default function CopilotClient() {
 
   const elapsed = startedAt ? now - startedAt : 0;
 
+  // The tab option keeps today's wording verbatim; the system option needs
+  // different share-dialog instructions plus a note on when to reach for it.
+  const shareInstructions =
+    source === "system"
+      ? 'Share your Entire Screen (with "Share system audio" enabled) and allow your mic — use this when the interview is running in a desktop app (Zoom, Teams, etc.) rather than a browser tab.'
+      : 'Share the meeting tab (with "Share tab audio" enabled) and allow your mic.';
+
   return (
     <Box sx={{ maxWidth: 1180, mx: "auto", p: 3 }}>
       <TabHeader
@@ -330,11 +365,34 @@ export default function CopilotClient() {
         description="Live transcription, question detection, and suggested answers during interviews."
       />
       <Typography variant="body2" sx={{ color: "var(--text-secondary)", mb: 2 }}>
-        Share the meeting tab (with &quot;Share tab audio&quot; enabled) and allow
-        your mic. Both sides of the call are transcribed live; the interviewer&apos;s
-        questions are detected on the right and answered automatically. Chrome or
-        Edge only.
+        {shareInstructions} Both sides of the call are transcribed live; the
+        interviewer&apos;s questions are detected on the right and answered
+        automatically. Chrome or Edge only.
       </Typography>
+
+      <Stack
+        direction="row"
+        spacing={1.25}
+        sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
+      >
+        <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
+          Interviewer audio:
+        </Typography>
+        <ToggleButtonGroup
+          exclusive
+          size="small"
+          value={source}
+          disabled={live}
+          onChange={(_e, val) => onSourceChange(val)}
+        >
+          <ToggleButton value="tab" sx={{ textTransform: "none", px: 1.5 }}>
+            Browser tab
+          </ToggleButton>
+          <ToggleButton value="system" sx={{ textTransform: "none", px: 1.5 }}>
+            System audio (speakers)
+          </ToggleButton>
+        </ToggleButtonGroup>
+      </Stack>
 
       {showConsent ? (
         <Alert severity="info" sx={{ mb: 2 }} onClose={() => setShowConsent(false)}>

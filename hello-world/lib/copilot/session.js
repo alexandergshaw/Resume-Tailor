@@ -1,5 +1,6 @@
 // Orchestrates a full copilot capture session across one or two audio sources:
-//   - "them": the interviewer, from the shared browser tab (required)
+//   - "them": the interviewer, from either the shared browser tab or shared
+//     system audio (whichever `source` selects) — required
 //   - "you":  your own voice, from the microphone (optional)
 //
 // Each source gets its own PcmPipeline + Deepgram stream, which gives clean
@@ -7,12 +8,22 @@
 // both are funneled through a single onTranscript callback tagged with the
 // speaker, and a single aggregated status is reported to the UI.
 
-import { captureTabAudio, captureMicAudio, PcmPipeline } from "./capture";
+import { captureTabAudio, captureSystemAudio, captureMicAudio, PcmPipeline } from "./capture";
 import { DeepgramStream } from "./deepgram";
 
+// Maps the `source` option to the capture function used for "them". Anything
+// not in this map (including an omitted or garbage value) resolves to the
+// tab path below, so an unrecognized choice degrades to today's behavior
+// instead of throwing.
+const THEM_CAPTURE_BY_SOURCE = {
+  tab: captureTabAudio,
+  system: captureSystemAudio,
+};
+
 export class CopilotSession {
-  constructor({ withMic = true, onTranscript, onStatus, onError } = {}) {
+  constructor({ withMic = true, source = "tab", onTranscript, onStatus, onError } = {}) {
     this.withMic = withMic;
+    this.captureThem = THEM_CAPTURE_BY_SOURCE[source] || captureTabAudio;
     this.onTranscript = onTranscript || (() => {});
     this.onStatus = onStatus || (() => {});
     this.onError = onError || (() => {});
@@ -60,14 +71,14 @@ export class CopilotSession {
 
   async start() {
     this._stopped = false;
-    // Interviewer (tab audio) is required. Capture it first so its picker shows
-    // before we prompt for the mic.
-    const tabStream = await captureTabAudio();
+    // Interviewer audio (tab or system, per `source`) is required. Capture it
+    // first so its picker shows before we prompt for the mic.
+    const themStream = await this.captureThem();
     if (this._stopped) {
-      tabStream.getTracks().forEach((t) => t.stop());
+      themStream.getTracks().forEach((t) => t.stop());
       return;
     }
-    await this._addSource({ key: "them", speaker: "them", stream: tabStream });
+    await this._addSource({ key: "them", speaker: "them", stream: themStream });
 
     if (this.withMic) {
       try {

@@ -352,3 +352,53 @@ from a fail without judgement calls.
 3. Confirm switching tabs resets the editor mode.
 
 **Expected:** With no saved versions for the email scope, `VersionControl` returns null (fewer than two versions) and `HighlightToggle` returns null (no previous version), so neither renders a broken control on the email tab. `lockScopesFor` never returns `email`, since the email is regenerated with the documents rather than revised on its own. Changing tabs sets the mode back to `view`, so edit mode cannot leak onto the read-only email tab.
+
+### R-034 | area: copilot-audio | parallel-safe: yes | automatable: yes
+
+**Summary:** The interviewer's audio source is selectable, and anything unrecognized degrades to the browser-tab path rather than throwing. Tab sharing was the only source before this option existed, so an unrecognized value must never break a session that used to work.
+
+**Steps:**
+1. Read `THEM_CAPTURE_BY_SOURCE` and the `CopilotSession` constructor in `hello-world/lib/copilot/session.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/session.test.js` from `hello-world/`.
+
+**Expected:** `source: "system"` selects `captureSystemAudio`; `source: "tab"`, an omitted `source`, and an unrecognized value all select `captureTabAudio`. The constructor never throws on a bad source. The "them" source is still captured before the mic prompt, so its picker appears first.
+
+### R-035 | area: copilot-audio | parallel-safe: yes | automatable: yes
+
+**Summary:** System-audio capture requests the constraints Chrome actually needs, and fails with instructions specific to that path. A generic or tab-worded error here sends the user to the wrong checkbox in the share dialog.
+
+**Steps:**
+1. Read `captureSystemAudio` in `hello-world/lib/copilot/capture.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/capture.test.js` from `hello-world/`.
+
+**Expected:** `getDisplayMedia` is called with `systemAudio: "include"`, `monitorTypeSurfaces: "include"`, and a `monitor` `displaySurface`, plus the shared raw-signal audio constraints (echoCancellation, noiseSuppression and autoGainControl all false). When the granted stream has no audio track, EVERY track is stopped before throwing, so no share indicator is left lit, and the thrown message names "Entire Screen" and "Share system audio" and states honestly that Chrome cannot capture system audio on macOS.
+
+### R-036 | area: copilot-audio | parallel-safe: yes | automatable: yes
+
+**Summary:** Adding the system-audio option did not change tab capture. Tab sharing is the default and the only path that works on macOS, so a silent change here would break the majority path.
+
+**Steps:**
+1. Read `captureTabAudio` and the shared `DISPLAY_AUDIO_CONSTRAINTS` / `requireAudioTrack` helpers in `hello-world/lib/copilot/capture.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/capture.test.js` from `hello-world/`.
+
+**Expected:** `captureTabAudio` still requests `video: true` (Chrome will not grant tab audio without a video track) with the same three raw-signal audio constraints, and still throws the tab-specific message naming a browser tab and "Share tab audio" -- not the system-audio wording. The two capture paths share one constraints constant and one no-audio-track guard so they cannot drift apart.
+
+### R-037 | area: copilot-audio | parallel-safe: yes | automatable: yes
+
+**Summary:** The source control cannot change under a running session, and the choice survives a reload. Switching source mid-session would leave the UI describing a source the live Deepgram streams are not using.
+
+**Steps:**
+1. Read the `ToggleButtonGroup`, `onSourceChange`, the `SOURCE_STORAGE_KEY` seeding effect, and the `shareInstructions` text in `hello-world/app/copilot/CopilotClient.js`.
+2. Confirm `source` is passed to `new CopilotSession(...)` and is in the `start` callback's dependency array.
+
+**Expected:** The control is disabled whenever status is `live` or `connecting`. `onSourceChange` ignores a null value (an exclusive ToggleButtonGroup emits null when the active button is clicked again), so the selection can never be cleared. The choice is stored under `copilot-audio-source`, which is a different key from `copilot-prep-context`; reads and writes are wrapped in try/catch and an unrecognized stored value falls back to `tab`. The instructional paragraph names Entire Screen and "Share system audio" for the system option and the meeting tab for the tab option.
+
+### R-038 | area: copilot-audio | parallel-safe: yes | automatable: yes
+
+**Summary:** Session teardown and failure semantics are unchanged by the new source option. The mic has always been optional and the interviewer source fatal; inverting either would either kill working sessions or leave a session silently transcribing nothing.
+
+**Steps:**
+1. Read `start`, `_addSource` and `stop` in `hello-world/lib/copilot/session.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/session.test.js` from `hello-world/`.
+
+**Expected:** A failure of the "them" capture (tab or system) rejects out of `start()` and is fatal. A mic failure is soft: it reports through onError and the session continues with interviewer audio only. Each source still gets its own PcmPipeline and DeepgramStream, which is what provides speaker separation without diarization. The first audio track of every source still gets an "ended" listener so the browser's native "Stop sharing" tears the session down.
