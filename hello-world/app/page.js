@@ -41,6 +41,7 @@ import { weaveSources } from "../lib/document/coverLetterWeave";
 import { parseEmploymentHistory } from "../lib/resume/parseEmployment";
 import { editFingerprint } from "../lib/tailor/editMining";
 import { recordMatchGaps, annotateAndRank, promotedEditRules } from "../lib/tailor/localSignals";
+import { emailPreviewText } from "../lib/tailor/documentScopes";
 import { useProfileEntries } from "./hooks/useProfileEntries";
 import { useScreenshots } from "./hooks/useScreenshots";
 import { useCompanyResearch } from "./hooks/useCompanyResearch";
@@ -2211,6 +2212,11 @@ export default function Home() {
       const engineUsed = typeof payload.engine === "string" ? payload.engine : "";
       const docxB64 = typeof payload.docxB64 === "string" ? payload.docxB64 : "";
       const coverLetterDocxB64 = typeof payload.coverLetterDocxB64 === "string" ? payload.coverLetterDocxB64 : "";
+      // Hiring-team email (session state only — see AC-8 note in route.js; no
+      // persistence yet). Not scoped to applyResume/applyCover: it's a third,
+      // independent document the engine generates on every run.
+      const emailSubject = typeof payload.emailSubject === "string" ? payload.emailSubject : "";
+      const emailResultLines = Array.isArray(payload.emailResultLines) ? payload.emailResultLines : [];
 
       updateTailoringJob(job.id, (entry) => ({
         ...entry,
@@ -2223,6 +2229,8 @@ export default function Home() {
           ...(applyCover ? ["cover"] : []),
         ]),
         error: coverLetterError || "",
+        emailSubject,
+        emailResultLines,
         ...(applyResume ? { result, resultLines, docxB64 } : {}),
         ...(applyCover ? { coverLetterResultLines, coverLetterDocxB64 } : {}),
       }));
@@ -2487,6 +2495,9 @@ export default function Home() {
       const nextEngine = typeof payload.engine === "string" ? payload.engine : "";
       const nextDocxB64 = typeof payload.docxB64 === "string" ? payload.docxB64 : "";
       const nextCoverLetterDocxB64 = typeof payload.coverLetterDocxB64 === "string" ? payload.coverLetterDocxB64 : "";
+      // Hiring-team email (session state only — see AC-8 note in route.js).
+      const nextEmailSubject = typeof payload.emailSubject === "string" ? payload.emailSubject : "";
+      const nextEmailResultLines = Array.isArray(payload.emailResultLines) ? payload.emailResultLines : [];
 
       if (nextCoverLetterError) setUrlError(nextCoverLetterError);
 
@@ -2515,6 +2526,8 @@ export default function Home() {
           ...(applyResume ? ["resume"] : []),
           ...(applyCover ? ["cover"] : []),
         ]),
+        emailSubject: nextEmailSubject,
+        emailResultLines: nextEmailResultLines,
         ...(applyResume ? { result: nextResult, resultLines: nextResultLines, docxB64: nextDocxB64 } : {}),
         ...(applyCover ? { coverLetterResultLines: nextCoverLetterResultLines, coverLetterDocxB64: nextCoverLetterDocxB64 } : {}),
       }));
@@ -2675,6 +2688,9 @@ export default function Home() {
       const nextEngine = typeof payload.engine === "string" ? payload.engine : "";
       const nextDocxB64 = typeof payload.docxB64 === "string" ? payload.docxB64 : "";
       const nextCoverLetterDocxB64 = typeof payload.coverLetterDocxB64 === "string" ? payload.coverLetterDocxB64 : "";
+      // Hiring-team email (session state only — see AC-8 note in route.js).
+      const nextEmailSubject = typeof payload.emailSubject === "string" ? payload.emailSubject : "";
+      const nextEmailResultLines = Array.isArray(payload.emailResultLines) ? payload.emailResultLines : [];
 
       if (nextCoverLetterError) setManualError(nextCoverLetterError);
 
@@ -2703,6 +2719,8 @@ export default function Home() {
           ...(applyResume ? ["resume"] : []),
           ...(applyCover ? ["cover"] : []),
         ]),
+        emailSubject: nextEmailSubject,
+        emailResultLines: nextEmailResultLines,
         ...(applyResume ? { result: nextResult, resultLines: nextResultLines, docxB64: nextDocxB64 } : {}),
         ...(applyCover ? { coverLetterResultLines: nextCoverLetterResultLines, coverLetterDocxB64: nextCoverLetterDocxB64 } : {}),
       }));
@@ -2822,6 +2840,9 @@ export default function Home() {
       const nextEngine = typeof payload.engine === "string" ? payload.engine : "";
       const nextDocxB64 = typeof payload.docxB64 === "string" ? payload.docxB64 : "";
       const nextCoverLetterDocxB64 = typeof payload.coverLetterDocxB64 === "string" ? payload.coverLetterDocxB64 : "";
+      // Hiring-team email (session state only — see AC-8 note in route.js).
+      const nextEmailSubject = typeof payload.emailSubject === "string" ? payload.emailSubject : "";
+      const nextEmailResultLines = Array.isArray(payload.emailResultLines) ? payload.emailResultLines : [];
 
       const syntheticJob = {
         id: syntheticJobId,
@@ -2846,6 +2867,8 @@ export default function Home() {
         engine: nextEngine,
         docxB64: nextDocxB64,
         coverLetterDocxB64: nextCoverLetterDocxB64,
+        emailSubject: nextEmailSubject,
+        emailResultLines: nextEmailResultLines,
         // This call unconditionally overwrites both result/resultLines and
         // coverLetterResultLines above (no applyResume/applyCover scoping
         // here, see the comment below) — both scopes' content is genuinely
@@ -3259,6 +3282,12 @@ export default function Home() {
             fileName:
               tailoringMap[preview.resumePreview.jobId]?.coverLetterFileName ||
               getDownloadCoverLetterFileNameForTitle(preview.resumePreview.title, preview.resumePreview.company).replace(/\.docx$/i, ""),
+          },
+          // AC-1/AC-3: plain text only — no fileName/html, it's never downloaded
+          // as a docx or hand-edited (see DocumentPreviewDialog's DOCX_SCOPES gating).
+          email: {
+            available: preview.previewScopeAvailable(tailoringMap[preview.resumePreview.jobId], "email"),
+            text: emailPreviewText(tailoringMap[preview.resumePreview.jobId]),
           },
         }}
         engine={tailorEngine}

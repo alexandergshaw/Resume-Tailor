@@ -9,10 +9,7 @@ import CircularProgress from "@mui/material/CircularProgress";
 import LibraryBooksIcon from "@mui/icons-material/LibraryBooks";
 import { downloadCombinedDocuments } from "@/lib/document/combineDocuments";
 import { sanitizeFileNamePart } from "@/lib/document/docx";
-
-// Mirrors the SCOPES list in DocumentPreviewDialog.js — the two fixed
-// document scopes this app supports.
-const SCOPES = ["resume", "cover"];
+import { DOCX_SCOPES } from "@/lib/tailor/documentScopes";
 
 // "Combine both documents" control: output format + busy/error, shown when a
 // résumé AND a cover letter both exist (`canCombine`, computed by the
@@ -53,7 +50,9 @@ export default function CombineDocumentsControl({
     setCombining(true);
     setCombineError("");
     try {
-      const models = await Promise.all(SCOPES.filter(available).map((scope) => loadModel(scope)));
+      // AC-5: always resume + cover letter only — a third, plain-text scope
+      // (the hiring email) must never silently join the combined docx/pdf.
+      const models = await Promise.all(DOCX_SCOPES.filter(available).map((scope) => loadModel(scope)));
       const err = await downloadCombinedDocuments({ models, format: combineFormat, fileBase: combinedFileBase() });
       if (err) setCombineError(err);
     } catch (e) {

@@ -407,6 +407,40 @@ export async function POST(request) {
       }
     }
 
+    // Optionally generate a short hiring-team email, grounded in the same
+    // tailored résumé as the cover letter (pickTailoredResume above). This is
+    // a soft failure like the cover letter: an error here never fails the
+    // request or blocks the résumé/cover letter from returning. Some engines
+    // (external) have no way to produce one and resolve to null rather than
+    // throwing — see lib/llm/engines/index.js. NOTE: the email is session
+    // state only for now (no generated_emails table / persistence — that is
+    // deliberately out of scope for this pass, not an oversight).
+    let emailSubject = "";
+    let emailResultLines = [];
+    let emailError = "";
+    if (typeof activeEngine.tailorHiringEmail === "function") {
+      try {
+        const emailDraft = await activeEngine.tailorHiringEmail({
+          jobPosting: effectiveJobPosting,
+          jobPostingUrl: effectiveJobPostingUrl,
+          companyName: scrapedCompany || result.companyName || postingMeta.companyName,
+          jobTitle: result.jobTitle || scrapedJobTitle || postingMeta.jobTitle,
+          resumeText,
+          tailoredResume,
+          additionalContext,
+          persona,
+          userId,
+        });
+        if (emailDraft) {
+          emailSubject = typeof emailDraft.subject === "string" ? emailDraft.subject : "";
+          emailResultLines = Array.isArray(emailDraft.bodyLines) ? emailDraft.bodyLines : [];
+        }
+      } catch (err) {
+        console.error("Error generating hiring-team email:", err);
+        emailError = `Hiring-team email generation failed: ${err.message || "unknown error"}`;
+      }
+    }
+
     const warnings = [...engineWarnings, ...(Array.isArray(result.warnings) ? result.warnings : [])];
 
     // Posting↔output match (embedded engine attaches report.match per document).
@@ -450,6 +484,9 @@ export async function POST(request) {
       coverLetterResult,
       coverLetterResultLines,
       coverLetterError,
+      emailSubject,
+      emailResultLines,
+      emailError,
     });
   } catch (error) {
     console.error("Error generating tailored resume:", error);

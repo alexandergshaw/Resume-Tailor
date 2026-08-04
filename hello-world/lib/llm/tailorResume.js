@@ -429,3 +429,136 @@ export async function generateTailoredCoverLetterDraft({
     resultLines: enforced,
   };
 }
+
+// A short, plain-text note to the hiring team — NOT a document with a
+// template. Unlike the resume/cover letter, there is no line-count or
+// character-budget contract to preserve; the prompt just asks for a small
+// JSON shape and a few honest sentences.
+export function buildHiringEmailPrompt({
+  jobPosting,
+  jobPostingUrl,
+  companyName,
+  jobTitle,
+  resumeText,
+  tailoredResume,
+  additionalContext,
+  steeringInstructions,
+}) {
+  const jobPostingBlock = jobPostingUrl
+    ? `Job posting URL: ${jobPostingUrl}\nFetch the full job description from this URL and use it to write the email.`
+    : `Job posting:\n${jobPosting || "Not provided."}`;
+  const steering = (steeringInstructions || "").trim();
+  const steeringBlock = steering
+    ? [
+        "USER REVISION REQUEST (highest priority): apply these changes, while still honoring every hard constraint above (no fabrication, plain text, subject stays one line):",
+        steering,
+        "",
+      ]
+    : [];
+  const tailoredResumeText = resolveTailoredResumeText(tailoredResume);
+
+  return [
+    "You are a job applicant writing a short, genuine email addressed to a company's hiring committee to accompany your résumé and cover letter.",
+    "",
+    "Hard constraints — these are non-negotiable:",
+    '1) Output JSON only in this exact shape: {"subject": "", "bodyLines": ["", ""]} — no other keys, no commentary, no markdown.',
+    "2) subject is a single line (no line breaks) that names the role.",
+    '3) bodyLines is 3 to 4 short paragraphs addressed to the hiring committee, each its own string with no embedded newlines: the first bodyLine must be exactly the salutation "Dear Hiring Committee," on its own line, followed by a sentence naming the role, one or two concrete strengths drawn from the résumé below, and a closing sign-off line (for example "Best regards,") followed by the candidate\'s name on its own line. No bullet points, no markdown, no signature block beyond that closing line.',
+    "4) Do not fabricate employers, titles, dates, certifications, or metrics that are not supported by the résumé or provided context.",
+    "5) Read as a brief human note, not a compressed cover letter — plain, direct, and specific.",
+    "",
+    `Target role: ${jobTitle || "Not provided."}`,
+    `Target company: ${companyName || "Not provided."}`,
+    "",
+    ...steeringBlock,
+    jobPostingBlock,
+    "",
+    `Additional context:\n${additionalContext || "None provided."}`,
+    "",
+    ...(tailoredResumeText
+      ? [
+          "Tailored résumé (already tailored for this exact posting — draw the email's one or two concrete strengths from it):",
+          tailoredResumeText,
+        ]
+      : [
+          "Source resume (for factual grounding only):",
+          resumeText || "Not provided.",
+        ]),
+  ].join("\n");
+}
+
+// Parse the hiring email's small JSON shape out of the model's raw text.
+// Anything that doesn't parse cleanly falls back to an empty draft — the
+// caller (generateTailoredHiringEmailDraft) turns that into a thrown error,
+// which the route treats as a soft failure (AC-6).
+function parseEmailResult(rawText) {
+  if (!rawText) return { subject: "", bodyLines: [] };
+  const directJsonMatch = rawText.match(/\{[\s\S]*\}/);
+  if (directJsonMatch) {
+    try {
+      const parsed = JSON.parse(directJsonMatch[0]);
+      const subject =
+        typeof parsed.subject === "string" ? parsed.subject.replace(/\r?\n+/g, " ").trim() : "";
+      const bodyLines = Array.isArray(parsed.bodyLines)
+        ? parsed.bodyLines
+            .map((line) => String(line ?? "").replace(/\r?\n+/g, " ").trim())
+            .filter(Boolean)
+        : [];
+      return { subject, bodyLines };
+    } catch {
+      // Fall through to an empty draft.
+    }
+  }
+  return { subject: "", bodyLines: [] };
+}
+
+// Generate a short hiring-team email grounded in the freshly tailored résumé
+// (same `tailoredResume` shape threaded to generateTailoredCoverLetterDraft —
+// see resolveTailoredResumeText / pickTailoredResume in app/api/tailor/route.js).
+// Returns `{ subject, bodyLines }` (AC-3) — never a docx, never a template.
+export async function generateTailoredHiringEmailDraft({
+  jobPosting,
+  jobPostingUrl,
+  companyName,
+  jobTitle,
+  resumeText,
+  tailoredResume,
+  additionalContext,
+  steeringInstructions,
+}) {
+  const { geminiModel } = getServerEnv();
+  const client = getGeminiClient();
+  const prompt = buildHiringEmailPrompt({
+    jobPosting,
+    jobPostingUrl,
+    companyName,
+    jobTitle,
+    resumeText,
+    tailoredResume,
+    additionalContext,
+    steeringInstructions,
+  });
+
+  const response = await client.models.generateContent({
+    model: geminiModel,
+    contents: prompt,
+    ...(jobPostingUrl
+      ? { tools: [{ urlContext: {} }] }
+      : { config: { responseMimeType: "application/json" } }),
+  });
+
+  const output = response.text?.trim() || "";
+  if (!output) {
+    throw new Error("Gemini returned an empty hiring-email response.");
+  }
+
+  const parsed = parseEmailResult(output);
+  if (!parsed.subject && parsed.bodyLines.length === 0) {
+    throw new Error("Hiring-email response did not contain any usable content.");
+  }
+
+  return {
+    subject: parsed.subject || (jobTitle ? `Application for ${jobTitle}` : "Application"),
+    bodyLines: parsed.bodyLines,
+  };
+}

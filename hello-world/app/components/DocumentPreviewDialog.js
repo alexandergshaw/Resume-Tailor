@@ -28,6 +28,7 @@ import CloseIcon from "@mui/icons-material/Close";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
 import { renderModelToHtml } from "@/lib/document/docxPreview";
 import { changedScopes as changedScopesOf } from "@/lib/tailor/previewScopes";
+import { SCOPES, SCOPE_LABEL, DOCX_SCOPES } from "@/lib/tailor/documentScopes";
 import { useIsMobile } from "../hooks/useResponsive";
 import EditorToolbar from "./preview/EditorToolbar";
 import CombineDocumentsControl from "./preview/CombineDocumentsControl";
@@ -35,8 +36,6 @@ import ReviseStrip from "./preview/ReviseStrip";
 import VersionControl from "./preview/VersionControl";
 import HighlightToggle from "./preview/HighlightToggle";
 
-const SCOPES = ["resume", "cover"];
-const SCOPE_LABEL = { resume: "Resume", cover: "Cover letter" };
 // Cover-letter framing options for the in-preview control. "" = auto-detect; the
 // rest pin the framing — the technical/non-technical axis the user controls, plus
 // teaching and university-staff. Mirrors the focus picker's VARIANT_OPTIONS.
@@ -144,6 +143,11 @@ export default function DocumentPreviewDialog({
   const [combineFormat, setCombineFormat] = useState("docx"); // "docx" | "pdf"
   const [combining, setCombining] = useState(false);
   const [combineError, setCombineError] = useState("");
+  // AC-4: inline feedback for the email tab's "Copy" control — "Copied" on
+  // success, an explanation on the rare rejection (clipboard API can reject
+  // when the document isn't focused or permission is denied).
+  const [copyFeedback, setCopyFeedback] = useState("");
+  const copyFeedbackTimerRef = useRef(null);
   // AC-4: line-level version highlighting, per scope, defaulting OFF so the
   // normal preview stays clean.
   const [highlightOn, setHighlightOn] = useState({ resume: false, cover: false });
@@ -155,7 +159,7 @@ export default function DocumentPreviewDialog({
   // on a reloadKey bump, which scope(s) actually got new content — a revise
   // or research-weave on one document must not blow away the other's cached
   // render, draft, or edit mode (AC-2).
-  const prevScopeSigRef = useRef({ resume: "", cover: "" });
+  const prevScopeSigRef = useRef({ resume: "", cover: "", email: "" });
 
   const available = (scope) => !!scopes[scope]?.available;
   const scopeSig = (scope) => scopes[scope]?.text ?? "";
@@ -250,7 +254,7 @@ export default function DocumentPreviewDialog({
       setFileNameDraft(scopes[startTab]?.fileName || "");
       setCombineError("");
       setHighlightOn({ resume: false, cover: false });
-      prevScopeSigRef.current = { resume: scopeSig("resume"), cover: scopeSig("cover") };
+      prevScopeSigRef.current = { resume: scopeSig("resume"), cover: scopeSig("cover"), email: scopeSig("email") };
     }
   }
 
@@ -322,7 +326,10 @@ export default function DocumentPreviewDialog({
   }, [mode, tab, docState]);
 
   // Never leave a debounce timer running after unmount.
-  useEffect(() => () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); }, []);
+  useEffect(() => () => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    if (copyFeedbackTimerRef.current) clearTimeout(copyFeedbackTimerRef.current);
+  }, []);
 
   // Remember the editor's current selection so a control that steals focus (e.g.
   // the font-size dropdown) can restore it before applying a format.
@@ -347,6 +354,21 @@ export default function DocumentPreviewDialog({
     } catch {
       /* clipboard may be unavailable */
     }
+  };
+  // AC-4: the email tab's primary action — copies subject + body (the same
+  // text the preview shows) so the user can paste both into their email
+  // client. Uses the async clipboard API, which can reject when the document
+  // isn't focused or permission is denied, so a failure gets its own visible
+  // message instead of silently doing nothing.
+  const copyEmail = async () => {
+    if (copyFeedbackTimerRef.current) clearTimeout(copyFeedbackTimerRef.current);
+    try {
+      await navigator.clipboard.writeText(scopes.email?.text || "");
+      setCopyFeedback("Copied");
+    } catch {
+      setCopyFeedback("Couldn't copy — select the text below and copy it manually.");
+    }
+    copyFeedbackTimerRef.current = setTimeout(() => setCopyFeedback(""), 3000);
   };
   // Insert a sentence at the caret (edit mode) as its own paragraph; otherwise
   // copy it so the user can paste wherever they like.
@@ -415,13 +437,21 @@ export default function DocumentPreviewDialog({
   const heading = [company, jobTitle].filter(Boolean).join(" · ");
   const state = docState[tab] || {};
   const hasContent = SCOPES.some(available);
-  // "Combine both" is offered only when a résumé AND a cover letter both exist.
-  const canCombine = SCOPES.every(available) && typeof loadModel === "function";
+  // "Combine both" is offered only when a résumé AND a cover letter both
+  // exist — deliberately DOCX_SCOPES, not SCOPES, so the plain-text email
+  // scope can never join a combined docx/pdf (AC-5).
+  const canCombine = DOCX_SCOPES.every(available) && typeof loadModel === "function";
   // Steering re-tailors from instructions: Gemini rewrites freely, and the
   // embedded engine applies emphasize/avoid/tone directives offline. The
   // external engine has no steering path, so the box stays hidden there.
+  // AC-5: there's no steering path for the hiring email either — reviving it
+  // means re-running the tailor, not a free-text revise — so the strip is
+  // restricted to the docx-backed scopes.
   const steeringEnabled =
-    (engine === "gemini" || isEmbedded) && available(tab) && typeof onResubmit === "function";
+    DOCX_SCOPES.includes(tab) &&
+    (engine === "gemini" || isEmbedded) &&
+    available(tab) &&
+    typeof onResubmit === "function";
 
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth fullScreen={isMobile}>
@@ -581,7 +611,13 @@ export default function DocumentPreviewDialog({
             disabled={busyActive}
           />
         ) : null}
-        {available(tab) ? (
+        {/* AC-6: the hiring email isn't editable in place (it's short plain
+            text meant to be pasted into an email client, not auto-saved
+            through the docx-oriented edit path) — the Preview/Edit toggle is
+            restricted to the docx-backed scopes, with a visible reason shown
+            in its place below rather than presenting an editor that doesn't
+            persist. */}
+        {DOCX_SCOPES.includes(tab) && available(tab) ? (
           <ToggleButtonGroup
             size="small"
             exclusive
@@ -592,6 +628,10 @@ export default function DocumentPreviewDialog({
             <ToggleButton value="view" sx={{ textTransform: "none", px: 1.5 }}>Preview</ToggleButton>
             <ToggleButton value="edit" sx={{ textTransform: "none", px: 1.5 }}>Edit</ToggleButton>
           </ToggleButtonGroup>
+        ) : tab === "email" && available(tab) ? (
+          <Box component="span" sx={{ fontSize: "0.75rem", color: "var(--text-muted)", my: 0.5 }}>
+            Read-only — copy the text below into your email client.
+          </Box>
         ) : null}
         </Box>
       </Box>
@@ -612,7 +652,10 @@ export default function DocumentPreviewDialog({
         </Box>
       ) : null}
 
-      {available(tab) ? (
+      {/* File name only means anything for a docx download — the email tab
+          has no download, so this row (and the auto-save status it also
+          carries) stays hidden there. */}
+      {DOCX_SCOPES.includes(tab) && available(tab) ? (
         <Box sx={{ px: { xs: 1.25, sm: 2 }, py: 0.75, display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", borderBottom: "1px solid var(--border)" }}>
           <Box component="span" sx={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
             File name
@@ -647,7 +690,7 @@ export default function DocumentPreviewDialog({
         </Box>
       ) : null}
 
-      {mode === "edit" && available(tab) ? (
+      {mode === "edit" && DOCX_SCOPES.includes(tab) && available(tab) ? (
         <EditorToolbar
           editorRef={editorRef}
           tab={tab}
@@ -742,19 +785,51 @@ export default function DocumentPreviewDialog({
           setCombineError={setCombineError}
           anyBusy={anyBusy}
         />
-        <Tooltip title={`Download the ${SCOPE_LABEL[tab].toLowerCase()} as .docx`}>
-          <span>
-            <Button
-              onClick={handleDownload}
-              disabled={!available(tab) || busyActive}
-              startIcon={<DescriptionIcon />}
-              variant="contained"
-              sx={{ textTransform: "none" }}
-            >
-              Download .docx
-            </Button>
-          </span>
-        </Tooltip>
+        {tab === "email" ? (
+          // AC-3/AC-5: the email is plain text, never a docx — its primary
+          // action is copying it (AC-4), not "Download .docx", which would
+          // otherwise silently run the wrong (résumé) build pipeline for it.
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            {copyFeedback ? (
+              <Box
+                component="span"
+                sx={{
+                  fontSize: "0.8rem",
+                  color: copyFeedback.startsWith("Couldn't") ? "var(--danger)" : "var(--success)",
+                }}
+              >
+                {copyFeedback}
+              </Box>
+            ) : null}
+            <Tooltip title="Copy the subject and body so you can paste them into your email client.">
+              <span>
+                <Button
+                  onClick={copyEmail}
+                  disabled={!available(tab)}
+                  startIcon={<ContentCopyIcon />}
+                  variant="contained"
+                  sx={{ textTransform: "none" }}
+                >
+                  Copy email
+                </Button>
+              </span>
+            </Tooltip>
+          </Box>
+        ) : (
+          <Tooltip title={`Download the ${SCOPE_LABEL[tab].toLowerCase()} as .docx`}>
+            <span>
+              <Button
+                onClick={handleDownload}
+                disabled={!available(tab) || busyActive}
+                startIcon={<DescriptionIcon />}
+                variant="contained"
+                sx={{ textTransform: "none" }}
+              >
+                Download .docx
+              </Button>
+            </span>
+          </Tooltip>
+        )}
       </DialogActions>
     </Dialog>
   );

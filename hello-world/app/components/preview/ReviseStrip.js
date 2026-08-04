@@ -6,9 +6,7 @@ import Tooltip from "@mui/material/Tooltip";
 import TextField from "@mui/material/TextField";
 import CircularProgress from "@mui/material/CircularProgress";
 import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
-
-// Mirrors SCOPE_LABEL in DocumentPreviewDialog.js.
-const SCOPE_LABEL = { resume: "Resume", cover: "Cover letter" };
+import { SCOPE_LABEL } from "@/lib/tailor/documentScopes";
 
 // The revise/steering strip: free-text instructions to re-run the selected
 // engine with, plus the Revise button. Shown only when `steeringEnabled`

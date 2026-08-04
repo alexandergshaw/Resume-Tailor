@@ -25,6 +25,7 @@ import {
 } from "../../lib/tailor/localSignals";
 import { syncTemplateEdits } from "../../lib/tailor/templateEdits";
 import { applyScopeFlags, lockScopesFor } from "../../lib/tailor/previewScopes";
+import { emailPreviewLines } from "../../lib/tailor/documentScopes";
 import { readEngine } from "../settings/engine";
 import { createClient } from "../../lib/supabase/client";
 import { persistGeneratedDocuments } from "../../lib/supabase/persistGeneration";
@@ -145,6 +146,11 @@ export function useDocumentPreview({
     if (!entry) return false;
     if (scope === "cover") {
       return Array.isArray(entry.coverLetterResultLines) && entry.coverLetterResultLines.length > 0;
+    }
+    // AC-2: absent for the external engine (and any failed run) — both
+    // fields are simply empty in that case, per the generation pipeline.
+    if (scope === "email") {
+      return Array.isArray(entry.emailResultLines) && entry.emailResultLines.length > 0;
     }
     return typeof entry.result === "string" && entry.result.trim().length > 0;
   }
@@ -385,6 +391,10 @@ export function useDocumentPreview({
   // builder (resolveDocumentBlob) so preview render, drag, and download all
   // produce identical output.
   async function buildPreviewBlob(scope) {
+    // AC-3/CRITICAL: the hiring email is plain text pasted into an email
+    // client, never a docx-backed document — always fall through to the
+    // plain-text model below, same as an upload with no docx template.
+    if (scope === "email") return null;
     const entry = tailoringMap[resumePreview.jobId] || {};
     if (scope === "cover") {
       const lines = Array.isArray(entry.coverLetterResultLines) ? entry.coverLetterResultLines : [];
@@ -433,7 +443,9 @@ export function useDocumentPreview({
       : linesToModel(
           scope === "cover"
             ? entry.coverLetterResultLines || []
-            : entry.resultLines || String(entry.result || "").split("\n"),
+            : scope === "email"
+              ? emailPreviewLines(entry)
+              : entry.resultLines || String(entry.result || "").split("\n"),
         );
     if (!opts.highlight) return model;
     const previous = previousVersionFor(scope);
@@ -802,6 +814,18 @@ export function useDocumentPreview({
           : {}),
         ...(touchedCover && payload.coverVariant !== undefined
           ? { coverVariantInfo: payload.coverVariant || null }
+          : {}),
+        // The hiring email is grounded in THIS request's tailored résumé, so
+        // propagate it here too — otherwise the email tab keeps showing a
+        // draft grounded in the pre-revise résumé after a revise/focus
+        // change. Guarded like coverVariant above: the external engine has
+        // no tailorHiringEmail and resolves to an empty array, so an empty
+        // response must never wipe a previously generated email.
+        ...(Array.isArray(payload.emailResultLines) && payload.emailResultLines.length > 0
+          ? {
+              emailSubject: typeof payload.emailSubject === "string" ? payload.emailSubject : "",
+              emailResultLines: payload.emailResultLines,
+            }
           : {}),
         ...(focusChange
           ? {

@@ -3,10 +3,18 @@ import { externalEngine } from "@/lib/llm/engines/externalEngine";
 import { embeddedEngine } from "@/lib/llm/engines/tailor-lite";
 
 // Registry of document-generation engines. Each engine implements
-// `tailorResume(options)` and `tailorCoverLetter(options)` returning the
-// normalized shape the /api/tailor route assembles its response from.
-// "embedded" is the in-process, deterministic (no-LLM) engine; "external" calls
-// the standalone Resume Tailor API. Both speak the same data shapes.
+// `tailorResume(options)`, `tailorCoverLetter(options)`, and
+// `tailorHiringEmail(options)` returning the normalized shape the /api/tailor
+// route assembles its response from. "embedded" is the in-process,
+// deterministic (no-LLM) engine; "external" calls the standalone Resume
+// Tailor API.
+//
+// The hiring email is the one place the three engines diverge: it's a short
+// plain-text note (`{ subject, bodyLines }`), never a filled .docx — no
+// engine runs it through a template pipeline. "external" has no such
+// endpoint on the standalone service and its `tailorHiringEmail` always
+// resolves to null rather than throwing; callers must treat a null/absent
+// result as "no email generated" rather than an error.
 const ENGINES = {
   [geminiEngine.name]: geminiEngine,
   [externalEngine.name]: externalEngine,

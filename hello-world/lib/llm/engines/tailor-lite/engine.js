@@ -24,6 +24,7 @@ import {
 } from "./docxModel.js";
 import { extractKeywords, canonicalize, categorize } from "./keywords.js";
 import { mapSlotsDetailed } from "./strategy.js";
+import { candidateUniverse } from "./universe.js";
 import { parsePosting } from "./parser.js";
 import { research } from "./researcher.js";
 import { parseSteering, applySteering, steerAggressiveness } from "./steering.js";
@@ -487,6 +488,85 @@ function buildReport({ workflow, reportSlots, unfilled, keywords, advisory, extr
   return report;
 }
 
+// --- Hiring email (deterministic, template-free) ---------------------------
+// The email is short plain text with a subject line, never a filled .docx —
+// it must never go through the scanPlaceholders/fillDocx template pipeline
+// the résumé and cover letter use above. This section assembles it directly
+// from the posting and the user's own library.
+
+// A few of the posting's requirements that the candidate's own library
+// (skill_groups.json, via candidateUniverse) can genuinely back up — the
+// intersection of what the posting asks for and what the candidate's
+// universe actually contains, so the email never claims a capability the
+// library doesn't support (AC-5: no fabrication).
+export function topMatchingCapabilities(posting, data, limit = 3) {
+  const { keywords } = resolveKeywords(posting, data);
+  const universe = candidateUniverse(data.skillGroups, data.taxonomy);
+  const seen = new Set();
+  const flat = [];
+  for (const category of Object.keys(keywords)) {
+    if (category === "topic") continue; // RAKE-lite phrases are advisory only, not claimed skills
+    for (const kw of keywords[category]) {
+      const key = kw.canonical.toLowerCase();
+      if (!universe.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      flat.push(kw);
+    }
+  }
+  flat.sort((a, b) => b.score - a.score || a.canonical.localeCompare(b.canonical));
+  return flat.slice(0, limit).map((kw) => kw.canonical);
+}
+
+// Prose list joiner: "A", "A and B", "A, B, and C".
+function joinWithAnd(items) {
+  if (items.length === 0) return "";
+  if (items.length === 1) return items[0];
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
+}
+
+// Assemble the subject + a handful of short paragraphs from the role/company,
+// the posting-matched capabilities above, and the profile's headline values
+// (name, current title/function, tenure) — no LLM, no template, deterministic
+// for a given library + posting.
+export function buildHiringEmailText({ role, organization, capabilities, profile }) {
+  const values = profile?.values || {};
+  const name = String(values.FULL_NAME || "").trim();
+  const currentEmployer = String(values.CURRENT_EMPLOYER || "").trim();
+  const primaryFunction = String(values.PRIMARY_FUNCTION || "").trim();
+  const years = String(values.YEARS_OF_EXPERIENCE || "").trim();
+
+  const roleLabel = role || "this role";
+  const orgLabel = organization || "your team";
+  const subject = `Application for ${role || "the open role"}${organization ? ` at ${organization}` : ""}`;
+
+  const introParts = [primaryFunction ? `I'm a ${primaryFunction.toLowerCase()}` : "I'm writing"];
+  if (years) introParts.push(`with ${years} years of experience`);
+  if (currentEmployer) introParts.push(`currently at ${currentEmployer}`);
+
+  // Addressed to a hiring committee, matching this repo's cover-letter
+  // convention (see lib/document/coverLetterWeave.test.js) — the salutation
+  // is always its own first line, never merged into the intro sentence.
+  const bodyLines = [
+    "Dear Hiring Committee,",
+    `${introParts.join(" ")}, and I'm excited to apply for the ${roleLabel} role at ${orgLabel}.`,
+  ];
+  if (capabilities.length > 0) {
+    bodyLines.push(
+      `My background includes hands-on work with ${joinWithAnd(capabilities)}, which lines up closely with what this role calls for.`,
+    );
+  }
+  bodyLines.push(
+    `I've attached my résumé and cover letter for more detail, and I'd welcome the chance to talk about how I can contribute to ${orgLabel}.`,
+  );
+  // Sign-off is two lines when a name exists ("Best regards," then the name
+  // on its own line); with no name, just the bare "Best regards," line.
+  bodyLines.push("Best regards,");
+  if (name) bodyLines.push(name);
+
+  return { subject, bodyLines };
+}
+
 export const embeddedEngine = {
   name: "embedded",
 
@@ -679,5 +759,28 @@ export const embeddedEngine = {
       warnings: [...steered.warnings, ...edits.warnings, ...focus.warnings, ...kwEdits.warnings],
       degraded: false,
     };
+  },
+
+  // Deterministic hiring-email generation: no LLM, and — unlike tailorResume/
+  // tailorCoverLetter above — no docx template pipeline at all (see the
+  // "Hiring email" section above buildHiringEmailText). A short plain-text
+  // note assembled from the role/company, the overlap between the posting
+  // and the candidate's own library capabilities, and the profile's headline
+  // values. `tailoredResume` is accepted here too (interface parity with the
+  // Gemini engine, which grounds its email in the freshly tailored résumé
+  // text) but intentionally left out of the destructure and ignored, exactly
+  // like tailorCoverLetter above: this path draws from the library and
+  // posting, not freeform résumé text.
+  async tailorHiringEmail({ jobPosting, jobPostingUrl, jobTitle, companyName, userId, persona }) {
+    const { text: posting, meta: scrapedMeta } = await resolvePostingText({ jobPosting, jobPostingUrl }, { required: false });
+    const baseData = toData(await loadLibrary({ userId }));
+    const { data: pdata } = applyPersona(baseData, persona);
+    const meta = postingMetaFor(posting, scrapedMeta);
+    const role = cleanPostingTitle(String(jobTitle || "").trim()) || meta.jobTitle;
+    const organization = String(companyName || "").trim() || meta.companyName;
+    const capabilities = topMatchingCapabilities(posting, pdata);
+    const { subject, bodyLines } = buildHiringEmailText({ role, organization, capabilities, profile: pdata.profile });
+
+    return { engine: "embedded", subject, bodyLines };
   },
 };

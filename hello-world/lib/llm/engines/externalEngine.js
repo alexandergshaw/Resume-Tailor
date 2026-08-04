@@ -139,6 +139,14 @@ export const externalEngine = {
     };
   },
 
+  // The external service is a standalone HTTP API this repo doesn't control
+  // and has no hiring-email endpoint, so this engine cannot generate one.
+  // Resolves to null (never throws) so the caller (app/api/tailor/route.js)
+  // simply treats the email as absent, the same as any other soft failure.
+  async tailorHiringEmail() {
+    return null;
+  },
+
   async tailorCoverLetter({ jobPosting, jobTitle, companyName }) {
     const { workflow } = getConfig();
     const posting = String(jobPosting || "").trim();
