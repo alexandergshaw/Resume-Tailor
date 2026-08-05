@@ -4,6 +4,7 @@ import { parseModelJson } from "@/lib/llm/extractEmployment";
 import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
 import { wantsEmbedded } from "@/lib/llm/featureEngine";
 import { critiqueAnswerLocal, buildDeliveryNotes, normalizeMetrics } from "@/lib/copilot/critiqueLocal";
+import { buildBodyLanguageFacts } from "@/lib/copilot/critiqueBodyLanguage";
 
 // Judges what a practice-mode candidate actually SAID in one recorded
 // answer — C4, layered on top of C3's delivery metrics
@@ -111,6 +112,44 @@ function sanitizeStar(star, type) {
   };
 }
 
+// BUG-12: tolerant enough to recognise "Body language:", "Body-language —",
+// "BODYLANGUAGE –" etc. as already-prefixed, not only the one exact phrase
+// with a literal space — a model that varies its own punctuation/casing
+// must not get double-prefixed ("Body language: Body-language: ..."), and
+// this same pattern is what both sanitizeCritique (below) and
+// AnswerFeedback.js use to recognise a body-language item inside `delivery`
+// regardless of which engine produced it.
+const BODY_LANGUAGE_PREFIX_RE = /^body[\s-]*language\b/i;
+
+function isBodyLanguageLine(s) {
+  return typeof s === "string" && BODY_LANGUAGE_PREFIX_RE.test(s.trim());
+}
+
+// The body-language line can fold up to four separate facts (head
+// orientation, posture, gestures, framing) into one sentence — MAX_STRING_LEN
+// (400) is sized for a single short delivery note like "You spoke for..."
+// and was silently truncating the framing fact off the end of a fully
+// measured answer's line (BUG-2). Generous headroom over the realistic
+// worst case (observed ~470-700 characters) rather than unbounded.
+const MAX_BODY_LANGUAGE_LEN = 1000;
+
+// D3: turns whatever the model returned for its own `bodyLanguage` field
+// (see buildPrompt's schema below) into one delivery-array line, tagged
+// with the same "Body language:" prefix critiqueLocal.js's own
+// bodyLanguageDeliveryNote uses — so the feedback panel (AnswerFeedback.js)
+// can split body-language content back out of `delivery` regardless of
+// which engine produced it. Anything that isn't a non-empty string (a
+// missing field, an object, a number the model hallucinated) is dropped
+// silently rather than surfaced, matching how every other model field here
+// degrades on malformed input instead of throwing.
+function bodyLanguageLineFromModel(raw) {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const line = BODY_LANGUAGE_PREFIX_RE.test(trimmed) ? trimmed : `Body language: ${trimmed}`;
+  return line.slice(0, MAX_BODY_LANGUAGE_LEN);
+}
+
 // Enforces the AC-C4-1 contract on ANY candidate result — the embedded
 // path's own output (already correctly shaped, but run through here too as
 // a safety net) and Gemini's parsed JSON alike — so a malformed model
@@ -118,8 +157,46 @@ function sanitizeStar(star, type) {
 // route actually took (never read from `raw.source`): it's the user's only
 // signal for which engine produced their feedback, and a Gemini response
 // must never be able to mislabel itself "embedded" or vice versa (BUG-3).
-function sanitizeCritique(raw, source, type) {
+//
+// D3: the response contract stays locked to its existing eight keys (see
+// route.test.js's "drops any unexpected field" case) — body-language
+// content is folded into the existing `delivery` list rather than given a
+// new top-level field. The embedded path already builds its own
+// body-language line straight into `raw.delivery` (critiqueLocal.js's
+// buildDeliveryNotes, which self-gates on metrics.bodyLanguage — no extra
+// gating needed here for that path); the Gemini path's separate
+// `raw.bodyLanguage` string (see buildPrompt) is a second possible source.
+// Whichever source produced it:
+// - BUG-1: it is given its OWN reserved slot (`MAX_LIST - 1` for
+//   everything else, one guaranteed slot for this) rather than competing
+//   with pace/filler/camera/mic or the model's own up-to-four delivery
+//   items for the same MAX_LIST cap — previously it was appended last and
+//   then silently sliced away whenever the rest of the list was already
+//   full, which was the common case, not an edge case.
+// - BUG-2: it gets its own longer MAX_BODY_LANGUAGE_LEN clamp instead of
+//   the per-item MAX_STRING_LEN every other short note uses, so a fully
+//   measured line does not get cut off mid-sentence.
+// - BUG-4: `allowBodyLanguage` gates the WHOLE channel, not just the
+//   model's dedicated field — a body-language-prefixed item the model
+//   wrote straight into its own `delivery` array is dropped the same way
+//   `raw.bodyLanguage` is when nothing was measured and no frames were
+//   sent (AC-D3-2), so a model cannot bypass the gate just by using the
+//   other field.
+function sanitizeCritique(raw, source, type, { allowBodyLanguage = true } = {}) {
   const r = raw && typeof raw === "object" ? raw : {};
+  const deliveryRaw = Array.isArray(r.delivery) ? r.delivery : [];
+  const otherDelivery = deliveryRaw.filter((s) => !isBodyLanguageLine(s));
+  const embeddedBodyLanguageLines = allowBodyLanguage ? deliveryRaw.filter((s) => isBodyLanguageLine(s)) : [];
+  const modelBodyLanguageLine = allowBodyLanguage ? bodyLanguageLineFromModel(r.bodyLanguage) : null;
+  const bodyLanguageLine = embeddedBodyLanguageLines.length
+    ? embeddedBodyLanguageLines
+        .map((s) => String(s).trim())
+        .join(" ")
+        .slice(0, MAX_BODY_LANGUAGE_LEN)
+    : modelBodyLanguageLine;
+  const delivery = bodyLanguageLine
+    ? [...sanitizeStringList(otherDelivery, MAX_LIST - 1), bodyLanguageLine]
+    : sanitizeStringList(otherDelivery);
   return {
     score: clampScore(r.score),
     verdict:
@@ -130,7 +207,7 @@ function sanitizeCritique(raw, source, type) {
     improvements: sanitizeStringList(r.improvements),
     missing: sanitizeStringList(r.missing),
     star: sanitizeStar(r.star, type),
-    delivery: sanitizeStringList(r.delivery),
+    delivery,
     source,
   };
 }
@@ -188,7 +265,31 @@ function visualInstruction(hasFrames) {
     : "No video frames were supplied for this answer. Make NO visual claims whatsoever — nothing about appearance, framing, lighting, posture, or expression.";
 }
 
-function buildPrompt({ question, type, answer, posting, profile, metricsFacts }) {
+// D3: the body-language rules the standard sets (lib/copilot/bodyLanguage.js,
+// restated in AC-D3), addressed to the model specifically — on top of, not
+// instead of, visualInstruction above. A head-pose measurement is not a
+// verified eye-contact measurement, so the model is barred from the eye
+// contact/gaze/attention vocabulary the same way the deterministic rubric
+// is; and since three still frames can show posture and framing but cannot
+// show how someone felt, the model is barred from any emotion/confidence/
+// personality/appearance read regardless of what it thinks it sees.
+function bodyLanguageInstruction(hasFrames) {
+  const rules = [
+    "Body-language rules: a camera can only measure head orientation, posture (tilt, lean, slouch), hand movement, and framing (position and fill in frame) — nothing else.",
+    "Describe head orientation only as facing the camera or head orientation — never as eye contact, gaze, or attention; a head-pose measurement is not a verified eye-contact measurement.",
+    "Hands that were out of frame, or not visible enough to measure movement, must be reported as NOT MEASURED — never as stillness. An unmeasured hand is not the same as a still one.",
+    "Never characterise emotion, confidence, nerves, or personality, and never comment on appearance, attractiveness, or any aspect of the person's body other than posture, orientation, and motion.",
+    "Treat any MEASURED BODY LANGUAGE facts below as ground truth — never contradict them or re-estimate a number they already give you.",
+    "Do not comment on any body-language signal that is absent from the MEASURED BODY LANGUAGE facts below and not visible in an attached frame — an absent signal was not measured, so say nothing about it rather than guessing.",
+    hasFrames
+      ? "Any visual body-language observation must be based ONLY on what is actually visible in the attached frames."
+      : "No frames were supplied, so make no visual body-language claims at all — you may still cite the MEASURED BODY LANGUAGE facts below, if any, but must not describe what anything looked like.",
+    "When body language was not measured and no frames were supplied, return bodyLanguage as an empty string rather than inventing generic filler.",
+  ];
+  return rules.join(" ");
+}
+
+function buildPrompt({ question, type, answer, posting, profile, metricsFacts, bodyLanguageFacts }) {
   const parts = [
     `The candidate was asked this ${type} interview question: "${question}"`,
     "",
@@ -208,9 +309,16 @@ function buildPrompt({ question, type, answer, posting, profile, metricsFacts })
   }
   parts.push("", "--- MEASURED DELIVERY METRICS (ground truth — cite these, do not re-estimate) ---");
   for (const fact of metricsFacts) parts.push(`- ${fact}`);
+  if (bodyLanguageFacts.length) {
+    parts.push(
+      "",
+      "--- MEASURED BODY LANGUAGE (ground truth — cite these, do not re-estimate; add visual detail ONLY from attached frames, never contradicting these) ---",
+    );
+    for (const fact of bodyLanguageFacts) parts.push(`- ${fact}`);
+  }
   parts.push(
     "",
-    'Return ONLY JSON of this exact shape: { "score": number, "verdict": string, "strengths": string[], "improvements": string[], "missing": string[], "star": object | null, "delivery": string[] }',
+    'Return ONLY JSON of this exact shape: { "score": number, "verdict": string, "strengths": string[], "improvements": string[], "missing": string[], "star": object | null, "delivery": string[], "bodyLanguage": string }',
     "score: 0-100 integer, an overall judgement of this answer's substance.",
     "verdict: one plain-language sentence.",
     "strengths: at most 4 short items — what the answer did well. Empty if the answer captured no real speech.",
@@ -218,6 +326,7 @@ function buildPrompt({ question, type, answer, posting, profile, metricsFacts })
     "missing: at most 4 short items — what the question or job posting expected that the answer skipped.",
     'star: for a BEHAVIORAL question only, { "situation": boolean, "task": boolean, "action": boolean, "result": boolean } reflecting which STAR beats the answer actually covered. For technical or general questions, this must be null.',
     "delivery: at most 4 short items grounded in the MEASURED DELIVERY METRICS above — do not invent numbers not given there.",
+    "bodyLanguage: one short sentence about head orientation, posture, hand movement, or framing only — grounded in the MEASURED BODY LANGUAGE facts above and/or what is actually visible in attached frames. An empty string when body language was not measured and no frames were supplied — never generic filler.",
   );
   return parts.join("\n");
 }
@@ -260,9 +369,14 @@ export async function POST(request) {
       const { geminiModel } = getServerEnv();
       const client = getGeminiClient();
       const metricsFacts = buildDeliveryNotes(metrics);
-      const prompt = buildPrompt({ question, type, answer, posting, profile, metricsFacts });
+      const bodyLanguageFacts = buildBodyLanguageFacts(metrics.bodyLanguage);
+      const prompt = buildPrompt({ question, type, answer, posting, profile, metricsFacts, bodyLanguageFacts });
       const frameParts = frames.map((base64) => ({ inlineData: { mimeType: "image/jpeg", data: base64 } }));
-      const systemInstruction = [BASE_SYSTEM, visualInstruction(frames.length > 0)].join(" ");
+      const systemInstruction = [
+        BASE_SYSTEM,
+        visualInstruction(frames.length > 0),
+        bodyLanguageInstruction(frames.length > 0),
+      ].join(" ");
 
       const response = await client.models.generateContent({
         model: geminiModel,
@@ -275,7 +389,8 @@ export async function POST(request) {
         const fallback = safeCritiqueAnswerLocal({ question, type, answer, posting, profile, metrics });
         return Response.json(sanitizeCritique(fallback, "embedded", type));
       }
-      return Response.json(sanitizeCritique(parsed, "gemini", type));
+      const allowBodyLanguage = bodyLanguageFacts.length > 0 || frames.length > 0;
+      return Response.json(sanitizeCritique(parsed, "gemini", type, { allowBodyLanguage }));
     } catch {
       const fallback = safeCritiqueAnswerLocal({ question, type, answer, posting, profile, metrics });
       return Response.json(sanitizeCritique(fallback, "embedded", type));

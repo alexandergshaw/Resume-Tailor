@@ -17,6 +17,12 @@
 /.next/
 /out/
 
+# MediaPipe wasm runtime, staged at build time (scripts/copy-mediapipe.mjs)
+# from the installed @mediapipe/tasks-vision package -- deliberately not
+# committed, see public/mediapipe/models/README.md. The .task model files
+# in that same models/ directory ARE committed and are not covered by this.
+/public/mediapipe/wasm/
+
 # production
 /build
 

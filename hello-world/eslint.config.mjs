@@ -28,6 +28,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Generated (never committed -- see .gitignore) MediaPipe wasm runtime,
+    // staged here at build/dev time by scripts/copy-mediapipe.mjs from the
+    // installed @mediapipe/tasks-vision package -- third-party vendor JS,
+    // not this app's source, same reasoning as the .next/** build output
+    // above.
+    "public/mediapipe/wasm/**",
   ]),
 ]);
 

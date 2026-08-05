@@ -11,6 +11,14 @@
 import { profileSkills } from "./answerLocal";
 import { defaultLibraryData } from "@/lib/llm/engines/tailor-lite/library/defaults";
 import { MIN_LUMA_SAMPLES, MIN_MOTION_SAMPLES } from "./videoStats";
+// D3's body-language rubric — pulled out into its own module purely to
+// keep this already-large file under its line cap; see
+// critiqueBodyLanguage.js's own header for why and how it's used here.
+import {
+  normalizeBodyLanguage,
+  computeBodyLanguageScore,
+  bodyLanguageDeliveryNote,
+} from "./critiqueBodyLanguage";
 
 const VALID_TYPES = ["behavioral", "technical", "general"];
 const MAX_LIST = 4;
@@ -374,9 +382,17 @@ function computeVideoScore(video) {
 // excludes a null delivery score from both the weighted composite and
 // "weakest component" picking, rather than averaging in a zero (BUG-12).
 function computeDeliveryScore(m) {
-  const scores = [computePaceScore(m), computeFillerScore(m), computeVideoScore(m.video)].filter(
-    (s) => s !== null,
-  );
+  const scores = [
+    computePaceScore(m),
+    computeFillerScore(m),
+    computeVideoScore(m.video),
+    // One of up to four equally-weighted delivery sub-scores, so it moves
+    // the FINAL composite by only a few points at the extreme — see
+    // computeBodyLanguageScore's own doc comment in critiqueBodyLanguage.js
+    // for the exact math. Deliberate: a proxy measurement should nudge the
+    // score, not dominate it.
+    computeBodyLanguageScore(m.bodyLanguage),
+  ].filter((s) => s !== null);
   if (scores.length === 0) return null;
   return Math.round(scores.reduce((sum, s) => sum + s, 0) / scores.length);
 }
@@ -455,6 +471,17 @@ export function buildDeliveryNotes(m) {
     notes.push("The mic was muted for part of this answer, so word count and pace may be understated.");
   }
 
+  // BUG-1: reserve body language its own slot rather than letting it
+  // compete with pace/filler/camera/mic for the same MAX_LIST cap — with
+  // the mic muted, those four already fill every slot, and appending the
+  // body-language note last meant `notes.slice(0, MAX_LIST)` silently threw
+  // away a fully measured note (and the score it had already moved) every
+  // time. When it exists, it always survives, even if that means trimming
+  // an older note first.
+  const bodyLanguageNote = bodyLanguageDeliveryNote(m.bodyLanguage);
+  if (bodyLanguageNote) {
+    return [...notes.slice(0, MAX_LIST - 1), bodyLanguageNote];
+  }
   return notes.slice(0, MAX_LIST);
 }
 
@@ -648,6 +675,12 @@ export function normalizeMetrics(raw) {
       fidgety: !!video.fidgety,
       partiallyOff: !!video.partiallyOff,
     },
+    // D3: metrics.bodyLanguage rides alongside metrics.video the same way it
+    // already reaches the client (usePracticeAnswer's doneAnswer sets it
+    // directly on the metrics object it hands to the critique request) —
+    // this is what actually threads it into the rubric/Gemini-facts below,
+    // since neither read raw client input directly.
+    bodyLanguage: normalizeBodyLanguage(m.bodyLanguage),
   };
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -20,9 +20,55 @@ import PostingPicker from "./PostingPicker";
 import QuestionCard from "./QuestionCard";
 import AnswerReview from "./AnswerReview";
 import AnswerFeedback from "./AnswerFeedback";
+import PracticeHistory from "./PracticeHistory";
 import { usePracticeAnswer } from "./usePracticeAnswer";
 import { usePrepContext } from "../usePrepContext";
 import PrepContext from "../PrepContext";
+
+// D1: whether recorded answers are saved to the user's account, persisted in
+// localStorage under a new key alongside the existing practice preferences
+// (usePrepContext.js's PREP_STORAGE_KEY, app/settings/engine.js's
+// ENGINE_STORAGE_KEY). Built as a real external store — same shape as
+// engine.js's useEngine — rather than a mount effect that calls setState:
+// getServerSaveEnabledSnapshot keeps the server render and the client's
+// first hydration pass identical (no flash/mismatch), and there is no
+// separate effect synchronously writing state afterward for the "set state
+// in an effect" lint rule to flag. Defaults ON — see AC-D1-4.
+const SAVE_RECORDINGS_STORAGE_KEY = "copilot-practice-save-recordings";
+const DEFAULT_SAVE_ENABLED = true;
+const saveEnabledListeners = new Set();
+
+function readSaveEnabled() {
+  if (typeof window === "undefined") return DEFAULT_SAVE_ENABLED;
+  try {
+    const stored = window.localStorage.getItem(SAVE_RECORDINGS_STORAGE_KEY);
+    if (stored === "on") return true;
+    if (stored === "off") return false;
+    return DEFAULT_SAVE_ENABLED;
+  } catch {
+    return DEFAULT_SAVE_ENABLED;
+  }
+}
+
+function getServerSaveEnabledSnapshot() {
+  return DEFAULT_SAVE_ENABLED;
+}
+
+function subscribeSaveEnabled(callback) {
+  saveEnabledListeners.add(callback);
+  return () => saveEnabledListeners.delete(callback);
+}
+
+function writeSaveEnabled(on) {
+  try {
+    window.localStorage.setItem(SAVE_RECORDINGS_STORAGE_KEY, on ? "on" : "off");
+  } catch {
+    // Quota exceeded / private browsing: the choice still applies for the
+    // rest of this tab via the listener notification below, it just won't
+    // persist across a reload.
+  }
+  saveEnabledListeners.forEach((cb) => cb());
+}
 
 // Practice mode's capture layer: camera + mic, transcribed as "you", plus a
 // posting picker, a generated interview question to practice against, (C3)
@@ -64,6 +110,24 @@ export default function PracticeClient() {
   const { engine } = useEngine();
   const isEmbedded = engine === "embedded";
 
+  // D1: "Save recordings to my account" — defaults ON. This value drives the
+  // switch's checked state and the privacy notice below, both of which
+  // should reflect whatever is true RIGHT NOW. The actual upload decision is
+  // separate: `readSaveEnabled` (the plain function, not this hook value) is
+  // handed to onDoneAnswer/usePracticeAnswer and re-read again immediately
+  // before any upload happens, seconds later — see BUG-2 in usePracticeAnswer's
+  // persistAnswer. That live re-read, not this render-time snapshot, is what
+  // makes toggling mid-critique actually take effect.
+  const saveEnabled = useSyncExternalStore(
+    subscribeSaveEnabled,
+    readSaveEnabled,
+    getServerSaveEnabledSnapshot,
+  );
+
+  const onToggleSaveEnabled = useCallback((e) => {
+    writeSaveEnabled(e.target.checked);
+  }, []);
+
   const {
     answering,
     settling,
@@ -84,6 +148,9 @@ export default function PracticeClient() {
     retryCritique,
     sessionAnswered,
     sessionAverageScore,
+    saveStatus,
+    saveError,
+    savedAnswerVersion,
   } = usePracticeAnswer();
 
   const sessionRef = useRef(null);
@@ -353,8 +420,22 @@ export default function PracticeClient() {
       posting: postingRef.current
         ? { title: postingRef.current.title, company: postingRef.current.company, description: postingRef.current.description }
         : null,
+      // The posting picker's option id IS the application id (see
+      // normalizePostingRows in lib/copilot/postings.js) — kept separate
+      // from `posting` above rather than folded into it, since `posting` is
+      // also what's sent to the critique engine and this id has no reason
+      // to travel with it.
+      applicationId: postingRef.current?.id || null,
       profile,
       includeFrames: sendFrames && !isEmbedded,
+      // BUG-2: a live reader, not `saveEnabled` itself — the upload this
+      // gates happens seconds later, after the critique settles, and the
+      // switch must be re-read at THAT moment (see usePracticeAnswer's
+      // persistAnswer), not latched to whatever it was when Done was
+      // pressed. `readSaveEnabled` always reflects the current value since
+      // it re-reads localStorage itself rather than closing over render-time
+      // state, so no dependency on `saveEnabled` is needed here either.
+      isSaveEnabled: readSaveEnabled,
     });
   }, [doneAnswerFlow, profile, sendFrames, isEmbedded]);
 
@@ -399,19 +480,30 @@ export default function PracticeClient() {
 
   const elapsed = startedAt ? now - startedAt : 0;
   // Derived from state, not hard-coded, and names every destination that
-  // actually receives data on the CURRENT engine — not just frames. On the
-  // Gemini engine, every critique request sends the answer transcript, the
-  // posting details, and the prep-context profile to Google, regardless of
-  // the frames switch; that switch only ever controls frames (AC-C4-5). The
-  // recorded replay clip is never uploaded under any setting — nothing in
-  // this component's data flow ever sends replayUrl/the recorder's blob
-  // anywhere (BUG-2).
+  // actually receives data on the CURRENT engine/switch combination — never
+  // a static claim. On the Gemini engine, every critique request sends the
+  // answer transcript, the posting details, and the prep-context profile to
+  // Google, regardless of the frames switch; that switch only ever controls
+  // whether still frames are ALSO sent (AC-C4-5) — unchanged by D1.
+  //
+  // D1 made the old blanket "your video stays in your browser and is never
+  // uploaded" claim false: the save switch below controls a SEPARATE
+  // destination (this user's own private Supabase storage) for the full
+  // recorded clip, independent of both the engine and the frames opt-in —
+  // saving happens (or doesn't) the same way on every engine. `videoNotice`
+  // and `engineNotice` are deliberately built from independent state and
+  // never reference each other's wording, so neither switch's sentence can
+  // be read as implying anything about the other (AC-D1-4).
   const framesWillUpload = sendFrames && !isEmbedded;
-  const privacyNotice = isEmbedded
-    ? "Your audio is streamed to Deepgram for transcription. The critique runs on this server with no AI provider — your answer, the posting, and your prep context are never sent to Google. Your video stays in your browser and is never uploaded."
+  const engineNotice = isEmbedded
+    ? "The critique runs on this server with no AI provider — your answer, the posting, and your prep context are never sent to Google."
     : framesWillUpload
-      ? "Your audio is streamed to Deepgram for transcription. Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback, along with up to three still frames from each answer. The rest of your video stays in your browser and is never uploaded."
-      : "Your audio is streamed to Deepgram for transcription. Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback. Your video stays in your browser and is never uploaded.";
+      ? "Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback, along with up to three still frames from each answer."
+      : "Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback.";
+  const videoNotice = saveEnabled
+    ? "Your answer video is uploaded to your own Supabase storage, private to your account, and listed in your practice history until you delete it."
+    : "Your video clip stays in your browser and is dropped when the session ends.";
+  const privacyNotice = `Your audio is streamed to Deepgram for transcription. ${engineNotice} ${videoNotice}`;
 
   return (
     <Box>
@@ -510,9 +602,23 @@ export default function PracticeClient() {
         />
         {isEmbedded ? (
           <Typography variant="caption" sx={{ color: "var(--text-muted)" }}>
-            The embedded engine never uploads anything.
+            The embedded engine never sends your answer, posting, or frames to an AI provider. This is
+            separate from saving recordings below.
           </Typography>
         ) : null}
+      </Stack>
+
+      <Stack direction="row" spacing={1} sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 0.5 }}>
+        <FormControlLabel
+          control={
+            <Switch size="small" checked={saveEnabled} onChange={onToggleSaveEnabled} />
+          }
+          label={
+            <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
+              Save recordings to my account
+            </Typography>
+          }
+        />
       </Stack>
 
       {/* Shown once at least one answer has been analyzed (AC-C4-6), and
@@ -553,10 +659,35 @@ export default function PracticeClient() {
             replayUrl={replayUrl}
             replaySupported={replaySupported}
           />
+          {/* D1's save state, surfaced honestly (AC-D1-3): only ever shown
+              when a save was actually attempted (saveStatus starts, and
+              stays, "idle" when the switch above is off — see
+              usePracticeAnswer's persistAnswer). "failed" states plainly
+              what went wrong rather than implying the recording was kept. */}
+          {saveStatus === "saving" ? (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Saving this answer to your practice history…
+            </Alert>
+          ) : null}
+          {saveStatus === "saved" ? (
+            <Alert severity={saveError ? "warning" : "success"} sx={{ mb: 2 }}>
+              {saveError ? `Saved to your practice history. ${saveError}` : "Saved to your practice history."}
+            </Alert>
+          ) : null}
+          {saveStatus === "failed" ? (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              This answer was not saved to your practice history: {saveError || "an unknown error occurred."}
+            </Alert>
+          ) : null}
           <AnswerFeedback
             status={critiqueStatus}
             feedback={critique}
             error={critiqueError}
+            // D3 bug fix: AnswerFeedback cannot tell frames-sent from
+            // frames-not-sent (or resolve D2's unavailable-reason code) from
+            // the response contract alone — both already live here.
+            framesSent={framesWillUpload}
+            bodyLanguageReason={answerMetrics?.bodyLanguage?.reason || null}
             onRetry={onRetryCritique}
             onNext={onNextQuestion}
             onTryAgain={onTryAgainAnswer}
@@ -576,6 +707,10 @@ export default function PracticeClient() {
           startedAt={startedAt}
         />
       </Stack>
+
+      <Box sx={{ mt: 2 }}>
+        <PracticeHistory refreshSignal={savedAnswerVersion} />
+      </Box>
     </Box>
   );
 }

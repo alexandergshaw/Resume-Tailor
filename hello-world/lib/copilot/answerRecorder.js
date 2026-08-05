@@ -1,11 +1,16 @@
 // Records the candidate's own answer (video + audio) over the practice
-// session's existing stream, purely so it can be played back afterward — no
-// network, nothing uploaded, no relation to the Deepgram transcription
-// stream running alongside it. Replay is a bonus feature, not a required
-// one: when MediaRecorder is missing, or none of the candidate mime types
-// are supported, every method below becomes a safe no-op so its absence can
-// never block answering or the delivery metrics computed from the
-// transcript instead.
+// session's existing stream, and hands back the resulting Blob — originally
+// purely for in-browser replay, and, since D1, that same Blob may also be
+// uploaded to the user's own practice history by the caller (see
+// lib/supabase/practiceAnswers.js and usePracticeAnswer.js's persistAnswer).
+// This module itself still does no networking either way: it has no
+// relation to the Deepgram transcription stream running alongside it, and
+// whether/where the Blob it returns goes afterward is entirely up to
+// whoever calls stop(). Replay (and now saving) is a bonus feature, not a
+// required one: when MediaRecorder is missing, or none of the candidate
+// mime types are supported, every method below becomes a safe no-op so its
+// absence can never block answering or the delivery metrics computed from
+// the transcript instead.
 //
 // No DOM/browser globals are touched at module scope — MediaRecorder is
 // only referenced inside methods, at call time — so this module imports

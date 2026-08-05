@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnswerRecorder } from "@/lib/copilot/answerRecorder";
 import { VideoFrameSampler } from "@/lib/copilot/videoStats";
+import { BodyLanguageSampler } from "@/lib/copilot/bodyLandmarks";
 import { computeAnswerMetrics } from "@/lib/copilot/answerMetrics";
 import { isFinalInAnswerWindow, deriveSpeechSpan } from "@/lib/copilot/answerWindow";
 import { critiqueAnswer } from "@/lib/copilot/critiqueClient";
+import { savePracticeAnswer, updatePracticeAnswerCritique } from "@/lib/supabase/practiceAnswers";
 
 // After "Done" is pressed, how long the transcript keeps draining before
 // closing for good. Deepgram's endpointing (300ms) plus normal network
@@ -47,6 +49,20 @@ export function usePracticeAnswer() {
   const [critiqueStatus, setCritiqueStatus] = useState("idle"); // idle | loading | done | error
   const [critique, setCritique] = useState(null); // the AC-C4-1 shape, once done
   const [critiqueError, setCritiqueError] = useState("");
+  // D1: persisting the completed answer (transcript + metrics + critique,
+  // plus the clip when one exists) to the user's account. "idle" until a
+  // save is actually attempted — the save switch being off (PracticeClient)
+  // means this never leaves "idle" for that answer, which is itself honest:
+  // nothing was attempted, so there's nothing to report. saveError doubles
+  // as the reason on "failed" and as a non-fatal note on "saved" (e.g. the
+  // clip was over the size cap and only the rest of the answer was kept) —
+  // see persistAnswer.
+  const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | failed
+  const [saveError, setSaveError] = useState("");
+  // Bumped after every successful save so PracticeHistory (mounted by
+  // PracticeClient) knows to reload — it has no other way to learn that a
+  // new row exists in the CURRENT session.
+  const [savedAnswerVersion, setSavedAnswerVersion] = useState(0);
   // Per-question scores for this session, keyed by the exact question text
   // — a Map rather than a running count/sum, so re-answering the SAME
   // question (via "Try again") REPLACES its entry instead of adding a
@@ -105,6 +121,13 @@ export function usePracticeAnswer() {
   // again cleanly, so there's no need to rebuild them per answer.
   const recorderRef = useRef(null);
   const samplerRef = useRef(null);
+  // D2: the body-language sampler, started/stopped in lockstep with
+  // samplerRef (VideoFrameSampler) everywhere below — see AC-D2-4. Its own
+  // MediaPipe models are cached at module scope inside bodyLandmarks.js and
+  // survive being rebuilt here, so recreating this instance per session
+  // (resetForSession) is cheap; only the FIRST model load in the whole page
+  // session is ever slow, and this never awaits it either way.
+  const bodySamplerRef = useRef(null);
   // Mirrors `replayUrl` so it can be revoked synchronously (session stop,
   // unmount) without depending on React state having flushed.
   const replayUrlRef = useRef("");
@@ -130,6 +153,14 @@ export function usePracticeAnswer() {
   // the SAME analysis on the SAME answer without re-recording. Frames are
   // deliberately NOT cached here — see runCritique.
   const lastCritiqueInputsRef = useRef(null);
+  // D1/BUG-6: `{ gen, id }` of the row already saved for the CURRENT answer,
+  // once the initial save has landed — lets a later successful Retry UPDATE
+  // that row's critique instead of inserting a duplicate (savePracticeAnswer
+  // only ever inserts). Keyed by generation, not just a bare id: a stale
+  // save/update settling for an ANSWER THAT'S SINCE BEEN ABANDONED must never
+  // be mistaken for belonging to whatever NEWER answer's id this ref might
+  // hold by the time it resolves — see persistAnswer.
+  const savedAnswerIdRef = useRef(null);
 
   // Exactly one replay object URL may exist at a time (AC-C3-6) — revoke
   // whatever the previous answer left behind before anything else adopts a
@@ -156,6 +187,9 @@ export function usePracticeAnswer() {
     setCritique(null);
     setCritiqueError("");
     lastCritiqueInputsRef.current = null;
+    setSaveStatus("idle");
+    setSaveError("");
+    savedAnswerIdRef.current = null;
   }, [revokeReplay]);
 
   // Abandons whatever answer is currently being recorded OR still settling
@@ -188,9 +222,14 @@ export function usePracticeAnswer() {
       settlingRef.current = false;
       setSettling(false);
     }
-    // Safe no-ops if already stopped above (or never started) — both
-    // classes guarantee stop() is idempotent and safe before start().
+    // Safe no-ops if already stopped above (or never started) — all three
+    // classes guarantee stop() is idempotent and safe before start(). Every
+    // path that abandons an in-progress answer routes through here, so this
+    // is also what makes AC-D2-4's "every abandonment path finalises both
+    // samplers" hold: posting change, next question, try again, session
+    // stop, and unmount all call this before anything else.
     samplerRef.current?.stop();
+    bodySamplerRef.current?.stop();
     recorderRef.current?.stop();
   }, []);
 
@@ -210,6 +249,7 @@ export function usePracticeAnswer() {
     answerMicMutedRef.current = false;
     recorderRef.current = null;
     samplerRef.current = null;
+    bodySamplerRef.current = null;
     resetAnswerState();
     setQuestionScores(new Map());
   }, [abandonInProgressAnswer, resetAnswerState]);
@@ -287,11 +327,128 @@ export function usePracticeAnswer() {
 
       if (!recorderRef.current) recorderRef.current = new AnswerRecorder();
       if (!samplerRef.current) samplerRef.current = new VideoFrameSampler();
+      if (!bodySamplerRef.current) bodySamplerRef.current = new BodyLanguageSampler();
       recorderRef.current.start(liveStream);
       samplerRef.current.start(liveStream);
+      bodySamplerRef.current.start(liveStream);
     },
     [abandonInProgressAnswer, resetAnswerState],
   );
+
+  // D1: syncs one completed answer to the user's account — called after
+  // EVERY critique settle for that answer (the initial one from doneAnswer,
+  // and any later Retry), and decides for itself whether that means
+  // inserting a new row or updating an existing one:
+  //
+  // - No row saved yet for this generation (`save` present, built by
+  //   doneAnswer with the recording/transcript/metrics) → INSERT, with
+  //   whatever critique this settle produced (or `{}` if it failed — a
+  //   failed analysis must not cost the user their recording, AC-D1-3).
+  // - A row already exists for this generation (`savedAnswerIdRef`) →
+  //   UPDATE just its critique — this is BUG-6's fix: without it, an answer
+  //   whose first critique failed and was then successfully retried stayed
+  //   stored with an empty critique forever, even though the user watched a
+  //   real one come back. Only worth doing when this settle actually
+  //   produced one; a retry that fails again has nothing new to persist.
+  // - Neither (a bare Retry with no row and no `save` payload) → nothing to
+  //   do; retryCritique doesn't carry a fresh recording to insert.
+  //
+  // BUG-2: `save.isSaveEnabled`, when present, is a LIVE reader (not a
+  // snapshot taken at Done) — called here, immediately before the network
+  // call, exactly like camera-frame consent is re-read at send time rather
+  // than latched (C4's BUG-1). The critique this waits on can take seconds;
+  // a user who turns "Save recordings" off in that window must get what
+  // they asked for, not whatever was true when Done was pressed.
+  //
+  // Fire-and-forget from the caller's point of view: never awaited by
+  // doneAnswer/runCritique, so a slow or failed save can never block the
+  // feedback panel, "Next question", or tear down the capture session.
+  // `gen` is the SAME generation the critique request was gated on. The
+  // network call itself is NOT skipped when it goes stale — the write this
+  // function makes has already reached the server by the time the
+  // post-await check below runs, and that's deliberate: the user asked for
+  // this recording to be saved, and abandoning the on-screen review (Next
+  // question, Try again, Stop, unmount) must not silently cancel a save
+  // already in flight. What the gen check actually gates is the LOCAL UI
+  // state (saveStatus/saveError) below it — an abandoned answer's result
+  // must not paint stale status onto whatever answer is on screen now. A
+  // row that DID land for an abandoned generation still bumps
+  // savedAnswerVersion, so PracticeHistory (if still mounted this session)
+  // picks it up even though nothing else about that answer is shown anymore.
+  const persistAnswer = useCallback(async (input) => {
+    const { gen, save, critique } = input;
+    const existingId =
+      savedAnswerIdRef.current && savedAnswerIdRef.current.gen === gen ? savedAnswerIdRef.current.id : null;
+
+    if (existingId) {
+      if (!critique) return;
+      setSaveStatus("saving");
+      setSaveError("");
+      const { error } = await updatePracticeAnswerCritique(existingId, critique);
+      if (answerGenRef.current !== gen) {
+        if (!error) setSavedAnswerVersion((v) => v + 1);
+        return;
+      }
+      if (error) {
+        setSaveStatus("failed");
+        setSaveError(error);
+        return;
+      }
+      setSaveStatus("saved");
+      setSaveError("");
+      setSavedAnswerVersion((v) => v + 1);
+      return;
+    }
+
+    if (!save) return;
+    const enabled = typeof save.isSaveEnabled === "function" ? save.isSaveEnabled() : true;
+    if (!enabled) return;
+
+    setSaveStatus("saving");
+    setSaveError("");
+    const {
+      blob,
+      mimeType,
+      question,
+      questionType,
+      transcript,
+      durationMs,
+      applicationId,
+      postingTitle,
+      postingCompany,
+      metrics,
+    } = save;
+    const { data, error } = await savePracticeAnswer({
+      blob,
+      mimeType,
+      question,
+      questionType,
+      transcript,
+      durationMs,
+      applicationId,
+      postingTitle,
+      postingCompany,
+      metrics,
+      critique: critique || {},
+    });
+    if (!error && data?.id) savedAnswerIdRef.current = { gen, id: data.id };
+    if (answerGenRef.current !== gen) {
+      if (!error && data?.id) setSavedAnswerVersion((v) => v + 1);
+      return;
+    }
+    if (error) {
+      setSaveStatus("failed");
+      setSaveError(error);
+      return;
+    }
+    setSaveStatus("saved");
+    // Not a failure — the answer WAS saved — but the clip specifically
+    // wasn't (over the size cap, or nothing was ever recorded — BUG-3), and
+    // that must be reported plainly rather than the save silently looking
+    // fully successful.
+    setSaveError(data?.videoSkipped || "");
+    setSavedAnswerVersion((v) => v + 1);
+  }, []);
 
   // Requests the substance critique for one completed answer and writes the
   // result into critique/critiqueStatus/critiqueError — gated on the SAME
@@ -310,29 +467,55 @@ export function usePracticeAnswer() {
   // itself would let a Retry replay a JPEG after the user had already
   // turned the opt-in off — the on-screen privacy notice would say no frame
   // is sent while one still was (BUG-1).
-  const runCritique = useCallback(async (baseInputs, { includeFrames }) => {
+  //
+  // `save` (D1) is only ever passed by doneAnswer's initial call, never by
+  // retryCritique — persistAnswer tells the initial insert and a later
+  // Retry's update apart by whether a row has already landed for this
+  // generation, not by whether `save` itself is present (see persistAnswer).
+  // Every settle here — the initial one AND any Retry — hands its result to
+  // persistAnswer; passing `critiqueResult` as-is (not coerced to `{}`) lets
+  // persistAnswer distinguish "this settle produced nothing new" (a Retry
+  // that failed again) from "this settle explicitly has an empty critique"
+  // (the very first save, when the FIRST attempt failed).
+  // BUG-3: persistAnswer must run after EVERY settle, stale generation or
+  // not — an abandoned review (Next question, Try again, Stop, unmount)
+  // must never cancel a save the user already asked for; that's the whole
+  // D1 rule (persistAnswer's own docblock states it) and it was being
+  // violated here: the old code returned early on a stale generation from
+  // inside both the try and the catch, before ever reaching
+  // persistAnswer(...) below. critiqueResult is now captured UNCONDITIONALLY
+  // (success or failure, current generation or not); only the LOCAL UI state
+  // writes (setCritique/setCritiqueStatus/setQuestionScores/setCritiqueError)
+  // stay gated on the generation, since those paint the screen for whatever
+  // answer is on screen NOW, not whichever one this request was for.
+  const runCritique = useCallback(async (baseInputs, { includeFrames, save } = {}) => {
     lastCritiqueInputsRef.current = baseInputs;
     const frames = includeFrames ? answerFramesRef.current || [] : [];
     const gen = answerGenRef.current;
     setCritiqueStatus("loading");
     setCritiqueError("");
+    let critiqueResult = null;
     try {
       const result = await critiqueAnswer({ ...baseInputs, frames });
-      if (answerGenRef.current !== gen) return;
-      setCritique(result);
-      setCritiqueStatus("done");
-      const key = baseInputs.question || "";
-      setQuestionScores((prev) => {
-        const next = new Map(prev);
-        next.set(key, Number(result?.score) || 0);
-        return next;
-      });
+      critiqueResult = result;
+      if (answerGenRef.current === gen) {
+        setCritique(result);
+        setCritiqueStatus("done");
+        const key = baseInputs.question || "";
+        setQuestionScores((prev) => {
+          const next = new Map(prev);
+          next.set(key, Number(result?.score) || 0);
+          return next;
+        });
+      }
     } catch (err) {
-      if (answerGenRef.current !== gen) return;
-      setCritiqueError(err?.message || "Could not analyze this answer.");
-      setCritiqueStatus("error");
+      if (answerGenRef.current === gen) {
+        setCritiqueError(err?.message || "Could not analyze this answer.");
+        setCritiqueStatus("error");
+      }
     }
-  }, []);
+    persistAnswer({ gen, save, critique: critiqueResult });
+  }, [persistAnswer]);
 
   // Re-runs the critique on the SAME answer (same transcript and metrics
   // already sent the first time) without touching the recording at all —
@@ -371,6 +554,16 @@ export function usePracticeAnswer() {
 
       const durationMs = Date.now() - answerStartRef.current;
       const videoResult = samplerRef.current ? samplerRef.current.stop() : { summary: null, frames: [] };
+      // D2: stopped in the SAME place as the video sampler, not after the
+      // drain below — AC-D2-4 requires both to start/stop in lockstep, and
+      // neither this call nor the model loading it may still be waiting on
+      // ever blocks anything: stop() itself never awaits (see
+      // BodyLanguageSampler.stop()), so a slow/unfinished model load simply
+      // means fewer (or zero) samples were collected this answer, reported
+      // honestly rather than waited for.
+      const bodyLanguageResult = bodySamplerRef.current
+        ? bodySamplerRef.current.stop()
+        : new BodyLanguageSampler().stop();
 
       const blobPromise = recorderRef.current ? recorderRef.current.stop() : Promise.resolve(null);
       const drainPromise = new Promise((resolve) => {
@@ -410,6 +603,11 @@ export function usePracticeAnswer() {
         video: videoResult.summary,
         micMuted: answerMicMutedRef.current,
       });
+      // D2: rides alongside the existing video summary rather than being
+      // folded into computeAnswerMetrics's own contract (answerMetrics.js
+      // is untouched by this feature) — AnswerReview reads it straight off
+      // metrics.bodyLanguage, same as it already reads metrics.video.
+      metrics.bodyLanguage = bodyLanguageResult;
 
       setAnswerTranscript(lines);
       setAnswerMetrics(metrics);
@@ -435,7 +633,33 @@ export function usePracticeAnswer() {
           profile: context.profile || "",
           metrics,
         },
-        { includeFrames: !!context.includeFrames },
+        {
+          includeFrames: !!context.includeFrames,
+          // D1: built UNCONDITIONALLY, regardless of the save switch's
+          // state right now — BUG-2's fix. Whether to actually upload is a
+          // per-UPLOAD decision, re-read at the moment persistAnswer is
+          // about to call savePracticeAnswer (via `isSaveEnabled`, a live
+          // reader, not a boolean snapshot taken here), exactly like the
+          // frames opt-in above is re-read at send time rather than
+          // latched. That live read is what lets a user who turns "Save
+          // recordings" OFF while the critique is still running stop the
+          // upload that was about to happen — the payload still has to be
+          // built here regardless, so there's something for that later
+          // check to act on either way.
+          save: {
+            blob,
+            mimeType: recorderRef.current?.mimeType || "",
+            question: context.question || "",
+            questionType: context.type || "general",
+            transcript: lines.join(" "),
+            durationMs,
+            applicationId: context.applicationId || null,
+            postingTitle: context.posting?.title || "",
+            postingCompany: context.posting?.company || "",
+            metrics,
+            isSaveEnabled: context.isSaveEnabled,
+          },
+        },
       );
     },
     [runCritique],
@@ -480,5 +704,8 @@ export function usePracticeAnswer() {
     retryCritique,
     sessionAnswered,
     sessionAverageScore,
+    saveStatus,
+    saveError,
+    savedAnswerVersion,
   };
 }

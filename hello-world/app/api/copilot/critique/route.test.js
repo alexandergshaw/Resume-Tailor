@@ -341,3 +341,223 @@ describe("POST /api/copilot/critique (response is clamped to the AC-C4-1 contrac
     expect(data.internalDebugInfo).toBeUndefined();
   });
 });
+
+// Metrics shape that clears buildBodyLanguageFacts' own coverage gate (D2's
+// normalizeBodyLanguage requires `available: true` plus at least one
+// measured field) — this is what makes route.js's own
+// `allowBodyLanguage = bodyLanguageFacts.length > 0 || frames.length > 0`
+// gate true via the "something was measured" branch, independent of frames.
+const MEASURED_BODY_LANGUAGE_METRICS = { bodyLanguage: { available: true, eyeContactRatio: 0.82 } };
+
+describe("POST /api/copilot/critique (D3 body language)", () => {
+  it("gives the body-language line its own reserved delivery slot, even when the model already filled all four delivery items", async () => {
+    mockUser();
+    mockGemini({
+      score: 82,
+      verdict: "Well done.",
+      strengths: [],
+      improvements: [],
+      missing: [],
+      star: null,
+      delivery: ["Delivery 1", "Delivery 2", "Delivery 3", "Delivery 4"],
+      bodyLanguage: "You faced the camera consistently and sat centered in frame.",
+    });
+    const res = await POST(
+      jsonRequest({
+        question: "Q",
+        type: "general",
+        answer: "A",
+        engine: "gemini",
+        metrics: MEASURED_BODY_LANGUAGE_METRICS,
+      }),
+    );
+    const data = await res.json();
+    expect(data.delivery).toEqual([
+      "Delivery 1",
+      "Delivery 2",
+      "Delivery 3",
+      "Body language: You faced the camera consistently and sat centered in frame.",
+    ]);
+    // "Delivery 4" lost its spot to the reserved body-language slot rather
+    // than the body-language line losing out to a full list (BUG-1).
+    expect(data.delivery).not.toContain("Delivery 4");
+  });
+
+  it("does not truncate a fully measured body-language note under its own longer clamp, keeping its final fact intact", async () => {
+    mockUser();
+    const filler = "Detailed posture and framing observation carried across the whole segment. ".repeat(6);
+    const longNote = `Body language: ${filler}The camera stayed centered until the very last word, ending on FINALFACT789.`;
+    // Longer than the ordinary per-item cap (400) but under the dedicated
+    // body-language cap (1000) — the realistic "fully measured" case.
+    expect(longNote.length).toBeGreaterThan(400);
+    expect(longNote.length).toBeLessThan(1000);
+    mockGemini({
+      score: 70,
+      verdict: "Solid.",
+      strengths: [],
+      improvements: [],
+      missing: [],
+      star: null,
+      delivery: [],
+      bodyLanguage: longNote,
+    });
+    const res = await POST(
+      jsonRequest({
+        question: "Q",
+        type: "general",
+        answer: "A",
+        engine: "gemini",
+        metrics: MEASURED_BODY_LANGUAGE_METRICS,
+      }),
+    );
+    const data = await res.json();
+    expect(data.delivery).toEqual([longNote]);
+    expect(data.delivery[0].endsWith("FINALFACT789.")).toBe(true);
+  });
+
+  it("clamps a body-language note that exceeds even the longer cap to exactly 1000 characters", async () => {
+    mockUser();
+    const overLong = `Body language: ${"x".repeat(2000)}`;
+    mockGemini({
+      score: 70,
+      verdict: "Solid.",
+      strengths: [],
+      improvements: [],
+      missing: [],
+      star: null,
+      delivery: [],
+      bodyLanguage: overLong,
+    });
+    const res = await POST(
+      jsonRequest({
+        question: "Q",
+        type: "general",
+        answer: "A",
+        engine: "gemini",
+        metrics: MEASURED_BODY_LANGUAGE_METRICS,
+      }),
+    );
+    const data = await res.json();
+    expect(data.delivery[0].length).toBe(1000);
+    expect(data.delivery[0]).toBe(overLong.slice(0, 1000));
+  });
+
+  it("recognizes a body-language sentence with different punctuation and casing as already prefixed, without double-prefixing it", async () => {
+    mockUser();
+    const variant = "BODY-LANGUAGE — you stayed centered and faced the camera the whole time.";
+    mockGemini({
+      score: 65,
+      verdict: "Fine.",
+      strengths: [],
+      improvements: [],
+      missing: [],
+      star: null,
+      delivery: [],
+      bodyLanguage: variant,
+    });
+    const res = await POST(
+      jsonRequest({
+        question: "Q",
+        type: "general",
+        answer: "A",
+        engine: "gemini",
+        metrics: MEASURED_BODY_LANGUAGE_METRICS,
+      }),
+    );
+    const data = await res.json();
+    // Passed through byte-for-byte: no second "Body language: " was
+    // prepended in front of the model's own already-prefixed variant.
+    expect(data.delivery).toEqual([variant]);
+  });
+
+  it("drops a body-language-tagged item the model wrote directly into delivery, and its dedicated field, when nothing was measured and no frames were sent", async () => {
+    mockUser();
+    mockGemini({
+      score: 60,
+      verdict: "OK.",
+      strengths: [],
+      improvements: [],
+      missing: [],
+      star: null,
+      delivery: ["Body language: looked confident and engaged", "Spoke clearly", "Kept a steady pace"],
+      bodyLanguage: "Great posture throughout.",
+    });
+    // No metrics.bodyLanguage supplied (defaults to unavailable) and no
+    // frames — allowBodyLanguage must be false, and it must gate BOTH
+    // sources, not only the dedicated `bodyLanguage` field.
+    const res = await POST(jsonRequest({ question: "Q", type: "general", answer: "A", engine: "gemini" }));
+    const data = await res.json();
+    expect(data.delivery).toEqual(["Spoke clearly", "Kept a steady pace"]);
+    expect(data.delivery.some((line) => /^body[\s-]*language\b/i.test(line))).toBe(false);
+  });
+
+  it("allows the body-language line through on frames alone, even when nothing was measured", async () => {
+    mockUser();
+    mockGemini({
+      score: 60,
+      verdict: "OK.",
+      strengths: [],
+      improvements: [],
+      missing: [],
+      star: null,
+      delivery: [],
+      bodyLanguage: "You leaned toward the camera near the end.",
+    });
+    const res = await POST(
+      jsonRequest({
+        question: "Q",
+        type: "general",
+        answer: "A",
+        engine: "gemini",
+        frames: ["data:image/jpeg;base64,aGVsbG8="],
+      }),
+    );
+    const data = await res.json();
+    expect(data.delivery).toEqual(["Body language: You leaned toward the camera near the end."]);
+  });
+
+  it("keeps the response to the same eight contract keys when a body-language line is included", async () => {
+    mockUser();
+    mockGemini({
+      score: 60,
+      verdict: "OK.",
+      strengths: [],
+      improvements: [],
+      missing: [],
+      star: null,
+      delivery: [],
+      bodyLanguage: "You faced forward consistently.",
+    });
+    const res = await POST(
+      jsonRequest({
+        question: "Q",
+        type: "general",
+        answer: "A",
+        engine: "gemini",
+        metrics: MEASURED_BODY_LANGUAGE_METRICS,
+      }),
+    );
+    const data = await res.json();
+    expect(Object.keys(data).sort()).toEqual(
+      ["delivery", "improvements", "missing", "score", "source", "star", "strengths", "verdict"].sort(),
+    );
+  });
+
+  it("embedded engine still reports source 'embedded' set by the server and never touches Gemini, even with body language measured", async () => {
+    mockUser();
+    const res = await POST(
+      jsonRequest({
+        question: "Tell me about a time you resolved a conflict.",
+        type: "behavioral",
+        answer: STAR_ANSWER,
+        engine: "embedded",
+        metrics: MEASURED_BODY_LANGUAGE_METRICS,
+      }),
+    );
+    const data = await res.json();
+    expect(data.source).toBe("embedded");
+    expect(getGeminiClient).not.toHaveBeenCalled();
+    expect(getServerEnv).not.toHaveBeenCalled();
+    expect(data.delivery.some((line) => line.startsWith("Body language:"))).toBe(true);
+  });
+});

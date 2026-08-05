@@ -18,6 +18,45 @@ const STAR_LABELS = [
 
 const SOURCE_LABEL = { gemini: "Gemini", embedded: "Embedded engine" };
 
+// D3: body-language content rides inside the SAME `delivery` string array
+// pace/filler/camera notes already use, tagged with this prefix by
+// critiqueLocal.js's bodyLanguageDeliveryNote (embedded) and route.js's
+// sanitizeCritique (Gemini) — the AC-C4-1 response contract stays locked to
+// its existing eight keys, so there is no separate field to read here.
+// Splitting on the tag is what lets this panel give body-language feedback
+// its own clearly labelled section instead of burying it in "Delivery
+// notes", distinct from the raw measurements AnswerReview shows. Kept
+// tolerant of punctuation/casing variants ("Body-language —", "BODYLANGUAGE")
+// rather than only the one exact phrase (BUG-12) — matches
+// route.js's own BODY_LANGUAGE_PREFIX_RE so both sides recognise the same
+// items the same way.
+const BODY_LANGUAGE_PREFIX_RE = /^body[\s-]*language\b/i;
+
+function splitDelivery(delivery) {
+  const items = Array.isArray(delivery) ? delivery : [];
+  return {
+    bodyLanguage: items.filter((s) => typeof s === "string" && BODY_LANGUAGE_PREFIX_RE.test(s.trim())),
+    rest: items.filter((s) => !(typeof s === "string" && BODY_LANGUAGE_PREFIX_RE.test(s.trim()))),
+  };
+}
+
+// D2's machine-readable `reason` codes (see BodyLanguageSampler.stop() in
+// lib/copilot/bodyLandmarks.js), resolved to plain language — a local copy
+// of the SAME map AnswerReview.js already keeps for its own (unexported)
+// use, rather than importing across a file this AC's modify list doesn't
+// include. Falls back to the raw code for any reason this map doesn't know
+// about, rather than hiding it.
+const BODY_LANGUAGE_UNAVAILABLE_REASONS = {
+  "no-camera": "no camera was available for this answer",
+  "camera-off": "the camera was off for this entire answer",
+  "runtime-assets-missing": "the on-device model files were not staged for this build",
+  "model-load-failed": "the on-device body-language models failed to load",
+  "no-frames": "the camera never produced a usable video frame",
+  "not-ready": "the on-device models were still loading when the answer ended",
+  "inference-failed": "on-device measurement failed while running",
+  "no-samples": "no measurements were collected during this answer",
+};
+
 function scoreColor(score) {
   if (score >= 75) return "var(--success)";
   if (score >= 50) return "var(--warning)";
@@ -56,10 +95,35 @@ export default function AnswerFeedback({
   status = "idle", // idle | loading | done | error
   feedback = null,
   error = "",
+  // D3/BUG-3: whether frames were actually sent for THIS critique request —
+  // PracticeClient already computes this (`sendFrames && !isEmbedded`) and
+  // passes it straight through; it must not be re-derived from
+  // `feedback.source` alone, since the frames-opt-in switch defaults off and
+  // Gemini is the default engine, so "source is gemini" does not by itself
+  // mean a frame was ever attached.
+  framesSent = false,
+  // D3/BUG-5: D2's raw `metrics.bodyLanguage.reason` code for the answer
+  // currently under review, passed straight through by PracticeClient
+  // (which already holds `answerMetrics`) — lets the "not available" state
+  // below say WHY rather than a bare generic sentence, without the response
+  // contract needing to carry it.
+  bodyLanguageReason = null,
   onRetry,
   onNext,
   onTryAgain,
 }) {
+  const { bodyLanguage: bodyLanguageNotes, rest: deliveryNotes } = splitDelivery(feedback?.delivery);
+  // BUG-3: someone only actually reviewed the video when Gemini both ran
+  // AND had a frame to look at — never true for the embedded engine (which
+  // never constructs a Gemini client or parses frames), and never true on
+  // the Gemini-failed-and-fell-back-to-embedded path either, since
+  // `feedback.source` there is correctly "embedded" even though frames may
+  // already have been sent for the (failed) attempt.
+  const bodyLanguageLooked = feedback?.source === "gemini" && !!framesSent;
+  const bodyLanguageReasonText = bodyLanguageReason
+    ? BODY_LANGUAGE_UNAVAILABLE_REASONS[bodyLanguageReason] || bodyLanguageReason
+    : "";
+
   return (
     <Box
       sx={{
@@ -147,7 +211,38 @@ export default function AnswerFeedback({
           <BulletList title="Strengths" items={feedback.strengths} />
           <BulletList title="Improvements" items={feedback.improvements} />
           <BulletList title="What was missing" items={feedback.missing} />
-          <BulletList title="Delivery notes" items={feedback.delivery} />
+          <BulletList title="Delivery notes" items={deliveryNotes} />
+
+          {/* D3: its own clearly labelled section, separate from "Delivery
+              notes" above — AnswerReview (rendered above this whole panel)
+              already shows the raw measurements; this is what to do about
+              them, or an honest word that there was nothing to measure. */}
+          <Box sx={{ mb: 1.5 }}>
+            <Typography variant="subtitle2" sx={{ color: "var(--text-secondary)", mb: 0.5 }}>
+              Body language feedback
+            </Typography>
+            {bodyLanguageNotes.length ? (
+              <>
+                <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
+                  {bodyLanguageNotes.map((item, i) => (
+                    <Typography key={i} component="li" variant="body2" sx={{ mb: 0.5, color: "var(--text-primary)" }}>
+                      {item}
+                    </Typography>
+                  ))}
+                </Box>
+                <Typography variant="caption" sx={{ color: "var(--text-muted)" }}>
+                  {bodyLanguageLooked
+                    ? `May include what was actually visible in your camera, in addition to the measured numbers (${SOURCE_LABEL[feedback.source] || feedback.source}).`
+                    : `Based on the measured numbers only — no one reviewed your video for this (${SOURCE_LABEL[feedback.source] || feedback.source}).`}
+                </Typography>
+              </>
+            ) : (
+              <Alert severity="info" sx={{ py: 0 }}>
+                Body-language feedback is not available for this answer
+                {bodyLanguageReasonText ? ` — ${bodyLanguageReasonText}.` : "."}
+              </Alert>
+            )}
+          </Box>
         </>
       ) : null}
 

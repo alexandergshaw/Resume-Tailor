@@ -534,6 +534,123 @@ describe("buildDeliveryNotes — mic muted", () => {
   });
 });
 
+// BUG-1: buildDeliveryNotes reserves the body-language note its own slot
+// instead of letting it compete with pace/filler/camera/mic for the same
+// MAX_LIST (4) cap. Before the fix, the body-language note was appended
+// last and then sliced away by notes.slice(0, MAX_LIST) whenever the other
+// four notes already filled every slot — so a fully measured, fully scored
+// body-language summary silently vanished from the response the moment the
+// mic had also been muted for part of the answer.
+describe("buildDeliveryNotes — body language note is never dropped by MAX_LIST (BUG-1 regression)", () => {
+  // Fills all four of the non-body-language note slots: pace, filler,
+  // camera, and mic-muted.
+  const fourOtherNotesRaw = {
+    wordCount: 40,
+    speechDurationSec: 20,
+    wordsPerMinute: 120,
+    paceLabel: "conversational",
+    fillerCount: 2,
+    fillerRate: 5,
+    fillers: [{ phrase: "um", count: 2 }],
+    video: {
+      hadVideo: true,
+      frames: MIN_LUMA_SAMPLES,
+      motionSamples: MIN_MOTION_SAMPLES,
+      tooDark: false,
+      tooBright: false,
+      veryStill: false,
+      fidgety: false,
+      partiallyOff: false,
+    },
+    micMuted: true,
+  };
+
+  const fullyMeasuredBodyLanguage = {
+    available: true,
+    eyeContactRatio: 0.82,
+    gestureRate: 0.4,
+    handsVisibleRatio: 0.9,
+  };
+  const expectedBodyLanguageNote =
+    "Body language: Head orientation: facing the camera 82% of the time your face was visible to the camera " +
+    "(head orientation, not eye contact). Gestures: hand movement measured 0.40 (normalized wrist movement per " +
+    "sample) (hands visible 90% of the time).";
+
+  it("without body language, pace/filler/camera/mic all four fit under MAX_LIST untouched", () => {
+    // Baseline for the regression case below: confirms these four notes
+    // really do fill every slot on their own, with nothing trimmed.
+    expect(notesFor(fourOtherNotesRaw)).toEqual([
+      "You spoke for 20 seconds at 120 words per minute (conversational).",
+      '2 filler words (5.0% of words) — mostly "um" x2.',
+      "Camera: lighting looked fine; motion looked steady.",
+      "The mic was muted for part of this answer, so word count and pace may be understated.",
+    ]);
+  });
+
+  it("keeps the body-language note when a fully measured summary is added on top of an already-full mic-muted note list, evicting the mic note instead", () => {
+    const notes = notesFor({ ...fourOtherNotesRaw, bodyLanguage: fullyMeasuredBodyLanguage });
+
+    // The regression: the body-language note must survive even though the
+    // mic was also muted and the other four notes already filled every
+    // MAX_LIST slot.
+    expect(notes).toContain(expectedBodyLanguageNote);
+    // MAX_LIST (4) is still respected — adding body language does not grow
+    // the list past its existing cap.
+    expect(notes).toHaveLength(4);
+    // Pace, filler, and camera survive unchanged; the mic-muted note is what
+    // gets evicted to make room, not the body-language note.
+    expect(notes).toEqual([
+      "You spoke for 20 seconds at 120 words per minute (conversational).",
+      '2 filler words (5.0% of words) — mostly "um" x2.',
+      "Camera: lighting looked fine; motion looked steady.",
+      expectedBodyLanguageNote,
+    ]);
+    expect(notes).not.toContain(
+      "The mic was muted for part of this answer, so word count and pace may be understated.",
+    );
+  });
+
+  it("does not evict anything when there is room under MAX_LIST for both the other notes and the body-language note", () => {
+    const notes = notesFor({
+      wordCount: 0,
+      video: { hadVideo: false },
+      bodyLanguage: { available: true, eyeContactRatio: 0.5 },
+    });
+    expect(notes).toEqual([
+      "No speech was captured for this answer.",
+      "The camera was off for this answer, so there are no visual delivery notes.",
+      "Body language: Head orientation: facing the camera 50% of the time your face was visible to the camera " +
+        "(head orientation, not eye contact).",
+    ]);
+  });
+
+  it("leaves the other notes at the full MAX_LIST budget when there is no body-language note at all", () => {
+    // available: false is D2's own "not measured" shape — must behave
+    // identically to the field being omitted entirely.
+    const notes = notesFor({ ...fourOtherNotesRaw, bodyLanguage: { available: false } });
+    expect(notes).toEqual([
+      "You spoke for 20 seconds at 120 words per minute (conversational).",
+      '2 filler words (5.0% of words) — mostly "um" x2.',
+      "Camera: lighting looked fine; motion looked steady.",
+      "The mic was muted for part of this answer, so word count and pace may be understated.",
+    ]);
+    expect(notes.some((note) => note.startsWith("Body language:"))).toBe(false);
+  });
+
+  it("is identifiable by its 'Body language:' prefix so a caller can split it back out of the list", () => {
+    const notes = notesFor({ ...fourOtherNotesRaw, bodyLanguage: fullyMeasuredBodyLanguage });
+    const bodyLanguageNotes = notes.filter((note) => note.startsWith("Body language:"));
+    const otherNotes = notes.filter((note) => !note.startsWith("Body language:"));
+
+    expect(bodyLanguageNotes).toEqual([expectedBodyLanguageNote]);
+    expect(otherNotes).toEqual([
+      "You spoke for 20 seconds at 120 words per minute (conversational).",
+      '2 filler words (5.0% of words) — mostly "um" x2.',
+      "Camera: lighting looked fine; motion looked steady.",
+    ]);
+  });
+});
+
 describe("critiqueAnswerLocal — delivery weighting when nothing is measurable", () => {
   // A real, well-structured behavioral answer, deliberately paired with
   // metrics = null (no speech/video signal at all): the answer's own
