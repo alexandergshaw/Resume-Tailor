@@ -1,6 +1,6 @@
-// Audio capture for the interview copilot.
+// Audio/video capture for the interview copilot.
 //
-// Three sources:
+// Four sources:
 //   - captureTabAudio(): the OTHER party's voice, via getDisplayMedia tab share.
 //     Chrome/Edge only, and the shared surface must have "Share tab audio" on.
 //   - captureSystemAudio(): the OTHER party's voice, via getDisplayMedia whole-
@@ -9,6 +9,8 @@
 //     where there's no browser tab to share. Chrome cannot capture system
 //     audio on macOS at all — sharing a browser tab is the only option there.
 //   - captureMicAudio(): your own voice, via getUserMedia.
+//   - captureCameraAndMic(): your camera + your own voice, via getUserMedia,
+//     for practice mode's self-view.
 //
 // Each MediaStream is fed through PcmPipeline, which uses an AudioWorklet to
 // emit 16 kHz mono PCM16 chunks. The AudioContext is pinned to 16 kHz so the
@@ -23,6 +25,15 @@ const DISPLAY_AUDIO_CONSTRAINTS = {
   echoCancellation: false,
   noiseSuppression: false,
   autoGainControl: false,
+};
+
+// Shared by captureMicAudio and captureCameraAndMic, the two getUserMedia
+// paths that want a clean, processed voice signal (as opposed to the raw
+// signal DISPLAY_AUDIO_CONSTRAINTS asks for above).
+const MIC_AUDIO_CONSTRAINTS = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
 };
 
 // Both display-capture paths fail the same way when the shared surface has no
@@ -134,18 +145,34 @@ export async function captureSystemAudio() {
 
 export async function captureMicAudio() {
   return navigator.mediaDevices.getUserMedia({
-    audio: {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-    },
+    audio: MIC_AUDIO_CONSTRAINTS,
   });
+}
+
+// Practice mode's capture: your camera plus your own voice. Video is a
+// standard 720p-ideal front-facing request; audio reuses the same processed
+// constraints as captureMicAudio so the two paths can't drift apart. Unlike
+// the display-capture paths above, a rejection here (permission denied, no
+// camera present, etc.) propagates unchanged — this function doesn't decide
+// what to do about it, that's PracticeSession's job.
+export async function captureCameraAndMic() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+    audio: MIC_AUDIO_CONSTRAINTS,
+  });
+
+  return requireAudioTrack(
+    stream,
+    () =>
+      "No microphone audio was captured. Practice needs your microphone to transcribe your answer.",
+  );
 }
 
 export class PcmPipeline {
   constructor() {
     this.ctx = null;
     this.nodes = [];
+    this._stopped = false;
   }
 
   // Wires stream -> worklet -> muted gain -> destination, calling onChunk with
@@ -153,8 +180,26 @@ export class PcmPipeline {
   // zero-gain node to the destination keeps the graph "live" so process() keeps
   // firing, without echoing the captured audio back out the speakers.
   async start(stream, onChunk) {
+    this._stopped = false;
+
     const ctx = new AudioContext({ sampleRate: 16000 });
+    // Assigned before the addModule await so a stop() that lands while the
+    // worklet module is still loading always finds a real AudioContext to
+    // close. Assigning only after addModule() resolves (the old behavior)
+    // left that window's stop() closing nothing, and the AudioContext this
+    // call went on to build was a live, unreferenced leak nobody could ever
+    // close — it held the audio graph over the captured stream open for the
+    // life of the page.
+    this.ctx = ctx;
     await ctx.audioWorklet.addModule(WORKLET_URL);
+
+    // The stop() above (if one landed) already closed `ctx`. Building nodes
+    // on an already-closed context would throw and surface to the user as a
+    // spurious error after they pressed Stop, so bail out instead of wiring
+    // the graph.
+    if (this._stopped) {
+      return null;
+    }
 
     const source = ctx.createMediaStreamSource(stream);
     const worklet = new AudioWorkletNode(ctx, "pcm-worklet");
@@ -166,12 +211,12 @@ export class PcmPipeline {
     worklet.connect(mute);
     mute.connect(ctx.destination);
 
-    this.ctx = ctx;
     this.nodes = [source, worklet, mute];
     return ctx;
   }
 
   async stop() {
+    this._stopped = true;
     for (const node of this.nodes) {
       try {
         node.disconnect();

@@ -412,3 +412,208 @@ from a fail without judgement calls.
 2. Run `npx vitest run --no-file-parallelism lib/copilot/capture.test.js` from `hello-world/`.
 
 **Expected:** The video track's `getSettings().displaySurface` is read BEFORE any track is stopped, since a stopped track's settings may be cleared. A `window` surface produces a message saying a window share carries no system audio on Windows and to pick "Entire Screen" instead, and it must NOT tell the user to turn on a "Share system audio" checkbox. A `browser` surface produces a message pointing at this app's own "Browser tab" interviewer-audio option. A `monitor` surface, an unrecognized surface, a missing `getSettings`, a `getSettings` that throws, a stream with no video track, and a stream that does not implement `getVideoTracks` at all ALL fall back to the whole-screen wording rather than raising a TypeError. In every one of these failure cases every granted track still has `stop()` called exactly once.
+
+### R-040 | area: practice-capture | parallel-safe: yes | automatable: yes
+
+**Summary:** Practice mode captures the candidate's own camera and mic, and a camera failure degrades to microphone-only without blaming the wrong device. `getUserMedia` is atomic, so a combined request also rejects when the MICROPHONE is the problem, and the old wording blamed the camera for that.
+
+**Steps:**
+1. Read `captureCameraAndMic` and the shared `MIC_AUDIO_CONSTRAINTS` in `hello-world/lib/copilot/capture.js`.
+2. Read `start()` in `hello-world/lib/copilot/practiceSession.js`.
+3. Run `npx vitest run --no-file-parallelism lib/copilot/capture.test.js lib/copilot/practiceSession.test.js` from `hello-world/`.
+
+**Expected:** `captureCameraAndMic` requests 720p-ideal front-facing video plus the processed mic constraints, and `captureMicAudio`'s own argument is unchanged by the extraction of that shared constant. A granted stream with no audio track has every track stopped before a microphone-specific error is thrown. The soft "Camera unavailable (...). Continuing with microphone only." warning is emitted ONLY after the mic-only fallback actually succeeds; when the fallback also fails, the ORIGINAL combined-request error propagates and no camera-blaming warning is emitted.
+
+### R-041 | area: practice-capture | parallel-safe: yes | automatable: yes
+
+**Summary:** A Stop that lands while the session is still connecting leaves nothing running. Without the guard this leaked a billed Deepgram socket and a live AudioContext, and repainted the UI as live with the session unreachable.
+
+**Steps:**
+1. Read `start()` and `stop()` in `hello-world/lib/copilot/practiceSession.js`, specifically where `_dg` and `_pipeline` are assigned relative to their awaits and where `_stopped` is re-checked.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/practiceSession.test.js` from `hello-world/`.
+
+**Expected:** `_dg` and `_pipeline` are assigned to the instance BEFORE their `connect()` / `start()` are awaited, and `_stopped` is re-checked after every await. A `stop()` during the Deepgram handshake, and a `stop()` during the AudioWorklet load, each end with the socket closed, the pipeline stopped, every track stopped, and a final status of `idle`. A late `open` arriving after teardown never repaints the status to `live` — every callback forwarded from the socket is swallowed once `_stopped` is set.
+
+### R-042 | area: practice-capture | parallel-safe: yes | automatable: yes
+
+**Summary:** A Deepgram socket that closes on its own tears the capture down for real. Reporting `idle` while the camera and mic kept running left the user with a lit camera indicator and no Stop button.
+
+**Steps:**
+1. Read the `onStatus` handler passed to `DeepgramStream` in `hello-world/lib/copilot/practiceSession.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/practiceSession.test.js` from `hello-world/`.
+
+**Expected:** An unsolicited `closed` while the session is running calls `stop()`, so every track is stopped and the status reaches `idle` — it is not a cosmetic status change. A `closed` arriving as a result of the app's own `stop()` does not recurse. The video track's `ended` listener flips `hasVideo` false and re-publishes through `onStream` WITHOUT stopping the session, since audio-only is a valid state; the audio track's `ended` listener does tear the session down.
+
+### R-043 | area: copilot-audio | parallel-safe: yes | automatable: yes
+
+**Summary:** `PcmPipeline` closes an AudioContext whose worklet load was interrupted by a concurrent stop. This affects the LIVE interview path as well as practice mode — before the fix, any Stop racing the module load leaked a running AudioContext for the life of the page.
+
+**Steps:**
+1. Read `PcmPipeline.start()` and `PcmPipeline.stop()` in `hello-world/lib/copilot/capture.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/capture.test.js lib/copilot/practiceSession.test.js lib/copilot/session.test.js` from `hello-world/`.
+
+**Expected:** `this.ctx` is assigned immediately after the AudioContext is constructed, BEFORE `addModule` is awaited, so a concurrent `stop()` always has something to close. `start()` re-checks its stopped flag after that await and returns without building the node graph when it is set, so `createMediaStreamSource` is never called on a closed context and no spurious error surfaces to a user who pressed Stop. The flag resets at the top of `start()` so the instance stays reusable.
+
+### R-044 | area: copilot-audio | parallel-safe: yes | automatable: yes
+
+**Summary:** The live interview session can never be stranded by leaving its view. The mode toggle keys off the session's existence rather than its status, because `status === "error"` leaves a `CopilotSession` holding the screen share and mic while the UI already shows "Start session".
+
+**Steps:**
+1. Read `onModeChange` and the unmount-cleanup effect in `hello-world/app/copilot/CopilotClient.js`.
+2. Confirm the mode `ToggleButtonGroup` ignores a null value and is disabled while the live session is running.
+
+**Expected:** Switching to practice mode stops any existing live session first, keyed on `sessionRef.current` existing rather than on `status`. Unmounting `CopilotClient` (switching main tabs in `app/page.js`) also stops the session, mirroring `PracticeClient`. Nothing about the audio-source toggle, the `copilot-audio-source` storage key, the share-instruction wording, the `CopilotSession` wiring or the question/answer flow is changed by this — R-034 through R-039 all still hold.
+
+### R-045 | area: practice-postings | parallel-safe: yes | automatable: yes
+
+**Summary:** The practice posting picker offers exactly the rows the Tracking table shows, and a failed load is never reported to the user as an empty account.
+
+**Steps:**
+1. Read `fetchPracticePostings` and `normalizePostingRows` in `hello-world/lib/copilot/postings.js`, and compare the query against `loadApplications` in `hello-world/app/page.js`.
+2. Read the `noOptionsText` and helper-text branches in `hello-world/app/copilot/practice/PostingPicker.js`.
+3. Run `npx vitest run --no-file-parallelism lib/copilot/postings.test.js` from `hello-world/`.
+
+**Expected:** The query is `applications` joined to `positions`, filtered to the signed-in user, excluding statuses `tracking` and `auto_tailored`, ordered by `applied_at` descending. Rows with no joined position, or with neither a title nor a company, are dropped; duplicates on title+company collapse case-insensitively keeping the newest; a row with a missing or unparseable `applied_at` is still included and merely sorts last. Signed out returns an empty list without querying, while an auth-lookup error and a query error are each thrown so the picker can show them. When the load fails, the dropdown says the load failed — it must NOT say the user has no tracked postings.
+
+### R-046 | area: practice-questions | parallel-safe: yes | automatable: yes
+
+**Summary:** The deterministic question bank is genuinely deterministic, never empty, and never repeats a question the session already asked.
+
+**Steps:**
+1. Read `buildQuestionBank` and `nextPracticeQuestion` in `hello-world/lib/copilot/practiceQuestions.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/practiceQuestions.test.js` from `hello-world/`.
+
+**Expected:** No `Math.random`, no `Date`; the same posting and asked-list always yield the same next question and the same wording. The bank is non-empty for a null, undefined, empty or whitespace-only posting. Technical questions are built from terms extracted from the posting's own description, falling back to a generic technical set when nothing is extractable. Types interleave rather than grouping. Dedupe runs through `normalizeQuestion`, tolerates non-strings and empty entries in the asked list, and a fully consumed bank returns exactly `{ question: "", type: "general", exhausted: true }`.
+
+### R-047 | area: practice-questions | parallel-safe: yes | automatable: yes
+
+**Summary:** The question route serves all three engine paths without ever dead-ending a practice session, and its asked-list cap keeps the questions most likely to be repeated.
+
+**Steps:**
+1. Read `app/api/copilot/question/route.js` in `hello-world/`.
+2. Run `npx vitest run --no-file-parallelism app/api/copilot/question/route.test.js` from `hello-world/`.
+
+**Expected:** No signed-in user returns 401 with "Sign in to use the interview copilot.". The embedded engine answers from the deterministic bank with `source: "embedded"` and never constructs a Gemini client. A Gemini throw, an unparseable response, an empty question, or a question duplicating one already asked all fall back to the bank and report `source: "fallback"` — never a 5xx, and never silently. `sanitizeAsked` keeps the MOST RECENT entries at the cap, not the first ones, and the anti-repeat comparison truncates the candidate the same way the stored entries were truncated. The response shape is identical across all three paths.
+
+### R-048 | area: practice-answer | parallel-safe: yes | automatable: yes
+
+**Summary:** An answer contains the words the candidate actually spoke between Start and Done — bounded by AUDIO time, not by when the transcript happened to arrive. Bounding by arrival time dropped the closing sentence of every answer and attributed pre-Start speech to it.
+
+**Steps:**
+1. Read `isFinalInAnswerWindow` and `deriveSpeechSpan` in `hello-world/lib/copilot/answerWindow.js`.
+2. Read the `start`/`duration` passthrough in `hello-world/lib/copilot/deepgram.js` and the drain in `doneAnswer` in `hello-world/app/copilot/practice/usePracticeAnswer.js`.
+3. Run `npx vitest run --no-file-parallelism lib/copilot/answerWindow.test.js lib/copilot/deepgram.test.js` from `hello-world/`.
+
+**Expected:** A final whose audio start precedes the answer's start offset is excluded. While the end offset is still null — the answer is in progress or draining — a final at or after the start offset is included, which is what catches the last sentence still in flight when Done is pressed. `doneAnswer` does not close the window synchronously; it drains for a bounded period so a lost socket can never hang the UI. `deepgram.js`'s `start` and `duration` are additive: the pre-existing `speaker`, `transcript`, `isFinal` and `speechFinal` fields are unchanged in name and value, non-Results frames and empty transcripts are still ignored, and the live copilot path is unaffected.
+
+### R-049 | area: practice-answer | parallel-safe: yes | automatable: yes
+
+**Summary:** Pace is computed over the span the words actually cover, not the button-to-button wall clock, and no delivery number is ever `NaN` or `Infinity`.
+
+**Steps:**
+1. Read `computeAnswerMetrics` in `hello-world/lib/copilot/answerMetrics.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/answerMetrics.test.js` from `hello-world/`.
+
+**Expected:** `wordsPerMinute` is derived from `speechDurationMs`, not from the wall-clock `durationMs`; both are reported, and the UI shows them as separate rows so they are never conflated. Zero, missing or negative durations produce 0 wpm rather than Infinity or NaN, and empty text returns zeros throughout. `hasMetric` delegates to `profileMetric` rather than duplicating the regex, and `micMuted` is carried through so the review can say the mic was off.
+
+### R-050 | area: practice-answer | parallel-safe: yes | automatable: yes
+
+**Summary:** A camera the candidate switched off is reported as off, not measured as a dark, motionless shot. The Camera control sets `track.enabled = false`, which leaves the track in the stream emitting black frames.
+
+**Steps:**
+1. Read `isTrackActive`, the sampling guard, and how `hadVideo` and `partiallyOff` are derived in `VideoFrameSampler` in `hello-world/lib/copilot/videoStats.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/videoStats.test.js` from `hello-world/`.
+
+**Expected:** Sampling is skipped while the video track is disabled or muted, and `hadVideo` is derived from whether any VALID sample was captured — not from track presence. A camera off for the whole answer reports `hadVideo: false` and produces no lighting or steadiness claim at all. A camera off for part of the answer sets `partiallyOff`, which the review states, while the valid samples still produce honest numbers. No sample is taken while the offscreen video reports zero dimensions or a readyState below HAVE_CURRENT_DATA.
+
+### R-051 | area: practice-answer | parallel-safe: yes | automatable: yes
+
+**Summary:** A measurement flag that is false for lack of data is never presented as a finding. This is the difference between "we measured it and it was fine" and "we could not measure it".
+
+**Steps:**
+1. Read `summarizeVideoStats` and the `MIN_LUMA_SAMPLES` / `MIN_MOTION_SAMPLES` gates in `hello-world/lib/copilot/videoStats.js`.
+2. Read `buildDeliveryNotes` and `computeDeliveryScore` in `hello-world/lib/copilot/critiqueLocal.js`.
+3. Run `npx vitest run --no-file-parallelism lib/copilot/videoStats.test.js lib/copilot/critiqueLocal.test.js` from `hello-world/`.
+
+**Expected:** Empty or missing input returns `frames: 0`, `motionSamples: 0` and every flag false with no NaN. `veryStill` and `fidgety` cannot fire below the motion-sample gate — a single-sample answer must never claim the candidate was very still. `tooDark` and `tooBright` cannot fire below the luma gate. No lighting claim is emitted without luma samples and no steadiness claim without motion samples, and no visual claim of any kind when `hadVideo` is false. When nothing about delivery was measurable, the delivery component is excluded and the remaining weights renormalized rather than scored zero and blamed in the verdict.
+
+### R-052 | area: practice-answer | parallel-safe: yes | automatable: yes
+
+**Summary:** Filler counting does not overstate. Ambiguous words are counted separately from true fillers, and no filler matches inside a larger or hyphenated word.
+
+**Steps:**
+1. Read `FILLER_PHRASES`, `DISCOURSE_MARKER_PHRASES` and `phraseRegex` in `hello-world/lib/copilot/answerMetrics.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/answerMetrics.test.js` from `hello-world/`.
+
+**Expected:** Um, uh, er, "you know", "sort of", "kind of" and "I mean" count as fillers. Like, right, actually, basically and literally are counted and displayed SEPARATELY as discourse markers that may be legitimate usage — they are not folded into the filler count. "unlike" never counts "like" and "right-hand" never counts "right": the boundary handling excludes letters, digits and hyphens on both sides. `fillerRate` is per 100 words and is 0 when there are no words.
+
+### R-053 | area: practice-answer | parallel-safe: yes | automatable: yes
+
+**Summary:** The replay recorder never blocks answering and never mixes one answer's video into another's clip.
+
+**Steps:**
+1. Read `pickSupportedMimeType` and the `AnswerRecorder` class in `hello-world/lib/copilot/answerRecorder.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/answerRecorder.test.js` from `hello-world/`.
+
+**Expected:** With `MediaRecorder` missing or no supported mime type, `start()` is a no-op and `stop()` resolves null — replay is a bonus and its absence never blocks answering or the metrics. `stop()` ALWAYS settles: with a Blob on the stop event, and with null when unsupported, when nothing was recording, when no chunks arrived, or when the guard timeout elapses first. Each recording's `dataavailable` listener is bound to its OWN chunk array, so a chunk flushed late by a previous recorder cannot land in the next answer's clip. `stop()` is safe twice and without a matching `start()`; a throwing constructor or `start()` degrades to the no-op path.
+
+### R-054 | area: practice-critique | parallel-safe: yes | automatable: yes
+
+**Summary:** The critique response contract is enforced by the server on every path, and the engine that produced a critique is reported truthfully.
+
+**Steps:**
+1. Read `sanitizeCritique`, `sanitizeStar` and the branch structure in `hello-world/app/api/copilot/critique/route.js`.
+2. Run `npx vitest run --no-file-parallelism app/api/copilot/critique/route.test.js` from `hello-world/`.
+
+**Expected:** `source` is always set by the server from the path actually taken and is never read from the model, so a Gemini response claiming `source: "embedded"` cannot survive. `star` is null unless the question type is behavioral, on both paths. The score is clamped to an integer 0-100 and the arrays are capped, so no unexpected field from the model reaches the client. The response shape is identical across the embedded, Gemini and fallback paths.
+
+### R-055 | area: practice-critique | parallel-safe: yes | automatable: yes
+
+**Summary:** The critique never dead-ends and never leaks camera frames to a path that should not have them.
+
+**Steps:**
+1. Read the `wantsEmbedded` branch, `sanitizeFrames`, and the fallback handling in `hello-world/app/api/copilot/critique/route.js`.
+2. Run `npx vitest run --no-file-parallelism app/api/copilot/critique/route.test.js` from `hello-world/`.
+
+**Expected:** No signed-in user returns 401. The embedded engine returns the deterministic critique, never constructs a Gemini client, and never parses frames at all. Frames reach Gemini only on the non-embedded path, and a non-JPEG data URL, a payload that is not decodable base64, a non-string entry, and anything past the third frame are all dropped. A Gemini throw, an unparseable response, and malformed client metrics all still return a usable critique rather than a 5xx — inputs are normalized once, before either branch, so the fallback cannot fail the same way the primary did.
+
+### R-056 | area: practice-critique | parallel-safe: yes | automatable: yes
+
+**Summary:** The deterministic rubric — what a no-API-key deploy runs — states nothing about the candidate's answer that it did not measure, and never contradicts itself.
+
+**Steps:**
+1. Read `RESULT_PHRASE_RE` / `RESULT_METRIC_RE`, `SITUATION_RE`, `TECH_TRADEOFF_RE`, `structureStrengthText`, the posting-overlap term matching, and the relevance boilerplate filter in `hello-world/lib/copilot/critiqueLocal.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/critiqueLocal.test.js` from `hello-world/`.
+
+**Expected:** A quantified result is detected anywhere in a sentence — "Support tickets fell by 40% after the change." and "It generated $250,000 in new revenue." both set the result beat. "A complete STAR story" is claimed only when all four beats are present, never alongside a `missing` entry naming an absent beat. "I looked at the logs" does not credit a Situation beat, and a bare "however" or "although" does not credit a trade-off. Posting-vocabulary overlap matches on word boundaries with a minimum canonical length, so short taxonomy entries cannot match inside unrelated words and manufacture a strength. Interview-question boilerplate is stripped before relevance overlap, so a directly responsive answer is not told it drifted. The rubric is fully deterministic — identical inputs give an identical score AND identical wording — and the score stays an integer within 0-100 for an empty answer, a one-word answer, a 2000-word answer and an all-filler answer. An empty answer returns a low score, an honest verdict, empty strengths, and asserts nothing about prose that does not exist.
+
+### R-057 | area: practice-privacy | parallel-safe: yes | automatable: no
+
+**Summary:** The practice screen never tells the candidate their camera data stays local while it is being uploaded, and consent for frames is read at send time rather than latched.
+
+**Steps:**
+1. Read `framesWillUpload`, `privacyNotice` and `onRetryCritique` in `hello-world/app/copilot/practice/PracticeClient.js`.
+2. Read `runCritique` and `retryCritique` in `hello-world/app/copilot/practice/usePracticeAnswer.js`, noting what `lastCritiqueInputsRef` does and does not hold.
+3. Read the practice-mode description in `hello-world/app/copilot/CopilotClient.js`.
+
+**Expected:** The frames opt-in defaults to off and is disabled on the embedded engine. Frames are read from the retained frame ref at SEND time using the current opt-in, and are deliberately not part of the cached retry inputs — so turning the switch off and pressing Retry sends no frames. The privacy notice is derived from the current engine and switch state and names every real destination: audio to Deepgram always; on the Gemini engine the answer transcript, posting details and prep context to Google, plus up to three still frames only when the switch is on; the embedded engine sends nothing to Google; the recorded replay clip is never uploaded under any setting. No wording promises the video stays in the browser while frames are in flight.
+
+### R-058 | area: practice-critique | parallel-safe: yes | automatable: no
+
+**Summary:** The shared prep context behaves like one value across both copilot views, and a deliberate deletion sticks.
+
+**Steps:**
+1. Read `usePrepContext` in `hello-world/app/copilot/usePrepContext.js`, specifically the listener store, the fallback latch, and how a stored empty string is distinguished from a never-written key.
+2. Confirm `CopilotClient` wraps the setter only to clear its answer cache, and that the cache-clearing logic is not inside the hook.
+
+**Expected:** The `/api/user-context` fallback runs at most once per mount and is not re-fired by the stored value changing, so clearing the textarea does not silently refill it from the account's saved context. The hook is a real external store — a module-level listener set, a subscribe that registers and unregisters, and a setter that notifies after writing — so an edit in practice mode is immediately visible to the live view mounted alongside it, and neither can overwrite the other with a stale value. Storage access stays wrapped in try/catch and the live path keeps the same storage key, the same fallback and the same answer-cache clearing on edit.
+
+### R-059 | area: practice-answer | parallel-safe: yes | automatable: no
+
+**Summary:** No browser resource outlives the answer that created it. Every abandonment path finalizes the recorder and the sampler, and exactly one replay object URL exists at a time.
+
+**Steps:**
+1. Read `abandonInProgressAnswer`, `resetAnswerState`, the object-URL handling, and the generation guard in `hello-world/app/copilot/practice/usePracticeAnswer.js`.
+2. Confirm every caller — posting change, next question, try again, session stop, the session's own unsolicited teardown, and unmount — goes through them.
+
+**Expected:** Changing the posting, moving to the next question, retrying, stopping the session, an unsolicited teardown, and unmounting all finalize an in-progress answer: the sampler interval and its offscreen video are released, the recorder is stopped, and the pending drain is resolved rather than left hanging. The replay object URL is revoked before a new one replaces it and on every discard path. Post-await writes are dropped when their captured generation is stale, so a finished answer's review cannot land under a different question. The mic-muted flag is seeded from the current switch state at answer start, not only from a toggle fired mid-recording.

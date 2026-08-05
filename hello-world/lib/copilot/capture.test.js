@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { captureTabAudio, captureSystemAudio } from "./capture";
+import {
+  captureTabAudio,
+  captureSystemAudio,
+  captureMicAudio,
+  captureCameraAndMic,
+} from "./capture";
 
 // Stand-ins for the bits of the MediaStreamTrack / MediaStream interfaces
 // capture.js actually touches: getAudioTracks(), getVideoTracks(), getTracks(),
@@ -57,6 +62,13 @@ function stubGetDisplayMedia(impl) {
   const getDisplayMedia = vi.fn(impl);
   globalThis.navigator.mediaDevices = { getDisplayMedia };
   return getDisplayMedia;
+}
+
+function stubGetUserMedia(impl) {
+  ensureNavigator();
+  const getUserMedia = vi.fn(impl);
+  globalThis.navigator.mediaDevices = { getUserMedia };
+  return getUserMedia;
 }
 
 describe("captureTabAudio", () => {
@@ -306,5 +318,85 @@ describe("captureSystemAudio", () => {
     );
     expect(videoTrack.stop).toHaveBeenCalledTimes(1);
     expect(cursorTrack.stop).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("captureMicAudio", () => {
+  it("requests exactly the processed mic constraints from getUserMedia, unchanged by the shared-constant extraction", async () => {
+    const stream = makeStream({ audioTracks: [makeTrack("audio")] });
+    const getUserMedia = stubGetUserMedia(() => Promise.resolve(stream));
+
+    const result = await captureMicAudio();
+
+    expect(result).toBe(stream);
+    expect(getUserMedia).toHaveBeenCalledWith({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+  });
+});
+
+describe("captureCameraAndMic", () => {
+  it("requests 720p-ideal front-facing video plus the processed mic constraints", async () => {
+    const stream = makeStream({
+      audioTracks: [makeTrack("audio")],
+      videoTracks: [makeTrack("video")],
+    });
+    const getUserMedia = stubGetUserMedia(() => Promise.resolve(stream));
+
+    const result = await captureCameraAndMic();
+
+    expect(result).toBe(stream);
+    expect(getUserMedia).toHaveBeenCalledWith({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+  });
+
+  it("stops every granted track and throws a microphone-specific message when no audio track came through", async () => {
+    const videoTrack = makeTrack("video");
+    const otherVideoTrack = makeTrack("video");
+    stubGetUserMedia(() =>
+      Promise.resolve(makeStream({ videoTracks: [videoTrack, otherVideoTrack] })),
+    );
+
+    let caught = null;
+    try {
+      await captureCameraAndMic();
+    } catch (err) {
+      caught = err;
+    }
+
+    // Exact match, not just a substring check: this must be the microphone
+    // wording, not one of captureTabAudio's or captureSystemAudio's messages
+    // (which talk about tabs, screens, and share-dialog checkboxes).
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught.message).toBe(
+      "No microphone audio was captured. Practice needs your microphone to transcribe your answer.",
+    );
+    expect(caught.message).not.toMatch(/tab|screen|share dialog/i);
+    expect(videoTrack.stop).toHaveBeenCalledTimes(1);
+    expect(otherVideoTrack.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates a getUserMedia rejection unchanged, as the same error instance", async () => {
+    const permissionError = new Error("Permission denied");
+    stubGetUserMedia(() => Promise.reject(permissionError));
+
+    let caught = null;
+    try {
+      await captureCameraAndMic();
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBe(permissionError);
   });
 });

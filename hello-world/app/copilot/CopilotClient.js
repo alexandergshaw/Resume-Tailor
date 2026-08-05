@@ -14,28 +14,25 @@ import { CopilotSession } from "@/lib/copilot/session";
 import { detectQuestion, normalizeQuestion } from "@/lib/copilot/questions";
 import { confirmQuestion } from "@/lib/copilot/detectClient";
 import { draftAnswer } from "@/lib/copilot/answerClient";
+import { fmtClock } from "@/lib/copilot/clock";
 import TabHeader from "@/app/components/TabHeader";
 import TranscriptView from "./TranscriptView";
 import QuestionFeed from "./QuestionFeed";
 import PrepContext from "./PrepContext";
+import StatusPill from "./StatusPill";
+import PracticeClient from "./practice/PracticeClient";
+import { usePrepContext } from "./usePrepContext";
 
 const CONTEXT_TURNS = 12;
 const MIN_WORDS_FOR_LLM = 4;
-const PREP_STORAGE_KEY = "copilot-prep-context";
 const SOURCE_STORAGE_KEY = "copilot-audio-source";
-
-function fmtClock(ms) {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
 
 // Phase 4: assemble the interviewer's speech into complete utterances (on
 // Deepgram's speech_final endpoint), confirm/normalize questions with an LLM
 // (heuristic pre-filter avoids calling it on trivial fragments), and auto-draft
 // talking points as soon as a question is detected.
 export default function CopilotClient() {
+  const [mode, setMode] = useState("live"); // "live" | "practice"
   const [status, setStatus] = useState("idle"); // idle | connecting | live | error
   const [warning, setWarning] = useState("");
   const [error, setError] = useState("");
@@ -43,7 +40,7 @@ export default function CopilotClient() {
   const [interims, setInterims] = useState({ them: "", you: "" });
   const [questions, setQuestions] = useState([]);
   const [autoDraft, setAutoDraft] = useState(true);
-  const [profile, setProfile] = useState("");
+  const [profile, setProfileRaw] = usePrepContext();
   const [source, setSource] = useState("tab"); // "tab" | "system" — the interviewer's audio source
   const [startedAt, setStartedAt] = useState(null);
   const [now, setNow] = useState(0);
@@ -70,46 +67,19 @@ export default function CopilotClient() {
     profileRef.current = profile;
   }, [profile]);
 
-  // Seed prep context: prefer what's saved in this browser, otherwise fall back
-  // to the user's saved "additional context" from the main app.
-  useEffect(() => {
-    let cancelled = false;
-    let local = null;
-    try {
-      local = window.localStorage.getItem(PREP_STORAGE_KEY);
-    } catch {
-      local = null;
-    }
-    if (local) {
-      setProfile(local);
-      return undefined;
-    }
-    (async () => {
-      try {
-        const res = await fetch("/api/user-context");
-        if (!res.ok) return;
-        const json = await res.json();
-        if (!cancelled && json?.additionalContext) setProfile(json.additionalContext);
-      } catch {
-        // best effort — the field just stays empty
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const onProfileChange = useCallback((val) => {
-    setProfile(val);
-    // Prior answers were grounded in the old background — drop them so future
-    // drafts reflect the edit.
-    answerCacheRef.current.clear();
-    try {
-      window.localStorage.setItem(PREP_STORAGE_KEY, val);
-    } catch {
-      // ignore quota / privacy-mode errors
-    }
-  }, []);
+  // Prep context (seed-from-storage/fallback/persist) lives in
+  // usePrepContext — this wraps its setter to also drop the answer cache:
+  // prior answers were grounded in the old background, so they must not
+  // survive an edit to it (that cache-clearing logic is specific to the
+  // live session's auto-draft flow, not something the shared hook should
+  // know about).
+  const onProfileChange = useCallback(
+    (val) => {
+      answerCacheRef.current.clear();
+      setProfileRaw(val);
+    },
+    [setProfileRaw],
+  );
 
   // Seed the interviewer-audio-source choice from localStorage, wrapped in
   // try/catch like the prep-context read above. A missing or unrecognized
@@ -150,6 +120,33 @@ export default function CopilotClient() {
     setInterims({ them: "", you: "" });
     setStatus("idle");
   }, []);
+
+  // Unmounting (e.g. switching main tabs) must not leave the screen-share or
+  // mic running — stop whatever session is active on the way out.
+  useEffect(() => {
+    return () => {
+      if (sessionRef.current) {
+        sessionRef.current.stop();
+        sessionRef.current = null;
+      }
+    };
+  }, []);
+
+  // MUI's exclusive ToggleButtonGroup reports `null` when the currently
+  // selected button is clicked again — ignore that so the mode can never end
+  // up unset. Leaving live mode must not strand a running session: `live`
+  // (derived from `status`) is false once the session has errored, but an
+  // errored CopilotSession can still be holding the screen-share and mic
+  // tracks, so key the teardown off `sessionRef.current` existing, not off
+  // `status`.
+  const onModeChange = useCallback(
+    (val) => {
+      if (val !== "live" && val !== "practice") return;
+      if (val === "practice" && sessionRef.current) stop();
+      setMode(val);
+    },
+    [stop],
+  );
 
   const buildContext = useCallback(
     () =>
@@ -362,13 +359,18 @@ export default function CopilotClient() {
     <Box sx={{ maxWidth: 1180, mx: "auto", p: 3 }}>
       <TabHeader
         title="Interview copilot"
-        description="Live transcription, question detection, and suggested answers during interviews."
+        description={
+          mode === "practice"
+            ? // "nothing else is recorded or shared" was false: on the Gemini
+              // engine, the answer transcript, posting details, and prep
+              // context all go to Google for the critique. The detailed
+              // notice below (PracticeClient) states exactly what leaves on
+              // the current engine — this one-liner defers to it rather
+              // than making its own (previously false) blanket claim.
+              "Practice speaking out loud with your camera and mic — see the notice below for what's sent to Deepgram or Gemini."
+            : "Live transcription, question detection, and suggested answers during interviews."
+        }
       />
-      <Typography variant="body2" sx={{ color: "var(--text-secondary)", mb: 2 }}>
-        {shareInstructions} Both sides of the call are transcribed live; the
-        interviewer&apos;s questions are detected on the right and answered
-        automatically. Chrome or Edge only.
-      </Typography>
 
       <Stack
         direction="row"
@@ -376,125 +378,146 @@ export default function CopilotClient() {
         sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
       >
         <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-          Interviewer audio:
+          Mode:
         </Typography>
         <ToggleButtonGroup
           exclusive
           size="small"
-          value={source}
+          value={mode}
           disabled={live}
-          onChange={(_e, val) => onSourceChange(val)}
+          onChange={(_e, val) => onModeChange(val)}
         >
-          <ToggleButton value="tab" sx={{ textTransform: "none", px: 1.5 }}>
-            Browser tab
+          <ToggleButton value="live" sx={{ textTransform: "none", px: 1.5 }}>
+            Live interview
           </ToggleButton>
-          <ToggleButton value="system" sx={{ textTransform: "none", px: 1.5 }}>
-            System audio (speakers)
+          <ToggleButton value="practice" sx={{ textTransform: "none", px: 1.5 }}>
+            Practice
           </ToggleButton>
         </ToggleButtonGroup>
       </Stack>
 
-      {showConsent ? (
-        <Alert severity="info" sx={{ mb: 2 }} onClose={() => setShowConsent(false)}>
-          Recording notice: audio is streamed to Deepgram for transcription. Make
-          sure everyone on the call consents before you start — some regions
-          require all-party consent.
-        </Alert>
-      ) : null}
-
-      {error ? (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      ) : null}
-      {warning ? (
-        <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setWarning("")}>
-          {warning}
-        </Alert>
-      ) : null}
-
-      <PrepContext value={profile} onChange={onProfileChange} />
-
-      <Stack
-        direction="row"
-        spacing={1.5}
-        sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
-      >
-        {live ? (
-          <Button variant="outlined" color="error" onClick={stop}>
-            Stop
-          </Button>
-        ) : (
-          <Button variant="contained" onClick={start}>
-            Start session
-          </Button>
-        )}
-        <StatusPill status={status} />
-        {startedAt ? (
-          <Typography
-            variant="body2"
-            sx={{ color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}
-          >
-            {fmtClock(elapsed)}
+      {mode === "practice" ? (
+        <PracticeClient />
+      ) : (
+        <>
+          <Typography variant="body2" sx={{ color: "var(--text-secondary)", mb: 2 }}>
+            {shareInstructions} Both sides of the call are transcribed live; the
+            interviewer&apos;s questions are detected on the right and answered
+            automatically. Chrome or Edge only.
           </Typography>
-        ) : null}
-        <Box sx={{ flex: 1 }} />
-        <FormControlLabel
-          control={
-            <Switch
-              size="small"
-              checked={autoDraft}
-              onChange={(e) => setAutoDraft(e.target.checked)}
-            />
-          }
-          label={
+
+          <Stack
+            direction="row"
+            spacing={1.25}
+            sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
+          >
             <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-              Auto-draft
+              Interviewer audio:
             </Typography>
-          }
-          sx={{ mr: 0.5 }}
-        />
-        <Button
-          size="small"
-          variant="text"
-          onClick={copyTranscript}
-          disabled={finals.length === 0}
-        >
-          Copy
-        </Button>
-        <Button
-          size="small"
-          variant="text"
-          onClick={clearAll}
-          disabled={finals.length === 0 && questions.length === 0}
-        >
-          Clear
-        </Button>
-      </Stack>
+            <ToggleButtonGroup
+              exclusive
+              size="small"
+              value={source}
+              disabled={live}
+              onChange={(_e, val) => onSourceChange(val)}
+            >
+              <ToggleButton value="tab" sx={{ textTransform: "none", px: 1.5 }}>
+                Browser tab
+              </ToggleButton>
+              <ToggleButton value="system" sx={{ textTransform: "none", px: 1.5 }}>
+                System audio (speakers)
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Stack>
 
-      <Stack
-        direction={{ xs: "column", md: "row" }}
-        spacing={2}
-        sx={{ alignItems: "stretch" }}
-      >
-        <TranscriptView finals={finals} interims={interims} startedAt={startedAt} />
-        <QuestionFeed questions={questions} onDraft={onDraft} />
-      </Stack>
+          {showConsent ? (
+            <Alert severity="info" sx={{ mb: 2 }} onClose={() => setShowConsent(false)}>
+              Recording notice: audio is streamed to Deepgram for transcription. Make
+              sure everyone on the call consents before you start — some regions
+              require all-party consent.
+            </Alert>
+          ) : null}
+
+          {error ? (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              {error}
+            </Alert>
+          ) : null}
+          {warning ? (
+            <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setWarning("")}>
+              {warning}
+            </Alert>
+          ) : null}
+
+          <PrepContext value={profile} onChange={onProfileChange} />
+
+          <Stack
+            direction="row"
+            spacing={1.5}
+            sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
+          >
+            {live ? (
+              <Button variant="outlined" color="error" onClick={stop}>
+                Stop
+              </Button>
+            ) : (
+              <Button variant="contained" onClick={start}>
+                Start session
+              </Button>
+            )}
+            <StatusPill status={status} />
+            {startedAt ? (
+              <Typography
+                variant="body2"
+                sx={{ color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}
+              >
+                {fmtClock(elapsed)}
+              </Typography>
+            ) : null}
+            <Box sx={{ flex: 1 }} />
+            <FormControlLabel
+              control={
+                <Switch
+                  size="small"
+                  checked={autoDraft}
+                  onChange={(e) => setAutoDraft(e.target.checked)}
+                />
+              }
+              label={
+                <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
+                  Auto-draft
+                </Typography>
+              }
+              sx={{ mr: 0.5 }}
+            />
+            <Button
+              size="small"
+              variant="text"
+              onClick={copyTranscript}
+              disabled={finals.length === 0}
+            >
+              Copy
+            </Button>
+            <Button
+              size="small"
+              variant="text"
+              onClick={clearAll}
+              disabled={finals.length === 0 && questions.length === 0}
+            >
+              Clear
+            </Button>
+          </Stack>
+
+          <Stack
+            direction={{ xs: "column", md: "row" }}
+            spacing={2}
+            sx={{ alignItems: "stretch" }}
+          >
+            <TranscriptView finals={finals} interims={interims} startedAt={startedAt} />
+            <QuestionFeed questions={questions} onDraft={onDraft} />
+          </Stack>
+        </>
+      )}
     </Box>
-  );
-}
-
-function StatusPill({ status }) {
-  const map = {
-    idle: { label: "Idle", color: "var(--text-muted)" },
-    connecting: { label: "Connecting…", color: "var(--warning)" },
-    live: { label: "● Live", color: "var(--success)" },
-    error: { label: "Error", color: "var(--danger)" },
-  };
-  const { label, color } = map[status] || map.idle;
-  return (
-    <Typography variant="body2" sx={{ color, fontWeight: 600 }}>
-      {label}
-    </Typography>
   );
 }

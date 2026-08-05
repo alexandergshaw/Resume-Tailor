@@ -73,6 +73,18 @@ export class DeepgramStream {
         transcript,
         isFinal: !!msg.is_final,
         speechFinal: !!msg.speech_final,
+        // Purely additive: `start` and `duration` are the audio-time offset
+        // (seconds since this connection's first audio) and length of the
+        // window this Results frame covers — present on every frame,
+        // interim or final. Existing consumers (the live copilot session,
+        // and practice mode before this change) destructure only the
+        // fields above and simply ignore these, so forwarding them changes
+        // nothing for them. Practice mode's answer collector uses them to
+        // bound an answer by when the words were actually SPOKEN rather
+        // than by when this event happened to arrive — see
+        // PracticeClient.js.
+        start: typeof msg.start === "number" ? msg.start : undefined,
+        duration: typeof msg.duration === "number" ? msg.duration : undefined,
       });
     });
 
