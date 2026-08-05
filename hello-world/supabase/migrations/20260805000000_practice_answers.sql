@@ -14,6 +14,12 @@
 -- Every text/jsonb column defaults to a not-null empty value so a partial
 -- save (e.g. critique failed, or no video) is still a valid row — see
 -- lib/supabase/practiceAnswers.js.
+--
+-- Applied by .github/workflows/supabase-migrations.yml, which runs
+-- `supabase db push` on merges to main that touch this directory, and can
+-- also be started by hand from the Actions tab (workflow_dispatch). Every
+-- statement below is idempotent, so re-running it over an already-applied
+-- migration is safe.
 
 create table if not exists public.practice_answers (
   id              uuid primary key default gen_random_uuid(),
