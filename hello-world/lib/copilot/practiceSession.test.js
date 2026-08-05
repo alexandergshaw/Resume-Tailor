@@ -1,18 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// PracticeSession.start() normally opens a real WebSocket via DeepgramStream —
-// not available in this node test environment. The spies are hoisted (not
-// just captured by the mock factory) so tests can assert a Deepgram stream
-// was never even built, not just never connected. dgControl.shouldThrowOnClose
-// lets the stop()-teardown tests below force close() to throw synchronously,
-// the way a real WebSocket close can, without touching practiceSession.js.
-// dgControl.hold lets a single test pause connect() before it resolves, so an
-// ordering claim ("X happens before dg.connect() resolves") can be proven
-// directly instead of inferred from call counts — every other test leaves it
-// null, which keeps connect() resolving immediately exactly as before.
-// FakeDeepgramStream.instances (reset each test, see beforeEach below) exposes
-// the onStatus/onError/onTranscript callbacks PracticeSession registered, so
-// the socket-event tests further down can invoke them directly — simulating a
+// PracticeSession.start() normally opens a real WebSocket via a stream built
+// through createSttStream — not available in this node test environment.
+// The spies are hoisted (not just captured by the mock factory) so tests can
+// assert a Deepgram stream was never even built, not just never connected.
+// dgControl.shouldThrowOnClose lets the stop()-teardown tests below force
+// close() to throw synchronously, the way a real WebSocket close can,
+// without touching practiceSession.js. dgControl.hold lets a single test
+// pause connect() before it resolves, so an ordering claim ("X happens
+// before dg.connect() resolves") can be proven directly instead of inferred
+// from call counts — every other test leaves it null, which keeps connect()
+// resolving immediately exactly as before. FakeDeepgramStream.instances
+// (reset each test, see beforeEach below) exposes the
+// onStatus/onError/onTranscript callbacks PracticeSession registered, so the
+// socket-event tests further down can invoke them directly — simulating a
 // status change, an error, or a transcript arriving from the socket, without
 // faking WebSocket event machinery.
 const { dgConstructorSpy, dgConnectSpy, dgCloseSpy, dgControl } = vi.hoisted(() => ({
@@ -22,7 +23,7 @@ const { dgConstructorSpy, dgConnectSpy, dgCloseSpy, dgControl } = vi.hoisted(() 
   dgControl: { shouldThrowOnClose: false, hold: null },
 }));
 
-vi.mock("./deepgram", () => {
+vi.mock("./stt", () => {
   class FakeDeepgramStream {
     constructor(opts = {}) {
       dgConstructorSpy(opts);
@@ -51,13 +52,18 @@ vi.mock("./deepgram", () => {
     }
   }
   FakeDeepgramStream.instances = [];
-  return { DeepgramStream: FakeDeepgramStream };
+  return {
+    DeepgramStream: FakeDeepgramStream,
+    createSttStream: async (opts) => new FakeDeepgramStream(opts),
+  };
 });
 
 // Imported after the mock above so practiceSession.js picks up the fake
-// DeepgramStream.
+// createSttStream. DeepgramStream is imported directly too, purely so tests
+// below can reach FakeDeepgramStream.instances — practiceSession.js itself
+// no longer imports it.
 import { PracticeSession } from "./practiceSession";
-import { DeepgramStream } from "./deepgram";
+import { DeepgramStream } from "./stt";
 
 // Stand-ins for the bits of the MediaStreamTrack / MediaStream interfaces
 // this file's tests touch: an `enabled` flag setMicMuted()/setCameraOff()

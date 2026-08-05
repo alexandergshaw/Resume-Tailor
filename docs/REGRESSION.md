@@ -760,3 +760,86 @@ from a fail without judgement calls.
 2. Read what `PracticeClient` passes it, specifically the frames-sent boolean and the body-language reason.
 
 **Expected:** The caption keys on whether frames were ACTUALLY sent, not on which engine ran. With the frames opt-in off — the default — the Gemini path reads the same as the embedded path: measured numbers only, nobody reviewed the video. The Gemini-failed-and-fell-back case does not claim a visual review either. When body language is unavailable the panel states the specific reason carried from the sampler rather than a generic message, and never hides the section silently or renders empty rows. The panel's body-language feedback is distinct from the raw measurements `AnswerReview` shows on the same screen, and the two never contradict each other.
+
+### R-074 | area: copilot-config | parallel-safe: yes | automatable: yes
+
+**Summary:** The copilot can open a session on a deploy with no Gemini key. Transcription is independent of the LLM, so requiring an LLM key to mint a transcription token was a coupling bug that made the whole copilot unusable on a keyless (embedded-engine) deploy.
+
+**Steps:**
+1. Read `getDeepgramApiKey` in `hello-world/lib/config/env.js` and confirm it does not go through `REQUIRED_SERVER_KEYS`.
+2. Read `app/api/copilot/token/route.js` and confirm the order of the auth check and the configuration check.
+3. Run `npx vitest run --no-file-parallelism lib/config/env.test.js app/api/copilot/token/route.test.js` from `hello-world/`.
+
+**Expected:** With `Gemini_LLM_API_Key` unset and the selected provider's key set, a signed-in POST mints a token successfully — before the fix this returned a 500 and no session could start. `getServerEnv()` itself is unchanged and still throws when the Gemini key is missing, because its other callers depend on that. An unauthenticated request returns the existing 401 EVEN when the provider is unconfigured, so an anonymous caller cannot probe the deployment's configuration; only a signed-in caller can learn that a provider key is unset.
+
+### R-075 | area: stt-abstraction | parallel-safe: yes | automatable: yes
+
+**Summary:** Speech-to-text sits behind a documented provider contract, and exactly one short-lived credential is minted per stream. ElevenLabs tokens are single-use and consumed on use, so a second fetch is not merely wasteful.
+
+**Steps:**
+1. Read the contract comment and `createSttStream` in `hello-world/lib/copilot/stt/index.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/stt/index.test.js lib/copilot/stt/token.test.js lib/copilot/stt/deepgram.token.test.js` from `hello-world/`.
+
+**Expected:** `createSttStream` fetches exactly ONE token per call and threads both the resolved provider and that token into the constructed instance — assert the call count, not merely that it worked. An explicit provider argument forces that choice; an omitted or unrecognized provider name resolves to Deepgram rather than throwing, so a bad value degrades to today's behavior. A token fetch that fails still returns a usable Deepgram instance with no injected token, leaving `connect()` to surface the real error rather than failing at selection time. A provider constructed directly with no token still fetches its own, which is what keeps `deepgram.test.js` valid.
+
+### R-076 | area: stt-abstraction | parallel-safe: yes | automatable: yes
+
+**Summary:** Both copilot session types construct their transcription stream through the abstraction, and Deepgram's wire behavior is unchanged by the move.
+
+**Steps:**
+1. Confirm `lib/copilot/session.js` and `lib/copilot/practiceSession.js` both obtain their stream from `createSttStream` rather than constructing a provider directly.
+2. Read `lib/copilot/stt/deepgram.js` and compare its connection parameters against what the live copilot used before the refactor.
+3. Run `npx vitest run --no-file-parallelism lib/copilot/session.test.js lib/copilot/practiceSession.test.js lib/copilot/stt/deepgram.test.js` from `hello-world/`.
+
+**Expected:** Deepgram keeps the same listen URL, the same query parameters (model, encoding, sample_rate, channels, interim_results, smart_format, punctuate, endpointing), the same `["token", <token>]` subprotocol, the same non-Results frame filtering, the same empty-transcript skip, the same `start`/`duration` passthrough and the same `CloseStream` flush on close. `PracticeSession` still assigns its stream reference BEFORE awaiting `connect()`, so the stop-during-connect guards from R-041 still hold. The session tests pass with their assertions unchanged — that is the evidence the refactor preserved behavior, and any rewording of them would destroy it.
+
+### R-077 | area: stt-elevenlabs | parallel-safe: yes | automatable: yes
+
+**Summary:** The ElevenLabs provider speaks the documented wire protocol, including the fields the service requires but the copilot's own pipeline knows nothing about.
+
+**Steps:**
+1. Read `connect()` and `send()` in `hello-world/lib/copilot/stt/elevenlabs.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/stt/elevenlabs.test.js` from `hello-world/`.
+
+**Expected:** The socket is opened with `model_id=scribe_v2_realtime`, `audio_format=pcm_16000`, `include_timestamps=true`, `commit_strategy=vad` and the token. `send()` accepts the same 16 kHz mono PCM16 `ArrayBuffer` every caller already passes, base64-encodes it into `audio_base_64`, and sends `message_type: "input_audio_chunk"` with `sample_rate: 16000` and `commit: false` — `commit` is documented as required, and `false` is the correct value under a VAD commit strategy where the server decides utterance boundaries. The base64 round-trips the original bytes exactly, including 0x00 and 0xFF and across the internal encode-loop boundary. Nothing is sent when the socket is not open.
+
+### R-078 | area: stt-elevenlabs | parallel-safe: yes | automatable: yes
+
+**Summary:** The ElevenLabs transcript mapping, which is where this provider silently succeeds or silently corrupts everything downstream.
+
+**Steps:**
+1. Read the message-type switch and the span derivation in `hello-world/lib/copilot/stt/elevenlabs.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/stt/elevenlabs.test.js` from `hello-world/`.
+
+**Expected:** `partial_transcript` maps to isFinal false / speechFinal false; `final_transcript` and `final_transcript_with_timestamps` map to isFinal true / speechFinal FALSE; `committed_transcript` and `committed_transcript_with_timestamps` map to isFinal true / speechFinal TRUE. That last mapping is the one that makes live-mode question detection work at all — under `commit_strategy=vad` a commit IS the end-of-utterance signal, the role Deepgram's `speech_final` plays — so it is asserted directly rather than incidentally. `start` and `duration` derive from the `words` array using only entries whose `type` is `word`, excluding spacing and audio-event entries. When there is no usable `words` array, BOTH are `undefined` and never a fabricated 0: `answerWindow.js` reads undefined as "no timing available", so a 0 would silently corrupt every practice-mode delivery number without ever throwing. Empty or whitespace-only text is skipped, and `session_started` and `committed_transcript_entities` never reach `onTranscript`.
+
+### R-079 | area: stt-elevenlabs | parallel-safe: yes | automatable: yes
+
+**Summary:** The tripwire for the wire format differing from the documentation. This provider was implemented against published docs and has never been exercised against the live service, so a protocol mismatch must announce itself rather than presenting as a session that transcribes nothing.
+
+**Steps:**
+1. Read the error handling and the unknown-message-type reporting in `hello-world/lib/copilot/stt/elevenlabs.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/stt/elevenlabs.test.js` from `hello-world/`.
+
+**Expected:** Every documented error `message_type` routes to `onError` with a useful message and is not treated as unrecognized. An UNRECOGNIZED `message_type` is reported through `onError` exactly ONCE per session, naming the type — it must fire, and it must not spam once per message. An abnormal socket close surfaces through `onError` in addition to `onStatus("closed")`, while a close initiated by the module's own `close()` does not. The module carries a comment recording that it was written against documentation rather than verified against the live service, so the provenance of its assumptions is legible to the next reader.
+
+### R-080 | area: copilot-config | parallel-safe: yes | automatable: yes
+
+**Summary:** Provider selection is a server decision, misconfiguration names the provider actually selected, and asking which provider is live costs nothing.
+
+**Steps:**
+1. Read `getSttProvider` and `getElevenLabsApiKey` in `hello-world/lib/config/env.js`.
+2. Read both the `GET` and `POST` handlers in `app/api/copilot/token/route.js`.
+3. Run `npx vitest run --no-file-parallelism lib/config/env.test.js app/api/copilot/token/route.test.js` from `hello-world/`.
+
+**Expected:** `STT_PROVIDER` selects the provider; unset, empty or unrecognized values resolve to Deepgram, so today's deploys are unaffected. `GET` returns `{ provider }` only — it mints nothing and makes no outbound provider call, which is the entire reason it exists: learning the provider name for the consent notice must not burn a single-use credential on every page view. `GET` is auth-gated exactly like `POST`, with auth ahead of configuration. `POST` mints from the selected provider, sending `xi-api-key` to the ElevenLabs single-use-token endpoint on that path. When the selected provider's key is unset the response is a 503 naming THAT provider and THAT environment variable, and it never silently falls back to the other provider.
+
+### R-081 | area: copilot-privacy | parallel-safe: yes | automatable: no
+
+**Summary:** The copilot tells the user which transcription service actually receives their audio, rather than a hardcoded name.
+
+**Steps:**
+1. Read how the provider display name is obtained and used in `hello-world/app/copilot/CopilotClient.js`.
+2. Read the privacy notice construction in `hello-world/app/copilot/practice/PracticeClient.js`.
+
+**Expected:** The destination name is derived from the provider the server reports, not hardcoded to either vendor. Before the provider is known the notice omits the destination clause entirely rather than guessing or naming a placeholder. The engine clause, the camera-frames clause and the save-recordings clause are independent of this and unchanged. The provider probe uses the non-minting GET, so simply opening the copilot does not consume a transcription credential.

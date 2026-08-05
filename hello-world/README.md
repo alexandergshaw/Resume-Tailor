@@ -109,6 +109,8 @@ For local development, create a `.env.local` file in `hello-world/` or run `npx 
 | `BRAVE_SEARCH_API_KEY` | No | [Brave Search API](https://brave.com/search/api/) — sturdier offline screenshot search (Embedded engine). Falls back to DuckDuckGo if unset |
 | `GOOGLE_SEARCH_API_KEY` | No | [Google Programmable Search](https://developers.google.com/custom-search/v1/overview) — alternate offline search provider (used if Brave isn't set) |
 | `GOOGLE_SEARCH_ENGINE_ID` | No | The `cx` id of your [Programmable Search Engine](https://programmablesearchengine.google.com/); required alongside `GOOGLE_SEARCH_API_KEY` |
+| `STT_PROVIDER` | No | Selects the interview copilot's speech-to-text provider: `deepgram` or `elevenlabs`. Defaults to `deepgram` when unset, and also falls back to `deepgram` for any unrecognized value. |
+| `ELEVENLABS_API_KEY` | Only if `STT_PROVIDER=elevenlabs` | [ElevenLabs](https://elevenlabs.io/app/settings/api-keys) — used to mint short-lived realtime transcription tokens for the interview copilot. Each token is single-use (consumed on first use) and expires after 15 minutes, so it's minted fresh per session rather than cached. Not read at all when `STT_PROVIDER` is unset or `deepgram`. |
 
 The `KV_REST_API_URL` and `KV_REST_API_TOKEN` variables are injected automatically when you create a Redis database via **Vercel Storage** and connect it to this project.
 

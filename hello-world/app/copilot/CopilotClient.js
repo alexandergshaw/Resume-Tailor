@@ -26,6 +26,12 @@ import { usePrepContext } from "./usePrepContext";
 const CONTEXT_TURNS = 12;
 const MIN_WORDS_FOR_LLM = 4;
 const SOURCE_STORAGE_KEY = "copilot-audio-source";
+// F2: display name for whichever speech-to-text provider the server has
+// selected (STT_PROVIDER, see lib/config/env.js's getSttProvider) — kept
+// here, keyed off the token response's `provider` field, rather than
+// hardcoded into the notices below, so they can never claim a destination
+// that isn't actually receiving the audio (AC-F2-5).
+const STT_PROVIDER_NAMES = { deepgram: "Deepgram", elevenlabs: "ElevenLabs" };
 
 // Phase 4: assemble the interviewer's speech into complete utterances (on
 // Deepgram's speech_final endpoint), confirm/normalize questions with an LLM
@@ -45,6 +51,11 @@ export default function CopilotClient() {
   const [startedAt, setStartedAt] = useState(null);
   const [now, setNow] = useState(0);
   const [showConsent, setShowConsent] = useState(true);
+  // F2: which speech-to-text provider is actually live — `null` until the
+  // mount-time probe below resolves. See the useEffect near the other
+  // mount-time setup for why this is a separate, display-only fetch rather
+  // than something threaded out of a running session.
+  const [sttProviderName, setSttProviderName] = useState(null);
 
   const sessionRef = useRef(null);
   const idRef = useRef(0);
@@ -92,6 +103,36 @@ export default function CopilotClient() {
       stored = null;
     }
     if (stored === "tab" || stored === "system") setSource(stored);
+  }, []);
+
+  // F2: learn which speech-to-text provider is actually live, purely so the
+  // privacy notices below (and the one PracticeClient renders, which reads
+  // this as a prop) can name it instead of unconditionally saying
+  // "Deepgram" the way they used to. Hits the token route's GET handler —
+  // NOT fetchSttToken()'s POST — because GET mints nothing: it just answers
+  // "which provider?" (see app/api/copilot/token/route.js). Using POST here
+  // would mint a real credential on every page view purely to read
+  // `.provider` and then throw it away unconnected, which is wasteful on
+  // any provider and a genuine loss on ElevenLabs, whose token is
+  // single-use. This runs ahead of, and separately from, whatever a
+  // session's own createSttStream call does when a session actually starts
+  // (see lib/copilot/stt/index.js) — the whole point is to inform the user
+  // BEFORE they press Start, not only once a session already exists.
+  // Errors are swallowed: an unreachable/misconfigured provider surfaces
+  // for real through the normal onError/onStatus("error") path once a
+  // session is actually started, and this mount-time probe is not it.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/copilot/token", { method: "GET" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (cancelled || !body) return;
+        setSttProviderName(STT_PROVIDER_NAMES[body?.provider] || null);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const onSourceChange = useCallback((val) => {
@@ -367,7 +408,9 @@ export default function CopilotClient() {
               // notice below (PracticeClient) states exactly what leaves on
               // the current engine — this one-liner defers to it rather
               // than making its own (previously false) blanket claim.
-              "Practice speaking out loud with your camera and mic — see the notice below for what's sent to Deepgram or Gemini."
+              // F2: the STT destination is only named once it's actually
+              // known (see the mount-time fetch above) — never guessed.
+              `Practice speaking out loud with your camera and mic — see the notice below for what's sent ${sttProviderName ? `to ${sttProviderName} or Gemini` : "to Gemini"}.`
             : "Live transcription, question detection, and suggested answers during interviews."
         }
       />
@@ -397,7 +440,7 @@ export default function CopilotClient() {
       </Stack>
 
       {mode === "practice" ? (
-        <PracticeClient />
+        <PracticeClient sttProviderName={sttProviderName} />
       ) : (
         <>
           <Typography variant="body2" sx={{ color: "var(--text-secondary)", mb: 2 }}>
@@ -432,9 +475,8 @@ export default function CopilotClient() {
 
           {showConsent ? (
             <Alert severity="info" sx={{ mb: 2 }} onClose={() => setShowConsent(false)}>
-              Recording notice: audio is streamed to Deepgram for transcription. Make
-              sure everyone on the call consents before you start — some regions
-              require all-party consent.
+              {/* F2: names the provider once known, never guesses one before then. */}
+              {`Recording notice: audio is streamed${sttProviderName ? ` to ${sttProviderName}` : ""} for transcription. Make sure everyone on the call consents before you start — some regions require all-party consent.`}
             </Alert>
           ) : null}
 

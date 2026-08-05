@@ -9,7 +9,7 @@
 // speaker, and a single aggregated status is reported to the UI.
 
 import { captureTabAudio, captureSystemAudio, captureMicAudio, PcmPipeline } from "./capture";
-import { DeepgramStream } from "./deepgram";
+import { createSttStream } from "./stt";
 
 // Maps the `source` option to the capture function used for "them". Anything
 // not in this map (including an omitted or garbage value) resolves to the
@@ -48,7 +48,7 @@ export class CopilotSession {
   }
 
   async _addSource({ key, speaker, stream }) {
-    const dg = new DeepgramStream({
+    const dg = await createSttStream({
       speaker,
       onStatus: (s) => this._setStatus(key, s),
       onError: (err) => {

@@ -6,7 +6,7 @@
 // translated into the vocabulary the UI already renders.
 
 import { captureCameraAndMic, captureMicAudio, PcmPipeline } from "./capture";
-import { DeepgramStream } from "./deepgram";
+import { createSttStream } from "./stt";
 
 // DeepgramStream's own status values ("connecting" | "open" | "closed") ->
 // the vocabulary CopilotSession.aggregateStatus already collapses "them"/
@@ -97,7 +97,7 @@ export class PracticeSession {
       this.onStream(this.stream, false);
     });
 
-    const dg = new DeepgramStream({
+    const dg = await createSttStream({
       speaker: "you",
       onStatus: (s) => {
         // Once stopped, every further status from this socket is stale —

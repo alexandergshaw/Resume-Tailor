@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// DeepgramStream normally fetches a token from our own API route and opens a
-// real WebSocket to Deepgram — neither is available in this node test
-// environment. Stand in with a class that reports "open" as soon as it's
-// asked to connect and otherwise does nothing, so CopilotSession's real
-// wiring (capture -> pipeline -> dg) can run end to end without a network.
-vi.mock("./deepgram", () => {
-  class FakeDeepgramStream {
+// createSttStream normally fetches a token from our own API route and opens
+// a real WebSocket to Deepgram — neither is available in this node test
+// environment. Stand in with a factory that resolves to a stream reporting
+// "open" as soon as it's asked to connect and otherwise does nothing, so
+// CopilotSession's real wiring (capture -> pipeline -> dg) can run end to
+// end without a network.
+vi.mock("./stt", () => {
+  class FakeSttStream {
     constructor({ onStatus } = {}) {
       this._onStatus = onStatus || (() => {});
     }
@@ -20,10 +21,10 @@ vi.mock("./deepgram", () => {
       this._onStatus("closed");
     }
   }
-  return { DeepgramStream: FakeDeepgramStream };
+  return { createSttStream: async (opts) => new FakeSttStream(opts) };
 });
 
-// Imported after the mock above so session.js picks up the fake DeepgramStream.
+// Imported after the mock above so session.js picks up the fake createSttStream.
 import { CopilotSession } from "./session";
 
 function makeTrack() {

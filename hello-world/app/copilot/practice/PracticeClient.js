@@ -77,7 +77,7 @@ function writeSaveEnabled(on) {
 // sampler, drain, generation guard, replay URL lifecycle, metrics/critique
 // state) lives in usePracticeAnswer (AC-C4-8) — this component owns the
 // capture session, the posting picker, the question, and the layout.
-export default function PracticeClient() {
+export default function PracticeClient({ sttProviderName } = {}) {
   const [status, setStatus] = useState("idle"); // idle | connecting | live | error
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
@@ -503,7 +503,17 @@ export default function PracticeClient() {
   const videoNotice = saveEnabled
     ? "Your answer video is uploaded to your own Supabase storage, private to your account, and listed in your practice history until you delete it."
     : "Your video clip stays in your browser and is dropped when the session ends.";
-  const privacyNotice = `Your audio is streamed to Deepgram for transcription. ${engineNotice} ${videoNotice}`;
+  // F2: `sttProviderName` is passed down from CopilotClient, which learns
+  // it from the /api/copilot/token response (see CopilotClient.js) rather
+  // than this component fetching its own — the provider is a single
+  // server-side choice (STT_PROVIDER) shared by live and practice mode
+  // alike, so one fetch per page is enough for both notices to agree. It is
+  // `undefined`/`null` until that fetch resolves, in which case this notice
+  // names no provider at all rather than guessing one (AC-F2-5).
+  const sttNotice = sttProviderName
+    ? `Your audio is streamed to ${sttProviderName} for transcription.`
+    : "Your audio is streamed for transcription.";
+  const privacyNotice = `${sttNotice} ${engineNotice} ${videoNotice}`;
 
   return (
     <Box>

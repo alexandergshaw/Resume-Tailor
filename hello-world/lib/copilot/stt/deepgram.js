@@ -1,10 +1,13 @@
-// Browser-side Deepgram streaming client.
+// Browser-side Deepgram streaming client — the Deepgram implementation of
+// the speech-to-text provider contract documented in ./index.js.
 //
 // Flow: fetch a short-lived token from our own /api/copilot/token route, open a
 // WebSocket straight to Deepgram's live listen endpoint (authenticated via the
 // Sec-WebSocket-Protocol subprotocol, since browsers can't set Authorization
 // headers on WebSockets), stream raw 16 kHz linear16 PCM, and surface interim +
 // final transcripts through callbacks.
+
+import { fetchSttToken } from "./token";
 
 const LISTEN_URL = "wss://api.deepgram.com/v1/listen";
 
@@ -23,28 +26,30 @@ const DEFAULT_PARAMS = {
   endpointing: "300",
 };
 
-export async function fetchDeepgramToken() {
-  const res = await fetch("/api/copilot/token", { method: "POST" });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(json.error || `Token request failed (${res.status}).`);
-  }
-  if (!json.token) throw new Error("Token route returned no token.");
-  return json.token;
-}
-
 export class DeepgramStream {
-  constructor({ speaker = "them", onTranscript, onStatus, onError } = {}) {
+  // `token`, if provided, is an already-minted credential from a single
+  // upstream fetch (see createSttStream in ./index.js) — connect() below
+  // uses it as-is instead of fetching its own. Omitted when constructed
+  // directly (as lib/copilot/stt/deepgram.test.js does), in which case
+  // connect() fetches its own token itself, exactly as before this option
+  // existed.
+  constructor({ speaker = "them", onTranscript, onStatus, onError, token } = {}) {
     this.speaker = speaker;
     this.onTranscript = onTranscript || (() => {});
     this.onStatus = onStatus || (() => {});
     this.onError = onError || (() => {});
     this.ws = null;
     this._closing = false;
+    this._token = token;
   }
 
   async connect() {
-    const token = await fetchDeepgramToken();
+    let token = this._token;
+    if (!token) {
+      const body = await fetchSttToken();
+      token = body.token;
+      if (!token) throw new Error("Token route returned no token.");
+    }
     const qs = new URLSearchParams(DEFAULT_PARAMS).toString();
     const ws = new WebSocket(`${LISTEN_URL}?${qs}`, ["token", token]);
     ws.binaryType = "arraybuffer";
