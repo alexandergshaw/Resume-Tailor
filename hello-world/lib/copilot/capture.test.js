@@ -322,7 +322,7 @@ describe("captureSystemAudio", () => {
 });
 
 describe("captureMicAudio", () => {
-  it("requests exactly the processed mic constraints from getUserMedia, unchanged by the shared-constant extraction", async () => {
+  it("requests exactly the processed mic constraints from getUserMedia when called with no device id, unchanged by the shared-constant extraction", async () => {
     const stream = makeStream({ audioTracks: [makeTrack("audio")] });
     const getUserMedia = stubGetUserMedia(() => Promise.resolve(stream));
 
@@ -334,6 +334,49 @@ describe("captureMicAudio", () => {
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true,
+      },
+    });
+    // AC-I1.8: pin the EXACT shape, not just a deep-equal match — a
+    // deviceId key present with value undefined would satisfy toEqual
+    // against an object literal that omits it (Vitest's/Jest's toEqual
+    // treats {a:1, b:undefined} and {a:1} as equal), but must not pass
+    // here: the constraints object handed to getUserMedia must not carry a
+    // `deviceId` own-key at all when no device was requested.
+    const call = getUserMedia.mock.calls[0][0];
+    expect(Object.prototype.hasOwnProperty.call(call.audio, "deviceId")).toBe(false);
+  });
+
+  it("requests exactly the same constraints object for null, undefined, and empty-string device ids alike (all 'no selection')", async () => {
+    const stream = makeStream({ audioTracks: [makeTrack("audio")] });
+
+    for (const deviceId of [null, undefined, ""]) {
+      const getUserMedia = stubGetUserMedia(() => Promise.resolve(stream));
+      await captureMicAudio(deviceId);
+      const call = getUserMedia.mock.calls[0][0];
+      expect(Object.prototype.hasOwnProperty.call(call.audio, "deviceId")).toBe(false);
+      expect(call).toEqual({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+    }
+  });
+
+  it("applies a given device id as deviceId: { exact: id }, alongside the same processed audio constraints", async () => {
+    const stream = makeStream({ audioTracks: [makeTrack("audio")] });
+    const getUserMedia = stubGetUserMedia(() => Promise.resolve(stream));
+
+    const result = await captureMicAudio("mic-123");
+
+    expect(result).toBe(stream);
+    expect(getUserMedia).toHaveBeenCalledWith({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        deviceId: { exact: "mic-123" },
       },
     });
   });

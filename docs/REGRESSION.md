@@ -676,7 +676,9 @@ R-064 is this case's successor for notice truthfulness and enumerates the same g
 2. Read `persistAnswer` and `runCritique` in `hello-world/app/copilot/practice/usePracticeAnswer.js`, noting how the save preference and the frames opt-in are each read.
 3. Read the practice-mode description in `hello-world/app/copilot/CopilotClient.js`.
 
-**Expected:** The save switch defaults on and the frames opt-in defaults off; they are independent controls with independent wording, and neither implies the other's behavior. The notice names every real destination for the current settings: audio to Deepgram always; on the Gemini engine the answer transcript, posting details and prep context to Google, plus up to three still frames only when the frames switch is on; the video to the user's own account storage only when saving is on, private to them and deletable from the history. Nothing anywhere still claims the video never leaves the browser while saving is enabled. Both the frames opt-in and the save preference are re-read immediately before the corresponding request, so turning either off mid-flight prevents that upload — neither is latched at Done.
+**Expected:** The save switch defaults on and the frames opt-in defaults off; they are independent controls with independent wording, and neither implies the other's behavior. The notice names every real destination for the current settings: audio to whichever transcription provider the server actually reports, and to none before that is known (R-081 owns that clause in full); on the Gemini engine the answer transcript, posting details and prep context to Google, plus up to three still frames only when the frames switch is on; the video to the user's own account storage only when saving is on, private to them and deletable from the history. Nothing anywhere still claims the video never leaves the browser while saving is enabled. Both the frames opt-in and the save preference are re-read immediately before the corresponding request, so turning either off mid-flight prevents that upload — neither is latched at Done.
+
+**Amended (group I):** the audio clause previously read "audio to Deepgram always". The pluggable-STT work retired that: the provider is a server-side choice and must be named only once known. R-057 had already been narrowed for the same reason but this case's own Expected was missed, leaving two cases in this document contradicting each other about the same sentence. Corrected here rather than deleted, since everything else this case pins is still live.
 
 ### R-065 | area: body-language | parallel-safe: yes | automatable: yes
 
@@ -1033,3 +1035,68 @@ R-064 is this case's successor for notice truthfulness and enumerates the same g
 2. Read the `label` and `blankHint` defaults in `hello-world/app/copilot/PostingPicker.js`.
 
 **Expected:** The picker stays enabled at all times, including while a session is live — unlike the mode toggle and audio-source picker, which disable once live — because the user may realize mid-interview that they picked the wrong posting. Changing OR clearing the posting clears `answerCacheRef`, for the same reason editing the prep context does: every cached draft was grounded in the previous application's documents and must not be served afterwards. `runDraft` passes the selected posting's own id as `applicationId`, reading it from a ref so a stable callback's async body sees the latest selection. The picker's `label` and `blankHint` defaults are practice mode's exact original strings, so practice mode's rendering — including the composed "no tracked postings yet" helper text — is unchanged.
+
+### R-101 | area: mic-selection | parallel-safe: yes | automatable: yes
+
+**Summary:** Choosing a microphone constrains capture to that exact device, and choosing System default sends no constraint at all.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/copilot/capture.test.js lib/copilot/session.test.js lib/copilot/audioDevices.test.js`.
+
+**Expected:** All tests pass. With no device id — and with `null`, `undefined` or `""` — the getUserMedia constraints object has NO `deviceId` own-key whatsoever, asserted with `hasOwnProperty` rather than an equality check: `deviceId: undefined` and `deviceId: "default"` are both WRONG here, the first because it still serializes as a key and the second because some browsers treat it as a real alias id rather than as "no constraint". With a device id it is applied as `deviceId: { exact: id }`; `exact` is mandatory, because with `ideal` or a bare string the browser silently substitutes another device and the user believes they are recording on a microphone they are not. An `OverconstrainedError` (the chosen device was unplugged) produces a message naming that cause and never the word "denied" — it is detected by `err.name`, not by matching message text, which is not spec'd — and the session still continues with interviewer audio only, exactly as any other mic failure does. `normalizeMicDevices` always puts System default first with `deviceId: null`, drops the browser's `"default"`/`"communications"` alias rows, de-duplicates by id, and numbers its "Microphone N" placeholders over the KEPT audioinput devices only. `resolveStoredMicDeviceId` returns `null` for an id no longer present. `captureCameraAndMic` (practice mode) is untouched.
+
+### R-102 | area: live-pace | parallel-safe: yes | automatable: yes
+
+**Summary:** Live pace is measured from audio time or not reported at all, and shares one set of thresholds with practice mode.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/copilot/livePace.test.js lib/copilot/answerMetrics.test.js`.
+
+**Expected:** All tests pass. `computeLivePace` returns `wordsPerMinute: null` with `measured: false` whenever it cannot measure — never `0`, and never a label without a measurement. `appendSpeechSample` DROPS frames whose `start`/`duration` are unusable rather than coercing them to `0`, and specifically does not treat `start === 0` as missing: a naive falsy check there is the exact bug class this guards, and a fabricated zero silently corrupts the reading. The slow/rushed thresholds are imported from `answerMetrics.js` (110/170), not restated — two copies would drift and live mode would then disagree with practice mode about what "rushed" means for the same speaker. `computeAnswerMetrics`'s own output is unchanged by that extraction, including its deliberate `"conversational"` fallback when the speech span or word count is zero, which is a not-enough-to-judge fallback and NOT a claim that 0 wpm was measured.
+
+### R-103 | area: live-dashboard | parallel-safe: yes | automatable: yes
+
+**Summary:** The prediction cache signature cannot collide, and the hook cannot show a stale prediction.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run app/copilot/useLiveDashboard.test.js`.
+
+**Expected:** All tests pass. Two genuinely different (questions, posting) pairs that WOULD collapse to the same string under a naive `|` delimiter produce different signatures under the real one. That collision matters because its failure is silent: a missed re-prediction leaves a stale predicted question on screen forever with nothing erroring. The signature is deterministic for identical inputs, since the whole caching scheme rests on it. `resolveDashboardState` returns the idle state whenever `active` is false EVEN WHEN a completed prediction is stored — the guarantee that a just-ended session cannot leave its prediction on screen — and does not surface a stored result whose signature no longer matches. The test also asserts at BYTE level that the source file contains no literal NUL character: the delimiter must be written as a six-character unicode escape (backslash, u, four zeroes), never as the raw byte, because a literal NUL makes git classify the file as binary and renders every future diff of it unreviewable, which passed eslint, the build and the whole test suite when it happened.
+
+### R-104 | area: live-dashboard | parallel-safe: yes | automatable: no
+
+**Summary:** The dashboard's speculative work cannot start before a session, and cannot break the session once it has.
+
+**Steps:**
+1. Read the `active` gating in `hello-world/app/copilot/useLiveDashboard.js`.
+2. Confirm `hello-world/app/copilot/CopilotClient.js` passes its existing `live` value as `active`.
+
+**Expected:** With `active` false, neither the prediction nor the pre-draft issues any request, and both report idle rather than whatever the previous session left behind. This exists because selecting a posting merely to look at the page would otherwise spend two model calls before Start was ever pressed. Every failure is caught inside the hook and surfaced as an error with a retry; nothing throws back out to the caller. Prediction and pre-drafting are speculative conveniences bolted onto a live interview — they must never be able to break transcription, question detection, or answer drafting, which are the session's actual job.
+
+### R-105 | area: live-dashboard | parallel-safe: yes | automatable: no
+
+**Summary:** A correct prediction is free, not merely fast — the pre-drafted answer lands under the key the real draft looks up.
+
+**Steps:**
+1. Read `onPrefetchedAnswer` and `runDraft` in `hello-world/app/copilot/CopilotClient.js`.
+
+**Expected:** Both use `normalizeQuestion(question)` as the `answerCacheRef` key. This is the whole cost argument for the feature: pre-drafting roughly doubles model calls per detected question, and the cache hit is what pays that back when the interviewer actually asks the predicted question. If the two keys ever diverge the cache silently never hits, nothing errors, and every prediction becomes pure cost with the real question still paying full price — so the two expressions must be checked against each other, not merely each read in isolation. Pre-drafting happens only while the existing Auto-draft switch is on, since that switch already means "spend model calls automatically".
+
+### R-106 | area: live-dashboard | parallel-safe: yes | automatable: no
+
+**Summary:** A predicted question can never be mistaken for one the interviewer actually asked.
+
+**Steps:**
+1. Read `hello-world/app/copilot/dashboard/LiveDashboard.js`.
+
+**Expected:** The two prediction panels are visually distinct from the two real-question panels (a different wrapper, an accent treatment, and a "Prediction" chip), AND say in words that the interviewer has not asked this. The failure mode being designed against is a candidate glancing at this mid-interview and confidently answering a question nobody asked, so visual distinction alone is not sufficient and neither is the text alone. The answer panel is explicitly tied to the predicted question rather than the current one. The pace panel says pace is not being measured yet whenever `measured` is false, and never renders `0 wpm` or a label — an unmeasured signal is reported as unmeasured, the same rule the body-language work established.
+
+### R-107 | area: mic-selection | parallel-safe: yes | automatable: no
+
+**Summary:** The microphone picker explains what it cannot know, and never prompts for permission just to render.
+
+**Steps:**
+1. Read `hello-world/app/copilot/MicPicker.js`.
+2. Read its wiring and storage handling in `hello-world/app/copilot/CopilotClient.js`.
+
+**Expected:** Device labels are empty until microphone permission has been granted once — a browser privacy rule, not an error — so the picker shows "Microphone N" placeholders and states plainly that real names appear after the first session grants access. It must NOT call `getUserMedia` to unlock labels: prompting for a microphone as a side effect of rendering a dropdown is a worse trade than an unnamed device. It subscribes to `devicechange` so a headset plugged in mid-visit appears, and removes that listener on unmount. It is disabled while a session is live or connecting, matching the audio-source toggle, because switching microphones mid-session would require rebuilding the "you" pipeline and a control that silently does nothing is worse than a disabled one. The selection persists under its own localStorage key, separate from `copilot-audio-source` and `copilot-prep-context`, wrapped in try/catch, and is resolved through `resolveStoredMicDeviceId` on load so a device that has since been unplugged falls back to System default rather than failing capture.

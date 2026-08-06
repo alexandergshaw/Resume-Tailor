@@ -178,4 +178,59 @@ describe("CopilotSession failure semantics", () => {
     expect(session._sources.map((s) => s.key)).toEqual(["them"]);
     expect(session.aggregateStatus()).toBe("live");
   });
+
+  it("soft-fails on OverconstrainedError with a message naming the unavailable-device cause, not the generic denied wording", async () => {
+    // A real getUserMedia rejection for an unsatisfiable `deviceId: {
+    // exact }` constraint is a DOMException named "OverconstrainedError" —
+    // reproduced here as a plain Error with that same `.name`, since that's
+    // the only field session.js's micFailureMessage inspects (AC-I1.8).
+    const overconstrained = new Error("Overconstrained");
+    overconstrained.name = "OverconstrainedError";
+    stubMediaDevices({ onGetUserMedia: () => Promise.reject(overconstrained) });
+    const onError = vi.fn();
+    const session = new CopilotSession({ withMic: true, micDeviceId: "unplugged-mic", onError });
+
+    await session.start();
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    const message = onError.mock.calls[0][0].message;
+    // Names the real cause (device no longer available)...
+    expect(message).toMatch(/no longer available/i);
+    // ...and must NOT use the generic "denied" wording, which would send a
+    // user whose headset was simply unplugged off to check permission
+    // settings that were never the problem.
+    expect(message).not.toMatch(/denied/i);
+    // Still degrades to interviewer-audio-only rather than failing the
+    // whole session — identical continuation behaviour to any other mic
+    // failure.
+    expect(session._sources.map((s) => s.key)).toEqual(["them"]);
+    expect(session.aggregateStatus()).toBe("live");
+  });
+
+  it("passes micDeviceId through to captureMicAudio's getUserMedia call as deviceId: { exact }", async () => {
+    stubMediaDevices();
+    const session = new CopilotSession({ withMic: true, micDeviceId: "mic-abc" });
+
+    await session.start();
+
+    const micCall = globalThis.navigator.mediaDevices.getUserMedia.mock.calls[0][0];
+    expect(micCall.audio.deviceId).toEqual({ exact: "mic-abc" });
+  });
+
+  it("omitting micDeviceId reproduces today's getUserMedia call byte-for-byte (no deviceId key at all)", async () => {
+    stubMediaDevices();
+    const session = new CopilotSession({ withMic: true });
+
+    await session.start();
+
+    const micCall = globalThis.navigator.mediaDevices.getUserMedia.mock.calls[0][0];
+    expect(micCall).toEqual({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+    expect(Object.prototype.hasOwnProperty.call(micCall.audio, "deviceId")).toBe(false);
+  });
 });

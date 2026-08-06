@@ -30,8 +30,13 @@ export const DISCOURSE_MARKER_PHRASES = ["like", "right", "actually", "basically
 // reads as slow/hesitant to a listener, above ~170 reads as rushed. The
 // bands are deliberately wide — this is a coarse delivery signal, not a
 // toastmasters score.
-const SLOW_WPM_MAX = 110;
-const RUSHED_WPM_MIN = 170;
+//
+// Exported so live mode's rolling pace reading (lib/copilot/livePace.js)
+// uses this SAME pair rather than restating the numbers — two copies of a
+// threshold would drift, and then practice mode and live mode would
+// disagree about what "rushed" means for the same speaker.
+export const SLOW_WPM_MAX = 110;
+export const RUSHED_WPM_MIN = 170;
 
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -76,9 +81,27 @@ function splitSentences(text) {
     .filter(Boolean);
 }
 
-function countWords(s) {
+// Exported so livePace.js counts words the same way this module does —
+// whitespace split, filtering empties — instead of restating the algorithm
+// and risking the two drifting apart on some edge case (tabs, repeated
+// spaces) neither module's author thought to test.
+export function countWords(s) {
   const trimmed = s.trim();
   return trimmed ? trimmed.split(/\s+/).filter(Boolean).length : 0;
+}
+
+// The wpm -> label mapping alone, WITHOUT the "was pace even measured"
+// guard computeAnswerMetrics applies before calling this (see there: when
+// speechDurationSec <= 0 or wordCount === 0, the label is "conversational"
+// by fallback, not because wordsPerMinute — which is 0 in that case —
+// genuinely landed in the conversational band). Exported so livePace.js
+// derives a label from a wpm value using the exact same bands and the
+// exact same boundary rules (`<`/`>`, not `<=`/`>=`) practice mode uses,
+// rather than restating them (AC-I2.12).
+export function paceLabelFor(wordsPerMinute) {
+  if (wordsPerMinute < SLOW_WPM_MAX) return "slow";
+  if (wordsPerMinute > RUSHED_WPM_MIN) return "rushed";
+  return "conversational";
 }
 
 // Signature/shape is a contract with feature C4, which consumes this
@@ -105,14 +128,12 @@ export function computeAnswerMetrics({ text, durationMs, speechDurationMs, video
     Number.isFinite(speechDurationMs) && speechDurationMs > 0 ? speechDurationMs / 1000 : 0;
 
   const wordsPerMinute = speechDurationSec > 0 && wordCount > 0 ? (wordCount / speechDurationSec) * 60 : 0;
-  const paceLabel =
-    speechDurationSec <= 0 || wordCount === 0
-      ? "conversational"
-      : wordsPerMinute < SLOW_WPM_MAX
-        ? "slow"
-        : wordsPerMinute > RUSHED_WPM_MIN
-          ? "rushed"
-          : "conversational";
+  // The guard stays here rather than moving into paceLabelFor: with no
+  // measured speech span (or no words), wordsPerMinute is 0 above, and 0
+  // would land in the "slow" band if run through paceLabelFor's plain
+  // threshold check — "conversational" is the deliberate fallback for "not
+  // enough to judge," not a claim that 0 wpm was actually measured.
+  const paceLabel = speechDurationSec <= 0 || wordCount === 0 ? "conversational" : paceLabelFor(wordsPerMinute);
 
   const { total: fillerCount, matches: fillers } = clean
     ? countPhrases(clean, FILLER_PHRASES)

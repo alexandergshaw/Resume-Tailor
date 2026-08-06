@@ -143,10 +143,30 @@ export async function captureSystemAudio() {
   return requireAudioTrack(stream, () => buildSystemAudioMessage(stream));
 }
 
-export async function captureMicAudio() {
-  return navigator.mediaDevices.getUserMedia({
-    audio: MIC_AUDIO_CONSTRAINTS,
-  });
+// `deviceId` is OPTIONAL (AC-I1.8) — the picker's "System default" option
+// (see audioDevices.js's SYSTEM_DEFAULT_OPTION) is `deviceId: null`, and any
+// falsy value here (null, undefined, "") must produce EXACTLY today's
+// constraints object: `{ audio: MIC_AUDIO_CONSTRAINTS }` with no `deviceId`
+// key at all — not `deviceId: undefined`, which still shows up as an own
+// key when the constraints object is serialized/inspected, and not
+// `deviceId: "default"`, which some browsers treat as a REAL alias id
+// rather than "no constraint" (see audioDevices.js's ALIAS_DEVICE_IDS
+// comment). That's why the branch below reuses the MIC_AUDIO_CONSTRAINTS
+// object as-is instead of spreading it into a new one when there's no id.
+//
+// When a device id IS given, it's applied as `deviceId: { exact: id }`.
+// `exact` (as opposed to `ideal`) is mandatory: with `ideal`, or with a bare
+// string constraint, the browser is free to silently substitute a different
+// device when the requested one is unavailable, and the user would believe
+// they're being recorded on a microphone they are not. `exact` instead makes
+// getUserMedia reject with OverconstrainedError when the id doesn't match
+// any current device — a failure CopilotSession handles explicitly (see
+// session.js) rather than a silent wrong-device substitution.
+export async function captureMicAudio(deviceId) {
+  const audio = deviceId
+    ? { ...MIC_AUDIO_CONSTRAINTS, deviceId: { exact: deviceId } }
+    : MIC_AUDIO_CONSTRAINTS;
+  return navigator.mediaDevices.getUserMedia({ audio });
 }
 
 // Practice mode's capture: your camera plus your own voice. Video is a

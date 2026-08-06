@@ -20,9 +20,42 @@ const THEM_CAPTURE_BY_SOURCE = {
   system: captureSystemAudio,
 };
 
+// AC-I1.8: a getUserMedia rejection whose `.name` is "OverconstrainedError"
+// means the `deviceId: { exact }` constraint captureMicAudio applied
+// (session.js's own micDeviceId, or a stored id resolved by
+// resolveStoredMicDeviceId in audioDevices.js that turned out to be stale
+// anyway) couldn't be satisfied by any currently connected device — the
+// selected microphone was unplugged or disconnected since it was chosen,
+// not a permission problem. Telling a user in that state "microphone
+// permission was denied" would be actively wrong and send them to the
+// browser's site-permission settings looking for a toggle that was never
+// the issue. This is checked by `.name` (the standard DOMException field
+// getUserMedia rejections use), not by matching the error message text,
+// which is not part of any spec and can't be relied on across browsers.
+function micFailureMessage(err) {
+  if (err?.name === "OverconstrainedError") {
+    return "Selected microphone is no longer available (it may have been unplugged or disconnected). Continuing with interviewer audio only.";
+  }
+  return `Microphone unavailable (${err?.message || "denied"}). Continuing with interviewer audio only.`;
+}
+
 export class CopilotSession {
-  constructor({ withMic = true, source = "tab", onTranscript, onStatus, onError } = {}) {
+  constructor({
+    withMic = true,
+    source = "tab",
+    micDeviceId,
+    onTranscript,
+    onStatus,
+    onError,
+  } = {}) {
     this.withMic = withMic;
+    // Left as whatever the caller passed — including `undefined` when
+    // omitted — rather than defaulted to `null` here. captureMicAudio
+    // already treats every falsy value (null, undefined, "") identically
+    // (see capture.js), so this preserves "omitting micDeviceId reproduces
+    // today's behaviour byte-for-byte" without this class needing its own
+    // opinion about which falsy value means "no selection".
+    this.micDeviceId = micDeviceId;
     this.captureThem = THEM_CAPTURE_BY_SOURCE[source] || captureTabAudio;
     this.onTranscript = onTranscript || (() => {});
     this.onStatus = onStatus || (() => {});
@@ -82,7 +115,7 @@ export class CopilotSession {
 
     if (this.withMic) {
       try {
-        const micStream = await captureMicAudio();
+        const micStream = await captureMicAudio(this.micDeviceId);
         if (this._stopped) {
           micStream.getTracks().forEach((t) => t.stop());
           return;
@@ -90,12 +123,11 @@ export class CopilotSession {
         await this._addSource({ key: "you", speaker: "you", stream: micStream });
       } catch (err) {
         // The mic is optional — keep the tab transcript running and surface a
-        // soft warning rather than failing the whole session.
-        this.onError(
-          new Error(
-            `Microphone unavailable (${err?.message || "denied"}). Continuing with interviewer audio only.`,
-          ),
-        );
+        // soft warning rather than failing the whole session, regardless of
+        // WHY it failed. micFailureMessage above only changes the wording
+        // for an unavailable-selected-device failure; the "keep going with
+        // interviewer audio only" behaviour is identical either way.
+        this.onError(new Error(micFailureMessage(err)));
       }
     }
   }

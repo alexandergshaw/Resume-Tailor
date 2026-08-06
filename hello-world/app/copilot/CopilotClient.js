@@ -15,6 +15,7 @@ import { detectQuestion, normalizeQuestion } from "@/lib/copilot/questions";
 import { confirmQuestion } from "@/lib/copilot/detectClient";
 import { draftAnswer } from "@/lib/copilot/answerClient";
 import { fmtClock } from "@/lib/copilot/clock";
+import { listMicrophones, resolveStoredMicDeviceId } from "@/lib/copilot/audioDevices";
 import { useEngine } from "@/app/settings/engine";
 import TabHeader from "@/app/components/TabHeader";
 import TranscriptView from "./TranscriptView";
@@ -23,13 +24,22 @@ import PrepContext from "./PrepContext";
 import StatusPill from "./StatusPill";
 import PostingPicker from "./PostingPicker";
 import SubmittedDocs from "./SubmittedDocs";
+import MicPicker from "./MicPicker";
+import LiveDashboard from "./dashboard/LiveDashboard";
 import PracticeClient from "./practice/PracticeClient";
 import { usePrepContext } from "./usePrepContext";
 import { useApplicationDocs } from "./useApplicationDocs";
+import { useLiveDashboard } from "./useLiveDashboard";
 
 const CONTEXT_TURNS = 12;
 const MIN_WORDS_FOR_LLM = 4;
 const SOURCE_STORAGE_KEY = "copilot-audio-source";
+// AC-I1.4: the selected microphone's own key — separate from
+// SOURCE_STORAGE_KEY (interviewer audio) and PrepContext's storage key, so
+// the three controls persist independently. Follows the exact same
+// seed-from-storage/persist pattern as SOURCE_STORAGE_KEY below (try/catch,
+// a bad or missing value falling back to the default).
+const MIC_STORAGE_KEY = "copilot-mic-device";
 // AC-H1.2: live mode's own wording for the shared PostingPicker — its
 // defaults are practice mode's exact strings, so passing these explicitly
 // here is what keeps the two modes worded differently without touching
@@ -81,6 +91,11 @@ export default function CopilotClient() {
   // (see onPostingChange/runDraft below).
   const [posting, setPosting] = useState(null);
   const [source, setSource] = useState("tab"); // "tab" | "system" — the interviewer's audio source
+  // AC-I1: the selected microphone's device id, or `null` for "System
+  // default" — audioDevices.js's SYSTEM_DEFAULT_OPTION.deviceId, and exactly
+  // the value capture.js's captureMicAudio treats as "no deviceId
+  // constraint at all" (AC-I1.3).
+  const [micDeviceId, setMicDeviceId] = useState(null);
   const [startedAt, setStartedAt] = useState(null);
   const [now, setNow] = useState(0);
   const [showConsent, setShowConsent] = useState(true);
@@ -174,6 +189,35 @@ export default function CopilotClient() {
     if (stored === "tab" || stored === "system") setSource(stored);
   }, []);
 
+  // AC-I1.4/AC-I1.5: seed the selected microphone from localStorage, same
+  // try/catch discipline as the source seed above. A stored id can't just be
+  // trusted, though — the device it names may no longer be plugged in — so
+  // this resolves it against a FRESH device list via
+  // resolveStoredMicDeviceId (wave 1's audioDevices.js) before adopting it,
+  // falling back to System default (`null`, already today's useState
+  // default) rather than leaving a stale id in place that would later throw
+  // OverconstrainedError. listMicrophones() only calls enumerateDevices(),
+  // never getUserMedia, so this never prompts for permission on its own —
+  // same guarantee MicPicker's own mount-time load relies on.
+  useEffect(() => {
+    let stored = null;
+    try {
+      stored = window.localStorage.getItem(MIC_STORAGE_KEY);
+    } catch {
+      stored = null;
+    }
+    if (!stored) return undefined;
+    let cancelled = false;
+    listMicrophones().then((options) => {
+      if (cancelled) return;
+      const resolved = resolveStoredMicDeviceId(stored, options);
+      if (resolved) setMicDeviceId(resolved);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // F2: learn which speech-to-text provider is actually live, purely so the
   // privacy notices below (and the one PracticeClient renders, which reads
   // this as a prop) can name it instead of unconditionally saying
@@ -214,7 +258,61 @@ export default function CopilotClient() {
     }
   }, []);
 
+  // AC-I1.4: `id` is `null` for "System default" (MicPicker's own
+  // SYSTEM_DEFAULT_OPTION.deviceId) — that's the useState default already,
+  // so there is nothing meaningful to persist for it; only a real device id
+  // is written to storage, and choosing System default clears whatever was
+  // stored before.
+  const onMicDeviceChange = useCallback((id) => {
+    setMicDeviceId(id || null);
+    try {
+      if (id) {
+        window.localStorage.setItem(MIC_STORAGE_KEY, id);
+      } else {
+        window.localStorage.removeItem(MIC_STORAGE_KEY);
+      }
+    } catch {
+      // ignore quota / privacy-mode errors
+    }
+  }, []);
+
   const live = status === "live" || status === "connecting";
+
+  // AC-I4.23: the load-bearing cache write — keyed EXACTLY the way runDraft
+  // below looks a cached answer up (normalizeQuestion(question)), so a
+  // correct prediction is served from the SAME cache instead of costing a
+  // second draftAnswer call when the interviewer actually asks the
+  // predicted question.
+  const onPrefetchedAnswer = useCallback((question, { points, type }) => {
+    answerCacheRef.current.set(normalizeQuestion(question), { points, type });
+  }, []);
+
+  // AC-I2/AC-I3/AC-I4: live mode's dashboard — talking pace, the predicted
+  // next question, and a pre-drafted answer for it. `active: live` (AC-I4
+  // fix) is what keeps a posting selection or a detected question from
+  // spending a model call before the user has actually pressed Start; see
+  // useLiveDashboard.js's own `active` doc for what it does with this.
+  const {
+    pace,
+    predictedQuestion,
+    predictionStatus,
+    predictionError,
+    retryPrediction,
+    retryPredraft,
+    predictedPoints,
+    predictedAnswerStatus,
+    predictedAnswerError,
+    recordSpeechSample,
+    resetForSession,
+  } = useLiveDashboard({
+    questions,
+    posting,
+    applicationId: posting?.id || null,
+    autoDraft,
+    profile,
+    onPrefetchedAnswer,
+    active: live,
+  });
 
   useEffect(() => {
     if (!live || !startedAt) return undefined;
@@ -393,23 +491,35 @@ export default function CopilotClient() {
     pendingRef.current = [];
     lastQNormRef.current = "";
     answerCacheRef.current.clear();
+    resetForSession();
     setStatus("connecting");
     try {
       const session = new CopilotSession({
         withMic: true,
         source,
+        micDeviceId,
         onStatus: (s) => {
           setStatus(s);
           if (s === "live") setStartedAt((prev) => prev || Date.now());
         },
         onError: (err) => setWarning(err.message),
-        onTranscript: ({ speaker, transcript, isFinal, speechFinal }) => {
+        onTranscript: ({ speaker, transcript, isFinal, speechFinal, start: spanStart, duration }) => {
           if (!isFinal) {
             setInterims((prev) => ({ ...prev, [speaker]: transcript }));
             return;
           }
           setInterims((prev) => ({ ...prev, [speaker]: "" }));
           appendFinal(speaker, transcript);
+
+          // AC-I2.10/11: feed the pace sampler from the user's own FINAL
+          // frames only — never the interviewer's, and never with a
+          // wall-clock substitute for missing audio timing.
+          // appendSpeechSample (via recordSpeechSample) already drops
+          // frames whose start/duration aren't usable numbers, so this
+          // passes them through as-is rather than pre-filtering here.
+          if (speaker === "you") {
+            recordSpeechSample({ text: transcript, start: spanStart, duration });
+          }
 
           // Assemble the interviewer's segments into one utterance and evaluate
           // it when Deepgram signals the end of speech (~300ms of silence).
@@ -433,7 +543,7 @@ export default function CopilotClient() {
       setStatus("error");
       await stop();
     }
-  }, [stop, appendFinal, evaluateUtterance, source]);
+  }, [stop, appendFinal, evaluateUtterance, source, micDeviceId, recordSpeechSample, resetForSession]);
 
   const onDraft = useCallback(
     (id) => {
@@ -583,6 +693,21 @@ export default function CopilotClient() {
             </ToggleButtonGroup>
           </Stack>
 
+          {/* AC-I1: your own microphone, the same kind of source control as
+              "Interviewer audio" above and disabled the same way (AC-I1.7)
+              — changing it mid-session would require tearing down and
+              rebuilding the "you" capture pipeline, which is out of scope. */}
+          <Stack
+            direction="row"
+            spacing={1.25}
+            sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
+          >
+            <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
+              Your microphone:
+            </Typography>
+            <MicPicker value={micDeviceId} onChange={onMicDeviceChange} disabled={live} />
+          </Stack>
+
           {showConsent ? (
             <Alert severity="info" sx={{ mb: 2 }} onClose={() => setShowConsent(false)}>
               {/* F2: names the STT provider once known, never guesses one before
@@ -708,6 +833,26 @@ export default function CopilotClient() {
               Clear
             </Button>
           </Stack>
+
+          {/* AC-I5: the five-panel dashboard — current question/answer,
+              predicted next question/answer, and talking pace. Presentational
+              only (every value is a prop from useLiveDashboard above); does
+              NOT replace QuestionFeed below, which stays the full question
+              history (AC-I5.30). */}
+          <Box sx={{ mb: 2 }}>
+            <LiveDashboard
+              questions={questions}
+              pace={pace}
+              predictedQuestion={predictedQuestion}
+              predictionStatus={predictionStatus}
+              predictionError={predictionError}
+              onRetryPrediction={retryPrediction}
+              onRetryPredraft={retryPredraft}
+              predictedPoints={predictedPoints}
+              predictedAnswerStatus={predictedAnswerStatus}
+              predictedAnswerError={predictedAnswerError}
+            />
+          </Box>
 
           <Stack
             direction={{ xs: "column", md: "row" }}
