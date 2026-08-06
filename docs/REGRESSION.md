@@ -1181,3 +1181,22 @@ R-064 is this case's successor for notice truthfulness and enumerates the same g
 The clause lives ONLY in the non-embedded branch. On the embedded engine `app/api/copilot/answer/route.js` branches on `wantsEmbedded(body?.engine)` and drafts through `draftSampleAnswerLocal`, so a pre-draft reaches no AI provider — the embedded sentence's existing "Sample answers are drafted on this server too" already covers it, and a second clause there would contradict it. For the same reason the caption beside the switches must NOT say the embedded guarantee is "separate from" pre-drafting: that construction means "the guarantee does not cover this", which is true of saving recordings (a Supabase upload that happens identically on every engine) and false of pre-drafting. Understating a protection the user actually has is still a false privacy claim.
 
 With `preDraftEnabled` false the notice is byte-identical to the frozen pre-extraction oracle on every combination — that path IS the old behaviour and must not shift by one character — and with `preDraftEnabled` true on the embedded engine it is likewise unchanged.
+
+### R-116 | area: practice-notices | parallel-safe: yes | automatable: yes
+
+**Summary:** The feedback panel reports the critique request that actually happened, not the current position of a switch the user can still move.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/copilot/answerProvenance.test.js`.
+2. Read `runCritique` and `resetAnswerState` in `hello-world/app/copilot/practice/usePracticeAnswer.js`, following `critiqueFramesSent`.
+3. Read what `hello-world/app/copilot/practice/PracticeClient.js` passes as `AnswerFeedback`'s `framesSent` prop, and separately what it passes as `buildPrivacyNotice`'s `framesWillUpload`.
+
+**Expected:** All tests pass. The provenance caption is derived from a value written ONCE, at the moment each critique settles, and never re-derived at render time. "Include camera frames in AI feedback" stays enabled and is rendered on the same screen as the feedback panel, so a caption re-derived from that switch silently rewrites itself for a request that already completed — turning it off after a frames-bearing critique made the panel say "no one reviewed your video for this" when Gemini had, with no new request made and nothing on screen indicating the claim had changed.
+
+The recorded value is what the `frames` array actually CARRIED, via `framesWereSent(frames)`, never the `includeFrames` flag that selected it. Those differ in a way that fails in the more damaging direction: with the opt-in on but no camera present, the camera switched off, or the sampler having failed, `runCritique` sends `frames: []`, so recording the flag would assert a video review that never occurred. `framesWereSent` treats anything that is not a non-empty array — missing, null, a string, an array-like object — as "nothing was sent" rather than throwing.
+
+`videoWasReviewed(source, framesSent)` requires BOTH that Gemini produced the critique and that frames were sent for that same request. The embedded engine never constructs a Gemini client or parses a frame; the Gemini-failed-and-fell-back-to-embedded path reports `source: "embedded"` even though frames may already have been transmitted for the failed attempt, because frames leaving the browser and a review having happened are two different facts and this function reports the second. It returns a real boolean, never a truthy passthrough — the panel renders one of two sentences off it, so a passthrough would still select the right branch and hide itself from a naive assertion.
+
+Both functions live in `lib/copilot/answerProvenance.js` rather than inside `AnswerFeedback.js` for the same reason `answerPoints.js` and `answerWindow.js` do: this repo's vitest runs `environment: "node"` with no jsdom, so a claim that lives inside a component module cannot be exercised by any test.
+
+The write happens on BOTH the success and the error settle, inside the same `answerGenRef.current === gen` guard as the other UI writes, so an abandoned or superseded request never repaints it; `resetAnswerState` clears it. `framesWillUpload` is deliberately UNCHANGED for the privacy notice and for the `includeFrames` argument built inside `onDoneAnswer`/`onRetryCritique` — those describe what will happen on the NEXT request and must keep reading live state (R-057, R-064). Only the retrospective caption reads the recorded value. Related: R-057, R-064, R-073.

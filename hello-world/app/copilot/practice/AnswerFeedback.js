@@ -8,6 +8,7 @@ import CircularProgress from "@mui/material/CircularProgress";
 import Divider from "@mui/material/Divider";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
+import { videoWasReviewed } from "@/lib/copilot/answerProvenance";
 
 const STAR_LABELS = [
   ["situation", "Situation"],
@@ -95,12 +96,17 @@ export default function AnswerFeedback({
   status = "idle", // idle | loading | done | error
   feedback = null,
   error = "",
-  // D3/BUG-3: whether frames were actually sent for THIS critique request —
-  // PracticeClient already computes this (`sendFrames && !isEmbedded`) and
-  // passes it straight through; it must not be re-derived from
-  // `feedback.source` alone, since the frames-opt-in switch defaults off and
-  // Gemini is the default engine, so "source is gemini" does not by itself
-  // mean a frame was ever attached.
+  // D3/BUG-3/K1: whether frames were actually sent for THIS critique
+  // request, as a retrospective fact. PracticeClient passes its
+  // `critiqueFramesSent` (usePracticeAnswer) here — the value recorded at
+  // the moment THIS critique settled from the frames array it actually
+  // sent — NOT `framesWillUpload`, its live re-derivation of the "Include
+  // camera frames" switch, which sits on the same screen as this panel and
+  // would silently change what this panel claims every time it's toggled
+  // (K1). It also must not be re-derived from `feedback.source` alone,
+  // since the frames-opt-in switch defaults off and Gemini is the default
+  // engine, so "source is gemini" does not by itself mean a frame was ever
+  // attached.
   framesSent = false,
   // D3/BUG-5: D2's raw `metrics.bodyLanguage.reason` code for the answer
   // currently under review, passed straight through by PracticeClient
@@ -121,13 +127,17 @@ export default function AnswerFeedback({
   onTryAgain,
 }) {
   const { bodyLanguage: bodyLanguageNotes, rest: deliveryNotes } = splitDelivery(feedback?.delivery);
-  // BUG-3: someone only actually reviewed the video when Gemini both ran
+  // BUG-3/K1: someone only actually reviewed the video when Gemini both ran
   // AND had a frame to look at — never true for the embedded engine (which
   // never constructs a Gemini client or parses frames), and never true on
   // the Gemini-failed-and-fell-back-to-embedded path either, since
   // `feedback.source` there is correctly "embedded" even though frames may
-  // already have been sent for the (failed) attempt.
-  const bodyLanguageLooked = feedback?.source === "gemini" && !!framesSent;
+  // already have been sent for the (failed) attempt. Moved into
+  // lib/copilot/answerProvenance.js (K1) so this decision is testable at
+  // all — this repo's vitest runs `environment: "node"` with no jsdom, so
+  // nothing inside a component module like this one can be exercised by a
+  // test.
+  const bodyLanguageLooked = videoWasReviewed(feedback?.source, framesSent);
   const bodyLanguageReasonText = bodyLanguageReason
     ? BODY_LANGUAGE_UNAVAILABLE_REASONS[bodyLanguageReason] || bodyLanguageReason
     : "";

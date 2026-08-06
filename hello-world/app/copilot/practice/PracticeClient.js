@@ -133,6 +133,7 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
     critiqueStatus,
     critique,
     critiqueError,
+    critiqueFramesSent,
     retryCritique,
     sessionAnswered,
     sessionAverageScore,
@@ -918,7 +919,20 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
             // D3 bug fix: AnswerFeedback cannot tell frames-sent from
             // frames-not-sent (or resolve D2's unavailable-reason code) from
             // the response contract alone — both already live here.
-            framesSent={framesWillUpload}
+            //
+            // K1: this is `critiqueFramesSent` (usePracticeAnswer), NOT
+            // `framesWillUpload` below. `framesWillUpload` is re-derived from
+            // the "Include camera frames" switch's LIVE state every render —
+            // correct for describing what the NEXT request will do (see its
+            // own doc and buildPrivacyNotice below), but the switch lives on
+            // this same screen as the feedback panel, so toggling it after a
+            // critique has already returned would silently rewrite the
+            // panel's claim about a request that already happened.
+            // critiqueFramesSent instead is written once, at the moment each
+            // critique settles, from the frames array that request actually
+            // sent — a retrospective fact that toggling the switch afterward
+            // cannot change.
+            framesSent={critiqueFramesSent}
             bodyLanguageReason={answerMetrics?.bodyLanguage?.reason || null}
             interviewTypeLabel={judgedInterviewTypeLabel}
             onRetry={onRetryCritique}

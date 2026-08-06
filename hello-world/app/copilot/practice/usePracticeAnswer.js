@@ -7,6 +7,7 @@ import { BodyLanguageSampler } from "@/lib/copilot/bodyLandmarks";
 import { computeAnswerMetrics } from "@/lib/copilot/answerMetrics";
 import { isFinalInAnswerWindow, deriveSpeechSpan } from "@/lib/copilot/answerWindow";
 import { critiqueAnswer } from "@/lib/copilot/critiqueClient";
+import { framesWereSent } from "@/lib/copilot/answerProvenance";
 import { savePracticeAnswer, updatePracticeAnswerCritique } from "@/lib/supabase/practiceAnswers";
 
 // After "Done" is pressed, how long the transcript keeps draining before
@@ -49,6 +50,16 @@ export function usePracticeAnswer() {
   const [critiqueStatus, setCritiqueStatus] = useState("idle"); // idle | loading | done | error
   const [critique, setCritique] = useState(null); // the AC-C4-1 shape, once done
   const [critiqueError, setCritiqueError] = useState("");
+  // K1: whether the LAST completed critique request actually carried at
+  // least one frame — recorded from the `frames` array runCritique actually
+  // sent, via framesWereSent(frames), never from the `includeFrames` flag
+  // that selected it (an opt-in with no usable camera sends `frames: []`).
+  // This is what AnswerFeedback's retrospective caption must read instead of
+  // PracticeClient's live `framesWillUpload`: that switch sits on the same
+  // screen as the feedback panel, so re-deriving the caption from its
+  // current value would silently rewrite what the panel claims about a
+  // request that already happened, every time the switch is toggled.
+  const [critiqueFramesSent, setCritiqueFramesSent] = useState(false);
   // D1: persisting the completed answer (transcript + metrics + critique,
   // plus the clip when one exists) to the user's account. "idle" until a
   // save is actually attempted — the save switch being off (PracticeClient)
@@ -186,6 +197,7 @@ export function usePracticeAnswer() {
     setCritiqueStatus("idle");
     setCritique(null);
     setCritiqueError("");
+    setCritiqueFramesSent(false);
     lastCritiqueInputsRef.current = null;
     setSaveStatus("idle");
     setSaveError("");
@@ -501,6 +513,11 @@ export function usePracticeAnswer() {
       if (answerGenRef.current === gen) {
         setCritique(result);
         setCritiqueStatus("done");
+        // K1: recorded from the `frames` array THIS request actually built
+        // and sent above, not from `includeFrames` — see critiqueFramesSent's
+        // own doc. Written on the success settle so AnswerFeedback's caption
+        // reflects what really left the browser for this critique.
+        setCritiqueFramesSent(framesWereSent(frames));
         const key = baseInputs.question || "";
         setQuestionScores((prev) => {
           const next = new Map(prev);
@@ -512,6 +529,11 @@ export function usePracticeAnswer() {
       if (answerGenRef.current === gen) {
         setCritiqueError(err?.message || "Could not analyze this answer.");
         setCritiqueStatus("error");
+        // K1: also written on the error settle — the body-language section
+        // renders in more than just the "done" state, and a stale true/false
+        // left over from a PREVIOUS answer's success must not misreport
+        // during a retry cycle for this one.
+        setCritiqueFramesSent(framesWereSent(frames));
       }
     }
     persistAnswer({ gen, save, critique: critiqueResult });
@@ -713,6 +735,7 @@ export function usePracticeAnswer() {
     critiqueStatus,
     critique,
     critiqueError,
+    critiqueFramesSent,
     retryCritique,
     sessionAnswered,
     sessionAverageScore,
