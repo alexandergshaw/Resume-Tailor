@@ -5,6 +5,7 @@ import { createClient as createSupabaseServerClient } from "@/lib/supabase/serve
 import { wantsEmbedded } from "@/lib/llm/featureEngine";
 import { critiqueAnswerLocal, buildDeliveryNotes, normalizeMetrics } from "@/lib/copilot/critiqueLocal";
 import { buildBodyLanguageFacts } from "@/lib/copilot/critiqueBodyLanguage";
+import { normalizeInterviewType, interviewType as resolveInterviewType } from "@/lib/copilot/interviewTypes";
 
 // Judges what a practice-mode candidate actually SAID in one recorded
 // answer — C4, layered on top of C3's delivery metrics
@@ -12,6 +13,12 @@ import { buildBodyLanguageFacts } from "@/lib/copilot/critiqueBodyLanguage";
 // app/api/copilot/answer/route.js's shape: auth, caps, the wantsEmbedded
 // branch, and a Gemini call with a system instruction. See AC-C4-1 for the
 // exact response contract both paths must return.
+//
+// G2: `body.interviewType` (the selected practice format — see
+// lib/copilot/interviewTypes.js) is normalized ONCE, alongside every other
+// input, and threaded into both the embedded rubric and the Gemini prompt so
+// a strong system-design answer and a strong phone-screen answer are judged
+// against different bars (AC-G2-B-2, AC-G2-B-3, AC-G2-B-4).
 
 const MAX_QUESTION_CHARS = 600;
 const MAX_ANSWER_CHARS = 8000;
@@ -289,12 +296,30 @@ function bodyLanguageInstruction(hasFrames) {
   return rules.join(" ");
 }
 
-function buildPrompt({ question, type, answer, posting, profile, metricsFacts, bodyLanguageFacts }) {
+// AC-G2-B-3: names the interview FORMAT being judged — distinct from
+// `type`, the question's own behavioral/technical/general classification —
+// and instructs the model to score against that format's bar specifically,
+// so a strong system-design answer and a strong phone-screen answer aren't
+// held to the same standard.
+function interviewFormatSection(descriptor) {
+  const { minWords, maxWords } = descriptor.lengthTarget;
+  return [
+    "--- INTERVIEW FORMAT ---",
+    `${descriptor.label} interview. ${descriptor.guidance}`,
+    `Judge this answer against the standard for THIS format specifically, not a generic one. ` +
+      `Weight these most: ${descriptor.emphasis.join(", ")}. ` +
+      `The ideal spoken length for this format is roughly ${minWords}-${maxWords} words.`,
+  ];
+}
+
+function buildPrompt({ question, type, answer, posting, profile, metricsFacts, bodyLanguageFacts, descriptor }) {
   const parts = [
     `The candidate was asked this ${type} interview question: "${question}"`,
     "",
     "Their answer (as transcribed):",
     answer || "(no speech was captured for this answer)",
+    "",
+    ...interviewFormatSection(descriptor),
   ];
   if (profile) {
     parts.push("", "--- CANDIDATE BACKGROUND (resume / target role / prep notes) ---", profile);
@@ -352,15 +377,19 @@ export async function POST(request) {
     const posting = sanitizePosting(body?.posting);
     const profile = (body?.profile ?? "").toString().slice(0, MAX_PROFILE_CHARS);
     const metrics = normalizeMetrics(body?.metrics);
+    // AC-G2-B-2: normalized once here, same as every other input above, then
+    // passed to both the embedded rubric and the Gemini prompt below.
+    const interviewType = normalizeInterviewType(body?.interviewType);
 
     // Embedded engine: a real deterministic rubric, no LLM call. Frames are
     // ignored entirely on this path — there is nothing to send them to.
     if (wantsEmbedded(body?.engine)) {
-      const result = safeCritiqueAnswerLocal({ question, type, answer, posting, profile, metrics });
+      const result = safeCritiqueAnswerLocal({ question, type, answer, posting, profile, metrics, interviewType });
       return Response.json(sanitizeCritique(result, "embedded", type));
     }
 
     const frames = sanitizeFrames(body?.frames);
+    const descriptor = resolveInterviewType(interviewType);
 
     // A Gemini failure or an unparseable response must not error out
     // mid-practice — fall back to the same deterministic rubric the
@@ -370,7 +399,16 @@ export async function POST(request) {
       const client = getGeminiClient();
       const metricsFacts = buildDeliveryNotes(metrics);
       const bodyLanguageFacts = buildBodyLanguageFacts(metrics.bodyLanguage);
-      const prompt = buildPrompt({ question, type, answer, posting, profile, metricsFacts, bodyLanguageFacts });
+      const prompt = buildPrompt({
+        question,
+        type,
+        answer,
+        posting,
+        profile,
+        metricsFacts,
+        bodyLanguageFacts,
+        descriptor,
+      });
       const frameParts = frames.map((base64) => ({ inlineData: { mimeType: "image/jpeg", data: base64 } }));
       const systemInstruction = [
         BASE_SYSTEM,
@@ -386,13 +424,13 @@ export async function POST(request) {
 
       const parsed = parseModelJson(response.text?.trim() || "");
       if (!looksLikeCritique(parsed)) {
-        const fallback = safeCritiqueAnswerLocal({ question, type, answer, posting, profile, metrics });
+        const fallback = safeCritiqueAnswerLocal({ question, type, answer, posting, profile, metrics, interviewType });
         return Response.json(sanitizeCritique(fallback, "embedded", type));
       }
       const allowBodyLanguage = bodyLanguageFacts.length > 0 || frames.length > 0;
       return Response.json(sanitizeCritique(parsed, "gemini", type, { allowBodyLanguage }));
     } catch {
-      const fallback = safeCritiqueAnswerLocal({ question, type, answer, posting, profile, metrics });
+      const fallback = safeCritiqueAnswerLocal({ question, type, answer, posting, profile, metrics, interviewType });
       return Response.json(sanitizeCritique(fallback, "embedded", type));
     }
   } catch (err) {

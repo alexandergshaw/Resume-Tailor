@@ -9,6 +9,7 @@ import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { createClient } from "@/lib/supabase/server";
 import { critiqueAnswerLocal, normalizeMetrics } from "@/lib/copilot/critiqueLocal";
+import { interviewType as resolveInterviewType } from "@/lib/copilot/interviewTypes";
 
 function jsonRequest(body) {
   return { json: async () => body };
@@ -559,5 +560,250 @@ describe("POST /api/copilot/critique (D3 body language)", () => {
     expect(getGeminiClient).not.toHaveBeenCalled();
     expect(getServerEnv).not.toHaveBeenCalled();
     expect(data.delivery.some((line) => line.startsWith("Body language:"))).toBe(true);
+  });
+});
+
+// G2: body.interviewType is normalized once and threaded into
+// critiqueAnswerLocal on every fallback path (embedded, the Gemini
+// unparseable-JSON fallback, and the Gemini network-failure fallback), and
+// into the Gemini prompt's own new format section — while the response
+// itself must never gain a ninth key for it.
+describe("POST /api/copilot/critique (G2 interview type)", () => {
+  it("embedded: forwards a recognized interviewType to critiqueAnswerLocal, changing the verdict's format phrase", async () => {
+    mockUser();
+    const question = "Tell me about your background.";
+    const type = "general";
+    const res = await POST(
+      jsonRequest({ question, type, answer: STAR_ANSWER, engine: "embedded", interviewType: "phone-screen" }),
+    );
+    const data = await res.json();
+
+    const expected = critiqueAnswerLocal({
+      question,
+      type,
+      answer: STAR_ANSWER,
+      posting: null,
+      profile: "",
+      metrics: normalizeMetrics(null),
+      interviewType: "phone-screen",
+    });
+    expect(data.verdict).toBe(expected.verdict);
+    expect(data.verdict).toContain("for a recruiter phone screen interview");
+
+    // Proves the value is actually threaded through this specific request,
+    // not just coincidentally equal to the untyped default.
+    const defaultExpected = critiqueAnswerLocal({
+      question,
+      type,
+      answer: STAR_ANSWER,
+      posting: null,
+      profile: "",
+      metrics: normalizeMetrics(null),
+    });
+    expect(data.verdict).not.toBe(defaultExpected.verdict);
+  });
+
+  it("embedded: an unrecognized interviewType value normalizes to general, matching what omitting it produces", async () => {
+    mockUser();
+    const question = "Tell me about your background.";
+    const type = "general";
+    const resGarbage = await POST(
+      jsonRequest({ question, type, answer: STAR_ANSWER, engine: "embedded", interviewType: "not-a-real-type" }),
+    );
+    const dataGarbage = await resGarbage.json();
+    const resOmitted = await POST(jsonRequest({ question, type, answer: STAR_ANSWER, engine: "embedded" }));
+    const dataOmitted = await resOmitted.json();
+
+    expect(dataGarbage).toEqual(dataOmitted);
+    // General's format phrase is empty, so no "for a ... interview" clause
+    // should appear at all.
+    expect(dataGarbage.verdict).not.toMatch(/for a .+ interview/);
+  });
+
+  it("embedded: interviewType is accepted on the request but is not one of the response keys", async () => {
+    mockUser();
+    const res = await POST(
+      jsonRequest({
+        question: "Q",
+        type: "general",
+        answer: "A solid general answer, for example with real specifics.",
+        engine: "embedded",
+        interviewType: "system-design",
+      }),
+    );
+    const data = await res.json();
+    expect(Object.keys(data).sort()).toEqual(
+      ["delivery", "improvements", "missing", "score", "source", "star", "strengths", "verdict"].sort(),
+    );
+    expect(data.interviewType).toBeUndefined();
+  });
+
+  it("gemini success: interviewType is accepted on the request but is not one of the response keys", async () => {
+    mockUser();
+    mockGemini({
+      score: 66,
+      verdict: "Reasonable.",
+      strengths: [],
+      improvements: [],
+      missing: [],
+      star: null,
+      delivery: [],
+    });
+    const res = await POST(
+      jsonRequest({ question: "Q", type: "general", answer: "A", engine: "gemini", interviewType: "leadership" }),
+    );
+    const data = await res.json();
+    expect(Object.keys(data).sort()).toEqual(
+      ["delivery", "improvements", "missing", "score", "source", "star", "strengths", "verdict"].sort(),
+    );
+    expect(data.interviewType).toBeUndefined();
+  });
+
+  it("gemini: forwards interviewType to the unparseable-JSON fallback, not only the embedded branch", async () => {
+    mockUser();
+    getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
+    getGeminiClient.mockReturnValue({
+      models: { generateContent: vi.fn().mockResolvedValue({ text: "not valid json at all" }) },
+    });
+    const question = "Tell me about your background.";
+    const type = "general";
+    const res = await POST(
+      jsonRequest({ question, type, answer: STAR_ANSWER, engine: "gemini", interviewType: "technical" }),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.source).toBe("embedded");
+
+    const expected = critiqueAnswerLocal({
+      question,
+      type,
+      answer: STAR_ANSWER,
+      posting: null,
+      profile: "",
+      metrics: normalizeMetrics(null),
+      interviewType: "technical",
+    });
+    expect(data.verdict).toBe(expected.verdict);
+    expect(data.verdict).toContain("for a technical / coding interview");
+
+    const defaultExpected = critiqueAnswerLocal({
+      question,
+      type,
+      answer: STAR_ANSWER,
+      posting: null,
+      profile: "",
+      metrics: normalizeMetrics(null),
+    });
+    expect(data.verdict).not.toBe(defaultExpected.verdict);
+  });
+
+  it("gemini: forwards interviewType to the network-failure fallback, not only the embedded branch", async () => {
+    mockUser();
+    getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
+    getGeminiClient.mockReturnValue({
+      models: { generateContent: vi.fn().mockRejectedValue(new Error("network down")) },
+    });
+    const question = "Tell me about your background.";
+    const type = "general";
+    const res = await POST(
+      jsonRequest({ question, type, answer: STAR_ANSWER, engine: "gemini", interviewType: "case-study" }),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.source).toBe("embedded");
+
+    const expected = critiqueAnswerLocal({
+      question,
+      type,
+      answer: STAR_ANSWER,
+      posting: null,
+      profile: "",
+      metrics: normalizeMetrics(null),
+      interviewType: "case-study",
+    });
+    expect(data.verdict).toBe(expected.verdict);
+    expect(data.verdict).toContain("for a case study interview");
+  });
+
+  it("gemini prompt gains an INTERVIEW FORMAT section naming the selected format", async () => {
+    mockUser();
+    mockGemini({
+      score: 72,
+      verdict: "Good.",
+      strengths: [],
+      improvements: [],
+      missing: [],
+      star: null,
+      delivery: [],
+    });
+    const res = await POST(
+      jsonRequest({ question: "Q", type: "general", answer: "A", engine: "gemini", interviewType: "leadership" }),
+    );
+    expect(res.status).toBe(200);
+
+    const client = getGeminiClient();
+    const call = client.models.generateContent.mock.calls[0][0];
+    const promptText = call.contents[0].parts.find((p) => typeof p.text === "string").text;
+
+    const descriptor = resolveInterviewType("leadership");
+    expect(promptText).toContain("--- INTERVIEW FORMAT ---");
+    expect(promptText).toContain(`${descriptor.label} interview. ${descriptor.guidance}`);
+    expect(promptText).toContain(`Weight these most: ${descriptor.emphasis.join(", ")}.`);
+    expect(promptText).toContain(
+      `The ideal spoken length for this format is roughly ${descriptor.lengthTarget.minWords}-${descriptor.lengthTarget.maxWords} words.`,
+    );
+  });
+
+  it("gemini prompt falls back to the general format section when interviewType is omitted", async () => {
+    mockUser();
+    mockGemini({
+      score: 72,
+      verdict: "Good.",
+      strengths: [],
+      improvements: [],
+      missing: [],
+      star: null,
+      delivery: [],
+    });
+    const res = await POST(jsonRequest({ question: "Q", type: "general", answer: "A", engine: "gemini" }));
+    expect(res.status).toBe(200);
+
+    const client = getGeminiClient();
+    const call = client.models.generateContent.mock.calls[0][0];
+    const promptText = call.contents[0].parts.find((p) => typeof p.text === "string").text;
+
+    const descriptor = resolveInterviewType(undefined);
+    expect(descriptor.value).toBe("general");
+    expect(promptText).toContain(`${descriptor.label} interview. ${descriptor.guidance}`);
+  });
+
+  it("gemini prompt normalizes an unrecognized interviewType to the general format section", async () => {
+    mockUser();
+    mockGemini({
+      score: 72,
+      verdict: "Good.",
+      strengths: [],
+      improvements: [],
+      missing: [],
+      star: null,
+      delivery: [],
+    });
+    const res = await POST(
+      jsonRequest({
+        question: "Q",
+        type: "general",
+        answer: "A",
+        engine: "gemini",
+        interviewType: "not-a-real-type",
+      }),
+    );
+    expect(res.status).toBe(200);
+
+    const client = getGeminiClient();
+    const call = client.models.generateContent.mock.calls[0][0];
+    const promptText = call.contents[0].parts.find((p) => typeof p.text === "string").text;
+
+    const generalDescriptor = resolveInterviewType("general");
+    expect(promptText).toContain(`${generalDescriptor.label} interview. ${generalDescriptor.guidance}`);
   });
 });

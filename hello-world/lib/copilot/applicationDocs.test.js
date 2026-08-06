@@ -1,0 +1,171 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+import { fetchApplicationDocs } from "./applicationDocs";
+
+// Minimal chainable double for `supabase.from(table).select(...).eq(...).maybeSingle()`.
+// Routes each `.from(table)` call to its own query builder and its own
+// canned result, and logs every `.eq()` call per table so tests can assert
+// the exact filter shape a query used (which is the point of the
+// user_id-scoping test below), not just the value it resolved to.
+function makeFakeSupabase({
+  appResult = { data: null, error: null },
+  resumeResult = { data: null, error: null },
+  coverLetterResult = { data: null, error: null },
+} = {}) {
+  const calls = {
+    from: [],
+    applications: { select: [], eq: [] },
+    generated_resumes: { select: [], eq: [] },
+    generated_cover_letters: { select: [], eq: [] },
+  };
+  const resultByTable = {
+    applications: appResult,
+    generated_resumes: resumeResult,
+    generated_cover_letters: coverLetterResult,
+  };
+
+  function makeQueryBuilder(table) {
+    const log = calls[table];
+    const builder = {
+      select: vi.fn((...args) => {
+        log.select.push(args);
+        return builder;
+      }),
+      eq: vi.fn((...args) => {
+        log.eq.push(args);
+        return builder;
+      }),
+      maybeSingle: vi.fn(() => Promise.resolve(resultByTable[table])),
+    };
+    return builder;
+  }
+
+  return {
+    calls,
+    from: vi.fn((table) => {
+      calls.from.push(table);
+      return makeQueryBuilder(table);
+    }),
+  };
+}
+
+describe("fetchApplicationDocs", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns the résumé and cover letter content for a matching application", async () => {
+    const fake = makeFakeSupabase({
+      appResult: { data: { id: "app-1", resume_used_id: "res-1", cover_letter_id: "cl-1" }, error: null },
+      resumeResult: { data: { content: "resume text" }, error: null },
+      coverLetterResult: { data: { content: "cover letter text" }, error: null },
+    });
+
+    const result = await fetchApplicationDocs(fake, { applicationId: "app-1", userId: "user-1" });
+
+    expect(result).toEqual({ resume: "resume text", coverLetter: "cover letter text" });
+  });
+
+  it("scopes the applications lookup to both the application id and the user id", async () => {
+    const fake = makeFakeSupabase({
+      appResult: { data: { id: "app-1", resume_used_id: null, cover_letter_id: null }, error: null },
+    });
+
+    await fetchApplicationDocs(fake, { applicationId: "app-1", userId: "user-1" });
+
+    expect(fake.calls.from).toContain("applications");
+    // This is the filter that stops one user's submitted documents from
+    // being read for another: both id and user_id must be present.
+    expect(fake.calls.applications.eq).toContainEqual(["id", "app-1"]);
+    expect(fake.calls.applications.eq).toContainEqual(["user_id", "user-1"]);
+  });
+
+  it("degrades to empty strings, without querying anything, when applicationId is missing", async () => {
+    const fake = makeFakeSupabase();
+
+    const result = await fetchApplicationDocs(fake, { applicationId: undefined, userId: "user-1" });
+
+    expect(result).toEqual({ resume: "", coverLetter: "" });
+    expect(fake.from).not.toHaveBeenCalled();
+  });
+
+  it("degrades to empty strings, without querying anything, when userId is missing", async () => {
+    const fake = makeFakeSupabase();
+
+    const result = await fetchApplicationDocs(fake, { applicationId: "app-1", userId: undefined });
+
+    expect(result).toEqual({ resume: "", coverLetter: "" });
+    expect(fake.from).not.toHaveBeenCalled();
+  });
+
+  it("degrades to empty strings, without throwing, when no application row matches", async () => {
+    const fake = makeFakeSupabase({ appResult: { data: null, error: null } });
+
+    const result = await fetchApplicationDocs(fake, { applicationId: "app-missing", userId: "user-1" });
+
+    expect(result).toEqual({ resume: "", coverLetter: "" });
+    // Neither document table should be queried once the application lookup
+    // itself came back empty.
+    expect(fake.calls.from).toEqual(["applications"]);
+  });
+
+  it("degrades to empty strings, without throwing, when the applications query errors", async () => {
+    const fake = makeFakeSupabase({
+      appResult: { data: null, error: { message: "connection reset" } },
+    });
+
+    const result = await fetchApplicationDocs(fake, { applicationId: "app-1", userId: "user-1" });
+
+    expect(result).toEqual({ resume: "", coverLetter: "" });
+    expect(fake.calls.from).toEqual(["applications"]);
+  });
+
+  it("degrades to an empty résumé, without throwing, when resume_used_id is null", async () => {
+    const fake = makeFakeSupabase({
+      appResult: { data: { id: "app-1", resume_used_id: null, cover_letter_id: "cl-1" }, error: null },
+      coverLetterResult: { data: { content: "cover letter text" }, error: null },
+    });
+
+    const result = await fetchApplicationDocs(fake, { applicationId: "app-1", userId: "user-1" });
+
+    expect(result).toEqual({ resume: "", coverLetter: "cover letter text" });
+    // A null id means fetchDocContent should never even query that table.
+    expect(fake.calls.from).not.toContain("generated_resumes");
+  });
+
+  it("degrades to an empty cover letter, without throwing, when cover_letter_id is null", async () => {
+    const fake = makeFakeSupabase({
+      appResult: { data: { id: "app-1", resume_used_id: "res-1", cover_letter_id: null }, error: null },
+      resumeResult: { data: { content: "resume text" }, error: null },
+    });
+
+    const result = await fetchApplicationDocs(fake, { applicationId: "app-1", userId: "user-1" });
+
+    expect(result).toEqual({ resume: "resume text", coverLetter: "" });
+    expect(fake.calls.from).not.toContain("generated_cover_letters");
+  });
+
+  it("degrades the résumé to empty, without throwing, when the résumé query errors", async () => {
+    const fake = makeFakeSupabase({
+      appResult: { data: { id: "app-1", resume_used_id: "res-1", cover_letter_id: "cl-1" }, error: null },
+      resumeResult: { data: null, error: { message: "boom" } },
+      coverLetterResult: { data: { content: "cover letter text" }, error: null },
+    });
+
+    const result = await fetchApplicationDocs(fake, { applicationId: "app-1", userId: "user-1" });
+
+    expect(result).toEqual({ resume: "", coverLetter: "cover letter text" });
+  });
+
+  it("degrades the cover letter to empty, without throwing, when the cover letter query errors", async () => {
+    const fake = makeFakeSupabase({
+      appResult: { data: { id: "app-1", resume_used_id: "res-1", cover_letter_id: "cl-1" }, error: null },
+      resumeResult: { data: { content: "resume text" }, error: null },
+      coverLetterResult: { data: null, error: { message: "boom" } },
+    });
+
+    const result = await fetchApplicationDocs(fake, { applicationId: "app-1", userId: "user-1" });
+
+    expect(result).toEqual({ resume: "resume text", coverLetter: "" });
+  });
+});

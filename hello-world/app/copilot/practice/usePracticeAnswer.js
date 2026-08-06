@@ -538,9 +538,9 @@ export function usePracticeAnswer() {
   // the answer mid-drain (posting change, next question, Stop, unmount, or
   // starting a new answer) writes nothing stale (BUG-11). `context` carries
   // what the hook doesn't itself know — the question, its type, the
-  // posting, the candidate's prep profile, and whether frames are allowed
-  // to be sent — so the critique request built at the end has everything it
-  // needs.
+  // posting, the candidate's prep profile, the selected interview type
+  // (G2), and whether frames are allowed to be sent — so the critique
+  // request built at the end has everything it needs.
   const doneAnswer = useCallback(
     async (context = {}) => {
       if (!answeringRef.current) return;
@@ -631,6 +631,11 @@ export function usePracticeAnswer() {
           answer: lines.join(" "),
           posting: context.posting || null,
           profile: context.profile || "",
+          // G2/AC-G2-C-4: cached into lastCritiqueInputsRef by runCritique
+          // below exactly like every other baseInputs field, so a later
+          // Retry (retryCritique) re-sends the SAME interview type the
+          // original request used, not whatever is currently selected.
+          interviewType: context.interviewType || "general",
           metrics,
         },
         {

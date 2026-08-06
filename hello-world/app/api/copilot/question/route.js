@@ -5,12 +5,15 @@ import { createClient as createSupabaseServerClient } from "@/lib/supabase/serve
 import { wantsEmbedded } from "@/lib/llm/featureEngine";
 import { nextPracticeQuestion } from "@/lib/copilot/practiceQuestions";
 import { normalizeQuestion } from "@/lib/copilot/questions";
+import {
+  normalizeInterviewType,
+  interviewType as getInterviewType,
+} from "@/lib/copilot/interviewTypes";
 
 const SYSTEM = [
   "You are an interviewer conducting a mock interview practice session with a candidate.",
-  "Given the job posting details and the questions already asked this session, produce exactly ONE next interview question.",
+  "Given the job posting details, the requested interview format, and the questions already asked this session, produce exactly ONE next interview question that fits the requested format.",
   "Never repeat a question already asked, even reworded.",
-  "Mix behavioral, technical, and role-specific questions across the session rather than asking the same type repeatedly.",
   "Keep it to a single sentence a real interviewer would say out loud.",
 ].join(" ");
 
@@ -48,8 +51,8 @@ function typeOrDefault(type) {
   return VALID_TYPES.includes(type) ? type : "general";
 }
 
-function fallbackResponse(posting, asked) {
-  const fallback = nextPracticeQuestion({ posting, asked });
+function fallbackResponse(posting, asked, interviewType) {
+  const fallback = nextPracticeQuestion({ posting, asked, interviewType });
   return Response.json({
     question: fallback.question,
     type: typeOrDefault(fallback.type),
@@ -58,10 +61,14 @@ function fallbackResponse(posting, asked) {
   });
 }
 
-function buildPrompt(posting, asked) {
-  const parts = [];
+function buildPrompt(posting, asked, descriptor) {
+  const parts = [
+    `Interview format: ${descriptor.label}`,
+    descriptor.guidance,
+    "Every question you generate must fit this format.",
+  ];
   if (posting?.title || posting?.company) {
-    parts.push(`Role: ${[posting.title, posting.company].filter(Boolean).join(" at ")}`);
+    parts.push("", `Role: ${[posting.title, posting.company].filter(Boolean).join(" at ")}`);
   }
   if (posting?.description) {
     parts.push("", "Job posting description:", posting.description);
@@ -96,10 +103,11 @@ export async function POST(request) {
     const body = await request.json();
     const posting = sanitizePosting(body?.posting);
     const asked = sanitizeAsked(body?.asked);
+    const interviewType = normalizeInterviewType(body?.interviewType);
 
     // Embedded engine: pull from the deterministic question bank — no LLM.
     if (wantsEmbedded(body?.engine)) {
-      const result = nextPracticeQuestion({ posting, asked });
+      const result = nextPracticeQuestion({ posting, asked, interviewType });
       return Response.json({
         question: result.question,
         type: typeOrDefault(result.type),
@@ -114,9 +122,10 @@ export async function POST(request) {
     try {
       const { geminiModel } = getServerEnv();
       const client = getGeminiClient();
+      const descriptor = getInterviewType(interviewType);
       const response = await client.models.generateContent({
         model: geminiModel,
-        contents: [{ role: "user", parts: [{ text: buildPrompt(posting, asked) }] }],
+        contents: [{ role: "user", parts: [{ text: buildPrompt(posting, asked, descriptor) }] }],
         config: { systemInstruction: SYSTEM, responseMimeType: "application/json" },
       });
 
@@ -131,7 +140,7 @@ export async function POST(request) {
       );
 
       if (!question || alreadyAsked) {
-        return fallbackResponse(posting, asked);
+        return fallbackResponse(posting, asked, interviewType);
       }
 
       return Response.json({
@@ -141,7 +150,7 @@ export async function POST(request) {
         exhausted: false,
       });
     } catch {
-      return fallbackResponse(posting, asked);
+      return fallbackResponse(posting, asked, interviewType);
     }
   } catch (err) {
     return Response.json(

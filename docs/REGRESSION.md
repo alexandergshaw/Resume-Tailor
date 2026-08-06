@@ -843,3 +843,104 @@ from a fail without judgement calls.
 2. Read the privacy notice construction in `hello-world/app/copilot/practice/PracticeClient.js`.
 
 **Expected:** The destination name is derived from the provider the server reports, not hardcoded to either vendor. Before the provider is known the notice omits the destination clause entirely rather than guessing or naming a placeholder. The engine clause, the camera-frames clause and the save-recordings clause are independent of this and unchanged. The provider probe uses the non-minting GET, so simply opening the copilot does not consume a transcription credential.
+
+### R-082 | area: sample-answer | parallel-safe: yes | automatable: yes
+
+**Summary:** The sample answer shown for a practice question is keyed to that exact question, and revealing one never starts a duplicate request underneath one already in flight.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/copilot/sampleAnswerState.test.js`.
+
+**Expected:** All tests pass. `activeSampleAnswer` returns the empty state whenever the stored draft's question differs from the question on screen — this derivation, not any explicit reset call, is what clears the panel on Next question, a posting change and a fresh Start. `needsRedraft` always redrafts on force and from the idle/error states, NEVER redrafts while a request for the same question is loading, and from the done state redrafts only when the prep context, the interview type, or the selected application has changed since the draft was built.
+
+### R-083 | area: sample-answer | parallel-safe: yes | automatable: no
+
+**Summary:** The sample-answer toggle is available in every phase where a question is on screen, and never displays a draft belonging to a question that is no longer showing.
+
+**Steps:**
+1. Read the `SampleAnswer` render condition and the action row in `hello-world/app/copilot/practice/QuestionCard.js`.
+2. Read `hello-world/app/copilot/practice/SampleAnswer.js`.
+
+**Expected:** The toggle renders whenever a question is present AND no next-question request is in flight, and is never disabled by `answering` or `settling` — so it works before answering, while recording, while settling, and after the answer is done. It does not render at all when there is no question, nor while `loading` is true (the guard against the previous question's draft sitting under a "Getting your next question" spinner). Regenerate appears only when a draft is actually displayed; the error state offers Retry instead.
+
+### R-084 | area: interview-type | parallel-safe: yes | automatable: yes
+
+**Summary:** The interview-type registry is the single frozen source of truth, and its `general` descriptor is behaviour-preserving.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/copilot/interviewTypes.test.js`.
+
+**Expected:** All tests pass. `normalizeInterviewType` maps null, undefined, empty string, non-strings and unrecognized values to `general` and never throws; `interviewType` always returns a descriptor. Seven entries with unique values; every `questionGroups` entry and every expectation `cue` is drawn from its fixed vocabulary; every `lengthTarget` has `minWords` below `maxWords`. The `general` descriptor is pinned to `questionGroups` exactly behavioral/technical/role, `lengthTarget` exactly 80-220 words, and an empty `expectations` list. Those three pins are the contract that keeps every consumer's default behaviour identical to what it was before interview types existed.
+
+### R-085 | area: interview-type | parallel-safe: yes | automatable: yes
+
+**Summary:** The interview type selects which question groups a practice session draws from, and omitting it reproduces the original bank exactly.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/copilot/practiceQuestions.test.js`.
+
+**Expected:** All tests pass. `buildQuestionBank(posting)` with no interview type equals `buildQuestionBank(posting, "general")` for a posting with a description, a posting without one, and no posting at all. A phone-screen bank draws only role questions; a behavioral bank only behavioral ones; a system-design bank includes the system-design group. Every bank, whatever the type, still opens with the opening question and closes with the closing question. Output is deterministic across repeated calls, and `nextPracticeQuestion` still dedupes via `normalizeQuestion` and still reports `exhausted:true` with an empty question once a type-scoped bank is drained.
+
+### R-086 | area: interview-type | parallel-safe: yes | automatable: yes
+
+**Summary:** The answer critique judges against the selected format's bar, and is unchanged for the default.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/copilot/critiqueLocal.test.js app/api/copilot/critique/route.test.js`.
+
+**Expected:** All tests pass. `critiqueAnswerLocal` with no interview type, and with "general", both produce the pre-feature output. Otherwise the descriptor's `lengthTarget` replaces the old fixed 80-220 window, so the same answer scores differently under a phone screen than under system design. Each unmet expectation cue appends its note to `missing` (a system-design answer naming no trade-off is told to name one; an answer that does name one is not), still capped by `MAX_LIST`. A non-general verdict names the format it was judged as. `star` stays gated purely on the QUESTION being behavioral — a behavioral interview type with a technical question still yields a null `star`. The response keeps exactly its eight keys and the interview type never leaks into it.
+
+### R-087 | area: sample-answer | parallel-safe: yes | automatable: yes
+
+**Summary:** A spoken sample answer never claims experience the candidate's own documents do not contain. This is the guard against the app coaching someone to lie in an interview.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/copilot/sampleAnswerLocal.test.js`.
+
+**Expected:** All tests pass. Given a resume that says "Led a team of five engineers" and "four product teams" but never mentions Microsoft Teams, the answer does not name Microsoft Teams — a mined skill is spoken only when it literally appears in the source material. No bare standalone metric sentence is emitted, and a metric is never paired with a story it did not come from (the answer never contains a bare "The result" sentence carrying a figure mined from a different bullet). A quoted resume bullet is spoken in first person ("I led a team..."), never as a subject-less fragment. A cover letter's application or motivation line is never quoted as the concrete example, in either the behavioral or the general shape; when used at all it is framed as motivation. With no resume, cover letter or prep context the answer says plainly that there is nothing on file rather than inventing a situation. Output is deterministic.
+
+### R-088 | area: sample-answer | parallel-safe: yes | automatable: yes
+
+**Summary:** Sample-answer grounding reads only the signed-in user's own submitted documents, and degrades to empty rather than throwing.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/copilot/applicationDocs.test.js`.
+
+**Expected:** All tests pass. The `applications` lookup filters on BOTH `id` and `user_id` — the filter that stops one user's submitted resume or cover letter being read for another, and the reason this case exists. `fetchApplicationDocs` never throws, returning empty strings for: a missing applicationId, a missing userId, no matching row, a query error on the application lookup, a null `resume_used_id`, a null `cover_letter_id`, and a query error on either document fetch.
+
+### R-089 | area: sample-answer | parallel-safe: yes | automatable: yes
+
+**Summary:** The two modes of the answer route stay separate: live mode's glanceable bullets are untouched by the practice-mode prose path.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run app/api/copilot/answer/route.test.js lib/copilot/answerLocal.test.js lib/copilot/answerClient.test.js`.
+
+**Expected:** All tests pass. A request with no `mode`, or an unrecognized one, returns points and type exactly as before — this is the live-interview path and it must not move. An `answer` mode request returns answer, type and grounding, with grounding reporting which submitted documents were actually found, and both flags false when the application has none. On the embedded engine, answer mode drafts on-device and never constructs a Gemini client. Auth still 401s and a blank question still 400s. `draftAnswerLocal` with no interview type produces the original bullets; `resolveScaffoldType` only ever overrides a general classification, never an already-behavioral or already-technical one.
+
+### R-090 | area: interview-type | parallel-safe: yes | automatable: yes
+
+**Summary:** The three copilot fetch wrappers forward the new fields, and omit them entirely when not supplied so existing callers send byte-identical requests.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/copilot/questionClient.test.js lib/copilot/critiqueClient.test.js lib/copilot/answerClient.test.js`.
+
+**Expected:** All tests pass. `fetchNextQuestion`, `critiqueAnswer` and `draftAnswer` each forward `interviewType`; `draftAnswer` also forwards `applicationId` and `mode`. A call that omits those fields produces a request body without those keys at all, so live mode's requests are unchanged from before the feature. Non-ok responses still throw with the server's error message.
+
+### R-091 | area: copilot-privacy | parallel-safe: yes | automatable: no
+
+**Summary:** The practice-mode privacy notice names the submitted resume and cover letter as things a sample answer sends, because it does send them.
+
+**Steps:**
+1. Read the `engineNotice` construction in `hello-world/app/copilot/practice/PracticeClient.js`.
+
+**Expected:** Both Gemini branches state that revealing a sample answer sends that question, the prep context, AND the resume and cover letter submitted for the selected posting. The embedded branch states that sample answers are drafted on the server too, and still claims nothing is sent to Google. The camera-frames clause, the save-recordings clause and the transcription-provider clause remain independent of all of this and unchanged. No branch makes a blanket claim that is false on the other branch.
+
+### R-092 | area: interview-type | parallel-safe: yes | automatable: no
+
+**Summary:** Changing the interview type mid-session invalidates the work that belonged to the previous format, without discarding the selected posting.
+
+**Steps:**
+1. Read `onInterviewTypeChange` alongside `onPostingChange` in `hello-world/app/copilot/practice/PracticeClient.js`.
+2. Read `hello-world/app/copilot/practice/useInterviewType.js`.
+
+**Expected:** Changing the type bumps the question-request generation token, clears the asked list, the current question, the exhausted flag, the question error and the loading flag, and abandons then resets any in-progress or reviewed answer — the same sequence a posting change performs, and for the same reason: a question generated for the old format no longer belongs on screen. It does NOT clear the selected posting. The selection persists across reloads via localStorage, defaults to `general`, and an unrecognized stored value reads back as `general`.

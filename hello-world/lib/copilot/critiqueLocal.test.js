@@ -723,3 +723,240 @@ describe("normalizeMetrics — paceLabel whitelist", () => {
     expect(result.delivery[0]).toBe("You spoke for 20 seconds at 150 words per minute (conversational).");
   });
 });
+
+// G2: `interviewType` (lib/copilot/interviewTypes.js) governs the ideal
+// length band, appends format-specific expectation notes to `missing`, and
+// names the format in the verdict — but only once a caller actually opts
+// into a non-"general" format. AC-G2-B-7 requires that omitting
+// `interviewType` and passing "general" explicitly stay byte-for-byte
+// identical to each other (and to today's pre-G2 output) across a strong
+// answer, a short vague answer, and an empty answer.
+describe("critiqueAnswerLocal — interviewType omitted vs \"general\" is behavior-preserving (AC-G2-B-7)", () => {
+  it("is identical for a strong behavioral answer with a metric", () => {
+    const inputs = {
+      question: "Tell me about a time you led a project.",
+      type: "behavioral",
+      answer:
+        "During my time at Acme, my task was to modernize the deployment pipeline. " +
+        "I built a new CI/CD system and coordinated the rollout. " +
+        "As a result, deploy time dropped by 60%.",
+    };
+    const omitted = critiqueAnswerLocal(inputs);
+    const general = critiqueAnswerLocal({ ...inputs, interviewType: "general" });
+
+    expect(omitted).toEqual(general);
+    // Grounded in the actual computed values, not just mutual equality: a
+    // complete STAR story, no format phrase in the verdict, and a length
+    // note keyed to the 80-220 default band.
+    expect(omitted.score).toBe(45);
+    expect(omitted.star).toEqual({ situation: true, task: true, action: true, result: true });
+    expect(omitted.verdict).toBe("This answer falls short at 45/100 — it doesn't fully engage what was actually asked.");
+    expect(omitted.improvements).toContain(
+      "At 31 words, this is short for the 80-220 word range interviewers expect — add more detail.",
+    );
+  });
+
+  it("is identical for a short vague answer", () => {
+    const inputs = {
+      question: "Tell me about a time you led a project.",
+      type: "general",
+      answer: "It went okay I guess.",
+    };
+    const omitted = critiqueAnswerLocal(inputs);
+    const general = critiqueAnswerLocal({ ...inputs, interviewType: "general" });
+
+    expect(omitted).toEqual(general);
+    expect(omitted.score).toBe(1);
+    expect(omitted.verdict).toBe("This answer falls short at 1/100 — the structure is thin.");
+    expect(omitted.missing).toEqual([
+      "The answer never opens with a clear claim.",
+      "The claim is never backed with a specific example or number.",
+    ]);
+  });
+
+  it("is identical for an empty answer", () => {
+    const inputs = {
+      question: "Tell me about a time you led a project.",
+      type: "behavioral",
+      answer: "",
+    };
+    const omitted = critiqueAnswerLocal(inputs);
+    const general = critiqueAnswerLocal({ ...inputs, interviewType: "general" });
+
+    expect(omitted).toEqual(general);
+    expect(omitted.score).toBe(0);
+    expect(omitted.verdict).toBe("No answer was captured for this question, so there is nothing to evaluate.");
+    expect(omitted.strengths).toEqual([]);
+  });
+});
+
+// The ideal word-count band now comes from the selected interview type's
+// own lengthTarget rather than a fixed 80/220 window. Same question, same
+// type, same 60-word answer — only interviewType changes — so any
+// difference in the length-related output is attributable solely to the
+// descriptor's lengthTarget, not to anything else about the answer.
+describe("critiqueAnswerLocal — length band comes from the selected interviewType's lengthTarget", () => {
+  const question = "Describe your background.";
+  const sixtyWords = `${Array.from({ length: 60 }, (_, i) => `word${i}`).join(" ")}.`;
+
+  it("scores a 60-word answer inside phone-screen's 50-130 band as well-calibrated", () => {
+    const result = critiqueAnswerLocal({
+      question,
+      type: "general",
+      answer: sixtyWords,
+      interviewType: "phone-screen",
+    });
+    expect(result.strengths).toContain("Length was well-calibrated at 60 words.");
+    expect(result.improvements.join(" ")).not.toMatch(/this is short/);
+    expect(result.score).toBe(31);
+  });
+
+  it("scores the same 60-word answer as short under system-design's 150-320 band", () => {
+    const result = critiqueAnswerLocal({
+      question,
+      type: "general",
+      answer: sixtyWords,
+      interviewType: "system-design",
+    });
+    expect(result.strengths).not.toContain("Length was well-calibrated at 60 words.");
+    expect(result.improvements).toContain(
+      "At 60 words, this is short for the 150-320 word range interviewers expect — add more detail.",
+    );
+    expect(result.score).toBe(24);
+  });
+});
+
+// AC-G2-B-5: each of the selected interview type's own `expectations`
+// (lib/copilot/interviewTypes.js) that the answer does NOT hit appends its
+// note to `missing`, on top of whatever the base rubric already found — and
+// an expectation the answer DOES hit contributes nothing. The existing
+// MAX_LIST (4) cap still applies once expectation notes are appended.
+describe("critiqueAnswerLocal — interviewType expectations append to missing (AC-G2-B-5)", () => {
+  const question = "Design a URL shortener that scales to millions of users.";
+  const baseAnswer =
+    "I would start by breaking the system into a write path and a read path. " +
+    "I would use a hash function to generate short codes and store the mapping in a distributed key-value store. " +
+    "I would add caching in front of the database to handle read-heavy traffic at scale, " +
+    "and I would shard the data by key to keep the system fast as usage grows across many servers worldwide.";
+
+  it("appends the tradeoff expectation note when a system-design answer names no trade-off", () => {
+    const result = critiqueAnswerLocal({
+      question,
+      type: "technical",
+      answer: baseAnswer,
+      interviewType: "system-design",
+    });
+    expect(result.missing).toEqual([
+      "The answer never restates the problem before diving in.",
+      "No trade-off is acknowledged.",
+      "Weigh at least one real trade-off, such as consistency versus availability or cost versus latency, instead of presenting your design as the only option.",
+    ]);
+  });
+
+  it("does not append the tradeoff expectation note once the answer names a trade-off", () => {
+    const answerWithTradeoff =
+      `${baseAnswer} There is a trade-off between consistency and availability here, ` +
+      "and I chose availability for this use case.";
+    const result = critiqueAnswerLocal({
+      question,
+      type: "technical",
+      answer: answerWithTradeoff,
+      interviewType: "system-design",
+    });
+    expect(result.missing).toEqual(["The answer never restates the problem before diving in."]);
+    expect(result.missing.join(" ")).not.toMatch(/trade-off/i);
+  });
+
+  it("still caps the combined missing list at MAX_LIST (4) once structure, posting, and expectation notes are all combined", () => {
+    const result = critiqueAnswerLocal({
+      question,
+      type: "technical",
+      answer:
+        "Our system needs to handle a lot of traffic every day. " +
+        "We have many users hitting the service constantly throughout the week.",
+      posting: {
+        title: "Backend Engineer",
+        company: "Acme",
+        description: "Experience with Kubernetes and PostgreSQL required.",
+      },
+      interviewType: "system-design",
+    });
+
+    expect(result.missing).toHaveLength(4);
+    expect(result.missing).toEqual([
+      "The answer never restates the problem before diving in.",
+      "No concrete approach is named.",
+      "No trade-off is acknowledged.",
+      'The posting emphasizes "PostgreSQL" — this answer never brings it up.',
+    ]);
+    // The system-design expectation notes (approach/trade-off) exist and
+    // would otherwise have been appended, but the structure and posting
+    // gaps alone already filled every MAX_LIST slot first.
+    expect(result.missing.join(" ")).not.toMatch(/Walk through your approach/);
+    expect(result.missing.join(" ")).not.toMatch(/Weigh at least one real trade-off/);
+  });
+});
+
+// AC-G2-B-6: once there's a real score to attach it to, a non-"general"
+// interviewType names the format being judged in the verdict; "general"
+// (and the wordCount === 0 case, regardless of interviewType) never does.
+describe("critiqueAnswerLocal — verdict names the format for a non-general interviewType (AC-G2-B-6)", () => {
+  it("names the format in the verdict for a recognized non-general interviewType", () => {
+    const result = critiqueAnswerLocal({
+      question: "Tell me about yourself.",
+      type: "general",
+      answer: "I have worked in software for five years, mostly on backend systems at small startups.",
+      interviewType: "phone-screen",
+    });
+    expect(result.score).toBe(48);
+    expect(result.verdict).toBe(
+      "This answer falls short at 48/100 for a recruiter phone screen interview — it stays generic instead of citing specifics.",
+    );
+  });
+
+  it("names no format for the default \"general\" interviewType", () => {
+    const result = critiqueAnswerLocal({
+      question: "Tell me about yourself.",
+      type: "general",
+      answer: "I have worked in software for five years, mostly on backend systems at small startups.",
+      interviewType: "general",
+    });
+    expect(result.verdict).not.toMatch(/for a .* interview/);
+  });
+
+  it("names no format when wordCount is 0, even for a recognized non-general interviewType", () => {
+    const result = critiqueAnswerLocal({
+      question: "Tell me about a time you led a project.",
+      type: "behavioral",
+      answer: "",
+      interviewType: "system-design",
+    });
+    expect(result.verdict).toBe("No answer was captured for this question, so there is nothing to evaluate.");
+    expect(result.verdict).not.toMatch(/for a .* interview/);
+  });
+});
+
+// AC-G2-B-8: `star` is gated purely on the QUESTION's own `type`
+// (behavioral/technical/general) — the selected practice-session
+// `interviewType` never overrides that, in either direction.
+describe("critiqueAnswerLocal — star is gated on question type, not interviewType (AC-G2-B-8)", () => {
+  it("keeps star null for a technical QUESTION even when interviewType is behavioral", () => {
+    const result = critiqueAnswerLocal({
+      question: "How would you design a URL shortener?",
+      type: "technical",
+      answer: "I would use a hash function to map long URLs to short codes.",
+      interviewType: "behavioral",
+    });
+    expect(result.star).toBeNull();
+  });
+
+  it("still populates star for a behavioral QUESTION even when interviewType is technical", () => {
+    const result = critiqueAnswerLocal({
+      question: "Tell me about a time you led a project.",
+      type: "behavioral",
+      answer: "I led the project from start to finish and it went well.",
+      interviewType: "technical",
+    });
+    expect(result.star).toEqual({ situation: false, task: false, action: true, result: false });
+  });
+});

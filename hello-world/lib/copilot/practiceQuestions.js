@@ -5,10 +5,21 @@
 // same next question. Template *selection* within a group still varies (via
 // `pick`, seeded on the posting's own text) so the session doesn't read as
 // obviously templated.
+//
+// Which groups feed the bank, and in what order, is driven by the selected
+// interview type's `questionGroups` (see lib/copilot/interviewTypes.js, the
+// single source of truth for that vocabulary). The opening and closing
+// questions are format-agnostic and always bookend the bank. An omitted or
+// unrecognized interview type resolves to "general", whose questionGroups
+// are exactly today's three (behavioral, technical, role) in today's order
+// — that keeps buildQuestionBank(posting) and nextPracticeQuestion({
+// posting, asked }) byte-identical to the pre-interview-type behavior for
+// every caller that doesn't opt in.
 
 import { profileSkills } from "./answerLocal";
 import { pick } from "@/lib/text/phrasing";
 import { normalizeQuestion } from "./questions";
+import { interviewType as resolveInterviewType } from "./interviewTypes";
 
 const MAX_TECHNICAL_TERMS = 5;
 
@@ -184,6 +195,140 @@ function roleQuestions(posting, seed) {
   ];
 }
 
+// Open-ended architecture prompts for a system-design interview. These carry
+// type "technical" like the rest of the technical bank — "system-design" is
+// a bank *group* name, not a question `type`; the type vocabulary itself
+// stays the three values it's always been (behavioral, technical, general).
+const SYSTEM_DESIGN_TOPICS = [
+  {
+    key: "scale-service",
+    variants: [
+      "Design a service that needs to scale to millions of users. Walk me through your approach.",
+      "How would you design a system that has to handle a sudden, large spike in traffic?",
+      "Walk me through how you'd architect a service for high availability at scale.",
+    ],
+  },
+  {
+    key: "data-store",
+    variants: [
+      "How would you design the data storage for a system with heavy read traffic and occasional writes?",
+      "Walk me through how you'd choose and design a database layer for a high-traffic application.",
+    ],
+  },
+  {
+    key: "failure-modes",
+    variants: [
+      "Design a system that needs to stay available even when one of its dependencies goes down. How would you handle that?",
+      "Walk me through how you'd design for graceful degradation when a downstream service fails.",
+    ],
+  },
+  {
+    key: "tradeoffs",
+    variants: [
+      "Walk me through a design where you had to trade consistency for availability. How did you decide?",
+      "Design a system where you have to choose between latency and accuracy. How would you approach that trade-off?",
+    ],
+  },
+];
+
+function systemDesignQuestions(seed) {
+  return SYSTEM_DESIGN_TOPICS.map((topic) => ({
+    question: pick(`${seed}|system-design|${topic.key}`, topic.variants),
+    type: "technical",
+  }));
+}
+
+// Business-problem prompts for a case-study interview. Most pose a
+// hypothetical to reason through out loud (type "general"); one asks about
+// an actual past situation, so it carries type "behavioral" like the rest of
+// the bank's past-tense questions.
+const CASE_STUDY_TOPICS = [
+  {
+    key: "market-entry",
+    type: "general",
+    variants: [
+      "Walk me through how you'd decide whether our company should enter a new market.",
+      "How would you evaluate whether launching a new product line makes sense for us?",
+    ],
+  },
+  {
+    key: "declining-metric",
+    type: "general",
+    variants: [
+      "A key metric for one of our products just dropped ten percent month over month. How would you figure out why?",
+      "Suppose engagement on a core feature suddenly falls off. Walk me through how you'd investigate it.",
+    ],
+  },
+  {
+    key: "prioritization",
+    type: "general",
+    variants: [
+      "How would you decide which of three competing initiatives to prioritize with limited resources?",
+      "Walk me through how you'd prioritize a roadmap when every stakeholder thinks their request is most urgent.",
+    ],
+  },
+  {
+    key: "past-recommendation",
+    type: "behavioral",
+    variants: [
+      "Tell me about a time you had to make a recommendation with incomplete data. How did you approach it, and what happened?",
+      "Describe a situation where you had to structure a business problem and defend a recommendation. What was the outcome?",
+    ],
+  },
+];
+
+function caseStudyQuestions(seed) {
+  return CASE_STUDY_TOPICS.map((topic) => ({
+    question: pick(`${seed}|case-study|${topic.key}`, topic.variants),
+    type: topic.type,
+  }));
+}
+
+// Past-situation prompts for a leadership/management interview, plus one
+// open-ended question about leadership philosophy — hence the per-topic type
+// rather than a fixed one, same reasoning as the case-study group above.
+const LEADERSHIP_TOPICS = [
+  {
+    key: "delegate",
+    type: "behavioral",
+    variants: [
+      "Tell me about a time you had to delegate a critical piece of work. How did you decide who to trust with it, and how did it go?",
+      "Describe a situation where you delegated a high-stakes task to someone on your team.",
+    ],
+  },
+  {
+    key: "underperformer",
+    type: "behavioral",
+    variants: [
+      "Tell me about a time you had to manage someone who was underperforming. What did you do?",
+      "Describe how you handled a situation where a direct report wasn't meeting expectations.",
+    ],
+  },
+  {
+    key: "difficult-decision",
+    type: "behavioral",
+    variants: [
+      "Walk me through a difficult decision you made as a leader that wasn't popular with your team.",
+      "Tell me about a time you had to make an unpopular call as the person in charge.",
+    ],
+  },
+  {
+    key: "philosophy",
+    type: "general",
+    variants: [
+      "How would you describe your leadership or management style?",
+      "What's your approach to managing and developing the people on your team?",
+    ],
+  },
+];
+
+function leadershipQuestions(seed) {
+  return LEADERSHIP_TOPICS.map((topic) => ({
+    question: pick(`${seed}|leadership|${topic.key}`, topic.variants),
+    type: topic.type,
+  }));
+}
+
 function closingQuestion(seed) {
   return {
     question: pick(`${seed}|closing`, [
@@ -195,9 +340,22 @@ function closingQuestion(seed) {
   };
 }
 
+// group name -> builder, one entry per value in the questionGroups
+// vocabulary declared by lib/copilot/interviewTypes.js. Every builder takes
+// (posting, seed) so they can be called uniformly regardless of whether a
+// given group actually uses the posting.
+const GROUP_BUILDERS = {
+  behavioral: (posting, seed) => behavioralQuestions(seed),
+  technical: (posting, seed) => technicalQuestions(posting, seed),
+  role: (posting, seed) => roleQuestions(posting, seed),
+  "system-design": (posting, seed) => systemDesignQuestions(seed),
+  "case-study": (posting, seed) => caseStudyQuestions(seed),
+  leadership: (posting, seed) => leadershipQuestions(seed),
+};
+
 // Round-robins across the given groups (in order) so the result interleaves
-// types instead of grouping them — the input groups (behavioral, technical,
-// role) are each internally ordered, and this only changes how they merge.
+// types instead of grouping them — each input group is internally ordered,
+// and this only changes how they merge.
 function interleave(groups) {
   const out = [];
   const queues = groups.map((g) => [...g]);
@@ -216,24 +374,27 @@ function interleave(groups) {
 
 // Builds the full, ordered question bank for a posting. Never empty, even
 // when `posting` is null/undefined — every section degrades to a generic
-// phrasing when the posting has nothing usable for it.
-export function buildQuestionBank(posting) {
+// phrasing when the posting has nothing usable for it. `interviewType` is
+// resolved through interviewTypes.js (unknown/missing -> "general"), and its
+// descriptor's questionGroups pick which groups feed the bank and in what
+// order; the opening and closing questions always bookend it regardless of
+// interview type.
+export function buildQuestionBank(posting, interviewType) {
   const seed = seedFor(posting);
   const opening = openingQuestion(posting, seed);
-  const behavioral = behavioralQuestions(seed);
-  const technical = technicalQuestions(posting, seed);
-  const role = roleQuestions(posting, seed);
   const closing = closingQuestion(seed);
+  const { questionGroups } = resolveInterviewType(interviewType);
+  const groups = questionGroups.map((name) => GROUP_BUILDERS[name](posting, seed));
 
-  return [opening, ...interleave([behavioral, technical, role]), closing];
+  return [opening, ...interleave(groups), closing];
 }
 
 // Returns the first bank entry not yet in `asked` (compared via
 // normalizeQuestion, so rewordings from the caller don't matter — only exact
 // text does here since the bank itself is fixed). Never throws on a
-// null/undefined posting or asked list.
-export function nextPracticeQuestion({ posting, asked } = {}) {
-  const bank = buildQuestionBank(posting);
+// null/undefined posting, asked list, or interview type.
+export function nextPracticeQuestion({ posting, asked, interviewType } = {}) {
+  const bank = buildQuestionBank(posting, interviewType);
   const askedList = Array.isArray(asked) ? asked : [];
   const askedNorms = new Set(
     askedList

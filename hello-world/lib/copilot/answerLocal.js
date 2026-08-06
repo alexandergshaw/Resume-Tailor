@@ -7,6 +7,7 @@
 // them. No network, no API key.
 
 import { classifyQuestionType } from "./questionType.js";
+import { normalizeInterviewType } from "./interviewTypes.js";
 import { extractKeywords } from "@/lib/llm/engines/tailor-lite/keywords";
 import { defaultLibraryData } from "@/lib/llm/engines/tailor-lite/library/defaults";
 import { parseEmploymentHistory } from "@/lib/resume/parseEmployment";
@@ -14,6 +15,24 @@ import { pick } from "@/lib/text/phrasing";
 
 const SKILL_CATEGORIES = ["technology", "tool_platform", "domain"];
 const MAX_POINTS = 5;
+
+// Interview-type values that push a question the classifier itself called
+// "general" toward a technical or a STAR scaffold instead (AC-G2-D-6). Only
+// fires when the question earns no classification of its own — a question
+// that already classifies as behavioral/technical keeps that classification
+// regardless of the interview type. Shared by draftAnswerLocal below and
+// sampleAnswerLocal.js's draftSampleAnswerLocal, so the two engines pick the
+// same scaffold for the same (question, interviewType) pair.
+const TECHNICAL_SCAFFOLD_INTERVIEW_TYPES = new Set(["system-design", "technical", "case-study"]);
+const STAR_SCAFFOLD_INTERVIEW_TYPES = new Set(["behavioral", "leadership"]);
+
+export function resolveScaffoldType(questionType, interviewTypeValue) {
+  if (questionType !== "general") return questionType;
+  const value = normalizeInterviewType(interviewTypeValue);
+  if (TECHNICAL_SCAFFOLD_INTERVIEW_TYPES.has(value)) return "technical";
+  if (STAR_SCAFFOLD_INTERVIEW_TYPES.has(value)) return "behavioral";
+  return questionType;
+}
 
 // The candidate's most salient real skills, highest-scoring first, de-duped.
 export function profileSkills(profile, limit = 6) {
@@ -84,7 +103,11 @@ function cleanLine(sentence) {
   return t;
 }
 
-const ACHIEVEMENT_VERBS =
+// Exported so sampleAnswerLocal.js can reuse the same verb vocabulary to
+// detect a verb-initial resume bullet and speak it in first person instead
+// of as a subject-less fragment. Other callers (this file, practiceQuestions.js)
+// keep using it exactly as before.
+export const ACHIEVEMENT_VERBS =
   /\b(built|led|designed|shipped|launched|scaled|drove|improved|reduced|created|owned|delivered|managed|architected|automated|migrated|grew|cut|increased|implemented|developed|optimi[sz]ed|mentored)\b/i;
 
 // The single most relevant, concrete line from the candidate's profile for this
@@ -177,10 +200,12 @@ function generalPoints({ headline, skills, expRef, seed }) {
 }
 
 // Build glanceable talking points for a live interview question, grounded in the
-// candidate's profile. Returns { points: string[], type }.
-export function draftAnswerLocal({ question, profile = "" } = {}) {
+// candidate's profile. `interviewType` (any string, normalized here) only ever
+// matters when the question's own classification is "general" — see
+// resolveScaffoldType above. Returns { points: string[], type }.
+export function draftAnswerLocal({ question, profile = "", interviewType } = {}) {
   const q = String(question || "").trim();
-  const type = classifyQuestionType(q);
+  const type = resolveScaffoldType(classifyQuestionType(q), interviewType);
   const skills = profileSkills(profile);
   const headline = profileHeadline(profile);
   const metric = profileMetric(profile);

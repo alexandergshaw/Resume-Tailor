@@ -103,6 +103,51 @@ describe("critiqueAnswer", () => {
     expect(JSON.parse(opts.body).engine).toBe("gemini");
   });
 
+  it("forwards interviewType when the caller provides one", async () => {
+    mockFetch(200, { score: 5, verdict: "Okay", strengths: [], improvements: [], missing: [], star: null, delivery: null, source: "local" });
+
+    await critiqueAnswer({
+      question: "Why this role?",
+      type: "motivational",
+      answer: "Because I care about the mission.",
+      posting: null,
+      profile: null,
+      metrics: null,
+      frames: [],
+      interviewType: "technical_screen",
+    });
+
+    const [, opts] = global.fetch.mock.calls[0];
+    expect(JSON.parse(opts.body).interviewType).toBe("technical_screen");
+  });
+
+  it("omits interviewType from the request body entirely when the caller does not pass it", async () => {
+    mockFetch(200, { score: 5, verdict: "Okay", strengths: [], improvements: [], missing: [], star: null, delivery: null, source: "local" });
+
+    await critiqueAnswer({
+      question: "Why this role?",
+      type: "motivational",
+      answer: "Because I care about the mission.",
+      posting: null,
+      profile: null,
+      metrics: null,
+      frames: [],
+    });
+
+    const [, opts] = global.fetch.mock.calls[0];
+    expect(opts.body).not.toContain("interviewType");
+    expect(Object.keys(JSON.parse(opts.body))).toEqual([
+      "question",
+      "type",
+      "answer",
+      "posting",
+      "profile",
+      "metrics",
+      "frames",
+      "engine",
+    ]);
+  });
+
   it("throws an Error carrying the server's error message on a non-OK response", async () => {
     mockFetch(400, { error: "Answer text is required." });
 

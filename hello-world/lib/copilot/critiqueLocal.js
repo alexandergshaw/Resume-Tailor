@@ -11,6 +11,13 @@
 import { profileSkills } from "./answerLocal";
 import { defaultLibraryData } from "@/lib/llm/engines/tailor-lite/library/defaults";
 import { MIN_LUMA_SAMPLES, MIN_MOTION_SAMPLES } from "./videoStats";
+// G2: the selected practice interviewType (lib/copilot/interviewTypes.js) is
+// the single source of truth for the ideal answer length, what the rubric
+// should additionally expect, and how the verdict names the format being
+// judged. `interviewType` here is the LOOKUP function (untrusted value ->
+// descriptor, normalizing internally) — imported under an alias so it
+// doesn't collide with the `interviewType` parameter name below.
+import { interviewType as resolveInterviewType, DEFAULT_INTERVIEW_TYPE } from "./interviewTypes";
 // D3's body-language rubric — pulled out into its own module purely to
 // keep this already-large file under its line cap; see
 // critiqueBodyLanguage.js's own header for why and how it's used here.
@@ -291,21 +298,22 @@ function computeRelevance(question, answer) {
 
 // --- Length ---------------------------------------------------------------
 
-// A named ideal band: long enough to cover a real example, short enough to
-// stay tight in a live interview — roughly 45-90 seconds of speech at a
-// conversational pace.
-const IDEAL_MIN_WORDS = 80;
-const IDEAL_MAX_WORDS = 220;
-// How many words over IDEAL_MAX_WORDS costs one point, once over the band.
+// The ideal word-count band is the selected interview type's own
+// `lengthTarget` (lib/copilot/interviewTypes.js) — a { minWords, maxWords }
+// pair, passed in rather than hardcoded here. "general"'s is {80, 220}: long
+// enough to cover a real example, short enough to stay tight in a live
+// interview (roughly 45-90 seconds of speech at a conversational pace), and
+// is the exact band this file used before interview types existed.
+// How many words over maxWords costs one point, once over the band.
 const OVER_LENGTH_WORDS_PER_POINT = 4;
 
-function computeLengthScore(wordCount) {
+function computeLengthScore(wordCount, { minWords, maxWords }) {
   if (wordCount <= 0) return 0;
-  if (wordCount >= IDEAL_MIN_WORDS && wordCount <= IDEAL_MAX_WORDS) return 100;
-  if (wordCount < IDEAL_MIN_WORDS) {
-    return Math.round(clamp(wordCount / IDEAL_MIN_WORDS, 0, 1) * 100);
+  if (wordCount >= minWords && wordCount <= maxWords) return 100;
+  if (wordCount < minWords) {
+    return Math.round(clamp(wordCount / minWords, 0, 1) * 100);
   }
-  const over = wordCount - IDEAL_MAX_WORDS;
+  const over = wordCount - maxWords;
   return Math.round(clamp(100 - over / OVER_LENGTH_WORDS_PER_POINT, 0, 100));
 }
 
@@ -600,16 +608,37 @@ function lengthStrengthText(wordCount) {
   return `Length was well-calibrated at ${wordCount} words.`;
 }
 
-function lengthImprovementText(wordCount) {
-  if (wordCount < IDEAL_MIN_WORDS) {
-    return `At ${wordCount} words, this is short for the ${IDEAL_MIN_WORDS}-${IDEAL_MAX_WORDS} word range interviewers expect — add more detail.`;
+function lengthImprovementText(wordCount, { minWords, maxWords }) {
+  if (wordCount < minWords) {
+    return `At ${wordCount} words, this is short for the ${minWords}-${maxWords} word range interviewers expect — add more detail.`;
   }
-  return `At ${wordCount} words, this runs long — aim for ${IDEAL_MIN_WORDS}-${IDEAL_MAX_WORDS} words and trim the rest.`;
+  return `At ${wordCount} words, this runs long — aim for ${minWords}-${maxWords} words and trim the rest.`;
 }
 
 function postingMissingItems(posting, missingTerms) {
   if (!posting) return [];
   return missingTerms.slice(0, 2).map((term) => `The posting emphasizes "${term}" — this answer never brings it up.`);
+}
+
+// AC-G2-B-5: the selected interview type's own `expectations`
+// (lib/copilot/interviewTypes.js) — cues a strong answer in THAT specific
+// format should hit, on top of the rubric's own structure/posting checks
+// above. Each cue maps to a detector this file already has; no new
+// detection logic is introduced here, only the mapping. "general"'s
+// expectations list is empty, so this appends nothing for a caller that
+// never opts into a specific interview type — see AC-G2-B-7.
+const EXPECTATION_DETECTORS = {
+  "result-metric": (answer) => RESULT_METRIC_RE.test(answer),
+  tradeoff: (answer) => TECH_TRADEOFF_RE.test(answer),
+  approach: (answer) => TECH_APPROACH_RE.test(answer),
+  "star-result": (answer) => hasResultCue(answer),
+  "specific-example": (answer) => countProperNouns(answer) > 0,
+};
+
+function expectationMissingItems(descriptor, answer) {
+  return descriptor.expectations
+    .filter((expectation) => !EXPECTATION_DETECTORS[expectation.cue](answer))
+    .map((expectation) => expectation.note);
 }
 
 // --- Verdict ---------------------------------------------------------------
@@ -626,14 +655,24 @@ function pickWeakest(components) {
   return components.reduce((min, c) => (c.score < min.score ? c : min));
 }
 
-function buildVerdict({ score, wordCount, weakestKey }) {
+// AC-G2-B-6: names the format being judged (e.g. "for a system design
+// interview") so the user can see the standard that was applied — but only
+// once there is a real score to attach it to (wordCount === 0 has nothing to
+// evaluate, format or not) and never for "general", which stays worded
+// exactly as before interview types existed (AC-G2-B-7).
+function formatPhrase(descriptor) {
+  return descriptor.value === DEFAULT_INTERVIEW_TYPE ? "" : ` for a ${descriptor.label.toLowerCase()} interview`;
+}
+
+function buildVerdict({ score, wordCount, weakestKey, descriptor }) {
   if (wordCount === 0) {
     return "No answer was captured for this question, so there is nothing to evaluate.";
   }
-  if (score >= 85) return `Strong answer at ${score}/100 — well structured, specific, and on point.`;
-  if (score >= 70) return `Solid answer at ${score}/100, though ${WEAKEST_HINT[weakestKey]}.`;
-  if (score >= 50) return `This needs work — ${score}/100, mainly because ${WEAKEST_HINT[weakestKey]}.`;
-  return `This answer falls short at ${score}/100 — ${WEAKEST_HINT[weakestKey]}.`;
+  const format = formatPhrase(descriptor);
+  if (score >= 85) return `Strong answer at ${score}/100${format} — well structured, specific, and on point.`;
+  if (score >= 70) return `Solid answer at ${score}/100${format}, though ${WEAKEST_HINT[weakestKey]}.`;
+  if (score >= 50) return `This needs work${format} — ${score}/100, mainly because ${WEAKEST_HINT[weakestKey]}.`;
+  return `This answer falls short at ${score}/100${format} — ${WEAKEST_HINT[weakestKey]}.`;
 }
 
 // --- Metrics normalization ---------------------------------------------
@@ -695,6 +734,16 @@ export function normalizeMetrics(raw) {
 // score, an honest verdict that nothing was captured, no strengths, and
 // improvements that say plainly that nothing was recorded rather than
 // critiquing the style of prose that doesn't exist.
+//
+// G2: `interviewType` is the practice session's selected format (an
+// untrusted value from lib/copilot/interviewTypes.js's vocabulary, or
+// anything else — resolveInterviewType normalizes it, defaulting to
+// "general"). It governs the ideal length band (AC-G2-B-4), extra
+// format-specific expectations appended to `missing` (AC-G2-B-5), and the
+// format name in the verdict (AC-G2-B-6). Omitted or "general" reproduces
+// today's exact output, unchanged (AC-G2-B-7) — it is a distinct concept
+// from `type` (the QUESTION's classification: behavioral/technical/general),
+// which alone still gates `star` (AC-G2-B-8).
 export function critiqueAnswerLocal({
   question = "",
   type = "general",
@@ -702,6 +751,7 @@ export function critiqueAnswerLocal({
   posting = null,
   profile = "",
   metrics = null,
+  interviewType,
 } = {}) {
   // `profile` isn't used by the rubric today — the candidate's background
   // doesn't change how THIS answer is judged the way it changes what
@@ -711,6 +761,7 @@ export function critiqueAnswerLocal({
   void profile;
 
   const t = VALID_TYPES.includes(type) ? type : "general";
+  const descriptor = resolveInterviewType(interviewType);
   const cleanAnswer = String(answer || "").trim();
   const m = normalizeMetrics(metrics);
 
@@ -727,7 +778,7 @@ export function critiqueAnswerLocal({
     overlapCount: overlapTerms.length,
   });
   const relevance = computeRelevance(question, cleanAnswer);
-  const lengthScore = computeLengthScore(wordCount);
+  const lengthScore = computeLengthScore(wordCount, descriptor.lengthTarget);
   const deliveryScore = computeDeliveryScore(m); // number | null — see its own comment
 
   // Weighted composite: when delivery is genuinely unmeasurable (null), it
@@ -778,14 +829,18 @@ export function critiqueAnswerLocal({
     else if (c.key === "specificity") {
       improvements.push(specificityImprovementText({ hasMetric: m.hasMetric, properNounCount }));
     } else if (c.key === "relevance" && relevance.qCount > 0) improvements.push(relevanceImprovementText(relevance));
-    else if (c.key === "length" && wordCount > 0) improvements.push(lengthImprovementText(wordCount));
+    else if (c.key === "length" && wordCount > 0) improvements.push(lengthImprovementText(wordCount, descriptor.lengthTarget));
     if (improvements.length >= MAX_LIST) break;
   }
 
-  const missing = [...structureMissingItems(structure), ...postingMissingItems(posting, missingPostingTerms)].slice(
-    0,
-    MAX_LIST,
-  );
+  // AC-G2-B-5: type-specific expectation notes are appended AFTER whatever
+  // the rubric already produced (structure gaps, then posting-vocabulary
+  // gaps), and the existing MAX_LIST cap still applies to the combined list.
+  const missing = [
+    ...structureMissingItems(structure),
+    ...postingMissingItems(posting, missingPostingTerms),
+    ...expectationMissingItems(descriptor, cleanAnswer),
+  ].slice(0, MAX_LIST);
 
   const delivery = buildDeliveryNotes(m);
 
@@ -795,7 +850,7 @@ export function critiqueAnswerLocal({
   const weakestCandidates =
     deliveryScore === null ? contentComponents : [...contentComponents, { key: "delivery", score: deliveryScore }];
   const weakest = pickWeakest(weakestCandidates);
-  const verdict = buildVerdict({ score, wordCount, weakestKey: weakest.key });
+  const verdict = buildVerdict({ score, wordCount, weakestKey: weakest.key, descriptor });
 
   return {
     score,

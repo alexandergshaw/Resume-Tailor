@@ -108,6 +108,14 @@ export default function AnswerFeedback({
   // below say WHY rather than a bare generic sentence, without the response
   // contract needing to carry it.
   bodyLanguageReason = null,
+  // G2/AC-G2-C-6: the resolved interview-type label ("System design",
+  // "Recruiter phone screen", ...) this critique was actually judged
+  // against. The eight-key critique response contract carries no
+  // interview-type field (AC-G2-B-3 locks it), so PracticeClient resolves
+  // it from the CURRENT interview type via interviewTypeLabel() and passes
+  // the string straight through — this component never re-derives a label
+  // from a raw value itself.
+  interviewTypeLabel = "",
   onRetry,
   onNext,
   onTryAgain,
@@ -184,6 +192,16 @@ export default function AnswerFeedback({
           <Typography variant="body1" sx={{ color: "var(--text-primary)", mb: 2 }}>
             {feedback.verdict}
           </Typography>
+
+          {/* AC-G2-C-6: states the standard this answer was judged against
+              — a system-design answer and a phone-screen answer are not
+              held to the same bar, and this is the user's only on-screen
+              confirmation of which one applied. */}
+          {interviewTypeLabel ? (
+            <Typography variant="body2" sx={{ color: "var(--text-muted)", mb: 2 }}>
+              Judged as a {interviewTypeLabel} interview.
+            </Typography>
+          ) : null}
 
           {feedback.star ? (
             <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: "wrap", rowGap: 1 }}>

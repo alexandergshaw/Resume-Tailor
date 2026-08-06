@@ -12,16 +12,20 @@ import { PracticeSession } from "@/lib/copilot/practiceSession";
 import { fmtClock } from "@/lib/copilot/clock";
 import { fetchNextQuestion } from "@/lib/copilot/questionClient";
 import { normalizeQuestion } from "@/lib/copilot/questions";
+import { interviewTypeLabel } from "@/lib/copilot/interviewTypes";
 import { useEngine } from "@/app/settings/engine";
 import TranscriptView from "../TranscriptView";
 import StatusPill from "../StatusPill";
 import CameraPreview from "./CameraPreview";
 import PostingPicker from "./PostingPicker";
+import InterviewTypePicker from "./InterviewTypePicker";
 import QuestionCard from "./QuestionCard";
 import AnswerReview from "./AnswerReview";
 import AnswerFeedback from "./AnswerFeedback";
 import PracticeHistory from "./PracticeHistory";
 import { usePracticeAnswer } from "./usePracticeAnswer";
+import { useSampleAnswer } from "./useSampleAnswer";
+import { useInterviewType } from "./useInterviewType";
 import { usePrepContext } from "../usePrepContext";
 import PrepContext from "../PrepContext";
 
@@ -97,6 +101,13 @@ export default function PracticeClient({ sttProviderName } = {}) {
   const [questionError, setQuestionError] = useState("");
   const [exhausted, setExhausted] = useState(false);
 
+  // G2: which interview format drives question generation, the sample
+  // answer, and the critique's rubric — a real external store (same shape
+  // as SAVE_RECORDINGS_STORAGE_KEY above and engine.js's useEngine), not
+  // component state, so it persists across visits the same way the save
+  // toggle and the engine choice already do.
+  const { interviewType, setInterviewType } = useInterviewType();
+
   // Same shared prep-context hook the live session uses (AC-C4-7) — grounds
   // the critique in the candidate's real background. Practice mode has no
   // answer cache to clear on edit, so unlike CopilotClient's wrapper, the
@@ -153,11 +164,33 @@ export default function PracticeClient({ sttProviderName } = {}) {
     savedAnswerVersion,
   } = usePracticeAnswer();
 
+  // G1: the toggleable sample answer for the question currently on screen.
+  // Deliberately kept independent of usePracticeAnswer above — showing or
+  // hiding a draft must never start/stop the recorder or samplers, alter
+  // answering/settling, or touch the critique (AC-G1-10), so this hook is
+  // given only the question text and the shared prep profile, and nothing
+  // it returns is threaded into usePracticeAnswer's API. G2: also given the
+  // selected interview type and the selected posting's id (its
+  // applicationId — see normalizePostingRows in lib/copilot/postings.js) so
+  // the draft can be grounded in the resume/cover letter submitted for that
+  // posting; null with no posting selected (AC-G2-C-9).
+  const sampleAnswer = useSampleAnswer({
+    question: currentQuestion?.question || "",
+    profile,
+    interviewType,
+    applicationId: posting?.id || null,
+  });
+
   const sessionRef = useRef(null);
   const idRef = useRef(0);
   const postingRef = useRef(null);
   const askedRef = useRef([]);
   const currentQuestionRef = useRef(null);
+  // G2: mirrors `interviewType` for requestQuestion below, the same reason
+  // postingRef/askedRef/currentQuestionRef exist — requestQuestion is a
+  // stable useCallback whose async body must see the LATEST selection, not
+  // whatever was current when the callback identity was created.
+  const interviewTypeRef = useRef(interviewType);
   // Monotonic generation token: bumped whenever an in-flight question
   // request should be discarded (posting change, Stop, or a fresh Start).
   // requestQuestion captures the generation before its await and refuses to
@@ -184,6 +217,9 @@ export default function PracticeClient({ sttProviderName } = {}) {
   useEffect(() => {
     currentQuestionRef.current = currentQuestion;
   }, [currentQuestion]);
+  useEffect(() => {
+    interviewTypeRef.current = interviewType;
+  }, [interviewType]);
 
   // Requests the next practice question for the currently selected posting,
   // deduping against the given asked list. Its own failures are caught here
@@ -201,6 +237,7 @@ export default function PracticeClient({ sttProviderName } = {}) {
       const result = await fetchNextQuestion({
         posting: p ? { title: p.title, company: p.company, description: p.description } : null,
         asked: askedList,
+        interviewType: interviewTypeRef.current,
       });
       if (reqGenRef.current !== gen) return;
       setCurrentQuestion({ question: result.question, type: result.type });
@@ -261,6 +298,27 @@ export default function PracticeClient({ sttProviderName } = {}) {
       resetAnswerState();
     },
     [abandonInProgressAnswer, resetAnswerState],
+  );
+
+  // G2/AC-G2-C-3: changing the interview type reshapes questions, the
+  // sample answer, and the critique's rubric alike — it does everything
+  // onPostingChange above does, for the same reasons (a question request
+  // in flight belongs to the old format; the asked list, current question,
+  // and any answer on screen all belonged to it too), EXCEPT it leaves the
+  // selected posting untouched — the two selections are independent.
+  const onInterviewTypeChange = useCallback(
+    (nextType) => {
+      setInterviewType(nextType);
+      reqGenRef.current += 1;
+      setAsked([]);
+      setCurrentQuestion(null);
+      setExhausted(false);
+      setQuestionError("");
+      setQuestionLoading(false);
+      abandonInProgressAnswer();
+      resetAnswerState();
+    },
+    [setInterviewType, abandonInProgressAnswer, resetAnswerState],
   );
 
   const stop = useCallback(async () => {
@@ -427,6 +485,10 @@ export default function PracticeClient({ sttProviderName } = {}) {
       // to travel with it.
       applicationId: postingRef.current?.id || null,
       profile,
+      // G2/AC-G2-C-4: closed over directly (not via a ref) — onDoneAnswer
+      // is recreated whenever `interviewType` changes, and it only ever
+      // runs synchronously at click time, so the closure is never stale.
+      interviewType,
       includeFrames: sendFrames && !isEmbedded,
       // BUG-2: a live reader, not `saveEnabled` itself — the upload this
       // gates happens seconds later, after the critique settles, and the
@@ -437,7 +499,7 @@ export default function PracticeClient({ sttProviderName } = {}) {
       // state, so no dependency on `saveEnabled` is needed here either.
       isSaveEnabled: readSaveEnabled,
     });
-  }, [doneAnswerFlow, profile, sendFrames, isEmbedded]);
+  }, [doneAnswerFlow, profile, sendFrames, isEmbedded, interviewType]);
 
   // "Try again" re-answers the SAME question: clears the same per-answer
   // state Next question clears (transcript, metrics, frames, replay clip,
@@ -495,11 +557,15 @@ export default function PracticeClient({ sttProviderName } = {}) {
   // never reference each other's wording, so neither switch's sentence can
   // be read as implying anything about the other (AC-D1-4).
   const framesWillUpload = sendFrames && !isEmbedded;
+  // G1: each branch also names the sample-answer draft's destination — the
+  // same "is this request grounded by an AI provider" fact the critique
+  // sentence above it already states, so this never drifts from it
+  // (AC-G1-9).
   const engineNotice = isEmbedded
-    ? "The critique runs on this server with no AI provider — your answer, the posting, and your prep context are never sent to Google."
+    ? "The critique runs on this server with no AI provider — your answer, the posting, and your prep context are never sent to Google. Sample answers are drafted on this server too."
     : framesWillUpload
-      ? "Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback, along with up to three still frames from each answer."
-      : "Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback.";
+      ? "Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback, along with up to three still frames from each answer. Revealing a sample answer sends that question, your prep context, and the resume and cover letter you submitted for the selected posting to Gemini as well."
+      : "Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback. Revealing a sample answer sends that question, your prep context, and the resume and cover letter you submitted for the selected posting to Gemini as well.";
   const videoNotice = saveEnabled
     ? "Your answer video is uploaded to your own Supabase storage, private to your account, and listed in your practice history until you delete it."
     : "Your video clip stays in your browser and is dropped when the session ends.";
@@ -514,6 +580,12 @@ export default function PracticeClient({ sttProviderName } = {}) {
     ? `Your audio is streamed to ${sttProviderName} for transcription.`
     : "Your audio is streamed for transcription.";
   const privacyNotice = `${sttNotice} ${engineNotice} ${videoNotice}`;
+  // G2/AC-G2-C-6: resolved once here, from the CURRENT interview type,
+  // rather than inside AnswerFeedback — changing interview type always
+  // clears any answer on screen (onInterviewTypeChange above), so this is
+  // always the type whatever critique is showing was actually judged
+  // against.
+  const judgedInterviewTypeLabel = interviewTypeLabel(interviewType);
 
   return (
     <Box>
@@ -533,6 +605,10 @@ export default function PracticeClient({ sttProviderName } = {}) {
           {warning}
         </Alert>
       ) : null}
+
+      <Box sx={{ mb: 2 }}>
+        <InterviewTypePicker value={interviewType} onChange={onInterviewTypeChange} disabled={false} />
+      </Box>
 
       <Box sx={{ mb: 2 }}>
         <PostingPicker value={posting} onChange={onPostingChange} disabled={false} />
@@ -658,6 +734,15 @@ export default function PracticeClient({ sttProviderName } = {}) {
           onRetry={onRetryQuestion}
           onStartAnswer={onStartAnswer}
           onDoneAnswer={onDoneAnswer}
+          sampleVisible={sampleAnswer.visible}
+          sampleStatus={sampleAnswer.status}
+          sampleAnswerText={sampleAnswer.answer}
+          sampleGrounding={sampleAnswer.grounding}
+          sampleError={sampleAnswer.error}
+          isEmbedded={isEmbedded}
+          onToggleSample={sampleAnswer.toggle}
+          onRetrySample={sampleAnswer.retry}
+          onRegenerateSample={sampleAnswer.regenerate}
         />
       </Box>
 
@@ -698,6 +783,7 @@ export default function PracticeClient({ sttProviderName } = {}) {
             // the response contract alone — both already live here.
             framesSent={framesWillUpload}
             bodyLanguageReason={answerMetrics?.bodyLanguage?.reason || null}
+            interviewTypeLabel={judgedInterviewTypeLabel}
             onRetry={onRetryCritique}
             onNext={onNextQuestion}
             onTryAgain={onTryAgainAnswer}

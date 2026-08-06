@@ -7,6 +7,7 @@ import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
+import SampleAnswer from "./SampleAnswer";
 
 const TYPE_LABEL = {
   behavioral: "Behavioral",
@@ -33,6 +34,20 @@ export default function QuestionCard({
   onRetry,
   onStartAnswer,
   onDoneAnswer,
+  // G1: the toggleable sample answer for THIS question — all state lives in
+  // PracticeClient's useSampleAnswer hook, threaded straight through to the
+  // presentational SampleAnswer panel below, same as everything else on
+  // this card. G2: `sampleAnswerText`/`sampleGrounding` carry mode
+  // "answer"'s prose response in place of G1's bullet points.
+  sampleVisible,
+  sampleStatus,
+  sampleAnswerText,
+  sampleGrounding,
+  sampleError,
+  isEmbedded,
+  onToggleSample,
+  onRetrySample,
+  onRegenerateSample,
 }) {
   // The empty state is reached two different ways: before the first Start
   // (the Start button is on screen), and mid-session right after a posting
@@ -136,6 +151,28 @@ export default function QuestionCard({
           </Button>
         )}
       </Stack>
+
+      {/* AC-G1-1: whenever there's a question on screen, whichever of the
+          phases above is showing — never disabled by answering/settling.
+          AC-G2-C-7 (BUG-G1-1): also gated on NOT loading — `loading` goes
+          true the instant "Next question" is pressed, but `question` isn't
+          cleared until the new one lands, so without this second condition
+          the PREVIOUS question's sample answer (and its toggle) sat here,
+          under a card already showing "Getting your next question…", for
+          the whole in-flight request. */}
+      {question && !loading ? (
+        <SampleAnswer
+          visible={sampleVisible}
+          status={sampleStatus}
+          answer={sampleAnswerText}
+          grounding={sampleGrounding}
+          error={sampleError}
+          isEmbedded={isEmbedded}
+          onToggle={onToggleSample}
+          onRetry={onRetrySample}
+          onRegenerate={onRegenerateSample}
+        />
+      ) : null}
     </Box>
   );
 }

@@ -68,6 +68,25 @@ describe("fetchNextQuestion", () => {
     expect(JSON.parse(opts.body).engine).toBe("gemini");
   });
 
+  it("forwards interviewType when the caller provides one", async () => {
+    mockFetch(200, { question: "Why this role?", type: "motivational", source: "bank", exhausted: false });
+
+    await fetchNextQuestion({ posting: "p", asked: [], interviewType: "phone_screen" });
+
+    const [, opts] = global.fetch.mock.calls[0];
+    expect(JSON.parse(opts.body).interviewType).toBe("phone_screen");
+  });
+
+  it("omits interviewType from the request body entirely when the caller does not pass it", async () => {
+    mockFetch(200, { question: "Why this role?", type: "motivational", source: "bank", exhausted: false });
+
+    await fetchNextQuestion({ posting: "p", asked: [] });
+
+    const [, opts] = global.fetch.mock.calls[0];
+    expect(opts.body).not.toContain("interviewType");
+    expect(Object.keys(JSON.parse(opts.body))).toEqual(["posting", "asked", "engine"]);
+  });
+
   it("throws an Error carrying the server's error message on a non-OK response", async () => {
     mockFetch(400, { error: "Posting text is required." });
 

@@ -9,6 +9,7 @@ import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { createClient } from "@/lib/supabase/server";
 import { nextPracticeQuestion } from "@/lib/copilot/practiceQuestions";
+import { interviewType as getInterviewTypeDescriptor } from "@/lib/copilot/interviewTypes";
 
 function jsonRequest(body) {
   return { json: async () => body };
@@ -288,5 +289,127 @@ describe("POST /api/copilot/question (response shape)", () => {
     const fallbackRes = await POST(jsonRequest({ posting, asked: [], engine: "gemini" }));
     const fallbackData = await fallbackRes.json();
     expect(Object.keys(fallbackData).sort()).toEqual(["exhausted", "question", "source", "type"]);
+  });
+});
+
+describe("POST /api/copilot/question (interviewType, embedded engine)", () => {
+  it("draws the next question from the requested format's own groups, not the general default", async () => {
+    mockUser();
+    const posting = { title: "Engineer", company: "Acme", description: "" };
+    // The opening question is format-agnostic, so ask it first for both
+    // formats to reach the part of the bank that actually differs.
+    const opening = nextPracticeQuestion({ posting, asked: [] }).question;
+    const askedOpening = [opening];
+
+    const technicalRes = await POST(
+      jsonRequest({ posting, asked: askedOpening, engine: "embedded", interviewType: "technical" }),
+    );
+    const technicalData = await technicalRes.json();
+    expect(technicalData.type).toBe("technical");
+
+    const behavioralRes = await POST(
+      jsonRequest({ posting, asked: askedOpening, engine: "embedded", interviewType: "behavioral" }),
+    );
+    const behavioralData = await behavioralRes.json();
+    expect(behavioralData.type).toBe("behavioral");
+
+    // Different formats, same posting and asked-history, must diverge.
+    expect(technicalData.question).not.toBe(behavioralData.question);
+
+    // And each must match the deterministic bank computed for that exact
+    // interview type, not just differ from each other.
+    const expectedTechnical = nextPracticeQuestion({
+      posting,
+      asked: askedOpening,
+      interviewType: "technical",
+    });
+    expect(technicalData.question).toBe(expectedTechnical.question);
+    const expectedBehavioral = nextPracticeQuestion({
+      posting,
+      asked: askedOpening,
+      interviewType: "behavioral",
+    });
+    expect(behavioralData.question).toBe(expectedBehavioral.question);
+  });
+
+  it("treats an unrecognized interviewType the same as omitting it (both resolve to general)", async () => {
+    mockUser();
+    const posting = { title: "Engineer", company: "Acme", description: "" };
+    const withUnknownType = await POST(
+      jsonRequest({ posting, asked: [], engine: "embedded", interviewType: "not-a-real-format" }),
+    );
+    const withUnknownTypeData = await withUnknownType.json();
+    const withNoType = await POST(jsonRequest({ posting, asked: [], engine: "embedded" }));
+    const withNoTypeData = await withNoType.json();
+    expect(withUnknownTypeData.question).toBe(withNoTypeData.question);
+    expect(withUnknownTypeData.type).toBe(withNoTypeData.type);
+
+    const expected = nextPracticeQuestion({ posting, asked: [], interviewType: "general" });
+    expect(withUnknownTypeData.question).toBe(expected.question);
+  });
+});
+
+describe("POST /api/copilot/question (interviewType, gemini engine)", () => {
+  it("includes the requested format's label and guidance in the Gemini prompt", async () => {
+    mockUser();
+    const generateContent = vi
+      .fn()
+      .mockResolvedValue({ text: JSON.stringify({ question: "A technical question?", type: "technical" }) });
+    getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
+    getGeminiClient.mockReturnValue({ models: { generateContent } });
+
+    const res = await POST(
+      jsonRequest({ posting: null, asked: [], engine: "gemini", interviewType: "technical" }),
+    );
+    expect(res.status).toBe(200);
+
+    const promptText = generateContent.mock.calls[0][0].contents[0].parts[0].text;
+    const descriptor = getInterviewTypeDescriptor("technical");
+    expect(promptText).toContain(`Interview format: ${descriptor.label}`);
+    expect(promptText).toContain(descriptor.guidance);
+  });
+
+  it("falls back to the general format's label and guidance when interviewType is unrecognized", async () => {
+    mockUser();
+    const generateContent = vi
+      .fn()
+      .mockResolvedValue({ text: JSON.stringify({ question: "Some question?", type: "general" }) });
+    getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
+    getGeminiClient.mockReturnValue({ models: { generateContent } });
+
+    await POST(jsonRequest({ posting: null, asked: [], engine: "gemini", interviewType: "made-up-format" }));
+
+    const promptText = generateContent.mock.calls[0][0].contents[0].parts[0].text;
+    const general = getInterviewTypeDescriptor("general");
+    const technical = getInterviewTypeDescriptor("technical");
+    expect(promptText).toContain(`Interview format: ${general.label}`);
+    expect(promptText).not.toContain(`Interview format: ${technical.label}`);
+  });
+
+  it("still falls back to the deterministic bank for the requested format when Gemini fails", async () => {
+    mockUser();
+    getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
+    getGeminiClient.mockReturnValue({
+      models: { generateContent: vi.fn().mockRejectedValue(new Error("network down")) },
+    });
+    const posting = { title: "Engineer", company: "Acme", description: "" };
+    // Skip past the format-agnostic opening question so the fallback lands
+    // on a question drawn from the "technical" format's own group.
+    const opening = nextPracticeQuestion({ posting, asked: [] }).question;
+    const askedOpening = [opening];
+
+    const res = await POST(
+      jsonRequest({ posting, asked: askedOpening, engine: "gemini", interviewType: "technical" }),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.source).toBe("fallback");
+    const expected = nextPracticeQuestion({
+      posting,
+      asked: askedOpening,
+      interviewType: "technical",
+    });
+    expect(data.question).toBe(expected.question);
+    expect(data.type).toBe("technical");
   });
 });
