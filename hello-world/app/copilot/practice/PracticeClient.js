@@ -17,7 +17,9 @@ import { useEngine } from "@/app/settings/engine";
 import TranscriptView from "../TranscriptView";
 import StatusPill from "../StatusPill";
 import CameraPreview from "./CameraPreview";
-import PostingPicker from "./PostingPicker";
+import PostingPicker from "../PostingPicker";
+import SubmittedDocs from "../SubmittedDocs";
+import { useApplicationDocs } from "../useApplicationDocs";
 import InterviewTypePicker from "./InterviewTypePicker";
 import QuestionCard from "./QuestionCard";
 import AnswerReview from "./AnswerReview";
@@ -180,6 +182,16 @@ export default function PracticeClient({ sttProviderName } = {}) {
     interviewType,
     applicationId: posting?.id || null,
   });
+
+  // AC-H3: the read-only "Submitted for this application" panel's data —
+  // same applicationId fact as sampleAnswer above (the picker option's `id`
+  // IS the application id, per onDoneAnswer's own note below). Owns its own
+  // load/generation-gating entirely (useApplicationDocs.js); this component
+  // only decides WHETHER to render the panel (never when no posting is
+  // selected — AC-H3.11) and never writes anything back into the prep
+  // context (AC-H3.14) — `profile`/`setProfile` above are never touched by
+  // this hook or by SubmittedDocs.
+  const submittedDocs = useApplicationDocs(posting?.id || null);
 
   const sessionRef = useRef(null);
   const idRef = useRef(0);
@@ -557,15 +569,66 @@ export default function PracticeClient({ sttProviderName } = {}) {
   // never reference each other's wording, so neither switch's sentence can
   // be read as implying anything about the other (AC-D1-4).
   const framesWillUpload = sendFrames && !isEmbedded;
+  // AC-H5/AC-H6.23/BUG-H5: the critique route now ALSO fetches and sends the
+  // submitted resume/cover letter to Gemini, grounding the critique the same
+  // way revealing a sample answer already did — but ONLY when a posting is
+  // selected AND that application actually has a document to send: with no
+  // posting there is no application for either request to fetch documents
+  // for, and even with one selected, an application whose
+  // `resume_used_id`/`cover_letter_id` are both unset makes
+  // fetchApplicationDocs return empty strings, in which case both routes'
+  // `if (resume || coverLetter)` guard (app/api/copilot/critique/route.js,
+  // app/api/copilot/answer/route.js) skips the document section entirely —
+  // nothing is sent. `hasPosting` alone used to gate both clauses below,
+  // which is exactly the gap BUG-H5 was filed for: it named Gemini as a
+  // recipient of documents that might not exist. `submittedDocs` (from
+  // useApplicationDocs, the same hook backing the "Submitted for this
+  // application" panel) now drives both clauses instead. While its load is
+  // still unsettled (`loading`/`idle`) or has failed (`error`), whether a
+  // document exists is genuinely unknown, so both clauses hedge with "may"
+  // — staying silent here, while documents might be about to be sent, would
+  // be the worse failure. Once the load settles (`status === "done"`), the
+  // clauses assert plainly and name only the document(s) actually found —
+  // resume only, cover letter only, or both, never both when only one
+  // exists — and the critique clause falls silent (rather than repeating
+  // BUG-H5's old blanket claim) when neither was found.
+  const hasPosting = !!posting;
+  const docsSettled = submittedDocs.status === "done";
+  const hasSubmittedResume = !!submittedDocs.resume;
+  const hasSubmittedCoverLetter = !!submittedDocs.coverLetter;
+  const submittedDocsLabel =
+    hasSubmittedResume && hasSubmittedCoverLetter
+      ? "resume and cover letter"
+      : hasSubmittedResume
+        ? "resume"
+        : "cover letter";
+  const submittedDocsToGeminiClause = !hasPosting
+    ? ""
+    : !docsSettled
+      ? " The critique may also send any resume or cover letter you submitted for the selected posting to Gemini."
+      : hasSubmittedResume || hasSubmittedCoverLetter
+        ? ` The critique also sends the ${submittedDocsLabel} you submitted for the selected posting to Gemini.`
+        : "";
   // G1: each branch also names the sample-answer draft's destination — the
   // same "is this request grounded by an AI provider" fact the critique
   // sentence above it already states, so this never drifts from it
-  // (AC-G1-9).
+  // (AC-G1-9). Unlike the critique clause above, this sentence is never
+  // empty — revealing a sample answer always sends the question and prep
+  // context to Gemini regardless of documents (see useSampleAnswer) — so
+  // only the document mention within it is conditional, following the same
+  // hedge/assert/omit split as submittedDocsToGeminiClause above.
+  const sampleAnswerClause = !hasPosting
+    ? "Revealing a sample answer sends that question and your prep context to Gemini as well."
+    : !docsSettled
+      ? "Revealing a sample answer sends that question and your prep context to Gemini as well, and may also send any resume or cover letter you submitted for the selected posting."
+      : hasSubmittedResume || hasSubmittedCoverLetter
+        ? `Revealing a sample answer sends that question, your prep context, and the ${submittedDocsLabel} you submitted for the selected posting to Gemini as well.`
+        : "Revealing a sample answer sends that question and your prep context to Gemini as well.";
   const engineNotice = isEmbedded
     ? "The critique runs on this server with no AI provider — your answer, the posting, and your prep context are never sent to Google. Sample answers are drafted on this server too."
     : framesWillUpload
-      ? "Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback, along with up to three still frames from each answer. Revealing a sample answer sends that question, your prep context, and the resume and cover letter you submitted for the selected posting to Gemini as well."
-      : "Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback. Revealing a sample answer sends that question, your prep context, and the resume and cover letter you submitted for the selected posting to Gemini as well.";
+      ? `Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback, along with up to three still frames from each answer.${submittedDocsToGeminiClause} ${sampleAnswerClause}`
+      : `Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback.${submittedDocsToGeminiClause} ${sampleAnswerClause}`;
   const videoNotice = saveEnabled
     ? "Your answer video is uploaded to your own Supabase storage, private to your account, and listed in your practice history until you delete it."
     : "Your video clip stays in your browser and is dropped when the session ends.";
@@ -613,6 +676,19 @@ export default function PracticeClient({ sttProviderName } = {}) {
       <Box sx={{ mb: 2 }}>
         <PostingPicker value={posting} onChange={onPostingChange} disabled={false} />
       </Box>
+
+      {/* AC-H3.11: rendered whenever a posting is selected, in BOTH modes,
+          and absent entirely otherwise — never shown in some disabled/empty
+          state for "no posting". */}
+      {posting ? (
+        <SubmittedDocs
+          status={submittedDocs.status}
+          resume={submittedDocs.resume}
+          coverLetter={submittedDocs.coverLetter}
+          error={submittedDocs.error}
+          onRetry={submittedDocs.retry}
+        />
+      ) : null}
 
       <Stack
         direction="row"
@@ -736,7 +812,7 @@ export default function PracticeClient({ sttProviderName } = {}) {
           onDoneAnswer={onDoneAnswer}
           sampleVisible={sampleAnswer.visible}
           sampleStatus={sampleAnswer.status}
-          sampleAnswerText={sampleAnswer.answer}
+          sampleAnswerPoints={sampleAnswer.points}
           sampleGrounding={sampleAnswer.grounding}
           sampleError={sampleAnswer.error}
           isEmbedded={isEmbedded}

@@ -37,11 +37,11 @@ export default function QuestionCard({
   // G1: the toggleable sample answer for THIS question — all state lives in
   // PracticeClient's useSampleAnswer hook, threaded straight through to the
   // presentational SampleAnswer panel below, same as everything else on
-  // this card. G2: `sampleAnswerText`/`sampleGrounding` carry mode
-  // "answer"'s prose response in place of G1's bullet points.
+  // this card. AC-H9: `sampleAnswerPoints` carries the sample answer as a
+  // bullet-point array (each a complete, speakable sentence).
   sampleVisible,
   sampleStatus,
-  sampleAnswerText,
+  sampleAnswerPoints,
   sampleGrounding,
   sampleError,
   isEmbedded,
@@ -164,7 +164,7 @@ export default function QuestionCard({
         <SampleAnswer
           visible={sampleVisible}
           status={sampleStatus}
-          answer={sampleAnswerText}
+          points={sampleAnswerPoints}
           grounding={sampleGrounding}
           error={sampleError}
           isEmbedded={isEmbedded}

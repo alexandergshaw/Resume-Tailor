@@ -636,6 +636,13 @@ export function usePracticeAnswer() {
           // Retry (retryCritique) re-sends the SAME interview type the
           // original request used, not whatever is currently selected.
           interviewType: context.interviewType || "general",
+          // AC-H5: same id `save.applicationId` below already carries for
+          // persisting the answer — cached into lastCritiqueInputsRef
+          // exactly like every other baseInputs field, so retryCritique
+          // (below) re-sends it for the SAME application the original
+          // critique was grounded in, not whatever posting is selected by
+          // the time Retry is pressed.
+          applicationId: context.applicationId || null,
           metrics,
         },
         {

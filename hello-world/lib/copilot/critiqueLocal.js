@@ -218,6 +218,48 @@ function containsTerm(text, term) {
 // "the answer used this posting term" (BUG-10).
 const MIN_POSTING_TERM_LENGTH = 3;
 
+// AC-H5.22: the résumé/cover letter actually submitted for this application
+// (when the route found one — see app/api/copilot/critique/route.js), mined
+// for distinctive vocabulary the same way postingKeyTerms mines a posting
+// above — profileSkills is the one extractor, reused rather than duplicated.
+// A mined term can be a taxonomy CANONICALIZATION rather than something the
+// candidate actually wrote (the recorded "team" -> "Microsoft Teams" defect
+// in lib/copilot/sampleAnswerLocal.js), so this filters the mined list down
+// to terms that literally occur in the submitted text, using the same
+// word-boundary containsTerm check postingKeyTerms overlap already relies
+// on — a canonicalized term the candidate never wrote can never drive this
+// signal. Same POSTING_TERMS_LIMIT/MIN_POSTING_TERM_LENGTH bounds as the
+// posting-side machinery, not new ones.
+function docsKeyTerms(resume, coverLetter) {
+  const text = [resume, coverLetter].filter(Boolean).join("\n");
+  if (!text) return [];
+  return profileSkills(text, POSTING_TERMS_LIMIT).filter(
+    (term) => term.length >= MIN_POSTING_TERM_LENGTH && containsTerm(text, term),
+  );
+}
+
+// AC-H5.22: when the submitted résumé/cover letter were found for this
+// application and the answer never names any of their distinctive terms,
+// this is the ONE additional `missing` item the rubric appends — it never
+// touches SCORE, and returns [] (no change at all) whenever `resume` and
+// `coverLetter` are both empty, which is exactly what every existing caller
+// still passes, keeping every other case byte-identical to before this
+// existed.
+function submittedDocsMissingItems({ resume, coverLetter, answer }) {
+  const hasResume = !!resume;
+  const hasCoverLetter = !!coverLetter;
+  if (!hasResume && !hasCoverLetter) return [];
+  const terms = docsKeyTerms(resume, coverLetter);
+  if (terms.length === 0) return [];
+  if (terms.some((term) => containsTerm(answer, term))) return [];
+  const label = hasResume && hasCoverLetter ? "resume and cover letter" : hasResume ? "resume" : "cover letter";
+  const verb = hasResume && hasCoverLetter ? "mention" : "mentions";
+  const named = terms.slice(0, 3).join(", ");
+  return [
+    `The ${label} you submitted for this posting ${verb} ${named}, but this answer never brings any of it up.`,
+  ];
+}
+
 const HAS_METRIC_POINTS = 40; // a quantified result was mentioned
 const PROPER_NOUN_POINTS = 10; // per named proper noun
 const MAX_PROPER_NOUN_CREDIT = 30;
@@ -744,6 +786,14 @@ export function normalizeMetrics(raw) {
 // today's exact output, unchanged (AC-G2-B-7) — it is a distinct concept
 // from `type` (the QUESTION's classification: behavioral/technical/general),
 // which alone still gates `star` (AC-G2-B-8).
+//
+// AC-H5.22: `resume`/`coverLetter` are the submitted documents the route
+// fetched for this application, already clamped — empty strings (the
+// default, and what every caller that doesn't know about applications still
+// passes) mean nothing was found or nothing was fetched at all, and produce
+// byte-identical output to before these parameters existed: they feed
+// nothing but submittedDocsMissingItems above, which itself returns []
+// whenever both are empty. SCORE is never affected by either value.
 export function critiqueAnswerLocal({
   question = "",
   type = "general",
@@ -752,6 +802,8 @@ export function critiqueAnswerLocal({
   profile = "",
   metrics = null,
   interviewType,
+  resume = "",
+  coverLetter = "",
 } = {}) {
   // `profile` isn't used by the rubric today — the candidate's background
   // doesn't change how THIS answer is judged the way it changes what
@@ -833,12 +885,23 @@ export function critiqueAnswerLocal({
     if (improvements.length >= MAX_LIST) break;
   }
 
-  // AC-G2-B-5: type-specific expectation notes are appended AFTER whatever
+  // AC-G2-B-5: type-specific expectation notes are appended after whatever
   // the rubric already produced (structure gaps, then posting-vocabulary
-  // gaps), and the existing MAX_LIST cap still applies to the combined list.
+  // gaps). BUG-H3: AC-H5.22's submitted-documents note is ordered AHEAD of
+  // those type-specific expectations, not last — a weak answer is exactly
+  // the answer that produces the most structure gaps, and appending the
+  // documents note last meant it was always the first thing MAX_LIST
+  // sliced away, silencing this feature's entire user-visible signal
+  // precisely when it mattered most. When `resume`/`coverLetter` are both
+  // empty (every existing caller, and any request with nothing to ground
+  // in) submittedDocsMissingItems always returns [], so this line adds
+  // nothing and the list stays byte-identical to before it existed —
+  // reordering an empty spread cannot change anything. The existing
+  // MAX_LIST cap still applies to the combined list.
   const missing = [
     ...structureMissingItems(structure),
     ...postingMissingItems(posting, missingPostingTerms),
+    ...submittedDocsMissingItems({ resume, coverLetter, answer: cleanAnswer }),
     ...expectationMissingItems(descriptor, cleanAnswer),
   ].slice(0, MAX_LIST);
 

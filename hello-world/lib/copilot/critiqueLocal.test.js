@@ -960,3 +960,7 @@ describe("critiqueAnswerLocal — star is gated on question type, not interviewT
     expect(result.star).toEqual({ situation: false, task: false, action: true, result: false });
   });
 });
+
+// AC-H5.22's submitted-documents grounding note has its own test file
+// (critiqueLocalDocsGrounding.test.js) rather than a describe block here —
+// this file was already close to the project's 1000-line-per-file cap.

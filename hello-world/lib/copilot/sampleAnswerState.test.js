@@ -7,7 +7,7 @@ describe("activeSampleAnswer", () => {
       question: "Tell me about a time you led a project.",
       visible: true,
       status: "done",
-      answer: "Sure, at my last job...",
+      points: ["Situation: Sure, at my last job..."],
       grounding: { resume: true, coverLetter: false },
       error: "",
       profile: "profile-A",
@@ -23,7 +23,7 @@ describe("activeSampleAnswer", () => {
       question: "Tell me about a time you led a project.",
       visible: true,
       status: "done",
-      answer: "Sure, at my last job...",
+      points: ["Situation: Sure, at my last job..."],
       grounding: { resume: true, coverLetter: false },
       error: "",
       profile: "profile-A",
@@ -32,7 +32,7 @@ describe("activeSampleAnswer", () => {
     };
     const active = activeSampleAnswer(state, "Tell me about a time you led a project.");
     expect(active).toBe(state);
-    expect(active.answer).toBe("Sure, at my last job...");
+    expect(active.points).toEqual(["Situation: Sure, at my last job..."]);
   });
 
   it("returns emptySampleAnswer() when state is null", () => {
@@ -50,7 +50,7 @@ describe("activeSampleAnswer", () => {
       question: "",
       visible: true,
       status: "done",
-      answer: "Fallback answer",
+      points: ["Fallback answer"],
       grounding: null,
       error: "",
       profile: "profile-A",
@@ -66,7 +66,7 @@ describe("activeSampleAnswer", () => {
       question: "Why do you want this role?",
       visible: true,
       status: "done",
-      answer: "Because...",
+      points: ["Because..."],
       grounding: null,
       error: "",
       profile: "profile-A",
@@ -75,6 +75,14 @@ describe("activeSampleAnswer", () => {
     };
     const active = activeSampleAnswer(state, "");
     expect(active).toEqual(emptySampleAnswer());
+  });
+});
+
+describe("emptySampleAnswer", () => {
+  it("carries points (an empty array) rather than a prose answer string (AC-H9.37)", () => {
+    const empty = emptySampleAnswer();
+    expect(empty.points).toEqual([]);
+    expect(empty).not.toHaveProperty("answer");
   });
 });
 
@@ -154,7 +162,7 @@ describe("needsRedraft — done redrafts only when profile, interviewType, or ap
   const doneActive = {
     question: "Q",
     status: "done",
-    answer: "Cached answer",
+    points: ["Cached point"],
     profile: "profile-A",
     interviewType: "behavioral",
     applicationId: "app-1",

@@ -6,6 +6,8 @@ import { wantsEmbedded } from "@/lib/llm/featureEngine";
 import { critiqueAnswerLocal, buildDeliveryNotes, normalizeMetrics } from "@/lib/copilot/critiqueLocal";
 import { buildBodyLanguageFacts } from "@/lib/copilot/critiqueBodyLanguage";
 import { normalizeInterviewType, interviewType as resolveInterviewType } from "@/lib/copilot/interviewTypes";
+import { fetchApplicationDocs } from "@/lib/copilot/applicationDocs";
+import { clampDocs, groundingFlags, submittedDocsPromptParts } from "@/lib/copilot/applicationDocsPrompt";
 
 // Judges what a practice-mode candidate actually SAID in one recorded
 // answer — C4, layered on top of C3's delivery metrics
@@ -19,6 +21,19 @@ import { normalizeInterviewType, interviewType as resolveInterviewType } from "@
 // input, and threaded into both the embedded rubric and the Gemini prompt so
 // a strong system-design answer and a strong phone-screen answer are judged
 // against different bars (AC-G2-B-2, AC-G2-B-3, AC-G2-B-4).
+//
+// AC-H5: `body.applicationId` (the selected posting's own id — see
+// PracticeClient's onDoneAnswer) is used to fetch the résumé/cover letter
+// actually SUBMITTED for that application, server-side, via the same
+// fetchApplicationDocs the answer route already uses — the client never
+// sends document text, and any client-supplied `resume`/`coverLetter` field
+// in the body is simply never read, so it cannot inject text labelled
+// "submitted resume" into the prompt. With no applicationId, or when
+// fetchApplicationDocs finds nothing (wrong user, no matching row, no
+// document id), `docs` comes back `{ resume: "", coverLetter: "" }` and
+// every code path below that reads `resume`/`coverLetter` degrades to
+// exactly what it did before this existed (AC-H5.21) — see buildPrompt and
+// critiqueAnswerLocal's own doc comments for how each keeps that promise.
 
 const MAX_QUESTION_CHARS = 600;
 const MAX_ANSWER_CHARS = 8000;
@@ -26,6 +41,8 @@ const MAX_PROFILE_CHARS = 8000;
 const MAX_TITLE_CHARS = 200;
 const MAX_COMPANY_CHARS = 120;
 const MAX_DESCRIPTION_CHARS = 4000;
+// Same cap app/api/copilot/answer/route.js already applies to this field.
+const MAX_APPLICATION_ID_CHARS = 100;
 const VALID_TYPES = ["behavioral", "technical", "general"];
 
 const MAX_FRAMES = 3;
@@ -272,6 +289,15 @@ function visualInstruction(hasFrames) {
     : "No video frames were supplied for this answer. Make NO visual claims whatsoever — nothing about appearance, framing, lighting, posture, or expression.";
 }
 
+// AC-H5: only ever appended to the system instruction when a SUBMITTED
+// RESUME and/or SUBMITTED COVER LETTER section was actually added to the
+// prompt (see buildPrompt) — omitted entirely otherwise, which is what keeps
+// the "no applicationId, or no documents found" case byte-identical to
+// before this existed (AC-H5.21).
+function submittedDocsInstruction() {
+  return "When SUBMITTED RESUME and/or SUBMITTED COVER LETTER sections are supplied, judge whether the answer actually draws on what the candidate submitted for THIS specific application — not just their general prep notes — the same way you already judge the CANDIDATE BACKGROUND section.";
+}
+
 // D3: the body-language rules the standard sets (lib/copilot/bodyLanguage.js,
 // restated in AC-D3), addressed to the model specifically — on top of, not
 // instead of, visualInstruction above. A head-pose measurement is not a
@@ -312,7 +338,18 @@ function interviewFormatSection(descriptor) {
   ];
 }
 
-function buildPrompt({ question, type, answer, posting, profile, metricsFacts, bodyLanguageFacts, descriptor }) {
+function buildPrompt({
+  question,
+  type,
+  answer,
+  posting,
+  profile,
+  metricsFacts,
+  bodyLanguageFacts,
+  descriptor,
+  resume,
+  coverLetter,
+}) {
   const parts = [
     `The candidate was asked this ${type} interview question: "${question}"`,
     "",
@@ -331,6 +368,18 @@ function buildPrompt({ question, type, answer, posting, profile, metricsFacts, b
       [posting.title, posting.company].filter(Boolean).join(" at "),
       posting.description || "",
     );
+  }
+  // AC-H5.21: submittedDocsPromptParts is only ever called here when there is
+  // something to say — `resume`/`coverLetter` are both "" in the byte-
+  // identical "no applicationId, or no documents found" case, so this branch
+  // is skipped entirely rather than calling the helper and discarding its
+  // "no submitted resume or cover letter" note. That note exists in
+  // applicationDocsPrompt.js for answer-mode's framing; this prompt has never
+  // had an equivalent sentence, and adding one here would break byte-
+  // identity for exactly the case that must stay unchanged. See that
+  // module's own doc comment, which names this exact trap.
+  if (resume || coverLetter) {
+    parts.push(...submittedDocsPromptParts({ resume, coverLetter }));
   }
   parts.push("", "--- MEASURED DELIVERY METRICS (ground truth — cite these, do not re-estimate) ---");
   for (const fact of metricsFacts) parts.push(`- ${fact}`);
@@ -380,11 +429,31 @@ export async function POST(request) {
     // AC-G2-B-2: normalized once here, same as every other input above, then
     // passed to both the embedded rubric and the Gemini prompt below.
     const interviewType = normalizeInterviewType(body?.interviewType);
+    // AC-H5: an applicationId string, capped the same way the answer route
+    // caps it. Note there is deliberately no `body?.resume`/`body?.coverLetter`
+    // read anywhere in this file — the ONLY source for those values is the
+    // fetchApplicationDocs call below, keyed off this id and the signed-in
+    // user, so a client cannot inject arbitrary text labelled "submitted
+    // resume" into the prompt (AC-H5.20).
+    const applicationId = (body?.applicationId ?? "").toString().trim().slice(0, MAX_APPLICATION_ID_CHARS);
+    const docs = await fetchApplicationDocs(supabase, { applicationId, userId: user.id });
+    const grounding = groundingFlags(docs);
+    const { resume, coverLetter } = clampDocs(docs);
 
     // Embedded engine: a real deterministic rubric, no LLM call. Frames are
     // ignored entirely on this path — there is nothing to send them to.
     if (wantsEmbedded(body?.engine)) {
-      const result = safeCritiqueAnswerLocal({ question, type, answer, posting, profile, metrics, interviewType });
+      const result = safeCritiqueAnswerLocal({
+        question,
+        type,
+        answer,
+        posting,
+        profile,
+        metrics,
+        interviewType,
+        resume,
+        coverLetter,
+      });
       return Response.json(sanitizeCritique(result, "embedded", type));
     }
 
@@ -408,12 +477,18 @@ export async function POST(request) {
         metricsFacts,
         bodyLanguageFacts,
         descriptor,
+        resume,
+        coverLetter,
       });
       const frameParts = frames.map((base64) => ({ inlineData: { mimeType: "image/jpeg", data: base64 } }));
       const systemInstruction = [
         BASE_SYSTEM,
         visualInstruction(frames.length > 0),
         bodyLanguageInstruction(frames.length > 0),
+        // AC-H5.21: appended only when a documents section was actually
+        // added to the prompt above — omitted entirely otherwise, so the
+        // "no documents" case's systemInstruction stays byte-identical.
+        ...(grounding.resume || grounding.coverLetter ? [submittedDocsInstruction()] : []),
       ].join(" ");
 
       const response = await client.models.generateContent({
@@ -424,13 +499,33 @@ export async function POST(request) {
 
       const parsed = parseModelJson(response.text?.trim() || "");
       if (!looksLikeCritique(parsed)) {
-        const fallback = safeCritiqueAnswerLocal({ question, type, answer, posting, profile, metrics, interviewType });
+        const fallback = safeCritiqueAnswerLocal({
+          question,
+          type,
+          answer,
+          posting,
+          profile,
+          metrics,
+          interviewType,
+          resume,
+          coverLetter,
+        });
         return Response.json(sanitizeCritique(fallback, "embedded", type));
       }
       const allowBodyLanguage = bodyLanguageFacts.length > 0 || frames.length > 0;
       return Response.json(sanitizeCritique(parsed, "gemini", type, { allowBodyLanguage }));
     } catch {
-      const fallback = safeCritiqueAnswerLocal({ question, type, answer, posting, profile, metrics, interviewType });
+      const fallback = safeCritiqueAnswerLocal({
+        question,
+        type,
+        answer,
+        posting,
+        profile,
+        metrics,
+        interviewType,
+        resume,
+        coverLetter,
+      });
       return Response.json(sanitizeCritique(fallback, "embedded", type));
     }
   } catch (err) {

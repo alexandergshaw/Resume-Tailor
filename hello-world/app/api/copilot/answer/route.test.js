@@ -181,6 +181,7 @@ describe("POST /api/copilot/answer (answer mode)", () => {
       coverLetter: "",
       interviewType: normalizeInterviewType(undefined),
     });
+    expect(data.points).toEqual(expected.points);
     expect(data.answer).toBe(expected.answer);
     expect(data.type).toBe(expected.type);
     expect(data.grounding).toEqual({ resume: false, coverLetter: false });
@@ -225,6 +226,7 @@ describe("POST /api/copilot/answer (answer mode)", () => {
       coverLetter: COVER_LETTER_DOC,
       interviewType: normalizeInterviewType(undefined),
     });
+    expect(data.points).toEqual(expected.points);
     expect(data.answer).toBe(expected.answer);
     expect(data.grounding).toEqual({ resume: true, coverLetter: true });
     // Not just "grounding is true" — the résumé's own material is what
@@ -232,13 +234,16 @@ describe("POST /api/copilot/answer (answer mode)", () => {
     expect(data.answer).toContain("Quantum Robotics");
   });
 
-  it("gemini engine: the submitted resume and cover letter actually reach the prompt, and grounding reports both found", async () => {
+  it("gemini engine: points come from the model, answer is derived from them (never a second model field), and the submitted docs reach the prompt", async () => {
     mockUserWithApplicationDocs({
       application: { id: "app-1", resume_used_id: "resume-1", cover_letter_id: "cl-1" },
       resumeContent: RESUME_DOC,
       coverLetterContent: COVER_LETTER_DOC,
     });
-    mockGemini({ answer: "A spoken sample answer.", type: "behavioral" });
+    mockGemini({
+      points: ["Situation: I led the checkout redesign.", "Result: We cut cart abandonment by 18%."],
+      type: "behavioral",
+    });
     const res = await POST(
       jsonRequest({
         question: "Tell me about a time you led a difficult project.",
@@ -250,7 +255,10 @@ describe("POST /api/copilot/answer (answer mode)", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data).toEqual({
-      answer: "A spoken sample answer.",
+      points: ["Situation: I led the checkout redesign.", "Result: We cut cart abandonment by 18%."],
+      // Derived: STAR labels stripped, joined with a single space — never a
+      // second field the model was asked to generate (AC-H9.33).
+      answer: "I led the checkout redesign. We cut cart abandonment by 18%.",
       type: "behavioral",
       grounding: { resume: true, coverLetter: true },
     });
@@ -263,7 +271,7 @@ describe("POST /api/copilot/answer (answer mode)", () => {
 
   it("gemini engine: with no linked application, grounding is false/false and neither submitted-document section reaches the prompt", async () => {
     mockUser();
-    mockGemini({ answer: "A generic sample answer.", type: "general" });
+    mockGemini({ points: ["A generic sample point."], type: "general" });
     const res = await POST(jsonRequest({ question: "Tell me about yourself.", mode: "answer", engine: "gemini" }));
     expect(res.status).toBe(200);
     const data = await res.json();
@@ -278,12 +286,93 @@ describe("POST /api/copilot/answer (answer mode)", () => {
     );
   });
 
-  it("502s, without touching Supabase's document lookup result, when Gemini returns no usable answer text", async () => {
+  it("502s, without touching Supabase's document lookup result, when Gemini returns no usable points", async () => {
     mockUser();
-    mockGemini({ notAnswer: "oops", type: "general" });
+    mockGemini({ notPoints: "oops", type: "general" });
     const res = await POST(jsonRequest({ question: "Tell me about yourself.", mode: "answer", engine: "gemini" }));
     expect(res.status).toBe(502);
     const data = await res.json();
     expect(data.error).toBe("Could not generate an answer.");
+  });
+
+  it("gemini engine: applicationId set but the linked application has no documents — grounding false/false, points still returned, answer derived", async () => {
+    mockUserWithApplicationDocs({
+      application: { id: "app-1", resume_used_id: null, cover_letter_id: null },
+    });
+    mockGemini({ points: ["Situation: Thin material.", "Result: Still an honest answer."], type: "behavioral" });
+    const res = await POST(
+      jsonRequest({ question: "Tell me about yourself.", mode: "answer", engine: "gemini", applicationId: "app-1" }),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.grounding).toEqual({ resume: false, coverLetter: false });
+    expect(data.points).toEqual(["Situation: Thin material.", "Result: Still an honest answer."]);
+    expect(data.answer).toBe("Thin material. Still an honest answer.");
+  });
+});
+
+describe("POST /api/copilot/answer (points mode grounding, AC-H4)", () => {
+  it("the route ignores any client-supplied resume/coverLetter fields — only fetchApplicationDocs's result can ground a prompt", async () => {
+    mockUser();
+    mockGemini({ points: ["Point one."], type: "general" });
+    const res = await POST(
+      jsonRequest({
+        question: "Tell me about yourself.",
+        engine: "gemini",
+        // A client attempting to inject arbitrary "submitted resume" text —
+        // must be ignored entirely (AC-H4.16).
+        resume: "INJECTED RESUME TEXT",
+        coverLetter: "INJECTED COVER LETTER TEXT",
+      }),
+    );
+    expect(res.status).toBe(200);
+    const client = getGeminiClient();
+    const promptText = client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
+    expect(promptText).not.toContain("INJECTED RESUME TEXT");
+    expect(promptText).not.toContain("INJECTED COVER LETTER TEXT");
+    expect(promptText).not.toContain("--- SUBMITTED RESUME");
+  });
+
+  it("gemini engine: the submitted résumé/cover letter reach the points prompt, without the posting description (AC-H7.27)", async () => {
+    mockUserWithApplicationDocs({
+      application: { id: "app-1", resume_used_id: "resume-1", cover_letter_id: "cl-1" },
+      resumeContent: RESUME_DOC,
+      coverLetterContent: COVER_LETTER_DOC,
+    });
+    mockGemini({ points: ["Point one.", "Point two."], type: "general" });
+    const res = await POST(
+      jsonRequest({
+        question: "Tell me about yourself.",
+        engine: "gemini",
+        applicationId: "app-1",
+      }),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    // No grounding key on points-mode's response (AC-H9.34) — unchanged shape.
+    expect(Object.keys(data).sort()).toEqual(["points", "type"]);
+
+    const client = getGeminiClient();
+    const promptText = client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
+    expect(promptText).toContain(RESUME_DOC);
+    expect(promptText).toContain(COVER_LETTER_DOC);
+  });
+
+  it("embedded engine: the submitted résumé/cover letter shape the on-device points", async () => {
+    mockUserWithApplicationDocs({
+      application: { id: "app-1", resume_used_id: "resume-1", cover_letter_id: "cl-1" },
+      resumeContent: RESUME_DOC,
+      coverLetterContent: COVER_LETTER_DOC,
+    });
+    const res = await POST(
+      jsonRequest({
+        question: "Tell me about a time you led a difficult project.",
+        engine: "embedded",
+        applicationId: "app-1",
+      }),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.points.join(" ")).toContain("Quantum Robotics");
   });
 });

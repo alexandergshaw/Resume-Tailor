@@ -3,20 +3,25 @@ import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { parseModelJson } from "@/lib/llm/extractEmployment";
 import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
 import { wantsEmbedded } from "@/lib/llm/featureEngine";
-import { draftAnswerLocal } from "@/lib/copilot/answerLocal";
+import { draftAnswerLocal, deriveAnswerFromPoints } from "@/lib/copilot/answerLocal";
 import { draftSampleAnswerLocal } from "@/lib/copilot/sampleAnswerLocal";
 import { fetchApplicationDocs } from "@/lib/copilot/applicationDocs";
+import { submittedDocsPromptParts } from "@/lib/copilot/applicationDocsPrompt";
 import { normalizeInterviewType, interviewType } from "@/lib/copilot/interviewTypes";
 
 // Two modes on one route (AC-G2-D-1). "points" (default, and the only mode
 // live mode ever sends — CopilotClient/QuestionFeed call draftAnswer with no
-// mode at all) keeps today's glanceable bullet points, unchanged. "answer"
-// is practice mode's new sample answer: one paragraph of spoken, first-person
-// prose the candidate could actually say, grounded in their prep notes and
-// the résumé/cover letter they actually submitted for the selected
-// application (lib/copilot/applicationDocs.js). An unknown or missing mode
-// is always treated as "points" — nothing about live mode's request or
-// response shape changes.
+// mode at all) keeps today's glanceable bullet points, grounded in the
+// candidate's prep context and, once a posting with submitted documents is
+// selected, the résumé and cover letter actually submitted for it (AC-H4) —
+// never the posting description (AC-H7.27). "answer" is practice mode's
+// sample answer: bullet points, each a complete sentence a candidate could
+// actually say out loud, sized to the interview type's length target and
+// STAR-labeled for a behavioral/leadership shape (AC-H9) — grounded in their
+// prep notes and the résumé/cover letter they actually submitted for the
+// selected application (lib/copilot/applicationDocs.js). An unknown or
+// missing mode is always treated as "points" — nothing about live mode's
+// request or response shape changes.
 const POINTS_SYSTEM = [
   "You are an interview coach helping a candidate answer questions during a LIVE interview.",
   "Given the question the interviewer just asked, produce concise talking points the candidate can glance at and speak from — NOT a script to read aloud.",
@@ -26,13 +31,16 @@ const POINTS_SYSTEM = [
   "Keep every point skimmable — a person on camera must absorb it in a glance.",
 ].join(" ");
 
-// AC-G2-D-3 / AC-G2-D-4: the answer must be built only from what was actually
-// submitted (or the prep context, when nothing was submitted), and must read
-// as something a person says out loud, not an essay.
+// AC-H9: the sample answer is a sequence of complete, speakable sentences —
+// never glanceable fragments — built only from what was actually submitted
+// (or the prep context, when nothing was submitted). `answer` is never asked
+// of the model here: it is always derived server-side from `points`
+// (deriveAnswerFromPoints, AC-H9.33).
 const ANSWER_SYSTEM = [
-  "You are an interview coach drafting ONE sample answer a candidate could actually say out loud in a real interview.",
+  "You are an interview coach drafting the sample answer a candidate could actually say out loud in a real interview, as a sequence of complete sentences — never glanceable fragments.",
   "The answer must be built only from the material provided below — the candidate's prep notes and, when available, the résumé and cover letter they actually submitted for this application — never invented.",
-  "Write natural spoken language: first person, no bullet points, no headings, no stage directions, nothing that isn't meant to be spoken aloud.",
+  "Return 3-6 points; each point is one complete, natural spoken sentence, first person, and together they are the whole answer — no headings, no stage directions, nothing that isn't meant to be spoken aloud.",
+  "For behavioral questions (\"tell me about a time...\"), prefix each point with its STAR label — \"Situation:\", \"Task:\", \"Action:\", \"Result:\".",
 ].join(" ");
 
 const MAX_CONTEXT_CHARS = 4000;
@@ -40,6 +48,7 @@ const MAX_PROFILE_CHARS = 8000;
 const MAX_RESUME_CHARS = 12000;
 const MAX_COVER_LETTER_CHARS = 6000;
 const MAX_ANSWER_CHARS = 6000;
+const MAX_ANSWER_POINTS = 6;
 const MAX_APPLICATION_ID_CHARS = 100;
 const VALID_TYPES = ["behavioral", "technical", "general"];
 
@@ -51,7 +60,21 @@ function interviewFormatLines(descriptor) {
   ];
 }
 
-function buildPointsPrompt(question, context, profile, descriptor) {
+// AC-H4.15: grounds live mode's talking points in the résumé and cover
+// letter actually submitted for the selected application, in addition to
+// the prep context — but never the posting description (AC-H7.27), which
+// this function never receives at all. AC-H4.17: with neither `resume` nor
+// `coverLetter` (no applicationId, or no documents found for it), this must
+// produce byte-for-byte what it produced before grounding existed as a
+// source — so the submitted-docs block below is only ever added when at
+// least one of the two is actually present. It deliberately does NOT reuse
+// applicationDocsPrompt.js's "no submitted resume or cover letter was
+// available" note for the neither-found case: that note exists for
+// answer-mode's framing (see buildAnswerPrompt) and adding any such note
+// here would itself break this exact byte-identity requirement — see that
+// module's own comment on checking groundingFlags and simply not calling
+// submittedDocsPromptParts when it doesn't apply.
+function buildPointsPrompt(question, context, profile, descriptor, resume, coverLetter) {
   const parts = [`The interviewer asked: "${question}"`, "", ...interviewFormatLines(descriptor)];
   if (profile) {
     parts.push(
@@ -59,6 +82,9 @@ function buildPointsPrompt(question, context, profile, descriptor) {
       "--- CANDIDATE BACKGROUND (their resume / target role / prep notes; use to personalize) ---",
       profile,
     );
+  }
+  if (resume || coverLetter) {
+    parts.push(...submittedDocsPromptParts({ resume, coverLetter }));
   }
   if (context) {
     parts.push("", "Recent conversation (most recent last), for context:", context);
@@ -89,6 +115,11 @@ function answerShapeInstruction(descriptor) {
   return "Shape it naturally for the question: lead with the point, then the concrete evidence behind it.";
 }
 
+// AC-H9.32: asks the model for `points` — 3-6 complete, speakable
+// sentences, STAR-labeled for a behavioral/leadership shape — never a single
+// prose `answer` field. The route derives `answer` from those points itself
+// (deriveAnswerFromPoints, AC-H9.33); the model is never asked to generate
+// prose separately.
 function buildAnswerPrompt({ question, context, profile, resume, coverLetter, descriptor }) {
   const parts = [`The interviewer asked: "${question}"`, "", ...interviewFormatLines(descriptor)];
   if (profile) {
@@ -111,11 +142,11 @@ function buildAnswerPrompt({ question, context, profile, resume, coverLetter, de
   }
   parts.push(
     "",
-    `Write the actual spoken answer the candidate should give, roughly ${descriptor.lengthTarget.minWords}-${descriptor.lengthTarget.maxWords} words.`,
-    "First person, spoken register — no bullet markers, no headings, no stage directions, nothing but words meant to be said out loud.",
+    `Write the actual spoken answer the candidate should give, as 3-6 points — each one a complete, speakable sentence, not a fragment — together totalling roughly ${descriptor.lengthTarget.minWords}-${descriptor.lengthTarget.maxWords} words.`,
+    "Each point is first person, spoken register — no bullet markers beyond the STAR label where it applies, no headings, no stage directions, nothing but words meant to be said out loud.",
     answerShapeInstruction(descriptor),
     "Every claim must come from the CANDIDATE PREP NOTES, SUBMITTED RESUME, or SUBMITTED COVER LETTER above — select, order, and phrase freely, but never invent an employer, project, metric, or credential that isn't there. If the material is thin, give a shorter, honest answer rather than inventing detail.",
-    'Return ONLY JSON of this exact shape: { "answer": string, "type": "behavioral" | "technical" | "general" }',
+    'Return ONLY JSON of this exact shape: { "points": string[], "type": "behavioral" | "technical" | "general" }',
   );
   return parts.join("\n");
 }
@@ -143,27 +174,37 @@ export async function POST(request) {
     const interviewTypeValue = normalizeInterviewType(body?.interviewType);
     const descriptor = interviewType(interviewTypeValue);
     const mode = body?.mode === "answer" ? "answer" : "points";
+    // AC-H4.16: the route fetches the submitted documents ITSELF from
+    // `applicationId` — any client-supplied resume/coverLetter field in the
+    // request body is never read (there is nothing above that reads
+    // `body.resume`/`body.coverLetter`), so a client cannot inject arbitrary
+    // text labelled "submitted resume" into either prompt. Fetched once,
+    // ahead of the mode branch, since both "points" (AC-H4) and "answer"
+    // (AC-H9) ground in the same two documents; fetchApplicationDocs itself
+    // short-circuits to empty docs (no Supabase round trip) when
+    // `applicationId` is empty, so this costs nothing when no posting is
+    // selected — the same case AC-H4.17/AC-H4.18's byte-identity guarantees
+    // cover.
     const applicationId = (body?.applicationId ?? "").toString().trim().slice(0, MAX_APPLICATION_ID_CHARS);
+    const docs = await fetchApplicationDocs(supabase, { applicationId, userId: user.id });
+    const grounding = { resume: !!docs.resume, coverLetter: !!docs.coverLetter };
+    const resume = docs.resume.slice(0, MAX_RESUME_CHARS);
+    const coverLetter = docs.coverLetter.slice(0, MAX_COVER_LETTER_CHARS);
 
     if (mode === "answer") {
-      const docs = await fetchApplicationDocs(supabase, { applicationId, userId: user.id });
-      const grounding = { resume: !!docs.resume, coverLetter: !!docs.coverLetter };
-      const resume = docs.resume.slice(0, MAX_RESUME_CHARS);
-      const coverLetter = docs.coverLetter.slice(0, MAX_COVER_LETTER_CHARS);
-
       // Embedded engine: assemble the spoken answer on-device — no LLM.
       if (wantsEmbedded(body?.engine)) {
-        const { answer, type } = draftSampleAnswerLocal({
+        const { points, answer, type } = draftSampleAnswerLocal({
           question,
           profile,
           resume,
           coverLetter,
           interviewType: interviewTypeValue,
         });
-        if (!answer) {
+        if (points.length === 0) {
           return Response.json({ error: "Could not generate an answer." }, { status: 502 });
         }
-        return Response.json({ answer, type, grounding });
+        return Response.json({ points, answer, type, grounding });
       }
 
       const { geminiModel } = getServerEnv();
@@ -180,17 +221,28 @@ export async function POST(request) {
       });
 
       const parsed = parseModelJson(response.text?.trim() || "");
-      const answer = typeof parsed?.answer === "string" ? parsed.answer.trim().slice(0, MAX_ANSWER_CHARS) : "";
-      if (!answer) {
+      const points = Array.isArray(parsed?.points)
+        ? parsed.points
+            .filter((p) => typeof p === "string" && p.trim())
+            .map((p) => p.trim())
+            .slice(0, MAX_ANSWER_POINTS)
+        : [];
+      if (points.length === 0) {
         return Response.json({ error: "Could not generate an answer." }, { status: 502 });
       }
       const type = VALID_TYPES.includes(parsed?.type) ? parsed.type : "general";
-      return Response.json({ answer, type, grounding });
+      // AC-H9.33: `answer` is derived here, from the same `points` just
+      // returned to the caller — never a second field asked of the model.
+      const answer = deriveAnswerFromPoints(points).slice(0, MAX_ANSWER_CHARS);
+      return Response.json({ points, answer, type, grounding });
     }
 
-    // "points" mode — live mode's glanceable bullets, unchanged in shape.
+    // "points" mode — live mode's glanceable bullets, unchanged in shape
+    // (AC-H9.34). Grounded in the submitted résumé/cover letter in addition
+    // to the prep context (AC-H4.15); byte-identical to today when neither
+    // was found (AC-H4.17/AC-H4.18).
     if (wantsEmbedded(body?.engine)) {
-      const { points, type } = draftAnswerLocal({ question, profile, interviewType: interviewTypeValue });
+      const { points, type } = draftAnswerLocal({ question, profile, resume, coverLetter, interviewType: interviewTypeValue });
       if (points.length === 0) {
         return Response.json({ error: "Could not generate an answer." }, { status: 502 });
       }
@@ -201,7 +253,9 @@ export async function POST(request) {
     const client = getGeminiClient();
     const response = await client.models.generateContent({
       model: geminiModel,
-      contents: [{ role: "user", parts: [{ text: buildPointsPrompt(question, context, profile, descriptor) }] }],
+      contents: [
+        { role: "user", parts: [{ text: buildPointsPrompt(question, context, profile, descriptor, resume, coverLetter) }] },
+      ],
       config: { systemInstruction: POINTS_SYSTEM, responseMimeType: "application/json" },
     });
 

@@ -1,11 +1,12 @@
 // Zero-cost SPOKEN sample answers — the embedded engine's counterpart to
-// app/api/copilot/answer/route.js's "answer" mode Gemini call. Where
-// answerLocal.js's draftAnswerLocal assembles glanceable bullet points for a
-// live interview, this assembles a short paragraph of first-person prose a
-// candidate could actually say out loud in practice mode, built only from
-// real material: the candidate's prep notes plus, when available, the
-// résumé and cover letter they actually submitted for the selected
-// application (lib/copilot/applicationDocs.js).
+// app/api/copilot/answer/route.js's "answer" mode Gemini call. This
+// assembles the sample answer as bullet points — each a complete,
+// first-person sentence a candidate could actually say out loud in practice
+// mode (AC-H9) — built only from real material: the candidate's prep notes
+// plus, when available, the résumé and cover letter they actually submitted
+// for the selected application (lib/copilot/applicationDocs.js). The flowing
+// `answer` string is derived from those same points (deriveAnswerFromPoints,
+// answerLocal.js), never generated separately.
 //
 // Grounding is structural, not a rule applied after the fact: every mining
 // helper below (reused from answerLocal.js) only ever returns text that
@@ -23,11 +24,17 @@
 
 import {
   ACHIEVEMENT_VERBS,
+  MOTIVATION_LINE_RE,
+  combineMaterial,
+  deriveAnswerFromPoints,
+  literallyMentioned,
+  pastWorkExperienceLine,
   profileHeadline,
   profileMetric,
   profileSkills,
   relevantExperienceLine,
   resolveScaffoldType,
+  usableExperienceLine,
 } from "./answerLocal.js";
 import { classifyQuestionType } from "./questionType.js";
 import { normalizeInterviewType, interviewType as interviewTypeDescriptor } from "./interviewTypes.js";
@@ -38,25 +45,13 @@ import { pick } from "@/lib/text/phrasing";
 const CRISP_MAX_WORDS = 130;
 const CRISP_SENTENCE_COUNT = 2;
 
-// A mined skill (profileSkills) can be a taxonomy inference rather than
-// something the candidate actually wrote — e.g. "team" gets canonicalized
-// to the product "Microsoft Teams". Spoken aloud in an interview that
-// becomes a claimed skill the candidate never mentioned, so this file keeps
-// a mined skill only when its own canonical name literally occurs, case
-// insensitively, somewhere in the combined source material.
-function escapeRegExp(text) {
-  return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function literallyMentioned(term, material) {
-  const t = String(term || "").trim();
-  if (!t) return false;
-  const escaped = escapeRegExp(t);
-  const startsWithWordChar = /^\w/.test(t);
-  const endsWithWordChar = /\w$/.test(t);
-  const pattern = new RegExp(`${startsWithWordChar ? "\\b" : ""}${escaped}${endsWithWordChar ? "\\b" : ""}`, "i");
-  return pattern.test(material);
-}
+// A mined skill (profileSkills), the "team" -> "Microsoft Teams" mining
+// hazard, the motivation-line-as-example hazard, and the wider skill pool
+// mined before filtering to literal mentions are all shared defenses now
+// exported from answerLocal.js (literallyMentioned, MOTIVATION_LINE_RE,
+// pastWorkExperienceLine, usableExperienceLine, combineMaterial) — reused
+// here rather than re-derived, and reused by draftAnswerLocal's own
+// grounding over submitted documents (AC-H4.19).
 
 // Resume bullets are written verb-initial ("Led a team...", "Reduced
 // p99..."); relevantExperienceLine lowercases that leading word so the
@@ -69,45 +64,6 @@ const LEADING_ACHIEVEMENT_VERB_RE = new RegExp(`^${ACHIEVEMENT_VERBS.source}`, "
 function firstPersonExperienceClause(line) {
   const t = String(line || "").trim();
   return t && LEADING_ACHIEVEMENT_VERB_RE.test(t) ? `I ${t}` : "";
-}
-
-// A line that reads as an application/motivation statement ("I am applying
-// for...", "I'm excited about...") rather than something the candidate
-// actually did. relevantExperienceLine scores purely on keyword overlap
-// plus an achievement signal, so a cover letter's opening line can
-// out-score a real accomplishment when the question's own wording happens
-// to overlap with it. A line only counts as real past work when it carries
-// its own achievement signal (a verb from ACHIEVEMENT_VERBS or a number)
-// and doesn't read as motivation phrasing.
-const MOTIVATION_LINE_RE =
-  /\b(i am applying|i'm applying|i am excited|i'm excited|looking forward to|excited (?:to|about)|would love to|hope to|eager to|i want to|passionate about|interested in (?:this|the|joining))\b/i;
-
-function isPastWorkLine(line) {
-  const t = String(line || "").trim();
-  if (!t) return false;
-  const hasAchievementSignal = /\d/.test(t) || ACHIEVEMENT_VERBS.test(t);
-  return hasAchievementSignal && !MOTIVATION_LINE_RE.test(t);
-}
-
-// The concrete example in the STAR/behavioral shape — and the experience
-// beat in the general shape (BUG-5) — must actually be an example of past
-// work. relevantExperienceLine (frozen, shared with answerLocal.js) only
-// ever returns its single top-scoring line, so when that line reads as a
-// motivation statement rather than past work (a cover letter's "I am
-// applying for..." opener can out-score a real accomplishment on keyword
-// overlap alone), this looks again with every such line removed from the
-// material — the shared function does the actual re-scoring, this just
-// keeps it from choosing one that shouldn't win. Shared by both shapes
-// rather than duplicated, since neither the logic nor the helpers it's
-// built on (isPastWorkLine) are specific to either one.
-function pastWorkExperienceLine(material, question) {
-  const top = usableExperienceLine(relevantExperienceLine(material, question));
-  if (!top || isPastWorkLine(top)) return top;
-  const withoutMotivationLines = String(material || "")
-    .split(/\r?\n+/)
-    .filter((line) => isPastWorkLine(line.replace(/^[\s•\-*–—>]+/, "").trim()))
-    .join("\n");
-  return usableExperienceLine(relevantExperienceLine(withoutMotivationLines, question));
 }
 
 // The mirror image of pastWorkExperienceLine: the candidate's own words for
@@ -144,30 +100,12 @@ function sentence(text) {
   return /[.!?]$/.test(capped) ? capped : `${capped}.`;
 }
 
-// The real material this answer may draw from: the candidate's prep notes
-// AND the documents they actually submitted for this application, combined
-// so every mining helper below runs over all three sources at once — exactly
-// the same helpers, and the same grounding guarantee, whichever source a
-// given fact actually came from.
-function combineMaterial(profile, resume, coverLetter) {
-  return [profile, resume, coverLetter]
-    .map((s) => String(s || "").trim())
-    .filter(Boolean)
-    .join("\n\n");
-}
-
-// relevantExperienceLine's cleanLine helper truncates anything over 140
-// characters mid-word with a trailing ellipsis — harmless in a bullet point,
-// but a cover letter's prose paragraphs run on a single "line" far longer
-// than a résumé bullet, so a paragraph selected as the best match comes back
-// cut off mid-sentence. Quoting a fragment that visibly stops mid-word does
-// not read as something a person would say, so this is treated the same as
-// no example being found — the caller falls back to shorter, generic
-// phrasing rather than speaking a garbled quote.
-function usableExperienceLine(line) {
-  return line && !line.endsWith("…") ? line : "";
-}
-
+// AC-H9.32: for the behavioral/leadership shape, each point carries its STAR
+// label, matching the exact convention POINTS_SYSTEM already uses in
+// app/api/copilot/answer/route.js. Every point below is built from the same
+// mined material and the same mining-hazard defenses as before (BUG-1
+// through BUG-5) — only the packaging changed, from unlabeled sentences
+// joined into one paragraph to individually labeled, complete bullets.
 function behavioralAnswer({ headline, expRef, seed }) {
   // The line only counts as an anchor once it's actually speakable in first
   // person (BUG-3) — a candidate line that isn't verb-initial gets dropped
@@ -178,54 +116,53 @@ function behavioralAnswer({ headline, expRef, seed }) {
 
   if (!hasAnchor) {
     return [
-      sentence(
+      `Situation: ${sentence(
         pick(seed, [
           "I don't have a specific story pulled from my materials for this one",
           "nothing specific from my background is on file to point to here",
         ]),
-      ),
-      sentence(
-        "but in general, when I run into a situation like that, I take ownership of the problem, keep the people it affects informed, and don't consider it finished until there's a result I can point to",
-      ),
+      )}`,
+      `Action: ${sentence(
+        "in general, when I run into a situation like that, I take ownership of the problem and keep the people it affects informed",
+      )}`,
+      `Result: ${sentence("I don't consider it finished until there's a result I can point to")}`,
     ];
   }
 
-  const parts = [];
-  if (headline.company) {
-    parts.push(
-      sentence(
-        headline.title
+  const points = [];
+  points.push(
+    `Situation: ${sentence(
+      headline.company
+        ? headline.title
           ? `as ${headline.title} at ${headline.company}, I ran into a situation that put this to the test`
-          : `at ${headline.company}, I ran into a situation that put this to the test`,
-      ),
-    );
-  } else {
-    parts.push(sentence("I can point to a specific example here"));
-  }
+          : `at ${headline.company}, I ran into a situation that put this to the test`
+        : "I can point to a specific example here",
+    )}`,
+  );
+
+  points.push(
+    `Task: ${sentence(
+      "I made it my job to own the outcome, not just contribute to it, so I got clear on what success looked like before I started",
+    )}`,
+  );
 
   // A result may only be spoken alongside the text it came from (BUG-2): a
   // resume bullet with its own embedded number already states its own
   // result ("...by 40%...", "...with zero downtime"), so that single line is
-  // spoken once, as the Result beat when it carries a metric and as the
-  // Action beat otherwise. A metric mined from a different line — a
+  // spoken once, as the Result point when it carries a metric and as the
+  // Action point otherwise. A metric mined from a different line — a
   // different story — is never spoken here at all.
   const expRefHasMetric = Boolean(expRef) && Boolean(profileMetric(expRef));
 
   if (firstPersonExpRef && !expRefHasMetric) {
-    parts.push(sentence(firstPersonExpRef));
+    points.push(`Action: ${sentence(firstPersonExpRef)}`);
   }
-
-  parts.push(
-    sentence(
-      "I made it my job to own the outcome, not just contribute to it, so I got clear on what success looked like before I started",
-    ),
-  );
 
   if (firstPersonExpRef && expRefHasMetric) {
-    parts.push(sentence(`the result: ${firstPersonExpRef}`));
+    points.push(`Result: ${sentence(firstPersonExpRef)}`);
   }
 
-  return parts;
+  return points;
 }
 
 function technicalAnswer({ skills, expRef, seed }) {
@@ -314,12 +251,16 @@ function generalAnswer({ headline, skills, expRef, pastWorkExpRef, motivationRef
   return parts;
 }
 
-// Draft one spoken, first-person sample answer, grounded only in the
-// candidate's real material. Returns { answer: string, type }. `type` is the
-// scaffold actually used to shape the answer — the question's own
-// classification, unless it classified as "general" and the interview type
-// pushes it toward a technical or STAR shape (resolveScaffoldType, shared
-// with draftAnswerLocal so both engines make the same call).
+// AC-H9.35: draft the sample answer as bullet points, grounded only in the
+// candidate's real material. Returns { points: string[], answer: string,
+// type }. `points` are complete, speakable sentences (STAR-labeled for the
+// behavioral shape); `answer` is DERIVED from `points` via
+// deriveAnswerFromPoints — never generated separately, so it can never drift
+// from what the points actually say (AC-H9.33). `type` is the scaffold
+// actually used to shape the answer — the question's own classification,
+// unless it classified as "general" and the interview type pushes it toward
+// a technical or STAR shape (resolveScaffoldType, shared with
+// draftAnswerLocal so both engines make the same call).
 export function draftSampleAnswerLocal({
   question,
   profile = "",
@@ -342,20 +283,20 @@ export function draftSampleAnswerLocal({
   const expRef = usableExperienceLine(relevantExperienceLine(material, q));
   const seed = q || material;
 
-  let sentences;
+  let rawPoints;
   if (type === "behavioral") {
     // The behavioral/STAR shape needs its example to actually be past work
     // (BUG-4), which the shared relevantExperienceLine doesn't guarantee.
     const behavioralExpRef = pastWorkExperienceLine(material, q);
-    sentences = behavioralAnswer({ headline, expRef: behavioralExpRef, seed });
-  } else if (type === "technical") sentences = technicalAnswer({ skills, expRef, seed });
+    rawPoints = behavioralAnswer({ headline, expRef: behavioralExpRef, seed });
+  } else if (type === "technical") rawPoints = technicalAnswer({ skills, expRef, seed });
   else {
     // The general shape's experience beat needs the same past-work guarantee
     // (BUG-5), plus a genuine motivation line, if the material has one, to
     // frame the closing beat with instead of the generic pick().
     const generalExpRef = pastWorkExperienceLine(material, q);
     const generalMotivationRef = motivationLine(material, q);
-    sentences = generalAnswer({
+    rawPoints = generalAnswer({
       headline,
       skills,
       expRef,
@@ -368,12 +309,13 @@ export function draftSampleAnswerLocal({
   // A short-format interview (a recruiter phone screen) gets the crispest
   // cut of the narrative instead of the fuller one — the descriptor's
   // lengthTarget shaping the answer the same way it shapes the Gemini
-  // prompt (AC-G2-D-6).
-  const usable = sentences.filter((s) => typeof s === "string" && s.trim());
-  const final = descriptor.lengthTarget.maxWords <= CRISP_MAX_WORDS ? usable.slice(0, CRISP_SENTENCE_COUNT) : usable;
+  // prompt (AC-G2-D-6/AC-H9.32).
+  const usable = rawPoints.filter((p) => typeof p === "string" && p.trim());
+  const points = descriptor.lengthTarget.maxWords <= CRISP_MAX_WORDS ? usable.slice(0, CRISP_SENTENCE_COUNT) : usable;
 
   return {
-    answer: final.join(" "),
+    points,
+    answer: deriveAnswerFromPoints(points),
     type,
   };
 }

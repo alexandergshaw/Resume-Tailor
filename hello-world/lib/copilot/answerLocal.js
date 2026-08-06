@@ -15,6 +15,18 @@ import { pick } from "@/lib/text/phrasing";
 
 const SKILL_CATEGORIES = ["technology", "tool_platform", "domain"];
 const MAX_POINTS = 5;
+// AC-H4.19: mining over the submitted résumé/cover letter runs a wider skill
+// pool than the default before filtering down to literal mentions — the
+// same reasoning sampleAnswerLocal.js's draftSampleAnswerLocal uses: a
+// taxonomy inference bumping a real skill out of the top few must not also
+// cost that real skill its spot once the inference itself is dropped.
+const WIDE_SKILL_POOL = 12;
+// The STAR-label prefix a behavioral point may carry, matching the exact
+// convention POINTS_SYSTEM (app/api/copilot/answer/route.js) already uses.
+// Shared so both that route and sampleAnswerLocal.js's draftSampleAnswerLocal
+// strip it the same way when deriving flowing prose from generated points
+// (AC-H9.33).
+const STAR_LABEL_RE = /^(Situation|Task|Action|Result):\s*/;
 
 // Interview-type values that push a question the classifier itself called
 // "general" toward a technical or a STAR scaffold instead (AC-G2-D-6). Only
@@ -140,6 +152,110 @@ export function relevantExperienceLine(profile, question) {
   return bestScore > 0 ? cleanLine(best) : "";
 }
 
+// AC-H4.15/AC-H4.18: combines every source of real material the candidate
+// has on file into one string every mining helper below can run over
+// uniformly — the candidate's own prep notes/profile plus, when available,
+// the résumé and cover letter actually submitted for the selected
+// application. Shared by draftAnswerLocal below (live mode's talking
+// points, once a posting with documents is selected) and
+// sampleAnswerLocal.js's draftSampleAnswerLocal (practice mode's sample
+// answer), so both engines combine the same three sources the same way —
+// reused here rather than re-derived in each file.
+export function combineMaterial(profile, resume, coverLetter) {
+  return [profile, resume, coverLetter]
+    .map((s) => String(s || "").trim())
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function escapeRegExp(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// A mined skill (profileSkills) can be a taxonomy inference rather than
+// something the candidate actually wrote — e.g. "team" gets canonicalized to
+// the product "Microsoft Teams". Surfaced as a talking point or spoken
+// aloud, that reads as a claimed skill the candidate never mentioned, so a
+// mined skill only counts once its own canonical name literally occurs,
+// case insensitively, somewhere in the material it was mined from. Exported
+// so any mining over submitted documents — here and in
+// sampleAnswerLocal.js — applies the same defense instead of re-deriving it
+// (the recorded "team" -> "Microsoft Teams" mining hazard).
+export function literallyMentioned(term, material) {
+  const t = String(term || "").trim();
+  if (!t) return false;
+  const escaped = escapeRegExp(t);
+  const startsWithWordChar = /^\w/.test(t);
+  const endsWithWordChar = /\w$/.test(t);
+  const pattern = new RegExp(`${startsWithWordChar ? "\\b" : ""}${escaped}${endsWithWordChar ? "\\b" : ""}`, "i");
+  return pattern.test(material);
+}
+
+// A line that reads as an application/motivation statement ("I am applying
+// for...", "I'm excited about...") rather than something the candidate
+// actually did. relevantExperienceLine scores purely on keyword overlap
+// plus an achievement signal, so a cover letter's opening line can out-score
+// a real accomplishment when the question's own wording happens to overlap
+// with it. Exported so both draftAnswerLocal and draftSampleAnswerLocal test
+// against the same wording instead of duplicating the pattern.
+export const MOTIVATION_LINE_RE =
+  /\b(i am applying|i'm applying|i am excited|i'm excited|looking forward to|excited (?:to|about)|would love to|hope to|eager to|i want to|passionate about|interested in (?:this|the|joining))\b/i;
+
+// A line only counts as real past work when it carries its own achievement
+// signal (a verb from ACHIEVEMENT_VERBS or a number) and doesn't read as
+// motivation phrasing (the recorded "motivation line quoted as a concrete
+// example" mining hazard).
+export function isPastWorkLine(line) {
+  const t = String(line || "").trim();
+  if (!t) return false;
+  const hasAchievementSignal = /\d/.test(t) || ACHIEVEMENT_VERBS.test(t);
+  return hasAchievementSignal && !MOTIVATION_LINE_RE.test(t);
+}
+
+// relevantExperienceLine's cleanLine helper truncates anything over 140
+// characters mid-word with a trailing ellipsis — tolerable in a glanceable
+// point, but a quote that visibly stops mid-word is never something a
+// person would actually say aloud, so a caller building a spoken sentence
+// (not a fragment) around it should treat that the same as no example
+// having been found.
+export function usableExperienceLine(line) {
+  return line && !line.endsWith("…") ? line : "";
+}
+
+// The concrete example a caller may cite as evidence of past work — never a
+// motivation statement. relevantExperienceLine only ever returns its single
+// top-scoring line, so when that line reads as motivation rather than past
+// work (a cover letter's "I am applying for..." opener can out-score a real
+// accomplishment on keyword overlap alone), this looks again with every
+// such line removed from the material. Exported so sampleAnswerLocal.js's
+// behavioral/general shapes reuse the same disqualification instead of
+// re-deriving it.
+export function pastWorkExperienceLine(material, question) {
+  const top = usableExperienceLine(relevantExperienceLine(material, question));
+  if (!top || isPastWorkLine(top)) return top;
+  const withoutMotivationLines = String(material || "")
+    .split(/\r?\n+/)
+    .filter((line) => isPastWorkLine(line.replace(/^[\s•\-*–—>]+/, "").trim()))
+    .join("\n");
+  return usableExperienceLine(relevantExperienceLine(withoutMotivationLines, question));
+}
+
+// Turns generated bullet points (each a complete, speakable sentence,
+// possibly STAR-labeled) into flowing prose: strips a leading STAR label
+// from each point, then joins with a single space. Shared by
+// app/api/copilot/answer/route.js (mode "answer", both the Gemini and
+// embedded paths) and sampleAnswerLocal.js's draftSampleAnswerLocal, so a
+// later feature that synthesizes audio from `answer` always gets the exact
+// same derivation regardless of which engine drafted the points — two
+// independently generated versions of the same answer would drift; this is
+// the one place that computes it (AC-H9.33).
+export function deriveAnswerFromPoints(points) {
+  return (Array.isArray(points) ? points : [])
+    .map((p) => String(p || "").replace(STAR_LABEL_RE, "").trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
 function behavioralPoints({ headline, metric, hint, expRef, seed }) {
   const situation = headline.company
     ? `a specific project at ${headline.company}${headline.title ? ` as ${headline.title}` : ""}`
@@ -200,17 +316,48 @@ function generalPoints({ headline, skills, expRef, seed }) {
 }
 
 // Build glanceable talking points for a live interview question, grounded in the
-// candidate's profile. `interviewType` (any string, normalized here) only ever
-// matters when the question's own classification is "general" — see
-// resolveScaffoldType above. Returns { points: string[], type }.
-export function draftAnswerLocal({ question, profile = "", interviewType } = {}) {
+// candidate's profile and, once a posting with submitted documents is selected
+// (AC-H4.15), the résumé and cover letter actually submitted for it.
+// `interviewType` (any string, normalized here) only ever matters when the
+// question's own classification is "general" — see resolveScaffoldType above.
+// Returns { points: string[], type }.
+//
+// With no resume/coverLetter (the caller has no applicationId, or no documents
+// were found for it), this computes skills/headline/metric/expRef from
+// `profile` alone via the exact same calls this function made before AC-H4 —
+// byte-identical output to what it produced before submitted documents existed
+// as a grounding source (AC-H4.18). Only when a document is present does
+// mining run over the combined material, and then with the same defenses
+// sampleAnswerLocal.js's grounding uses against its recorded mining hazards
+// (AC-H4.19): a wider skill pool filtered to literally-mentioned skills only
+// (never a taxonomy inference like "team" -> "Microsoft Teams"), an experience
+// line disqualified from being a motivation statement posing as a concrete
+// example, and a metric spoken only when it comes from that SAME experience
+// line — never a bare figure paired with a story mined from elsewhere.
+export function draftAnswerLocal({ question, profile = "", resume = "", coverLetter = "", interviewType } = {}) {
   const q = String(question || "").trim();
   const type = resolveScaffoldType(classifyQuestionType(q), interviewType);
-  const skills = profileSkills(profile);
-  const headline = profileHeadline(profile);
-  const metric = profileMetric(profile);
+
+  const hasDocs = Boolean(String(resume || "").trim()) || Boolean(String(coverLetter || "").trim());
+
+  let skills;
+  let headline;
+  let metric;
+  let expRef;
+  if (hasDocs) {
+    const material = combineMaterial(profile, resume, coverLetter);
+    skills = profileSkills(material, WIDE_SKILL_POOL).filter((s) => literallyMentioned(s, material));
+    headline = profileHeadline(material);
+    expRef = pastWorkExperienceLine(material, q);
+    metric = expRef ? profileMetric(expRef) : "";
+  } else {
+    skills = profileSkills(profile);
+    headline = profileHeadline(profile);
+    metric = profileMetric(profile);
+    expRef = relevantExperienceLine(profile, q);
+  }
+
   const hint = skillHint(q, skills);
-  const expRef = relevantExperienceLine(profile, q);
   const seed = q || profile;
 
   let points;

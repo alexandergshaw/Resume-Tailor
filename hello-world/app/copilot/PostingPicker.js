@@ -5,12 +5,38 @@ import Autocomplete from "@mui/material/Autocomplete";
 import TextField from "@mui/material/TextField";
 import { fetchPracticePostings } from "@/lib/copilot/postings";
 
+const DEFAULT_LABEL = "Practice for";
+const DEFAULT_BLANK_HINT = "Leave blank to practice with generic questions.";
+
+// AC-H1.2: the "no postings yet" message below folds `blankHint` into its
+// own second sentence by lowercasing its first letter — `blankHint` is
+// always phrased as a standalone sentence ("Leave blank to..."), and
+// reusing it here (instead of a second, separately-worded literal) keeps
+// that message from ever drifting out of sync with whichever wording the
+// caller passed in.
+function lowerFirst(text) {
+  return text ? text.charAt(0).toLowerCase() + text.slice(1) : text;
+}
+
 // Searchable picker over the user's own tracked postings (the same rows the
 // Tracking tab shows). It loads its own options on mount — the caller only
-// owns the current selection. Selecting nothing is a supported state:
-// practice then runs against the generic question bank instead of a
-// specific posting.
-export default function PostingPicker({ value, onChange, disabled }) {
+// owns the current selection. Selecting nothing is a supported state: with
+// nothing selected, the caller runs against generic material instead of a
+// specific posting (practice mode: the generic question bank; live mode:
+// the prep context alone).
+//
+// AC-H1.1/AC-H1.2: shared by both live mode (CopilotClient) and practice
+// mode (PracticeClient, the only caller before this change) — `label` and
+// `blankHint` let each mode word the field for what leaving it blank
+// actually means there. Both default to exactly today's strings, so
+// practice mode's rendering stays byte-identical.
+export default function PostingPicker({
+  value,
+  onChange,
+  disabled,
+  label = DEFAULT_LABEL,
+  blankHint = DEFAULT_BLANK_HINT,
+}) {
   const [options, setOptions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -38,8 +64,8 @@ export default function PostingPicker({ value, onChange, disabled }) {
   } else if (!value) {
     helperText =
       !loading && options.length === 0
-        ? "No tracked postings yet — add one from the Tracking tab. You can also leave blank to practice with generic questions."
-        : "Leave blank to practice with generic questions.";
+        ? `No tracked postings yet — add one from the Tracking tab. You can also ${lowerFirst(blankHint)}`
+        : blankHint;
   }
 
   // A load failure is not the same fact as "you have no tracked postings" —
@@ -68,7 +94,7 @@ export default function PostingPicker({ value, onChange, disabled }) {
         <TextField
           {...params}
           size="small"
-          label="Practice for"
+          label={label}
           placeholder="Search your postings…"
           helperText={helperText}
           error={!!error}

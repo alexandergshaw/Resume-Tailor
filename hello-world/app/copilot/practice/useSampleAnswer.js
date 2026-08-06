@@ -23,9 +23,10 @@ import { emptySampleAnswer, activeSampleAnswer, needsRedraft } from "@/lib/copil
 // posting's own id — see PracticeClient's onDoneAnswer for the same
 // normalizePostingRows fact) so the draft can be grounded in the resume and
 // cover letter actually submitted for that posting. Always requests
-// `mode: "answer"` — practice mode's sample answer is prose the candidate
-// could say out loud, never the bullet points live mode still uses
-// (AC-G2-C-9).
+// `mode: "answer"`, which AC-H9 changed to return `points` — an array of
+// complete, speakable, STAR-labeled-when-applicable sentences — in place of
+// a single prose string; this hook carries `points` through exactly where
+// it carried `answer` before, with the same caching/gating rules (AC-H9.37).
 export function useSampleAnswer({ question, profile, interviewType, applicationId }) {
   const [state, setState] = useState(emptySampleAnswer);
   // Bumped on every new request; a response is only ever written to state
@@ -53,21 +54,25 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
       question: q,
       visible: true,
       status: "loading",
-      answer: "",
+      points: [],
       grounding: null,
       error: "",
       profile: p,
       interviewType: it,
       applicationId: appId,
     });
+    // AC-H9: the route's `mode: "answer"` response is now
+    // { points, answer, type, grounding } — `points` is what this hook (and
+    // SampleAnswer.js) render; the derived prose `answer` field exists for a
+    // later speech-synthesis feature and is deliberately not read here.
     draftAnswer({ question: q, context: "", profile: p, interviewType: it, applicationId: appId, mode: "answer" })
-      .then(({ answer, grounding }) => {
+      .then(({ points, grounding }) => {
         if (genRef.current !== gen) return;
         setState((prev) => ({
           ...prev,
           question: q,
           status: "done",
-          answer,
+          points: Array.isArray(points) ? points : [],
           grounding: grounding || null,
           error: "",
           profile: p,
@@ -81,7 +86,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           ...prev,
           question: q,
           status: "error",
-          answer: "",
+          points: [],
           grounding: null,
           error: err?.message || "Could not draft a sample answer.",
           profile: p,
@@ -107,7 +112,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
   );
 
   // "Show sample answer" / "Hide sample answer". Hiding never fetches — it
-  // only flips visibility, leaving whatever is cached (answer, status,
+  // only flips visibility, leaving whatever is cached (points, status,
   // profile) exactly as it was for the next reveal (AC-G1-3).
   const toggle = useCallback(() => {
     if (active.visible) {
@@ -123,7 +128,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
   return {
     visible: active.visible,
     status: active.status,
-    answer: active.answer,
+    points: active.points,
     grounding: active.grounding,
     error: active.error,
     toggle,

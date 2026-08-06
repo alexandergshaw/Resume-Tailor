@@ -15,23 +15,51 @@ import { detectQuestion, normalizeQuestion } from "@/lib/copilot/questions";
 import { confirmQuestion } from "@/lib/copilot/detectClient";
 import { draftAnswer } from "@/lib/copilot/answerClient";
 import { fmtClock } from "@/lib/copilot/clock";
+import { useEngine } from "@/app/settings/engine";
 import TabHeader from "@/app/components/TabHeader";
 import TranscriptView from "./TranscriptView";
 import QuestionFeed from "./QuestionFeed";
 import PrepContext from "./PrepContext";
 import StatusPill from "./StatusPill";
+import PostingPicker from "./PostingPicker";
+import SubmittedDocs from "./SubmittedDocs";
 import PracticeClient from "./practice/PracticeClient";
 import { usePrepContext } from "./usePrepContext";
+import { useApplicationDocs } from "./useApplicationDocs";
 
 const CONTEXT_TURNS = 12;
 const MIN_WORDS_FOR_LLM = 4;
 const SOURCE_STORAGE_KEY = "copilot-audio-source";
+// AC-H1.2: live mode's own wording for the shared PostingPicker — its
+// defaults are practice mode's exact strings, so passing these explicitly
+// here is what keeps the two modes worded differently without touching
+// PostingPicker's defaults (which practice mode still relies on).
+const POSTING_PICKER_LABEL = "Interviewing for";
+const POSTING_PICKER_BLANK_HINT =
+  "Leave blank to keep talking points grounded in your prep context only.";
 // F2: display name for whichever speech-to-text provider the server has
 // selected (STT_PROVIDER, see lib/config/env.js's getSttProvider) — kept
 // here, keyed off the token response's `provider` field, rather than
 // hardcoded into the notices below, so they can never claim a destination
 // that isn't actually receiving the audio (AC-F2-5).
 const STT_PROVIDER_NAMES = { deepgram: "Deepgram", elevenlabs: "ElevenLabs" };
+
+// BUG-H5/AC-H6.25: names only the document(s) actually found for the
+// selected application — never both when only one exists — the same
+// discipline SubmittedDocs.js's statusSuffix and
+// practice/SampleAnswer.js's sourceCaption already apply to the read-only
+// panel and the sample-answer caption respectively. Only called once at
+// least one of the two is known to be present; callers decide what to say
+// when neither is.
+function submittedDocsClause(hasResume, hasCoverLetter) {
+  if (hasResume && hasCoverLetter) {
+    return "the résumé and cover letter you submitted for it are also sent to Google Gemini to ground your talking points";
+  }
+  if (hasResume) {
+    return "the résumé you submitted for it is also sent to Google Gemini to ground your talking points";
+  }
+  return "the cover letter you submitted for it is also sent to Google Gemini to ground your talking points";
+}
 
 // Phase 4: assemble the interviewer's speech into complete utterances (on
 // Deepgram's speech_final endpoint), confirm/normalize questions with an LLM
@@ -47,6 +75,11 @@ export default function CopilotClient() {
   const [questions, setQuestions] = useState([]);
   const [autoDraft, setAutoDraft] = useState(true);
   const [profile, setProfileRaw] = usePrepContext();
+  // AC-H1: the tracked posting selected for this live session, if any — the
+  // same picker practice mode has, feeding both the "Submitted for this
+  // application" panel and the grounding documents draftAnswer sends along
+  // (see onPostingChange/runDraft below).
+  const [posting, setPosting] = useState(null);
   const [source, setSource] = useState("tab"); // "tab" | "system" — the interviewer's audio source
   const [startedAt, setStartedAt] = useState(null);
   const [now, setNow] = useState(0);
@@ -66,6 +99,12 @@ export default function CopilotClient() {
   const questionsRef = useRef([]);
   const autoDraftRef = useRef(true);
   const profileRef = useRef("");
+  // AC-H1: mirrors `posting` for runDraft below, the same reason
+  // profileRef exists — runDraft is a stable useCallback whose async body
+  // must see the LATEST selection, not whatever was current when the
+  // callback identity was created (same pattern as PracticeClient's
+  // postingRef).
+  const postingRef = useRef(null);
   const answerCacheRef = useRef(new Map()); // normalized question -> { points, type }
 
   useEffect(() => {
@@ -77,6 +116,25 @@ export default function CopilotClient() {
   useEffect(() => {
     profileRef.current = profile;
   }, [profile]);
+  useEffect(() => {
+    postingRef.current = posting;
+  }, [posting]);
+
+  // AC-H2/AC-H3: loads the résumé and cover letter submitted for the
+  // selected posting, the moment it changes — feeds the "Submitted for this
+  // application" panel below. Called unconditionally (not just in live
+  // mode's JSX branch) because hooks can't be conditional; its result is
+  // simply unused while `mode === "practice"`, since that branch renders
+  // PracticeClient instead, which owns its own posting selection.
+  const {
+    status: docsStatus,
+    resume: docsResume,
+    coverLetter: docsCoverLetter,
+    error: docsError,
+    retry: retryDocs,
+  } = useApplicationDocs(posting?.id || null);
+  const { engine } = useEngine();
+  const isEmbedded = engine === "embedded";
 
   // Prep context (seed-from-storage/fallback/persist) lives in
   // usePrepContext — this wraps its setter to also drop the answer cache:
@@ -91,6 +149,17 @@ export default function CopilotClient() {
     },
     [setProfileRaw],
   );
+
+  // AC-H1.4: changing OR clearing the selected posting clears the answer
+  // cache for the same reason onProfileChange above does — every cached
+  // draft was grounded in the OLD posting's documents (or the lack of any),
+  // and must not be served once the selection has moved on. Covers both
+  // "changing" and "clearing" since PostingPicker calls onChange with
+  // `null` for the latter.
+  const onPostingChange = useCallback((newPosting) => {
+    answerCacheRef.current.clear();
+    setPosting(newPosting);
+  }, []);
 
   // Seed the interviewer-audio-source choice from localStorage, wrapped in
   // try/catch like the prep-context read above. A missing or unrecognized
@@ -232,6 +301,11 @@ export default function CopilotClient() {
           question,
           context: buildContext(),
           profile: profileRef.current,
+          // AC-H1.4/AC-H4: the selected posting's own id IS the application
+          // id (see normalizePostingRows in lib/copilot/postings.js) — the
+          // route uses it to fetch and ground in the submitted résumé/cover
+          // letter itself; this client never sends document text.
+          applicationId: postingRef.current?.id || null,
         });
         answerCacheRef.current.set(norm, { points, type });
         setQuestions((prev) =>
@@ -396,6 +470,42 @@ export default function CopilotClient() {
       ? 'Share your Entire Screen (with "Share system audio" enabled) and allow your mic — use this when the interview is running in a desktop app (Zoom, Teams, etc.) rather than a browser tab.'
       : 'Share the meeting tab (with "Share tab audio" enabled) and allow your mic.';
 
+  // AC-H6.24/AC-H6.25 (BUG-H5): derived from CURRENT state, not hard-coded,
+  // so it can never name a destination that isn't actually receiving data
+  // right now. Nothing about a selected posting's documents leaves the
+  // browser at all unless a posting is actually selected, so this is empty
+  // in that case — no claim, true or false, needs making. Once one is
+  // selected: on the embedded engine (isEmbedded, from useEngine — the same
+  // source of truth PracticeClient's own notice reads), the route's
+  // embedded path never calls Gemini at all (see
+  // app/api/copilot/answer/route.js), so this says so explicitly regardless
+  // of what useApplicationDocs finds below. On every other engine value,
+  // whether anything is actually sent depends on that same load — the one
+  // backing the "Submitted for this application" panel: while it is still
+  // loading (or has errored), whether a résumé/cover letter even exists for
+  // this application is genuinely unknown, so the notice hedges with "may"
+  // rather than asserting either way — staying silent instead, while
+  // documents might be about to be sent, would be the worse failure. Once
+  // the load settles (`docsStatus === "done"`) with neither document found,
+  // the route's own `if (resume || coverLetter)` guard
+  // (app/api/copilot/answer/route.js) means nothing is actually sent, so
+  // the notice falls silent rather than repeating BUG-H5's old (false)
+  // blanket claim. And once it settles with something found, this names
+  // only the document(s) that actually exist, never both when only one
+  // does.
+  const hasSubmittedResume = !!docsResume;
+  const hasSubmittedCoverLetter = !!docsCoverLetter;
+  const docsSettled = docsStatus === "done";
+  const postingGroundingNotice = !posting
+    ? ""
+    : isEmbedded
+      ? " The embedded engine drafts talking points on this server with no AI provider, so nothing about this application is sent to Google."
+      : !docsSettled
+        ? " Because you selected a posting, any résumé or cover letter you submitted for it may also be sent to Google Gemini to ground your talking points."
+        : hasSubmittedResume || hasSubmittedCoverLetter
+          ? ` Because you selected a posting, ${submittedDocsClause(hasSubmittedResume, hasSubmittedCoverLetter)}.`
+          : "";
+
   return (
     <Box sx={{ maxWidth: 1180, mx: "auto", p: 3 }}>
       <TabHeader
@@ -475,7 +585,14 @@ export default function CopilotClient() {
 
           {showConsent ? (
             <Alert severity="info" sx={{ mb: 2 }} onClose={() => setShowConsent(false)}>
-              {/* F2: names the provider once known, never guesses one before then. */}
+              {/* F2: names the STT provider once known, never guesses one before
+                  then. BUG-H4: the posting-grounding fact used to be appended
+                  here too, but this alert is dismissible (onClose) and shown
+                  before the user has selected anything — dismissing it before
+                  selecting a posting left that fact stated nowhere. It now
+                  renders in its own always-visible element below, next to the
+                  PostingPicker (see postingGroundingNotice's derivation and
+                  its render site further down). */}
               {`Recording notice: audio is streamed${sttProviderName ? ` to ${sttProviderName}` : ""} for transcription. Make sure everyone on the call consents before you start — some regions require all-party consent.`}
             </Alert>
           ) : null}
@@ -489,6 +606,48 @@ export default function CopilotClient() {
             <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setWarning("")}>
               {warning}
             </Alert>
+          ) : null}
+
+          {/* AC-H1.1/AC-H1.3: the same posting picker practice mode has, above
+              the prep context panel, wording it for live mode's own meaning
+              of leaving it blank. Stays enabled at all times, including while
+              a session is live — unlike the mode toggle and audio-source
+              picker above, which are disabled once `live`. */}
+          <Box sx={{ mb: 2 }}>
+            <PostingPicker
+              value={posting}
+              onChange={onPostingChange}
+              disabled={false}
+              label={POSTING_PICKER_LABEL}
+              blankHint={POSTING_PICKER_BLANK_HINT}
+            />
+          </Box>
+
+          {/* AC-H6.24/AC-H6.25 (BUG-H4): always visible — never gated by
+              showConsent — so the fact stays on screen for as long as a
+              posting stays selected, even after the consent alert above has
+              been dismissed. This is the ONE place that fact is stated; see
+              postingGroundingNotice's derivation above for exactly when it
+              applies and what it says. Empty (renders nothing) when no
+              posting is selected, matching PracticeClient's privacyNotice
+              treatment and visual weight. */}
+          {postingGroundingNotice ? (
+            <Typography variant="body2" sx={{ color: "var(--text-secondary)", mb: 2 }}>
+              {postingGroundingNotice}
+            </Typography>
+          ) : null}
+
+          {/* AC-H3: only rendered once a posting is actually selected — with
+              none selected, this panel is absent entirely rather than shown
+              empty or disabled. */}
+          {posting ? (
+            <SubmittedDocs
+              status={docsStatus}
+              resume={docsResume}
+              coverLetter={docsCoverLetter}
+              error={docsError}
+              onRetry={retryDocs}
+            />
           ) : null}
 
           <PrepContext value={profile} onChange={onProfileChange} />

@@ -17,14 +17,19 @@
 
 // The shape held in the hook's state, and what a mismatched question
 // derives to: nothing shown, nothing cached, never fetched. G2 always
-// requests mode "answer" (AC-G2-C-9), so the cached draft is a prose
-// string plus its grounding flags rather than G1's bullet points.
+// requests mode "answer" (AC-G2-C-9); AC-H9 changed that mode's response
+// shape from a single prose `answer` string to `points` (an array of
+// complete, speakable, STAR-labeled-when-applicable sentences) — this state
+// slot carries `points` through the same way it carried `answer` before,
+// with the same caching/gating rules (AC-H9.37). `answer` (the
+// server-derived prose join of `points`) is not carried here at all — this
+// UI renders bullets, not prose, so there is nothing here that needs it.
 export function emptySampleAnswer() {
   return {
     question: "",
     visible: false,
     status: "idle", // idle | loading | done | error
-    answer: "",
+    points: [],
     // { resume: boolean, coverLetter: boolean } once a draft lands — which
     // submitted documents it was actually grounded in. Null until then.
     grounding: null,

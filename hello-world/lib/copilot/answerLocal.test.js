@@ -8,6 +8,13 @@ import {
   relevantExperienceLine,
   resolveScaffoldType,
   ACHIEVEMENT_VERBS,
+  combineMaterial,
+  literallyMentioned,
+  isPastWorkLine,
+  usableExperienceLine,
+  pastWorkExperienceLine,
+  deriveAnswerFromPoints,
+  MOTIVATION_LINE_RE,
 } from "./answerLocal.js";
 
 const PROFILE = [
@@ -225,5 +232,210 @@ describe("draftAnswerLocal", () => {
       interviewType: "behavioral",
     });
     expect(type).toBe("technical");
+  });
+});
+
+// AC-H4.18: with no resume/coverLetter, draftAnswerLocal's output must be
+// byte-identical to what it produced before submitted-document grounding
+// existed. Proven exhaustively (many representative cases, diffed against
+// the pre-AC-H4 implementation) in a scratch script during development; this
+// is the permanent regression guard for the same guarantee.
+describe("draftAnswerLocal byte-identity with no submitted documents (AC-H4.18)", () => {
+  it("is identical whether resume/coverLetter are omitted or passed as empty strings", () => {
+    const withoutDocs = draftAnswerLocal({
+      question: "Tell me about a time you resolved a conflict on your team.",
+      profile: PROFILE,
+    });
+    const withEmptyDocs = draftAnswerLocal({
+      question: "Tell me about a time you resolved a conflict on your team.",
+      profile: PROFILE,
+      resume: "",
+      coverLetter: "",
+    });
+    expect(withEmptyDocs).toEqual(withoutDocs);
+  });
+
+  it("whitespace-only resume/coverLetter are treated the same as absent", () => {
+    const withoutDocs = draftAnswerLocal({ question: "Why do you want to work here?", profile: PROFILE });
+    const withBlankDocs = draftAnswerLocal({
+      question: "Why do you want to work here?",
+      profile: PROFILE,
+      resume: "   \n  ",
+      coverLetter: "\n",
+    });
+    expect(withBlankDocs).toEqual(withoutDocs);
+  });
+});
+
+// AC-H4.15/AC-H4.19: once a résumé and/or cover letter are present,
+// draftAnswerLocal grounds points in them, with the same mining-hazard
+// defenses sampleAnswerLocal.js's grounding uses.
+describe("draftAnswerLocal grounding in submitted documents (AC-H4.15/AC-H4.19)", () => {
+  const RESUME = [
+    "Senior Software Engineer, Initech — Remote",
+    "Jan 2021 – Present",
+    "Led a team of six engineers, cutting deployment time by 40%.",
+    "Collaborated closely with teams across the org on shared tooling.",
+    "Skills: Python, Django, PostgreSQL, Docker",
+  ].join("\n");
+
+  const COVER_LETTER = [
+    "Dear Hiring Manager,",
+    "I am applying for the Senior Software Engineer role because I want to grow my career in cloud infrastructure.",
+    "Sincerely, A Candidate",
+  ].join("\n");
+
+  const MISMATCHED_METRIC_RESUME = [
+    "Senior Software Engineer, Initech — Remote",
+    "Jan 2021 – Present",
+    "Led a team of six engineers through a major payments system migration.",
+    "Company-wide revenue grew 40% year over year during that period.",
+    "Skills: Python, Django, PostgreSQL, Docker",
+  ].join("\n");
+
+  it("weaves the submitted résumé's own accomplishment into the points", () => {
+    const { points } = draftAnswerLocal({
+      question: "Tell me about a time you led a team through a tough deadline.",
+      resume: RESUME,
+      interviewType: "behavioral",
+    });
+    expect(points.join(" ")).toContain("led a team of six engineers, cutting deployment time by 40%");
+    expect(points[0]).toMatch(/^Situation:/);
+  });
+
+  it("never speaks a taxonomy-inferred skill that doesn't literally appear in the submitted documents (mining hazard 1)", () => {
+    const { points } = draftAnswerLocal({
+      question: "Why do you want to work here?",
+      resume: RESUME,
+      coverLetter: COVER_LETTER,
+      interviewType: "general",
+    });
+    expect(points.join(" ")).not.toContain("Microsoft Teams");
+  });
+
+  it("never pairs a metric with a story mined from a different line (mining hazard 2)", () => {
+    const { points } = draftAnswerLocal({
+      question: "Tell me about a time you led a team through a system migration.",
+      resume: MISMATCHED_METRIC_RESUME,
+      interviewType: "behavioral",
+    });
+    // The only metric in the material (40%, on the revenue line) is
+    // unrelated to the migration story and must not appear anywhere.
+    expect(points.join(" ")).not.toContain("40%");
+    // The metric-free story is still told as the Action point.
+    expect(points.join(" ")).toContain("led a team of six engineers through a major payments system migration");
+  });
+
+  it("never quotes a cover-letter motivation line as the concrete example (mining hazard 4)", () => {
+    const { points } = draftAnswerLocal({
+      question: "Tell me about a time you led a team through a tough deadline.",
+      coverLetter: COVER_LETTER,
+      interviewType: "behavioral",
+    });
+    expect(points.join(" ")).not.toContain("applying");
+    expect(points.join(" ")).not.toContain("Senior Software Engineer role");
+  });
+
+  it("is deterministic for the same grounded inputs", () => {
+    const args = {
+      question: "Tell me about a time you led a team through a tough deadline.",
+      resume: RESUME,
+      coverLetter: COVER_LETTER,
+      interviewType: "behavioral",
+    };
+    expect(draftAnswerLocal(args)).toEqual(draftAnswerLocal({ ...args }));
+  });
+});
+
+describe("combineMaterial", () => {
+  it("joins non-empty sources with a blank line and drops empty ones", () => {
+    expect(combineMaterial("profile text", "", "cover letter text")).toBe("profile text\n\ncover letter text");
+    expect(combineMaterial("", "", "")).toBe("");
+    expect(combineMaterial("  ", undefined, null)).toBe("");
+  });
+});
+
+describe("literallyMentioned", () => {
+  it("matches a whole-word, case-insensitive occurrence", () => {
+    expect(literallyMentioned("Python", "Skills: Python, Django")).toBe(true);
+    expect(literallyMentioned("python", "Skills: Python, Django")).toBe(true);
+  });
+
+  it("does not match a canonical name that never literally occurs (the Microsoft Teams hazard)", () => {
+    expect(literallyMentioned("Microsoft Teams", "Collaborated closely with teams across the org.")).toBe(false);
+  });
+
+  it("returns false for an empty term", () => {
+    expect(literallyMentioned("", "anything")).toBe(false);
+  });
+});
+
+describe("isPastWorkLine / MOTIVATION_LINE_RE", () => {
+  it("treats a verb-initial or numeric line as past work", () => {
+    expect(isPastWorkLine("Led a team of six engineers, cutting deployment time by 40%.")).toBe(true);
+  });
+
+  it("rejects a motivation/application line even if it has an achievement-shaped word", () => {
+    expect(isPastWorkLine("I am applying for this role because I led similar teams before.")).toBe(false);
+    expect(MOTIVATION_LINE_RE.test("I am applying for this role")).toBe(true);
+  });
+
+  it("rejects an empty or plain descriptive line with no signal", () => {
+    expect(isPastWorkLine("")).toBe(false);
+    expect(isPastWorkLine("Responsible for various day-to-day tasks.")).toBe(false);
+  });
+});
+
+describe("usableExperienceLine", () => {
+  it("passes through a line that isn't truncated", () => {
+    expect(usableExperienceLine("A short clean line.")).toBe("A short clean line.");
+  });
+
+  it("drops a line truncated mid-word with an ellipsis", () => {
+    expect(usableExperienceLine("A very long line that got cut off mid…")).toBe("");
+  });
+
+  it("passes through empty input as empty", () => {
+    expect(usableExperienceLine("")).toBe("");
+  });
+});
+
+describe("pastWorkExperienceLine", () => {
+  const material = [
+    "I am applying for the Senior Software Engineer role because I love this company.",
+    "Led a team of six engineers, cutting deployment time by 40%.",
+  ].join("\n");
+
+  it("disqualifies a motivation line and picks the real past-work line instead", () => {
+    const line = pastWorkExperienceLine(material, "Tell me about a time you led a team.");
+    expect(line).toBe("led a team of six engineers, cutting deployment time by 40%");
+  });
+
+  it("returns empty when the only relevant line is a motivation line", () => {
+    const motivationOnly = "I am applying for the Senior Software Engineer role because I love this company.";
+    expect(pastWorkExperienceLine(motivationOnly, "Why do you want to work here?")).toBe("");
+  });
+});
+
+describe("deriveAnswerFromPoints (AC-H9.33)", () => {
+  it("strips a leading STAR label from each point and joins with a single space", () => {
+    const points = [
+      "Situation: I ran into a tricky bug.",
+      "Task: I needed to fix it before launch.",
+      "Action: I traced it to a race condition.",
+      "Result: I shipped a fix and the crash rate dropped.",
+    ];
+    expect(deriveAnswerFromPoints(points)).toBe(
+      "I ran into a tricky bug. I needed to fix it before launch. I traced it to a race condition. I shipped a fix and the crash rate dropped.",
+    );
+  });
+
+  it("leaves unlabeled points untouched", () => {
+    expect(deriveAnswerFromPoints(["First sentence.", "Second sentence."])).toBe("First sentence. Second sentence.");
+  });
+
+  it("handles empty input without throwing", () => {
+    expect(deriveAnswerFromPoints([])).toBe("");
+    expect(deriveAnswerFromPoints(undefined)).toBe("");
   });
 });

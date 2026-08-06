@@ -15,15 +15,16 @@ import Typography from "@mui/material/Typography";
 // rather than in a separate control so its "Show/Hide" label and the panel
 // it opens can never disagree about `visible`.
 //
-// G2: renders `mode: "answer"`'s response — a single prose string the
-// candidate could actually say out loud, not the G1 bullet-point array
-// (AC-G2-C-8). Split into paragraphs on blank lines; a bullet list would
-// misrepresent something meant to be spoken.
-function paragraphsOf(answer) {
-  return String(answer || "")
-    .split(/\n\s*\n/)
-    .map((p) => p.trim())
-    .filter(Boolean);
+// AC-H9: `mode: "answer"`'s response now returns `points` — bullets, each a
+// complete, speakable sentence (STAR-labeled for a behavioral/leadership
+// shape), replacing G2's earlier single prose string. Defends the same way
+// the old paragraphsOf did against a missing/malformed value: anything that
+// isn't a non-empty string is dropped rather than rendered as a blank
+// bullet or throwing.
+function cleanPoints(points) {
+  return (Array.isArray(points) ? points : [])
+    .filter((p) => typeof p === "string" && p.trim())
+    .map((p) => p.trim());
 }
 
 // AC-G2-C-8: states what the answer was actually built from, derived from
@@ -53,7 +54,9 @@ function sourceCaption(isEmbedded, grounding) {
 export default function SampleAnswer({
   visible,
   status, // idle | loading | done | error
-  answer,
+  // AC-H9.36: the sample answer as a bullet-point array (each a complete,
+  // speakable sentence) — see useSampleAnswer.js and cleanPoints above.
+  points,
   grounding,
   error,
   isEmbedded,
@@ -61,11 +64,11 @@ export default function SampleAnswer({
   onRetry,
   onRegenerate,
 }) {
+  const cleanedPoints = cleanPoints(points);
   // AC-G1-11: only offered once a draft is actually on screen — not while
   // it's loading, not while hidden, and not in the error state (which has
   // its own "Retry" action instead).
-  const canRegenerate = visible && status === "done" && !!answer;
-  const paragraphs = paragraphsOf(answer);
+  const canRegenerate = visible && status === "done" && cleanedPoints.length > 0;
 
   return (
     <Box sx={{ mt: 1.5 }}>
@@ -110,15 +113,15 @@ export default function SampleAnswer({
             </Alert>
           ) : null}
 
-          {status === "done" && paragraphs.length > 0 ? (
+          {status === "done" && cleanedPoints.length > 0 ? (
             <>
-              <Stack spacing={1.5}>
-                {paragraphs.map((paragraph, i) => (
-                  <Typography key={i} variant="body2" sx={{ color: "var(--text-primary)" }}>
-                    {paragraph}
+              <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
+                {cleanedPoints.map((point, i) => (
+                  <Typography key={i} component="li" variant="body2" sx={{ mb: 0.5, color: "var(--text-primary)" }}>
+                    {point}
                   </Typography>
                 ))}
-              </Stack>
+              </Box>
               <Typography variant="caption" sx={{ color: "var(--text-muted)", display: "block", mt: 1 }}>
                 {sourceCaption(isEmbedded, grounding)}
               </Typography>
