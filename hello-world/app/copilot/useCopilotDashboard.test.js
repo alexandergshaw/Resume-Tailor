@@ -6,12 +6,12 @@ import {
   resolvePrediction,
   resolvePredraft,
   resolveDashboardState,
-} from "./useLiveDashboard.js";
+} from "./useCopilotDashboard.js";
 
 // The source file itself, read as raw bytes -- not imported, so this check
 // runs regardless of how the module above happens to be transformed by the
 // test runner. See the "source file has no literal NUL byte" block below.
-const SOURCE_PATH = fileURLToPath(new URL("./useLiveDashboard.js", import.meta.url));
+const SOURCE_PATH = fileURLToPath(new URL("./useCopilotDashboard.js", import.meta.url));
 
 // The real delimiter predictionSignatureFor puts between the asked-question
 // text and the posting key: the NUL code point (0), built here via
@@ -139,6 +139,131 @@ describe("predictionSignatureFor", () => {
     it("contains no literal NUL byte", () => {
       const raw = readFileSync(SOURCE_PATH);
       expect(raw.indexOf(0)).toBe(-1);
+    });
+  });
+});
+
+// AC-J2.7: the third parameter, `interviewType` — practice mode's selected
+// format. Live mode never passes it at all, so the compatibility guarantee
+// under test here is that every call shape live mode actually uses (the
+// two-argument call, and passing an explicit falsy/non-string third
+// argument) produces a signature BYTE-IDENTICAL to what the pinned
+// two-argument expectations above already lock in — a regression here would
+// change every live-mode signature and silently invalidate cached
+// predictions across every session.
+describe("predictionSignatureFor — interviewType parameter", () => {
+  const questionsSets = [
+    [],
+    [{ question: "Tell me about yourself" }, { question: "Why this role?" }],
+  ];
+  const postings = [
+    null,
+    { title: "Backend Engineer", company: "Acme", description: "Build things" },
+  ];
+  // Values live mode's own call sites can plausibly produce for an omitted
+  // or not-a-real-type third argument: genuinely omitted, explicit
+  // null/undefined/empty string, and a couple of non-string shapes that a
+  // caller should never send but that the function must still degrade
+  // safely on rather than let leak into the signature.
+  const noTypeValues = [undefined, null, "", 42, {}, []];
+
+  it("omitting interviewType, or passing undefined/null/''/a non-string, all produce the same signature as the two-argument call", () => {
+    for (const questions of questionsSets) {
+      for (const posting of postings) {
+        const twoArgSignature = predictionSignatureFor(questions, posting);
+        for (const noType of noTypeValues) {
+          expect(predictionSignatureFor(questions, posting, noType)).toBe(twoArgSignature);
+        }
+      }
+    }
+  });
+
+  it("a non-empty interviewType produces a different signature than the same (questions, posting) with no type", () => {
+    const questions = [{ question: "Tell me about yourself" }];
+    const posting = { title: "Backend Engineer", company: "Acme", description: "Build things" };
+
+    const withoutType = predictionSignatureFor(questions, posting);
+    const withType = predictionSignatureFor(questions, posting, "behavioral");
+
+    expect(withType).not.toBe(withoutType);
+  });
+
+  it("two different interview types produce two different signatures for the same (questions, posting)", () => {
+    const questions = [{ question: "Tell me about yourself" }];
+    const posting = { title: "Backend Engineer", company: "Acme", description: "Build things" };
+
+    const behavioral = predictionSignatureFor(questions, posting, "behavioral");
+    const technical = predictionSignatureFor(questions, posting, "technical");
+
+    expect(behavioral).not.toBe(technical);
+  });
+
+  it("the empty-string sentinel still holds with no questions, no posting, and no interview type", () => {
+    expect(predictionSignatureFor([], null, "")).toBe("");
+    expect(predictionSignatureFor([], null, undefined)).toBe("");
+  });
+
+  it("no questions, no posting, WITH a non-empty interview type must NOT return the empty-string sentinel — otherwise practice mode with only a format chosen would never predict at all", () => {
+    const signature = predictionSignatureFor([], null, "behavioral");
+    expect(signature).not.toBe("");
+  });
+
+  it("is deterministic across repeated calls with the same interviewType", () => {
+    const questions = [{ question: "Tell me about yourself" }];
+    const posting = { title: "Backend Engineer", company: "Acme", description: "Build things" };
+    const first = predictionSignatureFor(questions, posting, "behavioral");
+    const second = predictionSignatureFor(questions, posting, "behavioral");
+    expect(first).toBe(second);
+  });
+
+  // Same spirit as the "NUL delimiter prevents a collision" block above,
+  // applied to the interviewType segment: an interview type is still
+  // payload, not a separator, so moving text across the boundary between the
+  // posting description and the interview type must not collapse two
+  // genuinely different inputs into the same signature.
+  describe("the interviewType segment does not collide with the posting description", () => {
+    // A naive stand-in that appends interviewType directly after the
+    // postingKey with NO delimiter at all — a plausible "simplification" bug
+    // this real function must not have. NOT imported from the source file.
+    function naiveSignatureWithType(questions, posting, interviewType) {
+      const asked = (Array.isArray(questions) ? questions : [])
+        .map((q) => (q && typeof q.question === "string" ? q.question.trim() : ""))
+        .filter(Boolean);
+      const postingKey = posting
+        ? `${posting.title || ""}|${posting.company || ""}|${posting.description || ""}`
+        : "";
+      const base = `${asked.join("\n")} ${postingKey}`;
+      return `${base}${interviewType || ""}`;
+    }
+
+    const questions = [{ question: "Tell me about yourself" }];
+
+    // Input A: the split between description and type falls after "X".
+    const postingA = { title: "Backend Engineer", company: "Acme", description: "X" };
+    const typeA = "YZ";
+
+    // Input B: a genuinely different (posting, interviewType) pair — built
+    // by moving "Y" from A's type into B's description, so naive
+    // concatenation of description+type produces the identical string "XYZ"
+    // for both, even though descriptionA !== descriptionB and typeA !== typeB.
+    const postingB = { title: "Backend Engineer", company: "Acme", description: "XY" };
+    const typeB = "Z";
+
+    it("sanity check: these two inputs really are different (posting, interviewType) pairs", () => {
+      expect(postingA).not.toEqual(postingB);
+      expect(typeA).not.toBe(typeB);
+    });
+
+    it("would collide into the identical string under a naive no-delimiter concatenation", () => {
+      const naiveA = naiveSignatureWithType(questions, postingA, typeA);
+      const naiveB = naiveSignatureWithType(questions, postingB, typeB);
+      expect(naiveA).toBe(naiveB);
+    });
+
+    it("produces genuinely different signatures for the same two inputs with the real function", () => {
+      const realA = predictionSignatureFor(questions, postingA, typeA);
+      const realB = predictionSignatureFor(questions, postingB, typeB);
+      expect(realA).not.toBe(realB);
     });
   });
 });

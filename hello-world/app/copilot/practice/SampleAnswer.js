@@ -7,6 +7,8 @@ import CircularProgress from "@mui/material/CircularProgress";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
+import { cleanAnswerPoints } from "@/lib/copilot/answerPoints";
+
 // G1: the toggleable sample answer for practice mode's current question.
 // Purely presentational — every bit of state (whether it's shown, whether a
 // draft is in flight, the cached answer, which engine drafted it) lives in
@@ -20,12 +22,10 @@ import Typography from "@mui/material/Typography";
 // shape), replacing G2's earlier single prose string. Defends the same way
 // the old paragraphsOf did against a missing/malformed value: anything that
 // isn't a non-empty string is dropped rather than rendered as a blank
-// bullet or throwing.
-function cleanPoints(points) {
-  return (Array.isArray(points) ? points : [])
-    .filter((p) => typeof p === "string" && p.trim())
-    .map((p) => p.trim());
-}
+// bullet or throwing. Shared with CopilotDashboard.js's two answer panels
+// via lib/copilot/answerPoints.js rather than a module-local copy — see
+// that module's doc for why (BUG-J6: the two copies had already drifted on
+// whether surviving entries get trimmed).
 
 // AC-G2-C-8: states what the answer was actually built from, derived from
 // the response's `grounding` flags — never a static claim, since whether
@@ -55,7 +55,8 @@ export default function SampleAnswer({
   visible,
   status, // idle | loading | done | error
   // AC-H9.36: the sample answer as a bullet-point array (each a complete,
-  // speakable sentence) — see useSampleAnswer.js and cleanPoints above.
+  // speakable sentence) — see useSampleAnswer.js and cleanAnswerPoints
+  // (lib/copilot/answerPoints.js) above.
   points,
   grounding,
   error,
@@ -64,7 +65,7 @@ export default function SampleAnswer({
   onRetry,
   onRegenerate,
 }) {
-  const cleanedPoints = cleanPoints(points);
+  const cleanedPoints = cleanAnswerPoints(points);
   // AC-G1-11: only offered once a draft is actually on screen — not while
   // it's loading, not while hidden, and not in the error state (which has
   // its own "Retry" action instead).

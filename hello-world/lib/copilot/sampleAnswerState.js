@@ -89,3 +89,54 @@ export function needsRedraft(active, profile, interviewType, applicationId, forc
     active.applicationId !== applicationId
   );
 }
+
+// AC-J2.9: the state to adopt for a draft that arrives from OUTSIDE the
+// hook's own request — specifically, the dashboard's pre-draft for a
+// predicted question that the practice engine then actually asked
+// (useSampleAnswer.js's cache; see useCopilotDashboard.js's
+// onPrefetchedAnswer). This is the practice-mode counterpart of live mode's
+// `answerCacheRef` hit, and the same cost argument applies: pre-drafting
+// roughly doubles the model calls a predicted question costs, and serving
+// the cached draft on reveal is what pays that back. If it never hits,
+// nothing errors — the reveal just quietly pays full price again.
+//
+// Returns `null` — meaning "cache miss, draft it properly" — whenever the
+// entry cannot be trusted for the CURRENT inputs:
+//
+//   - nothing cached for this question at all;
+//   - the cached entry holds no usable points (an empty or malformed array
+//     would render as a blank answer that looks like a finished one);
+//   - the entry was built from a different prep profile, interview type, or
+//     application than the reveal is asking about. That is exactly
+//     needsRedraft's "done" comparison above, applied to a cache entry
+//     instead of the on-screen draft — the two must agree, or a pre-draft
+//     made before the user edited their prep context would be served as if
+//     it reflected the edit.
+//
+// On a hit it returns a complete state slot with `visible: true`, because
+// the only caller is a reveal. Priming the cache itself never touches
+// visibility — a pre-drafted answer for a question the user has not asked
+// to see must not put itself on screen.
+export function cachedSampleAnswerFor(entry, question, profile, interviewType, applicationId) {
+  if (!entry) return null;
+  const points = Array.isArray(entry.points) ? entry.points.filter((p) => typeof p === "string" && p.trim()) : [];
+  if (points.length === 0) return null;
+  if (
+    entry.profile !== profile ||
+    entry.interviewType !== interviewType ||
+    entry.applicationId !== applicationId
+  ) {
+    return null;
+  }
+  return {
+    question,
+    visible: true,
+    status: "done",
+    points: entry.points,
+    grounding: entry.grounding || null,
+    error: "",
+    profile,
+    interviewType,
+    applicationId,
+  };
+}

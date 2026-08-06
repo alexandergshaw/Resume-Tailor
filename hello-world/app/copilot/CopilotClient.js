@@ -25,11 +25,11 @@ import StatusPill from "./StatusPill";
 import PostingPicker from "./PostingPicker";
 import SubmittedDocs from "./SubmittedDocs";
 import MicPicker from "./MicPicker";
-import LiveDashboard from "./dashboard/LiveDashboard";
+import CopilotDashboard from "./dashboard/CopilotDashboard";
 import PracticeClient from "./practice/PracticeClient";
 import { usePrepContext } from "./usePrepContext";
 import { useApplicationDocs } from "./useApplicationDocs";
-import { useLiveDashboard } from "./useLiveDashboard";
+import { useCopilotDashboard } from "./useCopilotDashboard";
 
 const CONTEXT_TURNS = 12;
 const MIN_WORDS_FOR_LLM = 4;
@@ -291,7 +291,7 @@ export default function CopilotClient() {
   // next question, and a pre-drafted answer for it. `active: live` (AC-I4
   // fix) is what keeps a posting selection or a detected question from
   // spending a model call before the user has actually pressed Start; see
-  // useLiveDashboard.js's own `active` doc for what it does with this.
+  // useCopilotDashboard.js's own `active` doc for what it does with this.
   const {
     pace,
     predictedQuestion,
@@ -304,7 +304,7 @@ export default function CopilotClient() {
     predictedAnswerError,
     recordSpeechSample,
     resetForSession,
-  } = useLiveDashboard({
+  } = useCopilotDashboard({
     questions,
     posting,
     applicationId: posting?.id || null,
@@ -659,8 +659,20 @@ export default function CopilotClient() {
         </ToggleButtonGroup>
       </Stack>
 
+      {/* AC-J1.5: the microphone selection is owned HERE, not per mode, and
+          handed to practice mode as props. It is one piece of hardware and
+          one localStorage key (MIC_STORAGE_KEY) shared by both modes: a
+          candidate who picks their headset for a live interview should not
+          have to pick it again to rehearse, and two independent selections
+          under two keys would let the picker in one mode contradict what
+          the other is actually recording on. Same reasoning that already
+          made `sttProviderName` a prop rather than a second fetch. */}
       {mode === "practice" ? (
-        <PracticeClient sttProviderName={sttProviderName} />
+        <PracticeClient
+          sttProviderName={sttProviderName}
+          micDeviceId={micDeviceId}
+          onMicDeviceChange={onMicDeviceChange}
+        />
       ) : (
         <>
           <Typography variant="body2" sx={{ color: "var(--text-secondary)", mb: 2 }}>
@@ -836,11 +848,11 @@ export default function CopilotClient() {
 
           {/* AC-I5: the five-panel dashboard — current question/answer,
               predicted next question/answer, and talking pace. Presentational
-              only (every value is a prop from useLiveDashboard above); does
+              only (every value is a prop from useCopilotDashboard above); does
               NOT replace QuestionFeed below, which stays the full question
               history (AC-I5.30). */}
           <Box sx={{ mb: 2 }}>
-            <LiveDashboard
+            <CopilotDashboard
               questions={questions}
               pace={pace}
               predictedQuestion={predictedQuestion}

@@ -442,4 +442,92 @@ describe("captureCameraAndMic", () => {
 
     expect(caught).toBe(permissionError);
   });
+
+  // AC-J1.1: mirrors captureMicAudio's own "no device id -> no deviceId key
+  // at all" rule (see the describe("captureMicAudio") block above). The two
+  // getUserMedia paths share micAudioConstraints precisely so they can't
+  // drift apart on this; a test that only checked captureMicAudio would miss
+  // a regression that hit captureCameraAndMic alone.
+  it("requests exactly the processed mic constraints from getUserMedia when called with no device id, with no deviceId own-key", async () => {
+    const stream = makeStream({
+      audioTracks: [makeTrack("audio")],
+      videoTracks: [makeTrack("video")],
+    });
+    const getUserMedia = stubGetUserMedia(() => Promise.resolve(stream));
+
+    const result = await captureCameraAndMic();
+
+    expect(result).toBe(stream);
+    const call = getUserMedia.mock.calls[0][0];
+    // Pin the EXACT shape, not just a deep-equal match — see the matching
+    // comment on captureMicAudio's own no-device-id test above for why
+    // toEqual alone would not catch a stray `deviceId: undefined`.
+    expect(Object.prototype.hasOwnProperty.call(call.audio, "deviceId")).toBe(false);
+    expect(call.audio).toEqual({
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    });
+  });
+
+  it("requests exactly the same audio constraints object for null, undefined, and empty-string device ids alike (all 'no selection')", async () => {
+    const stream = makeStream({
+      audioTracks: [makeTrack("audio")],
+      videoTracks: [makeTrack("video")],
+    });
+
+    for (const deviceId of [null, undefined, ""]) {
+      const getUserMedia = stubGetUserMedia(() => Promise.resolve(stream));
+      await captureCameraAndMic(deviceId);
+      const call = getUserMedia.mock.calls[0][0];
+      expect(Object.prototype.hasOwnProperty.call(call.audio, "deviceId")).toBe(false);
+      expect(call.audio).toEqual({
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      });
+      // The video half must not move at all as the device id varies.
+      expect(call.video).toEqual({
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        facingMode: "user",
+      });
+    }
+  });
+
+  it("applies a given device id as deviceId: { exact: id }, leaving the video request untouched", async () => {
+    const stream = makeStream({
+      audioTracks: [makeTrack("audio")],
+      videoTracks: [makeTrack("video")],
+    });
+    const getUserMedia = stubGetUserMedia(() => Promise.resolve(stream));
+
+    const result = await captureCameraAndMic("cam-mic-456");
+
+    expect(result).toBe(stream);
+    expect(getUserMedia).toHaveBeenCalledWith({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        deviceId: { exact: "cam-mic-456" },
+      },
+    });
+  });
+
+  it("uses the exact form, not ideal or a bare string — a substituted microphone would defeat the point of picking one", async () => {
+    const stream = makeStream({
+      audioTracks: [makeTrack("audio")],
+      videoTracks: [makeTrack("video")],
+    });
+    const getUserMedia = stubGetUserMedia(() => Promise.resolve(stream));
+
+    await captureCameraAndMic("cam-mic-456");
+
+    const call = getUserMedia.mock.calls[0][0];
+    expect(call.audio.deviceId).toEqual({ exact: "cam-mic-456" });
+    expect(call.audio.deviceId).not.toHaveProperty("ideal");
+    expect(typeof call.audio.deviceId).not.toBe("string");
+  });
 });

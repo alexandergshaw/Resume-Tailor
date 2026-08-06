@@ -65,29 +65,21 @@ vi.mock("./stt", () => {
 import { PracticeSession } from "./practiceSession";
 import { DeepgramStream } from "./stt";
 
-// Stand-ins for the bits of the MediaStreamTrack / MediaStream interfaces
-// this file's tests touch: an `enabled` flag setMicMuted()/setCameraOff()
-// flip, a `stop()` they must never call (but start()/stop() must), and
-// addEventListener() for the "ended" listeners start() attaches. Unlike a
-// bare vi.fn(), this addEventListener remembers the registered callback so a
-// test can fire it directly (fireEnded()) to simulate the camera/mic being
-// lost mid-session.
-function makeTrack() {
-  const track = { enabled: true, stop: vi.fn(), _listeners: {} };
-  track.addEventListener = vi.fn((event, cb) => {
-    track._listeners[event] = cb;
-  });
-  track.fireEnded = () => track._listeners.ended?.();
-  return track;
-}
-
-function makeStream({ audioTracks = [], videoTracks = [] } = {}) {
-  return {
-    getAudioTracks: () => audioTracks,
-    getVideoTracks: () => videoTracks,
-    getTracks: () => [...videoTracks, ...audioTracks],
-  };
-}
+// makeTrack/makeStream and the AudioContext/AudioWorklet doubles below are
+// shared with practiceSession.micDevice.test.js (the mic-device-selection
+// cases split out of this file once it crossed this project's 1000-line
+// verification gate — see BUG-J1) via practiceSessionTestDoubles.js, so both
+// suites assert against the SAME notion of what a MediaStream/
+// MediaStreamTrack/AudioContext looks like rather than risking two copies
+// drifting apart.
+import {
+  makeTrack,
+  makeStream,
+  audioContextControl,
+  FakeAudioContext,
+  FakeAudioWorkletNode,
+  stubGetUserMedia,
+} from "./practiceSessionTestDoubles.js";
 
 // These tests exercise setMicMuted()/setCameraOff() directly against
 // session.stream, without going through start() — start() drives real
@@ -213,50 +205,6 @@ describe("PracticeSession.setCameraOff", () => {
   });
 });
 
-// capture.js's PcmPipeline is real code in the tests below (only
-// navigator.mediaDevices is stubbed), so it drives a real AudioContext/
-// AudioWorkletNode — browser globals that don't exist in node. Stand in with
-// the minimal surface PcmPipeline.start()/stop() actually touches.
-// closeSpy is on the instance (not the class) because a fresh AudioContext is
-// constructed on every PcmPipeline.start(), and the stop()-teardown tests
-// below need to assert against the one instance a given session actually
-// created — FakeAudioContext.instances (reset each test) makes that instance
-// reachable from the test body.
-class FakeAudioContext {
-  constructor() {
-    this.audioWorklet = {
-      addModule: vi.fn(async () => {
-        if (audioContextControl.holdAddModule) await audioContextControl.holdAddModule;
-      }),
-    };
-    this.destination = {};
-    this.closeSpy = vi.fn().mockResolvedValue(undefined);
-    FakeAudioContext.instances.push(this);
-  }
-  createMediaStreamSource() {
-    return { connect: vi.fn(), disconnect: vi.fn() };
-  }
-  createGain() {
-    return { gain: { value: 0 }, connect: vi.fn(), disconnect: vi.fn() };
-  }
-  close() {
-    return this.closeSpy();
-  }
-}
-FakeAudioContext.instances = [];
-// audioContextControl.holdAddModule lets a test pause PcmPipeline.start() at
-// its one await point (loading the AudioWorklet module) so a concurrent
-// stop() can be proven to land while pipeline.start() is still in flight —
-// mirrors dgControl.hold above, for the pipeline side instead of the socket.
-const audioContextControl = { holdAddModule: null };
-class FakeAudioWorkletNode {
-  constructor() {
-    this.port = {};
-    this.connect = vi.fn();
-    this.disconnect = vi.fn();
-  }
-}
-
 const originalMediaDevices = globalThis.navigator?.mediaDevices;
 const originalAudioContext = globalThis.AudioContext;
 const originalAudioWorkletNode = globalThis.AudioWorkletNode;
@@ -285,27 +233,6 @@ afterEach(() => {
   if (originalAudioWorkletNode === undefined) delete globalThis.AudioWorkletNode;
   else globalThis.AudioWorkletNode = originalAudioWorkletNode;
 });
-
-// Node itself defines a read-only `navigator` global (no mediaDevices on it),
-// so `globalThis.navigator = ...` throws — only the object's own properties
-// can be reassigned, not the binding itself. Fall back to defining it only
-// when it's genuinely missing.
-function ensureNavigator() {
-  if (typeof globalThis.navigator === "undefined") {
-    Object.defineProperty(globalThis, "navigator", {
-      value: {},
-      writable: true,
-      configurable: true,
-    });
-  }
-}
-
-function stubGetUserMedia(impl) {
-  ensureNavigator();
-  const getUserMedia = vi.fn(impl);
-  globalThis.navigator.mediaDevices = { getUserMedia };
-  return getUserMedia;
-}
 
 describe("PracticeSession capture source", () => {
   it("withVideo true captures camera+mic (both video and audio requested)", async () => {
@@ -394,6 +321,14 @@ describe("PracticeSession camera fallback", () => {
     expect(dgConstructorSpy).not.toHaveBeenCalled();
   });
 });
+
+// AC-J1.2/AC-J1.3/AC-J1.4's micDeviceId-plumbing cases, and AC-J1.4's
+// micSelectionAwareError-rewrite cases, live in
+// practiceSession.micDevice.test.js — split out of this file once it crossed
+// this project's 1000-line verification gate (BUG-J1). Same PracticeSession
+// under test, same test-double conventions (via
+// practiceSessionTestDoubles.js), just a separate file so this one stays
+// under the limit.
 
 describe("PracticeSession stop() racing capture", () => {
   it("stops every granted track and never builds a Deepgram stream when stop() lands before capture resolves", async () => {

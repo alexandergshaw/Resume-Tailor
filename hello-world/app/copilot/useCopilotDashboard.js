@@ -5,7 +5,7 @@ import { fetchNextQuestion } from "@/lib/copilot/questionClient";
 import { draftAnswer } from "@/lib/copilot/answerClient";
 import { appendSpeechSample, computeLivePace } from "@/lib/copilot/livePace";
 
-// AC-I2/AC-I3/AC-I4: live mode's dashboard hook — talking pace, the
+// AC-I2/AC-I3/AC-I4: the copilot dashboard hook — talking pace, the
 // predicted next question, and a pre-drafted answer for it. Every DECISION
 // (what signature identifies "the current thing to predict for", whether a
 // stored result still applies, whether a pre-draft should even be
@@ -21,6 +21,16 @@ import { appendSpeechSample, computeLivePace } from "@/lib/copilot/livePace";
 // runPredraft) catch their own failures into state and never throw back out
 // to a caller, and neither one ever touches anything the capture session
 // itself depends on.
+//
+// AC-J2: BOTH modes use this hook now (it was live-only through group I,
+// hence the AC-I numbering above). Practice mode's dashboard exists so a
+// candidate rehearses against the same instrument they will be reading
+// mid-interview, so the two must not be allowed to drift into separate
+// implementations — the same reasoning that made livePace.js import
+// answerMetrics.js's thresholds instead of restating them. The only two
+// things practice needs that live does not are the OPTIONAL `interviewType`
+// and `draftMode` inputs below; both default to omitted, which reproduces
+// live mode's requests byte-for-byte.
 
 // The detected-question list, reduced to the plain question strings the
 // prediction route's `asked` param wants — newest last, same order
@@ -66,13 +76,28 @@ export function postingPayloadFor(posting) {
 // which reads as "nothing changed" and silently misses a re-prediction.
 // The test file's own source-scan assertion pins that this SOURCE file
 // never contains a literal NUL byte — only the escape above.
-export function predictionSignatureFor(questions, posting) {
+//
+// AC-J2.7: `interviewType` (practice mode's selected format) contributes a
+// THIRD segment, but ONLY when it is a non-empty string. Live mode has no
+// interview-type picker and passes nothing, so its signatures stay
+// byte-identical to what they were before this parameter existed — which is
+// exactly what R-103's expected-string assertions pin, and why the segment
+// is conditional rather than always appended as an empty field the way the
+// posting key is. Practice mode needs it because it can change format while
+// a posting is selected and no question has been asked yet: without this
+// segment both signatures would be the same string, so the prediction made
+// for the PREVIOUS format would keep matching and nothing would re-trigger
+// it. The delimiter reasoning above applies unchanged — an interview type is
+// a short slug, but it is still payload, and payload never delimits payload.
+export function predictionSignatureFor(questions, posting, interviewType) {
   const asked = askedQuestionsFor(questions);
-  if (asked.length === 0 && !posting) return "";
+  const type = typeof interviewType === "string" ? interviewType : "";
+  if (asked.length === 0 && !posting && !type) return "";
   const postingKey = posting
     ? `${posting.title || ""}|${posting.company || ""}|${posting.description || ""}`
     : "";
-  return `${asked.join("\n")}\u0000${postingKey}`;
+  const base = `${asked.join("\n")}\u0000${postingKey}`;
+  return type ? `${base}\u0000${type}` : base;
 }
 
 // The state slot runPrediction writes to, and what a signature with no
@@ -125,6 +150,13 @@ export function predraftKeyFor(predictionStatus, predictedQuestion, autoDraft) {
   return autoDraft && predictionStatus === "done" && predictedQuestion ? predictedQuestion : "";
 }
 
+// AC-J2.9: `grounding` (which submitted documents the draft was actually
+// built from) is deliberately NOT a field here. Neither dashboard renders
+// it — both panels show bullets only, and the two must stay identical — so
+// carrying it through this state slot would be dead weight. It reaches the
+// one place it IS rendered (practice mode's revealed sample answer, whose
+// SampleAnswer.js caption states it) by riding on the onPrefetchedAnswer
+// payload into the caller's cache instead.
 const EMPTY_PREDRAFT_RESULT = { forQuestion: "", outcome: null, points: [], type: "general", error: "" };
 
 // Same "does the stored value belong to what's current" comparison as
@@ -200,7 +232,25 @@ export function resolveDashboardState(result, key, active, resolveFn, idleState)
 //                        prediction as if it still applied. Defaults to
 //                        `false` (no requests) so an omitted value can never
 //                        accidentally re-enable firing.
-export function useLiveDashboard({
+//   interviewType        AC-J2.7/AC-J2.8: practice mode's selected format,
+//                        forwarded to BOTH requests and folded into the
+//                        prediction signature. Live mode omits it (AC-I3.21
+//                        — live has no interview-type picker, and silently
+//                        inheriting practice's stored setting would make
+//                        live output depend on a control the user cannot
+//                        see there), and an omitted value is never sent, so
+//                        the route's own "general" default applies exactly
+//                        as it did before this input existed.
+//   draftMode            the `mode` the pre-draft asks /api/copilot/answer
+//                        for: omitted in live mode (the route's "points"
+//                        default — glanceable bullets, what CopilotClient's
+//                        own runDraft requests), and "answer" in practice
+//                        mode, so a pre-draft lands in the SAME shape
+//                        useSampleAnswer would have fetched for that
+//                        question. That shared shape is what makes priming
+//                        practice's sample-answer cache with it sound
+//                        rather than a near-miss (AC-J2.9).
+export function useCopilotDashboard({
   questions,
   posting,
   applicationId,
@@ -208,6 +258,8 @@ export function useLiveDashboard({
   profile,
   onPrefetchedAnswer,
   active = false,
+  interviewType,
+  draftMode,
 }) {
   const [speechSamples, setSpeechSamples] = useState([]);
   const [predictionResult, setPredictionResult] = useState(EMPTY_PREDICTION_RESULT);
@@ -222,7 +274,15 @@ export function useLiveDashboard({
   const postingRef = useRef(posting);
   const applicationIdRef = useRef(applicationId);
   const profileRef = useRef(profile);
+  const interviewTypeRef = useRef(interviewType);
+  const draftModeRef = useRef(draftMode);
   const onPrefetchedAnswerRef = useRef(onPrefetchedAnswer);
+  useEffect(() => {
+    interviewTypeRef.current = interviewType;
+  }, [interviewType]);
+  useEffect(() => {
+    draftModeRef.current = draftMode;
+  }, [draftMode]);
   useEffect(() => {
     questionsRef.current = questions;
   }, [questions]);
@@ -266,10 +326,14 @@ export function useLiveDashboard({
       const result = await fetchNextQuestion({
         posting: postingPayloadFor(postingRef.current),
         asked: askedList,
-        // AC-I3.21: `interviewType` is deliberately omitted — live mode has
-        // no interview-type picker, and silently inheriting practice
-        // mode's stored setting would make live output depend on a control
-        // the user can't see here. The route defaults to "general".
+        // AC-I3.21/AC-J2.8: `undefined` in live mode, which is exactly what
+        // this call sent before the input existed — live has no
+        // interview-type picker, and silently inheriting practice mode's
+        // stored setting would make live output depend on a control the
+        // user can't see there, so the route's "general" default applies.
+        // Practice mode passes its selected format, which is the whole
+        // point of it having a picker.
+        interviewType: interviewTypeRef.current,
       });
       question = typeof result?.question === "string" ? result.question.trim() : "";
       type = result?.type || "general";
@@ -286,23 +350,44 @@ export function useLiveDashboard({
     let outcome = "error";
     let points = [];
     let type = "general";
+    let grounding = null;
     let error = "";
+    // AC-J2.10: read ONCE, before the await, and reported back to the
+    // caller alongside the draft. These three are what the draft is actually
+    // grounded in, and the pre-draft is deliberately NOT re-fired when they
+    // change (predraftKey is the predicted question text alone — see
+    // predraftKeyFor), so by the time this resolves the CURRENT values may
+    // be different ones. A caller that cached this draft against whatever
+    // was current at callback time would be labelling it with grounding it
+    // was never built from, and would then serve it as valid — the exact
+    // staleness needsRedraft (sampleAnswerState.js) exists to catch, defeated
+    // by a mislabelled cache entry.
+    const draftedFrom = {
+      profile: profileRef.current,
+      interviewType: interviewTypeRef.current,
+      applicationId: applicationIdRef.current,
+    };
     try {
       // AC-I4.25: same draftAnswer client and same applicationId grounding
-      // a real drafted answer uses. No `mode` — live mode's default
-      // ("points") glanceable bullets, exactly what CopilotClient's own
-      // runDraft requests. `context` is intentionally empty: this hook is
+      // a real drafted answer uses. `mode` is `undefined` in live mode,
+      // which JSON.stringify omits entirely — so the route sees the same
+      // body it saw before this input existed and applies its "points"
+      // default (glanceable bullets, exactly what CopilotClient's own
+      // runDraft requests). `context` is intentionally empty: this hook is
       // never given the live transcript (see the module doc above), the
       // same way useSampleAnswer's practice-mode pre-draft also drafts
       // with no context.
       const draft = await draftAnswer({
         question,
         context: "",
-        profile: profileRef.current,
-        applicationId: applicationIdRef.current,
+        profile: draftedFrom.profile,
+        interviewType: draftedFrom.interviewType,
+        applicationId: draftedFrom.applicationId,
+        mode: draftModeRef.current,
       });
       points = Array.isArray(draft.points) ? draft.points : [];
       type = draft.type || "general";
+      grounding = draft.grounding || null;
       outcome = "done";
     } catch (err) {
       error = err?.message || "Could not draft the predicted answer.";
@@ -328,7 +413,11 @@ export function useLiveDashboard({
     // which breaks that promise just as surely as a rethrow would.
     if (outcome === "done") {
       try {
-        onPrefetchedAnswerRef.current?.(question, { points, type });
+        // AC-J2.10: `draftedFrom` travels with the draft so the caller can
+        // cache it against what it was ACTUALLY built from. Live mode's
+        // onPrefetchedAnswer destructures only `{ points, type }` and is
+        // unaffected by the extra fields.
+        onPrefetchedAnswerRef.current?.(question, { points, type, grounding, ...draftedFrom });
       } catch {
         // Deliberately swallowed — see comment above. Nothing to recover:
         // the draft itself already reached predraftResult/predraftState;
@@ -345,7 +434,7 @@ export function useLiveDashboard({
   // draft flipping loading -> done, see CopilotClient's runDraft), but the
   // signature STRING only changes when the asked text or the posting
   // actually changes — which is the effect's actual trigger (AC-I3.18).
-  const signature = predictionSignatureFor(questions, posting);
+  const signature = predictionSignatureFor(questions, posting, interviewType);
 
   // Gated on `active`: a posting selected (or questions detected, though
   // that can't happen before a session starts) while `active` is false must

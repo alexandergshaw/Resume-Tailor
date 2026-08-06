@@ -2,7 +2,13 @@
 
 import { useCallback, useRef, useState } from "react";
 import { draftAnswer } from "@/lib/copilot/answerClient";
-import { emptySampleAnswer, activeSampleAnswer, needsRedraft } from "@/lib/copilot/sampleAnswerState";
+import {
+  emptySampleAnswer,
+  activeSampleAnswer,
+  needsRedraft,
+  cachedSampleAnswerFor,
+} from "@/lib/copilot/sampleAnswerState";
+import { normalizeQuestion } from "@/lib/copilot/questions";
 
 // G1: thin React wrapper around lib/copilot/sampleAnswerState.js's pure
 // derivation. This hook owns exactly the three things React-specific
@@ -33,6 +39,14 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
   // while it's still the newest one requested — a slow draft for a question
   // the user has since moved past must repaint nothing (AC-G1-7).
   const genRef = useRef(0);
+  // AC-J2.8: practice mode's counterpart to live mode's answerCacheRef
+  // (CopilotClient.js) — the entire cost justification for the dashboard's
+  // "Pre-draft predicted answer" switch. Keyed by normalizeQuestion, the
+  // same normalization live mode's cache uses, so a predicted question that
+  // actually gets asked (even with different case/whitespace) still hits.
+  // A plain ref rather than state: writing to it must never itself trigger
+  // a render or touch `state` — see `prime` below.
+  const cacheRef = useRef(new Map());
 
   // Only a stored draft built for the EXACT question on screen right now
   // ever applies (AC-G1-5) — no effect resets this on question change, the
@@ -68,17 +82,31 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
     draftAnswer({ question: q, context: "", profile: p, interviewType: it, applicationId: appId, mode: "answer" })
       .then(({ points, grounding }) => {
         if (genRef.current !== gen) return;
+        const cleanPoints = Array.isArray(points) ? points : [];
+        const cleanGrounding = grounding || null;
         setState((prev) => ({
           ...prev,
           question: q,
           status: "done",
-          points: Array.isArray(points) ? points : [],
-          grounding: grounding || null,
+          points: cleanPoints,
+          grounding: cleanGrounding,
           error: "",
           profile: p,
           interviewType: it,
           applicationId: appId,
         }));
+        // AC-J2.8: a real (user-requested) draft is cached the exact same
+        // way a dashboard pre-draft is (see `prime` below) — same key, same
+        // entry shape — so a draft survives moving to a different question
+        // and back without a second request, not just a prediction that
+        // happened to land before the reveal.
+        cacheRef.current.set(normalizeQuestion(q), {
+          points: cleanPoints,
+          grounding: cleanGrounding,
+          profile: p,
+          interviewType: it,
+          applicationId: appId,
+        });
       })
       .catch((err) => {
         if (genRef.current !== gen) return;
@@ -103,6 +131,31 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
   const reveal = useCallback(
     (force) => {
       if (needsRedraft(active, profile, interviewType, applicationId, force)) {
+        // AC-J2.8: `force` (Retry/Regenerate) always bypasses the cache and
+        // redrafts — needsRedraft already returns true unconditionally for
+        // force, so this branch only reaches the cache lookup when force is
+        // false, which is exactly what "always bypass" requires. A correct
+        // prediction must be FREE on reveal, not merely fast: before paying
+        // for a fresh request, check whether the dashboard already
+        // pre-drafted this exact question. cachedSampleAnswerFor applies the
+        // same profile/interviewType/applicationId comparison needsRedraft's
+        // own "done" branch does, just against a cache entry instead of the
+        // draft already on screen, so a pre-draft made before the user
+        // edited their prep context (or changed posting/interview type) is
+        // never served as if it still applied.
+        if (!force) {
+          const cached = cachedSampleAnswerFor(
+            cacheRef.current.get(normalizeQuestion(question)),
+            question,
+            profile,
+            interviewType,
+            applicationId,
+          );
+          if (cached) {
+            setState(cached);
+            return;
+          }
+        }
         request(question, profile, interviewType, applicationId);
         return;
       }
@@ -110,6 +163,23 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
     },
     [active, profile, interviewType, applicationId, question, request],
   );
+
+  // AC-J2.8: primes the cache with a dashboard pre-draft for a question the
+  // user has NOT asked to see yet — called from PracticeClient's
+  // onPrefetchedAnswer. Deliberately never touches `state`: a pre-drafted
+  // answer for a question that isn't on screen must not put itself on
+  // screen, and must not disturb a draft already on screen for a DIFFERENT
+  // question (the current `state` may belong to an earlier question the
+  // user is still looking at while this question is only predicted).
+  const prime = useCallback((q, { points, grounding, profile: p, interviewType: it, applicationId: appId } = {}) => {
+    cacheRef.current.set(normalizeQuestion(q), {
+      points: Array.isArray(points) ? points : [],
+      grounding: grounding || null,
+      profile: p,
+      interviewType: it,
+      applicationId: appId,
+    });
+  }, []);
 
   // "Show sample answer" / "Hide sample answer". Hiding never fetches — it
   // only flips visibility, leaving whatever is cached (points, status,
@@ -134,5 +204,6 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
     toggle,
     retry,
     regenerate,
+    prime,
   };
 }

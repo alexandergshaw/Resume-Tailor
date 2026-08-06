@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -10,9 +10,8 @@ import Switch from "@mui/material/Switch";
 import Typography from "@mui/material/Typography";
 import { PracticeSession } from "@/lib/copilot/practiceSession";
 import { fmtClock } from "@/lib/copilot/clock";
-import { fetchNextQuestion } from "@/lib/copilot/questionClient";
-import { normalizeQuestion } from "@/lib/copilot/questions";
 import { interviewTypeLabel } from "@/lib/copilot/interviewTypes";
+import { buildPrivacyNotice } from "@/lib/copilot/practiceNotices";
 import { useEngine } from "@/app/settings/engine";
 import TranscriptView from "../TranscriptView";
 import StatusPill from "../StatusPill";
@@ -20,61 +19,21 @@ import CameraPreview from "./CameraPreview";
 import PostingPicker from "../PostingPicker";
 import SubmittedDocs from "../SubmittedDocs";
 import { useApplicationDocs } from "../useApplicationDocs";
+import MicPicker from "../MicPicker";
+import CopilotDashboard, { PRACTICE_COPY } from "../dashboard/CopilotDashboard";
+import { useCopilotDashboard } from "../useCopilotDashboard";
 import InterviewTypePicker from "./InterviewTypePicker";
 import QuestionCard from "./QuestionCard";
 import AnswerReview from "./AnswerReview";
 import AnswerFeedback from "./AnswerFeedback";
 import PracticeHistory from "./PracticeHistory";
 import { usePracticeAnswer } from "./usePracticeAnswer";
+import { usePracticeQuestions } from "./usePracticeQuestions";
 import { useSampleAnswer } from "./useSampleAnswer";
 import { useInterviewType } from "./useInterviewType";
+import { useSaveRecordings, readSaveEnabled } from "./useSaveRecordings";
 import { usePrepContext } from "../usePrepContext";
 import PrepContext from "../PrepContext";
-
-// D1: whether recorded answers are saved to the user's account, persisted in
-// localStorage under a new key alongside the existing practice preferences
-// (usePrepContext.js's PREP_STORAGE_KEY, app/settings/engine.js's
-// ENGINE_STORAGE_KEY). Built as a real external store — same shape as
-// engine.js's useEngine — rather than a mount effect that calls setState:
-// getServerSaveEnabledSnapshot keeps the server render and the client's
-// first hydration pass identical (no flash/mismatch), and there is no
-// separate effect synchronously writing state afterward for the "set state
-// in an effect" lint rule to flag. Defaults ON — see AC-D1-4.
-const SAVE_RECORDINGS_STORAGE_KEY = "copilot-practice-save-recordings";
-const DEFAULT_SAVE_ENABLED = true;
-const saveEnabledListeners = new Set();
-
-function readSaveEnabled() {
-  if (typeof window === "undefined") return DEFAULT_SAVE_ENABLED;
-  try {
-    const stored = window.localStorage.getItem(SAVE_RECORDINGS_STORAGE_KEY);
-    if (stored === "on") return true;
-    if (stored === "off") return false;
-    return DEFAULT_SAVE_ENABLED;
-  } catch {
-    return DEFAULT_SAVE_ENABLED;
-  }
-}
-
-function getServerSaveEnabledSnapshot() {
-  return DEFAULT_SAVE_ENABLED;
-}
-
-function subscribeSaveEnabled(callback) {
-  saveEnabledListeners.add(callback);
-  return () => saveEnabledListeners.delete(callback);
-}
-
-function writeSaveEnabled(on) {
-  try {
-    window.localStorage.setItem(SAVE_RECORDINGS_STORAGE_KEY, on ? "on" : "off");
-  } catch {
-    // Quota exceeded / private browsing: the choice still applies for the
-    // rest of this tab via the listener notification below, it just won't
-    // persist across a reload.
-  }
-  saveEnabledListeners.forEach((cb) => cb());
-}
 
 // Practice mode's capture layer: camera + mic, transcribed as "you", plus a
 // posting picker, a generated interview question to practice against, (C3)
@@ -83,7 +42,7 @@ function writeSaveEnabled(on) {
 // sampler, drain, generation guard, replay URL lifecycle, metrics/critique
 // state) lives in usePracticeAnswer (AC-C4-8) — this component owns the
 // capture session, the posting picker, the question, and the layout.
-export default function PracticeClient({ sttProviderName } = {}) {
+export default function PracticeClient({ sttProviderName, micDeviceId, onMicDeviceChange } = {}) {
   const [status, setStatus] = useState("idle"); // idle | connecting | live | error
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
@@ -97,18 +56,33 @@ export default function PracticeClient({ sttProviderName } = {}) {
   const [hasVideo, setHasVideo] = useState(false);
 
   const [posting, setPosting] = useState(null);
-  const [currentQuestion, setCurrentQuestion] = useState(null); // { question, type }
-  const [asked, setAsked] = useState([]);
-  const [questionLoading, setQuestionLoading] = useState(false);
-  const [questionError, setQuestionError] = useState("");
-  const [exhausted, setExhausted] = useState(false);
 
   // G2: which interview format drives question generation, the sample
   // answer, and the critique's rubric — a real external store (same shape
-  // as SAVE_RECORDINGS_STORAGE_KEY above and engine.js's useEngine), not
+  // as useSaveRecordings.js's own store and engine.js's useEngine), not
   // component state, so it persists across visits the same way the save
   // toggle and the engine choice already do.
   const { interviewType, setInterviewType } = useInterviewType();
+
+  // BUG-J4/AC-J3: "which question are we on" — the whole question state
+  // machine, extracted into usePracticeQuestions.js (see its own module doc
+  // for what moved and why) purely to keep this component under the gate.
+  const {
+    currentQuestion,
+    currentQuestionText,
+    asked,
+    questionLoading,
+    questionError,
+    exhausted,
+    currentQuestionRef,
+    requestQuestion,
+    advanceAsked,
+    retryFetch,
+    resetQuestions,
+    invalidateInFlight,
+    clearForNewSession,
+    invalidateAndClearLoading,
+  } = usePracticeQuestions({ posting, interviewType });
 
   // Same shared prep-context hook the live session uses (AC-C4-7) — grounds
   // the critique in the candidate's real background. Practice mode has no
@@ -123,23 +97,24 @@ export default function PracticeClient({ sttProviderName } = {}) {
   const { engine } = useEngine();
   const isEmbedded = engine === "embedded";
 
-  // D1: "Save recordings to my account" — defaults ON. This value drives the
-  // switch's checked state and the privacy notice below, both of which
-  // should reflect whatever is true RIGHT NOW. The actual upload decision is
-  // separate: `readSaveEnabled` (the plain function, not this hook value) is
-  // handed to onDoneAnswer/usePracticeAnswer and re-read again immediately
-  // before any upload happens, seconds later — see BUG-2 in usePracticeAnswer's
-  // persistAnswer. That live re-read, not this render-time snapshot, is what
-  // makes toggling mid-critique actually take effect.
-  const saveEnabled = useSyncExternalStore(
-    subscribeSaveEnabled,
-    readSaveEnabled,
-    getServerSaveEnabledSnapshot,
-  );
+  // D1: "Save recordings to my account" — defaults ON. `saveEnabled` drives
+  // the switch's checked state and the privacy notice below, both of which
+  // should reflect whatever is true RIGHT NOW. See useSaveRecordings.js for
+  // why the actual upload decision (`readSaveEnabled`, imported above as a
+  // plain function, not this hook's value) re-reads storage instead — that
+  // upload happens seconds later, after the critique settles (BUG-2 in
+  // usePracticeAnswer's persistAnswer).
+  const { saveEnabled, setSaveEnabled } = useSaveRecordings();
+  const onToggleSaveEnabled = useCallback((e) => setSaveEnabled(e.target.checked), [setSaveEnabled]);
 
-  const onToggleSaveEnabled = useCallback((e) => {
-    writeSaveEnabled(e.target.checked);
-  }, []);
+  // AC-J2.7: "Pre-draft predicted answer" — plain component state, not
+  // persisted, the same way live mode's Auto-draft switch (CopilotClient.js)
+  // is plain state rather than a stored preference. It exists so the user
+  // can turn off the extra model call a pre-draft costs per prediction
+  // (AC-I4.26's cost concern, restated here since practice mode has no
+  // other auto-drafting control to piggyback on); its value is what's
+  // passed to useCopilotDashboard as `autoDraft` below.
+  const [preDraftPredicted, setPreDraftPredicted] = useState(true);
 
   const {
     answering,
@@ -195,21 +170,10 @@ export default function PracticeClient({ sttProviderName } = {}) {
 
   const sessionRef = useRef(null);
   const idRef = useRef(0);
+  // BUG-J4: stays here — onDoneAnswer below reads it for the critique
+  // payload, not exclusively a question-flow concern (askedRef/
+  // currentQuestionRef/interviewTypeRef/reqGenRef all moved into that hook).
   const postingRef = useRef(null);
-  const askedRef = useRef([]);
-  const currentQuestionRef = useRef(null);
-  // G2: mirrors `interviewType` for requestQuestion below, the same reason
-  // postingRef/askedRef/currentQuestionRef exist — requestQuestion is a
-  // stable useCallback whose async body must see the LATEST selection, not
-  // whatever was current when the callback identity was created.
-  const interviewTypeRef = useRef(interviewType);
-  // Monotonic generation token: bumped whenever an in-flight question
-  // request should be discarded (posting change, Stop, or a fresh Start).
-  // requestQuestion captures the generation before its await and refuses to
-  // write state if a newer generation has since started — otherwise a slow
-  // response for the OLD posting/session can land after the user has already
-  // moved on and repaint stale data over their new selection.
-  const reqGenRef = useRef(0);
 
   const running = status === "live" || status === "connecting";
   const controlsEnabled = status === "live";
@@ -223,93 +187,132 @@ export default function PracticeClient({ sttProviderName } = {}) {
   useEffect(() => {
     postingRef.current = posting;
   }, [posting]);
-  useEffect(() => {
-    askedRef.current = asked;
-  }, [asked]);
-  useEffect(() => {
-    currentQuestionRef.current = currentQuestion;
-  }, [currentQuestion]);
-  useEffect(() => {
-    interviewTypeRef.current = interviewType;
-  }, [interviewType]);
 
-  // Requests the next practice question for the currently selected posting,
-  // deduping against the given asked list. Its own failures are caught here
-  // and surfaced via questionError — never thrown — so a question request
-  // never tears down the capture session. Every write after the await is
-  // gated on the generation token still being current: a posting change, a
-  // Stop, or a fresh Start can all invalidate this call while it's in
-  // flight, and a stale response must write nothing when that happens.
-  const requestQuestion = useCallback(async (askedList) => {
-    const gen = (reqGenRef.current += 1);
-    setQuestionLoading(true);
-    setQuestionError("");
-    const p = postingRef.current;
-    try {
-      const result = await fetchNextQuestion({
-        posting: p ? { title: p.title, company: p.company, description: p.description } : null,
-        asked: askedList,
-        interviewType: interviewTypeRef.current,
-      });
-      if (reqGenRef.current !== gen) return;
-      setCurrentQuestion({ question: result.question, type: result.type });
-      setExhausted(!!result.exhausted);
-    } catch (err) {
-      if (reqGenRef.current !== gen) return;
-      setQuestionError(err?.message || "Could not get the next question.");
-    } finally {
-      if (reqGenRef.current === gen) setQuestionLoading(false);
-    }
-  }, []);
+  // AC-J2.6: primes useSampleAnswer's own cache (AC-J2.8) with a dashboard
+  // pre-draft — the practice-mode counterpart of live mode's
+  // onPrefetchedAnswer (CopilotClient.js), which writes into its
+  // answerCacheRef the same way. `payload` is passed straight through: it
+  // already carries the profile/interviewType/applicationId the draft was
+  // ACTUALLY built from (see useCopilotDashboard.js's runPredraft), and
+  // re-deriving those from current render state instead would mislabel a
+  // draft whose inputs changed while it was in flight. Deliberately depends
+  // on `sampleAnswer.prime` (stable, [] deps inside useSampleAnswer) rather
+  // than the whole `sampleAnswer` object, which is a fresh literal every
+  // render — depending on it would defeat the whole point of this being a
+  // useCallback, hence the exhaustive-deps override below.
+  const onPrefetchedAnswer = useCallback(
+    (question, payload) => sampleAnswer.prime(question, payload),
+    [sampleAnswer.prime], // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
-  // "Next question" pushes the current question onto the asked list (so the
-  // route dedupes against it) and requests the next one. Skips the push when
-  // that question is already in the list — a prior failed request leaves
-  // `currentQuestion` in place, and pressing Next again must not record it
-  // twice. The question changing invalidates whatever answer (in progress,
-  // settling, or already reviewed) belonged to the previous one.
+  // J2.5: the ASKED list plus the current question, oldest first, in the
+  // `{ question }` shape askedQuestionsFor (useCopilotDashboard.js) expects
+  // — this is what the prediction predicts FROM. Deliberately a DIFFERENT
+  // array from `dashboardQuestions` below, which drives what the
+  // dashboard's "Current question"/"Current answer" panels actually
+  // display (J2.4): feeding the predictor a list that includes the
+  // not-yet-asked current question is correct (an interviewer choosing the
+  // next question already knows what was just asked), but the display
+  // panels must show ONLY that current question, never the whole history.
+  // Memoized on `asked`/`currentQuestionText` alone: useCopilotDashboard
+  // keys its own effect on the derived signature STRING, not on this
+  // array's reference, so a fresh array every render causes no bug — but it
+  // did re-fire that hook's questionsRef sync effect on every render for
+  // nothing, since a new array is a new reference every time.
+  const dashboardAskedQuestions = useMemo(() => {
+    return currentQuestionText
+      ? [...asked.map((q) => ({ question: q })), { question: currentQuestionText }]
+      : asked.map((q) => ({ question: q }));
+  }, [asked, currentQuestionText]);
+
+  // J2.4: the one-entry array CopilotDashboard's "Current question"/"Current
+  // answer" panels read (see CopilotDashboard.js's latestQuestionEntry).
+  // Live mode has a real running array of detected questions; practice mode
+  // synthesizes this single-entry stand-in from `currentQuestion` and the
+  // SAME `sampleAnswer` instance QuestionCard already renders below, so
+  // revealing the sample answer in either place reveals it in both (J2.3) —
+  // two independent visibility flags for one draft would let the card and
+  // the dashboard panel disagree about whether the answer is showing.
+  const dashboardQuestions = useMemo(() => {
+    if (!currentQuestionText) return [];
+    return [
+      {
+        id: currentQuestionText,
+        question: currentQuestionText,
+        status: sampleAnswer.status,
+        points: sampleAnswer.points,
+        error: sampleAnswer.error,
+      },
+    ];
+  }, [currentQuestionText, sampleAnswer.status, sampleAnswer.points, sampleAnswer.error]);
+
+  // AC-J2: practice mode's own instance of the SAME dashboard hook live mode
+  // uses (useCopilotDashboard.js, formerly useLiveDashboard.js) — the whole
+  // point of a practice dashboard is rehearsing against the instrument the
+  // candidate will be reading mid-interview, so this must not become a
+  // second, diverging implementation. `draftMode: "answer"` asks for the
+  // same response shape useSampleAnswer already requests, which is what
+  // makes priming its cache with a pre-draft sound (see that hook's `prime`
+  // and AC-J2.9 in useCopilotDashboard.js). `active: running` mirrors
+  // CopilotClient's own `active: live` — a posting selected or a question
+  // on screen before Start practice is pressed must not spend a model call.
+  const {
+    pace,
+    predictedQuestion,
+    predictionStatus,
+    predictionError,
+    retryPrediction,
+    retryPredraft,
+    predictedPoints,
+    predictedAnswerStatus,
+    predictedAnswerError,
+    recordSpeechSample,
+    // AC-J2.10: usePracticeAnswer above already returns its own
+    // `resetForSession` (destructured near the top of this component) — the
+    // dashboard hook's own reset is renamed at this destructuring site so
+    // the two can never shadow one another, and start() below calls BOTH.
+    resetForSession: resetDashboardForSession,
+  } = useCopilotDashboard({
+    questions: dashboardAskedQuestions,
+    posting,
+    applicationId: posting?.id || null,
+    profile,
+    interviewType,
+    draftMode: "answer",
+    autoDraft: preDraftPredicted,
+    active: running,
+    onPrefetchedAnswer,
+  });
+
+  // "Next question": advanceAsked (usePracticeQuestions) does the
+  // question-side half — see its own doc for the dedupe rule. Order matters
+  // here: abandonInProgressAnswer/resetAnswerState run BETWEEN computing
+  // the next asked list and requesting it, mirroring the inline version
+  // exactly (the question changing invalidates the previous answer).
   const onNextQuestion = useCallback(() => {
-    const prevQuestion = currentQuestionRef.current?.question;
-    const alreadyAsked =
-      !!prevQuestion &&
-      askedRef.current.some((q) => normalizeQuestion(q) === normalizeQuestion(prevQuestion));
-    const next = prevQuestion && !alreadyAsked ? [...askedRef.current, prevQuestion] : askedRef.current;
-    setAsked(next);
+    const next = advanceAsked();
     abandonInProgressAnswer();
     resetAnswerState();
     requestQuestion(next);
-  }, [requestQuestion, resetAnswerState, abandonInProgressAnswer]);
+  }, [advanceAsked, abandonInProgressAnswer, resetAnswerState, requestQuestion]);
 
   const onRetryQuestion = useCallback(() => {
     abandonInProgressAnswer();
     resetAnswerState();
-    requestQuestion(askedRef.current);
-  }, [requestQuestion, abandonInProgressAnswer, resetAnswerState]);
+    retryFetch();
+  }, [abandonInProgressAnswer, resetAnswerState, retryFetch]);
 
   // The picker can be changed at any time, including while live. Changing
-  // the posting clears the asked-question list and the current question —
-  // the asked list is per-posting, not per-session. Bumping the generation
-  // token here discards any question request already in flight for the
-  // posting being left behind.
+  // the posting clears the question flow via resetQuestions (see its own
+  // doc) and the answer flow — the question just changed out from under it.
   const onPostingChange = useCallback(
     (newPosting) => {
-      reqGenRef.current += 1;
+      resetQuestions();
       setPosting(newPosting);
-      setAsked([]);
-      setCurrentQuestion(null);
-      setExhausted(false);
-      setQuestionError("");
-      // A request left in flight for the old posting is now gen-gated and will
-      // never get to clear this itself — clear it here so the card doesn't
-      // sit on a spinner for a request that's been discarded.
-      setQuestionLoading(false);
-      // The question just changed out from under whatever answer (in
-      // progress, settling, or already reviewed) was on screen — it
-      // belongs to a question that's gone now.
       abandonInProgressAnswer();
       resetAnswerState();
     },
-    [abandonInProgressAnswer, resetAnswerState],
+    [resetQuestions, abandonInProgressAnswer, resetAnswerState],
   );
 
   // G2/AC-G2-C-3: changing the interview type reshapes questions, the
@@ -321,24 +324,18 @@ export default function PracticeClient({ sttProviderName } = {}) {
   const onInterviewTypeChange = useCallback(
     (nextType) => {
       setInterviewType(nextType);
-      reqGenRef.current += 1;
-      setAsked([]);
-      setCurrentQuestion(null);
-      setExhausted(false);
-      setQuestionError("");
-      setQuestionLoading(false);
+      resetQuestions();
       abandonInProgressAnswer();
       resetAnswerState();
     },
-    [setInterviewType, abandonInProgressAnswer, resetAnswerState],
+    [setInterviewType, resetQuestions, abandonInProgressAnswer, resetAnswerState],
   );
 
   const stop = useCallback(async () => {
     // Invalidate any question request in flight — its response belongs to a
     // session that is being torn down — and stop the card from sitting on a
     // spinner for a request that will never get to write its result.
-    reqGenRef.current += 1;
-    setQuestionLoading(false);
+    invalidateAndClearLoading();
     // An answer in progress or still settling must be finalized cleanly,
     // not abandoned mid-recording with a dangling interval/recorder — see
     // AC-C3-4 and BUG-4.
@@ -352,7 +349,7 @@ export default function PracticeClient({ sttProviderName } = {}) {
     setHasVideo(false);
     setStatus("idle");
     resetAnswerState();
-  }, [abandonInProgressAnswer, resetAnswerState]);
+  }, [invalidateAndClearLoading, abandonInProgressAnswer, resetAnswerState]);
 
   // Unmounting (e.g. switching back to live mode) must not leave the camera
   // or mic running — stop whatever session is active on the way out. The
@@ -372,7 +369,7 @@ export default function PracticeClient({ sttProviderName } = {}) {
     // that just happened, or a still-resolving request from before) before
     // any of the async work below runs — a response for the OLD session
     // landing after this point must not overwrite what's about to start.
-    reqGenRef.current += 1;
+    invalidateInFlight();
     // Idempotent: a stray session (e.g. one that's mid-teardown from an
     // unsolicited close) must never be orphaned by pressing Start again.
     if (sessionRef.current) {
@@ -390,14 +387,18 @@ export default function PracticeClient({ sttProviderName } = {}) {
     setHasVideo(false);
     // A fresh start resets the asked list — it's scoped to a session, and a
     // new session should be able to hear its opening question again.
-    setAsked([]);
-    setCurrentQuestion(null);
-    setExhausted(false);
-    setQuestionError("");
+    clearForNewSession();
     // A fresh start also leaves no answer, recorder, or sampler behind from
     // whatever the previous session was doing, and resets the audio-time
     // clock to 0 — it's relative to THIS session's Deepgram socket.
     resetForSession();
+    // AC-J2.10: the dashboard hook's own reset — clears its pace samples and
+    // any prediction/pre-draft left over from a previous session the same
+    // way resetForSession above clears the answer flow's own state. Without
+    // this, a session restarted against the same posting with no questions
+    // asked yet could briefly keep showing the PREVIOUS session's stale
+    // prediction (see useCopilotDashboard.js's own resetForSession doc).
+    resetDashboardForSession();
     setStatus("connecting");
     // Fire-and-forget: requestQuestion catches its own errors into
     // questionError, so a slow or failed question request never blocks or
@@ -406,6 +407,7 @@ export default function PracticeClient({ sttProviderName } = {}) {
     try {
       const session = new PracticeSession({
         withVideo: true,
+        micDeviceId,
         onStatus: (s) => {
           setStatus(s);
           if (s === "live") {
@@ -438,6 +440,14 @@ export default function PracticeClient({ sttProviderName } = {}) {
             return;
           }
           setInterim("");
+          // AC-J2.9: feed the dashboard's pace sampler from FINAL frames
+          // only — appendSpeechSample (via recordSpeechSample) already
+          // drops frames whose start/duration aren't usable numbers, so
+          // this passes them through as-is rather than pre-filtering here,
+          // and never substitutes a wall-clock value for a missing one
+          // (same discipline CopilotClient's own onTranscript handler
+          // follows for live mode).
+          recordSpeechSample({ text: transcript, start: audioStart, duration: audioDuration });
           setFinals((prev) => [
             ...prev,
             { id: (idRef.current += 1), speaker: "you", text: transcript, at: Date.now() },
@@ -462,7 +472,19 @@ export default function PracticeClient({ sttProviderName } = {}) {
       setStatus("error");
       await stop();
     }
-  }, [stop, requestQuestion, abandonInProgressAnswer, resetAnswerState, resetForSession, recordTranscriptEvent]);
+  }, [
+    stop,
+    requestQuestion,
+    invalidateInFlight,
+    clearForNewSession,
+    abandonInProgressAnswer,
+    resetAnswerState,
+    resetForSession,
+    resetDashboardForSession,
+    recordTranscriptEvent,
+    recordSpeechSample,
+    micDeviceId,
+  ]);
 
   // Starts recording the current question's answer. A no-op unless the
   // session is actually live with a question on screen — the "Start
@@ -476,7 +498,7 @@ export default function PracticeClient({ sttProviderName } = {}) {
     // toggle-driven markMicMuted() would never fire during an answer where
     // it's never re-toggled (BUG-15).
     startAnswerFlow(liveStream, micMuted);
-  }, [status, startAnswerFlow, micMuted]);
+  }, [status, startAnswerFlow, micMuted, currentQuestionRef]);
 
   // "Done" hands the hook everything it needs to both compute C3's metrics
   // AND kick off C4's critique: the question/type being answered, the
@@ -511,7 +533,7 @@ export default function PracticeClient({ sttProviderName } = {}) {
       // state, so no dependency on `saveEnabled` is needed here either.
       isSaveEnabled: readSaveEnabled,
     });
-  }, [doneAnswerFlow, profile, sendFrames, isEmbedded, interviewType]);
+  }, [doneAnswerFlow, profile, sendFrames, isEmbedded, interviewType, currentQuestionRef]);
 
   // "Try again" re-answers the SAME question: clears the same per-answer
   // state Next question clears (transcript, metrics, frames, replay clip,
@@ -559,15 +581,6 @@ export default function PracticeClient({ sttProviderName } = {}) {
   // answer transcript, the posting details, and the prep-context profile to
   // Google, regardless of the frames switch; that switch only ever controls
   // whether still frames are ALSO sent (AC-C4-5) — unchanged by D1.
-  //
-  // D1 made the old blanket "your video stays in your browser and is never
-  // uploaded" claim false: the save switch below controls a SEPARATE
-  // destination (this user's own private Supabase storage) for the full
-  // recorded clip, independent of both the engine and the frames opt-in —
-  // saving happens (or doesn't) the same way on every engine. `videoNotice`
-  // and `engineNotice` are deliberately built from independent state and
-  // never reference each other's wording, so neither switch's sentence can
-  // be read as implying anything about the other (AC-D1-4).
   const framesWillUpload = sendFrames && !isEmbedded;
   // AC-H5/AC-H6.23/BUG-H5: the critique route now ALSO fetches and sends the
   // submitted resume/cover letter to Gemini, grounding the critique the same
@@ -579,70 +592,40 @@ export default function PracticeClient({ sttProviderName } = {}) {
   // fetchApplicationDocs return empty strings, in which case both routes'
   // `if (resume || coverLetter)` guard (app/api/copilot/critique/route.js,
   // app/api/copilot/answer/route.js) skips the document section entirely —
-  // nothing is sent. `hasPosting` alone used to gate both clauses below,
-  // which is exactly the gap BUG-H5 was filed for: it named Gemini as a
-  // recipient of documents that might not exist. `submittedDocs` (from
-  // useApplicationDocs, the same hook backing the "Submitted for this
-  // application" panel) now drives both clauses instead. While its load is
-  // still unsettled (`loading`/`idle`) or has failed (`error`), whether a
-  // document exists is genuinely unknown, so both clauses hedge with "may"
-  // — staying silent here, while documents might be about to be sent, would
-  // be the worse failure. Once the load settles (`status === "done"`), the
-  // clauses assert plainly and name only the document(s) actually found —
-  // resume only, cover letter only, or both, never both when only one
-  // exists — and the critique clause falls silent (rather than repeating
-  // BUG-H5's old blanket claim) when neither was found.
+  // nothing is sent. `submittedDocs` (from useApplicationDocs, the same hook
+  // backing the "Submitted for this application" panel) drives both
+  // clauses; while its load is still unsettled (`loading`/`idle`) or has
+  // failed (`error`), whether a document exists is genuinely unknown.
   const hasPosting = !!posting;
   const docsSettled = submittedDocs.status === "done";
   const hasSubmittedResume = !!submittedDocs.resume;
   const hasSubmittedCoverLetter = !!submittedDocs.coverLetter;
-  const submittedDocsLabel =
-    hasSubmittedResume && hasSubmittedCoverLetter
-      ? "resume and cover letter"
-      : hasSubmittedResume
-        ? "resume"
-        : "cover letter";
-  const submittedDocsToGeminiClause = !hasPosting
-    ? ""
-    : !docsSettled
-      ? " The critique may also send any resume or cover letter you submitted for the selected posting to Gemini."
-      : hasSubmittedResume || hasSubmittedCoverLetter
-        ? ` The critique also sends the ${submittedDocsLabel} you submitted for the selected posting to Gemini.`
-        : "";
-  // G1: each branch also names the sample-answer draft's destination — the
-  // same "is this request grounded by an AI provider" fact the critique
-  // sentence above it already states, so this never drifts from it
-  // (AC-G1-9). Unlike the critique clause above, this sentence is never
-  // empty — revealing a sample answer always sends the question and prep
-  // context to Gemini regardless of documents (see useSampleAnswer) — so
-  // only the document mention within it is conditional, following the same
-  // hedge/assert/omit split as submittedDocsToGeminiClause above.
-  const sampleAnswerClause = !hasPosting
-    ? "Revealing a sample answer sends that question and your prep context to Gemini as well."
-    : !docsSettled
-      ? "Revealing a sample answer sends that question and your prep context to Gemini as well, and may also send any resume or cover letter you submitted for the selected posting."
-      : hasSubmittedResume || hasSubmittedCoverLetter
-        ? `Revealing a sample answer sends that question, your prep context, and the ${submittedDocsLabel} you submitted for the selected posting to Gemini as well.`
-        : "Revealing a sample answer sends that question and your prep context to Gemini as well.";
-  const engineNotice = isEmbedded
-    ? "The critique runs on this server with no AI provider — your answer, the posting, and your prep context are never sent to Google. Sample answers are drafted on this server too."
-    : framesWillUpload
-      ? `Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback, along with up to three still frames from each answer.${submittedDocsToGeminiClause} ${sampleAnswerClause}`
-      : `Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback.${submittedDocsToGeminiClause} ${sampleAnswerClause}`;
-  const videoNotice = saveEnabled
-    ? "Your answer video is uploaded to your own Supabase storage, private to your account, and listed in your practice history until you delete it."
-    : "Your video clip stays in your browser and is dropped when the session ends.";
-  // F2: `sttProviderName` is passed down from CopilotClient, which learns
-  // it from the /api/copilot/token response (see CopilotClient.js) rather
-  // than this component fetching its own — the provider is a single
-  // server-side choice (STT_PROVIDER) shared by live and practice mode
-  // alike, so one fetch per page is enough for both notices to agree. It is
-  // `undefined`/`null` until that fetch resolves, in which case this notice
-  // names no provider at all rather than guessing one (AC-F2-5).
-  const sttNotice = sttProviderName
-    ? `Your audio is streamed to ${sttProviderName} for transcription.`
-    : "Your audio is streamed for transcription.";
-  const privacyNotice = `${sttNotice} ${engineNotice} ${videoNotice}`;
+  // AC-J3: the actual sentence-by-sentence derivation (critique/sample-
+  // answer document clauses, the pre-draft clause, the engine notice, the
+  // video notice, the STT notice) now lives in lib/copilot/practiceNotices.js,
+  // extracted purely to keep this component under this repo's line-count
+  // gate — with `preDraftEnabled: false`, its output is byte-identical to
+  // what used to be inlined here (see that module's own tests for the full
+  // combinatorial proof). F2: `sttProviderName` is passed down from
+  // CopilotClient, which learns it from the /api/copilot/token response
+  // rather than this component fetching its own — one fetch per page is
+  // enough for both modes' notices to agree. D1: `saveEnabled` is this
+  // render's live value from useSaveRecordings, since the notice should
+  // reflect whatever is true RIGHT NOW (unlike the upload decision itself,
+  // which re-reads storage — see useSaveRecordings.js's own doc on
+  // `readSaveEnabled`).
+  const privacyNotice = buildPrivacyNotice({
+    sttProviderName,
+    isEmbedded,
+    framesWillUpload,
+    hasPosting,
+    docsSettled,
+    hasSubmittedResume,
+    hasSubmittedCoverLetter,
+    saveEnabled,
+    // BUG-J3: discloses the pre-draft switch's automatic Gemini send.
+    preDraftEnabled: preDraftPredicted,
+  });
   // G2/AC-G2-C-6: resolved once here, from the CURRENT interview type,
   // rather than inside AnswerFeedback — changing interview type always
   // clears any answer on screen (onInterviewTypeChange above), so this is
@@ -689,6 +672,25 @@ export default function PracticeClient({ sttProviderName } = {}) {
           onRetry={submittedDocs.retry}
         />
       ) : null}
+
+      {/* AC-J1.6: the microphone is one piece of hardware shared with live
+          mode — CopilotClient owns the selection AND the localStorage key
+          (see its own MIC_STORAGE_KEY doc) and hands both down as props,
+          exactly the way it already hands down `sttProviderName`. This
+          component owns no storage logic of its own for it. Laid out like
+          live mode's own "Your microphone:" row in CopilotClient.js, placed
+          above the Start/Stop row the same way that row sits above live
+          mode's Start/Stop row. */}
+      <Stack
+        direction="row"
+        spacing={1.25}
+        sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
+      >
+        <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
+          Your microphone:
+        </Typography>
+        <MicPicker value={micDeviceId} onChange={onMicDeviceChange} disabled={running} />
+      </Stack>
 
       <Stack
         direction="row"
@@ -746,6 +748,9 @@ export default function PracticeClient({ sttProviderName } = {}) {
         />
       </Stack>
 
+      {/* AC-J2.7: "Pre-draft predicted answer" shares this row with the two
+          switches it was named alongside — camera frames and save
+          recordings — rather than a third row of its own. */}
       <Stack direction="row" spacing={1} sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 0.5 }}>
         <FormControlLabel
           control={
@@ -762,15 +767,6 @@ export default function PracticeClient({ sttProviderName } = {}) {
             </Typography>
           }
         />
-        {isEmbedded ? (
-          <Typography variant="caption" sx={{ color: "var(--text-muted)" }}>
-            The embedded engine never sends your answer, posting, or frames to an AI provider. This is
-            separate from saving recordings below.
-          </Typography>
-        ) : null}
-      </Stack>
-
-      <Stack direction="row" spacing={1} sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 0.5 }}>
         <FormControlLabel
           control={
             <Switch size="small" checked={saveEnabled} onChange={onToggleSaveEnabled} />
@@ -781,6 +777,41 @@ export default function PracticeClient({ sttProviderName } = {}) {
             </Typography>
           }
         />
+        <FormControlLabel
+          control={
+            <Switch
+              size="small"
+              checked={preDraftPredicted}
+              onChange={(e) => setPreDraftPredicted(e.target.checked)}
+            />
+          }
+          label={
+            <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
+              Pre-draft predicted answer
+            </Typography>
+          }
+        />
+        {/* BUG-J2: this used to say "...separate from saving recordings
+            below", which became wrong once the save switch moved into this
+            same row (it reads as a locator, not a claim about coverage). It
+            briefly said "and from pre-drafting predicted answers" too, but
+            that was a FALSE privacy claim in the dangerous direction: the
+            embedded engine's own sentence above ("Sample answers are
+            drafted on this server too") already covers pre-drafting
+            correctly — draftAnswer sends `engine: readEngine()`, and
+            app/api/copilot/answer/route.js's wantsEmbedded branch drafts
+            locally, so a pre-draft on this engine reaches no AI provider at
+            all. Saying "separate from" pre-drafting would have told the
+            user the embedded guarantee excludes it, which understates the
+            protection they actually have. Only saving recordings is
+            genuinely a separate destination (Supabase upload happens
+            identically on every engine), so only that stays named here. */}
+        {isEmbedded ? (
+          <Typography variant="caption" sx={{ color: "var(--text-muted)" }}>
+            The embedded engine never sends your answer, posting, or frames to an AI provider. This is
+            separate from saving recordings.
+          </Typography>
+        ) : null}
       </Stack>
 
       {/* Shown once at least one answer has been analyzed (AC-C4-6), and
@@ -793,6 +824,36 @@ export default function PracticeClient({ sttProviderName } = {}) {
           score {sessionAverageScore}/100.
         </Alert>
       ) : null}
+
+      {/* AC-J2.1: the same five-panel dashboard live mode shows, so a
+          candidate rehearses against the instrument they will be reading
+          during a real interview — see CopilotDashboard.js's own module doc
+          for why the layout, states, and copy stay identical between modes.
+          Does NOT replace QuestionCard below, which keeps its own Next
+          question / Start answering / Done / sample-answer controls. */}
+      <Box sx={{ mb: 2 }}>
+        <CopilotDashboard
+          questions={dashboardQuestions}
+          copy={PRACTICE_COPY}
+          pace={pace}
+          predictedQuestion={predictedQuestion}
+          predictionStatus={predictionStatus}
+          predictionError={predictionError}
+          onRetryPrediction={retryPrediction}
+          onRetryPredraft={retryPredraft}
+          predictedPoints={predictedPoints}
+          predictedAnswerStatus={predictedAnswerStatus}
+          predictedAnswerError={predictedAnswerError}
+          // AC-J2.3: gated behind the SAME useSampleAnswer instance
+          // QuestionCard's own sample-answer panel uses below, so revealing
+          // the answer in either place reveals it in both — practice mode's
+          // whole drill is answering cold, and the dashboard must not put
+          // the model's answer on screen before the candidate asks for it.
+          answerHidden={!sampleAnswer.visible}
+          onRevealAnswer={sampleAnswer.toggle}
+          revealLabel="Show sample answer"
+        />
+      </Box>
 
       <Box sx={{ mb: 2 }}>
         <QuestionCard

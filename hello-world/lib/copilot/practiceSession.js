@@ -19,9 +19,47 @@ const DG_STATUS_TO_UI_STATUS = {
   open: "live",
 };
 
+// AC-J1.4: the practice-mode counterpart of session.js's micFailureMessage,
+// and deliberately NOT the same sentence. In live mode the microphone is
+// optional — that message ends "Continuing with interviewer audio only",
+// because the interviewer's tab/system audio keeps the session alive. Here
+// the microphone IS the session: there is nothing to continue with, so this
+// tells the user what to do instead of what is still working.
+//
+// Checked by `.name` (the standard DOMException field getUserMedia
+// rejections use), never by matching message text, which is not spec'd —
+// same reasoning as session.js's own check. Gated on a device id actually
+// having been requested: with no selection there is no `deviceId: { exact }`
+// constraint in play, so an OverconstrainedError from some other constraint
+// must not be reported as a vanished microphone. In every case this does
+// not recognize, the ORIGINAL error object is returned untouched, so a
+// permission denial (and everything else practice mode already surfaced)
+// reads exactly as it did before a microphone could be chosen at all.
+//
+// Note what this deliberately does NOT do: retry capture with the device
+// constraint dropped. Falling back to some other microphone would start a
+// session recording on hardware the user did not choose while the picker
+// still names the one they did — the exact silent-substitution failure
+// `deviceId: { exact }` exists to prevent (see capture.js).
+function micSelectionAwareError(err, micDeviceId) {
+  if (micDeviceId && err?.name === "OverconstrainedError") {
+    return new Error(
+      "Selected microphone is no longer available (it may have been unplugged or disconnected). Choose a different microphone and start again.",
+    );
+  }
+  return err;
+}
+
 export class PracticeSession {
-  constructor({ withVideo = true, onTranscript, onStatus, onError, onStream } = {}) {
+  constructor({ withVideo = true, micDeviceId, onTranscript, onStatus, onError, onStream } = {}) {
     this.withVideo = withVideo;
+    // AC-J1.3: left as whatever the caller passed — including `undefined`
+    // when omitted — rather than defaulted to `null` here, for the same
+    // reason CopilotSession leaves its own alone: capture.js treats every
+    // falsy value identically, so omitting this reproduces pre-feature
+    // behaviour byte-for-byte without this class having an opinion about
+    // which falsy value means "no selection".
+    this.micDeviceId = micDeviceId;
     this.onTranscript = onTranscript || (() => {});
     this.onStatus = onStatus || (() => {});
     this.onError = onError || (() => {});
@@ -44,20 +82,32 @@ export class PracticeSession {
     // surface, not the fallback's.
     let stream;
     let cameraFailure = null;
+    //
+    // AC-J1.4: whichever error ends up being thrown goes through
+    // micSelectionAwareError first, so a chosen microphone that has since
+    // been unplugged is named as such instead of surfacing the browser's
+    // bare "constraint could not be satisfied" text under a camera-shaped
+    // failure path. The mic-only fallback carries the SAME device id, so it
+    // fails identically in that case — which is correct: substituting a
+    // different microphone is never an acceptable recovery here.
     if (this.withVideo) {
       try {
-        stream = await captureCameraAndMic();
+        stream = await captureCameraAndMic(this.micDeviceId);
       } catch (err) {
         if (this._stopped) return;
         cameraFailure = err;
         try {
-          stream = await captureMicAudio();
+          stream = await captureMicAudio(this.micDeviceId);
         } catch {
-          throw cameraFailure;
+          throw micSelectionAwareError(cameraFailure, this.micDeviceId);
         }
       }
     } else {
-      stream = await captureMicAudio();
+      try {
+        stream = await captureMicAudio(this.micDeviceId);
+      } catch (err) {
+        throw micSelectionAwareError(err, this.micDeviceId);
+      }
     }
 
     // A stop() that arrived while a capture prompt was up must not leave a

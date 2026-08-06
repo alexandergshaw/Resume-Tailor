@@ -163,10 +163,19 @@ export async function captureSystemAudio() {
 // any current device — a failure CopilotSession handles explicitly (see
 // session.js) rather than a silent wrong-device substitution.
 export async function captureMicAudio(deviceId) {
-  const audio = deviceId
-    ? { ...MIC_AUDIO_CONSTRAINTS, deviceId: { exact: deviceId } }
-    : MIC_AUDIO_CONSTRAINTS;
-  return navigator.mediaDevices.getUserMedia({ audio });
+  return navigator.mediaDevices.getUserMedia({ audio: micAudioConstraints(deviceId) });
+}
+
+// The audio half of both getUserMedia paths, extracted so captureMicAudio
+// and captureCameraAndMic apply a chosen microphone IDENTICALLY (AC-J1.2).
+// Two copies of this three-line expression is exactly how live and practice
+// mode would end up disagreeing about whether "System default" means an
+// absent key or a `deviceId: undefined` one — a difference invisible in
+// review and only observable by inspecting the constraints object's own
+// keys, which is what capture.test.js asserts on.
+function micAudioConstraints(deviceId) {
+  if (!deviceId) return MIC_AUDIO_CONSTRAINTS;
+  return { ...MIC_AUDIO_CONSTRAINTS, deviceId: { exact: deviceId } };
 }
 
 // Practice mode's capture: your camera plus your own voice. Video is a
@@ -175,10 +184,18 @@ export async function captureMicAudio(deviceId) {
 // the display-capture paths above, a rejection here (permission denied, no
 // camera present, etc.) propagates unchanged — this function doesn't decide
 // what to do about it, that's PracticeSession's job.
-export async function captureCameraAndMic() {
+//
+// AC-J1.1: `deviceId` is OPTIONAL and obeys the exact same rules
+// captureMicAudio's does (see micAudioConstraints above) — falsy produces
+// today's constraints object with no `deviceId` own-key at all, and a real
+// id is applied as `deviceId: { exact: id }`. Practice mode used to have no
+// microphone selection of its own, which meant a user who had picked a
+// specific microphone for live mode was silently recorded on the OS default
+// the moment they switched to practice.
+export async function captureCameraAndMic(deviceId) {
   const stream = await navigator.mediaDevices.getUserMedia({
     video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
-    audio: MIC_AUDIO_CONSTRAINTS,
+    audio: micAudioConstraints(deviceId),
   });
 
   return requireAudioTrack(
