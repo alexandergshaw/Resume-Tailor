@@ -135,10 +135,17 @@ describe("POST /api/copilot/answer (points mode is unmoved by the answer-mode ch
     );
     expect(res.status).toBe(200);
     const data = await res.json();
-    // AC-K1: points mode gained the three reading aids, and nothing else —
+    // AC-K1: points mode gained the reading aids, and nothing else —
     // `answer` and `grounding` are still answer mode's alone, which is what
     // this case has always been about.
-    expect(Object.keys(data).sort()).toEqual(["buzzwords", "cues", "points", "resumeAnchor", "type"]);
+    expect(Object.keys(data).sort()).toEqual([
+      "buzzwords",
+      "cues",
+      "idealProject",
+      "points",
+      "resumeAnchor",
+      "type",
+    ]);
     expect(data).not.toHaveProperty("answer");
     expect(data).not.toHaveProperty("grounding");
     expect(Array.isArray(data.points)).toBe(true);
@@ -161,6 +168,7 @@ describe("POST /api/copilot/answer (points mode is unmoved by the answer-mode ch
       // never to an empty header.
       buzzwords: [],
       resumeAnchor: null,
+      idealProject: null,
     });
   });
 });
@@ -289,11 +297,17 @@ describe("POST /api/copilot/answer (answer mode)", () => {
         company: "Quantum Robotics",
         matched: true,
         project: "Led the checkout redesign, cutting cart abandonment by 18%",
+        // RESUME_DOC has only one usable bullet for this role, so there is
+        // no second one to describe it with.
+        description: [],
         // AC-K1.3 correction: this anchor was mined from the SUBMITTED
         // résumé (RESUME_DOC), not the prep profile, so it is honestly
         // labeled "resume".
         source: "resume",
       },
+      // No applicationId on this request -> no posting description -> no
+      // benchmark to mine (same "nothing selected" degrade as buzzwords).
+      idealProject: null,
     });
 
     const client = getGeminiClient();
@@ -383,8 +397,15 @@ describe("POST /api/copilot/answer (points mode grounding, AC-H4)", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     // No grounding key on points-mode's response (AC-H9.34) — still true
-    // after AC-K1 added the three reading aids to both modes.
-    expect(Object.keys(data).sort()).toEqual(["buzzwords", "cues", "points", "resumeAnchor", "type"]);
+    // after AC-K1 added the reading aids to both modes.
+    expect(Object.keys(data).sort()).toEqual([
+      "buzzwords",
+      "cues",
+      "idealProject",
+      "points",
+      "resumeAnchor",
+      "type",
+    ]);
     expect(data).not.toHaveProperty("grounding");
 
     const client = getGeminiClient();
@@ -508,9 +529,19 @@ describe("POST /api/copilot/answer (reading aids, AC-K1)", () => {
     expect(data.buzzwords).toContain("Kubernetes");
     expect(data.buzzwords).toContain("Terraform");
 
+    // idealProject present in answer mode too, mined from the SAME posting
+    // description — grounded (a stated number, a term the posting actually
+    // contains), never fabricated.
+    expect(data.idealProject).not.toBeNull();
+    expect(data.idealProject.metrics).toContain("5+ years");
+    for (const term of data.idealProject.shape.split(", ")) {
+      expect(POSTING_DESC.toLowerCase()).toContain(term.toLowerCase());
+    }
+
     // AC-H7.27 is unchanged: the description grounds NOTHING. It is fetched
-    // through its own call and handed only to the buzzword miner, so no
-    // wording from it can leak into the answer the model writes.
+    // through its own call and handed only to the buzzword/idealProject
+    // miners, so no wording from it can leak into the answer the model
+    // writes.
     const client = getGeminiClient();
     const promptText = client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
     expect(promptText).not.toContain("Senior Platform Engineer");
@@ -528,6 +559,10 @@ describe("POST /api/copilot/answer (reading aids, AC-K1)", () => {
     );
     const data = await res.json();
     expect(data.buzzwords.length).toBeGreaterThan(0);
+    // idealProject present in points mode too — the same aid, the same
+    // posting-description-only input, on the mode that has no `answer` field
+    // at all.
+    expect(data.idealProject).not.toBeNull();
 
     const client = getGeminiClient();
     const promptText = client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
@@ -541,6 +576,7 @@ describe("POST /api/copilot/answer (reading aids, AC-K1)", () => {
     const data = await res.json();
     expect(data.buzzwords).toEqual([]);
     expect(data.resumeAnchor).toBeNull();
+    expect(data.idealProject).toBeNull();
     expect(data.cues).toEqual(["A generic point"]);
   });
 });

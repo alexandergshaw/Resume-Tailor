@@ -221,7 +221,8 @@ export function resolveDashboardState(result, key, active, resolveFn, idleState)
 //   autoDraft            the existing Auto-draft switch's current value.
 //   profile              the prep-context string.
 //   onPrefetchedAnswer   (question, { points, cues, buzzwords, resumeAnchor,
-//                        type, ... }) => void — called once a pre-draft
+//                        idealProject, type, ... }) => void — called once a
+//                        pre-draft
 //                        succeeds, so the caller can write it into its OWN
 //                        answer cache (AC-I4.23). Read via a ref (see
 //                        onPrefetchedAnswerRef below), so an unstable
@@ -363,6 +364,7 @@ export function useCopilotDashboard({
     let cues = [];
     let buzzwords = [];
     let anchor = null;
+    let idealProjectResult = null;
     let type = "general";
     let grounding = null;
     let error = "";
@@ -403,6 +405,7 @@ export function useCopilotDashboard({
       cues = Array.isArray(draft.cues) ? draft.cues : [];
       buzzwords = Array.isArray(draft.buzzwords) ? draft.buzzwords : [];
       anchor = draft.resumeAnchor || null;
+      idealProjectResult = draft.idealProject || null;
       type = draft.type || "general";
       grounding = draft.grounding || null;
       outcome = "done";
@@ -432,18 +435,19 @@ export function useCopilotDashboard({
       try {
         // AC-J2.10: `draftedFrom` travels with the draft so the caller can
         // cache it against what it was ACTUALLY built from.
-        // AC-K1: `buzzwords` and `resumeAnchor` travel here rather than
-        // through a state slot — the predicted-answer panel does not render
-        // them (see EMPTY_PREDRAFT_RESULT above), but the caller's cache
-        // needs them so a prediction that gets asked serves a COMPLETE
-        // answer, not one missing its two subsections. Named `resumeAnchor`
-        // to match the route's own response field, so nothing has to
-        // remember a rename between the two.
+        // AC-K1: `buzzwords`, `resumeAnchor` and `idealProject` travel here
+        // rather than through a state slot — the predicted-answer panel does
+        // not render them (see EMPTY_PREDRAFT_RESULT above), but the
+        // caller's cache needs them so a prediction that gets asked serves a
+        // COMPLETE answer, not one missing its subsections. Named
+        // `resumeAnchor`/`idealProject` to match the route's own response
+        // fields, so nothing has to remember a rename between the two.
         onPrefetchedAnswerRef.current?.(question, {
           points,
           cues,
           buzzwords,
           resumeAnchor: anchor,
+          idealProject: idealProjectResult,
           type,
           grounding,
           ...draftedFrom,

@@ -287,13 +287,14 @@ export default function CopilotClient() {
   // prediction serves the SAME panel the question would have drafted on
   // demand — a cache hit that dropped the cues and subsections would make a
   // successful prediction look like a degraded answer.
-  const onPrefetchedAnswer = useCallback((question, { points, type, cues, buzzwords, resumeAnchor }) => {
+  const onPrefetchedAnswer = useCallback((question, { points, type, cues, buzzwords, resumeAnchor, idealProject }) => {
     answerCacheRef.current.set(normalizeQuestion(question), {
       points,
       type,
       cues: Array.isArray(cues) ? cues : [],
       buzzwords: Array.isArray(buzzwords) ? buzzwords : [],
       anchor: resumeAnchor || null,
+      idealProject: idealProject || null,
     });
   }, []);
 
@@ -401,6 +402,7 @@ export default function CopilotClient() {
                     cues: cached.cues || [],
                     buzzwords: cached.buzzwords || [],
                     anchor: cached.anchor || null,
+                    idealProject: cached.idealProject || null,
                     type: it.type || cached.type,
                     cached: true,
                   }
@@ -416,7 +418,7 @@ export default function CopilotClient() {
         ),
       );
       try {
-        const { points, type, cues, buzzwords, resumeAnchor } = await draftAnswer({
+        const { points, type, cues, buzzwords, resumeAnchor, idealProject } = await draftAnswer({
           question,
           context: buildContext(),
           profile: profileRef.current,
@@ -433,6 +435,7 @@ export default function CopilotClient() {
           cues: Array.isArray(cues) ? cues : [],
           buzzwords: Array.isArray(buzzwords) ? buzzwords : [],
           anchor: resumeAnchor || null,
+          idealProject: idealProject || null,
         };
         answerCacheRef.current.set(norm, { points, type, ...aids });
         setQuestions((prev) =>
@@ -469,6 +472,7 @@ export default function CopilotClient() {
           cues: [],
           buzzwords: [],
           anchor: null,
+          idealProject: null,
           type: type || null,
           error: "",
         },

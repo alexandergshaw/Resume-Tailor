@@ -8,11 +8,13 @@ import { readEngine } from "@/app/settings/engine";
 // of calling Gemini.
 //
 // AC-K1: both modes return `cues` (one short prompt per point — what the UI
-// renders), `buzzwords` (terms from the posting to work in) and
-// `resumeAnchor` ({ title, company, matched, project } or null). This client
-// returns the parsed body verbatim, so those need no plumbing here; the
-// consumers that carry them into state are useSampleAnswer.js (practice),
-// CopilotClient.js (live) and useCopilotDashboard.js (both dashboards).
+// renders), `buzzwords` (terms from the posting to work in), `resumeAnchor`
+// ({ title, company, matched, project, description } or null) and
+// `idealProject` ({ shape, metrics } or null — the ideal-project benchmark,
+// lib/copilot/idealProject.js). This client returns the parsed body verbatim,
+// so those need no plumbing here; the consumers that carry them into state
+// are useSampleAnswer.js (practice), CopilotClient.js (live) and
+// useCopilotDashboard.js (both dashboards).
 export async function draftAnswer({ question, context, profile, interviewType, applicationId, mode }) {
   const res = await fetch("/api/copilot/answer", {
     method: "POST",

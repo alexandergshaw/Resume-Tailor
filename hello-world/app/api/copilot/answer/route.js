@@ -11,6 +11,7 @@ import { normalizeInterviewType, interviewType } from "@/lib/copilot/interviewTy
 import { deriveCues, resolveCues } from "@/lib/copilot/answerCues";
 import { postingBuzzwords } from "@/lib/copilot/postingBuzzwords";
 import { resumeAnchor } from "@/lib/copilot/resumeAnchor";
+import { idealProject as idealProjectFor } from "@/lib/copilot/idealProject";
 
 // Two modes on one route (AC-G2-D-1). "points" (default, and the only mode
 // live mode ever sends — CopilotClient/QuestionFeed call draftAnswer with no
@@ -26,7 +27,7 @@ import { resumeAnchor } from "@/lib/copilot/resumeAnchor";
 // missing mode is always treated as "points" — nothing about live mode's
 // REQUEST shape changes.
 //
-// AC-K1: both modes now also return three reading aids alongside the answer,
+// AC-K1: both modes now also return reading aids alongside the answer,
 // because both are read under exactly the same pressure — mid-question, in
 // one glance:
 //   cues         one short prompt per point (lib/copilot/answerCues.js). The
@@ -38,6 +39,11 @@ import { resumeAnchor } from "@/lib/copilot/resumeAnchor";
 //                prompt (AC-H7.27).
 //   resumeAnchor which of their own roles the answer came out of, and a
 //                project from it (lib/copilot/resumeAnchor.js).
+//   idealProject the kind of project a recruiter for THIS posting would
+//                consider ideal, and the metrics they'd want to hear — a
+//                BENCHMARK, never a claim (lib/copilot/idealProject.js). Same
+//                posting-description-only input as `buzzwords`; never reaches
+//                either prompt either.
 // This is the one part of the response shape that did move for live mode: it
 // gained keys, and every existing key kept its meaning.
 const POINTS_SYSTEM = [
@@ -210,6 +216,10 @@ function answerAids({ postingDescription, resume, profile, question, points }) {
     // not a résumé. `source` reports which one so the UI can word the label
     // honestly instead of always claiming "on your resume".
     resumeAnchor: anchor ? { ...anchor, source: resume ? "resume" : "prep" } : null,
+    // Same `postingDescription` buzzwords reads, mined for a different
+    // purpose — see lib/copilot/idealProject.js. Null with no posting
+    // selected, same as `resumeAnchor` above.
+    idealProject: idealProjectFor(postingDescription, { question, points }),
   };
 }
 

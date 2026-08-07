@@ -2,6 +2,21 @@ import { describe, it, expect } from "vitest";
 
 import { resumeAnchor } from "./resumeAnchor.js";
 
+// BUG-K2: a word-level "every word occurs in the material" check cannot
+// catch a phrase spliced together out of two DIFFERENT source lines — every
+// individual word can be real while the RUN of words together never
+// appeared anywhere (the same class of bug as an earlier fix in this repo
+// that emitted "Ubled the throughput" while a word-level check stayed
+// green). This asserts something stronger: the phrase, once shortenToCue's
+// leading-capital is undone, is a literal CONTIGUOUS substring of the
+// material — i.e. it is a fragment of exactly one source line, never a
+// splice of two.
+function isContiguousFragment(phrase, material) {
+  if (!phrase) return true;
+  const candidate = (phrase.charAt(0).toLowerCase() + phrase.slice(1)).toLowerCase();
+  return material.toLowerCase().includes(candidate);
+}
+
 const RESUME = [
   "Experience",
   "Senior Software Engineer, Initech — Remote",
@@ -163,5 +178,135 @@ describe("resumeAnchor", () => {
   it("is deterministic", () => {
     const args = { question: "Tell me about leading a team.", points: ["I led a team of six engineers."] };
     expect(resumeAnchor(RESUME, args)).toEqual(resumeAnchor(RESUME, args));
+  });
+
+  // BUG-K2: the same contiguity guarantee applied to `project` — it must be
+  // a fragment of exactly ONE résumé line, never assembled from more than
+  // one.
+  it("project is a contiguous fragment of a single résumé line, never spliced across two", () => {
+    const anchor = resumeAnchor(RESUME, { question: "Tell me about leading a team." });
+    expect(anchor.project).toBeTruthy();
+    expect(isContiguousFragment(anchor.project, RESUME)).toBe(true);
+  });
+});
+
+describe("resumeAnchor.description", () => {
+  it("draws a description from the same role's OTHER bullet, never repeating the project line", () => {
+    // RESUME's Initech role has two bullets — "leading a team" question
+    // scores the team bullet highest for `project`, leaving the payments
+    // bullet as the only other candidate for `description`.
+    const anchor = resumeAnchor(RESUME, { question: "Tell me about leading a team." });
+    expect(anchor.project).toMatch(/team/i);
+    expect(anchor.description.length).toBeGreaterThan(0);
+    expect(anchor.description).not.toContain(anchor.project);
+    const joined = anchor.description.join(" ").toLowerCase();
+    expect(joined).not.toContain("led a team of six engineers");
+    expect(joined).toMatch(/payments|2m requests/);
+  });
+
+  it("is empty when the named role has no other usable bullet", () => {
+    const material = [
+      "Experience",
+      "Support Analyst, Acme Corp — Austin, TX",
+      "Mar 2018 – Dec 2020",
+      "- Handled tickets.",
+      "Senior Software Engineer, Initech — Remote",
+      "Jan 2021 – Present",
+      "- Led a team of six engineers, cutting deployment time by 40%.",
+    ].join("\n");
+    const anchor = resumeAnchor(material, {
+      question: "Tell me about your work as a Support Analyst at Acme handling tickets.",
+    });
+    expect(anchor.title).toBe("Support Analyst");
+    // "Handled tickets." is the only Acme bullet and it's too short to be a
+    // usable project OR a usable description (relevantExperienceLine skips
+    // anything under 24 chars) — Initech's bullet belongs to a different
+    // employer and must never be borrowed in as this role's description.
+    expect(anchor.description).toEqual([]);
+  });
+
+  it("is empty when there is no role at all (whole-résumé fallback)", () => {
+    const material = [
+      "Led a migration of the billing platform to a new payments provider in 2022.",
+      "Reduced checkout errors by 30% across the whole funnel.",
+    ].join("\n");
+    const anchor = resumeAnchor(material, { question: "Tell me about a migration you led." });
+    expect(anchor.matched).toBe(false);
+    expect(anchor.title).toBe("");
+    expect(anchor.description).toEqual([]);
+  });
+
+  it("never invents a word that is not in the material", () => {
+    const anchor = resumeAnchor(RESUME, { question: "Tell me about leading a team." });
+    const lowered = RESUME.toLowerCase();
+    for (const phrase of anchor.description) {
+      for (const word of phrase.toLowerCase().match(/[a-z0-9]+/g) || []) {
+        const wholeWordPresent = new RegExp(`\\b${word}\\b`).test(lowered);
+        expect(wholeWordPresent).toBe(true);
+      }
+    }
+  });
+
+  it("never presents a motivation line as a description", () => {
+    const material = [
+      "Experience",
+      "Product Manager, Globex — Remote",
+      "Jan 2020 – Present",
+      "- I am applying for this cloud infrastructure role because I want to grow my career in cloud infrastructure.",
+      "- Launched a self-serve onboarding flow that lifted activation 18%.",
+      "- Partnered with design on a new onboarding flow for enterprise customers.",
+    ].join("\n");
+    const anchor = resumeAnchor(material, { question: "Why do you want this cloud infrastructure role?" });
+    expect(anchor.project).not.toMatch(/applying/i);
+    for (const phrase of anchor.description) {
+      expect(phrase).not.toMatch(/applying/i);
+    }
+  });
+
+  it("is deterministic", () => {
+    const args = { question: "Tell me about leading a team.", points: ["I led a team of six engineers."] };
+    expect(resumeAnchor(RESUME, args).description).toEqual(resumeAnchor(RESUME, args).description);
+  });
+
+  // BUG-K2 (blocker): the reported failure — two DIFFERENT bullets spliced
+  // into one fabricated sentence with no separator, the first bullet's tail
+  // silently dropped ("...serving" + "Mentored..." -> "...serving Mentored
+  // four junior engineers..."). Pinned with the exact reported résumé and
+  // question.
+  describe("BUG-K2: never splices two different bullets into one phrase", () => {
+    const MATERIAL = [
+      "Experience",
+      "Senior Software Engineer, Initech — Remote",
+      "Jan 2021 – Present",
+      "- Led a team of six engineers, cutting deployment time by 40%.",
+      "- Built a payments migration platform serving 2M requests per day.",
+      "- Mentored four junior engineers through the promotion process.",
+    ].join("\n");
+
+    it("returns description as an array, each element a contiguous fragment of exactly one bullet", () => {
+      const anchor = resumeAnchor(MATERIAL, { question: "Tell me about leading a team." });
+      expect(Array.isArray(anchor.description)).toBe(true);
+      expect(anchor.description.length).toBeGreaterThan(0);
+      for (const phrase of anchor.description) {
+        expect(isContiguousFragment(phrase, MATERIAL)).toBe(true);
+      }
+    });
+
+    it("never reproduces the reported splice — one bullet's tail run into another bullet's start", () => {
+      const anchor = resumeAnchor(MATERIAL, { question: "Tell me about leading a team." });
+      // No SINGLE element may blend two different bullets — the reported
+      // failure was one string containing both the first bullet's tail and
+      // the second bullet's opening word with no separator between them.
+      // (Joining the array elements with a space for this check would
+      // recreate that exact adjacency regardless of the fix — the array
+      // shape itself, asserted below, is what actually prevents the splice
+      // from ever reaching the render layer as one string.)
+      for (const phrase of anchor.description) {
+        expect(phrase.toLowerCase()).not.toMatch(/serving mentored|day mentored/);
+      }
+      // The two source bullets must survive as two DISTINCT array entries,
+      // not one merged phrase.
+      expect(anchor.description.length).toBe(2);
+    });
   });
 });

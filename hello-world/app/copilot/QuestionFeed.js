@@ -151,8 +151,9 @@ function QuestionCard({ q, onDraft }) {
           </Box>
           {/* AC-K1.2/AC-K1.3: the posting's own vocabulary to work in, and
               which role and project on the candidate's resume this answer
-              came out of. Renders nothing when the draft carries neither. */}
-          <AnswerAids buzzwords={q.buzzwords} anchor={q.anchor} />
+              came out of, plus the ideal-project benchmark for this posting.
+              Renders nothing when the draft carries none of them. */}
+          <AnswerAids buzzwords={q.buzzwords} anchor={q.anchor} idealProject={q.idealProject} />
         </Box>
       ) : null}
 

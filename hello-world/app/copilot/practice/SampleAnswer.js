@@ -71,6 +71,10 @@ export default function SampleAnswer({
   // decides what (if anything) each one looks like.
   buzzwords,
   anchor,
+  // The kind of project a recruiter for this posting would consider ideal,
+  // and the metrics they'd want to hear — straight through to AnswerAids the
+  // same way, which renders it as a benchmark rather than a claim.
+  idealProject,
   grounding,
   error,
   isEmbedded,
@@ -148,7 +152,7 @@ export default function SampleAnswer({
                   </Typography>
                 ))}
               </Box>
-              <AnswerAids buzzwords={buzzwords} anchor={anchor} />
+              <AnswerAids buzzwords={buzzwords} anchor={anchor} idealProject={idealProject} />
               <Typography variant="caption" sx={{ color: "var(--text-muted)", display: "block", mt: 1 }}>
                 {sourceCaption(isEmbedded, grounding)}
               </Typography>

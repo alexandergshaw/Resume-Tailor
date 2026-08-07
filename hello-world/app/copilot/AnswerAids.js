@@ -73,15 +73,35 @@ function Aid({ label, children }) {
   );
 }
 
-export default function AnswerAids({ buzzwords, anchor }) {
+export default function AnswerAids({ buzzwords, anchor, idealProject }) {
   const terms = (Array.isArray(buzzwords) ? buzzwords : []).filter((t) => typeof t === "string" && t.trim());
   const role = roleText(anchor);
   const project = (anchor?.project || "").trim();
+  // Feature 2: a short reminder of the SAME role's scope, subordinate to the
+  // role line above it — never a third top-level term competing with
+  // "Project to talk about" (rendered as captions under the role, not its
+  // own <Aid>). BUG-K2: an ARRAY of independently-shortened phrases, one per
+  // source bullet — never joined into one string, which is how two
+  // different bullets got spliced into a single fabricated sentence with no
+  // separator between them. Each element is rendered on its own line below.
+  const description = (Array.isArray(anchor?.description) ? anchor.description : []).filter(
+    (d) => typeof d === "string" && d.trim(),
+  );
+  // Feature 1: the kind of project a recruiter for THIS posting would
+  // consider ideal, and the metrics they'd want to hear — a BENCHMARK, never
+  // something the candidate did. `idealProject` is `{ shape, metrics } |
+  // null` (lib/copilot/idealProject.js); an entry cached before this existed
+  // carries neither field, which resolves to the same "nothing to show" as
+  // no posting selected.
+  const idealShape = (idealProject?.shape || "").trim();
+  const idealMetrics = (Array.isArray(idealProject?.metrics) ? idealProject.metrics : []).filter(
+    (m) => typeof m === "string" && m.trim(),
+  );
 
   // Nothing to show is nothing rendered — never a header with an empty list
   // under it. No posting selected means no buzzwords; no submitted resume
   // means no role and no project; both are ordinary states, not errors.
-  if (terms.length === 0 && !role && !project) return null;
+  if (terms.length === 0 && !role && !project && !idealShape && idealMetrics.length === 0) return null;
 
   return (
     <Box
@@ -131,6 +151,23 @@ export default function AnswerAids({ buzzwords, anchor }) {
           <Typography variant="body2" sx={{ color: "var(--text-primary)", fontWeight: 600 }}>
             {role}
           </Typography>
+          {/* Feature 2: what the role actually WAS, not just its title —
+              subordinate to the role line above (smaller, muted caption)
+              rather than a heading of its own, so it reads as an extra
+              detail about the same role instead of a third top-level term
+              competing with "Project to talk about" below. BUG-K2: each
+              phrase renders on its OWN line — never joined into one string,
+              which is what let two different bullets read as one spliced
+              sentence. */}
+          {description.map((phrase, i) => (
+            <Typography
+              key={i}
+              variant="caption"
+              sx={{ display: "block", mt: 0.25, color: "var(--text-secondary)" }}
+            >
+              {phrase}
+            </Typography>
+          ))}
         </Aid>
       ) : null}
 
@@ -139,6 +176,57 @@ export default function AnswerAids({ buzzwords, anchor }) {
           <Typography variant="body2" sx={{ color: "var(--text-primary)" }}>
             {project}
           </Typography>
+        </Aid>
+      ) : null}
+
+      {/* Feature 1: what a recruiter for THIS posting would consider an
+          ideal project — deliberately NOT another <Aid> row that merely
+          sits next to "Project to talk about". This describes work the
+          candidate did NOT do, so it borrows PredictionPanel's exact
+          treatment (CopilotDashboard.js: accent border, accent-tinted
+          background, an explicit chip) — the same visual language that
+          already keeps a REAL question from being mistaken for a predicted
+          one (AC-I3.20) — plus third-person "roles like this look for"
+          wording that can never be lifted verbatim into a first-person
+          answer. */}
+      {idealShape || idealMetrics.length ? (
+        <Aid label="Ideal project for this posting">
+          <Box
+            sx={{
+              p: 1.25,
+              borderRadius: 1.5,
+              border: "1px solid var(--accent)",
+              background: "var(--accent-soft)",
+            }}
+          >
+            <Chip
+              size="small"
+              label="Benchmark, not from your resume"
+              sx={{
+                height: 18,
+                fontSize: 10,
+                fontWeight: 700,
+                letterSpacing: 0.3,
+                textTransform: "uppercase",
+                color: "var(--accent-contrast)",
+                background: "var(--accent)",
+                mb: 0.75,
+              }}
+            />
+            {idealShape ? (
+              <Typography variant="body2" sx={{ color: "var(--text-primary)" }}>
+                Roles like this look for: {idealShape}.
+              </Typography>
+            ) : null}
+            {idealMetrics.length ? (
+              <Typography
+                variant="body2"
+                sx={{ color: "var(--text-secondary)", mt: idealShape ? 0.5 : 0 }}
+              >
+                Metrics to have ready: {idealMetrics.join(", ")}.
+              </Typography>
+            ) : null}
+          </Box>
         </Aid>
       ) : null}
     </Box>

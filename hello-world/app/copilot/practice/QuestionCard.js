@@ -40,13 +40,15 @@ export default function QuestionCard({
   // this card. AC-H9: `sampleAnswerPoints` carries the sample answer as a
   // bullet-point array (each a complete, speakable sentence). AC-K1:
   // `sampleCues` is the few-word version actually rendered, and
-  // `sampleBuzzwords`/`sampleAnchor` are the two subsections under it.
+  // `sampleBuzzwords`/`sampleAnchor`/`sampleIdealProject` are the
+  // subsections under it.
   sampleVisible,
   sampleStatus,
   sampleAnswerPoints,
   sampleCues,
   sampleBuzzwords,
   sampleAnchor,
+  sampleIdealProject,
   sampleGrounding,
   sampleError,
   isEmbedded,
@@ -177,6 +179,7 @@ export default function QuestionCard({
           cues={sampleCues}
           buzzwords={sampleBuzzwords}
           anchor={sampleAnchor}
+          idealProject={sampleIdealProject}
           grounding={sampleGrounding}
           error={sampleError}
           isEmbedded={isEmbedded}

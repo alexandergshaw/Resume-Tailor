@@ -241,6 +241,7 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
         cues: sampleAnswer.cues,
         buzzwords: sampleAnswer.buzzwords,
         anchor: sampleAnswer.anchor,
+        idealProject: sampleAnswer.idealProject,
         error: sampleAnswer.error,
       },
     ];
@@ -251,6 +252,7 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
     sampleAnswer.cues,
     sampleAnswer.buzzwords,
     sampleAnswer.anchor,
+    sampleAnswer.idealProject,
     sampleAnswer.error,
   ]);
 
@@ -752,6 +754,7 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
           sampleCues={sampleAnswer.cues}
           sampleBuzzwords={sampleAnswer.buzzwords}
           sampleAnchor={sampleAnswer.anchor}
+          sampleIdealProject={sampleAnswer.idealProject}
           sampleGrounding={sampleAnswer.grounding}
           sampleError={sampleAnswer.error}
           isEmbedded={isEmbedded}

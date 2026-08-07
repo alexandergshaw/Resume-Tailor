@@ -1361,3 +1361,32 @@ The comment check is not ceremony. Several of the moved comments encode reasonin
 `PracticeClient.js` is at or below 900 lines. The gate is 1000 and the file was at 990 before this extraction, with two queued features both adding threading to it. The extraction stopped at 840 rather than a lower target: driving it further would have required bundling unrelated state into ad-hoc objects invented at the call site, which is a new derived value, not a faithful move. A number reached by trimming comments or collapsing JSX would NOT satisfy this case — an earlier extraction in this repo landed the file at exactly 999 that way, which is why the comment diff in step 2 exists.
 
 **Known follow-up:** `app/copilot/CopilotClient.js` is 937 lines and has the same two seams (an audio-source/mic/consent/posting setup block and a Start/Stop/Auto-draft controls block). It was deliberately NOT bundled into this change — two extractions in one diff is unreviewable — and remains uncovered by this case.
+
+### R-130 | area: sample-answer | parallel-safe: yes | automatable: yes
+
+**Summary:** The ideal-project benchmark can never be lifted into an answer as a claim, and never states a number the posting did not.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/copilot/idealProject.test.js app/api/copilot/answer/route.test.js`.
+2. Read the ideal-project block in `hello-world/app/copilot/AnswerAids.js`.
+
+**Expected:** All tests pass. This block describes work the candidate did NOT do — that is its purpose, and it is the only part of the sample-answer panel with that property. Everything about it exists to stop a candidate reading it under interview pressure and claiming it out loud, which is the failure R-087 exists to prevent, arriving from a new direction.
+
+`idealProject` emits no digit sequence that is not literally present in the posting: the numbers it shows ("5+ years", "2M requests") are the posting's own, and everything else is a metric CATEGORY ("latency reduction %", "uptime / reliability %") — a kind of number to have ready, never a fabricated figure. Terms in `shape` survive the same `literallyMentioned` filter `postingBuzzwords` uses, so a taxonomy inference the posting never wrote can never appear. Blank, missing or non-string input returns `null`, so no posting selected renders no block at all rather than an empty header. Output is deterministic.
+
+The rendered wording is third person throughout — "Roles like this look for:" and "Metrics to have ready:" — and is asserted to contain no first-person pronoun. It carries the accent treatment `PredictionPanel` uses (`var(--accent)` border, `var(--accent-soft)` background) plus a "Benchmark, not from your resume" chip, NOT the plain description-list styling the résumé-derived rows use. That visual separation is load-bearing, not decoration: it sits directly beside "Project to talk about", which is quoted from the candidate's real résumé, and a user glancing mid-interview must never mistake one for the other (the same argument as AC-I3.20). The chip deliberately carries no em dash — an em dash is not spoken at default screen-reader punctuation, so the contrast it was carrying would be lost.
+
+### R-131 | area: sample-answer | parallel-safe: yes | automatable: yes
+
+**Summary:** Every phrase shown to the candidate is a contiguous fragment of ONE source line — word membership is not enough.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/copilot/resumeAnchor.test.js lib/copilot/idealProject.test.js`.
+
+**Expected:** All tests pass. `resumeAnchor`'s `description` is a `string[]`, one independently-shortened phrase per source bullet, and is NEVER joined into a single string anywhere — not in the module, not in `AnswerAids.js`, which renders one element per phrase. `project` and each `description` element are asserted to be contiguous substrings of a single line of the source material, not merely composed of words that appear somewhere in it.
+
+This case exists because of BUG-K2, and the shape of that bug is the point. `description` was built by joining two bullets, producing "Built a payments migration platform serving Mentored four junior engineers through the promotion process" — two unrelated accomplishments spliced into one sentence, the first truncated mid-phrase. The module's own "never invents a word" test PASSED on it, because every individual word does occur in the résumé. A word-membership assertion is structurally incapable of catching phrase-level fabrication; only a contiguity assertion is. This is the same gap that let an earlier defect emit "Ubled the throughput" while a word-level check stayed green, and it will keep recurring wherever mined text is shown to a user, so the contiguity form is the one to reach for.
+
+`description` excludes the bullet already used as `project`, is empty when the role has no second usable bullet, and the block does not render at all when empty. A motivation line is never surfaced as role scope, via the same `pastWorkExperienceLine` disqualification the drafted answer uses.
+
+**Known limitation, deliberately not fixed here:** `significantTerms` filters through the shared tailor-lite stopword list, which contains "team". So a question about "leading a team" scores zero overlap against a bullet reading "Led a team of six engineers", and `matched` reports false — the label then honestly says "Most recent role" rather than "Closest role", but the role scoring is weaker than intended for common interview vocabulary. Fixing it needs a resumeAnchor-local allowlist reasoned about deliberately; the shared list must NOT be edited, since the tailoring pipeline depends on it.

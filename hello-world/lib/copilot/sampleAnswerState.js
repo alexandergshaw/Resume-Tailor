@@ -42,6 +42,11 @@ export function emptySampleAnswer() {
     // { title, company, matched, project } once a draft lands, or null when
     // there was no resume to read a role out of.
     anchor: null,
+    // { shape, metrics } once a draft lands and a posting was selected, or
+    // null otherwise — lib/copilot/idealProject.js's benchmark, carried
+    // through this slot exactly like `buzzwords`/`anchor` (same caching and
+    // staleness rules; just as wrong to show against a different question).
+    idealProject: null,
     // { resume: boolean, coverLetter: boolean } once a draft lands — which
     // submitted documents it was actually grounded in. Null until then.
     grounding: null,
@@ -153,6 +158,7 @@ export function cachedSampleAnswerFor(entry, question, profile, interviewType, a
     cues: Array.isArray(entry.cues) ? entry.cues : [],
     buzzwords: Array.isArray(entry.buzzwords) ? entry.buzzwords : [],
     anchor: entry.anchor || null,
+    idealProject: entry.idealProject || null,
     grounding: entry.grounding || null,
     error: "",
     profile,

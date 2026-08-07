@@ -125,20 +125,28 @@ function cleanLine(sentence) {
 export const ACHIEVEMENT_VERBS =
   /\b(built|led|designed|shipped|launched|scaled|drove|improved|reduced|created|owned|delivered|managed|architected|automated|migrated|grew|cut|increased|implemented|developed|optimi[sz]ed|mentored)\b/i;
 
-// The single most relevant, concrete line from the candidate's profile for this
-// question — the raw material an LLM would cite. Profiles are line-oriented
-// (resume/prep bullets), so it scores each line by overlap with the question
-// plus an "accomplishment" signal (a verb or metric), skipping headers and
-// skills lists.
-export function relevantExperienceLine(profile, question) {
+// The top `limit` candidate lines from `profile`, ranked exactly the way a
+// single "most relevant line" search would score them — overlap with the
+// question terms plus an "accomplishment" signal (a verb or metric),
+// skipping headers and skills lists. Exported so a caller wanting a SECOND
+// (or third) usable line — resumeAnchor.js's `description`, drawn from the
+// same role's remaining bullets — can pull one without re-deriving this
+// scoring a second time, which would let the two drift on what counts as a
+// usable line. `relevantExperienceLine` below is this with `limit: 1`, so
+// the two can never disagree about what the single best line is.
+//
+// Ties keep source order (stable sort, plain `>` comparisons below never
+// replace on equal score) — the same determinism `relevantExperienceLine`
+// got before this was factored out, where only a STRICTLY greater score
+// replaced the running best.
+export function rankedExperienceLines(profile, question, limit = 1) {
   const lines = String(profile || "")
     .split(/\r?\n+/)
     .map((l) => l.replace(/^[\s•\-*–—>]+/, "").trim())
     .filter(Boolean);
   const qTerms = new Set((String(question || "").toLowerCase().match(/[a-z0-9]{3,}/g) || []));
 
-  let best = "";
-  let bestScore = 0;
+  const scored = [];
   for (const s of lines) {
     if (s.length < 24) continue;
     if (/^(skills?|technologies|tools|education|summary|objective)\s*:/i.test(s)) continue;
@@ -147,12 +155,30 @@ export function relevantExperienceLine(profile, question) {
     for (const w of words) if (qTerms.has(w)) overlap += 1;
     const hasSignal = /\d/.test(s) || ACHIEVEMENT_VERBS.test(s);
     const score = overlap * 2 + (hasSignal ? 1 : 0);
-    if (score > bestScore) {
-      bestScore = score;
-      best = s;
-    }
+    if (score > 0) scored.push({ line: s, score });
   }
-  return bestScore > 0 ? cleanLine(best) : "";
+  scored.sort((a, b) => b.score - a.score);
+
+  const seen = new Set();
+  const out = [];
+  for (const item of scored) {
+    const cleaned = cleanLine(item.line);
+    const key = cleaned.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(cleaned);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+// The single most relevant, concrete line from the candidate's profile for this
+// question — the raw material an LLM would cite. Profiles are line-oriented
+// (resume/prep bullets), so it scores each line by overlap with the question
+// plus an "accomplishment" signal (a verb or metric), skipping headers and
+// skills lists.
+export function relevantExperienceLine(profile, question) {
+  return rankedExperienceLines(profile, question, 1)[0] || "";
 }
 
 // AC-H4.15/AC-H4.18: combines every source of real material the candidate

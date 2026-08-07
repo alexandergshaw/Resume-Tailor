@@ -300,6 +300,7 @@ describe("cachedSampleAnswerFor", () => {
       cues: [],
       buzzwords: [],
       anchor: null,
+      idealProject: null,
       grounding: { resume: true, coverLetter: false },
       error: "",
       profile: CURRENT_PROFILE,
@@ -313,6 +314,7 @@ describe("cachedSampleAnswerFor", () => {
       cues: ["Situation: Checkout redesign"],
       buzzwords: ["Kubernetes"],
       anchor: { title: "Senior Engineer", company: "Quantum Robotics", matched: true, project: "Checkout redesign" },
+      idealProject: { shape: "Distributed Systems", metrics: ["5+ years", "cost saved"] },
     });
     const result = cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP);
     expect(result.cues).toEqual(["Situation: Checkout redesign"]);
@@ -323,6 +325,7 @@ describe("cachedSampleAnswerFor", () => {
       matched: true,
       project: "Checkout redesign",
     });
+    expect(result.idealProject).toEqual({ shape: "Distributed Systems", metrics: ["5+ years", "cost saved"] });
   });
 
   // BUG-J6: cachedSampleAnswerFor only filters a COPY of `entry.points` to

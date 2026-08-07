@@ -329,13 +329,14 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
                   </Typography>
                 ))}
               </Box>
-              {/* AC-K1.2/AC-K1.3: the same two subsections the question card
+              {/* AC-K1.2/AC-K1.3: the same subsections the question card
                   shows, in the panel a candidate is actually looking at
-                  mid-interview. Renders nothing at all when the draft carries
-                  neither (no posting selected, no submitted resume). Reading
-                  these aloud too — via the same focus move, without any
-                  separate wiring — is F9's free coverage for this panel. */}
-              <AnswerAids buzzwords={current.buzzwords} anchor={current.anchor} />
+                  mid-interview — including the ideal-project benchmark.
+                  Renders nothing at all when the draft carries none of them
+                  (no posting selected, no submitted resume). Reading these
+                  aloud too — via the same focus move, without any separate
+                  wiring — is F9's free coverage for this panel. */}
+              <AnswerAids buzzwords={current.buzzwords} anchor={current.anchor} idealProject={current.idealProject} />
             </>
           ) : (
             <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>

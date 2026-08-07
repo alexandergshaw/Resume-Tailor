@@ -72,6 +72,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
       cues: [],
       buzzwords: [],
       anchor: null,
+      idealProject: null,
       grounding: null,
       error: "",
       profile: p,
@@ -79,13 +80,14 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
       applicationId: appId,
     });
     // AC-H9/AC-K1: the route's `mode: "answer"` response is
-    // { points, cues, answer, type, grounding, buzzwords, resumeAnchor }.
-    // `cues` is what SampleAnswer.js renders, with `points` as its fallback
-    // (answerBullets); `buzzwords`/`resumeAnchor` are the two subsections
-    // under it. The derived prose `answer` field exists for a later
-    // speech-synthesis feature and is deliberately not read here.
+    // { points, cues, answer, type, grounding, buzzwords, resumeAnchor,
+    // idealProject }. `cues` is what SampleAnswer.js renders, with `points`
+    // as its fallback (answerBullets); `buzzwords`/`resumeAnchor`/
+    // `idealProject` are the subsections under it. The derived prose
+    // `answer` field exists for a later speech-synthesis feature and is
+    // deliberately not read here.
     draftAnswer({ question: q, context: "", profile: p, interviewType: it, applicationId: appId, mode: "answer" })
-      .then(({ points, cues, buzzwords, resumeAnchor, grounding }) => {
+      .then(({ points, cues, buzzwords, resumeAnchor, idealProject, grounding }) => {
         if (genRef.current !== gen) return;
         const cleanPoints = Array.isArray(points) ? points : [];
         // AC-K1: same defensive normalization `points` already gets — a
@@ -95,6 +97,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
         const cleanCues = Array.isArray(cues) ? cues : [];
         const cleanBuzzwords = Array.isArray(buzzwords) ? buzzwords : [];
         const cleanAnchor = resumeAnchor || null;
+        const cleanIdealProject = idealProject || null;
         const cleanGrounding = grounding || null;
         setState((prev) => ({
           ...prev,
@@ -104,6 +107,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           cues: cleanCues,
           buzzwords: cleanBuzzwords,
           anchor: cleanAnchor,
+          idealProject: cleanIdealProject,
           grounding: cleanGrounding,
           error: "",
           profile: p,
@@ -120,6 +124,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           cues: cleanCues,
           buzzwords: cleanBuzzwords,
           anchor: cleanAnchor,
+          idealProject: cleanIdealProject,
           grounding: cleanGrounding,
           profile: p,
           interviewType: it,
@@ -136,6 +141,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           cues: [],
           buzzwords: [],
           anchor: null,
+          idealProject: null,
           grounding: null,
           error: err?.message || "Could not draft a sample answer.",
           profile: p,
@@ -195,7 +201,17 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
   const prime = useCallback(
     (
       q,
-      { points, cues, buzzwords, resumeAnchor, grounding, profile: p, interviewType: it, applicationId: appId } = {},
+      {
+        points,
+        cues,
+        buzzwords,
+        resumeAnchor,
+        idealProject,
+        grounding,
+        profile: p,
+        interviewType: it,
+        applicationId: appId,
+      } = {},
     ) => {
       cacheRef.current.set(normalizeQuestion(q), {
         points: Array.isArray(points) ? points : [],
@@ -206,6 +222,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
         cues: Array.isArray(cues) ? cues : [],
         buzzwords: Array.isArray(buzzwords) ? buzzwords : [],
         anchor: resumeAnchor || null,
+        idealProject: idealProject || null,
         grounding: grounding || null,
         profile: p,
         interviewType: it,
@@ -236,6 +253,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
     cues: active.cues,
     buzzwords: active.buzzwords,
     anchor: active.anchor,
+    idealProject: active.idealProject,
     grounding: active.grounding,
     error: active.error,
     toggle,
