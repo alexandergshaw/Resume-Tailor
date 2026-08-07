@@ -12,6 +12,7 @@ import { deriveCues, resolveCues } from "@/lib/copilot/answerCues";
 import { postingBuzzwords } from "@/lib/copilot/postingBuzzwords";
 import { resumeAnchor } from "@/lib/copilot/resumeAnchor";
 import { idealProject as idealProjectFor } from "@/lib/copilot/idealProject";
+import { buildIdealProjectPrompt, IDEAL_PROJECT_SYSTEM, normalizeIdealProject } from "@/lib/copilot/idealProjectPrompt";
 
 // Two modes on one route (AC-G2-D-1). "points" (default, and the only mode
 // live mode ever sends — CopilotClient/QuestionFeed call draftAnswer with no
@@ -43,7 +44,13 @@ import { idealProject as idealProjectFor } from "@/lib/copilot/idealProject";
 //                consider ideal, and the metrics they'd want to hear — a
 //                BENCHMARK, never a claim (lib/copilot/idealProject.js). Same
 //                posting-description-only input as `buzzwords`; never reaches
-//                either prompt either.
+//                either prompt either. AC-N3: on the Gemini path, `project`
+//                inside it is now the MODEL'S OWN worked example when one
+//                survives lib/copilot/idealProjectPrompt.js's validator —
+//                idealProject.js's hand-authored archetype is the fallback,
+//                not the answer, for every other case (embedded engine, no
+//                posting, a network error, a malformed or rejected
+//                response). See answerAids' own comment below.
 // This is the one part of the response shape that did move for live mode: it
 // gained keys, and every existing key kept its meaning.
 const POINTS_SYSTEM = [
@@ -187,6 +194,35 @@ function buildAnswerPrompt({ question, context, profile, resume, coverLetter, de
   return parts.join("\n");
 }
 
+// AC-N3: asks the model for a worked example grounded in the actual posting,
+// instead of always handing back one of idealProjectNarrative.js's seven
+// archetypes. Rides ALONGSIDE the points/answer call rather than after it —
+// both call sites below start this before awaiting the main response, so the
+// added latency is the slower of the two requests, not their sum, which
+// matters because this fires while the candidate is mid-question.
+//
+// Resolves to null, never rejects, on every failure mode: no posting to
+// build a prompt from, a network error, unparseable JSON, or a response
+// normalizeIdealProject won't vouch for. This has to be true unconditionally
+// — a broken worked example is an aid beside the answer, not the answer, and
+// must never be able to fail the request it rides beside or surface an
+// error the candidate would see mid-question.
+async function generateIdealProjectExample({ client, geminiModel, description, question }) {
+  const prompt = buildIdealProjectPrompt({ description, question });
+  if (!prompt) return null;
+  try {
+    const response = await client.models.generateContent({
+      model: geminiModel,
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      config: { systemInstruction: IDEAL_PROJECT_SYSTEM, responseMimeType: "application/json" },
+    });
+    const parsed = parseModelJson(response.text?.trim() || "");
+    return normalizeIdealProject(parsed, { description });
+  } catch {
+    return null;
+  }
+}
+
 // AC-K1.2/AC-K1.3: the two aids that sit BESIDE a drafted answer rather than
 // inside it — the posting's own vocabulary to work in, and which of the
 // candidate's own roles (and which project inside it) the answer came out of.
@@ -205,9 +241,20 @@ function buildAnswerPrompt({ question, context, profile, resume, coverLetter, de
 // from my resume". The prep context is the fallback only when no résumé was
 // submitted for this application, since it is often résumé-shaped text
 // pasted in by hand.
-function answerAids({ postingDescription, resume, profile, question, points }) {
+//
+// Async now, for exactly one reason: `generatedProjectPromise`, the in-flight
+// call started by the caller (only on the Gemini path — the embedded path
+// never has one), is awaited here rather than started here, so it and the
+// main points/answer call are genuinely concurrent instead of one waiting on
+// the other.
+async function answerAids({ postingDescription, resume, profile, question, points, generatedProjectPromise }) {
   const anchorText = resume || profile;
   const anchor = resumeAnchor(anchorText, { question, points });
+  // The FALLBACK, computed exactly as it always has been — never skipped,
+  // because a missing or rejected model response must still leave the
+  // candidate with an example rather than nothing.
+  const deterministicProject = idealProjectFor(postingDescription, { question, points });
+  const generatedProject = generatedProjectPromise ? await generatedProjectPromise : null;
   return {
     buzzwords: postingBuzzwords(postingDescription, { question, points }),
     // AC-K1.3 correction: `anchor` is mined from whichever of `resume` /
@@ -216,10 +263,25 @@ function answerAids({ postingDescription, resume, profile, question, points }) {
     // not a résumé. `source` reports which one so the UI can word the label
     // honestly instead of always claiming "on your resume".
     resumeAnchor: anchor ? { ...anchor, source: resume ? "resume" : "prep" } : null,
-    // Same `postingDescription` buzzwords reads, mined for a different
-    // purpose — see lib/copilot/idealProject.js. Null with no posting
-    // selected, same as `resumeAnchor` above.
-    idealProject: idealProjectFor(postingDescription, { question, points }),
+    // BUG: `generatedProject` is `normalizeIdealProject`'s return value — the
+    // shape of `idealProjectFor()`'s `project` FIELD ({ title, sections,
+    // outcomes }), never the shape of the aid itself ({ shape, summary,
+    // metrics, project }). `generatedProject || deterministicProject` used
+    // to substitute the field's shape for the whole aid's shape, so on the
+    // accept path `shape`/`summary`/`metrics` vanished, AnswerAids.js's
+    // `hasIdealRow` computed false, and the entire block — row, disclosure,
+    // worked example — rendered as nothing. The feature reached the user
+    // only when the model call failed or was rejected. A valid generated
+    // example must ENRICH the deterministic aid, not replace it: keep
+    // `deterministicProject`'s `shape`/`summary`/`metrics` and swap only its
+    // `project` for the model's. If there is no deterministic aid at all (no
+    // posting, or no shape term survived — idealProjectFor returns null),
+    // there is nothing for a generated example to sit beside, so the result
+    // stays null rather than shipping a `project`-only object — that bare
+    // shape is exactly the broken state this bug produced.
+    idealProject: deterministicProject
+      ? (generatedProject ? { ...deterministicProject, project: generatedProject } : deterministicProject)
+      : null,
   };
 }
 
@@ -292,13 +354,17 @@ export async function POST(request) {
           answer,
           type,
           grounding,
-          ...answerAids({ postingDescription: posting, resume, profile, question, points }),
+          // Embedded engine: no model call at all, on either aid — the
+          // established rule for every AI feature in this repo is that
+          // engine choice governs whether a feature calls a model, and
+          // idealProjectFor's deterministic path is this one's.
+          ...(await answerAids({ postingDescription: posting, resume, profile, question, points })),
         });
       }
 
       const { geminiModel } = getServerEnv();
       const client = getGeminiClient();
-      const response = await client.models.generateContent({
+      const responsePromise = client.models.generateContent({
         model: geminiModel,
         contents: [
           {
@@ -308,6 +374,15 @@ export async function POST(request) {
         ],
         config: { systemInstruction: ANSWER_SYSTEM, responseMimeType: "application/json" },
       });
+      // Started before `responsePromise` is awaited, so the two requests are
+      // actually concurrent — see generateIdealProjectExample's own comment.
+      const generatedProjectPromise = generateIdealProjectExample({
+        client,
+        geminiModel,
+        description: posting,
+        question,
+      });
+      const response = await responsePromise;
 
       const parsed = parseModelJson(response.text?.trim() || "");
       const points = Array.isArray(parsed?.points)
@@ -331,7 +406,7 @@ export async function POST(request) {
         answer,
         type,
         grounding,
-        ...answerAids({ postingDescription: posting, resume, profile, question, points }),
+        ...(await answerAids({ postingDescription: posting, resume, profile, question, points, generatedProjectPromise })),
       });
     }
 
@@ -348,19 +423,29 @@ export async function POST(request) {
         points,
         cues: deriveCues(points),
         type,
-        ...answerAids({ postingDescription: posting, resume, profile, question, points }),
+        // Embedded engine: no model call at all — see the answer-mode
+        // branch above for the same rule stated once already.
+        ...(await answerAids({ postingDescription: posting, resume, profile, question, points })),
       });
     }
 
     const { geminiModel } = getServerEnv();
     const client = getGeminiClient();
-    const response = await client.models.generateContent({
+    const responsePromise = client.models.generateContent({
       model: geminiModel,
       contents: [
         { role: "user", parts: [{ text: buildPointsPrompt(question, context, profile, descriptor, resume, coverLetter) }] },
       ],
       config: { systemInstruction: POINTS_SYSTEM, responseMimeType: "application/json" },
     });
+    // Started before `responsePromise` is awaited — see generateIdealProjectExample's own comment.
+    const generatedProjectPromise = generateIdealProjectExample({
+      client,
+      geminiModel,
+      description: posting,
+      question,
+    });
+    const response = await responsePromise;
 
     const parsed = parseModelJson(response.text?.trim() || "");
     const points = Array.isArray(parsed?.points)
@@ -381,7 +466,7 @@ export async function POST(request) {
       points,
       cues: deriveCues(points),
       type,
-      ...answerAids({ postingDescription: posting, resume, profile, question, points }),
+      ...(await answerAids({ postingDescription: posting, resume, profile, question, points, generatedProjectPromise })),
     });
   } catch (err) {
     return Response.json(

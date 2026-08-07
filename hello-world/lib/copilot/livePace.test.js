@@ -42,7 +42,7 @@ describe("appendSpeechSample", () => {
     // start is a legitimate, falsy-in-JS value for the very first frame of
     // a stream. A `if (!start)` style check would wrongly drop this.
     const result = appendSpeechSample([], { text: EIGHT_WORDS, start: 0, duration: 2 });
-    expect(result).toEqual([{ words: 8, start: 0, end: 2 }]);
+    expect(result).toEqual([{ words: 8, start: 0, end: 2, fillers: 0 }]);
   });
 
   it("drops a frame with a negative start or negative duration", () => {
@@ -64,7 +64,7 @@ describe("appendSpeechSample", () => {
 
   it("counts words the same way answerMetrics.js does — whitespace split, filtering empties", () => {
     const result = appendSpeechSample([], { text: "  hello   world  ", start: 0, duration: 1 });
-    expect(result).toEqual([{ words: 2, start: 0, end: 1 }]);
+    expect(result).toEqual([{ words: 2, start: 0, end: 1, fillers: 0 }]);
 
     const tabsAndNewlines = appendSpeechSample([], { text: "one\ttwo\nthree", start: 0, duration: 1 });
     expect(tabsAndNewlines[0].words).toBe(3);
@@ -72,12 +72,12 @@ describe("appendSpeechSample", () => {
 
   it("appends a usable frame with words = countWords(text), end = start + duration", () => {
     const result = appendSpeechSample([], { text: "hello world", start: 4, duration: 2.5 });
-    expect(result).toEqual([{ words: 2, start: 4, end: 6.5 }]);
+    expect(result).toEqual([{ words: 2, start: 4, end: 6.5, fillers: 0 }]);
   });
 
   it("treats non-array `samples` input as an empty starting list rather than throwing", () => {
     const result = appendSpeechSample(null, { text: "hello world", start: 0, duration: 1 });
-    expect(result).toEqual([{ words: 2, start: 0, end: 1 }]);
+    expect(result).toEqual([{ words: 2, start: 0, end: 1, fillers: 0 }]);
   });
 
   it("builds up a mixed list across usable and unusable frames, in append order", () => {
@@ -86,8 +86,8 @@ describe("appendSpeechSample", () => {
     samples = appendSpeechSample(samples, { text: "no timing here at all" }); // dropped
     samples = appendSpeechSample(samples, { text: "more words said now", start: 2, duration: 3 }); // usable
     expect(samples).toEqual([
-      { words: 2, start: 0, end: 2 },
-      { words: 4, start: 2, end: 5 },
+      { words: 2, start: 0, end: 2, fillers: 0 },
+      { words: 4, start: 2, end: 5, fillers: 0 },
     ]);
   });
 });

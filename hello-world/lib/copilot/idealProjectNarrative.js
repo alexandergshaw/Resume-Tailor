@@ -19,6 +19,16 @@
 // through here. That is what makes R-135's failure structurally impossible
 // rather than merely untested.
 
+// AC-N3: exported so idealProjectPrompt.js's validator can hold a
+// MODEL-WRITTEN example to the exact same shape these hand-authored ones are
+// already held to (idealProjectNarrative.test.js), instead of restating the
+// four labels and three word bounds a second time somewhere they could drift
+// out of sync with what is actually shipped here.
+export const SECTION_LABELS = ["Problem", "Built", "Ran", "Landed"];
+export const MIN_BODY_WORDS = 12;
+export const MAX_BODY_WORDS = 28;
+export const MAX_TOTAL_WORDS = 120;
+
 // The setting slot ({D1}) is filled from posting terms whose taxonomy
 // category is "domain" — "Education", "Distributed Systems", "Journalism".
 // The capability slot ({D2}) and the methodology slot ({M}) are each matched
@@ -352,10 +362,10 @@ export function buildProject(archetypeKey, shapeTerms) {
   return {
     title: archetype.title(d1),
     sections: [
-      { label: "Problem", body: archetype.problem },
-      { label: "Built", body: archetype.built(d2) },
-      { label: "Ran", body: m ? archetype.ranWith(m) : archetype.ranWithout },
-      { label: "Landed", body: archetype.landed },
+      { label: SECTION_LABELS[0], body: archetype.problem },
+      { label: SECTION_LABELS[1], body: archetype.built(d2) },
+      { label: SECTION_LABELS[2], body: m ? archetype.ranWith(m) : archetype.ranWithout },
+      { label: SECTION_LABELS[3], body: archetype.landed },
     ],
     // Verbatim, per-archetype — see the ARCHETYPES header comment for why
     // this is never a lookup keyed by `metrics`. Built as a NEW array of NEW

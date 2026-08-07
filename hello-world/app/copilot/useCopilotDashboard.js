@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchNextQuestion } from "@/lib/copilot/questionClient";
 import { draftAnswer } from "@/lib/copilot/answerClient";
-import { appendSpeechSample, computeLivePace } from "@/lib/copilot/livePace";
+import { appendSpeechSample, computeLivePace, computeLiveFillers } from "@/lib/copilot/livePace";
 
-// AC-I2/AC-I3/AC-I4: the copilot dashboard hook — talking pace, the
-// predicted next question, and a pre-drafted answer for it. Every DECISION
+// AC-I2/AC-I3/AC-I4/AC-N1: the copilot dashboard hook — talking pace, the
+// verbal-filler reading beside it, the predicted next question, and a
+// pre-drafted answer for it. Every DECISION
 // (what signature identifies "the current thing to predict for", whether a
 // stored result still applies, whether a pre-draft should even be
 // attempted) is a plain exported function below, reachable from vitest
@@ -590,8 +591,21 @@ export function useCopilotDashboard({
   // derivations above) grows an array this recomputes a window scan over.
   const pace = useMemo(() => computeLivePace(speechSamples), [speechSamples]);
 
+  // AC-N1: same straight pass-through, same memoization reason, as `pace`
+  // above — what counts as a filler, the rolling window, and when a reading
+  // is too thin to report are entirely lib/copilot/livePace.js's job. Reads
+  // the SAME `speechSamples` list, over the SAME window, as `pace` — the two
+  // are rendered side by side, and a viewer comparing them is only comparing
+  // one moment of speech to itself if both numbers were derived from that
+  // one moment. A second, independently-windowed list here could each be
+  // internally correct and still describe two different spans of speech,
+  // which would make the pairing on screen a lie even though neither number
+  // was wrong.
+  const fillers = useMemo(() => computeLiveFillers(speechSamples), [speechSamples]);
+
   return {
     pace,
+    fillers,
     predictedQuestion: predictionState.question,
     predictionStatus: predictionState.status,
     predictionError: predictionState.error,

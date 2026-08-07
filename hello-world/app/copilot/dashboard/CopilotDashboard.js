@@ -14,9 +14,10 @@ import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus"
 import AnswerAids from "../AnswerAids";
 import AnswerLines from "../AnswerLines";
 
-// AC-I5/AC-J2: the copilot's five-panel dashboard — current question, its
-// answer, the predicted next question, that question's pre-drafted answer,
-// and the user's current talking pace. Purely presentational (AC-I5.31):
+// AC-I5/AC-J2: the copilot's dashboard — current question, its answer, the
+// predicted next question, that question's pre-drafted answer, and a
+// delivery strip covering the user's current talking pace AND verbal-filler
+// rate. Purely presentational (AC-I5.31):
 // every value arrives as a prop, same contract as
 // SampleAnswer.js/SubmittedDocs.js — this owns no fetching and no state
 // beyond the trivial "is a panel expanded" kind SubmittedDocs already uses
@@ -46,6 +47,18 @@ const PACE_LABEL_COLOR = {
   slow: "var(--warning)",
   conversational: "var(--success)",
   rushed: "var(--warning)",
+};
+// Filler-rate reading beside pace, same shape as PACE_LABEL_TEXT/COLOR above
+// so the two readings in DeliveryPanel (below) are visually one family of
+// thing rather than two differently-designed widgets bolted together.
+// `noticeable` and `heavy` deliberately share a color with each other (and
+// with pace's `slow`/`rushed`) — the LABEL TEXT is what tells them apart,
+// never color alone (WCAG 1.4.1), same reasoning as PACE_LABEL_COLOR.
+const FILLER_LABEL_TEXT = { clean: "Clean", noticeable: "Some filler", heavy: "Heavy filler" };
+const FILLER_LABEL_COLOR = {
+  clean: "var(--success)",
+  noticeable: "var(--warning)",
+  heavy: "var(--warning)",
 };
 
 function latestQuestionEntry(questions) {
@@ -86,7 +99,9 @@ export const LIVE_COPY = {
   predraftIdle: "Turn on Auto-draft to have an answer ready for this question before it is asked.",
   predraftCaption: "Pre-drafted for the predicted question above — not the current one.",
   predraftEmpty: "No talking points came back for the predicted question.",
-  paceTitle: "Your talking speed",
+  // Covers both readings in the strip below (speed and filler rate), not
+  // speed alone any more — see DeliveryPanel.
+  deliveryTitle: "Your delivery",
 };
 
 // AC-J2.2: practice mode's wording. Deliberately the SAME sentences
@@ -448,43 +463,95 @@ function PredictedAnswerPanel({ predictionStatus, predictedQuestion, status, poi
   );
 }
 
-// AC-I2.14: `measured: false` is not "0 wpm" — it must read as "not
-// measured", never as a real (if unflattering) reading. Rendered as plain
-// text rather than a colored chip in that case, so an unmeasured signal
-// never even LOOKS like the same kind of thing as a measured one.
-function PacePanel({ pace, copy }) {
-  const measured = !!pace?.measured;
+// AC-I2.14: `measured: false` is not "0 wpm" (or "0% filler") — it must read
+// as "not measured", never as a real (if unflattering) reading. Rendered as
+// plain muted text rather than a colored chip in that case, so an unmeasured
+// signal never even LOOKS like the same kind of thing as a measured one.
+// This now covers TWO independent signals — talking speed (`pace`) and
+// verbal-filler rate (`fillers`) — each gated on its OWN `measured` flag,
+// because they have different measurability rules (filler detection needs
+// enough transcribed words to count against; pace needs enough elapsed
+// time). One being unmeasured must never hide or block the other.
+//
+// Renamed from PacePanel: it used to hold one reading, now it holds two, so
+// "pace" stopped being an accurate name for what the whole strip shows.
+function ReadingSlot({ label, valueText, measuredCopy }) {
+  return valueText ? (
+    <Stack direction="row" spacing={0.75} sx={{ alignItems: "baseline" }}>
+      <Typography sx={{ color: "var(--text-primary)", fontWeight: 600 }}>{valueText}</Typography>
+      {label}
+    </Stack>
+  ) : (
+    // Same slot, same position, just muted text instead of a number+label —
+    // this is what keeps the strip's height and layout fixed as a reading
+    // arrives mid-answer (no reflow when speed or filler rate flips from
+    // unmeasured to measured).
+    <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>
+      {measuredCopy}
+    </Typography>
+  );
+}
+
+function DeliveryPanel({ pace, fillers, copy }) {
+  const paceMeasured = !!pace?.measured;
+  const fillerMeasured = !!fillers?.measured;
   return (
     <Box
       sx={{
-        p: 1.75,
+        // Shorter than the old PacePanel on purpose (AC: cut half-window
+        // scrolling) — less padding, and the title moves onto the readings'
+        // own row below instead of sitting above them on its own line.
+        p: 1.25,
         borderRadius: 2,
         border: "1px solid var(--border)",
         background: "var(--bg-soft)",
       }}
     >
-      {/* F10: same nesting level as the four panel titles above — a sibling
-          section under the dashboard's own h3 title. */}
-      <Typography variant="subtitle2" component="h4" sx={{ mb: 1, color: "var(--text-secondary)", fontWeight: 700 }}>
-        {copy.paceTitle}
-      </Typography>
-      {measured ? (
-        <Stack direction="row" spacing={1.25} sx={{ alignItems: "baseline", flexWrap: "wrap" }}>
-          <Typography sx={{ color: "var(--text-primary)", fontWeight: 600 }}>
-            {Math.round(pace.wordsPerMinute)} words/min
-          </Typography>
-          <Typography
-            variant="body2"
-            sx={{ fontWeight: 700, color: PACE_LABEL_COLOR[pace.paceLabel] || "var(--text-secondary)" }}
-          >
-            {PACE_LABEL_TEXT[pace.paceLabel] || pace.paceLabel}
-          </Typography>
-        </Stack>
-      ) : (
-        <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>
-          Pace is not being measured yet — keep talking and it will appear here.
+      <Stack
+        direction="row"
+        spacing={2}
+        sx={{
+          alignItems: "baseline",
+          // Wrap only when the strip genuinely cannot hold all three items
+          // (title + two readings) on one line — this is the compact strip
+          // the half-window dual-screen case needs, not a panel that
+          // reserves its own row for the title.
+          flexWrap: "wrap",
+          rowGap: 0.5,
+        }}
+      >
+        {/* F10: same nesting level as the four panel titles above — a
+            sibling section under the dashboard's own h3 title. Heading
+            LEVEL is unchanged by this rewrite (R-125) even though the
+            title moved onto the readings' row. */}
+        <Typography variant="subtitle2" component="h4" sx={{ color: "var(--text-secondary)", fontWeight: 700 }}>
+          {copy.deliveryTitle}
         </Typography>
-      )}
+        <ReadingSlot
+          label={
+            <Typography
+              variant="body2"
+              sx={{ fontWeight: 700, color: PACE_LABEL_COLOR[pace?.paceLabel] || "var(--text-secondary)" }}
+            >
+              {PACE_LABEL_TEXT[pace?.paceLabel] || pace?.paceLabel}
+            </Typography>
+          }
+          valueText={paceMeasured ? `${Math.round(pace.wordsPerMinute)} words/min` : null}
+          measuredCopy="speed: not measured yet"
+        />
+        <ReadingSlot
+          label={
+            <Typography
+              variant="body2"
+              sx={{ fontWeight: 700, color: FILLER_LABEL_COLOR[fillers?.fillerLabel] || "var(--text-secondary)" }}
+            >
+              {FILLER_LABEL_TEXT[fillers?.fillerLabel] || fillers?.fillerLabel}
+            </Typography>
+          }
+          valueText={fillerMeasured ? `${fillers.fillerRate.toFixed(1)}% filler` : null}
+          measuredCopy="filler: not measured yet"
+        />
+      </Stack>
     </Box>
   );
 }
@@ -492,6 +559,12 @@ function PacePanel({ pace, copy }) {
 export default function CopilotDashboard({
   questions,
   pace,
+  // Verbal-filler reading beside pace in DeliveryPanel — see the contract
+  // atop FILLER_LABEL_TEXT/COLOR above. May be `undefined` from a caller
+  // that has not been wired up to computeLiveFillers yet; DeliveryPanel
+  // reads it defensively and renders the unmeasured phrase in that case,
+  // same as it already does for a missing `pace`.
+  fillers,
   predictedQuestion,
   predictionStatus,
   predictionError,
@@ -524,8 +597,8 @@ export default function CopilotDashboard({
       }}
     >
       {/* F10: the dashboard's own section title, one level under the tab's
-          h2 (TabHeader.js) — see RealPanel/PredictionPanel/PacePanel above
-          for the panel titles nested another level under this one. */}
+          h2 (TabHeader.js) — see RealPanel/PredictionPanel/DeliveryPanel
+          above for the panel titles nested another level under this one. */}
       <Typography variant="subtitle2" component="h3" sx={{ mb: 1.5, color: "var(--text-secondary)", fontWeight: 700 }}>
         {text.title}
       </Typography>
@@ -533,7 +606,14 @@ export default function CopilotDashboard({
       <Box
         sx={{
           display: "grid",
-          gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+          // Was `md` (900px). A half-width window on a common 1440-wide
+          // dual-screen setup is ~720px — under `md` — which fell to a
+          // single column and stacked all four panels, the single biggest
+          // contributor to the scrolling the half-window/dual-screen user
+          // is complaining about. `sm` (600px) still gives up two columns
+          // well before that width. Do not "tidy" this back to `md`: the
+          // half-window case is the point, not an oversight.
+          gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
           gap: 1.5,
         }}
       >
@@ -565,7 +645,7 @@ export default function CopilotDashboard({
       </Box>
 
       <Box sx={{ mt: 1.5 }}>
-        <PacePanel pace={pace} copy={text} />
+        <DeliveryPanel pace={pace} fillers={fillers} copy={text} />
       </Box>
     </Box>
   );

@@ -1,5 +1,6 @@
 // Pure "how fast is the user talking right now" computation for live mode's
-// dashboard (AC-I2). No React, no timers, no Date.now(), no randomness —
+// dashboard (AC-I2) — and, alongside it, how much verbal filler is in that
+// same speech (AC-N1). No React, no timers, no Date.now(), no randomness —
 // every function here is a straight function of its arguments, exactly the
 // way answerMetrics.js's computeAnswerMetrics is.
 //
@@ -26,9 +27,21 @@
 // The thresholds and the wpm -> label mapping are imported from
 // answerMetrics.js rather than restated here, so practice mode and live
 // mode can never disagree about what "rushed" means for the same speaker
-// (AC-I2.12).
+// (AC-I2.12). The filler matcher and its own thresholds/label mapping are
+// imported from there for the identical reason (AC-N1's version of the same
+// rule) — see computeLiveFillers below.
+//
+// The pace and filler readings are derived from ONE appended sample list
+// and windowed together rather than kept as two separate lists, because
+// they are rendered side by side: a user comparing "142 wpm" against
+// "noticeable filler" is comparing two properties of the SAME stretch of
+// speech only if both numbers actually came from that one stretch. Two
+// lists, each windowed on its own, could each be internally correct and
+// still describe two different spans — the last 30s of talking speed next
+// to the last 30s of filler from a moment earlier, say — which would make
+// the pairing on screen a lie even though neither number was wrong.
 
-import { paceLabelFor, countWords } from "./answerMetrics";
+import { paceLabelFor, countWords, countPhrases, FILLER_PHRASES, fillerLabelFor } from "./answerMetrics";
 
 // Seconds. Default width of the rolling window computeLivePace looks back
 // over when the caller doesn't specify one — long enough to smooth over a
@@ -51,6 +64,19 @@ export const MIN_WORDS_FOR_MEASUREMENT = 8;
 // needs each sample's END position to compare against the most recent one
 // seen — storing it once at append time is less error-prone than
 // recomputing `start + duration` on every comparison).
+//
+// A sample also carries `fillers` — its unambiguous-filler count, counted
+// once here at append time so computeLiveFillers below only ever sums
+// numbers already sitting on the samples it windows, the same way it sums
+// `words`. It MUST be a plain, enumerable field, not hidden via
+// Object.defineProperty(..., { enumerable: false }): a hidden field is
+// dropped by `JSON.parse(JSON.stringify(...))`, `structuredClone`, object
+// spread, or any future code that maps or rebuilds the sample array — and
+// when it vanishes the filler reading does not error, it just silently
+// reports a lower rate that still looks like a real measurement. That is
+// exactly the failure mode this module's own header comment guards against
+// for missing durations ("dropped rather than kept with a fabricated 0,
+// which would silently corrupt every pace reading computed afterward").
 
 // Appends one finalized transcript frame to `samples`, returning a NEW
 // array — `samples` itself is never mutated, so a caller holding the
@@ -71,7 +97,12 @@ export const MIN_WORDS_FOR_MEASUREMENT = 8;
 // transcript before calling onTranscript — but defensively handled here
 // too) is also dropped: it would only dilute the measured span with time
 // during which nothing was said, without contributing anything to word
-// count.
+// count — or, now, to filler count either.
+//
+// Both drop rules apply identically to the filler reading: a frame with
+// unusable timing can't be placed in the window at all, and a frame with no
+// words has no fillers to count either, so there is no separate filler drop
+// rule to keep in sync with this one.
 export function appendSpeechSample(samples, { text, start, duration } = {}) {
   const base = Array.isArray(samples) ? samples : [];
   const hasTiming =
@@ -83,10 +114,18 @@ export function appendSpeechSample(samples, { text, start, duration } = {}) {
     duration >= 0;
   if (!hasTiming) return base;
 
-  const words = countWords(String(text || ""));
+  const cleanText = String(text || "");
+  const words = countWords(cleanText);
   if (words === 0) return base;
 
-  return [...base, { words, start, end: start + duration }];
+  // Counted with answerMetrics.js's own matcher (see countPhrases/
+  // FILLER_PHRASES there) rather than a regex written here — see the
+  // module-level import comment for why a second copy of "what counts as a
+  // filler" is a bug waiting to happen, not a convenience.
+  const fillers = countPhrases(cleanText, FILLER_PHRASES).total;
+
+  const sample = { words, start, end: start + duration, fillers };
+  return [...base, sample];
 }
 
 // Keeps only the tail of `samples` whose audio-time position falls within
@@ -143,4 +182,59 @@ export function computeLivePace(samples, { windowSec } = {}) {
 
   const wordsPerMinute = (totalWords / spanSec) * 60;
   return { wordsPerMinute, paceLabel: paceLabelFor(wordsPerMinute), measured: true };
+}
+
+// Derives `{ fillerCount, fillerRate, fillerLabel, measured }` from the SAME
+// rolling window computeLivePace draws on — trimToWindow, unchanged, over
+// the samples appendSpeechSample already built. fillerRate is fillers per
+// hundred words, and fillerLabel is answerMetrics.js's fillerLabelFor
+// applied to that rate, so a live filler reading and a post-answer one can
+// never disagree about what the same rate means (the same reasoning
+// computeLivePace's own doc comment gives for sharing paceLabelFor).
+//
+// `measured` follows the identical AC-I2.14 floor computeLivePace uses —
+// fewer than MIN_WORDS_FOR_MEASUREMENT words in the window (including no
+// samples at all) means "not enough to trust a rate", not a rate of 0.
+//
+// Unlike computeLivePace, this function does NOT require spanSec > 0.
+// computeLivePace's span guard exists purely to avoid dividing by zero —
+// wordsPerMinute needs a length of TIME in the denominator. A filler rate's
+// denominator is WORDS, which the word-count guard above already protects;
+// there is no division here that a zero-length window could break. Copying
+// computeLivePace's span guard across would be the obvious move and the
+// wrong one: it would report "not measured" for a real, complete answer
+// that happened to arrive as a single zero-duration transcript frame,
+// exactly the case liveFiller.test.js's "still reports when the speech span
+// has no measurable length" case exists to catch.
+//
+// Zero fillers over enough words is a real measurement, not the absence of
+// one — the AC-I2.14 "unmeasured is never reported as a real-looking zero"
+// rule, applied to the one signal here where zero is the goal rather than
+// the failure: only too little speech is unmeasured, never a clean stretch
+// of it.
+export function computeLiveFillers(samples, { windowSec } = {}) {
+  const windowed = trimToWindow(samples, windowSec);
+
+  let totalWords = 0;
+  let totalFillers = 0;
+  for (const sample of windowed) {
+    totalWords += sample.words;
+    // A sample whose `fillers` isn't a finite number (should not happen —
+    // appendSpeechSample always sets it from countPhrases — but guarded here
+    // too, same defensive posture as the missing-timing guard in
+    // appendSpeechSample above) contributes nothing rather than being summed
+    // as-is: an unguarded `NaN` here would propagate into `fillerCount` and
+    // `fillerRate` below and still satisfy `totalWords >=
+    // MIN_WORDS_FOR_MEASUREMENT`, producing `measured: true` alongside a
+    // `NaN` reading — precisely the "unmeasured reported as a plausible
+    // number" failure this module's header (and AC-I2.14) rules out.
+    totalFillers += Number.isFinite(sample.fillers) ? sample.fillers : 0;
+  }
+
+  if (totalWords < MIN_WORDS_FOR_MEASUREMENT) {
+    return { fillerCount: null, fillerRate: null, fillerLabel: null, measured: false };
+  }
+
+  const fillerRate = (totalFillers / totalWords) * 100;
+  return { fillerCount: totalFillers, fillerRate, fillerLabel: fillerLabelFor(fillerRate), measured: true };
 }

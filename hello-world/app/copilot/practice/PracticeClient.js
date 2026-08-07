@@ -22,6 +22,7 @@ import PracticeHistory from "./PracticeHistory";
 import { usePracticeAnswer } from "./usePracticeAnswer";
 import { usePracticeQuestions } from "./usePracticeQuestions";
 import { useSampleAnswer } from "./useSampleAnswer";
+import { autoStartDecision, shouldQueueSampleAnswer } from "@/lib/copilot/practiceFlow";
 import { useInterviewType } from "./useInterviewType";
 import { useSaveRecordings, readSaveEnabled } from "./useSaveRecordings";
 import { usePrepContext } from "../usePrepContext";
@@ -166,6 +167,23 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
   // payload, not exclusively a question-flow concern (askedRef/
   // currentQuestionRef/interviewTypeRef/reqGenRef all moved into that hook).
   const postingRef = useRef(null);
+  // AC-N2: arms "Next question"/"Try again" auto-start intent for
+  // autoStartDecision (lib/copilot/practiceFlow.js) — a ref, not state,
+  // because arming it is a side effect of a click that already has its own
+  // reason to re-render (requestQuestion's loading flag), so a second,
+  // dedicated render for the arm itself would be pure waste. Read fresh by
+  // attemptAutoStart below, never listed as a dependency anywhere (writing
+  // a ref must never itself be treated as "the thing that changed").
+  const armedRef = useRef(false);
+  // BUG fix: a failed fetch leaves the PREVIOUS question on screen —
+  // usePracticeQuestions' catch sets questionError and deliberately does
+  // not clear `currentQuestion` — so once `loading` goes back to false,
+  // "is there a question" is true but stale, not evidence a new one
+  // arrived. armedFromRef captures what was on screen at the moment the
+  // press armed, so autoStartDecision can require the question to have
+  // CHANGED instead, and never auto-start the recorder on the question the
+  // user just moved off.
+  const armedFromRef = useRef("");
 
   const running = status === "live" || status === "connecting";
   const controlsEnabled = status === "live";
@@ -196,6 +214,47 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
     (question, payload) => sampleAnswer.prime(question, payload),
     [sampleAnswer.prime], // eslint-disable-line react-hooks/exhaustive-deps
   );
+
+  // AC-N2: queues a sample-answer draft the moment a question lands, so
+  // it's already cached (READY, never SHOWN — see useSampleAnswer's queue)
+  // by the time the user reveals it, instead of paying for it and waiting
+  // only after asking to see it. Gated by shouldQueueSampleAnswer
+  // (lib/copilot/practiceFlow.js) so this never re-fires for a question it
+  // already queued, never races the reveal panel's own request while it's
+  // open, and never pays for a draft that's already cached (a prior queue,
+  // a prior reveal, or a dashboard pre-draft via onPrefetchedAnswer above).
+  //
+  // Deliberately independent of `armedRef`/autoStartDecision above — see
+  // practiceFlow.test.js's "the two decisions are independent" cases: a
+  // question reached ANY way (Next question, Retry, a posting change, the
+  // first question of a session) still wants its answer queued, whether or
+  // not a press is armed to auto-start the recorder.
+  useEffect(() => {
+    const should = shouldQueueSampleAnswer({
+      question: currentQuestionText,
+      loading: questionLoading,
+      visible: sampleAnswer.visible,
+      hasCached: sampleAnswer.hasCached(currentQuestionText),
+      queuedFor: sampleAnswer.getQueuedFor(),
+    });
+    if (!should) return;
+    sampleAnswer.queue(currentQuestionText, profile, interviewType, posting?.id || null);
+    // `sampleAnswer` is a fresh literal every render (same as
+    // onPrefetchedAnswer's own sampleAnswer.prime call above) — depending on
+    // the specific, stable members this body actually reads/calls is what
+    // keeps this effect from re-running on every unrelated render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    currentQuestionText,
+    questionLoading,
+    sampleAnswer.visible,
+    sampleAnswer.hasCached,
+    sampleAnswer.getQueuedFor,
+    sampleAnswer.queue,
+    profile,
+    interviewType,
+    posting,
+  ]);
 
   // J2.5: the ASKED list plus the current question, oldest first, in the
   // `{ question }` shape askedQuestionsFor (useCopilotDashboard.js) expects
@@ -268,6 +327,7 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
   // on screen before Start practice is pressed must not spend a model call.
   const {
     pace,
+    fillers,
     predictedQuestion,
     predictionStatus,
     predictionError,
@@ -301,11 +361,20 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
   // the next asked list and requesting it, mirroring the inline version
   // exactly (the question changing invalidates the previous answer).
   const onNextQuestion = useCallback(() => {
+    // AC-N2: arms auto-start BEFORE the fetch, not after — the question
+    // this press is waiting for hasn't landed yet (requestQuestion is
+    // async), so there is nothing here to check synchronously. The
+    // attemptAutoStart effect below picks this up once `questionLoading`/
+    // `currentQuestionText` actually change. armedFromRef is captured in
+    // the same breath: whatever is on screen right now, so a failed fetch
+    // that leaves it unchanged can be told apart from a real arrival.
+    armedRef.current = true;
+    armedFromRef.current = currentQuestionRef.current?.question || "";
     const next = advanceAsked();
     abandonInProgressAnswer();
     resetAnswerState();
     requestQuestion(next);
-  }, [advanceAsked, abandonInProgressAnswer, resetAnswerState, requestQuestion]);
+  }, [advanceAsked, abandonInProgressAnswer, resetAnswerState, requestQuestion, currentQuestionRef]);
 
   const onRetryQuestion = useCallback(() => {
     abandonInProgressAnswer();
@@ -517,6 +586,53 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
     startAnswerFlow(liveStream, micMuted);
   }, [status, startAnswerFlow, micMuted, currentQuestionRef]);
 
+  // AC-N2: the single place that turns an armed press into an actual
+  // "start answering" call, or lets it go. Reads `armedRef` fresh (a ref,
+  // so this always sees whatever the last press left behind, never a
+  // stale closure) and hands everything else straight to autoStartDecision
+  // (lib/copilot/practiceFlow.js) — see that module's header for why every
+  // one of these inputs matters and what each failure mode disarms rather
+  // than waits on.
+  //
+  // Starting the recorder the instant the question lands (no countdown) is
+  // safe because pace and filler are measured on the AUDIO clock, not
+  // wall-clock (see lib/copilot/livePace.js's header and
+  // answerMetrics.js's speechDurationSec) — the seconds the user spends
+  // reading the question before speaking are silence before the first
+  // word, not part of the measured span, so they cannot drag the reading
+  // down. That is a property of the measurement itself, not an assumption
+  // being made here.
+  //
+  // Called two ways: from the effect below, which is what actually catches
+  // the "Next question" case (the question arrives asynchronously, so
+  // there is nothing to check until a later render); and directly from
+  // onTryAgainAnswer, whose target question is already on screen with
+  // nothing to wait for — armed/status/question/loading/answering/settling
+  // are all already correct at the moment of that click, and waiting for
+  // some OTHER, unrelated render to happen to touch one of them first would
+  // leave that press armed but stranded.
+  const attemptAutoStart = useCallback(() => {
+    const decision = autoStartDecision({
+      armed: armedRef.current,
+      status,
+      question: currentQuestionText,
+      armedFrom: armedFromRef.current,
+      loading: questionLoading,
+      answering,
+      settling,
+    });
+    if (decision === "wait") return;
+    // Disarm BEFORE starting, not after — a re-render triggered mid-start
+    // (onStartAnswer's own setAnswering(true)) must never be able to read
+    // this press as still pending and fire the recorder a second time.
+    armedRef.current = false;
+    if (decision === "start") onStartAnswer();
+  }, [status, currentQuestionText, questionLoading, answering, settling, onStartAnswer]);
+
+  useEffect(() => {
+    attemptAutoStart();
+  }, [attemptAutoStart]);
+
   // "Done" hands the hook everything it needs to both compute C3's metrics
   // AND kick off C4's critique: the question/type being answered, the
   // posting (so the critique can check the answer against its vocabulary),
@@ -556,10 +672,26 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
   // state Next question clears (transcript, metrics, frames, replay clip,
   // feedback) but leaves the question itself — and the asked list — in
   // place, unlike onNextQuestion.
+  //
+  // AC-N2: arms auto-start too — same intent, same loop, as onNextQuestion.
+  // Unlike that press, this one's target question is already on screen, so
+  // there is no fetch to wait for: attemptAutoStart is called directly,
+  // synchronously, rather than left for the effect to catch on some later
+  // render that may never touch one of its watched values. armedFromRef is
+  // deliberately reset to "" here rather than to the current question: this
+  // press's whole point is to re-arm on the SAME question, so comparing
+  // against it would read as "unchanged" and disarm the very case this
+  // button exists for. There is no async gap here for a fetch to fail
+  // into, so nothing could have gone stale — the same "no predecessor"
+  // exception autoStartDecision gives the first question of a session
+  // applies here too, and correctly still yields "start".
   const onTryAgainAnswer = useCallback(() => {
+    armedRef.current = true;
+    armedFromRef.current = "";
     abandonInProgressAnswer();
     resetAnswerState();
-  }, [abandonInProgressAnswer, resetAnswerState]);
+    attemptAutoStart();
+  }, [abandonInProgressAnswer, resetAnswerState, attemptAutoStart]);
 
   // "Retry" (the error-state action, re-analyzing the SAME already-recorded
   // answer) reads the opt-in/engine state fresh, at the moment it's
@@ -712,6 +844,7 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
           questions={dashboardQuestions}
           copy={PRACTICE_COPY}
           pace={pace}
+          fillers={fillers}
           predictedQuestion={predictedQuestion}
           predictionStatus={predictionStatus}
           predictionError={predictionError}

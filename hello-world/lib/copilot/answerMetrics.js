@@ -38,6 +38,22 @@ export const DISCOURSE_MARKER_PHRASES = ["like", "right", "actually", "basically
 export const SLOW_WPM_MAX = 110;
 export const RUSHED_WPM_MIN = 170;
 
+// Rate bands for fillerLabel (fillers per hundred words). 1% is roughly one
+// hesitation marker per hundred words — a listener does not register that as
+// a pattern; 5% is one in twenty, which reads as an audible verbal tic.
+//
+// Deliberately NOT the same constants as critiqueLocal.js's
+// FILLER_RATE_GOOD_PCT / FILLER_RATE_BAD_PCT, even though both pairs bound
+// "clean" versus "heavy" filler use. Those two are the endpoints of a
+// continuous SCORE ramp (100 down to 30); these two are the boundaries of a
+// LABEL a person reads. Merging them would force one pair of numbers to
+// serve two different jobs — a score ramp wants a wide span to grade inside,
+// a label wants the "heavy" boundary set at the point a listener would
+// actually call it a tic, and there's no reason those two design goals
+// should land on the same number.
+export const FILLER_RATE_CLEAN_MAX = 1;
+export const FILLER_RATE_HEAVY_MIN = 5;
+
 // R-127: a hard ceiling on what a computed wpm can possibly mean, distinct
 // from RUSHED_WPM_MIN above — RUSHED_WPM_MIN is a delivery judgement ("this
 // person is talking fast"); this is a physical-plausibility judgement ("no
@@ -72,7 +88,14 @@ function phraseRegex(phrase) {
 // Shared by both the unambiguous-filler and discourse-marker passes: counts
 // each phrase's occurrences in `text` and returns the per-phrase breakdown
 // (highest count first) plus the total.
-function countPhrases(text, phrases) {
+//
+// Exported for the same reason `countWords` and `paceLabelFor` already are:
+// so livePace.js counts fillers with this SAME matcher rather than
+// restating it. The lookaround inside phraseRegex is specifically the part
+// that must not be re-implemented by eye — a plain `\b` boundary matches
+// "um" inside "summary" and "right" inside "right-hand", and a rewritten
+// version could easily reintroduce exactly that.
+export function countPhrases(text, phrases) {
   let total = 0;
   const matches = [];
   for (const phrase of phrases) {
@@ -119,6 +142,24 @@ export function paceLabelFor(wordsPerMinute) {
   if (wordsPerMinute < SLOW_WPM_MAX) return "slow";
   if (wordsPerMinute > RUSHED_WPM_MIN) return "rushed";
   return "conversational";
+}
+
+// The FILLER_RATE_CLEAN_MAX/FILLER_RATE_HEAVY_MIN -> label mapping, alone,
+// exported so livePace.js's rolling filler reading derives a label the same
+// way this module's own callers eventually will, rather than re-deriving
+// one from the two constants by hand (the same "one source of the mapping"
+// reasoning paceLabelFor above exists for).
+//
+// Boundaries are INCLUSIVE at both ends — at or below FILLER_RATE_CLEAN_MAX
+// is "clean", at or above FILLER_RATE_HEAVY_MIN is "heavy" — which is the
+// opposite of paceLabelFor's strict `<`/`>` above. That is deliberate, not
+// an inconsistency to "fix": the difference is in the names. A "MAX for
+// clean" is a ceiling clean is allowed to touch; a wpm band edge is just
+// where one band's territory ends and the next one's begins.
+export function fillerLabelFor(rate) {
+  if (rate <= FILLER_RATE_CLEAN_MAX) return "clean";
+  if (rate >= FILLER_RATE_HEAVY_MIN) return "heavy";
+  return "noticeable";
 }
 
 // Signature/shape is a contract with feature C4, which consumes this

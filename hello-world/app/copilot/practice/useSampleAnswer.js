@@ -47,6 +47,19 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
   // A plain ref rather than state: writing to it must never itself trigger
   // a render or touch `state` — see `prime` below.
   const cacheRef = useRef(new Map());
+  // AC-N2: `queue`'s own generation token, separate from `genRef` above —
+  // `request` (a user-requested reveal) and `queue` (a silent pre-fetch for
+  // a question that just landed) must never be able to invalidate one
+  // another just because they happen to overlap in flight. A slow queue for
+  // a question the user has since moved past is discarded exactly like a
+  // slow `request` is (AC-G1-7), by the same "still the newest?" check.
+  const queueGenRef = useRef(0);
+  // AC-N2: the question `queue` last kicked off a draft for, normalized the
+  // same way the cache is keyed — read fresh on every render (a ref, not
+  // state, for the same reason `cacheRef` is one: writing it must never
+  // itself trigger a render) so PracticeClient's queue effect can dedupe
+  // against it via shouldQueueSampleAnswer without a second cache lookup.
+  const queuedForRef = useRef("");
 
   // Only a stored draft built for the EXACT question on screen right now
   // ever applies (AC-G1-5) — no effect resets this on question change, the
@@ -232,6 +245,67 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
     [],
   );
 
+  // AC-N2: fetches a draft for `q` and writes it to the cache via the exact
+  // same `cacheRef.current.set` shape `request`'s resolution above uses —
+  // deliberately never touching `state`. Practice mode hides the sample
+  // answer behind a reveal on purpose (seeing a model answer before
+  // attempting one is what makes practice worthless), so this makes the
+  // draft READY, never SHOWN — only `reveal` ever sets `state`. Callers
+  // decide whether this should run at all via shouldQueueSampleAnswer
+  // (lib/copilot/practiceFlow.js); this just does the fetch and the write.
+  const queue = useCallback((q, p, it, appId) => {
+    // Written synchronously, before the fetch even starts — the same
+    // moment `request` above marks its own state loading. `hasCached`
+    // alone isn't enough to dedupe against: the cache entry doesn't exist
+    // until the fetch below RESOLVES, so a second effect run for the same
+    // question while it's still in flight (a profile edit, an interview-
+    // type change) would see `hasCached` still false and queue it again.
+    // `queuedFor` closes that gap — it's true from the moment this line
+    // runs, not from whenever the network call happens to finish.
+    queuedForRef.current = normalizeQuestion(q);
+    const gen = (queueGenRef.current += 1);
+    draftAnswer({ question: q, context: "", profile: p, interviewType: it, applicationId: appId, mode: "answer" })
+      .then(({ points, cues, buzzwords, resumeAnchor, idealProject, grounding }) => {
+        // A newer queue (or a real `request`) has since started for a
+        // different question — this response belongs to a question the
+        // user has already moved past, so it writes nothing.
+        if (queueGenRef.current !== gen) return;
+        cacheRef.current.set(normalizeQuestion(q), {
+          points: Array.isArray(points) ? points : [],
+          cues: Array.isArray(cues) ? cues : [],
+          buzzwords: Array.isArray(buzzwords) ? buzzwords : [],
+          anchor: resumeAnchor || null,
+          idealProject: idealProject || null,
+          grounding: grounding || null,
+          profile: p,
+          interviewType: it,
+          applicationId: appId,
+        });
+      })
+      .catch(() => {
+        // AC-N2: swallowed on purpose — a failed queue must leave the user
+        // with today's behaviour (a real request paid for on reveal), never
+        // an error on screen and never a rejected promise escaping to a
+        // caller that isn't expecting one. `reveal(false)` already falls
+        // back to a fresh request whenever the cache has nothing usable, so
+        // there is nothing else to do here.
+      });
+  }, []);
+
+  // AC-N2: whether a draft is already cached for `q` — exposed so
+  // PracticeClient's queue effect can feed shouldQueueSampleAnswer's
+  // `hasCached` without reaching into `cacheRef` itself (which is private to
+  // this hook) or re-deriving the same normalizeQuestion lookup a second way.
+  const hasCached = useCallback((q) => cacheRef.current.has(normalizeQuestion(q)), []);
+
+  // AC-N2: reads `queuedForRef` — a function, not the value itself, because
+  // React now flags a ref read during render (this hook's own function body
+  // runs on every one of PracticeClient's renders, same as any other hook)
+  // as a mistake even when nothing here uses it to decide what to render.
+  // Called from PracticeClient's queue effect, never during render, exactly
+  // like `hasCached` above already is.
+  const getQueuedFor = useCallback(() => queuedForRef.current, []);
+
   // "Show sample answer" / "Hide sample answer". Hiding never fetches — it
   // only flips visibility, leaving whatever is cached (points, status,
   // profile) exactly as it was for the next reveal (AC-G1-3).
@@ -260,5 +334,8 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
     retry,
     regenerate,
     prime,
+    queue,
+    hasCached,
+    getQueuedFor,
   };
 }
