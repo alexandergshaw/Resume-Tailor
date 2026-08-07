@@ -177,13 +177,25 @@ export function shortenToCue(text, maxWords = MAX_CUE_WORDS) {
   return label ? `${label}: ${cue}` : cue;
 }
 
-// Every point shortened to a cue, blanks dropped. Input is sanitised through
-// cleanAnswerPoints first so this behaves identically to the render layer for
-// a malformed `points` array.
+// Every point shortened to a cue, ONE ENTRY PER CLEANED POINT — positions
+// preserved, never dropped. Input is sanitised through cleanAnswerPoints
+// first so this behaves identically to the render layer for a malformed
+// `points` array.
+//
+// A `.filter(Boolean)` used to sit at the end of this pipeline, dropping any
+// point that shortened to "" (a point too terse for shortenToCue to make a
+// cue from — see its own doc comment). That reads harmless in isolation, but
+// this array's whole reason for existing is to sit next to `points` and be
+// read positionally: answerLines (answerPoints.js) trusts cues[i] to head
+// points[i] only when the two arrays come out the SAME LENGTH. Dropping one
+// blank cue shrinks this array by one, so a single terse sentence anywhere
+// in a three-, four-, ten-point draft made the lengths disagree and
+// answerLines discarded every cue in the whole answer — not just the one for
+// the terse line. "" now holds that point's place instead: the line it heads
+// simply renders with no cue, which is exactly what an empty `cue` already
+// means at the render layer, and every other line keeps the cue it earned.
 export function deriveCues(points) {
-  return cleanAnswerPoints(points)
-    .map((p) => shortenToCue(p))
-    .filter(Boolean);
+  return cleanAnswerPoints(points).map((p) => shortenToCue(p));
 }
 
 // The cues to actually ship for a set of points. Model-supplied cues win when
@@ -192,11 +204,27 @@ export function deriveCues(points) {
 // the wrong beat is worse than a mechanical one sitting against the right
 // one. Supplied cues still go through shortenToCue, so "cues" that came back
 // as full sentences are trimmed rather than trusted.
+//
+// Two different things are being cleaned here, and they are not the same
+// operation. `cleanAnswerPoints(modelCues)` measures what the model actually
+// SUPPLIED: a blank, whitespace-only, or non-string entry in the raw
+// response isn't a cue placeholder, it's nothing, so dropping it before
+// counting is correct — there was never anything at that position to hold a
+// place for. What must NOT happen is dropping an entry AFTER shortenToCue
+// has already run on it. An entry that shortens to "" (e.g. the model sent
+// back "..." as a "cue") was genuinely supplied and still occupies its own
+// position against cleanPoints; a `.filter(Boolean)` used to sit after the
+// `.map(shortenToCue)` below and remove it anyway, which is the exact same
+// mistake deriveCues used to make — it shrank `suppliedRaw`'s paired-up
+// length by one, turned an exact-count match into a mismatch, and discarded
+// every OTHER correctly-supplied cue along with the one that had nothing in
+// it. `supplied` (post-shortenToCue, blanks intact) is what ships; the
+// length check that decides whether it ships at all is judged on
+// `suppliedRaw` — the supplied array's own length, before shortening.
 export function resolveCues(modelCues, points) {
   const cleanPoints = cleanAnswerPoints(points);
-  const supplied = cleanAnswerPoints(modelCues)
-    .map((c) => shortenToCue(c))
-    .filter(Boolean);
-  if (supplied.length > 0 && supplied.length === cleanPoints.length) return supplied;
+  const suppliedRaw = cleanAnswerPoints(modelCues);
+  const supplied = suppliedRaw.map((c) => shortenToCue(c));
+  if (suppliedRaw.length > 0 && suppliedRaw.length === cleanPoints.length) return supplied;
   return deriveCues(cleanPoints);
 }

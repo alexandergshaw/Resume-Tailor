@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { resumeAnchor } from "./resumeAnchor.js";
+import { resumeAnchor, gateHeaderPair } from "./resumeAnchor.js";
 
 // BUG-K2: a word-level "every word occurs in the material" check cannot
 // catch a phrase spliced together out of two DIFFERENT source lines — every
@@ -307,6 +307,135 @@ describe("resumeAnchor.description", () => {
       // The two source bullets must survive as two DISTINCT array entries,
       // not one merged phrase.
       expect(anchor.description.length).toBe(2);
+    });
+  });
+});
+
+// AC-L3: the plausibility gate. The full reported-bug fixture (a wrapped,
+// marker-less résumé that mis-parses into "Collaborated with business
+// leaders" / "and development teams to translate…") is pinned in
+// resumeAnchorPlausibility.test.js and is not duplicated here; these cases
+// isolate each of the gate's four checks individually, plus the two
+// behaviors that make it more than four independent per-field checks:
+// a non-empty garbage value on ONE side blanks its sibling too (they were
+// never independently observed — see resumeAnchor.js's gateHeaderPair for
+// why), while a field that is simply ABSENT never does.
+describe("resumeAnchor plausibility gate", () => {
+  it("blanks a title that is verb-initial — a resume bullet, not a title", () => {
+    const material = [
+      "Experience",
+      "Built and scaled the platform for global rollout",
+      "Jan 2019 - Dec 2020",
+      "- Automated the deployment pipeline end to end, cutting release time by 60%.",
+    ].join("\n");
+    const anchor = resumeAnchor(material, { question: "Tell me about automating a deployment pipeline." });
+    expect(anchor.title).toBe("");
+    expect(anchor.company).toBe("");
+    // The header failing the gate must not touch project/description — they
+    // are read from the SAME role's own bullets, a separate pass over the
+    // material that never depends on whether the header parsed cleanly.
+    expect(anchor.project).toBeTruthy();
+  });
+
+  it("blanks a title containing sentence punctuation mid-string", () => {
+    const material = [
+      "Experience",
+      "Owned the roadmap. Reported directly to the VP",
+      "Jan 2020 - Dec 2021",
+      "- Ran the migration end to end, hitting every milestone on schedule.",
+    ].join("\n");
+    const anchor = resumeAnchor(material, { question: "Tell me about owning a roadmap." });
+    expect(anchor.title).toBe("");
+    expect(anchor.company).toBe("");
+  });
+
+  it("blanks a title that reads as a name but simply runs far longer than any real title", () => {
+    const material = [
+      "Experience",
+      "Regional Director Of Strategic Partnerships And Growth Initiatives",
+      "Jan 2018 - Dec 2019",
+      "- Negotiated partnership agreements worth over $10M in incremental revenue.",
+    ].join("\n");
+    const anchor = resumeAnchor(material, { question: "Tell me about negotiating a partnership." });
+    // 8 words / 66 characters — capitalised, no achievement verb, no
+    // mid-string punctuation, so only the length check catches this one.
+    expect(anchor.title).toBe("");
+  });
+
+  it("a garbage company blanks an otherwise-plausible sibling title (they came from the same broken split)", () => {
+    const material = [
+      "Experience",
+      "Senior Software Engineer, and infrastructure teams across three regions",
+      "Jan 2019 - Dec 2020",
+      "- Migrated the platform to a new provider, cutting costs by 20%.",
+    ].join("\n");
+    const anchor = resumeAnchor(material, { question: "Tell me about a migration you led." });
+    // Without sibling contamination, "Senior Software Engineer" alone would
+    // pass every one of the four checks — it is only suspect because it was
+    // torn from the exact same comma-split as the clearly-broken company.
+    expect(anchor.title).toBe("");
+    expect(anchor.company).toBe("");
+    expect(anchor.project).toBeTruthy();
+  });
+
+  it("a naturally absent company does NOT blank a genuinely good title", () => {
+    const material = [
+      "Experience",
+      "Freelance Consultant",
+      "Jan 2021 - Present",
+      "- Advised early-stage startups on go-to-market strategy and pricing.",
+    ].join("\n");
+    const anchor = resumeAnchor(material, { question: "Tell me about advising a startup." });
+    // parseEmploymentHistory legitimately finds no second header segment
+    // here (no comma, no "at", nothing to split off) — company was never
+    // OBSERVED, let alone observed as garbage, so it must not drag a fine
+    // title down with it.
+    expect(anchor.title).toBe("Freelance Consultant");
+    expect(anchor.company).toBe("");
+  });
+
+  it("keeps real titles and companies the gate must never reject", () => {
+    const material = [
+      "Experience",
+      "VP of Product, Acme Learning",
+      "Jan 2021 - Present",
+      "- Owns the product roadmap across three business units.",
+    ].join("\n");
+    const anchor = resumeAnchor(material, { question: "Tell me about owning a product roadmap." });
+    expect(anchor.title).toBe("VP of Product");
+    expect(anchor.company).toBe("Acme Learning");
+  });
+
+  // "Acme, Inc." can never reach resumeAnchor()'s output as one string:
+  // parseEmployment.js's own header-splitting treats every comma as a
+  // segment separator, so a company containing one is always fractured
+  // into separate parts before parseHeader assembles a `company` value —
+  // there is no résumé text that routes this literal string through
+  // resumeAnchor(). Asserted directly against the exported gate instead, so
+  // "the gate itself does not reject a real, comma-bearing company name" is
+  // still pinned somewhere.
+  describe("gateHeaderPair (direct)", () => {
+    it("passes every real title/company shape named in the spec", () => {
+      expect(gateHeaderPair("Product Curriculum Lead", "Acme Learning")).toEqual({
+        title: "Product Curriculum Lead",
+        company: "Acme Learning",
+      });
+      expect(gateHeaderPair("Senior Software Engineer", "Initech")).toEqual({
+        title: "Senior Software Engineer",
+        company: "Initech",
+      });
+      expect(gateHeaderPair("VP of Product", "Acme, Inc.")).toEqual({
+        title: "VP of Product",
+        company: "Acme, Inc.",
+      });
+    });
+
+    it("blanks both when either half fails, and blanks neither when both pass", () => {
+      expect(gateHeaderPair("Collaborated with business leaders", "and development teams across regions")).toEqual({
+        title: "",
+        company: "",
+      });
+      expect(gateHeaderPair("", "")).toEqual({ title: "", company: "" });
     });
   });
 });

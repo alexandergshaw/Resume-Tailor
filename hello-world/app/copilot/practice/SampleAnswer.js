@@ -7,9 +7,10 @@ import CircularProgress from "@mui/material/CircularProgress";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
-import { answerBullets } from "@/lib/copilot/answerPoints";
+import { answerLines } from "@/lib/copilot/answerPoints";
 import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus";
 import AnswerAids from "../AnswerAids";
+import AnswerLines from "../AnswerLines";
 
 // G1: the toggleable sample answer for practice mode's current question.
 // Purely presentational — every bit of state (whether it's shown, whether a
@@ -23,14 +24,13 @@ import AnswerAids from "../AnswerAids";
 // complete, speakable sentence (STAR-labeled for a behavioral/leadership
 // shape), replacing G2's earlier single prose string.
 //
-// AC-K1.1: what this panel RENDERS is `cues` — the same beats cut down to a
-// few words each, because a sample answer is read in the seconds before
-// speaking and a paragraph of complete sentences cannot be. The full points
-// are still what the draft IS (and what the derived prose `answer` comes
-// from); they are the fallback here only when no cues came back. That
-// decision is answerBullets in lib/copilot/answerPoints.js, shared with
+// AC-K1.1/AC-L1: what this panel RENDERS is a CUE PLUS the sentence behind
+// it, per line — the cue is the beat cut down to a few words, read in the
+// seconds before speaking; the point is the full sentence a candidate can
+// actually speak from. Neither replaces the other. That decision is
+// answerLines in lib/copilot/answerPoints.js, shared with
 // CopilotDashboard.js's two answer panels and QuestionFeed.js's card rather
-// than written out three times — see that module's doc for why (BUG-J6: two
+// than written out four times — see that module's doc for why (BUG-J6: two
 // copies of its sibling filter had already drifted).
 
 // AC-G2-C-8: states what the answer was actually built from, derived from
@@ -61,10 +61,11 @@ export default function SampleAnswer({
   visible,
   status, // idle | loading | done | error
   // AC-H9.36: the sample answer as a bullet-point array (each a complete,
-  // speakable sentence) — see useSampleAnswer.js and answerBullets
+  // speakable sentence) — see useSampleAnswer.js and answerLines
   // (lib/copilot/answerPoints.js) above.
   points,
-  // AC-K1.1: one short prompt per point — what actually gets rendered.
+  // AC-K1.1: one short prompt per point — rendered alongside its point, not
+  // in place of it. See answerLines above.
   cues,
   // AC-K1.2/AC-K1.3: the posting's own vocabulary, and the resume role and
   // project this answer came out of. Straight through to AnswerAids, which
@@ -82,11 +83,11 @@ export default function SampleAnswer({
   onRetry,
   onRegenerate,
 }) {
-  const bullets = answerBullets(cues, points);
+  const lines = answerLines(cues, points);
   // AC-G1-11: only offered once a draft is actually on screen — not while
   // it's loading, not while hidden, and not in the error state (which has
   // its own "Retry" action instead).
-  const canRegenerate = visible && status === "done" && bullets.length > 0;
+  const canRegenerate = visible && status === "done" && lines.length > 0;
 
   return (
     <Box sx={{ mt: 1.5 }}>
@@ -110,7 +111,7 @@ export default function SampleAnswer({
           mounted (idle → "") for the whole life of this card so only its
           TEXT changes from here on. */}
       <Box component="span" role="status" aria-live="polite" sx={visuallyHidden}>
-        {answerStatusMessage({ status, bulletCount: bullets.length })}
+        {answerStatusMessage({ status, bulletCount: lines.length })}
       </Box>
 
       {visible ? (
@@ -143,15 +144,9 @@ export default function SampleAnswer({
             </Alert>
           ) : null}
 
-          {status === "done" && bullets.length > 0 ? (
+          {status === "done" && lines.length > 0 ? (
             <>
-              <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
-                {bullets.map((bullet, i) => (
-                  <Typography key={i} component="li" variant="body2" sx={{ mb: 0.5, color: "var(--text-primary)" }}>
-                    {bullet}
-                  </Typography>
-                ))}
-              </Box>
+              <AnswerLines lines={lines} />
               <AnswerAids buzzwords={buzzwords} anchor={anchor} idealProject={idealProject} />
               <Typography variant="caption" sx={{ color: "var(--text-muted)", display: "block", mt: 1 }}>
                 {sourceCaption(isEmbedded, grounding)}

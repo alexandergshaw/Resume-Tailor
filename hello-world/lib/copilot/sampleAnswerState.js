@@ -31,8 +31,8 @@ export function emptySampleAnswer() {
     status: "idle", // idle | loading | done | error
     points: [],
     // AC-K1: the three reading aids that arrive with the draft. `cues` is
-    // what SampleAnswer.js renders (points are the fallback — answerBullets
-    // in lib/copilot/answerPoints.js); `buzzwords` and `anchor` are the two
+    // rendered alongside `points`, never in place of them — answerLines
+    // in lib/copilot/answerPoints.js; `buzzwords` and `anchor` are the two
     // subsections under it. Carried through this slot exactly the way
     // `points` is, with the same caching and staleness rules, because they
     // are built from the same request and are just as wrong to show against

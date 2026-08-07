@@ -9,9 +9,10 @@ import CircularProgress from "@mui/material/CircularProgress";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
-import { answerBullets } from "@/lib/copilot/answerPoints";
+import { answerLines } from "@/lib/copilot/answerPoints";
 import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus";
 import AnswerAids from "../AnswerAids";
+import AnswerLines from "../AnswerLines";
 
 // AC-I5/AC-J2: the copilot's five-panel dashboard — current question, its
 // answer, the predicted next question, that question's pre-drafted answer,
@@ -228,10 +229,10 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
   // must fall through to the copy.noPoints branch rather than rendering an
   // empty `<ul>`.
   //
-  // AC-K1.1: `cues` when the draft has them, the full points when it does
-  // not — the same answerBullets call practice mode's SampleAnswer.js and
-  // live mode's QuestionFeed.js card make, so all three read alike.
-  const bullets = answerBullets(current?.cues, current?.points);
+  // AC-K1.1/AC-L1: a cue PLUS the sentence behind it, per line — the same
+  // answerLines call practice mode's SampleAnswer.js and live mode's
+  // QuestionFeed.js card make, so all three read alike.
+  const lines = answerLines(current?.cues, current?.points);
 
   // F7: WCAG 2.4.3. Clicking the reveal button below UNMOUNTS it (the
   // `answerHidden` branch stops matching) and replaces it with the revealed
@@ -289,7 +290,7 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
           revealed container the moment the user presses reveal, which is
           what announces the content at that point. */}
       <Box component="span" role="status" aria-live="polite" sx={visuallyHidden}>
-        {answerStatusMessage({ status: answerHidden ? "idle" : current?.status, bulletCount: bullets.length })}
+        {answerStatusMessage({ status: answerHidden ? "idle" : current?.status, bulletCount: lines.length })}
       </Box>
       {!current ? (
         <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>
@@ -320,15 +321,9 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
             // PredictedAnswerPanel below) — role="alert" plus a non-color
             // icon, rather than a plain colored Typography (WCAG 1.4.1).
             <Alert severity="error">{current.error || "Could not draft an answer."}</Alert>
-          ) : current.status === "done" && bullets.length ? (
+          ) : current.status === "done" && lines.length ? (
             <>
-              <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
-                {bullets.map((bullet, i) => (
-                  <Typography key={i} component="li" variant="body2" sx={{ mb: 0.5, color: "var(--text-primary)" }}>
-                    {bullet}
-                  </Typography>
-                ))}
-              </Box>
+              <AnswerLines lines={lines} />
               {/* AC-K1.2/AC-K1.3: the same subsections the question card
                   shows, in the panel a candidate is actually looking at
                   mid-interview — including the ideal-project benchmark.
@@ -387,19 +382,20 @@ function PredictedQuestionPanel({ status, question, error, onRetry, copy }) {
 }
 
 function PredictedAnswerPanel({ predictionStatus, predictedQuestion, status, points, cues, error, onRetry, copy }) {
-  // BUG-J6: now shared with CurrentAnswerPanel via answerBullets rather than
+  // BUG-J6: now shared with CurrentAnswerPanel via answerLines rather than
   // each panel writing this filter out separately — see that helper's doc.
-  // AC-K1.1: cues here too, for the same reason CurrentAnswerPanel has them —
-  // two answer panels side by side, one in cues and one in full sentences,
-  // would read as two different kinds of thing.
-  const bullets = answerBullets(cues, points);
+  // AC-K1.1/AC-L1: cue plus sentence here too, for the same reason
+  // CurrentAnswerPanel has them — two answer panels side by side, one
+  // showing cues alone and one showing full sentences, would read as two
+  // different kinds of thing.
+  const lines = answerLines(cues, points);
   return (
     <PredictionPanel title={copy.predictedAnswerTitle}>
       {/* F9: see CurrentAnswerPanel's identical region for why this must be
           unconditional — only its text may change, the node itself must
           never mount and unmount with the content. */}
       <Box component="span" role="status" aria-live="polite" sx={visuallyHidden}>
-        {answerStatusMessage({ status, bulletCount: bullets.length })}
+        {answerStatusMessage({ status, bulletCount: lines.length })}
       </Box>
       {predictionStatus !== "done" || !predictedQuestion ? (
         <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
@@ -436,15 +432,9 @@ function PredictedAnswerPanel({ predictionStatus, predictedQuestion, status, poi
         >
           {error || "Could not draft an answer to the predicted question."}
         </Alert>
-      ) : bullets.length ? (
+      ) : lines.length ? (
         <>
-          <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
-            {bullets.map((bullet, i) => (
-              <Typography key={i} component="li" variant="body2" sx={{ mb: 0.5, color: "var(--text-primary)" }}>
-                {bullet}
-              </Typography>
-            ))}
-          </Box>
+          <AnswerLines lines={lines} />
           <Typography variant="caption" sx={{ display: "block", mt: 0.75, color: "var(--text-secondary)" }}>
             {copy.predraftCaption}
           </Typography>

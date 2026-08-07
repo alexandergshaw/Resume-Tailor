@@ -22,7 +22,7 @@
 // already-cached (R-111) answer would mount the region and its final text
 // in the same frame and say nothing.
 //
-// `bulletCount` is the caller's already-computed `answerBullets(...).length`
+// `bulletCount` is the caller's already-computed `answerLines(...).length`
 // (lib/copilot/answerPoints.js) — this module does not recompute cues vs.
 // points, the same "one decision, one place" reasoning that module's own
 // doc comment gives for why it is shared rather than reimplemented per

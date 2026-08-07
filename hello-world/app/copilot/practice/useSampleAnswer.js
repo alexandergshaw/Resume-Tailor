@@ -82,7 +82,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
     // AC-H9/AC-K1: the route's `mode: "answer"` response is
     // { points, cues, answer, type, grounding, buzzwords, resumeAnchor,
     // idealProject }. `cues` is what SampleAnswer.js renders, with `points`
-    // as its fallback (answerBullets); `buzzwords`/`resumeAnchor`/
+    // alongside its point (answerLines); `buzzwords`/`resumeAnchor`/
     // `idealProject` are the subsections under it. The derived prose
     // `answer` field exists for a later speech-synthesis feature and is
     // deliberately not read here.

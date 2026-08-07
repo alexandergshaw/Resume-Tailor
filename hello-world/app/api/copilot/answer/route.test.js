@@ -511,6 +511,16 @@ describe("POST /api/copilot/answer (reading aids, AC-K1)", () => {
     expect(data.resumeAnchor.project).toContain("checkout redesign");
   });
 
+  // AC-K1.2 correction: postingBuzzwords used to return the SAME terms for
+  // every question against a given posting — the only per-question signal
+  // was an almost-never-firing substring test, so three unrelated questions
+  // came back with one byte-identical six-term list. It now requires the
+  // term to actually be relevant to the question/draft (taxonomy-canonical
+  // intersection, or full word overlap), so the question below has to
+  // genuinely be about the posting's own vocabulary — a real candidate could
+  // easily be asked this against a posting requiring Kubernetes/Terraform —
+  // rather than a generic question the old, unfiltered list would have
+  // padded out regardless of topic.
   it("mines buzzwords from the selected posting WITHOUT the description reaching either prompt", async () => {
     mockUserWithApplicationDocs({
       application: APPLICATION_WITH_POSTING,
@@ -519,7 +529,7 @@ describe("POST /api/copilot/answer (reading aids, AC-K1)", () => {
     mockGemini({ points: ["Point one.", "Point two."], type: "general" });
     const res = await POST(
       jsonRequest({
-        question: "How do you approach infrastructure work?",
+        question: "How would you use Kubernetes and Terraform to manage this team's infrastructure?",
         mode: "answer",
         engine: "gemini",
         applicationId: "app-1",
@@ -530,12 +540,31 @@ describe("POST /api/copilot/answer (reading aids, AC-K1)", () => {
     expect(data.buzzwords).toContain("Terraform");
 
     // idealProject present in answer mode too, mined from the SAME posting
-    // description — grounded (a stated number, a term the posting actually
-    // contains), never fabricated.
+    // description. `shape` is still grounded — every term literally occurs
+    // in the posting. `metrics` is NOT: mining the posting's own numbers into
+    // metrics is exactly the bug this module now permanently forbids (see
+    // idealProject.js's header comment on the reported "Metrics to have
+    // ready: $78,496, $105,974..." failure — the posting's SALARY BAND,
+    // rendered back as if it were a project metric). What used to be
+    // `metrics).toContain("5+ years")` pinned the old, now-impossible
+    // behaviour; the contract worth pinning now is that NO metric ever
+    // carries a digit, and none of the posting's own stated figures
+    // (including its "5+ years" experience floor) ever resurface as one.
     expect(data.idealProject).not.toBeNull();
-    expect(data.idealProject.metrics).toContain("5+ years");
+    for (const metric of data.idealProject.metrics) {
+      expect(metric).not.toMatch(/\d/);
+    }
+    expect(data.idealProject.metrics.join(" | ")).not.toContain("5+ years");
     for (const term of data.idealProject.shape.split(", ")) {
       expect(POSTING_DESC.toLowerCase()).toContain(term.toLowerCase());
+    }
+    // `summary` is the new advisory sentence alongside shape/metrics — always
+    // third person, never first, so a candidate under interview pressure
+    // reading it next to a real quote from their own résumé cannot mistake
+    // it for something to claim (R-087, idealProject.js header comment).
+    expect(data.idealProject.summary).toMatch(/^They want a project built around/);
+    for (const term of data.idealProject.shape.split(", ")) {
+      expect(data.idealProject.summary).toContain(term);
     }
 
     // AC-H7.27 is unchanged: the description grounds NOTHING. It is fetched
@@ -548,6 +577,40 @@ describe("POST /api/copilot/answer (reading aids, AC-K1)", () => {
     expect(promptText).not.toContain("Deep experience with Kubernetes");
   });
 
+  // AC-K1.2 headline case: the user-reported bug itself. A posting WITH a
+  // description, but a question that shares none of the posting's
+  // vocabulary, must come back with buzzwords: [] — not the old fixed list
+  // padded out regardless of relevance. The other aids are independent of
+  // buzzwords being empty: idealProject only RANKS on question relevance (it
+  // never filters shapeTerms out for being off-topic — see idealProject.js),
+  // and resumeAnchor reads the candidate's own résumé, not the posting, so
+  // neither degrades just because this question has nothing to do with
+  // Kubernetes/Terraform/Python.
+  it("returns buzzwords: [] for a posting with a description when the question shares none of its vocabulary", async () => {
+    mockUserWithApplicationDocs({
+      application: APPLICATION_WITH_POSTING,
+      resumeContent: RESUME_DOC,
+    });
+    mockGemini({ points: ["Point one.", "Point two."], type: "general" });
+    const res = await POST(
+      jsonRequest({
+        question: "How do you handle conflict with a difficult coworker?",
+        mode: "answer",
+        engine: "gemini",
+        applicationId: "app-1",
+      }),
+    );
+    const data = await res.json();
+    expect(data.buzzwords).toEqual([]);
+    expect(data.idealProject).not.toBeNull();
+    expect(data.resumeAnchor).not.toBeNull();
+    expect(data.points.length).toBeGreaterThan(0);
+  });
+
+  // Same relevance-gated buzzwords as the answer-mode case above — the
+  // question has to actually be about the posting's own vocabulary
+  // (Python/Kubernetes, both stated in POSTING_DESC) for `buzzwords` to come
+  // back non-empty, rather than any generic "tell me about yourself" opener.
   it("keeps the posting description out of the points-mode prompt too", async () => {
     mockUserWithApplicationDocs({
       application: APPLICATION_WITH_POSTING,
@@ -555,7 +618,11 @@ describe("POST /api/copilot/answer (reading aids, AC-K1)", () => {
     });
     mockGemini({ points: ["Point one."], type: "general" });
     const res = await POST(
-      jsonRequest({ question: "Tell me about yourself.", engine: "gemini", applicationId: "app-1" }),
+      jsonRequest({
+        question: "Tell me about your Python and Kubernetes background.",
+        engine: "gemini",
+        applicationId: "app-1",
+      }),
     );
     const data = await res.json();
     expect(data.buzzwords.length).toBeGreaterThan(0);

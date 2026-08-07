@@ -30,9 +30,9 @@ import { literallyMentioned } from "./answerLocal.js";
 // "kind of project" — enough to be specific ("Cloud Computing, Distributed
 // Systems") without turning into a second buzzword list.
 export const MAX_SHAPE_TERMS = 3;
-// Metrics are capped, not just the posting-stated numbers within them — a
-// recruiter's checklist, not an exhaustive one.
-export const MAX_METRICS = 4;
+// Metrics are a recruiter's checklist of CATEGORIES, not an exhaustive one —
+// capped short so the block stays glanceable.
+export const MAX_METRICS = 3;
 
 // The three taxonomy categories that name a KIND OF PROJECT rather than a
 // soft skill or a certification — "Agile" and "Distributed Systems" describe
@@ -50,60 +50,63 @@ function collect(grouped, categories) {
   return items;
 }
 
-// The posting's OWN stated numbers — real figures the posting text itself
-// contains ("5+ years", "2M requests/day", "99.9% uptime"). Each entry is
-// the literal matched substring, never reconstructed or reformatted, so it
-// trivially satisfies "never emits a number absent from the posting" by
-// construction — the same "grounding is structural" discipline
-// resumeAnchor.js documents for `project`.
-const POSTING_NUMBER_RE =
-  /\$\s?\d[\d,.]*\s?[kmb]?\b|\d+(?:\.\d+)?\s?%|\b\d[\d,.]*\+?[kmb]?\s*(?:years?|yrs?|users?|customers?|clients?|requests?(?:\s?\/\s?(?:day|sec|second|s|hour|hr))?|deals?|hires?|people|engineers?|reports?|hours?|days?|weeks?|months?|tb|gb|mb|ms|x)\b/gi;
-
-function postingNumbers(text, limit) {
-  const seen = new Set();
-  const out = [];
-  for (const raw of text.match(POSTING_NUMBER_RE) || []) {
-    const cleaned = raw.trim().replace(/\s+/g, " ");
-    const key = cleaned.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(cleaned);
-    if (out.length >= limit) break;
-  }
-  return out;
-}
+// Mining the posting's OWN stated numbers into `metrics` was tried and is
+// deliberately, permanently gone. Reported failure: a posting stating
+// "Salary range: $78,496.00 - $105,974.00" in two formats yielded "Metrics
+// to have ready: $78,496, $105,974, $78,496.00, $105,974.00" — the SALARY
+// BAND, restated four times because the dedupe key was the exact string and
+// the posting gave it twice over. Those four entries then consumed the
+// entire MAX_METRICS budget, so the real metric CATEGORIES below were never
+// reached at all — the block that was supposed to tell a candidate what to
+// have a number READY FOR instead just echoed the posting's pay range back
+// at them.
+//
+// The fix is not a better number filter — there isn't one. A job posting's
+// digits are its salary band, its years-of-experience floor and its
+// headcount; it essentially never states a metric from a project the
+// candidate should describe, and no regex can tell "$78,496" (compensation)
+// apart from "40% latency reduction" (a project metric) by shape alone,
+// because postings don't write the latter. So this module never reads a
+// number OUT of the posting at all: `metrics` is exclusively the
+// hand-authored CATEGORY phrases from categoryMetrics() below — a kind of
+// number to have ready, never a figure.
 
 // Generic metric CATEGORIES a recruiter touching this bucket's vocabulary
 // would want a number for — never a specific figure, only the KIND of
 // number to have ready (e.g. "latency reduction %" names a category; "40%
 // latency reduction" would be a fabricated figure, which is exactly what
-// this must never produce). Buckets are tried in order and a posting can
-// trigger more than one; GENERIC_METRICS is always appended last so a
-// posting whose vocabulary matches nothing named below still gets a usable,
-// sensible set instead of an empty one.
+// this must never produce). Buckets are ranked by FIT (see categoryMetrics
+// below) and a posting can still trigger more than one if the best-fitting
+// bucket doesn't fill MAX_METRICS on its own; GENERIC_METRICS is always
+// appended last so a posting whose vocabulary matches nothing named below
+// still gets a usable, sensible set instead of an empty one.
+//
+// Each `test` carries the `g` flag purely so categoryMetrics can COUNT its
+// matches instead of only asking yes/no — the set of words each bucket
+// recognizes is otherwise unchanged.
 const METRIC_BUCKETS = [
   {
-    test: /\b(latency|throughput|uptime|reliability|scalab|scaling|infrastructure|distributed|cloud|backend|platform|devops|migrat|performance)\b/i,
+    test: /\b(latency|throughput|uptime|reliability|scalab|scaling|infrastructure|distributed|cloud|backend|platform|devops|migrat|performance)\b/gi,
     metrics: ["latency reduction %", "uptime / reliability %", "throughput at scale", "infrastructure cost saved"],
   },
   {
-    test: /\b(data|machine learning|\bml\b|analytics|model|pipeline|etl)\b/i,
+    test: /\b(data|machine learning|\bml\b|analytics|model|pipeline|etl)\b/gi,
     metrics: ["model accuracy improvement", "data volume processed", "pipeline runtime reduction"],
   },
   {
-    test: /\b(product|ux|user experience|design|frontend|customer)\b/i,
+    test: /\b(product|ux|user experience|design|frontend|customer)\b/gi,
     metrics: ["adoption rate", "user satisfaction / NPS", "time-to-ship"],
   },
   {
-    test: /\b(sales|revenue|growth|marketing|pipeline|quota)\b/i,
+    test: /\b(sales|revenue|growth|marketing|pipeline|quota)\b/gi,
     metrics: ["revenue impact", "conversion rate", "pipeline generated"],
   },
   {
-    test: /\b(support|customer success|service|operations|\bops\b)\b/i,
+    test: /\b(support|customer success|service|operations|\bops\b)\b/gi,
     metrics: ["resolution time", "customer satisfaction score", "ticket volume handled"],
   },
   {
-    test: /\b(security|compliance|risk)\b/i,
+    test: /\b(security|compliance|risk)\b/gi,
     metrics: ["incidents prevented", "audit / compliance pass rate"],
   },
 ];
@@ -119,13 +122,38 @@ function categoryMetrics(text, limit) {
     seen.add(key);
     out.push(phrase);
   };
-  for (const bucket of METRIC_BUCKETS) {
-    if (!bucket.test.test(text)) continue;
+
+  // Rank buckets by how well each one actually FITS the posting — the number
+  // of times its own pattern matches the posting text — rather than trying
+  // them in declaration order and stopping at the first hit. First-match-wins
+  // was the bug: run against a real "Senior Product Manager, Education
+  // Technology" posting, the infrastructure bucket is declared first and its
+  // pattern matches the single incidental word "platform", so it claimed the
+  // ENTIRE MAX_METRICS budget before the product bucket — which the posting's
+  // "product manager", "product experience" and the rest of its vocabulary
+  // actually fit — was ever consulted. The candidate was told to prepare
+  // "latency reduction %, uptime / reliability %, throughput at scale" for a
+  // product interview: declaration order was standing in for fit, and it was
+  // wrong every time a posting merely brushed past an infra word without
+  // being an infra posting. Scoring by match COUNT (not match/no-match) fixes
+  // that: one incidental "platform" scores 1 and loses to a bucket whose
+  // vocabulary the posting actually uses repeatedly. Ties keep declaration
+  // order as the tiebreaker, so the result stays fully deterministic.
+  const ranked = METRIC_BUCKETS.map((bucket, idx) => ({
+    bucket,
+    idx,
+    score: (text.match(bucket.test) || []).length,
+  }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score || a.idx - b.idx);
+
+  for (const { bucket } of ranked) {
     for (const phrase of bucket.metrics) {
       add(phrase);
       if (out.length >= limit) return out;
     }
   }
+
   for (const phrase of GENERIC_METRICS) {
     add(phrase);
     if (out.length >= limit) break;
@@ -133,11 +161,24 @@ function categoryMetrics(text, limit) {
   return out;
 }
 
-// The kind of project a recruiter for THIS posting would consider ideal, and
-// the metrics they would want to hear about it. `question`/`points` rank
-// which of the posting's terms are most relevant to what's on screen right
-// now, the same way postingBuzzwords' `context` does — the same posting
-// yields a different emphasis per question.
+// Joins shape terms into prose ("Education", "Education and Agile",
+// "Education, Artificial Intelligence and Agile") — the same list `shape`
+// already carries, just readable as the object of a sentence instead of a
+// labelled, comma-separated heading. Ordinary "a, b and c" English joining,
+// no Oxford comma, because `summary` is meant to read as a sentence a human
+// wrote, not as a second rendering of the `shape` list.
+function joinShapeTerms(terms) {
+  if (terms.length === 1) return terms[0];
+  if (terms.length === 2) return `${terms[0]} and ${terms[1]}`;
+  return `${terms.slice(0, -1).join(", ")} and ${terms[terms.length - 1]}`;
+}
+
+// The kind of project a recruiter for THIS posting would consider ideal, a
+// one-sentence description of it, and the metric CATEGORIES they would want
+// to hear about it. `question`/`points` rank which of the posting's terms
+// are most relevant to what's on screen right now, the same way
+// postingBuzzwords' `context` does — the same posting yields a different
+// emphasis per question.
 //
 // Returns null for an empty/blank/non-string description (no posting
 // selected -> no block at all, same contract as postingBuzzwords/
@@ -185,11 +226,19 @@ export function idealProject(description, { question = "", points = [] } = {}) {
   }
   if (shapeTerms.length === 0) return null;
 
-  const numbers = postingNumbers(text, MAX_METRICS);
-  const categories = categoryMetrics(text, MAX_METRICS - numbers.length);
+  // Third-person advisory voice, never first person: this names a project
+  // the candidate did NOT do, rendered next to a real quote from their own
+  // résumé (AnswerAids' "Project to talk about"). A candidate under
+  // interview pressure could misread a first-person sentence here as
+  // something to claim, which is exactly the failure this module's own
+  // header comment (R-087) exists to prevent — so `summary` reads as a
+  // recruiter's expectation of the role, never as a sentence the candidate
+  // could read aloud as a claim about themselves.
+  const summary = `They want a project built around ${joinShapeTerms(shapeTerms)}, owned end to end, with a measurable outcome.`;
 
   return {
     shape: shapeTerms.join(", "),
-    metrics: [...numbers, ...categories].slice(0, MAX_METRICS),
+    summary,
+    metrics: categoryMetrics(text, MAX_METRICS),
   };
 }

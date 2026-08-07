@@ -8,9 +8,10 @@ import CircularProgress from "@mui/material/CircularProgress";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
-import { answerBullets } from "@/lib/copilot/answerPoints";
+import { answerLines } from "@/lib/copilot/answerPoints";
 import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus";
 import AnswerAids from "./AnswerAids";
+import AnswerLines from "./AnswerLines";
 
 const TYPE_LABEL = {
   behavioral: "Behavioral",
@@ -35,7 +36,7 @@ export default function QuestionFeed({ questions, onDraft }) {
   // LATEST question, which is also the one `addQuestion`/`runDraft` just
   // acted on.
   const latest = questions.length ? questions[questions.length - 1] : null;
-  const latestBullets = answerBullets(latest?.cues, latest?.points);
+  const latestLines = answerLines(latest?.cues, latest?.points);
   return (
     <Box
       sx={{
@@ -63,7 +64,7 @@ export default function QuestionFeed({ questions, onDraft }) {
       </Typography>
 
       <Box component="span" role="status" aria-live="polite" sx={visuallyHidden}>
-        {answerStatusMessage({ status: latest?.status, bulletCount: latestBullets.length })}
+        {answerStatusMessage({ status: latest?.status, bulletCount: latestLines.length })}
       </Box>
 
       {questions.length === 0 ? (
@@ -84,12 +85,12 @@ export default function QuestionFeed({ questions, onDraft }) {
 function QuestionCard({ q, onDraft }) {
   const loading = q.status === "loading";
   const done = q.status === "done";
-  // AC-K1.1: the cues are what a candidate reads while the interviewer is
-  // still finishing the question; the full points are the fallback for a
-  // draft that has none (one cached before cues existed). Same answerBullets
-  // call practice mode's SampleAnswer.js and the shared dashboard's answer
-  // panels make — one decision, one place.
-  const bullets = answerBullets(q.cues, q.points);
+  // AC-K1.1/AC-L1: a cue plus the sentence behind it, per line — the cue is
+  // what a candidate reads while the interviewer is still finishing the
+  // question, the sentence is what they can actually speak from. Same
+  // answerLines call practice mode's SampleAnswer.js and the shared
+  // dashboard's answer panels make — one decision, one place.
+  const lines = answerLines(q.cues, q.points);
   return (
     <Box
       sx={{
@@ -135,20 +136,9 @@ function QuestionCard({ q, onDraft }) {
         </Alert>
       ) : null}
 
-      {done && bullets.length ? (
+      {done && lines.length ? (
         <Box sx={{ mb: 1 }}>
-          <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
-            {bullets.map((bullet, i) => (
-              <Typography
-                key={i}
-                component="li"
-                variant="body2"
-                sx={{ mb: 0.5, color: "var(--text-primary)" }}
-              >
-                {bullet}
-              </Typography>
-            ))}
-          </Box>
+          <AnswerLines lines={lines} />
           {/* AC-K1.2/AC-K1.3: the posting's own vocabulary to work in, and
               which role and project on the candidate's resume this answer
               came out of, plus the ideal-project benchmark for this posting.

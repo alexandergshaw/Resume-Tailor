@@ -191,6 +191,19 @@ describe("deriveCues", () => {
   it("is deterministic", () => {
     expect(deriveCues(POINTS)).toEqual(deriveCues(POINTS));
   });
+
+  // The reported defect: `.filter(Boolean)` used to sit at the end of this
+  // pipeline and drop a point that shortened to "" entirely, shrinking the
+  // array below points.length. Here several points in the same draft shorten
+  // to nothing at once — deriveCues must still return exactly one entry per
+  // cleaned point, "" at each terse position, everything else intact at its
+  // own index.
+  it("returns exactly one entry per cleaned point, with a blank placeholder for each one that shortens to nothing", () => {
+    const points = ["...", "I led a team of six.", "??", "Shipped the migration on time."];
+    const cues = deriveCues(points);
+    expect(cues).toHaveLength(points.length);
+    expect(cues).toEqual(["", "Led a team of six", "", "Shipped the migration on time"]);
+  });
 });
 
 describe("resolveCues", () => {
@@ -230,5 +243,34 @@ describe("resolveCues", () => {
 
   it("returns an empty array when there are no points to cue", () => {
     expect(resolveCues(["stray cue"], [])).toEqual([]);
+  });
+
+  // The resolveCues half of the same defect deriveCues had: a `.filter(Boolean)`
+  // used to run after `.map(shortenToCue)`, so a supplied cue that genuinely
+  // shortened to nothing (present in the raw response, just not usable —
+  // "..." on its own) was dropped rather than held in place. That shrank the
+  // supplied array below points.length, turned what should have been an
+  // accepted 1:1 match into a mismatch, and threw away the OTHER two
+  // perfectly good supplied cues along with it. They must now survive at
+  // their own positions, with "" only where the model's own entry earned it.
+  it("holds a supplied cue's position with \"\" when it shortens to nothing, without discarding the other supplied cues", () => {
+    const points = [
+      "Point one is about the migration effort.",
+      "Point two is about the terse case.",
+      "Point three is about the final result.",
+    ];
+    const cues = resolveCues(["Migration effort here", "...", "Final result achieved"], points);
+    expect(cues).toEqual(["Migration effort here", "", "Final result achieved"]);
+  });
+
+  it("still discards every supplied cue on a genuine count mismatch (2 cues for 3 points)", () => {
+    const points = ["Point one.", "Point two.", "Point three."];
+    const cues = ["Cue one", "Cue two"];
+    // A real count mismatch is not the same failure as a blank holding its
+    // place — the model returning fewer/more entries than there are points
+    // still means it paired them up differently than the points array
+    // reads, so the whole supplied set is still discarded, unchanged from
+    // before this fix.
+    expect(resolveCues(cues, points)).toEqual(deriveCues(points));
   });
 });
