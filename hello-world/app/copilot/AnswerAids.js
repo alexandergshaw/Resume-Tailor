@@ -137,10 +137,13 @@ export default function AnswerAids({ buzzwords, anchor, idealProject }) {
   // The kind of project a recruiter for THIS posting would consider ideal,
   // and the metric categories they'd want to hear about — a BENCHMARK,
   // never something the candidate did. `idealProject` is
-  // `{ shape, summary, metrics } | null` (lib/copilot/idealProject.js); an
-  // entry cached before `summary` existed carries `shape` but no `summary`,
-  // so the advisory line falls back to a shape-derived sentence. `metrics`
-  // is category names only ("adoption rate"), never figures.
+  // `{ shape, summary, metrics, project? } | null`
+  // (lib/copilot/idealProject.js); an entry cached before `summary` existed
+  // carries `shape` but no `summary`, so the advisory line falls back to a
+  // shape-derived sentence, and an entry cached before AC-M2 carries no
+  // `project` at all, so the worked example below (normalized separately,
+  // just underneath) simply doesn't appear. `metrics` is category names
+  // only ("adoption rate"), never figures.
   const idealSummary = (idealProject?.summary || "").trim();
   const idealShape = (idealProject?.shape || "").trim();
   const idealMetrics = (Array.isArray(idealProject?.metrics) ? idealProject.metrics : []).filter(
@@ -148,12 +151,44 @@ export default function AnswerAids({ buzzwords, anchor, idealProject }) {
   );
   const idealLine = idealSummary || (idealShape ? `Roles like this look for: ${idealShape}.` : "");
 
+  // AC-M2: the worked example. `idealProject.project` is the only place a
+  // fabricated FIGURE is ever allowed to appear (lib/copilot/idealProject.js
+  // / idealProjectNarrative.js) — `shape`, `summary` and `metrics` above are
+  // exactly as figure-free as they always were, unchanged. Every piece is
+  // normalized independently before use, the same defensive shape the
+  // `idealMetrics` filter two lines up already uses (Array.isArray guard,
+  // then a non-empty-string filter): a `project` that is missing, null, or
+  // carrying a non-array `sections`/`outcomes` must degrade to rendering
+  // nothing here — never throw, never render an empty label. Named
+  // `idealProject*` rather than `project*` on purpose: `project` above
+  // (line ~128) is the candidate's OWN résumé project string ("Project to
+  // talk about") and is a completely different thing.
+  const idealProjectTitle = (idealProject?.project?.title || "").trim();
+  const idealProjectSections = (
+    Array.isArray(idealProject?.project?.sections) ? idealProject.project.sections : []
+  ).filter((s) => s && typeof s.label === "string" && s.label.trim() && typeof s.body === "string" && s.body.trim());
+  const idealProjectOutcomes = (
+    Array.isArray(idealProject?.project?.outcomes) ? idealProject.project.outcomes : []
+  ).filter(
+    (o) => o && typeof o.metric === "string" && o.metric.trim() && typeof o.figure === "string" && o.figure.trim(),
+  );
+  // Gated on BOTH sections and outcomes surviving normalization, not
+  // either alone: the contract only ever produces them together (a
+  // `project` is either absent or carries exactly 4 sections and exactly 3
+  // outcomes), so treating one as sufficient would let a malformed payload
+  // render the invented-numbers disclosure over an empty sections list, or
+  // a figure list with no problem/built/ran/landed narrative above it to
+  // anchor it. Either normalization coming up short falls all the way back
+  // to exactly today's rendering below — the first line, then the
+  // `metrics` line — never a half-built block.
+  const hasIdealProjectExample = idealProjectSections.length > 0 && idealProjectOutcomes.length > 0;
+
   const hasRoleRow = !!role || description.length > 0;
   const hasProjectRow = !!project;
   const hasResumeGroup = hasRoleRow || hasProjectRow;
 
   const hasWordsRow = terms.length > 0;
-  const hasIdealRow = !!idealLine || idealMetrics.length > 0;
+  const hasIdealRow = !!idealLine || idealMetrics.length > 0 || hasIdealProjectExample;
   const hasPostingGroup = hasWordsRow || hasIdealRow;
 
   // Nothing to show is nothing rendered — never a header with an empty
@@ -286,7 +321,72 @@ export default function AnswerAids({ buzzwords, anchor, idealProject }) {
                   <strong>Not from your resume.</strong>
                   {idealLine ? ` ${idealLine}` : ""}
                 </Typography>
-                {idealMetrics.length ? (
+                {hasIdealProjectExample ? (
+                  // AC-M2's own disclosure, governed by the SAME rule the
+                  // comment above this row already explains at length: it
+                  // must sit in the `dd`, in DOM order before the first
+                  // figure (the first one arrives several lines down, in
+                  // the outcomes list), and never live only in a `dt` —
+                  // this component's `<dl>`s are `display: grid`, which
+                  // drops the description-list role in WebKit, so an
+                  // orphaned `dt` there is just unattached text. "invented"
+                  // carries the warning; the sentence after it says what to
+                  // do about it. Period, not an em dash, between the two —
+                  // an em dash is not spoken at default screen-reader
+                  // punctuation, the same lesson R-136 already paid for
+                  // once on this exact row.
+                  <Typography variant="body2" sx={{ color: "var(--text-primary)" }}>
+                    <strong>A worked example, invented.</strong> The numbers
+                    below are made up, to show what a strong answer for this
+                    posting sounds like. Replace every one of them with your
+                    own.
+                  </Typography>
+                ) : null}
+                {hasIdealProjectExample && idealProjectTitle ? (
+                  <Typography variant="body2" sx={{ color: "var(--text-primary)", fontWeight: 600 }}>
+                    {idealProjectTitle}
+                  </Typography>
+                ) : null}
+                {hasIdealProjectExample
+                  ? idealProjectSections.map((section, i) => (
+                      // Bold (not colour) distinguishes the label from its
+                      // body — WCAG 1.4.1, the same rule the rest of this
+                      // row already rests on. A period follows the label,
+                      // never an em dash, for the same spoken-punctuation
+                      // reason as everywhere else here.
+                      <Typography key={i} variant="body2" sx={{ color: "var(--text-primary)" }}>
+                        <strong>{section.label}.</strong> {section.body}
+                      </Typography>
+                    ))
+                  : null}
+                {hasIdealProjectExample ? (
+                  // A real `<ul>`/`<li>` list — markers left INTACT, unlike
+                  // the buzzword `Stack` above, which strips its markers
+                  // with `listStyle: "none"` and puts the `list` role back
+                  // explicitly because MUI's `Stack` isn't a `ul` to begin
+                  // with. This IS one already, so doing the same thing here
+                  // would remove the only signal telling a screen reader
+                  // it's a list, with nothing here to restore the role
+                  // (R-136). `pl: 2.5`, not the browser default
+                  // `padding-inline-start` (~40px), so the markers clear
+                  // this row's own accent rule instead of shoving every
+                  // line in the row well to the right of its neighbours.
+                  <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
+                    {idealProjectOutcomes.map((outcome, i) => (
+                      <Typography key={i} component="li" variant="body2" sx={{ color: "var(--text-primary)" }}>
+                        <strong>{outcome.metric}</strong>: {outcome.figure}
+                      </Typography>
+                    ))}
+                  </Box>
+                ) : null}
+                {!hasIdealProjectExample && idealMetrics.length ? (
+                  // R-130's term-list echo: once the outcomes list above
+                  // renders, it already gives every one of these same
+                  // category names a worked figure, two lines closer to the
+                  // reader — so this line renders ONLY when there is no
+                  // worked example to say it better (no `project` on the
+                  // payload, or a malformed one), which is exactly today's
+                  // behaviour for an entry cached before AC-M2.
                   <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
                     Metrics to have ready: {idealMetrics.join(", ")}.
                   </Typography>

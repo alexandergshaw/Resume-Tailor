@@ -12,7 +12,18 @@
 // safety story — a visually distinct treatment (PredictionPanel's look,
 // AC-I3.20) and third-person "roles like this look for" wording — but this
 // module's own contribution is never phrasing `shape`/`metrics` as
-// something spoken in the first person, and never fabricating a number.
+// something spoken in the first person, and never fabricating a number in
+// either of them.
+//
+// AC-M1 narrowed that "never fabricating a number" rule, deliberately, to
+// exactly `shape` and `metrics`: `project` (built below via
+// idealProjectNarrative.js) is a worked example and the one place a
+// fabricated figure is allowed to appear, because it is the one place a
+// candidate is explicitly told the numbers are invented (AnswerAids' "A
+// worked example, invented" disclosure). See idealProjectNarrative.js's own
+// header for why that module can make figures up safely: every figure it
+// writes is a hand-authored constant, never something read out of the
+// posting.
 //
 // Same posture as postingBuzzwords.js throughout: deterministic, no network,
 // no LLM, degrades to null on any failure, and both engines get the same
@@ -25,6 +36,7 @@
 import { extractKeywords } from "@/lib/llm/engines/tailor-lite/keywords";
 import { defaultLibraryData } from "@/lib/llm/engines/tailor-lite/library/defaults";
 import { literallyMentioned } from "./answerLocal.js";
+import { buildProject } from "./idealProjectNarrative.js";
 
 // How many of the posting's own domain/methodology/technology terms name the
 // "kind of project" — enough to be specific ("Cloud Computing, Distributed
@@ -42,10 +54,14 @@ export const MAX_METRICS = 3;
 // is a thing to mention, not a description of the PROJECT'S shape.
 const SHAPE_CATEGORIES = ["domain", "methodology", "technology"];
 
+// Category is threaded through onto each item (not just canonical/score/count
+// as extractKeywords returns them) because idealProjectNarrative's {D1} slot
+// needs to know WHICH shape terms name a domain vs. a methodology — grouped's
+// own key is the only place that distinction lives.
 function collect(grouped, categories) {
   const items = [];
   for (const category of categories) {
-    for (const item of grouped[category] || []) items.push(item);
+    for (const item of grouped[category] || []) items.push({ ...item, category });
   }
   return items;
 }
@@ -84,33 +100,77 @@ function collect(grouped, categories) {
 // Each `test` carries the `g` flag purely so categoryMetrics can COUNT its
 // matches instead of only asking yes/no — the set of words each bucket
 // recognizes is otherwise unchanged.
+// `key` names the archetype in idealProjectNarrative.js that tells the SAME
+// story this bucket's metrics are about (AC-M1) — one more place R-137's fix
+// has to hold, since the two are now selected by the same ranking and must
+// never disagree.
 const METRIC_BUCKETS = [
   {
+    key: "infra",
     test: /\b(latency|throughput|uptime|reliability|scalab|scaling|infrastructure|distributed|cloud|backend|platform|devops|migrat|performance)\b/gi,
     metrics: ["latency reduction %", "uptime / reliability %", "throughput at scale", "infrastructure cost saved"],
   },
   {
+    key: "data",
     test: /\b(data|machine learning|\bml\b|analytics|model|pipeline|etl)\b/gi,
     metrics: ["model accuracy improvement", "data volume processed", "pipeline runtime reduction"],
   },
   {
+    key: "product",
     test: /\b(product|ux|user experience|design|frontend|customer)\b/gi,
     metrics: ["adoption rate", "user satisfaction / NPS", "time-to-ship"],
   },
   {
+    key: "revenue",
     test: /\b(sales|revenue|growth|marketing|pipeline|quota)\b/gi,
     metrics: ["revenue impact", "conversion rate", "pipeline generated"],
   },
   {
+    key: "support",
     test: /\b(support|customer success|service|operations|\bops\b)\b/gi,
     metrics: ["resolution time", "customer satisfaction score", "ticket volume handled"],
   },
   {
+    key: "security",
     test: /\b(security|compliance|risk)\b/gi,
     metrics: ["incidents prevented", "audit / compliance pass rate"],
   },
 ];
 const GENERIC_METRICS = ["cost saved", "adoption rate", "time-to-ship", "team size managed"];
+
+// Rank buckets by how well each one actually FITS the posting — the number
+// of times its own pattern matches the posting text — rather than trying
+// them in declaration order and stopping at the first hit. First-match-wins
+// was the bug: run against a real "Senior Product Manager, Education
+// Technology" posting, the infrastructure bucket is declared first and its
+// pattern matches the single incidental word "platform", so it claimed the
+// ENTIRE MAX_METRICS budget before the product bucket — which the posting's
+// "product manager", "product experience" and the rest of its vocabulary
+// actually fit — was ever consulted. The candidate was told to prepare
+// "latency reduction %, uptime / reliability %, throughput at scale" for a
+// product interview: declaration order was standing in for fit, and it was
+// wrong every time a posting merely brushed past an infra word without
+// being an infra posting. Scoring by match COUNT (not match/no-match) fixes
+// that: one incidental "platform" scores 1 and loses to a bucket whose
+// vocabulary the posting actually uses repeatedly. Ties keep declaration
+// order as the tiebreaker, so the result stays fully deterministic.
+//
+// The `score > 0` filter has to live HERE, inside the shared helper, not in
+// either caller: idealProject() also uses this ranking to pick an archetype
+// (AC-M1), and if a posting matching nothing were allowed to fall through to
+// `ranked[0]` regardless of score, that call site would hand the generic
+// fallback posting an `infra` archetype (bucket 0, score 0) instead of
+// "generic" — and `categoryMetrics` would start emitting infra metrics for
+// it too, breaking the documented GENERIC_METRICS fallback.
+function rankBuckets(text) {
+  return METRIC_BUCKETS.map((bucket, idx) => ({
+    bucket,
+    idx,
+    score: (text.match(bucket.test) || []).length,
+  }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score || a.idx - b.idx);
+}
 
 function categoryMetrics(text, limit) {
   if (limit <= 0) return [];
@@ -123,31 +183,7 @@ function categoryMetrics(text, limit) {
     out.push(phrase);
   };
 
-  // Rank buckets by how well each one actually FITS the posting — the number
-  // of times its own pattern matches the posting text — rather than trying
-  // them in declaration order and stopping at the first hit. First-match-wins
-  // was the bug: run against a real "Senior Product Manager, Education
-  // Technology" posting, the infrastructure bucket is declared first and its
-  // pattern matches the single incidental word "platform", so it claimed the
-  // ENTIRE MAX_METRICS budget before the product bucket — which the posting's
-  // "product manager", "product experience" and the rest of its vocabulary
-  // actually fit — was ever consulted. The candidate was told to prepare
-  // "latency reduction %, uptime / reliability %, throughput at scale" for a
-  // product interview: declaration order was standing in for fit, and it was
-  // wrong every time a posting merely brushed past an infra word without
-  // being an infra posting. Scoring by match COUNT (not match/no-match) fixes
-  // that: one incidental "platform" scores 1 and loses to a bucket whose
-  // vocabulary the posting actually uses repeatedly. Ties keep declaration
-  // order as the tiebreaker, so the result stays fully deterministic.
-  const ranked = METRIC_BUCKETS.map((bucket, idx) => ({
-    bucket,
-    idx,
-    score: (text.match(bucket.test) || []).length,
-  }))
-    .filter((entry) => entry.score > 0)
-    .sort((a, b) => b.score - a.score || a.idx - b.idx);
-
-  for (const { bucket } of ranked) {
+  for (const { bucket } of rankBuckets(text)) {
     for (const phrase of bucket.metrics) {
       add(phrase);
       if (out.length >= limit) return out;
@@ -209,22 +245,29 @@ export function idealProject(description, { question = "", points = [] } = {}) {
     .filter((item) => literallyMentioned(item.canonical, text))
     .map((item, idx) => ({
       canonical: item.canonical,
+      category: item.category,
       relevant: literallyMentioned(item.canonical, context) ? 1 : 0,
       score: item.score || 0,
       idx,
     }))
     .sort((a, b) => b.relevant - a.relevant || b.score - a.score || a.idx - b.idx);
 
+  // { canonical, category } per term, not just strings — idealProjectNarrative
+  // needs each term's taxonomy category to fill its {D1} slot (AC-M1) and
+  // discarding it here (as this used to) would leave that module unable to
+  // tell "Education" (a setting) from "Agile" (a delivery method).
   const seen = new Set();
   const shapeTerms = [];
   for (const item of ranked) {
     const key = item.canonical.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    shapeTerms.push(item.canonical);
+    shapeTerms.push({ canonical: item.canonical, category: item.category });
     if (shapeTerms.length >= MAX_SHAPE_TERMS) break;
   }
   if (shapeTerms.length === 0) return null;
+
+  const shapeNames = shapeTerms.map((t) => t.canonical);
 
   // Third-person advisory voice, never first person: this names a project
   // the candidate did NOT do, rendered next to a real quote from their own
@@ -234,11 +277,19 @@ export function idealProject(description, { question = "", points = [] } = {}) {
   // header comment (R-087) exists to prevent — so `summary` reads as a
   // recruiter's expectation of the role, never as a sentence the candidate
   // could read aloud as a claim about themselves.
-  const summary = `They want a project built around ${joinShapeTerms(shapeTerms)}, owned end to end, with a measurable outcome.`;
+  const summary = `They want a project built around ${joinShapeTerms(shapeNames)}, owned end to end, with a measurable outcome.`;
+
+  // The archetype is chosen by the SAME fit ranking that already picks
+  // `metrics` (R-137), so a product posting can never be handed product
+  // metrics next to an infrastructure story. `rankBuckets` already applies
+  // the `score > 0` filter, so "matches nothing" lands on "generic" here
+  // exactly the way it lands on GENERIC_METRICS in categoryMetrics.
+  const archetypeKey = rankBuckets(text)[0]?.bucket.key || "generic";
 
   return {
-    shape: shapeTerms.join(", "),
+    shape: shapeNames.join(", "),
     summary,
     metrics: categoryMetrics(text, MAX_METRICS),
+    project: buildProject(archetypeKey, shapeTerms),
   };
 }

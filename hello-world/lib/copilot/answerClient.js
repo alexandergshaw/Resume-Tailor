@@ -10,8 +10,10 @@ import { readEngine } from "@/app/settings/engine";
 // AC-K1: both modes return `cues` (one short prompt per point — what the UI
 // renders), `buzzwords` (terms from the posting to work in), `resumeAnchor`
 // ({ title, company, matched, project, description } or null) and
-// `idealProject` ({ shape, metrics } or null — the ideal-project benchmark,
-// lib/copilot/idealProject.js). This client returns the parsed body verbatim,
+// `idealProject` ({ shape, summary, metrics, project } or null — the
+// ideal-project benchmark, lib/copilot/idealProject.js; AC-M1 added
+// `project`, the worked-example write-up built by
+// lib/copilot/idealProjectNarrative.js). This client returns the parsed body verbatim,
 // so those need no plumbing here; the consumers that carry them into state
 // are useSampleAnswer.js (practice), CopilotClient.js (live) and
 // useCopilotDashboard.js (both dashboards).
