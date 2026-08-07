@@ -3,26 +3,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import FormControlLabel from "@mui/material/FormControlLabel";
 import Stack from "@mui/material/Stack";
-import Switch from "@mui/material/Switch";
-import Typography from "@mui/material/Typography";
 import { PracticeSession } from "@/lib/copilot/practiceSession";
-import { fmtClock } from "@/lib/copilot/clock";
 import { interviewTypeLabel } from "@/lib/copilot/interviewTypes";
 import { buildPrivacyNotice } from "@/lib/copilot/practiceNotices";
 import { useEngine } from "@/app/settings/engine";
 import TranscriptView from "../TranscriptView";
-import StatusPill from "../StatusPill";
 import CameraPreview from "./CameraPreview";
-import PostingPicker from "../PostingPicker";
-import SubmittedDocs from "../SubmittedDocs";
 import { useApplicationDocs } from "../useApplicationDocs";
-import MicPicker from "../MicPicker";
 import CopilotDashboard, { PRACTICE_COPY } from "../dashboard/CopilotDashboard";
 import { useCopilotDashboard } from "../useCopilotDashboard";
-import InterviewTypePicker from "./InterviewTypePicker";
+import PracticeSetup from "./PracticeSetup";
+import PracticeControls from "./PracticeControls";
 import QuestionCard from "./QuestionCard";
 import AnswerReview from "./AnswerReview";
 import AnswerFeedback from "./AnswerFeedback";
@@ -33,7 +25,6 @@ import { useSampleAnswer } from "./useSampleAnswer";
 import { useInterviewType } from "./useInterviewType";
 import { useSaveRecordings, readSaveEnabled } from "./useSaveRecordings";
 import { usePrepContext } from "../usePrepContext";
-import PrepContext from "../PrepContext";
 
 // Practice mode's capture layer: camera + mic, transcribed as "you", plus a
 // posting picker, a generated interview question to practice against, (C3)
@@ -659,184 +650,43 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
 
   return (
     <Box>
-      <Typography variant="body2" sx={{ color: "var(--text-secondary)", mb: 2 }}>
-        {privacyNotice}
-      </Typography>
+      <PracticeSetup
+        privacyNotice={privacyNotice}
+        profile={profile}
+        onProfileChange={setProfile}
+        error={error}
+        warning={warning}
+        onDismissWarning={() => setWarning("")}
+        interviewType={interviewType}
+        onInterviewTypeChange={onInterviewTypeChange}
+        posting={posting}
+        onPostingChange={onPostingChange}
+        submittedDocs={submittedDocs}
+      />
 
-      <PrepContext value={profile} onChange={setProfile} />
-
-      {error ? (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      ) : null}
-      {warning ? (
-        <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setWarning("")}>
-          {warning}
-        </Alert>
-      ) : null}
-
-      <Box sx={{ mb: 2 }}>
-        <InterviewTypePicker value={interviewType} onChange={onInterviewTypeChange} disabled={false} />
-      </Box>
-
-      <Box sx={{ mb: 2 }}>
-        <PostingPicker value={posting} onChange={onPostingChange} disabled={false} />
-      </Box>
-
-      {/* AC-H3.11: rendered whenever a posting is selected, in BOTH modes,
-          and absent entirely otherwise — never shown in some disabled/empty
-          state for "no posting". */}
-      {posting ? (
-        <SubmittedDocs
-          status={submittedDocs.status}
-          resume={submittedDocs.resume}
-          coverLetter={submittedDocs.coverLetter}
-          error={submittedDocs.error}
-          onRetry={submittedDocs.retry}
-        />
-      ) : null}
-
-      {/* AC-J1.6: the microphone is one piece of hardware shared with live
-          mode — CopilotClient owns the selection AND the localStorage key
-          (see its own MIC_STORAGE_KEY doc) and hands both down as props,
-          exactly the way it already hands down `sttProviderName`. This
-          component owns no storage logic of its own for it. Laid out like
-          live mode's own "Your microphone:" row in CopilotClient.js, placed
-          above the Start/Stop row the same way that row sits above live
-          mode's Start/Stop row. */}
-      <Stack
-        direction="row"
-        spacing={1.25}
-        sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
-      >
-        <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-          Your microphone:
-        </Typography>
-        <MicPicker value={micDeviceId} onChange={onMicDeviceChange} disabled={running} />
-      </Stack>
-
-      <Stack
-        direction="row"
-        spacing={1.5}
-        sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
-      >
-        {running ? (
-          <Button variant="outlined" color="error" onClick={stop}>
-            Stop
-          </Button>
-        ) : (
-          <Button variant="contained" onClick={start}>
-            Start practice
-          </Button>
-        )}
-        <StatusPill status={status} />
-        {startedAt ? (
-          <Typography
-            variant="body2"
-            sx={{ color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}
-          >
-            {fmtClock(elapsed)}
-          </Typography>
-        ) : null}
-        <Box sx={{ flex: 1 }} />
-        <FormControlLabel
-          control={
-            <Switch
-              size="small"
-              checked={!cameraOff}
-              disabled={!controlsEnabled || !hasVideo}
-              onChange={onToggleCamera}
-            />
-          }
-          label={
-            <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-              Camera
-            </Typography>
-          }
-        />
-        <FormControlLabel
-          control={
-            <Switch
-              size="small"
-              checked={micMuted}
-              disabled={!controlsEnabled}
-              onChange={onToggleMic}
-            />
-          }
-          label={
-            <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-              Mute mic
-            </Typography>
-          }
-        />
-      </Stack>
-
-      {/* AC-J2.7: "Pre-draft predicted answer" shares this row with the two
-          switches it was named alongside — camera frames and save
-          recordings — rather than a third row of its own. */}
-      <Stack direction="row" spacing={1} sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 0.5 }}>
-        <FormControlLabel
-          control={
-            <Switch
-              size="small"
-              checked={sendFrames}
-              disabled={isEmbedded}
-              onChange={(e) => setSendFrames(e.target.checked)}
-            />
-          }
-          label={
-            <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-              Include camera frames in AI feedback
-            </Typography>
-          }
-        />
-        <FormControlLabel
-          control={
-            <Switch size="small" checked={saveEnabled} onChange={onToggleSaveEnabled} />
-          }
-          label={
-            <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-              Save recordings to my account
-            </Typography>
-          }
-        />
-        <FormControlLabel
-          control={
-            <Switch
-              size="small"
-              checked={preDraftPredicted}
-              onChange={(e) => setPreDraftPredicted(e.target.checked)}
-            />
-          }
-          label={
-            <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-              Pre-draft predicted answer
-            </Typography>
-          }
-        />
-        {/* BUG-J2: this used to say "...separate from saving recordings
-            below", which became wrong once the save switch moved into this
-            same row (it reads as a locator, not a claim about coverage). It
-            briefly said "and from pre-drafting predicted answers" too, but
-            that was a FALSE privacy claim in the dangerous direction: the
-            embedded engine's own sentence above ("Sample answers are
-            drafted on this server too") already covers pre-drafting
-            correctly — draftAnswer sends `engine: readEngine()`, and
-            app/api/copilot/answer/route.js's wantsEmbedded branch drafts
-            locally, so a pre-draft on this engine reaches no AI provider at
-            all. Saying "separate from" pre-drafting would have told the
-            user the embedded guarantee excludes it, which understates the
-            protection they actually have. Only saving recordings is
-            genuinely a separate destination (Supabase upload happens
-            identically on every engine), so only that stays named here. */}
-        {isEmbedded ? (
-          <Typography variant="caption" sx={{ color: "var(--text-muted)" }}>
-            The embedded engine never sends your answer, posting, or frames to an AI provider. This is
-            separate from saving recordings.
-          </Typography>
-        ) : null}
-      </Stack>
+      <PracticeControls
+        micDeviceId={micDeviceId}
+        onMicDeviceChange={onMicDeviceChange}
+        running={running}
+        status={status}
+        onStop={stop}
+        onStart={start}
+        startedAt={startedAt}
+        elapsed={elapsed}
+        controlsEnabled={controlsEnabled}
+        cameraOff={cameraOff}
+        hasVideo={hasVideo}
+        onToggleCamera={onToggleCamera}
+        micMuted={micMuted}
+        onToggleMic={onToggleMic}
+        sendFrames={sendFrames}
+        isEmbedded={isEmbedded}
+        onSendFramesChange={(e) => setSendFrames(e.target.checked)}
+        saveEnabled={saveEnabled}
+        onToggleSaveEnabled={onToggleSaveEnabled}
+        preDraftPredicted={preDraftPredicted}
+        onPreDraftChange={(e) => setPreDraftPredicted(e.target.checked)}
+      />
 
       {/* Shown once at least one answer has been analyzed (AC-C4-6), and
           rendered independent of the review panel below so it stays

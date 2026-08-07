@@ -1341,3 +1341,23 @@ Every cache entry — a real draft, a pre-draft, and live mode's reused-answer p
 2. Run `npx vitest run --no-file-parallelism lib/copilot/answerMetrics.test.js lib/copilot/critiqueLocal.test.js` from `hello-world/`.
 
 **Expected:** `computeAnswerMetrics` sets `paceIsPlausible: false` once `wordsPerMinute` exceeds 300 (a physical ceiling, distinct from the existing RUSHED_WPM_MIN=170 delivery band) — it never clamps the number itself, so a measurement fault stays visible as a fault instead of rendering as a plausible-looking, wrong one. `critiqueLocal.js`'s `normalizeMetrics` independently RE-DERIVES `paceIsPlausible` from the numeric `wordsPerMinute` it just normalized rather than trusting whatever a client payload claims, in both directions: a client that (falsely) claims `paceIsPlausible: true` at an impossible wpm is overridden to `false`, and a client that (incorrectly) flags a genuinely plausible wpm as implausible is overridden back to `true`. `buildDeliveryNotes` cites the wpm as fact ("You spoke for N seconds at N words per minute...") only when plausible; when not, it reports that speech was captured and that the pace measurement points to a data problem, without stating the impossible number — which is what keeps it out of `app/api/copilot/critique/route.js`'s "MEASURED DELIVERY METRICS... treat those numbers as ground truth" prompt section as a fact to cite. No score moves: `computePaceScore`/`computeDeliveryScore` still key off `paceLabel` alone, proven by a case that holds `paceLabel` fixed while flipping `wordsPerMinute` across the ceiling and asserting `critiqueAnswerLocal`'s score is byte-identical either way.
+
+### R-129 | area: practice-setup | parallel-safe: yes | automatable: no
+
+**Summary:** Practice mode's setup and session controls render and behave identically after being extracted out of PracticeClient, and nothing was lost in the move.
+
+**Steps:**
+1. Read `hello-world/app/copilot/practice/PracticeSetup.js` and `hello-world/app/copilot/practice/PracticeControls.js`, then the two call sites in `hello-world/app/copilot/practice/PracticeClient.js`.
+2. From the repo root, dump the pre-split file and diff its comment set against the union of the three post-split files:
+   `git show <the commit before the split>:hello-world/app/copilot/practice/PracticeClient.js > /tmp/pc-head.js`
+   then extract every `//`, `/* */` and `{/* */}` line from that dump and from the three current files, sort each set, and diff.
+3. From `hello-world`, run `wc -l` on all three files.
+4. Grep both new files for `useState|useEffect|useRef|useCallback|useMemo`.
+
+**Expected:** Both new files are PURELY presentational: no hooks, no handlers, no derived values — every value arrives as a discrete prop computed exactly where it was computed before, following the flat-prop convention `QuestionCard.js` already established. The comment diff shows ZERO removals; the only additions are the two new module docs. This check is the whole verification, because this repo runs vitest with `environment: "node"` and no jsdom, so no test can render either component and a textual oracle against the pre-split file is the only real proof the move was faithful.
+
+The comment check is not ceremony. Several of the moved comments encode reasoning that cost a fix round to learn and would be silently expensive to lose: BUG-J2's explanation of why the embedded-engine caption must NOT claim the guarantee is "separate from" pre-drafting (understating a protection is still a false privacy claim), AC-J1.6's note that the microphone is one piece of hardware whose selection and storage key both live in CopilotClient, and AC-J2.7's note on why the pre-draft switch shares a row with the two switches it was named alongside.
+
+`PracticeClient.js` is at or below 900 lines. The gate is 1000 and the file was at 990 before this extraction, with two queued features both adding threading to it. The extraction stopped at 840 rather than a lower target: driving it further would have required bundling unrelated state into ad-hoc objects invented at the call site, which is a new derived value, not a faithful move. A number reached by trimming comments or collapsing JSX would NOT satisfy this case — an earlier extraction in this repo landed the file at exactly 999 that way, which is why the comment diff in step 2 exists.
+
+**Known follow-up:** `app/copilot/CopilotClient.js` is 937 lines and has the same two seams (an audio-source/mic/consent/posting setup block and a Start/Stop/Auto-draft controls block). It was deliberately NOT bundled into this change — two extractions in one diff is unreviewable — and remains uncovered by this case.
