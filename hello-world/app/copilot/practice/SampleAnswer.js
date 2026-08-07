@@ -7,7 +7,8 @@ import CircularProgress from "@mui/material/CircularProgress";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
-import { cleanAnswerPoints } from "@/lib/copilot/answerPoints";
+import { answerBullets } from "@/lib/copilot/answerPoints";
+import AnswerAids from "../AnswerAids";
 
 // G1: the toggleable sample answer for practice mode's current question.
 // Purely presentational — every bit of state (whether it's shown, whether a
@@ -17,15 +18,19 @@ import { cleanAnswerPoints } from "@/lib/copilot/answerPoints";
 // rather than in a separate control so its "Show/Hide" label and the panel
 // it opens can never disagree about `visible`.
 //
-// AC-H9: `mode: "answer"`'s response now returns `points` — bullets, each a
+// AC-H9: `mode: "answer"`'s response returns `points` — bullets, each a
 // complete, speakable sentence (STAR-labeled for a behavioral/leadership
-// shape), replacing G2's earlier single prose string. Defends the same way
-// the old paragraphsOf did against a missing/malformed value: anything that
-// isn't a non-empty string is dropped rather than rendered as a blank
-// bullet or throwing. Shared with CopilotDashboard.js's two answer panels
-// via lib/copilot/answerPoints.js rather than a module-local copy — see
-// that module's doc for why (BUG-J6: the two copies had already drifted on
-// whether surviving entries get trimmed).
+// shape), replacing G2's earlier single prose string.
+//
+// AC-K1.1: what this panel RENDERS is `cues` — the same beats cut down to a
+// few words each, because a sample answer is read in the seconds before
+// speaking and a paragraph of complete sentences cannot be. The full points
+// are still what the draft IS (and what the derived prose `answer` comes
+// from); they are the fallback here only when no cues came back. That
+// decision is answerBullets in lib/copilot/answerPoints.js, shared with
+// CopilotDashboard.js's two answer panels and QuestionFeed.js's card rather
+// than written out three times — see that module's doc for why (BUG-J6: two
+// copies of its sibling filter had already drifted).
 
 // AC-G2-C-8: states what the answer was actually built from, derived from
 // the response's `grounding` flags — never a static claim, since whether
@@ -55,9 +60,16 @@ export default function SampleAnswer({
   visible,
   status, // idle | loading | done | error
   // AC-H9.36: the sample answer as a bullet-point array (each a complete,
-  // speakable sentence) — see useSampleAnswer.js and cleanAnswerPoints
+  // speakable sentence) — see useSampleAnswer.js and answerBullets
   // (lib/copilot/answerPoints.js) above.
   points,
+  // AC-K1.1: one short prompt per point — what actually gets rendered.
+  cues,
+  // AC-K1.2/AC-K1.3: the posting's own vocabulary, and the resume role and
+  // project this answer came out of. Straight through to AnswerAids, which
+  // decides what (if anything) each one looks like.
+  buzzwords,
+  anchor,
   grounding,
   error,
   isEmbedded,
@@ -65,16 +77,16 @@ export default function SampleAnswer({
   onRetry,
   onRegenerate,
 }) {
-  const cleanedPoints = cleanAnswerPoints(points);
+  const bullets = answerBullets(cues, points);
   // AC-G1-11: only offered once a draft is actually on screen — not while
   // it's loading, not while hidden, and not in the error state (which has
   // its own "Retry" action instead).
-  const canRegenerate = visible && status === "done" && cleanedPoints.length > 0;
+  const canRegenerate = visible && status === "done" && bullets.length > 0;
 
   return (
     <Box sx={{ mt: 1.5 }}>
       <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-        <Button size="small" variant="outlined" onClick={onToggle}>
+        <Button size="small" variant="outlined" onClick={onToggle} aria-expanded={visible}>
           {visible ? "Hide sample answer" : "Show sample answer"}
         </Button>
         {canRegenerate ? (
@@ -114,15 +126,16 @@ export default function SampleAnswer({
             </Alert>
           ) : null}
 
-          {status === "done" && cleanedPoints.length > 0 ? (
+          {status === "done" && bullets.length > 0 ? (
             <>
               <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
-                {cleanedPoints.map((point, i) => (
+                {bullets.map((bullet, i) => (
                   <Typography key={i} component="li" variant="body2" sx={{ mb: 0.5, color: "var(--text-primary)" }}>
-                    {point}
+                    {bullet}
                   </Typography>
                 ))}
               </Box>
+              <AnswerAids buzzwords={buzzwords} anchor={anchor} />
               <Typography variant="caption" sx={{ color: "var(--text-muted)", display: "block", mt: 1 }}>
                 {sourceCaption(isEmbedded, grounding)}
               </Typography>

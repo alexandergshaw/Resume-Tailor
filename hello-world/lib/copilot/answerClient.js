@@ -1,11 +1,18 @@
 import { readEngine } from "@/app/settings/engine";
 
 // Thin client for the /api/copilot/answer route. `mode` is "points" (the
-// default — live mode's glanceable bullets, response { points, type }) or
-// "answer" (practice mode's spoken sample answer, response
-// { answer, type, grounding }); an unknown/missing mode is treated as
-// "points" by the route. Passes the selected engine so the Embedded engine
-// drafts the answer on-device instead of calling Gemini.
+// default — live mode's glanceable bullets) or "answer" (practice mode's
+// spoken sample answer, which also carries `answer` and `grounding`); an
+// unknown/missing mode is treated as "points" by the route. Passes the
+// selected engine so the Embedded engine drafts the answer on-device instead
+// of calling Gemini.
+//
+// AC-K1: both modes return `cues` (one short prompt per point — what the UI
+// renders), `buzzwords` (terms from the posting to work in) and
+// `resumeAnchor` ({ title, company, matched, project } or null). This client
+// returns the parsed body verbatim, so those need no plumbing here; the
+// consumers that carry them into state are useSampleAnswer.js (practice),
+// CopilotClient.js (live) and useCopilotDashboard.js (both dashboards).
 export async function draftAnswer({ question, context, profile, interviewType, applicationId, mode }) {
   const res = await fetch("/api/copilot/answer", {
     method: "POST",

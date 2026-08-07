@@ -5,9 +5,12 @@ import { createClient as createSupabaseServerClient } from "@/lib/supabase/serve
 import { wantsEmbedded } from "@/lib/llm/featureEngine";
 import { draftAnswerLocal, deriveAnswerFromPoints } from "@/lib/copilot/answerLocal";
 import { draftSampleAnswerLocal } from "@/lib/copilot/sampleAnswerLocal";
-import { fetchApplicationDocs } from "@/lib/copilot/applicationDocs";
+import { fetchApplicationDocs, fetchPostingDescription } from "@/lib/copilot/applicationDocs";
 import { submittedDocsPromptParts } from "@/lib/copilot/applicationDocsPrompt";
 import { normalizeInterviewType, interviewType } from "@/lib/copilot/interviewTypes";
+import { deriveCues, resolveCues } from "@/lib/copilot/answerCues";
+import { postingBuzzwords } from "@/lib/copilot/postingBuzzwords";
+import { resumeAnchor } from "@/lib/copilot/resumeAnchor";
 
 // Two modes on one route (AC-G2-D-1). "points" (default, and the only mode
 // live mode ever sends — CopilotClient/QuestionFeed call draftAnswer with no
@@ -21,7 +24,22 @@ import { normalizeInterviewType, interviewType } from "@/lib/copilot/interviewTy
 // prep notes and the résumé/cover letter they actually submitted for the
 // selected application (lib/copilot/applicationDocs.js). An unknown or
 // missing mode is always treated as "points" — nothing about live mode's
-// request or response shape changes.
+// REQUEST shape changes.
+//
+// AC-K1: both modes now also return three reading aids alongside the answer,
+// because both are read under exactly the same pressure — mid-question, in
+// one glance:
+//   cues         one short prompt per point (lib/copilot/answerCues.js). The
+//                full `points` are unchanged and still what `answer` is
+//                derived from; the cues are what the UI actually renders.
+//   buzzwords    terms from the posting the candidate should work in
+//                (lib/copilot/postingBuzzwords.js). The posting description
+//                feeds THIS and nothing else — it still never reaches either
+//                prompt (AC-H7.27).
+//   resumeAnchor which of their own roles the answer came out of, and a
+//                project from it (lib/copilot/resumeAnchor.js).
+// This is the one part of the response shape that did move for live mode: it
+// gained keys, and every existing key kept its meaning.
 const POINTS_SYSTEM = [
   "You are an interview coach helping a candidate answer questions during a LIVE interview.",
   "Given the question the interviewer just asked, produce concise talking points the candidate can glance at and speak from — NOT a script to read aloud.",
@@ -41,6 +59,13 @@ const ANSWER_SYSTEM = [
   "The answer must be built only from the material provided below — the candidate's prep notes and, when available, the résumé and cover letter they actually submitted for this application — never invented.",
   "Return 3-6 points; each point is one complete, natural spoken sentence, first person, and together they are the whole answer — no headings, no stage directions, nothing that isn't meant to be spoken aloud.",
   "For behavioral questions (\"tell me about a time...\"), prefix each point with its STAR label — \"Situation:\", \"Task:\", \"Action:\", \"Result:\".",
+  // AC-K1.1: the cue is what the candidate actually reads mid-question; the
+  // point behind it is the sentence they say. Asked of the model rather than
+  // trimmed from the point afterwards because a model that knows which few
+  // words carry the beat phrases them better than any mechanical shortener
+  // can — but the shortener still runs over whatever comes back (resolveCues),
+  // so a "cue" returned as a full sentence is trimmed rather than trusted.
+  "Also return `cues`: exactly one per point, in the same order — each a 2-6 word prompt naming what that point is about, carrying the same STAR label where the point has one. A cue is a reminder, not a sentence: no verbs the point does not have, no punctuation at the end.",
 ].join(" ");
 
 const MAX_CONTEXT_CHARS = 4000;
@@ -50,6 +75,10 @@ const MAX_COVER_LETTER_CHARS = 6000;
 const MAX_ANSWER_CHARS = 6000;
 const MAX_ANSWER_POINTS = 6;
 const MAX_APPLICATION_ID_CHARS = 100;
+// The posting description is mined for buzzwords only, never interpolated
+// into a prompt, so this cap exists purely to bound the keyword extractor's
+// work on a pathologically long description.
+const MAX_POSTING_CHARS = 20000;
 const VALID_TYPES = ["behavioral", "technical", "general"];
 
 function interviewFormatLines(descriptor) {
@@ -146,9 +175,42 @@ function buildAnswerPrompt({ question, context, profile, resume, coverLetter, de
     "Each point is first person, spoken register — no bullet markers beyond the STAR label where it applies, no headings, no stage directions, nothing but words meant to be said out loud.",
     answerShapeInstruction(descriptor),
     "Every claim must come from the CANDIDATE PREP NOTES, SUBMITTED RESUME, or SUBMITTED COVER LETTER above — select, order, and phrase freely, but never invent an employer, project, metric, or credential that isn't there. If the material is thin, give a shorter, honest answer rather than inventing detail.",
-    'Return ONLY JSON of this exact shape: { "points": string[], "type": "behavioral" | "technical" | "general" }',
+    'Return ONLY JSON of this exact shape: { "points": string[], "cues": string[], "type": "behavioral" | "technical" | "general" }',
+    "cues: exactly one per point, same order — a 2-6 word prompt for that point, with the same STAR label where the point has one.",
   );
   return parts.join("\n");
+}
+
+// AC-K1.2/AC-K1.3: the two aids that sit BESIDE a drafted answer rather than
+// inside it — the posting's own vocabulary to work in, and which of the
+// candidate's own roles (and which project inside it) the answer came out of.
+// Computed identically for both modes and both engines, from the same two
+// pure modules, so live and practice can never show different aids for the
+// same question and the aids never depend on who drafted the answer.
+//
+// `postingDescription` reaches ONLY this function — never buildPointsPrompt
+// or buildAnswerPrompt (AC-H7.27 is unchanged: the posting description still
+// never grounds an answer). See lib/copilot/postingBuzzwords.js for why a
+// list the candidate reads and chooses from is a different thing from
+// material an answer is generated out of.
+//
+// The résumé is preferred over the prep notes for the role/project because
+// that is what the user asked to be told about — "the job title and company
+// from my resume". The prep context is the fallback only when no résumé was
+// submitted for this application, since it is often résumé-shaped text
+// pasted in by hand.
+function answerAids({ postingDescription, resume, profile, question, points }) {
+  const anchorText = resume || profile;
+  const anchor = resumeAnchor(anchorText, { question, points });
+  return {
+    buzzwords: postingBuzzwords(postingDescription, { question, points }),
+    // AC-K1.3 correction: `anchor` is mined from whichever of `resume` /
+    // `profile` was actually non-empty — with no posting selected (the
+    // common live-mode case), that is the free-text prep-context textarea,
+    // not a résumé. `source` reports which one so the UI can word the label
+    // honestly instead of always claiming "on your resume".
+    resumeAnchor: anchor ? { ...anchor, source: resume ? "resume" : "prep" } : null,
+  };
 }
 
 export async function POST(request) {
@@ -186,10 +248,18 @@ export async function POST(request) {
     // selected — the same case AC-H4.17/AC-H4.18's byte-identity guarantees
     // cover.
     const applicationId = (body?.applicationId ?? "").toString().trim().slice(0, MAX_APPLICATION_ID_CHARS);
-    const docs = await fetchApplicationDocs(supabase, { applicationId, userId: user.id });
+    // AC-K1.2: the posting description is fetched alongside the documents but
+    // through its OWN call, deliberately — see fetchPostingDescription's doc
+    // in lib/copilot/applicationDocs.js. It is passed only to answerAids
+    // below; no prompt builder in this file ever receives it.
+    const [docs, postingDescription] = await Promise.all([
+      fetchApplicationDocs(supabase, { applicationId, userId: user.id }),
+      fetchPostingDescription(supabase, { applicationId, userId: user.id }),
+    ]);
     const grounding = { resume: !!docs.resume, coverLetter: !!docs.coverLetter };
     const resume = docs.resume.slice(0, MAX_RESUME_CHARS);
     const coverLetter = docs.coverLetter.slice(0, MAX_COVER_LETTER_CHARS);
+    const posting = postingDescription.slice(0, MAX_POSTING_CHARS);
 
     if (mode === "answer") {
       // Embedded engine: assemble the spoken answer on-device — no LLM.
@@ -204,7 +274,16 @@ export async function POST(request) {
         if (points.length === 0) {
           return Response.json({ error: "Could not generate an answer." }, { status: 502 });
         }
-        return Response.json({ points, answer, type, grounding });
+        return Response.json({
+          points,
+          // No model to ask on this path, so the cues are always the
+          // deterministic shortening of the points just drafted.
+          cues: deriveCues(points),
+          answer,
+          type,
+          grounding,
+          ...answerAids({ postingDescription: posting, resume, profile, question, points }),
+        });
       }
 
       const { geminiModel } = getServerEnv();
@@ -234,7 +313,16 @@ export async function POST(request) {
       // AC-H9.33: `answer` is derived here, from the same `points` just
       // returned to the caller — never a second field asked of the model.
       const answer = deriveAnswerFromPoints(points).slice(0, MAX_ANSWER_CHARS);
-      return Response.json({ points, answer, type, grounding });
+      return Response.json({
+        points,
+        // The model's own cues when it returned one per point; otherwise the
+        // same deterministic shortening the embedded path uses.
+        cues: resolveCues(parsed?.cues, points),
+        answer,
+        type,
+        grounding,
+        ...answerAids({ postingDescription: posting, resume, profile, question, points }),
+      });
     }
 
     // "points" mode — live mode's glanceable bullets, unchanged in shape
@@ -246,7 +334,12 @@ export async function POST(request) {
       if (points.length === 0) {
         return Response.json({ error: "Could not generate an answer." }, { status: 502 });
       }
-      return Response.json({ points, type });
+      return Response.json({
+        points,
+        cues: deriveCues(points),
+        type,
+        ...answerAids({ postingDescription: posting, resume, profile, question, points }),
+      });
     }
 
     const { geminiModel } = getServerEnv();
@@ -271,7 +364,15 @@ export async function POST(request) {
     }
     const type = VALID_TYPES.includes(parsed?.type) ? parsed.type : "general";
 
-    return Response.json({ points, type });
+    // Points mode's PROMPT is untouched (AC-H4.17/R-095's byte-identity
+    // requirement still holds — nothing above this line changed) — the model
+    // is not asked for cues here, so they are always derived.
+    return Response.json({
+      points,
+      cues: deriveCues(points),
+      type,
+      ...answerAids({ postingDescription: posting, resume, profile, question, points }),
+    });
   } catch (err) {
     return Response.json(
       { error: err?.message || "Answer request failed." },

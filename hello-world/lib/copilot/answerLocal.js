@@ -25,8 +25,11 @@ const WIDE_SKILL_POOL = 12;
 // convention POINTS_SYSTEM (app/api/copilot/answer/route.js) already uses.
 // Shared so both that route and sampleAnswerLocal.js's draftSampleAnswerLocal
 // strip it the same way when deriving flowing prose from generated points
-// (AC-H9.33).
-const STAR_LABEL_RE = /^(Situation|Task|Action|Result):\s*/;
+// (AC-H9.33). Exported for lib/copilot/answerCues.js, which must split the
+// SAME label off the front of a point before shortening the sentence behind
+// it — a second copy of this pattern there would be free to drift from the
+// one the prompts actually emit.
+export const STAR_LABEL_RE = /^(Situation|Task|Action|Result):\s*/;
 
 // Interview-type values that push a question the classifier itself called
 // "general" toward a technical or a STAR scaffold instead (AC-G2-D-6). Only

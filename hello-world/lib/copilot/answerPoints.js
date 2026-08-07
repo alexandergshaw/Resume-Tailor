@@ -35,3 +35,25 @@ export function cleanAnswerPoints(points) {
     .filter((p) => typeof p === "string" && p.trim())
     .map((p) => p.trim());
 }
+
+// AC-K1.1: what a drafted answer actually RENDERS as bullets. The cues (a few
+// words each — lib/copilot/answerCues.js) are the point of the exercise: they
+// are read mid-question, in a glance. The full `points` are the fallback, for
+// two real cases rather than as belt-and-braces:
+//
+//   - a draft cached before cues existed (useSampleAnswer's cache and live
+//     mode's answerCacheRef both survive across a deploy within one open
+//     session), and
+//   - any response where the cues came back empty while the points did not.
+//
+// Showing the full sentences in either case is a worse read but a correct
+// one; showing nothing would look like the draft failed. Defined here rather
+// than in answerCues.js because this is a RENDER decision — the same reason
+// cleanAnswerPoints lives here and not in the cache — and defined once
+// because three surfaces make it (practice's SampleAnswer, live's
+// QuestionFeed card, and the shared dashboard's answer panels), which is
+// exactly the count that let this module's own filter drift last time.
+export function answerBullets(cues, points) {
+  const cleanCues = cleanAnswerPoints(cues);
+  return cleanCues.length ? cleanCues : cleanAnswerPoints(points);
+}

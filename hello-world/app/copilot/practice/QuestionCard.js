@@ -38,10 +38,15 @@ export default function QuestionCard({
   // PracticeClient's useSampleAnswer hook, threaded straight through to the
   // presentational SampleAnswer panel below, same as everything else on
   // this card. AC-H9: `sampleAnswerPoints` carries the sample answer as a
-  // bullet-point array (each a complete, speakable sentence).
+  // bullet-point array (each a complete, speakable sentence). AC-K1:
+  // `sampleCues` is the few-word version actually rendered, and
+  // `sampleBuzzwords`/`sampleAnchor` are the two subsections under it.
   sampleVisible,
   sampleStatus,
   sampleAnswerPoints,
+  sampleCues,
+  sampleBuzzwords,
+  sampleAnchor,
   sampleGrounding,
   sampleError,
   isEmbedded,
@@ -165,6 +170,9 @@ export default function QuestionCard({
           visible={sampleVisible}
           status={sampleStatus}
           points={sampleAnswerPoints}
+          cues={sampleCues}
+          buzzwords={sampleBuzzwords}
+          anchor={sampleAnchor}
           grounding={sampleGrounding}
           error={sampleError}
           isEmbedded={isEmbedded}

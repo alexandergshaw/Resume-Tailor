@@ -7,6 +7,9 @@ import CircularProgress from "@mui/material/CircularProgress";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
+import { answerBullets } from "@/lib/copilot/answerPoints";
+import AnswerAids from "./AnswerAids";
+
 const TYPE_LABEL = {
   behavioral: "Behavioral",
   technical: "Technical",
@@ -14,7 +17,8 @@ const TYPE_LABEL = {
 };
 
 // Right-hand feed of detected questions. Each card shows the question and, on
-// demand, LLM-drafted talking points the candidate can speak from.
+// demand, the drafted answer: a few-word cue per beat (AC-K1.1), the posting
+// buzzwords to work in, and the resume role and project it came out of.
 export default function QuestionFeed({ questions, onDraft }) {
   return (
     <Box
@@ -56,6 +60,12 @@ export default function QuestionFeed({ questions, onDraft }) {
 function QuestionCard({ q, onDraft }) {
   const loading = q.status === "loading";
   const done = q.status === "done";
+  // AC-K1.1: the cues are what a candidate reads while the interviewer is
+  // still finishing the question; the full points are the fallback for a
+  // draft that has none (one cached before cues existed). Same answerBullets
+  // call practice mode's SampleAnswer.js and the shared dashboard's answer
+  // panels make — one decision, one place.
+  const bullets = answerBullets(q.cues, q.points);
   return (
     <Box
       sx={{
@@ -98,18 +108,24 @@ function QuestionCard({ q, onDraft }) {
         </Typography>
       ) : null}
 
-      {done && q.points?.length ? (
-        <Box component="ul" sx={{ m: 0, mb: 1, pl: 2.5 }}>
-          {q.points.map((p, i) => (
-            <Typography
-              key={i}
-              component="li"
-              variant="body2"
-              sx={{ mb: 0.5, color: "var(--text-primary)" }}
-            >
-              {p}
-            </Typography>
-          ))}
+      {done && bullets.length ? (
+        <Box sx={{ mb: 1 }}>
+          <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
+            {bullets.map((bullet, i) => (
+              <Typography
+                key={i}
+                component="li"
+                variant="body2"
+                sx={{ mb: 0.5, color: "var(--text-primary)" }}
+              >
+                {bullet}
+              </Typography>
+            ))}
+          </Box>
+          {/* AC-K1.2/AC-K1.3: the posting's own vocabulary to work in, and
+              which role and project on the candidate's resume this answer
+              came out of. Renders nothing when the draft carries neither. */}
+          <AnswerAids buzzwords={q.buzzwords} anchor={q.anchor} />
         </Box>
       ) : null}
 

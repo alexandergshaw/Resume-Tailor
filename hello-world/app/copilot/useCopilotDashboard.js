@@ -157,7 +157,17 @@ export function predraftKeyFor(predictionStatus, predictedQuestion, autoDraft) {
 // one place it IS rendered (practice mode's revealed sample answer, whose
 // SampleAnswer.js caption states it) by riding on the onPrefetchedAnswer
 // payload into the caller's cache instead.
-const EMPTY_PREDRAFT_RESULT = { forQuestion: "", outcome: null, points: [], type: "general", error: "" };
+// AC-K1: `cues` rides along because the pre-drafted answer panel renders it
+// the same way every other answer surface does — a dashboard panel still
+// showing full sentences next to a card showing cues is exactly the
+// live/practice drift AC-J2.1 exists to prevent. `buzzwords` and `anchor` are
+// deliberately NOT state slots here, for the same reason `grounding` isn't
+// (see above): neither dashboard renders those two subsections in the
+// PREDICTED panel — it is a guess at a question nobody has asked, and two
+// more labelled blocks under it would crowd out the current answer beside it.
+// They still reach the caller's cache by riding on the onPrefetchedAnswer
+// payload, so revealing the answer for a question that IS asked shows them.
+const EMPTY_PREDRAFT_RESULT = { forQuestion: "", outcome: null, points: [], cues: [], type: "general", error: "" };
 
 // Same "does the stored value belong to what's current" comparison as
 // resolvePrediction, keyed on `predraftKey` (which already folds in
@@ -165,12 +175,12 @@ const EMPTY_PREDRAFT_RESULT = { forQuestion: "", outcome: null, points: [], type
 // collapses to idle for free whenever predraftKeyFor decided there's
 // nothing to draft.
 export function resolvePredraft(result, predraftKey) {
-  if (!predraftKey) return { status: "idle", points: [], type: "general", error: "" };
+  if (!predraftKey) return { status: "idle", points: [], cues: [], type: "general", error: "" };
   if (!result || result.forQuestion !== predraftKey) {
-    return { status: "loading", points: [], type: "general", error: "" };
+    return { status: "loading", points: [], cues: [], type: "general", error: "" };
   }
-  if (result.outcome === "error") return { status: "error", points: [], type: "general", error: result.error };
-  return { status: "done", points: result.points, type: result.type, error: "" };
+  if (result.outcome === "error") return { status: "error", points: [], cues: [], type: "general", error: result.error };
+  return { status: "done", points: result.points, cues: result.cues || [], type: result.type, error: "" };
 }
 
 // The idle shapes predictionState/predraftState fall back to below whenever
@@ -178,7 +188,7 @@ export function resolvePredraft(result, predraftKey) {
 // `!signature`/`!predraftKey` branches above, kept as named constants only
 // so the two calls into resolveDashboardState below don't restate them.
 const IDLE_PREDICTION_STATE = { status: "idle", question: "", type: "general", error: "" };
-const IDLE_PREDRAFT_STATE = { status: "idle", points: [], type: "general", error: "" };
+const IDLE_PREDRAFT_STATE = { status: "idle", points: [], cues: [], type: "general", error: "" };
 
 // The active gate layered on top of a resolve* function's own self-healing
 // comparison above: forces `idleState` whenever `active` is false,
@@ -210,12 +220,13 @@ export function resolveDashboardState(result, key, active, resolveFn, idleState)
 //                        CopilotClient's own runDraft already sends.
 //   autoDraft            the existing Auto-draft switch's current value.
 //   profile              the prep-context string.
-//   onPrefetchedAnswer   (question, { points, type }) => void — called once
-//                        a pre-draft succeeds, so the caller can write it
-//                        into its OWN answer cache (AC-I4.23). Read via a
-//                        ref (see onPrefetchedAnswerRef below), so an
-//                        unstable identity across renders never changes
-//                        when this hook actually fires it.
+//   onPrefetchedAnswer   (question, { points, cues, buzzwords, resumeAnchor,
+//                        type, ... }) => void — called once a pre-draft
+//                        succeeds, so the caller can write it into its OWN
+//                        answer cache (AC-I4.23). Read via a ref (see
+//                        onPrefetchedAnswerRef below), so an unstable
+//                        identity across renders never changes when this hook
+//                        actually fires it.
 //   active                whether a capture session is actually running
 //                        (CopilotClient's own `live`, i.e.
 //                        `status === "live" || status === "connecting"`).
@@ -349,6 +360,9 @@ export function useCopilotDashboard({
     const gen = (genRef.current += 1);
     let outcome = "error";
     let points = [];
+    let cues = [];
+    let buzzwords = [];
+    let anchor = null;
     let type = "general";
     let grounding = null;
     let error = "";
@@ -386,6 +400,9 @@ export function useCopilotDashboard({
         mode: draftModeRef.current,
       });
       points = Array.isArray(draft.points) ? draft.points : [];
+      cues = Array.isArray(draft.cues) ? draft.cues : [];
+      buzzwords = Array.isArray(draft.buzzwords) ? draft.buzzwords : [];
+      anchor = draft.resumeAnchor || null;
       type = draft.type || "general";
       grounding = draft.grounding || null;
       outcome = "done";
@@ -393,7 +410,7 @@ export function useCopilotDashboard({
       error = err?.message || "Could not draft the predicted answer.";
     }
     if (genRef.current !== gen) return;
-    setPredraftResult({ forQuestion: question, outcome, points, type, error });
+    setPredraftResult({ forQuestion: question, outcome, points, cues, type, error });
     // AC-I4.23: the load-bearing write. CopilotClient writes this into the
     // SAME answerCacheRef it already keys by normalized question, so
     // runDraft's existing cache lookup serves it instantly if the
@@ -414,10 +431,23 @@ export function useCopilotDashboard({
     if (outcome === "done") {
       try {
         // AC-J2.10: `draftedFrom` travels with the draft so the caller can
-        // cache it against what it was ACTUALLY built from. Live mode's
-        // onPrefetchedAnswer destructures only `{ points, type }` and is
-        // unaffected by the extra fields.
-        onPrefetchedAnswerRef.current?.(question, { points, type, grounding, ...draftedFrom });
+        // cache it against what it was ACTUALLY built from.
+        // AC-K1: `buzzwords` and `resumeAnchor` travel here rather than
+        // through a state slot — the predicted-answer panel does not render
+        // them (see EMPTY_PREDRAFT_RESULT above), but the caller's cache
+        // needs them so a prediction that gets asked serves a COMPLETE
+        // answer, not one missing its two subsections. Named `resumeAnchor`
+        // to match the route's own response field, so nothing has to
+        // remember a rename between the two.
+        onPrefetchedAnswerRef.current?.(question, {
+          points,
+          cues,
+          buzzwords,
+          resumeAnchor: anchor,
+          type,
+          grounding,
+          ...draftedFrom,
+        });
       } catch {
         // Deliberately swallowed — see comment above. Nothing to recover:
         // the draft itself already reached predraftResult/predraftState;
@@ -563,6 +593,7 @@ export function useCopilotDashboard({
     predictionError: predictionState.error,
     retryPrediction,
     predictedPoints: predraftState.points,
+    predictedCues: predraftState.cues,
     predictedAnswerStatus: predraftState.status,
     predictedAnswerError: predraftState.error,
     retryPredraft,

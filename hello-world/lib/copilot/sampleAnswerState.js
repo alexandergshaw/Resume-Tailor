@@ -30,6 +30,18 @@ export function emptySampleAnswer() {
     visible: false,
     status: "idle", // idle | loading | done | error
     points: [],
+    // AC-K1: the three reading aids that arrive with the draft. `cues` is
+    // what SampleAnswer.js renders (points are the fallback — answerBullets
+    // in lib/copilot/answerPoints.js); `buzzwords` and `anchor` are the two
+    // subsections under it. Carried through this slot exactly the way
+    // `points` is, with the same caching and staleness rules, because they
+    // are built from the same request and are just as wrong to show against
+    // a different question.
+    cues: [],
+    buzzwords: [],
+    // { title, company, matched, project } once a draft lands, or null when
+    // there was no resume to read a role out of.
+    anchor: null,
     // { resume: boolean, coverLetter: boolean } once a draft lands — which
     // submitted documents it was actually grounded in. Null until then.
     grounding: null,
@@ -133,6 +145,14 @@ export function cachedSampleAnswerFor(entry, question, profile, interviewType, a
     visible: true,
     status: "done",
     points: entry.points,
+    // AC-K1: an entry cached before these existed (a pre-draft primed earlier
+    // in the same open session) has none of them, which resolves to the empty
+    // shapes here — SampleAnswer.js then falls back to rendering the full
+    // points and simply omits the two subsections, rather than showing a
+    // header with nothing under it.
+    cues: Array.isArray(entry.cues) ? entry.cues : [],
+    buzzwords: Array.isArray(entry.buzzwords) ? entry.buzzwords : [],
+    anchor: entry.anchor || null,
     grounding: entry.grounding || null,
     error: "",
     profile,

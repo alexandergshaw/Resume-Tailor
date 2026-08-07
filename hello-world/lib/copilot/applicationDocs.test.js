@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-import { fetchApplicationDocs } from "./applicationDocs";
+import { fetchApplicationDocs, fetchPostingDescription } from "./applicationDocs";
 
 // Minimal chainable double for `supabase.from(table).select(...).eq(...).maybeSingle()`.
 // Routes each `.from(table)` call to its own query builder and its own
@@ -167,5 +167,78 @@ describe("fetchApplicationDocs", () => {
     const result = await fetchApplicationDocs(fake, { applicationId: "app-1", userId: "user-1" });
 
     expect(result).toEqual({ resume: "resume text", coverLetter: "" });
+  });
+});
+
+// AC-K1.2. Deliberately a SEPARATE function from fetchApplicationDocs above,
+// not a third field on its result: that result is what gets interpolated into
+// both answer prompts, and the posting description must never reach either
+// one (AC-H7.27). Splitting the lookup is what makes that structural rather
+// than a rule someone has to remember.
+describe("fetchPostingDescription", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns the joined position's description", async () => {
+    const fake = makeFakeSupabase({
+      appResult: { data: { id: "app-1", positions: { description: "We need a platform engineer." } }, error: null },
+    });
+
+    expect(await fetchPostingDescription(fake, { applicationId: "app-1", userId: "user-1" })).toBe(
+      "We need a platform engineer.",
+    );
+  });
+
+  it("accepts the embedded relation as an array as well as an object", async () => {
+    // PostgREST returns a one-to-many embed as an array; which shape comes
+    // back depends on the schema's foreign key, not on this caller.
+    const fake = makeFakeSupabase({
+      appResult: { data: { id: "app-1", positions: [{ description: "Array-shaped embed." }] }, error: null },
+    });
+
+    expect(await fetchPostingDescription(fake, { applicationId: "app-1", userId: "user-1" })).toBe(
+      "Array-shaped embed.",
+    );
+  });
+
+  it("scopes the lookup to both the application id and the user id", async () => {
+    const fake = makeFakeSupabase({ appResult: { data: { id: "app-1", positions: null }, error: null } });
+
+    await fetchPostingDescription(fake, { applicationId: "app-1", userId: "user-1" });
+
+    // The same control fetchApplicationDocs relies on: one user's posting
+    // must never be readable through another user's request.
+    expect(fake.calls.applications.eq).toContainEqual(["id", "app-1"]);
+    expect(fake.calls.applications.eq).toContainEqual(["user_id", "user-1"]);
+  });
+
+  it("degrades to an empty string, without querying anything, when applicationId or userId is missing", async () => {
+    const noApp = makeFakeSupabase();
+    expect(await fetchPostingDescription(noApp, { applicationId: undefined, userId: "user-1" })).toBe("");
+    expect(noApp.from).not.toHaveBeenCalled();
+
+    const noUser = makeFakeSupabase();
+    expect(await fetchPostingDescription(noUser, { applicationId: "app-1", userId: undefined })).toBe("");
+    expect(noUser.from).not.toHaveBeenCalled();
+  });
+
+  it("degrades to an empty string, without throwing, for every other failure mode", async () => {
+    // No matching row, a query error, no joined position, and a null or
+    // non-string description all mean the same thing to the caller: no
+    // buzzword section. None of them may break the answer around it.
+    const cases = [
+      { data: null, error: null },
+      { data: null, error: { message: "connection reset" } },
+      { data: { id: "app-1" }, error: null },
+      { data: { id: "app-1", positions: null }, error: null },
+      { data: { id: "app-1", positions: [] }, error: null },
+      { data: { id: "app-1", positions: { description: null } }, error: null },
+      { data: { id: "app-1", positions: { description: 42 } }, error: null },
+    ];
+    for (const appResult of cases) {
+      const fake = makeFakeSupabase({ appResult });
+      expect(await fetchPostingDescription(fake, { applicationId: "app-1", userId: "user-1" })).toBe("");
+    }
   });
 });

@@ -40,3 +40,40 @@ export async function fetchApplicationDocs(supabase, { applicationId, userId } =
   ]);
   return { resume, coverLetter };
 }
+
+// The job description the candidate applied against, for the ONE thing the
+// posting is allowed to feed: the buzzword list beside the answer
+// (lib/copilot/postingBuzzwords.js). It is deliberately NOT part of
+// fetchApplicationDocs's return value — that function's result is what gets
+// interpolated into both prompts, and AC-H7.27 says the posting description
+// never reaches either one. Keeping it behind a separate call means a future
+// edit cannot fold the description into a prompt by accident: there is no
+// code path where a prompt builder is handed an object that happens to carry
+// it.
+//
+// Never throws, exactly like fetchApplicationDocs: every failure mode — no
+// applicationId, no userId, no matching row, an application with no joined
+// position, a null description, or any query error — degrades to an empty
+// string, which the caller renders as "no buzzword section" rather than an
+// error.
+export async function fetchPostingDescription(supabase, { applicationId, userId } = {}) {
+  if (!applicationId || !userId) return "";
+
+  // Same non-optional user_id scoping as above, and for the same reason: a
+  // posting description belongs to one user's application, and an
+  // application-scoped lookup must never read another user's row even if RLS
+  // is ever misconfigured.
+  const { data, error } = await supabase
+    .from("applications")
+    .select("id, positions ( description )")
+    .eq("id", applicationId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error || !data) return "";
+
+  // PostgREST returns an embedded one-to-one relation as an object and a
+  // one-to-many as an array; accept either rather than depending on which
+  // shape the schema's foreign key happens to produce.
+  const position = Array.isArray(data.positions) ? data.positions[0] : data.positions;
+  return typeof position?.description === "string" ? position.description : "";
+}

@@ -283,8 +283,18 @@ export default function CopilotClient() {
   // correct prediction is served from the SAME cache instead of costing a
   // second draftAnswer call when the interviewer actually asks the
   // predicted question.
-  const onPrefetchedAnswer = useCallback((question, { points, type }) => {
-    answerCacheRef.current.set(normalizeQuestion(question), { points, type });
+  // AC-K1: the pre-draft's reading aids are cached with it, so a correct
+  // prediction serves the SAME panel the question would have drafted on
+  // demand — a cache hit that dropped the cues and subsections would make a
+  // successful prediction look like a degraded answer.
+  const onPrefetchedAnswer = useCallback((question, { points, type, cues, buzzwords, resumeAnchor }) => {
+    answerCacheRef.current.set(normalizeQuestion(question), {
+      points,
+      type,
+      cues: Array.isArray(cues) ? cues : [],
+      buzzwords: Array.isArray(buzzwords) ? buzzwords : [],
+      anchor: resumeAnchor || null,
+    });
   }, []);
 
   // AC-I2/AC-I3/AC-I4: live mode's dashboard — talking pace, the predicted
@@ -300,6 +310,7 @@ export default function CopilotClient() {
     retryPrediction,
     retryPredraft,
     predictedPoints,
+    predictedCues,
     predictedAnswerStatus,
     predictedAnswerError,
     recordSpeechSample,
@@ -380,6 +391,16 @@ export default function CopilotClient() {
                     ...it,
                     status: "done",
                     points: cached.points,
+                    // AC-K1: served from cache exactly as they were drafted.
+                    // A reused answer that silently dropped its cues and
+                    // subsections would look like a WORSE answer than the
+                    // same question drafted fresh, which is not what "reused"
+                    // is meant to signal. An entry cached before these
+                    // existed resolves to the empty shapes, and the card
+                    // falls back to the full points.
+                    cues: cached.cues || [],
+                    buzzwords: cached.buzzwords || [],
+                    anchor: cached.anchor || null,
                     type: it.type || cached.type,
                     cached: true,
                   }
@@ -395,7 +416,7 @@ export default function CopilotClient() {
         ),
       );
       try {
-        const { points, type } = await draftAnswer({
+        const { points, type, cues, buzzwords, resumeAnchor } = await draftAnswer({
           question,
           context: buildContext(),
           profile: profileRef.current,
@@ -405,10 +426,18 @@ export default function CopilotClient() {
           // letter itself; this client never sends document text.
           applicationId: postingRef.current?.id || null,
         });
-        answerCacheRef.current.set(norm, { points, type });
+        // AC-K1: same defensive normalization the practice hook applies — a
+        // missing or malformed field becomes the empty shape here, once, so
+        // neither the cache nor the render layer has to re-guard its type.
+        const aids = {
+          cues: Array.isArray(cues) ? cues : [],
+          buzzwords: Array.isArray(buzzwords) ? buzzwords : [],
+          anchor: resumeAnchor || null,
+        };
+        answerCacheRef.current.set(norm, { points, type, ...aids });
         setQuestions((prev) =>
           prev.map((it) =>
-            it.id === id ? { ...it, status: "done", points, type: it.type || type } : it,
+            it.id === id ? { ...it, status: "done", points, ...aids, type: it.type || type } : it,
           ),
         );
       } catch (err) {
@@ -435,6 +464,11 @@ export default function CopilotClient() {
           at: Date.now(),
           status: auto ? "loading" : "idle",
           points: null,
+          // AC-K1: seeded empty alongside `points` so an entry is a complete
+          // shape from the moment it exists, whichever status it is in.
+          cues: [],
+          buzzwords: [],
+          anchor: null,
           type: type || null,
           error: "",
         },
@@ -861,6 +895,7 @@ export default function CopilotClient() {
               onRetryPrediction={retryPrediction}
               onRetryPredraft={retryPredraft}
               predictedPoints={predictedPoints}
+              predictedCues={predictedCues}
               predictedAnswerStatus={predictedAnswerStatus}
               predictedAnswerError={predictedAnswerError}
             />

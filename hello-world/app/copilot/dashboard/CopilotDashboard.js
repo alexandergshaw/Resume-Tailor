@@ -8,7 +8,8 @@ import CircularProgress from "@mui/material/CircularProgress";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
-import { cleanAnswerPoints } from "@/lib/copilot/answerPoints";
+import { answerBullets } from "@/lib/copilot/answerPoints";
+import AnswerAids from "../AnswerAids";
 
 // AC-I5/AC-J2: the copilot's five-panel dashboard — current question, its
 // answer, the predicted next question, that question's pre-drafted answer,
@@ -217,7 +218,11 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
   // THIS filtered length, not `current.points?.length` — an all-blank array
   // must fall through to the copy.noPoints branch rather than rendering an
   // empty `<ul>`.
-  const cleanPoints = cleanAnswerPoints(current?.points);
+  //
+  // AC-K1.1: `cues` when the draft has them, the full points when it does
+  // not — the same answerBullets call practice mode's SampleAnswer.js and
+  // live mode's QuestionFeed.js card make, so all three read alike.
+  const bullets = answerBullets(current?.cues, current?.points);
   return (
     <RealPanel title={copy.currentAnswerTitle}>
       {!current ? (
@@ -239,14 +244,21 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
         <Typography variant="body2" sx={{ color: "var(--danger)" }}>
           {current.error || "Could not draft an answer."}
         </Typography>
-      ) : current.status === "done" && cleanPoints.length ? (
-        <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
-          {cleanPoints.map((p, i) => (
-            <Typography key={i} component="li" variant="body2" sx={{ mb: 0.5, color: "var(--text-primary)" }}>
-              {p}
-            </Typography>
-          ))}
-        </Box>
+      ) : current.status === "done" && bullets.length ? (
+        <>
+          <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
+            {bullets.map((bullet, i) => (
+              <Typography key={i} component="li" variant="body2" sx={{ mb: 0.5, color: "var(--text-primary)" }}>
+                {bullet}
+              </Typography>
+            ))}
+          </Box>
+          {/* AC-K1.2/AC-K1.3: the same two subsections the question card
+              shows, in the panel a candidate is actually looking at
+              mid-interview. Renders nothing at all when the draft carries
+              neither (no posting selected, no submitted resume). */}
+          <AnswerAids buzzwords={current.buzzwords} anchor={current.anchor} />
+        </>
       ) : (
         <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>
           {copy.noPoints}
@@ -293,11 +305,13 @@ function PredictedQuestionPanel({ status, question, error, onRetry, copy }) {
   );
 }
 
-function PredictedAnswerPanel({ predictionStatus, predictedQuestion, status, points, error, onRetry, copy }) {
-  // BUG-J6: now shared with CurrentAnswerPanel via cleanAnswerPoints rather
-  // than each panel writing this filter out separately — see that helper's
-  // doc.
-  const cleanPoints = cleanAnswerPoints(points);
+function PredictedAnswerPanel({ predictionStatus, predictedQuestion, status, points, cues, error, onRetry, copy }) {
+  // BUG-J6: now shared with CurrentAnswerPanel via answerBullets rather than
+  // each panel writing this filter out separately — see that helper's doc.
+  // AC-K1.1: cues here too, for the same reason CurrentAnswerPanel has them —
+  // two answer panels side by side, one in cues and one in full sentences,
+  // would read as two different kinds of thing.
+  const bullets = answerBullets(cues, points);
   return (
     <PredictionPanel title={copy.predictedAnswerTitle}>
       {predictionStatus !== "done" || !predictedQuestion ? (
@@ -335,12 +349,12 @@ function PredictedAnswerPanel({ predictionStatus, predictedQuestion, status, poi
         >
           {error || "Could not draft an answer to the predicted question."}
         </Alert>
-      ) : cleanPoints.length ? (
+      ) : bullets.length ? (
         <>
           <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
-            {cleanPoints.map((p, i) => (
+            {bullets.map((bullet, i) => (
               <Typography key={i} component="li" variant="body2" sx={{ mb: 0.5, color: "var(--text-primary)" }}>
-                {p}
+                {bullet}
               </Typography>
             ))}
           </Box>
@@ -404,6 +418,7 @@ export default function CopilotDashboard({
   predictionError,
   onRetryPrediction,
   predictedPoints,
+  predictedCues,
   predictedAnswerStatus,
   predictedAnswerError,
   onRetryPredraft,
@@ -460,6 +475,7 @@ export default function CopilotDashboard({
           predictedQuestion={predictedQuestion}
           status={predictedAnswerStatus}
           points={predictedPoints}
+          cues={predictedCues}
           error={predictedAnswerError}
           onRetry={onRetryPredraft}
           copy={text}

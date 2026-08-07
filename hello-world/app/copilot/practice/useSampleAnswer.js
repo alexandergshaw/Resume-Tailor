@@ -69,26 +69,41 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
       visible: true,
       status: "loading",
       points: [],
+      cues: [],
+      buzzwords: [],
+      anchor: null,
       grounding: null,
       error: "",
       profile: p,
       interviewType: it,
       applicationId: appId,
     });
-    // AC-H9: the route's `mode: "answer"` response is now
-    // { points, answer, type, grounding } — `points` is what this hook (and
-    // SampleAnswer.js) render; the derived prose `answer` field exists for a
-    // later speech-synthesis feature and is deliberately not read here.
+    // AC-H9/AC-K1: the route's `mode: "answer"` response is
+    // { points, cues, answer, type, grounding, buzzwords, resumeAnchor }.
+    // `cues` is what SampleAnswer.js renders, with `points` as its fallback
+    // (answerBullets); `buzzwords`/`resumeAnchor` are the two subsections
+    // under it. The derived prose `answer` field exists for a later
+    // speech-synthesis feature and is deliberately not read here.
     draftAnswer({ question: q, context: "", profile: p, interviewType: it, applicationId: appId, mode: "answer" })
-      .then(({ points, grounding }) => {
+      .then(({ points, cues, buzzwords, resumeAnchor, grounding }) => {
         if (genRef.current !== gen) return;
         const cleanPoints = Array.isArray(points) ? points : [];
+        // AC-K1: same defensive normalization `points` already gets — a
+        // missing or malformed field must land in state as the empty shape,
+        // so the render layer's "is there anything to show" checks stay
+        // simple truthiness rather than each one re-guarding the type.
+        const cleanCues = Array.isArray(cues) ? cues : [];
+        const cleanBuzzwords = Array.isArray(buzzwords) ? buzzwords : [];
+        const cleanAnchor = resumeAnchor || null;
         const cleanGrounding = grounding || null;
         setState((prev) => ({
           ...prev,
           question: q,
           status: "done",
           points: cleanPoints,
+          cues: cleanCues,
+          buzzwords: cleanBuzzwords,
+          anchor: cleanAnchor,
           grounding: cleanGrounding,
           error: "",
           profile: p,
@@ -102,6 +117,9 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
         // happened to land before the reveal.
         cacheRef.current.set(normalizeQuestion(q), {
           points: cleanPoints,
+          cues: cleanCues,
+          buzzwords: cleanBuzzwords,
+          anchor: cleanAnchor,
           grounding: cleanGrounding,
           profile: p,
           interviewType: it,
@@ -115,6 +133,9 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           question: q,
           status: "error",
           points: [],
+          cues: [],
+          buzzwords: [],
+          anchor: null,
           grounding: null,
           error: err?.message || "Could not draft a sample answer.",
           profile: p,
@@ -171,15 +192,28 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
   // screen, and must not disturb a draft already on screen for a DIFFERENT
   // question (the current `state` may belong to an earlier question the
   // user is still looking at while this question is only predicted).
-  const prime = useCallback((q, { points, grounding, profile: p, interviewType: it, applicationId: appId } = {}) => {
-    cacheRef.current.set(normalizeQuestion(q), {
-      points: Array.isArray(points) ? points : [],
-      grounding: grounding || null,
-      profile: p,
-      interviewType: it,
-      applicationId: appId,
-    });
-  }, []);
+  const prime = useCallback(
+    (
+      q,
+      { points, cues, buzzwords, resumeAnchor, grounding, profile: p, interviewType: it, applicationId: appId } = {},
+    ) => {
+      cacheRef.current.set(normalizeQuestion(q), {
+        points: Array.isArray(points) ? points : [],
+        // AC-K1: a pre-draft carries the reading aids too, so a correct
+        // prediction stays FREE on reveal rather than free-but-degraded — a
+        // cache hit that dropped the aids would show a different, poorer
+        // panel than the same question drafted on demand.
+        cues: Array.isArray(cues) ? cues : [],
+        buzzwords: Array.isArray(buzzwords) ? buzzwords : [],
+        anchor: resumeAnchor || null,
+        grounding: grounding || null,
+        profile: p,
+        interviewType: it,
+        applicationId: appId,
+      });
+    },
+    [],
+  );
 
   // "Show sample answer" / "Hide sample answer". Hiding never fetches — it
   // only flips visibility, leaving whatever is cached (points, status,
@@ -199,6 +233,9 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
     visible: active.visible,
     status: active.status,
     points: active.points,
+    cues: active.cues,
+    buzzwords: active.buzzwords,
+    anchor: active.anchor,
     grounding: active.grounding,
     error: active.error,
     toggle,

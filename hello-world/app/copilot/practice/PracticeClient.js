@@ -242,10 +242,26 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
         question: currentQuestionText,
         status: sampleAnswer.status,
         points: sampleAnswer.points,
+        // AC-K1: the dashboard's answer panel reads the same fields live
+        // mode's detected-question entries carry, so the card and the panel
+        // show one answer in one form — a panel still rendering full
+        // sentences beside a card showing cues is the drift J2.3 exists to
+        // prevent, in a new place.
+        cues: sampleAnswer.cues,
+        buzzwords: sampleAnswer.buzzwords,
+        anchor: sampleAnswer.anchor,
         error: sampleAnswer.error,
       },
     ];
-  }, [currentQuestionText, sampleAnswer.status, sampleAnswer.points, sampleAnswer.error]);
+  }, [
+    currentQuestionText,
+    sampleAnswer.status,
+    sampleAnswer.points,
+    sampleAnswer.cues,
+    sampleAnswer.buzzwords,
+    sampleAnswer.anchor,
+    sampleAnswer.error,
+  ]);
 
   // AC-J2: practice mode's own instance of the SAME dashboard hook live mode
   // uses (useCopilotDashboard.js, formerly useLiveDashboard.js) — the whole
@@ -265,6 +281,7 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
     retryPrediction,
     retryPredraft,
     predictedPoints,
+    predictedCues,
     predictedAnswerStatus,
     predictedAnswerError,
     recordSpeechSample,
@@ -843,6 +860,7 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
           onRetryPrediction={retryPrediction}
           onRetryPredraft={retryPredraft}
           predictedPoints={predictedPoints}
+          predictedCues={predictedCues}
           predictedAnswerStatus={predictedAnswerStatus}
           predictedAnswerError={predictedAnswerError}
           // AC-J2.3: gated behind the SAME useSampleAnswer instance
@@ -875,6 +893,9 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
           sampleVisible={sampleAnswer.visible}
           sampleStatus={sampleAnswer.status}
           sampleAnswerPoints={sampleAnswer.points}
+          sampleCues={sampleAnswer.cues}
+          sampleBuzzwords={sampleAnswer.buzzwords}
+          sampleAnchor={sampleAnswer.anchor}
           sampleGrounding={sampleAnswer.grounding}
           sampleError={sampleAnswer.error}
           isEmbedded={isEmbedded}

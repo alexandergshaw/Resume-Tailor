@@ -293,11 +293,35 @@ describe("cachedSampleAnswerFor", () => {
       visible: true,
       status: "done",
       points: entry.points,
+      // AC-K1: an entry cached before the reading aids existed carries none
+      // of them, and resolves to the empty shapes rather than `undefined` —
+      // the render layer then falls back to the full points and omits both
+      // subsections, instead of rendering a header with nothing under it.
+      cues: [],
+      buzzwords: [],
+      anchor: null,
       grounding: { resume: true, coverLetter: false },
       error: "",
       profile: CURRENT_PROFILE,
       interviewType: CURRENT_TYPE,
       applicationId: CURRENT_APP,
+    });
+  });
+
+  it("carries the reading aids through on a hit when the cached entry has them", () => {
+    const entry = validEntry({
+      cues: ["Situation: Checkout redesign"],
+      buzzwords: ["Kubernetes"],
+      anchor: { title: "Senior Engineer", company: "Quantum Robotics", matched: true, project: "Checkout redesign" },
+    });
+    const result = cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP);
+    expect(result.cues).toEqual(["Situation: Checkout redesign"]);
+    expect(result.buzzwords).toEqual(["Kubernetes"]);
+    expect(result.anchor).toEqual({
+      title: "Senior Engineer",
+      company: "Quantum Robotics",
+      matched: true,
+      project: "Checkout redesign",
     });
   });
 

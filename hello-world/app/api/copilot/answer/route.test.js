@@ -123,7 +123,7 @@ describe("POST /api/copilot/answer (embedded engine)", () => {
 });
 
 describe("POST /api/copilot/answer (points mode is unmoved by the answer-mode change)", () => {
-  it("treats an unrecognized mode value the same as no mode at all — still {points,type}, never {answer,grounding}", async () => {
+  it("treats an unrecognized mode value the same as no mode at all — never {answer,grounding}", async () => {
     mockUser();
     const res = await POST(
       jsonRequest({
@@ -135,18 +135,33 @@ describe("POST /api/copilot/answer (points mode is unmoved by the answer-mode ch
     );
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(Object.keys(data).sort()).toEqual(["points", "type"]);
+    // AC-K1: points mode gained the three reading aids, and nothing else —
+    // `answer` and `grounding` are still answer mode's alone, which is what
+    // this case has always been about.
+    expect(Object.keys(data).sort()).toEqual(["buzzwords", "cues", "points", "resumeAnchor", "type"]);
+    expect(data).not.toHaveProperty("answer");
+    expect(data).not.toHaveProperty("grounding");
     expect(Array.isArray(data.points)).toBe(true);
     expect(data.points.length).toBeGreaterThan(0);
   });
 
-  it("gemini points mode still returns exactly {points,type} — no grounding key added", async () => {
+  it("gemini points mode returns points, type and the reading aids — still no grounding key", async () => {
     mockUser();
     mockGemini({ points: ["Point one", "Point two", "Point three"], type: "technical" });
     const res = await POST(jsonRequest({ question: "How would you design a rate limiter?", engine: "gemini" }));
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data).toEqual({ points: ["Point one", "Point two", "Point three"], type: "technical" });
+    expect(data).toEqual({
+      points: ["Point one", "Point two", "Point three"],
+      type: "technical",
+      // Already short, so each cue is its point minus terminal punctuation.
+      cues: ["Point one", "Point two", "Point three"],
+      // No posting selected -> nothing to mine; no submitted résumé and no
+      // prep profile -> no role to name. Both degrade to "section absent",
+      // never to an empty header.
+      buzzwords: [],
+      resumeAnchor: null,
+    });
   });
 });
 
@@ -261,6 +276,24 @@ describe("POST /api/copilot/answer (answer mode)", () => {
       answer: "I led the checkout redesign. We cut cart abandonment by 18%.",
       type: "behavioral",
       grounding: { resume: true, coverLetter: true },
+      // AC-K1.1: this model response carried no `cues`, so they fall back to
+      // the deterministic shortening of the points — STAR label kept, the
+      // sentence behind it cut to a prompt.
+      cues: ["Situation: Led the checkout redesign", "Result: Cut cart abandonment by 18%"],
+      // AC-K1.2: the fake application row carries no joined position, so
+      // there is no posting description to mine.
+      buzzwords: [],
+      // AC-K1.3: read out of the SUBMITTED résumé, not the prep profile.
+      resumeAnchor: {
+        title: "Senior Software Engineer",
+        company: "Quantum Robotics",
+        matched: true,
+        project: "Led the checkout redesign, cutting cart abandonment by 18%",
+        // AC-K1.3 correction: this anchor was mined from the SUBMITTED
+        // résumé (RESUME_DOC), not the prep profile, so it is honestly
+        // labeled "resume".
+        source: "resume",
+      },
     });
 
     const client = getGeminiClient();
@@ -349,8 +382,10 @@ describe("POST /api/copilot/answer (points mode grounding, AC-H4)", () => {
     );
     expect(res.status).toBe(200);
     const data = await res.json();
-    // No grounding key on points-mode's response (AC-H9.34) — unchanged shape.
-    expect(Object.keys(data).sort()).toEqual(["points", "type"]);
+    // No grounding key on points-mode's response (AC-H9.34) — still true
+    // after AC-K1 added the three reading aids to both modes.
+    expect(Object.keys(data).sort()).toEqual(["buzzwords", "cues", "points", "resumeAnchor", "type"]);
+    expect(data).not.toHaveProperty("grounding");
 
     const client = getGeminiClient();
     const promptText = client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
@@ -374,5 +409,138 @@ describe("POST /api/copilot/answer (points mode grounding, AC-H4)", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.points.join(" ")).toContain("Quantum Robotics");
+  });
+});
+
+// AC-K1: the three reading aids that sit beside a drafted answer. The load-
+// bearing case in here is the LAST one: the posting description became an
+// input to this route for the first time, and it must reach the buzzword
+// list and nothing else.
+describe("POST /api/copilot/answer (reading aids, AC-K1)", () => {
+  const POSTING_DESC = [
+    "Senior Platform Engineer",
+    "Requirements:",
+    "- Deep experience with Kubernetes and Terraform",
+    "- 5+ years of Python",
+  ].join("\n");
+
+  // The same fake row shape mockUserWithApplicationDocs already resolves for
+  // the `applications` table, plus the joined position fetchPostingDescription
+  // reads. One row serves both lookups, exactly as the real query does.
+  const APPLICATION_WITH_POSTING = {
+    id: "app-1",
+    resume_used_id: "resume-1",
+    cover_letter_id: "cl-1",
+    positions: { description: POSTING_DESC },
+  };
+
+  it("uses the model's own cues when it returns one per point", async () => {
+    mockUser();
+    mockGemini({
+      points: ["Situation: I led the checkout redesign.", "Result: We cut cart abandonment by 18%."],
+      cues: ["Situation: Checkout redesign", "Result: Cart abandonment down 18%"],
+      type: "behavioral",
+    });
+    const res = await POST(
+      jsonRequest({ question: "Tell me about a project you led.", mode: "answer", engine: "gemini" }),
+    );
+    const data = await res.json();
+    expect(data.cues).toEqual(["Situation: Checkout redesign", "Result: Cart abandonment down 18%"]);
+    // The full sentences are untouched — the cues are an ADDITION, not a
+    // replacement, which is what keeps the derived `answer` speakable.
+    expect(data.points).toEqual([
+      "Situation: I led the checkout redesign.",
+      "Result: We cut cart abandonment by 18%.",
+    ]);
+  });
+
+  it("falls back to derived cues when the model returns a mismatched number of them", async () => {
+    mockUser();
+    mockGemini({
+      points: ["Situation: I led the checkout redesign.", "Result: We cut cart abandonment by 18%."],
+      cues: ["Only one cue"],
+      type: "behavioral",
+    });
+    const res = await POST(
+      jsonRequest({ question: "Tell me about a project you led.", mode: "answer", engine: "gemini" }),
+    );
+    const data = await res.json();
+    expect(data.cues).toEqual(["Situation: Led the checkout redesign", "Result: Cut cart abandonment by 18%"]);
+  });
+
+  it("names the role and project out of the SUBMITTED résumé, not the prep profile", async () => {
+    mockUserWithApplicationDocs({
+      application: APPLICATION_WITH_POSTING,
+      resumeContent: RESUME_DOC,
+      coverLetterContent: COVER_LETTER_DOC,
+    });
+    const res = await POST(
+      jsonRequest({
+        question: "Tell me about the checkout work you led.",
+        profile: PROFILE,
+        mode: "answer",
+        engine: "embedded",
+        applicationId: "app-1",
+      }),
+    );
+    const data = await res.json();
+    // PROFILE names Acme Corp; RESUME_DOC names Quantum Robotics. The résumé
+    // wins because it is what the candidate actually submitted here.
+    expect(data.resumeAnchor.company).toBe("Quantum Robotics");
+    expect(data.resumeAnchor.project).toContain("checkout redesign");
+  });
+
+  it("mines buzzwords from the selected posting WITHOUT the description reaching either prompt", async () => {
+    mockUserWithApplicationDocs({
+      application: APPLICATION_WITH_POSTING,
+      resumeContent: RESUME_DOC,
+    });
+    mockGemini({ points: ["Point one.", "Point two."], type: "general" });
+    const res = await POST(
+      jsonRequest({
+        question: "How do you approach infrastructure work?",
+        mode: "answer",
+        engine: "gemini",
+        applicationId: "app-1",
+      }),
+    );
+    const data = await res.json();
+    expect(data.buzzwords).toContain("Kubernetes");
+    expect(data.buzzwords).toContain("Terraform");
+
+    // AC-H7.27 is unchanged: the description grounds NOTHING. It is fetched
+    // through its own call and handed only to the buzzword miner, so no
+    // wording from it can leak into the answer the model writes.
+    const client = getGeminiClient();
+    const promptText = client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
+    expect(promptText).not.toContain("Senior Platform Engineer");
+    expect(promptText).not.toContain("Deep experience with Kubernetes");
+  });
+
+  it("keeps the posting description out of the points-mode prompt too", async () => {
+    mockUserWithApplicationDocs({
+      application: APPLICATION_WITH_POSTING,
+      resumeContent: RESUME_DOC,
+    });
+    mockGemini({ points: ["Point one."], type: "general" });
+    const res = await POST(
+      jsonRequest({ question: "Tell me about yourself.", engine: "gemini", applicationId: "app-1" }),
+    );
+    const data = await res.json();
+    expect(data.buzzwords.length).toBeGreaterThan(0);
+
+    const client = getGeminiClient();
+    const promptText = client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
+    expect(promptText).not.toContain("Deep experience with Kubernetes");
+  });
+
+  it("degrades every aid to absent — never to an empty section — when there is nothing to build one from", async () => {
+    mockUser();
+    mockGemini({ points: ["A generic point."], type: "general" });
+    const res = await POST(jsonRequest({ question: "Tell me about yourself.", engine: "gemini" }));
+    const data = await res.json();
+    expect(data.buzzwords).toEqual([]);
+    expect(data.resumeAnchor).toBeNull();
+    expect(data.cues).toEqual(["A generic point"]);
   });
 });
