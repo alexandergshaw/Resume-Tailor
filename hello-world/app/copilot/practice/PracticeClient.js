@@ -450,14 +450,20 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
           }
         },
         onError: (err) => setWarning(err.message),
-        onTranscript: ({ transcript, isFinal, start: audioStart, duration: audioDuration }) => {
-          recordTranscriptEvent({ isFinal, transcript, start: audioStart, duration: audioDuration });
+        onTranscript: ({ transcript, isFinal, start: audioStart, duration: audioDuration, textAlreadyDelivered }) => {
+          recordTranscriptEvent({ isFinal, transcript, start: audioStart, duration: audioDuration, textAlreadyDelivered });
 
           if (!isFinal) {
             setInterim(transcript);
             return;
           }
           setInterim("");
+          // R-127: textAlreadyDelivered re-delivers the text of the final
+          // that already fed the two accumulators below for this same span
+          // (see lib/copilot/stt/index.js's onTranscript contract) — skip
+          // both, or the pace sampler and the on-screen transcript both
+          // double-count this utterance.
+          if (textAlreadyDelivered) return;
           // AC-J2.9: feed the dashboard's pace sampler from FINAL frames
           // only — appendSpeechSample (via recordSpeechSample) already
           // drops frames whose start/duration aren't usable numbers, so

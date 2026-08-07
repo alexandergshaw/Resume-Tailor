@@ -11,6 +11,7 @@
 import { profileSkills } from "./answerLocal";
 import { defaultLibraryData } from "@/lib/llm/engines/tailor-lite/library/defaults";
 import { MIN_LUMA_SAMPLES, MIN_MOTION_SAMPLES } from "./videoStats";
+import { MAX_PLAUSIBLE_WPM } from "./answerMetrics";
 // G2: the selected practice interviewType (lib/copilot/interviewTypes.js) is
 // the single source of truth for the ideal answer length, what the rubric
 // should additionally expect, and how the verdict names the format being
@@ -457,7 +458,20 @@ function computeDeliveryScore(m) {
 export function buildDeliveryNotes(m) {
   const notes = [];
 
-  if (m.wordCount > 0 && m.speechDurationSec > 0) {
+  if (m.wordCount > 0 && m.speechDurationSec > 0 && !m.paceIsPlausible) {
+    // R-127: a wpm above MAX_PLAUSIBLE_WPM (answerMetrics.js) is not a fast
+    // talker, it's a measurement fault — citing it here would hand the
+    // critique prompt a "ground truth" number that cannot be true
+    // (app/api/copilot/critique/route.js's BASE_SYSTEM instructs the model
+    // to cite these numbers, never re-estimate them). This is reported as a
+    // DATA problem, not a delivery problem — the fix is that a measurement
+    // fault stops being reported as a delivery fault, never that a score
+    // moves (computePaceScore/computeDeliveryScore below are unaffected by
+    // this flag; they still key off paceLabel alone, exactly as before).
+    notes.push(
+      `${m.wordCount} words were captured over ${Math.round(m.speechDurationSec)} seconds, but the computed pace came out well above what a person can physically speak — that points to a measurement issue, not the candidate's actual delivery, so pace is not being reported as a fact here.`,
+    );
+  } else if (m.wordCount > 0 && m.speechDurationSec > 0) {
     notes.push(
       `You spoke for ${Math.round(m.speechDurationSec)} seconds at ${Math.round(m.wordsPerMinute)} words per minute (${m.paceLabel}).`,
     );
@@ -735,11 +749,22 @@ const VALID_PACE_LABELS = new Set(["slow", "rushed", "conversational"]);
 export function normalizeMetrics(raw) {
   const m = raw && typeof raw === "object" ? raw : {};
   const video = m.video && typeof m.video === "object" ? m.video : {};
+  const wordsPerMinute = Number.isFinite(m.wordsPerMinute) ? m.wordsPerMinute : 0;
   return {
     wordCount: Number.isFinite(m.wordCount) ? m.wordCount : 0,
     durationSec: Number.isFinite(m.durationSec) ? m.durationSec : 0,
     speechDurationSec: Number.isFinite(m.speechDurationSec) ? m.speechDurationSec : 0,
-    wordsPerMinute: Number.isFinite(m.wordsPerMinute) ? m.wordsPerMinute : 0,
+    wordsPerMinute,
+    // R-127: recomputed HERE from the numeric wordsPerMinute above, never
+    // trusted from whatever `raw.paceIsPlausible` a client payload claims —
+    // a client that lied (or one built before this field existed, which
+    // never sends it at all) must not be able to assert an impossible wpm
+    // as ground truth to the critique prompt (see buildDeliveryNotes below
+    // and BASE_SYSTEM's "treat those numbers as ground truth" instruction in
+    // app/api/copilot/critique/route.js). This is the actual defensive
+    // check; computeAnswerMetrics's own `paceIsPlausible` (answerMetrics.js)
+    // is the client-side, honest-client copy of the same rule.
+    paceIsPlausible: wordsPerMinute <= MAX_PLAUSIBLE_WPM,
     paceLabel: VALID_PACE_LABELS.has(m.paceLabel) ? m.paceLabel : "conversational",
     fillerCount: Number.isFinite(m.fillerCount) ? m.fillerCount : 0,
     fillerRate: Number.isFinite(m.fillerRate) ? m.fillerRate : 0,

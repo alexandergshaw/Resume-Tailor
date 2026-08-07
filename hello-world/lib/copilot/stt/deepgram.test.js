@@ -253,6 +253,41 @@ describe("DeepgramStream transcript forwarding", () => {
     expect(onTranscript).not.toHaveBeenCalled();
   });
 
+  it("never carries a textAlreadyDelivered key on any frame, even for two back-to-back Results frames with identical transcript/start/duration (R-127 no-regression)", async () => {
+    // ElevenLabs' committed_transcript(_with_timestamps) re-delivers the
+    // SAME span a preceding final_transcript(_with_timestamps) already
+    // delivered, purely to carry speechFinal:true — see
+    // lib/copilot/stt/elevenlabs.js and docs/REGRESSION.md R-127. Deepgram
+    // has no equivalent second message: speech_final rides on the SAME
+    // Results frame as is_final (see this file's own DEFAULT_PARAMS/
+    // endpointing comment), so there is no separate "commit" message to
+    // re-deliver a span from in the first place — this module must never
+    // gain the R-127 dedup flag as a side effect of some future change.
+    // Every other test in this file already proves this implicitly (each
+    // uses `toHaveBeenCalledWith` against a fixed 6-key object, which fails
+    // on any extra key), but this is the explicit case for it: even the
+    // adversarial input — two structurally-identical final frames sent back
+    // to back — must not produce the flag.
+    const onTranscript = vi.fn();
+    const { ws } = await connectStream({ onTranscript });
+
+    const frame = resultsFrame({
+      transcript: "same text twice",
+      isFinal: true,
+      speechFinal: true,
+      start: 4,
+      duration: 1,
+    });
+    emitMessage(ws, frame);
+    emitMessage(ws, frame);
+
+    expect(onTranscript).toHaveBeenCalledTimes(2);
+    for (const call of onTranscript.mock.calls.map((c) => c[0])) {
+      expect("textAlreadyDelivered" in call).toBe(false);
+      expect(call.textAlreadyDelivered).toBeUndefined();
+    }
+  });
+
   it("ignores Results frames with an empty, whitespace-only, or missing transcript", async () => {
     const onTranscript = vi.fn();
     const { ws } = await connectStream({ onTranscript });

@@ -38,6 +38,23 @@ export const DISCOURSE_MARKER_PHRASES = ["like", "right", "actually", "basically
 export const SLOW_WPM_MAX = 110;
 export const RUSHED_WPM_MIN = 170;
 
+// R-127: a hard ceiling on what a computed wpm can possibly mean, distinct
+// from RUSHED_WPM_MIN above — RUSHED_WPM_MIN is a delivery judgement ("this
+// person is talking fast"); this is a physical-plausibility judgement ("no
+// person is talking at all"). Sustained conversational speech tops out
+// around 250 wpm even for a naturally fast talker; 300 gives that real
+// upper end a wide margin while still catching a number no human voice can
+// produce. A wpm above this is not evidence of a fast talker, it's evidence
+// of a MEASUREMENT fault — the production case this constant exists for was
+// the ElevenLabs adapter double-emitting every committed utterance, which
+// doubled wordCount while speechDurationSec (a min/max span, idempotent
+// under exact duplication) stayed the same, reporting 367 wpm for a true
+// pace of ~184 wpm. See computeAnswerMetrics's `paceIsPlausible` below and
+// lib/copilot/critiqueLocal.js's normalizeMetrics, which independently
+// re-derives this same check server-side rather than trusting a client's
+// own claim.
+export const MAX_PLAUSIBLE_WPM = 300;
+
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -134,6 +151,14 @@ export function computeAnswerMetrics({ text, durationMs, speechDurationMs, video
   // threshold check — "conversational" is the deliberate fallback for "not
   // enough to judge," not a claim that 0 wpm was actually measured.
   const paceLabel = speechDurationSec <= 0 || wordCount === 0 ? "conversational" : paceLabelFor(wordsPerMinute);
+  // R-127: a FLAG, not a clamp — see MAX_PLAUSIBLE_WPM's own comment above
+  // for why a clamp would be the wrong fix (it would render a measurement
+  // fault as a plausible-looking, wrong number instead of an honest "this
+  // reading can't be trusted"). Trivially true whenever wordsPerMinute is 0
+  // (no pace was measured at all) — there is nothing implausible about "no
+  // reading". Does not affect paceLabel or any score: a measurement fault
+  // must stop being reported as a delivery fault, not move one.
+  const paceIsPlausible = wordsPerMinute <= MAX_PLAUSIBLE_WPM;
 
   const { total: fillerCount, matches: fillers } = clean
     ? countPhrases(clean, FILLER_PHRASES)
@@ -164,6 +189,7 @@ export function computeAnswerMetrics({ text, durationMs, speechDurationMs, video
     speechDurationSec,
     wordsPerMinute,
     paceLabel,
+    paceIsPlausible,
     fillerCount,
     fillerRate,
     fillers,

@@ -590,6 +590,108 @@ describe("ElevenLabsStream#_handleMessage message-type to isFinal/speechFinal ma
   });
 });
 
+// R-127: the test above proves final_transcript and committed_transcript
+// differ in speechFinal "for the same text" but sends each to its OWN fresh
+// stream, so it never exercises what happens when the SAME stream sees both
+// for the SAME utterance — which is exactly what production did, and which
+// doubled every reported word count, filler count, and words-per-minute
+// (docs/REGRESSION.md R-127). These cases send both messages to one stream,
+// in the order the real protocol produces them.
+describe("ElevenLabsStream#_handleMessage textAlreadyDelivered dedup (R-127)", () => {
+  it("flags a committed_transcript_with_timestamps that exactly re-delivers the immediately preceding final_transcript_with_timestamps's span, while still delivering speechFinal:true", () => {
+    const onTranscript = vi.fn();
+    const stream = makeMappingStream({ onTranscript });
+
+    const words = [
+      { type: "word", start: 1.0, end: 1.3, text: "hello" },
+      { type: "word", start: 1.4, end: 1.8, text: "there" },
+    ];
+
+    stream._handleMessage(
+      transcriptMessage("final_transcript_with_timestamps", { text: "hello there", words }),
+    );
+    stream._handleMessage(
+      transcriptMessage("committed_transcript_with_timestamps", { text: "hello there", words }),
+    );
+
+    expect(onTranscript).toHaveBeenCalledTimes(2);
+    const [finalCall, committedCall] = onTranscript.mock.calls.map((c) => c[0]);
+
+    // The FIRST delivery of this span (final_transcript_with_timestamps) is
+    // a normal, un-flagged frame — a text-accumulating consumer must append
+    // it exactly like today.
+    expect(finalCall.isFinal).toBe(true);
+    expect(finalCall.speechFinal).toBe(false);
+    expect(finalCall.textAlreadyDelivered).toBeUndefined();
+    expect("textAlreadyDelivered" in finalCall).toBe(false);
+
+    // The SECOND delivery of the SAME span is flagged so a text-accumulating
+    // consumer skips it — but it is still delivered at all (consumers need
+    // its speechFinal:true, which is this provider's only end-of-turn
+    // signal), and its transcript/start/duration are unchanged.
+    expect(committedCall.isFinal).toBe(true);
+    expect(committedCall.speechFinal).toBe(true);
+    expect(committedCall.textAlreadyDelivered).toBe(true);
+    expect(committedCall.transcript).toBe("hello there");
+    expect(committedCall.start).toBe(finalCall.start);
+    expect(committedCall.duration).toBe(finalCall.duration);
+  });
+
+  it("delivers two genuinely different utterances that happen to share the same text but start at different times, neither one swallowed", () => {
+    const onTranscript = vi.fn();
+    const stream = makeMappingStream({ onTranscript });
+
+    const wordsAt = (offset) => [{ type: "word", start: offset, end: offset + 0.3, text: "okay" }];
+
+    // First utterance: final then its matching committed (a normal R-127 pair).
+    stream._handleMessage(
+      transcriptMessage("final_transcript_with_timestamps", { text: "okay", words: wordsAt(1.0) }),
+    );
+    stream._handleMessage(
+      transcriptMessage("committed_transcript_with_timestamps", { text: "okay", words: wordsAt(1.0) }),
+    );
+    // Second utterance, seconds later: the speaker says the exact same word
+    // again. Same text as the first utterance, but a DIFFERENT start — this
+    // must be recognised as new speech, not swallowed as a re-delivery of
+    // the first utterance.
+    stream._handleMessage(
+      transcriptMessage("final_transcript_with_timestamps", { text: "okay", words: wordsAt(9.0) }),
+    );
+    stream._handleMessage(
+      transcriptMessage("committed_transcript_with_timestamps", { text: "okay", words: wordsAt(9.0) }),
+    );
+
+    expect(onTranscript).toHaveBeenCalledTimes(4);
+    const calls = onTranscript.mock.calls.map((c) => c[0]);
+    expect(calls.map((c) => c.transcript)).toEqual(["okay", "okay", "okay", "okay"]);
+    // Only each committed frame is a re-delivery of ITS OWN preceding final
+    // — never of the other utterance's frames.
+    expect(calls[0].textAlreadyDelivered).toBeUndefined(); // 1st utterance's final
+    expect(calls[1].textAlreadyDelivered).toBe(true); // 1st utterance's committed
+    expect(calls[2].textAlreadyDelivered).toBeUndefined(); // 2nd utterance's final — new span
+    expect(calls[3].textAlreadyDelivered).toBe(true); // 2nd utterance's committed
+  });
+
+  it("does not flag a committed_transcript whose text matches the last final but whose start/duration cannot be proven equal (no words array, so both are undefined)", () => {
+    // Neither final_transcript nor committed_transcript (without the
+    // _with_timestamps suffix) ever carry a words array, so deriveSpan
+    // yields start/duration undefined for both — undefined === undefined
+    // proves nothing about whether this is really the same span, so this
+    // must NOT be treated as a re-delivery (see the judgement call
+    // documented in elevenlabs.js's _emitTranscript).
+    const onTranscript = vi.fn();
+    const stream = makeMappingStream({ onTranscript });
+
+    stream._handleMessage(transcriptMessage("final_transcript", { text: "same text" }));
+    stream._handleMessage(transcriptMessage("committed_transcript", { text: "same text" }));
+
+    const [finalCall, committedCall] = onTranscript.mock.calls.map((c) => c[0]);
+    expect(finalCall.start).toBeUndefined();
+    expect(committedCall.start).toBeUndefined();
+    expect(committedCall.textAlreadyDelivered).toBeUndefined();
+  });
+});
+
 describe("ElevenLabsStream#_handleMessage start/duration derivation from words", () => {
   it("derives start from the first word's start and duration from the last word's end minus that start, in seconds", () => {
     const onTranscript = vi.fn();

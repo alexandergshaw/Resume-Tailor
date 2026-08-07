@@ -75,3 +75,47 @@ export function deriveSpeechSpan(finals) {
   }
   return { firstStart, lastEnd };
 }
+
+// The accept/reject DECISION usePracticeAnswer.js's recordTranscriptEvent
+// applies to every transcript event (interim or final) from the session's
+// STT socket — extracted out to a plain function (R-127) for the same
+// reason isFinalInAnswerWindow/deriveSpeechSpan above already are: it is
+// this feature's riskiest logic, and usePracticeAnswer.js is a React hook
+// with no test file of its own (this repo's vitest config runs
+// `environment: "node"` — no jsdom anywhere in the suite, so a hook can't
+// be mounted to exercise it directly). recordTranscriptEvent still owns the
+// running audio clock and the refs themselves — a ref has no meaning
+// outside a React lifecycle — this function owns only whether one final
+// gets appended, and what.
+//
+// Returns `null` (reject, append nothing) when: the event isn't a final at
+// all, nothing is currently being collected (`collecting`), the final falls
+// outside the answer's audio-time window (isFinalInAnswerWindow, above), or
+// `textAlreadyDelivered` is set. Otherwise returns the
+// `{ text, start, duration }` entry to append.
+//
+// `textAlreadyDelivered` (see stt/index.js's onTranscript contract) is
+// ElevenLabs' R-127 dedup flag: its committed_transcript(_with_timestamps)
+// re-delivers the SAME span's text a final_transcript(_with_timestamps)
+// already delivered, purely to carry `speechFinal: true` for end-of-turn
+// timing — appending its text a second time would double this answer's
+// word count, filler count, and words-per-minute. Absent/falsy (Deepgram,
+// and every ElevenLabs frame that ISN'T a re-delivery) behaves exactly as
+// this function did before the flag existed.
+export function acceptedAnswerFinal({
+  isFinal,
+  transcript,
+  start,
+  duration,
+  textAlreadyDelivered,
+  collecting,
+  answerStart,
+  answerEnd,
+} = {}) {
+  if (!isFinal) return null;
+  if (!collecting) return null;
+  if (textAlreadyDelivered) return null;
+  const included = isFinalInAnswerWindow({ start, answerStart, answerEnd });
+  if (!included) return null;
+  return { text: transcript, start, duration };
+}

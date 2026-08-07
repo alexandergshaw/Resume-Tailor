@@ -151,6 +151,20 @@ export class ElevenLabsStream {
     // socket sending the same unknown type repeatedly must not flood the
     // caller with duplicate errors.
     this._reportedUnknownType = false;
+    // R-127 fix: the last isFinal:true frame's { text, start, duration }
+    // this instance delivered. ElevenLabs' commit_strategy=vad means a
+    // committed_transcript(_with_timestamps) is sent for an utterance
+    // ElevenLabs has ALREADY sent as a final_transcript(_with_timestamps)
+    // moments earlier — same text, same span — purely to carry
+    // speechFinal:true (see the committed_transcript case in
+    // _handleMessage below). Every consumer of onTranscript that appends
+    // TEXT on isFinal was therefore counting that one utterance's words
+    // twice: a 5-entry answer transcript rendered as A, A, B, B, C, and
+    // reported word count / filler count / words-per-minute were all
+    // roughly double the true value. This retains just enough to recognise
+    // an exact re-delivery of the same span, one utterance at a time — see
+    // _emitTranscript.
+    this._lastFinal = null;
   }
 
   async connect() {
@@ -285,7 +299,40 @@ export class ElevenLabsStream {
     // path skips an empty/whitespace-only transcript (AC-F2-3).
     if (!transcript) return;
     const { start, duration } = deriveSpan(msg?.words);
-    this.onTranscript({ speaker: this.speaker, transcript, isFinal, speechFinal, start, duration });
+
+    // R-127 fix: does this final exactly re-deliver the span this instance
+    // JUST delivered? Only a NUMERIC start/duration can prove that — a
+    // message with no words array (or none of its entries numeric;
+    // deriveSpan above) yields `undefined` for both, and
+    // `undefined === undefined` proves nothing about whether this is a
+    // re-delivery of the last utterance or a second, genuinely untimed one.
+    // Treated the same way isFinalInAnswerWindow (lib/copilot/answerWindow.js)
+    // treats an unknown `start` elsewhere in this codebase: unproven, so it
+    // does NOT dedupe — the safer failure here is a rare residual
+    // double-count for an untimed frame, never silently swallowing real
+    // speech. A genuinely repeated phrase has a different `start`, so real
+    // repeated speech can never be swallowed by this check.
+    const last = this._lastFinal;
+    const textAlreadyDelivered =
+      isFinal &&
+      !!last &&
+      last.text === transcript &&
+      typeof last.start === "number" &&
+      typeof start === "number" &&
+      last.start === start &&
+      typeof last.duration === "number" &&
+      typeof duration === "number" &&
+      last.duration === duration;
+
+    if (isFinal) this._lastFinal = { text: transcript, start, duration };
+
+    const frame = { speaker: this.speaker, transcript, isFinal, speechFinal, start, duration };
+    // Contract (see ./index.js's onTranscript doc): absent/falsy means
+    // "append" — the key is only ever set when true, so Deepgram's frames
+    // (and every ElevenLabs frame that isn't a re-delivery) are byte-
+    // identical to before this flag existed.
+    if (textAlreadyDelivered) frame.textAlreadyDelivered = true;
+    this.onTranscript(frame);
   }
 
   send(arrayBuffer) {

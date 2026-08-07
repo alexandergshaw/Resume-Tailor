@@ -5,7 +5,7 @@ import { AnswerRecorder } from "@/lib/copilot/answerRecorder";
 import { VideoFrameSampler } from "@/lib/copilot/videoStats";
 import { BodyLanguageSampler } from "@/lib/copilot/bodyLandmarks";
 import { computeAnswerMetrics } from "@/lib/copilot/answerMetrics";
-import { isFinalInAnswerWindow, deriveSpeechSpan } from "@/lib/copilot/answerWindow";
+import { deriveSpeechSpan, acceptedAnswerFinal } from "@/lib/copilot/answerWindow";
 import { critiqueAnswer } from "@/lib/copilot/critiqueClient";
 import { framesWereSent } from "@/lib/copilot/answerProvenance";
 import { savePracticeAnswer, updatePracticeAnswerCritique } from "@/lib/supabase/practiceAnswers";
@@ -281,27 +281,33 @@ export function usePracticeAnswer() {
     };
   }, [abandonInProgressAnswer]);
 
-  // Called for EVERY transcript event on the session's Deepgram socket —
-  // final or interim — so the audio clock stays fresh regardless of
-  // whether an answer is being recorded. Only finals arriving while
-  // collectingRef is true are evaluated for inclusion; everything else is
-  // the caller's concern (interim display, the full session transcript).
-  const recordTranscriptEvent = useCallback(({ isFinal, transcript, start, duration }) => {
+  // Called for EVERY transcript event on the session's STT socket — final
+  // or interim — so the audio clock stays fresh regardless of whether an
+  // answer is being recorded. The accept/reject decision for whether a
+  // FINAL belongs in the answer (collecting? inside the window? a R-127
+  // ElevenLabs re-delivery already accounted for?) is
+  // acceptedAnswerFinal — extracted to lib/copilot/answerWindow.js so it's
+  // unit-testable outside this hook; this function keeps only the audio
+  // clock and the ref itself, which have no meaning outside React.
+  const recordTranscriptEvent = useCallback(({ isFinal, transcript, start, duration, textAlreadyDelivered }) => {
     if (typeof start === "number" && typeof duration === "number") {
       const end = start + duration;
       if (end > audioClockRef.current) audioClockRef.current = end;
     }
-    if (!isFinal) return;
-    if (!collectingRef.current) return;
 
-    const included = isFinalInAnswerWindow({
+    const entry = acceptedAnswerFinal({
+      isFinal,
+      transcript,
       start,
+      duration,
+      textAlreadyDelivered,
+      collecting: collectingRef.current,
       answerStart: answerStartAudioRef.current,
       answerEnd: answerDoneAudioRef.current,
     });
-    if (!included) return;
+    if (!entry) return;
 
-    answerFinalsRef.current = [...answerFinalsRef.current, { text: transcript, start, duration }];
+    answerFinalsRef.current = [...answerFinalsRef.current, entry];
   }, []);
 
   // Starts recording the current question's answer over the given live

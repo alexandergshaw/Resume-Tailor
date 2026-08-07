@@ -75,6 +75,24 @@
 //       which words belong to an answer — getting the units or the
 //       reference point wrong here silently corrupts every delivery number
 //       practice mode reports, without ever throwing.
+//     - `textAlreadyDelivered` (R-127): true when this frame's `transcript`
+//       is an EXACT re-delivery — same text, same `start`, same `duration`
+//       — of a `transcript` this same instance already delivered on an
+//       earlier isFinal:true frame. ElevenLabs' commit_strategy=vad sends a
+//       committed_transcript(_with_timestamps) for an utterance it already
+//       sent as a final_transcript(_with_timestamps) moments earlier, purely
+//       to carry `speechFinal: true` — the frame still has to be delivered
+//       (consumers need that `speechFinal`), but a consumer that ACCUMULATES
+//       transcript text (a running word count, a session transcript, an
+//       assembled question) must not append this frame's text a second
+//       time, or it silently doubles word count, filler count, and
+//       words-per-minute. Absent/falsy — NEVER explicitly `false` — on
+//       every other frame, so a consumer that has never heard of this field
+//       (Deepgram's frames, and any test written before it existed) sees a
+//       byte-identical object to before it existed. Deepgram never sets
+//       this: its `speech_final` rides on the SAME message as `is_final`
+//       (see deepgram.js), so it has no separate "commit" message to
+//       re-deliver a span from in the first place.
 //
 // ## Provider selection
 //

@@ -537,36 +537,57 @@ export default function CopilotClient() {
           if (s === "live") setStartedAt((prev) => prev || Date.now());
         },
         onError: (err) => setWarning(err.message),
-        onTranscript: ({ speaker, transcript, isFinal, speechFinal, start: spanStart, duration }) => {
+        onTranscript: ({
+          speaker,
+          transcript,
+          isFinal,
+          speechFinal,
+          start: spanStart,
+          duration,
+          textAlreadyDelivered,
+        }) => {
           if (!isFinal) {
             setInterims((prev) => ({ ...prev, [speaker]: transcript }));
             return;
           }
           setInterims((prev) => ({ ...prev, [speaker]: "" }));
-          appendFinal(speaker, transcript);
 
-          // AC-I2.10/11: feed the pace sampler from the user's own FINAL
-          // frames only — never the interviewer's, and never with a
-          // wall-clock substitute for missing audio timing.
-          // appendSpeechSample (via recordSpeechSample) already drops
-          // frames whose start/duration aren't usable numbers, so this
-          // passes them through as-is rather than pre-filtering here.
-          if (speaker === "you") {
-            recordSpeechSample({ text: transcript, start: spanStart, duration });
+          // R-127: textAlreadyDelivered re-delivers the text of the final
+          // that already went into appendFinal/recordSpeechSample/pendingRef
+          // for this same span (see lib/copilot/stt/index.js's onTranscript
+          // contract) — skip the TEXT accumulation below, but `speechFinal`
+          // is still honoured unconditionally further down: it is this
+          // frame's own end-of-turn signal regardless of whether its text
+          // was new.
+          if (!textAlreadyDelivered) {
+            appendFinal(speaker, transcript);
+
+            // AC-I2.10/11: feed the pace sampler from the user's own FINAL
+            // frames only — never the interviewer's, and never with a
+            // wall-clock substitute for missing audio timing.
+            // appendSpeechSample (via recordSpeechSample) already drops
+            // frames whose start/duration aren't usable numbers, so this
+            // passes them through as-is rather than pre-filtering here.
+            if (speaker === "you") {
+              recordSpeechSample({ text: transcript, start: spanStart, duration });
+            }
+
+            // Assemble the interviewer's segments into one utterance —
+            // evaluated below once Deepgram/ElevenLabs signals the end of
+            // speech, regardless of whether THIS particular frame's text
+            // was itself a re-delivery.
+            if (speaker === "them") {
+              pendingRef.current.push(transcript);
+            }
           }
 
-          // Assemble the interviewer's segments into one utterance and evaluate
-          // it when Deepgram signals the end of speech (~300ms of silence).
-          if (speaker === "them") {
-            pendingRef.current.push(transcript);
-            if (speechFinal) {
-              const utterance = pendingRef.current
-                .join(" ")
-                .replace(/\s+/g, " ")
-                .trim();
-              pendingRef.current = [];
-              evaluateUtterance(utterance);
-            }
+          if (speaker === "them" && speechFinal) {
+            const utterance = pendingRef.current
+              .join(" ")
+              .replace(/\s+/g, " ")
+              .trim();
+            pendingRef.current = [];
+            evaluateUtterance(utterance);
           }
         },
       });

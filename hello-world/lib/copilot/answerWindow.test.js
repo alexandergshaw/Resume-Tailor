@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isFinalInAnswerWindow, deriveSpeechSpan } from "./answerWindow.js";
+import { isFinalInAnswerWindow, deriveSpeechSpan, acceptedAnswerFinal } from "./answerWindow.js";
 
 describe("isFinalInAnswerWindow — lower bound", () => {
   it("excludes a final whose audio start is before the answer's start offset", () => {
@@ -142,5 +142,53 @@ describe("deriveSpeechSpan", () => {
     // becomes the reported lastEnd.
     expect(span.lastEnd - span.firstStart).toBeGreaterThanOrEqual(0);
     expect(span.lastEnd).toBe(11);
+  });
+});
+
+// R-127: acceptedAnswerFinal is the extraction of usePracticeAnswer.js's
+// recordTranscriptEvent accept/reject decision — reachable here because
+// usePracticeAnswer.js itself is a React hook this repo's node-only vitest
+// setup cannot mount (no jsdom anywhere in the suite).
+describe("acceptedAnswerFinal", () => {
+  const baseArgs = () => ({
+    isFinal: true,
+    transcript: "hello there",
+    start: 6,
+    duration: 1.5,
+    textAlreadyDelivered: false,
+    collecting: true,
+    answerStart: 5,
+    answerEnd: null,
+  });
+
+  it("returns the { text, start, duration } entry for a normal, in-window final while collecting", () => {
+    expect(acceptedAnswerFinal(baseArgs())).toEqual({ text: "hello there", start: 6, duration: 1.5 });
+  });
+
+  it("returns null for an interim (isFinal: false), regardless of everything else", () => {
+    expect(acceptedAnswerFinal({ ...baseArgs(), isFinal: false })).toBeNull();
+  });
+
+  it("returns null when nothing is currently being collected", () => {
+    expect(acceptedAnswerFinal({ ...baseArgs(), collecting: false })).toBeNull();
+  });
+
+  it("returns null when the final falls outside the answer's audio-time window", () => {
+    // Spoken before "Start answering" — isFinalInAnswerWindow's own lower-
+    // bound behavior, reused here rather than reimplemented.
+    expect(acceptedAnswerFinal({ ...baseArgs(), start: 4.9, answerStart: 5 })).toBeNull();
+  });
+
+  // The R-127 case: a committed_transcript(_with_timestamps) frame that
+  // re-delivers a final's text must never be appended a second time, even
+  // though it is otherwise a perfectly normal, in-window, collecting final.
+  it("returns null when textAlreadyDelivered is set, even though every other condition would accept it", () => {
+    expect(acceptedAnswerFinal({ ...baseArgs(), textAlreadyDelivered: true })).toBeNull();
+  });
+
+  it("still accepts a normal final when textAlreadyDelivered is absent (Deepgram, and every non-re-delivered ElevenLabs frame)", () => {
+    const { textAlreadyDelivered, ...withoutFlag } = baseArgs();
+    void textAlreadyDelivered;
+    expect(acceptedAnswerFinal(withoutFlag)).toEqual({ text: "hello there", start: 6, duration: 1.5 });
   });
 });
