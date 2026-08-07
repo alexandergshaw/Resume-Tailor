@@ -317,48 +317,78 @@ export default function AnswerAids({ buzzwords, anchor, idealProject }) {
           {hasIdealRow ? (
             <Aid label="Ideal project for this posting" ddSx={{ borderLeft: "2px solid var(--accent)", pl: 1.25 }}>
               <Stack spacing={LINE_GAP}>
+                {/* Two things changed here, both from the same piece of
+                    user feedback: "way too fucking verbose ... keep the
+                    core with the project details and numbers, just make it
+                    much shorter and bulleted".
+
+                    First, this used to be TWO separate lines — "Not from
+                    your resume." with its own sentence, then, only when a
+                    worked example exists, a SECOND paragraph disclosing
+                    that ITS numbers are invented too. Both said the same
+                    thing from two angles, so they're now one line: `Not
+                    from your resume.` still opens it, still `<strong>`,
+                    and — per the comment above this row — the whole line
+                    still lives in the `dd` ahead of every figure, because
+                    this component's `<dl>`s are `display: grid` and an
+                    orphaned `dt` is unattached text on WebKit. Sentences
+                    inside the line are separated by periods, never an em
+                    dash, for the same spoken-punctuation reason as
+                    everywhere else on this row (R-136).
+
+                    Second, the `idealLine` advisory sentence (`summary`,
+                    added by R-130's amendment 3 because the block once had
+                    "no substance") is dropped whenever a worked example
+                    exists: it restates in prose what the title and the
+                    sections/outcomes below it already show concretely, and
+                    it was the single longest line in the block. `idealLine`
+                    keeps its exact original job, and its exact original
+                    rendering, for the one case that still has no concrete
+                    example to lose it to — an `idealProject` cached before
+                    AC-M2, which carries `summary`/`shape` but no `project`.
+                    That branch (the `else` below) is byte-identical to
+                    before this change. */}
                 <Typography variant="body2" sx={{ color: "var(--text-primary)" }}>
                   <strong>Not from your resume.</strong>
-                  {idealLine ? ` ${idealLine}` : ""}
+                  {hasIdealProjectExample
+                    ? " The example below and its numbers are invented. Replace them with your own."
+                    : idealLine
+                      ? ` ${idealLine}`
+                      : ""}
                 </Typography>
-                {hasIdealProjectExample ? (
-                  // AC-M2's own disclosure, governed by the SAME rule the
-                  // comment above this row already explains at length: it
-                  // must sit in the `dd`, in DOM order before the first
-                  // figure (the first one arrives several lines down, in
-                  // the outcomes list), and never live only in a `dt` —
-                  // this component's `<dl>`s are `display: grid`, which
-                  // drops the description-list role in WebKit, so an
-                  // orphaned `dt` there is just unattached text. "invented"
-                  // carries the warning; the sentence after it says what to
-                  // do about it. Period, not an em dash, between the two —
-                  // an em dash is not spoken at default screen-reader
-                  // punctuation, the same lesson R-136 already paid for
-                  // once on this exact row.
-                  <Typography variant="body2" sx={{ color: "var(--text-primary)" }}>
-                    <strong>A worked example, invented.</strong> The numbers
-                    below are made up, to show what a strong answer for this
-                    posting sounds like. Replace every one of them with your
-                    own.
-                  </Typography>
-                ) : null}
                 {hasIdealProjectExample && idealProjectTitle ? (
                   <Typography variant="body2" sx={{ color: "var(--text-primary)", fontWeight: 600 }}>
                     {idealProjectTitle}
                   </Typography>
                 ) : null}
-                {hasIdealProjectExample
-                  ? idealProjectSections.map((section, i) => (
-                      // Bold (not colour) distinguishes the label from its
-                      // body — WCAG 1.4.1, the same rule the rest of this
-                      // row already rests on. A period follows the label,
-                      // never an em dash, for the same spoken-punctuation
-                      // reason as everywhere else here.
-                      <Typography key={i} variant="body2" sx={{ color: "var(--text-primary)" }}>
-                        <strong>{section.label}.</strong> {section.body}
+                {hasIdealProjectExample ? (
+                  // A real `<ul>`/`<li>` list, not four stacked paragraphs
+                  // — bullets are literally what "make it ... bulleted"
+                  // asked for. Same list styling the outcomes list just
+                  // below uses, and for the identical reason: markers are
+                  // left INTACT (no `listStyle: "none"`). Unlike the
+                  // buzzword `Stack` above — which isn't a `ul` to begin
+                  // with, so it can strip its markers and put the `list`
+                  // role back explicitly via `role="list"` — this element
+                  // IS a real `ul`; if its markers were stripped there
+                  // would be nothing here to restore the role WITH
+                  // (R-136). `pl: 2.5`, matching the outcomes list below,
+                  // so both lists' markers clear this row's own accent
+                  // rule at the same depth instead of one sitting at the
+                  // browser default `padding-inline-start` (~40px). Bold
+                  // (not colour) still distinguishes each label from its
+                  // body — WCAG 1.4.1 — and a colon, not an em dash,
+                  // follows it: a colon is spoken as a pause, an em dash is
+                  // not, the same reason every other label/body pair on
+                  // this row uses one.
+                  <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
+                    {idealProjectSections.map((section, i) => (
+                      <Typography key={i} component="li" variant="body2" sx={{ color: "var(--text-primary)" }}>
+                        <strong>{section.label}:</strong> {section.body}
                       </Typography>
-                    ))
-                  : null}
+                    ))}
+                  </Box>
+                ) : null}
                 {hasIdealProjectExample ? (
                   // A real `<ul>`/`<li>` list — markers left INTACT, unlike
                   // the buzzword `Stack` above, which strips its markers

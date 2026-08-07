@@ -27,26 +27,31 @@
 // dropped into a specific grammatical position (see the two lists' own
 // comments).
 
-// {D2} is the subject of "…doing the unglamorous part" in every archetype's
-// "What they built" section, so every entry here has to read as a plausible
-// actor performing work. "Cloud Computing", "Data Science" and "Analytics"
-// are real `technology`/`domain` canonicals and were tried here; all three
-// were rejected because none of them "does" anything as the subject of that
+// {D2} is the subject of an action verb in every archetype's "Built"
+// section — "pre-filling known fields and flagging what a person would
+// skip" in the product archetype, an equivalent construction in every other
+// one — so every entry here has to read as a plausible actor performing
+// work. "Cloud Computing", "Data Science" and "Analytics" are real
+// `technology`/`domain` canonicals and were tried here; all three were
+// rejected because none of them "does" anything as the subject of that
 // sentence the way a model or an assistant does. Verified against
 // lib/llm/engines/tailor-lite/data/skills_taxonomy.json — every entry below
 // is a real canonical (category "domain"), so every entry is actually
 // reachable from `shape`.
 const TECH_TERMS = ["Artificial Intelligence", "Machine Learning", "Deep Learning", "Generative AI"];
 
-// {M} is sentence-initial and every archetype's "How it ran" copy describes
-// two-week (or weekly) INCREMENTS run against a backlog — iterative delivery.
-// That is true of Agile and Scrum. It is not true of Kanban (continuous flow,
-// no fixed increment), Waterfall (the opposite of iterative), DevOps (a
-// practice area, not a cadence) or Infrastructure as Code (not a delivery
-// cadence at all) — all five are real `methodology` canonicals a posting can
-// legitimately name, and all five would turn "How it ran" into a fabricated
-// claim about the posting's own vocabulary if substituted in. So the list
-// stays at two, and every other methodology canonical takes the archetype's
+// {M} is an adjective inside the sentence ("Two-week Agile sprints…"), not a
+// sentence-initial prefix — which is also why `ranWithout` can drop the slot
+// and its space without leaving the sentence to start on a lowercase
+// fallback. Every archetype's "Ran" copy describes two-week (or weekly)
+// INCREMENTS run against a backlog — iterative delivery. That is true of
+// Agile and Scrum. It is not true of Kanban (continuous flow, no fixed
+// increment), Waterfall (the opposite of iterative), DevOps (a practice
+// area, not a cadence) or Infrastructure as Code (not a delivery cadence at
+// all) — all five are real `methodology` canonicals a posting can
+// legitimately name, and all five would turn "Ran" into a fabricated claim
+// about the posting's own vocabulary if substituted in. So the list stays at
+// two, and every other methodology canonical takes the archetype's
 // `ranWithout` copy instead, which describes the same two-week cadence
 // without naming it.
 const DELIVERY_METHODS = ["Agile", "Scrum"];
@@ -89,21 +94,35 @@ const NOT_A_SETTING = [
 // "31% → 68% of licensed seats active weekly" — R-137's failure, one level
 // down. Owning three pairs per archetype, unconnected to any lookup, makes
 // that mismatch unconstructible instead of merely untested.
+
+// Every title, section body and `ranWithout` string below is deliberately
+// short. The first version of this table answered "it needs to be written
+// as though it's an actual project" with four paragraphs per archetype, and
+// the verdict on what shipped was "this is way too fucking verbose" — a fair
+// read on something a candidate has to take in mid-question, in one glance,
+// under interview pressure. The fix kept the content: the project details
+// and the figures are the same ones that were in the paragraphs. Only the
+// length changed — each section is now one skimmable bullet, not a
+// paragraph. lib/copilot/idealProjectNarrative.test.js enforces the new
+// shape in both directions: a floor (12 words) so a section cannot decay
+// back into the one-line advice this table originally replaced, and a
+// ceiling (28 words per section, 120 for the whole title-plus-sections
+// example) so it cannot grow back into the paragraphs this rewrite removed.
 const ARCHETYPES = {
   product: {
     d1Default: "a consumer product",
     d2Default: "automation",
     title: (d1) => `Relaunching the one workflow people actually came for, in ${d1}.`,
     problem:
-      "Sign-ups were healthy and use was not — roughly a third of licensed seats were active in any given week — and the support queue kept returning the same complaint: the core workflow took nine steps across four screens. The team wrote the problem down as one sentence, with the usage data and a year of in-product survey scores behind it, before anyone proposed a solution.",
+      "Healthy sign-ups, weak weekly use — barely a third of licensed seats — and a core workflow nine steps long.",
     built: (d2) =>
-      `A deliberately thin first slice, in front of a forty-account pilot rather than the whole base: nine steps collapsed to three, with ${d2} doing the unglamorous part — pre-filling what the system already knew and flagging the records a person would have skipped. Two features that tested badly with the pilot were cut before launch instead of shipped and defended.`,
+      `Nine steps cut to three, piloted on forty accounts, with ${d2} pre-filling known fields and flagging what a person would skip.`,
     ranWith: (m) =>
-      `${m}: two-week sprints, a backlog the owner ranked and defended personally, a demo every second Friday with real users in the room, and a written decision log so settled trade-offs stayed settled. Shipping moved off the quarterly release train onto the same fortnightly cadence, which is what made the rest of it possible.`,
+      `Two-week ${m} sprints, an owner-ranked backlog, fortnightly demos with real users, and quarterly releases moved to the same cadence.`,
     ranWithout:
-      "One cross-functional team on a two-week cadence — design, engineering, support and the owner in the same room — with a backlog the owner ranked and defended personally and a written decision log so settled trade-offs stayed settled. Shipping moved off the quarterly release train onto the same fortnightly cadence, which is what made the rest of it possible.",
+      "Two-week sprints, an owner-ranked backlog, fortnightly demos with real users, and quarterly releases moved to the same cadence.",
     landed:
-      "Measured against numbers that existed before the work started, not ones found afterwards: the same in-product survey ran through the whole thing, so the satisfaction change is a comparison rather than a claim. The owner can also say what did not move — session length was flat and the mobile pilot slipped a quarter — which is what makes the rest of it credible in the room.",
+      "Baselined before the work and measured the same way after — including the misses: session length flat, mobile pilot slipped a quarter.",
     outcomes: [
       { metric: "adoption rate", figure: "31% → 68% of licensed seats active weekly" },
       { metric: "user satisfaction / NPS", figure: "in-product NPS +12 → +41" },
@@ -114,17 +133,17 @@ const ARCHETYPES = {
   data: {
     d1Default: "analytics",
     d2Default: "the model",
-    title: (d1) => `Taking a model from a notebook nobody trusted to a decision the business runs on, in ${d1}.`,
+    title: (d1) => `Moving a model from an untrusted notebook into production, in ${d1}.`,
     problem:
-      "A ranking model built the year before was still living in a notebook: it scored well offline, nobody could reproduce last month's numbers, and the two teams downstream had quietly gone back to a hand-maintained spreadsheet. The first week went to reproducing the existing baseline exactly, so there was an honest number to beat.",
+      "A model that scored well offline but nobody could reproduce, so both downstream teams had quietly gone back to a spreadsheet.",
     built: (d2) =>
-      `A retraining pipeline that runs on a schedule instead of on a laptop: features versioned, training data snapshotted per run, the nightly job widened from a sampled slice to every account, and every prediction traceable back to the exact model and inputs that produced it. Nothing was switched over until ${d2} had run behind a flag against the old spreadsheet, on live traffic, for six weeks.`,
+      `A scheduled retraining pipeline with versioned features and traceable predictions; nothing switched over until ${d2} had run six weeks on live traffic.`,
     ranWith: (m) =>
-      `${m}: two-week increments against a backlog written as questions the business had actually asked, a demo of real predictions on real data at the end of each, and a kill criterion agreed up front — if the lift held under a month of live traffic it shipped, and if it did not the spreadsheet stayed.`,
+      `Two-week ${m} increments against questions the business actually asked, with a kill criterion agreed before any of it started.`,
     ranWithout:
-      "Two-week increments against a backlog written as questions the business had actually asked, a demo of real predictions on real data at the end of each, and a kill criterion agreed up front — if the lift held under a month of live traffic it shipped, and if it did not the spreadsheet stayed.",
+      "Two-week increments against questions the business actually asked, with a kill criterion agreed before any of it started.",
     landed:
-      "The comparison was against the honest baseline rather than against nothing. Two of the five features that looked strongest offline turned out to leak future information and were removed, which cost about a third of the headline lift and was reported that way.",
+      "Compared against the reproduced baseline, not against nothing — and two leaking features were cut, costing a third of the headline lift.",
     outcomes: [
       { metric: "model accuracy improvement", figure: "precision@10 0.42 → 0.61 on live traffic" },
       { metric: "data volume processed", figure: "1.8M records a night, up from a 240k sample" },
@@ -135,23 +154,23 @@ const ARCHETYPES = {
   infra: {
     d1Default: "platform engineering",
     d2Default: "the new service tier",
-    // {D2} here is the subject of "rolled out region by region behind a
-    // flag" — a sentence about a service tier, not about an actor doing
-    // work, so it cannot safely hold a posting's capability the way the
-    // TECH_TERMS allowlist assumes (see that list's comment, which is a
-    // per-SENTENCE justification, not a global one). Always use d2Default.
+    // {D2} here is the subject of "rolled out region by region" — a sentence
+    // about a service tier, not about an actor doing work, so it cannot
+    // safely hold a posting's capability the way the TECH_TERMS allowlist
+    // assumes (see that list's comment, which is a per-SENTENCE
+    // justification, not a global one). Always use d2Default.
     capabilityFromPosting: false,
     title: (d1) => `Surviving the peak day without a war room, in ${d1}.`,
     problem:
-      "The busiest hour of the month timed out every time it came round, the on-call rotation had burned through two engineers in a quarter, and nobody could say which of the seven services was the actual cause because the traces stopped at the gateway. Tracing came first — a fortnight of instrumentation before a single optimisation — because the team refused to tune what it could not measure.",
+      "The busiest hour of the month timed out, on-call burned two engineers in a quarter, and traces stopped at the gateway.",
     built: (d2) =>
-      `The two hot paths moved off synchronous fan-out onto a queue with backpressure, the read path was cached against an explicit invalidation contract rather than a guessed expiry, and ${d2} rolled out region by region behind a flag with an automatic rollback on error rate. Load tests reproduced the peak day at three times its real volume before any of it went live.`,
+      `Hot paths moved onto a queue with backpressure, reads cached against an explicit invalidation contract, and ${d2} rolled out region by region.`,
     ranWith: (m) =>
-      `${m}: weekly increments, one migration per increment, and a standing rule that nothing shipped without the dashboard that would prove or disprove it. Every rollout carried a written rollback plan, and two of them were used.`,
+      `Weekly ${m} increments, one migration each, and nothing shipped without the dashboard that would prove or disprove it.`,
     ranWithout:
-      "Weekly increments, one migration per increment, and a standing rule that nothing shipped without the dashboard that would prove or disprove it. Every rollout carried a written rollback plan, and two of them were used.",
+      "Weekly increments, one migration each, and nothing shipped without the dashboard that would prove or disprove it.",
     landed:
-      "The peak day passed without a war room for the first time in three years. The team is equally clear on what it did not fix — the legacy reporting job still runs for six hours overnight — and on how much of the latency win came from caching rather than from anything architectural.",
+      "First peak day in three years without a war room — and clear the win was caching, not architecture.",
     outcomes: [
       { metric: "latency reduction %", figure: "p95 on the hot path 2.4s → 610ms" },
       { metric: "uptime / reliability %", figure: "monthly availability 99.2% → 99.95%" },
@@ -164,15 +183,15 @@ const ARCHETYPES = {
     d2Default: "a scoring model",
     title: (d1) => `Rebuilding the two stages where deals were actually dying, in ${d1}.`,
     problem:
-      "Pipeline looked healthy and the close rate did not: about one in nine qualified opportunities converted, and the average deal sat for five weeks between the demo and the security review with nobody owning it. Six months of closed-lost notes were read and coded by hand before anything was changed.",
+      "Healthy pipeline, a one-in-nine close rate, and five dead weeks between the demo and the security review.",
     built: (d2) =>
-      `The two dead stages got an owner, a service-level target and a shared checklist; the security review moved to a standard packet sent before the demo instead of after it; and ${d2} flagged the accounts matching the profile of past wins, so effort stopped being spread evenly across a list.`,
+      `Both dead stages got an owner and a checklist, the security review moved ahead of the demo, and ${d2} flagged accounts matching past wins.`,
     ranWith: (m) =>
-      `${m}: a two-week cycle with a pipeline review at the end of each, one experiment at a time so the effect of every change stayed attributable, and a written record of what was kept and what was reverted.`,
+      `A two-week ${m} cycle, one experiment at a time so every change stayed attributable, with every revert written down.`,
     ranWithout:
-      "A two-week cycle with a pipeline review at the end of each, one experiment at a time so the effect of every change stayed attributable, and a written record of what was kept and what was reverted.",
+      "A two-week cycle, one experiment at a time so every change stayed attributable, with every revert written down.",
     landed:
-      "Attribution was kept honest: the same three quarters carried a pricing change, and the analysis separates the two instead of claiming all of it. The enterprise segment did not move at all, and that is stated up front.",
+      "Attribution kept honest — a pricing change landed the same quarter and is separated out; enterprise did not move at all.",
     outcomes: [
       { metric: "revenue impact", figure: "$1.4M net-new ARR over three quarters" },
       { metric: "conversion rate", figure: "qualified-to-closed 11% → 19%" },
@@ -185,15 +204,15 @@ const ARCHETYPES = {
     d2Default: "a triage assistant",
     title: (d1) => `Emptying the queue by fixing the five things people kept writing in about, in ${d1}.`,
     problem:
-      "First response averaged nineteen hours and the backlog grew every Monday. Three months of tickets were sampled and tagged by hand, and roughly forty per cent of them turned out to be four recurring product defects plus a password-reset flow nobody could find — a product problem being absorbed as a staffing problem.",
+      "Nineteen-hour first response, a backlog growing weekly, and forty per cent of tickets tracing to four defects and one lost reset flow.",
     built: (d2) =>
-      `The four defects were escalated with the ticket counts attached and fixed at source; the reset flow moved to the page people actually landed on; and ${d2} routed incoming tickets to the right queue and drafted a first reply for the top intents, with a person approving every send.`,
+      `The four defects fixed at source, the reset flow moved where people land, and ${d2} routing tickets and drafting replies for a person to approve.`,
     ranWith: (m) =>
-      `${m}: weekly increments run jointly by support and engineering, one intent at a time, and a standing review of the tickets the routing got wrong — the misroutes set the next increment's backlog.`,
+      `Weekly ${m} increments run jointly by support and engineering, one intent at a time, with misroutes setting the next backlog.`,
     ranWithout:
-      "Weekly increments run jointly by support and engineering, one intent at a time, and a standing review of the tickets the routing got wrong — the misroutes set the next increment's backlog.",
+      "Weekly increments run jointly by support and engineering, one intent at a time, with misroutes setting the next backlog.",
     landed:
-      "The wins from deflection are reported separately from the wins from faster handling, because they are different achievements. Volume during the two peak weeks of the year did not improve at all.",
+      "Deflection wins reported separately from faster handling — and the two peak weeks did not improve at all.",
     outcomes: [
       { metric: "resolution time", figure: "first response 19h → 3h, full resolution 4.1 days → 1.6" },
       { metric: "customer satisfaction score", figure: "CSAT 3.4 → 4.5 out of 5" },
@@ -204,21 +223,21 @@ const ARCHETYPES = {
   security: {
     d1Default: "security and compliance",
     d2Default: "automated policy checks",
-    // {D2} here is the subject of "ran in the deployment pipeline" — again
-    // an artifact being described, not an actor doing work, so it has the
-    // same problem as infra's slot above. Always use d2Default.
+    // {D2} here is the subject of "blocked the pipeline" — again an artifact
+    // being described, not an actor doing work, so it has the same problem
+    // as infra's slot above. Always use d2Default.
     capabilityFromPosting: false,
     title: (d1) => `Getting through a real audit without a three-week fire drill, in ${d1}.`,
     problem:
-      "The last audit had taken three weeks of evidence-gathering by hand, and two of its findings were repeats from the year before. An inventory came first: every system holding regulated data, who owned it, and which control was meant to cover it — twenty-three systems, eleven of them with no named owner.",
+      "Three weeks of hand-gathered evidence last time, two repeat findings, and eleven of twenty-three regulated systems with no named owner.",
     built: (d2) =>
-      `Access reviews moved from a quarterly spreadsheet to an automated report each owner signs, secrets moved out of configuration files into a managed store with rotation, and ${d2} ran in the deployment pipeline — blocking on the small set of rules that had actually produced findings rather than on every rule available.`,
+      `Access reviews became a signed automated report, secrets moved into a rotating store, and ${d2} blocked the pipeline only on rules that had caused findings.`,
     ranWith: (m) =>
-      `${m}: one control per two-week increment, each with the evidence artifact it would produce written down before the work started, so the audit trail became a by-product of the work instead of a project of its own.`,
+      `One control per two-week ${m} increment, each with its evidence artifact defined before the work started.`,
     ranWithout:
-      "One control per two-week increment, each with the evidence artifact it would produce written down before the work started, so the audit trail became a by-product of the work instead of a project of its own.",
+      "One control per two-week increment, each with its evidence artifact defined before the work started.",
     landed:
-      'The measure is the audit result and the near-misses caught before they became incidents, never "no breach happened" — an absence is not evidence of a control. One finding did repeat, and the owner says why.',
+      'Measured on the audit result and near-misses caught, never on "no breach happened" — and one finding did repeat.',
     outcomes: [
       { metric: "incidents prevented", figure: "17 credential leaks caught pre-merge in six months" },
       { metric: "audit / compliance pass rate", figure: "passed with 1 finding, down from 6" },
@@ -229,18 +248,17 @@ const ARCHETYPES = {
   generic: {
     d1Default: "the core of the business",
     d2Default: "a small amount of automation",
-    title: (d1) =>
-      `Owning one problem end to end in ${d1}, from a written problem statement to the number that proved it worked.`,
+    title: (d1) => `Owning one problem end to end in ${d1}, from written problem statement to proven number.`,
     problem:
-      "The work that mattered most was the work nobody could see: a process running on three spreadsheets and one person's memory, costing about six hours a week in each of the teams that ran it and failing silently whenever that person was away. It was written up with a week of timings behind it before any fix was proposed.",
+      "A process living on three spreadsheets and one person's memory, costing six hours a week per team and failing silently.",
     built: (d2) =>
-      `The process was rebuilt as one owned system with a single source of truth, the manual steps that could not be removed were made visible instead of invisible, and ${d2} took the repetitive middle so the judgement calls stayed with a person. A pilot ran with two teams for a month before anyone else was moved onto it.`,
+      `One owned system with a single source of truth, the remaining manual steps made visible, and ${d2} taking the repetitive middle.`,
     ranWith: (m) =>
-      `${m}: two-week increments with something usable at the end of each, a backlog ordered by the cost of the problem rather than by who asked loudest, and a short written record of every trade-off so the same argument was not had twice.`,
+      `Two-week ${m} increments with something usable each time, a backlog ordered by cost rather than volume, and trade-offs written down.`,
     ranWithout:
-      "Two-week increments with something usable at the end of each, a backlog ordered by the cost of the problem rather than by who asked loudest, and a short written record of every trade-off so the same argument was not had twice.",
+      "Two-week increments with something usable each time, a backlog ordered by cost rather than volume, and trade-offs written down.",
     landed:
-      "Baselined before the work started, measured the same way afterwards, and reported with the part that did not work included — one of the teams that moved onto it went back to the old process, and the reason is part of the story.",
+      "Baselined before and measured the same way after — including the team that went back to the old process, and why.",
     outcomes: [
       { metric: "cost saved", figure: "$41k a year in recovered time and retired tooling" },
       { metric: "adoption rate", figure: "9 of the 11 teams on it within two quarters" },
@@ -334,10 +352,10 @@ export function buildProject(archetypeKey, shapeTerms) {
   return {
     title: archetype.title(d1),
     sections: [
-      { label: "The problem", body: archetype.problem },
-      { label: "What they built", body: archetype.built(d2) },
-      { label: "How it ran", body: m ? archetype.ranWith(m) : archetype.ranWithout },
-      { label: "How it landed", body: archetype.landed },
+      { label: "Problem", body: archetype.problem },
+      { label: "Built", body: archetype.built(d2) },
+      { label: "Ran", body: m ? archetype.ranWith(m) : archetype.ranWithout },
+      { label: "Landed", body: archetype.landed },
     ],
     // Verbatim, per-archetype — see the ARCHETYPES header comment for why
     // this is never a lookup keyed by `metrics`. Built as a NEW array of NEW

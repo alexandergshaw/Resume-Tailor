@@ -107,7 +107,7 @@ const METHODOLOGY_ONLY_POSTING = [
 
 // Matches no METRIC_BUCKET at all, so it exercises the generic archetype the
 // same way it already exercises GENERIC_METRICS — and it names no methodology,
-// so it also covers the runWithout branch of "How it ran".
+// so it also covers the runWithout branch of "Ran".
 const NO_BUCKET_POSTING = [
   "Senior Staff Writer, Newsroom",
   "",
@@ -188,7 +188,10 @@ const CTX = {
   points: ["I led a team through a launch."],
 };
 
-const SECTION_LABELS = ["The problem", "What they built", "How it ran", "How it landed"];
+// One word each. The labels lead bulleted lines now, not paragraphs, and
+// "What they built" reads as padding in front of a bullet the way "Built"
+// does not.
+const SECTION_LABELS = ["Problem", "Built", "Ran", "Landed"];
 
 function bodies(result) {
   return result.project.sections.map((s) => s.body);
@@ -209,16 +212,38 @@ describe("idealProject worked example", () => {
     }
   });
 
-  // The reported failure this whole change answers: "this section needs to have
-  // a lot more detail... it needs to be written as though it's an actual
-  // project". One advisory sentence is not a project. The floor is set at 30
-  // words because the shortest body in the shipped copy is 32 — a floor that no
-  // real body clears only by accident, and that a placeholder cannot clear.
-  it("gives every section enough prose to read as an actual project", () => {
+  // Both bounds, and the pair is the requirement. The first version of this
+  // block answered "it needs to be written as though it's an actual project"
+  // with four paragraphs and got "this is way too fucking verbose" back — a
+  // fair verdict on something read mid-interview, in one glance, under
+  // pressure. The content did not change; the length did. So the floor stops
+  // the sections decaying back into the one-line advice this replaced, and the
+  // ceiling stops them growing back into paragraphs. A body that needs more
+  // than 28 words is carrying detail that belongs in the candidate's own
+  // answer, not in a benchmark of one.
+  it("keeps every section a bullet, not a paragraph", () => {
     for (const posting of ALL_POSTINGS) {
-      for (const body of bodies(idealProject(posting, CTX))) {
-        expect(body.trim().split(/\s+/).length).toBeGreaterThanOrEqual(30);
+      const result = idealProject(posting, CTX);
+      for (const body of bodies(result)) {
+        const words = body.trim().split(/\s+/).length;
+        expect(words, `too long to skim: ${body}`).toBeLessThanOrEqual(28);
+        expect(words, `too thin to be a project: ${body}`).toBeGreaterThanOrEqual(12);
         expect(body.trim().endsWith(".")).toBe(true);
+      }
+      // The whole example, title included, has to fit in a glance. The version
+      // this replaced ran to roughly 220 words across the same four sections.
+      const total = [result.project.title, ...bodies(result)].join(" ").trim().split(/\s+/).length;
+      expect(total, "the whole example no longer fits in a glance").toBeLessThanOrEqual(120);
+    }
+  });
+
+  // A label leading a bulleted line earns its place only if it is shorter than
+  // what it labels. "What they built" in front of a fifteen-word bullet is
+  // padding; "Built" is a label.
+  it("labels each bullet in one word", () => {
+    for (const posting of ALL_POSTINGS) {
+      for (const { label } of idealProject(posting, CTX).project.sections) {
+        expect(label.trim().split(/\s+/)).toHaveLength(1);
       }
     }
   });
@@ -301,8 +326,8 @@ describe("idealProject worked example", () => {
     // Every {D1} slot in the copy is preceded by the word "in" — the invariant
     // that keeps substitution grammatical for any noun phrase.
     expect(result.project.title).toContain("in Education");
-    expect(section(result, "What they built")).toContain("Artificial Intelligence");
-    expect(section(result, "How it ran")).toContain("Agile");
+    expect(section(result, "Built")).toContain("Artificial Intelligence");
+    expect(section(result, "Ran")).toContain("Agile");
   });
 
   // A posting that names no methodology must not have one invented for it, and
@@ -313,11 +338,13 @@ describe("idealProject worked example", () => {
   // posting's vocabulary would make a lie.
   it("names a methodology only when the shipped copy is true of it", () => {
     for (const posting of [NO_BUCKET_POSTING, DEVOPS_POSTING, INFRA_POSTING]) {
-      const howItRan = section(idealProject(posting, CTX), "How it ran");
+      const howItRan = section(idealProject(posting, CTX), "Ran");
       for (const name of ["Agile", "Scrum", "Kanban", "DevOps", "Waterfall", "Lean", "Infrastructure as Code"]) {
         expect(howItRan, `named ${name} for a posting whose copy would not be true of it`).not.toContain(name);
       }
-      expect(howItRan.trim().split(/\s+/).length).toBeGreaterThanOrEqual(30);
+      // Still a real bullet, not a stub: dropping the methodology name must not
+      // be implemented by dropping the sentence.
+      expect(howItRan.trim().split(/\s+/).length).toBeGreaterThanOrEqual(12);
     }
     // DevOps IS in this posting's `shape` — it is excluded from the sentence on
     // purpose, not because the posting never mentioned it.
@@ -334,7 +361,7 @@ describe("idealProject worked example", () => {
     expect(result.project.title).toContain("in a support organisation");
     expect(result.project.title).not.toContain("Scrum");
     expect(result.project.title).not.toContain("{");
-    expect(section(result, "How it ran")).toContain("Scrum");
+    expect(section(result, "Ran")).toContain("Scrum");
   });
 
   // A substituted slot lands inside a hand-written sentence, and the copy has to
@@ -384,11 +411,11 @@ describe("idealProject worked example", () => {
   it("only lets the posting's capability fill a slot that can actually hold one", () => {
     const infra = idealProject(INFRA_WITH_TECH_POSTING, CTX);
     expect(infra.shape).toContain("Machine Learning");
-    expect(section(infra, "What they built")).not.toContain("Machine Learning");
+    expect(section(infra, "Built")).not.toContain("Machine Learning");
 
     // The converse, so this cannot be satisfied by never substituting at all:
     // the product story's slot IS built to hold one, and still does.
-    expect(section(idealProject(PRODUCT_POSTING, CTX), "What they built")).toContain("Artificial Intelligence");
+    expect(section(idealProject(PRODUCT_POSTING, CTX), "Built")).toContain("Artificial Intelligence");
   });
 
   // No slot may ever reach the screen unsubstituted.
