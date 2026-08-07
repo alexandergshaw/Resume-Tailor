@@ -8,6 +8,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
 import { answerBullets } from "@/lib/copilot/answerPoints";
+import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus";
 import AnswerAids from "../AnswerAids";
 
 // G1: the toggleable sample answer for practice mode's current question.
@@ -95,6 +96,18 @@ export default function SampleAnswer({
           </Button>
         ) : null}
       </Stack>
+
+      {/* F9: deliberately OUTSIDE the `{visible ? ... : null}` block below —
+          that panel is conditionally rendered, so a status region nested
+          inside it would mount at the same instant `visible` turns true. On
+          a cache hit (R-111) `status` is already "done" the moment it
+          mounts, which is exactly the case NVDA/JAWS fail to announce: a
+          region whose final text was already there when it appeared. Kept
+          mounted (idle → "") for the whole life of this card so only its
+          TEXT changes from here on. */}
+      <Box component="span" role="status" aria-live="polite" sx={visuallyHidden}>
+        {answerStatusMessage({ status, bulletCount: bullets.length })}
+      </Box>
 
       {visible ? (
         <Box

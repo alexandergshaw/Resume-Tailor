@@ -91,7 +91,11 @@ export default function QuestionCard({
             </Typography>
           </Box>
         ) : (
-          <Typography variant="h6" sx={{ flex: 1, fontWeight: 600, color: "var(--text-primary)" }}>
+          // F10: one level under the tab's h2 (TabHeader.js), same as this
+          // tab's other top-level panel titles — `component=` changes only
+          // the rendered element, never the `variant` that governs how this
+          // looks.
+          <Typography variant="h6" component="h3" sx={{ flex: 1, fontWeight: 600, color: "var(--text-primary)" }}>
             {question || emptyText}
           </Typography>
         )}

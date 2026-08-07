@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -9,6 +10,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
 import { answerBullets } from "@/lib/copilot/answerPoints";
+import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus";
 import AnswerAids from "../AnswerAids";
 
 // AC-I5/AC-J2: the copilot's five-panel dashboard — current question, its
@@ -136,7 +138,12 @@ function RealPanel({ title, children }) {
         minWidth: 0,
       }}
     >
-      <Typography variant="subtitle2" sx={{ mb: 1, color: "var(--text-secondary)", fontWeight: 700 }}>
+      {/* F10: nested one level under the dashboard's own h3 title below —
+          `variant="subtitle2"` alone maps (via MUI's defaultVariantMapping)
+          to `h6`, which skipped straight from the tab's h2 with h3/h4/h5
+          never appearing. `component=` changes only the rendered element;
+          `variant` (and therefore the look) is unchanged. */}
+      <Typography variant="subtitle2" component="h4" sx={{ mb: 1, color: "var(--text-secondary)", fontWeight: 700 }}>
         {title}
       </Typography>
       {children}
@@ -161,7 +168,9 @@ function PredictionPanel({ title, children }) {
       }}
     >
       <Stack direction="row" spacing={1} sx={{ mb: 1, alignItems: "center" }}>
-        <Typography variant="subtitle2" sx={{ color: "var(--text-secondary)", fontWeight: 700 }}>
+        {/* F10: same nesting level as RealPanel's title above — both sit
+            directly under the dashboard's own h3 title. */}
+        <Typography variant="subtitle2" component="h4" sx={{ color: "var(--text-secondary)", fontWeight: 700 }}>
           {title}
         </Typography>
         <Chip
@@ -223,8 +232,65 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
   // not — the same answerBullets call practice mode's SampleAnswer.js and
   // live mode's QuestionFeed.js card make, so all three read alike.
   const bullets = answerBullets(current?.cues, current?.points);
+
+  // F7: WCAG 2.4.3. Clicking the reveal button below UNMOUNTS it (the
+  // `answerHidden` branch stops matching) and replaces it with the revealed
+  // content, so focus fell back to <body> — a keyboard/screen-reader user
+  // pressed Enter, heard silence, and had to Tab from the top of the
+  // document mid-interview. `revealedRef` sits on the wrapping container for
+  // every post-reveal state (loading/error/done/empty; see the render below)
+  // so focus lands there and stays valid across the loading -> done
+  // transition, without ever needing to move again. `prevAnswerHiddenRef`
+  // starts equal to the current value on mount specifically so the effect
+  // never fires on mount — only on a later true -> false TRANSITION, i.e.
+  // the reveal button actually being pressed.
+  const revealedRef = useRef(null);
+  const prevAnswerHiddenRef = useRef(answerHidden);
+  useEffect(() => {
+    const prevAnswerHidden = prevAnswerHiddenRef.current;
+    prevAnswerHiddenRef.current = answerHidden;
+    // R-110/R-122: three separate protections here, each doing a different
+    // job — worth naming precisely rather than crediting one with work
+    // another one does:
+    //   1. `prevAnswerHiddenRef` seeds to the CURRENT `answerHidden` on
+    //      mount (see the ref's own declaration above), so this effect can
+    //      never see a transition on its first run. That is what stops a
+    //      mount-time false-positive focus steal, in every mode.
+    //   2. Live mode passes neither `answerHidden` nor `onRevealAnswer`, so
+    //      this component's defaults hold `answerHidden={false}` for the
+    //      component's ENTIRE life — there is no `true -> false` edge to
+    //      detect in the first place, ever. That absence of any transition
+    //      is what excludes live mode, independent of the `onReveal` guard
+    //      below: the condition on the next line is unreachable there
+    //      regardless of whether that guard exists.
+    //   3. The `onReveal` guard is defence-in-depth for a caller this
+    //      component does not have today: one that passes `answerHidden`
+    //      (making the edge reachable) without also passing
+    //      `onRevealAnswer`. It protects nothing in live mode currently,
+    //      since live mode never reaches a state where the edge could fire.
+    if (prevAnswerHidden === true && answerHidden === false && typeof onReveal === "function") {
+      revealedRef.current?.focus();
+    }
+  }, [answerHidden, onReveal]);
+
   return (
     <RealPanel title={copy.currentAnswerTitle}>
+      {/* F9: persistently mounted regardless of status (never nested inside
+          a conditionally-rendered branch) so only its TEXT changes as a
+          draft moves loading -> done — see answerStatusMessage's doc for why
+          a region that mounts already carrying its final text is not
+          announced by NVDA/JAWS.
+          R-110/AC-J2.3: while `answerHidden` is true the status is forced to
+          "idle" so this region stays silent — the panel must not announce
+          the drafted answer's readiness or shape (e.g. "Answer ready, 4
+          points") before the user has asked to see it, which would leak
+          exactly the thing practice mode's reveal gate exists to withhold.
+          Nothing is lost: the F7 focus move above already lands focus on the
+          revealed container the moment the user presses reveal, which is
+          what announces the content at that point. */}
+      <Box component="span" role="status" aria-live="polite" sx={visuallyHidden}>
+        {answerStatusMessage({ status: answerHidden ? "idle" : current?.status, bulletCount: bullets.length })}
+      </Box>
       {!current ? (
         <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>
           {copy.noCurrentAnswer}
@@ -233,36 +299,50 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
         <Button size="small" variant="outlined" onClick={onReveal}>
           {revealLabel}
         </Button>
-      ) : current.status === "loading" ? (
-        <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
-          <CircularProgress size={16} />
-          <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>
-            Drafting…
-          </Typography>
-        </Stack>
-      ) : current.status === "error" ? (
-        <Typography variant="body2" sx={{ color: "var(--danger)" }}>
-          {current.error || "Could not draft an answer."}
-        </Typography>
-      ) : current.status === "done" && bullets.length ? (
-        <>
-          <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
-            {bullets.map((bullet, i) => (
-              <Typography key={i} component="li" variant="body2" sx={{ mb: 0.5, color: "var(--text-primary)" }}>
-                {bullet}
-              </Typography>
-            ))}
-          </Box>
-          {/* AC-K1.2/AC-K1.3: the same two subsections the question card
-              shows, in the panel a candidate is actually looking at
-              mid-interview. Renders nothing at all when the draft carries
-              neither (no posting selected, no submitted resume). */}
-          <AnswerAids buzzwords={current.buzzwords} anchor={current.anchor} />
-        </>
       ) : (
-        <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>
-          {copy.noPoints}
-        </Typography>
+        // F7: the single revealed-content container focus moves into on
+        // reveal — see the effect above. `tabIndex={-1}` makes it
+        // programmatically focusable without adding a tab stop. Wrapping
+        // every post-reveal status branch (not only `done`) means focus
+        // also lands here — and a screen reader starts reading from here —
+        // when the reveal click kicks off a fresh draft that is still
+        // `loading`, not only on a cache hit that is already `done`.
+        <Box ref={revealedRef} tabIndex={-1}>
+          {current.status === "loading" ? (
+            <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
+              <CircularProgress size={16} />
+              <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>
+                Drafting…
+              </Typography>
+            </Stack>
+          ) : current.status === "error" ? (
+            // F11: matches the sibling error paths (SampleAnswer.js,
+            // PredictedAnswerPanel below) — role="alert" plus a non-color
+            // icon, rather than a plain colored Typography (WCAG 1.4.1).
+            <Alert severity="error">{current.error || "Could not draft an answer."}</Alert>
+          ) : current.status === "done" && bullets.length ? (
+            <>
+              <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
+                {bullets.map((bullet, i) => (
+                  <Typography key={i} component="li" variant="body2" sx={{ mb: 0.5, color: "var(--text-primary)" }}>
+                    {bullet}
+                  </Typography>
+                ))}
+              </Box>
+              {/* AC-K1.2/AC-K1.3: the same two subsections the question card
+                  shows, in the panel a candidate is actually looking at
+                  mid-interview. Renders nothing at all when the draft carries
+                  neither (no posting selected, no submitted resume). Reading
+                  these aloud too — via the same focus move, without any
+                  separate wiring — is F9's free coverage for this panel. */}
+              <AnswerAids buzzwords={current.buzzwords} anchor={current.anchor} />
+            </>
+          ) : (
+            <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>
+              {copy.noPoints}
+            </Typography>
+          )}
+        </Box>
       )}
     </RealPanel>
   );
@@ -314,6 +394,12 @@ function PredictedAnswerPanel({ predictionStatus, predictedQuestion, status, poi
   const bullets = answerBullets(cues, points);
   return (
     <PredictionPanel title={copy.predictedAnswerTitle}>
+      {/* F9: see CurrentAnswerPanel's identical region for why this must be
+          unconditional — only its text may change, the node itself must
+          never mount and unmount with the content. */}
+      <Box component="span" role="status" aria-live="polite" sx={visuallyHidden}>
+        {answerStatusMessage({ status, bulletCount: bullets.length })}
+      </Box>
       {predictionStatus !== "done" || !predictedQuestion ? (
         <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
           A predicted question will need to appear above first.
@@ -386,7 +472,9 @@ function PacePanel({ pace, copy }) {
         background: "var(--bg-soft)",
       }}
     >
-      <Typography variant="subtitle2" sx={{ mb: 1, color: "var(--text-secondary)", fontWeight: 700 }}>
+      {/* F10: same nesting level as the four panel titles above — a sibling
+          section under the dashboard's own h3 title. */}
+      <Typography variant="subtitle2" component="h4" sx={{ mb: 1, color: "var(--text-secondary)", fontWeight: 700 }}>
         {copy.paceTitle}
       </Typography>
       {measured ? (
@@ -444,7 +532,10 @@ export default function CopilotDashboard({
         boxShadow: "var(--shadow-soft)",
       }}
     >
-      <Typography variant="subtitle2" sx={{ mb: 1.5, color: "var(--text-secondary)", fontWeight: 700 }}>
+      {/* F10: the dashboard's own section title, one level under the tab's
+          h2 (TabHeader.js) — see RealPanel/PredictionPanel/PacePanel above
+          for the panel titles nested another level under this one. */}
+      <Typography variant="subtitle2" component="h3" sx={{ mb: 1.5, color: "var(--text-secondary)", fontWeight: 700 }}>
         {text.title}
       </Typography>
 

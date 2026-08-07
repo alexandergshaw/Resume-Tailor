@@ -23,8 +23,13 @@ import Typography from "@mui/material/Typography";
 //
 // Markup is a description list rather than headings + paragraphs, on purpose.
 // Each label is a term whose value sits under it, which is what `dl` means;
-// and it avoids inventing heading levels inside a card whose own title is
-// already an `h6` (MUI maps `subtitle2` to one), which is how heading order
+// and it avoids inventing a further heading level under whichever heading
+// already encloses it on each of its three parents — SampleAnswer.js's
+// question card title (`h3`), QuestionFeed.js's "Detected questions"
+// section title (`h3`), and CopilotDashboard.js's `CurrentAnswerPanel`
+// title (`h4`). Adding a heading here would either repeat a level already
+// in use one step up, or push the tree to `h5` — a depth nothing else
+// under `/copilot` needs (R-125) — either of which is how heading order
 // gets broken.
 
 // The label above the role. Says plainly WHY this role is the one being

@@ -244,7 +244,11 @@ export default function PracticeHistory({ refreshSignal }) {
         mb: 2,
       }}
     >
-      <Typography variant="h6" sx={{ fontWeight: 600, color: "var(--text-primary)", mb: 1.5 }}>
+      {/* F10: one level under the tab's h2 (TabHeader.js), same as this
+          tab's other top-level panel titles. `component=` changes only the
+          rendered element, never the `variant` that governs how this
+          looks. */}
+      <Typography variant="h6" component="h3" sx={{ fontWeight: 600, color: "var(--text-primary)", mb: 1.5 }}>
         Practice history
       </Typography>
 

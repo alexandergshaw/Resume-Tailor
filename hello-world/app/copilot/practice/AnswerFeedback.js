@@ -68,7 +68,9 @@ function BulletList({ title, items }) {
   if (!items || items.length === 0) return null;
   return (
     <Box sx={{ mb: 1.5 }}>
-      <Typography variant="subtitle2" sx={{ color: "var(--text-secondary)", mb: 0.5 }}>
+      {/* F10: nested one level under "Answer feedback" below, same as
+          "Body language feedback" further down this panel. */}
+      <Typography variant="subtitle2" component="h4" sx={{ color: "var(--text-secondary)", mb: 0.5 }}>
         {title}
       </Typography>
       <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
@@ -153,7 +155,12 @@ export default function AnswerFeedback({
         mb: 2,
       }}
     >
-      <Typography variant="h6" sx={{ fontWeight: 600, color: "var(--text-primary)", mb: 1.5 }}>
+      {/* F10: one level under the tab's h2 (TabHeader.js), same as this
+          tab's other top-level panel titles. The BulletList section titles
+          and "Body language feedback" below nest another level under this
+          one. `component=` changes only the rendered element, never the
+          `variant` that governs how this looks. */}
+      <Typography variant="h6" component="h3" sx={{ fontWeight: 600, color: "var(--text-primary)", mb: 1.5 }}>
         Answer feedback
       </Typography>
 
@@ -181,7 +188,15 @@ export default function AnswerFeedback({
       {status === "done" && feedback ? (
         <>
           <Stack direction="row" spacing={1.5} sx={{ alignItems: "baseline", mb: 1 }}>
-            <Typography variant="h4" sx={{ fontWeight: 700, color: scoreColor(feedback.score) }}>
+            {/* F10: this was the second half of the "h6 then h4 inside it"
+                defect — a numeric score is a data value, not a section
+                title, and was never meant to be a heading at all (a
+                Typography variant governs its CSS styling only, not
+                whether MUI's defaultVariantMapping also makes it a
+                heading element). `component="span"` keeps the exact same
+                large, bold, colored look `variant="h4"` gives it while
+                taking it out of the document's heading outline entirely. */}
+            <Typography variant="h4" component="span" sx={{ fontWeight: 700, color: scoreColor(feedback.score) }}>
               {feedback.score}
             </Typography>
             <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>
@@ -246,7 +261,9 @@ export default function AnswerFeedback({
               already shows the raw measurements; this is what to do about
               them, or an honest word that there was nothing to measure. */}
           <Box sx={{ mb: 1.5 }}>
-            <Typography variant="subtitle2" sx={{ color: "var(--text-secondary)", mb: 0.5 }}>
+            {/* F10: nested one level under "Answer feedback" above, same as
+                the BulletList section titles. */}
+            <Typography variant="subtitle2" component="h4" sx={{ color: "var(--text-secondary)", mb: 0.5 }}>
               Body language feedback
             </Typography>
             {bodyLanguageNotes.length ? (

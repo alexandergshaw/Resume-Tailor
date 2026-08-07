@@ -152,7 +152,13 @@ export default function AnswerReview({
         mb: 2,
       }}
     >
-      <Typography variant="h6" sx={{ fontWeight: 600, color: "var(--text-primary)", mb: 1.5 }}>
+      {/* F10: one level under the tab's h2 (TabHeader.js), same as this
+          tab's other top-level panel titles. The three subtitle2 section
+          titles below ("Body language", "Replay", "What was heard") nest
+          another level under this one. `component=` changes only the
+          rendered element, never the `variant` that governs how this
+          looks. */}
+      <Typography variant="h6" component="h3" sx={{ fontWeight: 600, color: "var(--text-primary)", mb: 1.5 }}>
         Answer review
       </Typography>
 
@@ -228,7 +234,8 @@ export default function AnswerReview({
           "facing the camera" is worded as head orientation, explicitly not
           as verified eye contact — see isLookingAtCamera's own comment in
           lib/copilot/bodyLanguage.js for why that distinction matters. */}
-      <Typography variant="subtitle2" sx={{ color: "var(--text-secondary)", mb: 1 }}>
+      {/* F10: nested one level under "Answer review" above. */}
+      <Typography variant="subtitle2" component="h4" sx={{ color: "var(--text-secondary)", mb: 1 }}>
         Body language
       </Typography>
       {!bodyLanguage ? (
@@ -300,7 +307,8 @@ export default function AnswerReview({
 
       <Divider sx={{ mb: 2, borderColor: "var(--border)" }} />
 
-      <Typography variant="subtitle2" sx={{ color: "var(--text-secondary)", mb: 1 }}>
+      {/* F10: nested one level under "Answer review" above. */}
+      <Typography variant="subtitle2" component="h4" sx={{ color: "var(--text-secondary)", mb: 1 }}>
         Replay
       </Typography>
       {replayUrl ? (
@@ -322,7 +330,8 @@ export default function AnswerReview({
         </Typography>
       )}
 
-      <Typography variant="subtitle2" sx={{ color: "var(--text-secondary)", mb: 1 }}>
+      {/* F10: nested one level under "Answer review" above. */}
+      <Typography variant="subtitle2" component="h4" sx={{ color: "var(--text-secondary)", mb: 1 }}>
         What was heard
       </Typography>
       {transcript && transcript.length ? (

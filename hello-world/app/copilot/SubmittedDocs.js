@@ -38,7 +38,13 @@ function statusSuffix(status, resume, coverLetter) {
 function DocumentSection({ title, text, notFoundText }) {
   return (
     <Box>
-      <Typography variant="subtitle2" sx={{ color: "var(--text-primary)", mb: 0.5 }}>
+      {/* F10: the disclosure this sits under is a Button ("Submitted for
+          this application" above), not a heading, so this title has no
+          heading ancestor besides the tab's own h2 (TabHeader.js) — one
+          level under it, same as this tab's other top-level panel titles.
+          `component=` only changes the rendered element, never the
+          `variant` that governs how this looks. */}
+      <Typography variant="subtitle2" component="h3" sx={{ color: "var(--text-primary)", mb: 0.5 }}>
         {title}
       </Typography>
       {text ? (
