@@ -4,11 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
-import { PracticeSession } from "@/lib/copilot/practiceSession";
 import { interviewTypeLabel } from "@/lib/copilot/interviewTypes";
 import { buildPrivacyNotice } from "@/lib/copilot/practiceNotices";
 import { useEngine } from "@/app/settings/engine";
 import TranscriptView from "../TranscriptView";
+import QuestionFeed from "../QuestionFeed";
 import CameraPreview from "./CameraPreview";
 import { useApplicationDocs } from "../useApplicationDocs";
 import CopilotDashboard, { PRACTICE_COPY } from "../dashboard/CopilotDashboard";
@@ -21,11 +21,64 @@ import AnswerFeedback from "./AnswerFeedback";
 import PracticeHistory from "./PracticeHistory";
 import { usePracticeAnswer } from "./usePracticeAnswer";
 import { usePracticeQuestions } from "./usePracticeQuestions";
+import { useRoomQuestions } from "./useRoomQuestions";
 import { useSampleAnswer } from "./useSampleAnswer";
-import { autoStartDecision, shouldQueueSampleAnswer } from "@/lib/copilot/practiceFlow";
+import { shouldQueueSampleAnswer } from "@/lib/copilot/practiceFlow";
 import { useInterviewType } from "./useInterviewType";
-import { useSaveRecordings, readSaveEnabled } from "./useSaveRecordings";
+import { useSaveRecordings } from "./useSaveRecordings";
 import { usePrepContext } from "../usePrepContext";
+import { usePracticeCaptureSession } from "./usePracticeCaptureSession";
+import { usePracticeAnswerActions } from "./usePracticeAnswerActions";
+
+// Final wave (AC-M2): names the room-question detector's own document
+// mention — same "only the document(s) actually found" discipline
+// submittedDocsLabelFor (lib/copilot/practiceNotices.js) already applies to
+// every other clause in this notice. Kept as its own tiny copy here rather
+// than exported from that module: practiceNotices.js is not one of this
+// feature's allowed files (see the module doc on roomQuestionPrivacyClause
+// below for why the whole clause lives here instead of there).
+function roomQuestionDocsWord(hasResume, hasCoverLetter) {
+  if (hasResume && hasCoverLetter) return "resume and cover letter";
+  if (hasResume) return "resume";
+  return "cover letter";
+}
+
+// Final wave (AC-M2): drafting an answer for a room question is a NEW
+// outbound request — buildPrivacyNotice (lib/copilot/practiceNotices.js)
+// predates this feature and has no clause for it, and that module is not
+// among this feature's allowed files, so the sentence is composed here and
+// appended to its output instead of silently leaving the notice this
+// component renders incomplete about a transfer it now performs
+// automatically (this codebase has shipped that exact class of bug before —
+// BUG-H5). Unconditional, not gated on whether anyone has actually spoken
+// yet this session, for the same reason BUG-J3's pre-draft clause is
+// unconditional: detection runs the moment a session starts, not behind a
+// switch the candidate opts into, so it has to be disclosed before it can
+// happen, not after. Follows the exact same hedge (docs not yet settled) /
+// assert (docs found) / omit (no posting, or none found) discipline as
+// practiceNotices.js's own submittedDocsToGeminiClauseFor.
+function roomQuestionPrivacyClause({
+  isEmbedded,
+  hasPosting,
+  docsSettled,
+  hasSubmittedResume,
+  hasSubmittedCoverLetter,
+}) {
+  if (isEmbedded) {
+    return "If someone else in the room asks a question, it is detected and answered on this server too, with no AI provider involved.";
+  }
+  const base =
+    "If someone else in the room asks a question, what they say is sent to Gemini to detect and draft a response, along with your prep context";
+  if (!hasPosting) return `${base}.`;
+  if (!docsSettled) {
+    return `${base}, and may also send any resume or cover letter you submitted for the selected posting.`;
+  }
+  if (hasSubmittedResume || hasSubmittedCoverLetter) {
+    const label = roomQuestionDocsWord(hasSubmittedResume, hasSubmittedCoverLetter);
+    return `${base}, and the ${label} you submitted for the selected posting.`;
+  }
+  return `${base}.`;
+}
 
 // Practice mode's capture layer: camera + mic, transcribed as "you", plus a
 // posting picker, a generated interview question to practice against, (C3)
@@ -36,16 +89,6 @@ import { usePrepContext } from "../usePrepContext";
 // capture session, the posting picker, the question, and the layout.
 export default function PracticeClient({ sttProviderName, micDeviceId, onMicDeviceChange } = {}) {
   const [status, setStatus] = useState("idle"); // idle | connecting | live | error
-  const [error, setError] = useState("");
-  const [warning, setWarning] = useState("");
-  const [finals, setFinals] = useState([]); // { id, speaker: "you", text, at }
-  const [interim, setInterim] = useState("");
-  const [startedAt, setStartedAt] = useState(null);
-  const [now, setNow] = useState(0);
-  const [cameraOff, setCameraOff] = useState(false);
-  const [micMuted, setMicMuted] = useState(false);
-  const [stream, setStream] = useState(null);
-  const [hasVideo, setHasVideo] = useState(false);
 
   const [posting, setPosting] = useState(null);
 
@@ -113,13 +156,25 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
     settling,
     answerTranscript,
     answerMetrics,
+    // Final wave (AC-M2): the speaker tag that dominated the most recently
+    // completed answer, learned by usePracticeAnswer's own doneAnswer and
+    // persisted across "Next question"/"Try again" — see that hook's own
+    // doc. Fed straight into useRoomQuestions below, which is the ONLY
+    // consumer: the drill itself never renders this.
+    myTag,
     replayUrl,
     replaySupported,
     startAnswer: startAnswerFlow,
     doneAnswer: doneAnswerFlow,
     abandonInProgressAnswer,
     resetAnswerState,
-    resetForSession,
+    // Renamed at this destructuring site so it can be folded, below, into a
+    // single combined callback with useRoomQuestions' own resetForSession —
+    // usePracticeCaptureSession.js's start() calls exactly ONE
+    // `resetForSession` prop at the top of every fresh capture session, the
+    // same reason useCopilotDashboard's own resetForSession is renamed to
+    // resetDashboardForSession a little further down.
+    resetForSession: resetAnswerFlowForSession,
     recordTranscriptEvent,
     markMicMuted,
     critiqueStatus,
@@ -133,6 +188,49 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
     saveError,
     savedAnswerVersion,
   } = usePracticeAnswer();
+
+  // Final wave (AC-M2): whether the candidate's OWN answer is currently
+  // being recorded — reconstructed from usePracticeAnswer's two already-
+  // exposed booleans rather than a third value that hook would have to
+  // export, since it's exactly the union of them: `answering` (Start
+  // answering through Done) and `settling` (Done through the end of the
+  // post-Done transcript drain) together are the same window
+  // usePracticeAnswer's own internal collectingRef tracks. Every turn
+  // captured while this is true is the candidate's by definition
+  // (shouldTreatAsRoomQuestion's first signal, lib/copilot/roomQuestions.js)
+  // — pressing "Start answering" IS the statement that what follows belongs
+  // to that answer, whoever's voice it actually is.
+  const collectingAnswer = answering || settling;
+
+  // Final wave (AC-M2): detects a question asked by someone else in the
+  // room WHILE it's being asked, and drafts the full answer for it — the
+  // same detect/confirm/draft pipeline live mode's detected-question feed
+  // runs, reused rather than re-implemented (see useRoomQuestions.js's own
+  // header). `applicationId`/`profile` are the same two grounding facts
+  // sampleAnswer above is given; `myTag`/`collectingAnswer` are the two
+  // signals shouldTreatAsRoomQuestion needs to tell the candidate's own
+  // voice apart from someone else's.
+  const roomQuestions = useRoomQuestions({
+    applicationId: posting?.id || null,
+    profile,
+    myTag,
+    collecting: collectingAnswer,
+  });
+
+  // Folds usePracticeAnswer's own per-session reset together with
+  // useRoomQuestions' — see resetAnswerFlowForSession's own comment above
+  // for why this single combined callback exists rather than
+  // usePracticeCaptureSession.js gaining a second reset call. A brand-new
+  // capture session must not carry over a room question detected during the
+  // PREVIOUS one, nor its dedupe guard against repeating it.
+  const resetForSession = useCallback(() => {
+    resetAnswerFlowForSession();
+    roomQuestions.resetForSession();
+    // `roomQuestions` is a fresh literal every render (same as
+    // sampleAnswer.prime's own dependency a little further down) — depending
+    // on its one stable member ([] deps inside useRoomQuestions) is what
+    // keeps this callback's identity from changing every render too.
+  }, [resetAnswerFlowForSession, roomQuestions.resetForSession]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // G1: the toggleable sample answer for the question currently on screen.
   // Deliberately kept independent of usePracticeAnswer above — showing or
@@ -161,8 +259,6 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
   // this hook or by SubmittedDocs.
   const submittedDocs = useApplicationDocs(posting?.id || null);
 
-  const sessionRef = useRef(null);
-  const idRef = useRef(0);
   // BUG-J4: stays here — onDoneAnswer below reads it for the critique
   // payload, not exclusively a question-flow concern (askedRef/
   // currentQuestionRef/interviewTypeRef/reqGenRef all moved into that hook).
@@ -187,12 +283,6 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
 
   const running = status === "live" || status === "connecting";
   const controlsEnabled = status === "live";
-
-  useEffect(() => {
-    if (!running || !startedAt) return undefined;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [running, startedAt]);
 
   useEffect(() => {
     postingRef.current = posting;
@@ -411,319 +501,88 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
     [setInterviewType, resetQuestions, abandonInProgressAnswer, resetAnswerState],
   );
 
-  const stop = useCallback(async () => {
-    // Invalidate any question request in flight — its response belongs to a
-    // session that is being torn down — and stop the card from sitting on a
-    // spinner for a request that will never get to write its result.
-    invalidateAndClearLoading();
-    // An answer in progress or still settling must be finalized cleanly,
-    // not abandoned mid-recording with a dangling interval/recorder — see
-    // AC-C3-4 and BUG-4.
-    abandonInProgressAnswer();
-    if (sessionRef.current) {
-      await sessionRef.current.stop();
-      sessionRef.current = null;
-    }
-    setInterim("");
-    setStream(null);
-    setHasVideo(false);
-    setStatus("idle");
-    resetAnswerState();
-  }, [invalidateAndClearLoading, abandonInProgressAnswer, resetAnswerState]);
-
-  // Unmounting (e.g. switching back to live mode) must not leave the camera
-  // or mic running — stop whatever session is active on the way out. The
-  // answer flow's own recorder/sampler/timer/replay-URL teardown lives in
-  // usePracticeAnswer's own unmount effect.
-  useEffect(() => {
-    return () => {
-      if (sessionRef.current) {
-        sessionRef.current.stop();
-        sessionRef.current = null;
-      }
-    };
-  }, []);
-
-  const start = useCallback(async () => {
-    // Invalidate any question request already in flight (e.g. from a Stop
-    // that just happened, or a still-resolving request from before) before
-    // any of the async work below runs — a response for the OLD session
-    // landing after this point must not overwrite what's about to start.
-    invalidateInFlight();
-    // Idempotent: a stray session (e.g. one that's mid-teardown from an
-    // unsolicited close) must never be orphaned by pressing Start again.
-    if (sessionRef.current) {
-      await sessionRef.current.stop();
-      sessionRef.current = null;
-    }
-    setError("");
-    setWarning("");
-    setFinals([]);
-    setInterim("");
-    setStartedAt(null);
-    setCameraOff(false);
-    setMicMuted(false);
-    setStream(null);
-    setHasVideo(false);
-    // A fresh start resets the asked list — it's scoped to a session, and a
-    // new session should be able to hear its opening question again.
-    clearForNewSession();
-    // A fresh start also leaves no answer, recorder, or sampler behind from
-    // whatever the previous session was doing, and resets the audio-time
-    // clock to 0 — it's relative to THIS session's Deepgram socket.
-    resetForSession();
-    // AC-J2.10: the dashboard hook's own reset — clears its pace samples and
-    // any prediction/pre-draft left over from a previous session the same
-    // way resetForSession above clears the answer flow's own state. Without
-    // this, a session restarted against the same posting with no questions
-    // asked yet could briefly keep showing the PREVIOUS session's stale
-    // prediction (see useCopilotDashboard.js's own resetForSession doc).
-    resetDashboardForSession();
-    setStatus("connecting");
-    // Fire-and-forget: requestQuestion catches its own errors into
-    // questionError, so a slow or failed question request never blocks or
-    // fails the capture session starting up.
-    requestQuestion([]);
-    try {
-      const session = new PracticeSession({
-        withVideo: true,
-        micDeviceId,
-        onStatus: (s) => {
-          setStatus(s);
-          if (s === "live") {
-            setStartedAt((prev) => prev || Date.now());
-          } else if (s === "idle") {
-            // The session can tear itself down on its own (an "ended" track,
-            // or an unsolicited socket close) — reset the same view state
-            // the explicit Stop button resets, including finalizing any
-            // answer that was mid-recording or settling AND clearing
-            // whatever review/feedback was on screen. Without
-            // resetAnswerState here, bumping the generation (inside
-            // abandonInProgressAnswer) strands an in-flight critique's
-            // status at "loading" forever, since its eventual response is
-            // gen-gated and writes nothing — every abandonment path must be
-            // symmetric with the explicit Stop handler below (BUG-15).
-            abandonInProgressAnswer();
-            resetAnswerState();
-            setInterim("");
-            setStream(null);
-            setHasVideo(false);
-            sessionRef.current = null;
-          }
-        },
-        onError: (err) => setWarning(err.message),
-        onTranscript: ({ transcript, isFinal, start: audioStart, duration: audioDuration, textAlreadyDelivered }) => {
-          recordTranscriptEvent({ isFinal, transcript, start: audioStart, duration: audioDuration, textAlreadyDelivered });
-
-          if (!isFinal) {
-            setInterim(transcript);
-            return;
-          }
-          setInterim("");
-          // R-127: textAlreadyDelivered re-delivers the text of the final
-          // that already fed the two accumulators below for this same span
-          // (see lib/copilot/stt/index.js's onTranscript contract) — skip
-          // both, or the pace sampler and the on-screen transcript both
-          // double-count this utterance.
-          if (textAlreadyDelivered) return;
-          // AC-J2.9: feed the dashboard's pace sampler from FINAL frames
-          // only — appendSpeechSample (via recordSpeechSample) already
-          // drops frames whose start/duration aren't usable numbers, so
-          // this passes them through as-is rather than pre-filtering here,
-          // and never substitutes a wall-clock value for a missing one
-          // (same discipline CopilotClient's own onTranscript handler
-          // follows for live mode).
-          recordSpeechSample({ text: transcript, start: audioStart, duration: audioDuration });
-          setFinals((prev) => [
-            ...prev,
-            { id: (idRef.current += 1), speaker: "you", text: transcript, at: Date.now() },
-          ]);
-        },
-        // Published as soon as capture succeeds, well before the Deepgram
-        // socket connects, so the self-view never lies about the camera
-        // being off during the "connecting" phase.
-        onStream: (s, hasV) => {
-          setStream(s);
-          setHasVideo(hasV);
-        },
-      });
-      sessionRef.current = session;
-      await session.start();
-    } catch (err) {
-      setError(err?.message || "Could not start practice.");
-      // A camera-unavailable warning from earlier in this same start() only
-      // makes sense next to a running session — a hard failure means the
-      // session never came up, so any stale soft warning must go with it.
-      setWarning("");
-      setStatus("error");
-      await stop();
-    }
-  }, [
+  // AC-C3/AC-C4: the capture-session pipeline (camera/mic lifecycle,
+  // transcript, elapsed clock, camera/mic toggles) lives in
+  // usePracticeCaptureSession.js — see that module's own header for why
+  // `status`/`setStatus` stay here as controlled state rather than moving in
+  // with the rest: useCopilotDashboard's `active: running` above needs
+  // `running` (derived from `status`) before this hook can be called, since
+  // this hook's own `start` needs useCopilotDashboard's
+  // `resetDashboardForSession`/`recordSpeechSample` in return.
+  const {
+    error,
+    warning,
+    setWarning,
+    finals,
+    interim,
+    startedAt,
+    elapsed,
+    cameraOff,
+    micMuted,
+    stream,
+    hasVideo,
+    start,
     stop,
-    requestQuestion,
-    invalidateInFlight,
-    clearForNewSession,
+    onToggleCamera,
+    onToggleMic,
+    sessionRef,
+  } = usePracticeCaptureSession({
+    status,
+    setStatus,
+    micDeviceId,
+    invalidateAndClearLoading,
     abandonInProgressAnswer,
     resetAnswerState,
+    invalidateInFlight,
+    clearForNewSession,
     resetForSession,
     resetDashboardForSession,
+    requestQuestion,
     recordTranscriptEvent,
     recordSpeechSample,
-    micDeviceId,
-  ]);
+    markMicMuted,
+    // Final wave (AC-M2): the room-question detector, forwarded straight
+    // into usePracticeCaptureSession so it can be handed to the
+    // PracticeSession constructor alongside onTranscript/onStatus/onError/
+    // onStream — see that hook's own comment on this option for how it
+    // still sees the current handler despite the constructor call
+    // happening well after render, inside start(). `roomQuestions.
+    // onUtterance` is itself a stable callback (useRoomQuestions.js's own
+    // [] + ref-only dependency chain), so this never forces `start` to be
+    // rebuilt on its account.
+    onUtterance: roomQuestions.onUtterance,
+  });
 
-  // Starts recording the current question's answer. A no-op unless the
-  // session is actually live with a question on screen — the "Start
-  // answering" button is disabled for all of those cases, but this guard
-  // means a stray call can never leave the flow in an inconsistent state.
-  const onStartAnswer = useCallback(() => {
-    const liveStream = sessionRef.current?.stream;
-    if (!liveStream || status !== "live" || !currentQuestionRef.current?.question) return;
-    // Read the CURRENT mute state at the moment recording starts — the mic
-    // can already be muted before "Start answering" is pressed, and the
-    // toggle-driven markMicMuted() would never fire during an answer where
-    // it's never re-toggled (BUG-15).
-    startAnswerFlow(liveStream, micMuted);
-  }, [status, startAnswerFlow, micMuted, currentQuestionRef]);
+  // AC-N2/AC-C4: the answer-lifecycle button handlers (Start answering, the
+  // auto-start arming machinery, Done, Try again, Retry critique) live in
+  // usePracticeAnswerActions.js — see that module's own header for why
+  // armedRef/armedFromRef/postingRef stay declared here rather than moving
+  // in with the rest (onNextQuestion above also writes armedRef/
+  // armedFromRef, and postingRef is BUG-J4's own "not exclusively an
+  // answer-flow concern" ref) and are passed down by reference instead.
+  const { onStartAnswer, onDoneAnswer, onTryAgainAnswer, onRetryCritique } = usePracticeAnswerActions({
+    sessionRef,
+    status,
+    currentQuestionRef,
+    startAnswerFlow,
+    micMuted,
+    armedRef,
+    armedFromRef,
+    currentQuestionText,
+    questionLoading,
+    answering,
+    settling,
+    doneAnswerFlow,
+    postingRef,
+    profile,
+    sendFrames,
+    isEmbedded,
+    interviewType,
+    abandonInProgressAnswer,
+    resetAnswerState,
+    retryCritique,
+  });
 
-  // AC-N2: the single place that turns an armed press into an actual
-  // "start answering" call, or lets it go. Reads `armedRef` fresh (a ref,
-  // so this always sees whatever the last press left behind, never a
-  // stale closure) and hands everything else straight to autoStartDecision
-  // (lib/copilot/practiceFlow.js) — see that module's header for why every
-  // one of these inputs matters and what each failure mode disarms rather
-  // than waits on.
-  //
-  // Starting the recorder the instant the question lands (no countdown) is
-  // safe because pace and filler are measured on the AUDIO clock, not
-  // wall-clock (see lib/copilot/livePace.js's header and
-  // answerMetrics.js's speechDurationSec) — the seconds the user spends
-  // reading the question before speaking are silence before the first
-  // word, not part of the measured span, so they cannot drag the reading
-  // down. That is a property of the measurement itself, not an assumption
-  // being made here.
-  //
-  // Called two ways: from the effect below, which is what actually catches
-  // the "Next question" case (the question arrives asynchronously, so
-  // there is nothing to check until a later render); and directly from
-  // onTryAgainAnswer, whose target question is already on screen with
-  // nothing to wait for — armed/status/question/loading/answering/settling
-  // are all already correct at the moment of that click, and waiting for
-  // some OTHER, unrelated render to happen to touch one of them first would
-  // leave that press armed but stranded.
-  const attemptAutoStart = useCallback(() => {
-    const decision = autoStartDecision({
-      armed: armedRef.current,
-      status,
-      question: currentQuestionText,
-      armedFrom: armedFromRef.current,
-      loading: questionLoading,
-      answering,
-      settling,
-    });
-    if (decision === "wait") return;
-    // Disarm BEFORE starting, not after — a re-render triggered mid-start
-    // (onStartAnswer's own setAnswering(true)) must never be able to read
-    // this press as still pending and fire the recorder a second time.
-    armedRef.current = false;
-    if (decision === "start") onStartAnswer();
-  }, [status, currentQuestionText, questionLoading, answering, settling, onStartAnswer]);
-
-  useEffect(() => {
-    attemptAutoStart();
-  }, [attemptAutoStart]);
-
-  // "Done" hands the hook everything it needs to both compute C3's metrics
-  // AND kick off C4's critique: the question/type being answered, the
-  // posting (so the critique can check the answer against its vocabulary),
-  // the candidate's prep profile, and whether frames may be sent at all
-  // (opt-in switch AND not the embedded engine — AC-C4-5).
-  const onDoneAnswer = useCallback(() => {
-    doneAnswerFlow({
-      question: currentQuestionRef.current?.question || "",
-      type: currentQuestionRef.current?.type || "general",
-      posting: postingRef.current
-        ? { title: postingRef.current.title, company: postingRef.current.company, description: postingRef.current.description }
-        : null,
-      // The posting picker's option id IS the application id (see
-      // normalizePostingRows in lib/copilot/postings.js) — kept separate
-      // from `posting` above rather than folded into it, since `posting` is
-      // also what's sent to the critique engine and this id has no reason
-      // to travel with it.
-      applicationId: postingRef.current?.id || null,
-      profile,
-      // G2/AC-G2-C-4: closed over directly (not via a ref) — onDoneAnswer
-      // is recreated whenever `interviewType` changes, and it only ever
-      // runs synchronously at click time, so the closure is never stale.
-      interviewType,
-      includeFrames: sendFrames && !isEmbedded,
-      // BUG-2: a live reader, not `saveEnabled` itself — the upload this
-      // gates happens seconds later, after the critique settles, and the
-      // switch must be re-read at THAT moment (see usePracticeAnswer's
-      // persistAnswer), not latched to whatever it was when Done was
-      // pressed. `readSaveEnabled` always reflects the current value since
-      // it re-reads localStorage itself rather than closing over render-time
-      // state, so no dependency on `saveEnabled` is needed here either.
-      isSaveEnabled: readSaveEnabled,
-    });
-  }, [doneAnswerFlow, profile, sendFrames, isEmbedded, interviewType, currentQuestionRef]);
-
-  // "Try again" re-answers the SAME question: clears the same per-answer
-  // state Next question clears (transcript, metrics, frames, replay clip,
-  // feedback) but leaves the question itself — and the asked list — in
-  // place, unlike onNextQuestion.
-  //
-  // AC-N2: arms auto-start too — same intent, same loop, as onNextQuestion.
-  // Unlike that press, this one's target question is already on screen, so
-  // there is no fetch to wait for: attemptAutoStart is called directly,
-  // synchronously, rather than left for the effect to catch on some later
-  // render that may never touch one of its watched values. armedFromRef is
-  // deliberately reset to "" here rather than to the current question: this
-  // press's whole point is to re-arm on the SAME question, so comparing
-  // against it would read as "unchanged" and disarm the very case this
-  // button exists for. There is no async gap here for a fetch to fail
-  // into, so nothing could have gone stale — the same "no predecessor"
-  // exception autoStartDecision gives the first question of a session
-  // applies here too, and correctly still yields "start".
-  const onTryAgainAnswer = useCallback(() => {
-    armedRef.current = true;
-    armedFromRef.current = "";
-    abandonInProgressAnswer();
-    resetAnswerState();
-    attemptAutoStart();
-  }, [abandonInProgressAnswer, resetAnswerState, attemptAutoStart]);
-
-  // "Retry" (the error-state action, re-analyzing the SAME already-recorded
-  // answer) reads the opt-in/engine state fresh, at the moment it's
-  // pressed, rather than replaying whatever was true when the answer was
-  // first submitted. The user may have turned the frames switch off (or
-  // switched to the embedded engine) while the error was on screen — no
-  // frame may leave the browser while the on-screen notice already says
-  // none do (BUG-1).
-  const onRetryCritique = useCallback(() => {
-    retryCritique({ includeFrames: sendFrames && !isEmbedded });
-  }, [retryCritique, sendFrames, isEmbedded]);
-
-  const onToggleCamera = useCallback((e) => {
-    const on = e.target.checked;
-    setCameraOff(!on);
-    sessionRef.current?.setCameraOff(!on);
-  }, []);
-
-  const onToggleMic = useCallback(
-    (e) => {
-      const muted = e.target.checked;
-      setMicMuted(muted);
-      sessionRef.current?.setMicMuted(muted);
-      // Only what happens WHILE actively recording affects the answer being
-      // measured — muting after Done has no bearing on an answer that's
-      // already done being recorded (see BUG-6).
-      markMicMuted(muted);
-    },
-    [markMicMuted],
-  );
-
-  const elapsed = startedAt ? now - startedAt : 0;
   // Derived from state, not hard-coded, and names every destination that
   // actually receives data on the CURRENT engine/switch combination — never
   // a static claim. On the Gemini engine, every critique request sends the
@@ -763,7 +622,11 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
   // reflect whatever is true RIGHT NOW (unlike the upload decision itself,
   // which re-reads storage — see useSaveRecordings.js's own doc on
   // `readSaveEnabled`).
-  const privacyNotice = buildPrivacyNotice({
+  // Final wave (AC-M2): roomQuestionPrivacyClause's own sentence is appended
+  // after buildPrivacyNotice's full output — see that function's own doc
+  // for why it lives in this file rather than inside practiceNotices.js
+  // itself.
+  const privacyNotice = `${buildPrivacyNotice({
     sttProviderName,
     isEmbedded,
     framesWillUpload,
@@ -774,7 +637,7 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
     saveEnabled,
     // BUG-J3: discloses the pre-draft switch's automatic Gemini send.
     preDraftEnabled: preDraftPredicted,
-  });
+  })} ${roomQuestionPrivacyClause({ isEmbedded, hasPosting, docsSettled, hasSubmittedResume, hasSubmittedCoverLetter })}`;
   // G2/AC-G2-C-6: resolved once here, from the CURRENT interview type,
   // rather than inside AnswerFeedback — changing interview type always
   // clears any answer on screen (onInterviewTypeChange above), so this is
@@ -967,6 +830,21 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
           startedAt={startedAt}
         />
       </Stack>
+
+      {/* Final wave (AC-M2): an ADDITIONAL panel, not a replacement for the
+          drill above — QuestionCard (the generated practice question) stays
+          the primary thing on screen; this sits below the camera/transcript
+          row, exactly like live mode's own QuestionFeed sits beside its
+          transcript rather than above the detected-question history it
+          documents. Reuses QuestionFeed/AnswerLines/AnswerAids unmodified
+          (see useRoomQuestions.js's own doc for why the entries it's fed
+          already match that component's contract field for field), so a
+          room question's drafted answer looks exactly like every other
+          drafted answer in this app — same cues, same buzzwords/resume/
+          ideal-project aids, same accessible status region. */}
+      <Box sx={{ mt: 2 }}>
+        <QuestionFeed questions={roomQuestions.questions} onDraft={roomQuestions.onDraft} />
+      </Box>
 
       <Box sx={{ mt: 2 }}>
         <PracticeHistory refreshSignal={savedAnswerVersion} />

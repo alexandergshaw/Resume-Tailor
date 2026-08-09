@@ -92,7 +92,7 @@ export function deriveSpeechSpan(finals) {
 // all, nothing is currently being collected (`collecting`), the final falls
 // outside the answer's audio-time window (isFinalInAnswerWindow, above), or
 // `textAlreadyDelivered` is set. Otherwise returns the
-// `{ text, start, duration }` entry to append.
+// `{ text, start, duration, speakerTag }` entry to append.
 //
 // `textAlreadyDelivered` (see stt/index.js's onTranscript contract) is
 // ElevenLabs' R-127 dedup flag: its committed_transcript(_with_timestamps)
@@ -102,11 +102,26 @@ export function deriveSpeechSpan(finals) {
 // word count, filler count, and words-per-minute. Absent/falsy (Deepgram,
 // and every ElevenLabs frame that ISN'T a re-delivery) behaves exactly as
 // this function did before the flag existed.
+//
+// `speakerTag` (AC-M2): carried straight through onto the returned entry,
+// unexamined. This function still decides accept/reject purely on audio
+// time (plus the R-127 dedup flag above) — whose words a final belongs to
+// is not something one final can settle. A short "Mhm" from the
+// interviewer is indistinguishable from a short reply from the candidate
+// until it can be weighed against the rest of the window, which is exactly
+// what partitionAnswerFinals (answerSpeakers.js) does once the whole
+// answer's finals are in. Passed through with no truthiness check — tag `0`
+// is a real speaker id (Deepgram numbers speakers from 0), and `!speakerTag`
+// would treat it as absent, silently dropping the most common speaker's
+// attribution. Absent entirely (every non-diarized final, i.e. every
+// existing practice user) comes through as `undefined`, same as before this
+// field existed.
 export function acceptedAnswerFinal({
   isFinal,
   transcript,
   start,
   duration,
+  speakerTag,
   textAlreadyDelivered,
   collecting,
   answerStart,
@@ -117,5 +132,5 @@ export function acceptedAnswerFinal({
   if (textAlreadyDelivered) return null;
   const included = isFinalInAnswerWindow({ start, answerStart, answerEnd });
   if (!included) return null;
-  return { text: transcript, start, duration };
+  return { text: transcript, start, duration, speakerTag };
 }

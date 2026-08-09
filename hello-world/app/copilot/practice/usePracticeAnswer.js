@@ -5,7 +5,8 @@ import { AnswerRecorder } from "@/lib/copilot/answerRecorder";
 import { VideoFrameSampler } from "@/lib/copilot/videoStats";
 import { BodyLanguageSampler } from "@/lib/copilot/bodyLandmarks";
 import { computeAnswerMetrics } from "@/lib/copilot/answerMetrics";
-import { deriveSpeechSpan, acceptedAnswerFinal } from "@/lib/copilot/answerWindow";
+import { acceptedAnswerFinal } from "@/lib/copilot/answerWindow";
+import { answerMetricsInputs } from "@/lib/copilot/answerSpeakers";
 import { critiqueAnswer } from "@/lib/copilot/critiqueClient";
 import { framesWereSent } from "@/lib/copilot/answerProvenance";
 import { savePracticeAnswer, updatePracticeAnswerCritique } from "@/lib/supabase/practiceAnswers";
@@ -37,7 +38,37 @@ export function usePracticeAnswer() {
   const [settling, setSettling] = useState(false);
   const [answerTranscript, setAnswerTranscript] = useState([]); // string[] finalized during the last completed answer
   const [answerMetrics, setAnswerMetrics] = useState(null);
-  const [replayUrl, setReplayUrl] = useState("");
+  // AC-M2: the other half of partitionAnswerFinals's split for the last
+  // completed answer — every accepted final that was NOT attributed to the
+  // candidate (raw `{ text, start, duration, speakerTag }` entries, same
+  // shape as answerFinalsRef, not just text). Practice mode does nothing
+  // with these itself; this is purely a handoff so a later wave can scan
+  // them for a mock interviewer's questions without re-deriving the split.
+  // Always empty for a non-diarized session, since partitionAnswerFinals
+  // puts every untagged final in `mine`.
+  const [otherSpeakerFinals, setOtherSpeakerFinals] = useState([]);
+  // Final wave (room-question detection): the speaker tag that dominated
+  // the MOST RECENTLY COMPLETED answer — answerMetricsInputs' own `myTag`
+  // (answerSpeakers.js), which partitionAnswerFinals already computes
+  // internally to build `mine`/`others`. `null` until the first answer with
+  // at least one tagged final has completed; a solo/non-diarized session
+  // never learns a value here and stays `null` for the whole session, which
+  // is exactly what roomQuestions.js's shouldTreatAsRoomQuestion treats as
+  // "not yet learned" rather than "no one else is ever in the room".
+  //
+  // Deliberately state, not a ref: this rides straight into
+  // useRoomQuestions (PracticeClient.js) as a plain prop, the same way
+  // `answering`/`settling` already do, and that hook mirrors it into its
+  // OWN ref internally (the same postingRef/profileRef pattern every other
+  // async pipeline in this codebase already uses) — this hook has no async
+  // continuation of its own that needs a stable ref-read of this value.
+  //
+  // Persists across "Next question"/"Try again" on purpose (see doneAnswer
+  // below, which only ever WRITES a non-null result, never clears this) —
+  // once the candidate's voice is known, it stays known for the rest of the
+  // session; only resetForSession (a fresh capture session, a fresh
+  // diarization) clears it back to `null`.
+  const [myTag, setMyTag] = useState(null);
   // Whether AnswerRecorder actually supports recording in this browser, as
   // of the last completed answer — distinguishes "this browser can't
   // record" from "recording just produced nothing this time" (BUG-10).
@@ -97,9 +128,13 @@ export function usePracticeAnswer() {
   // final for the answer at all.
   const collectingRef = useRef(false);
   // Finals accepted into the answer currently being collected — never the
-  // full session transcript. Each entry is `{ text, start, duration }`
-  // (start/duration in audio-time seconds, possibly non-numbers — see
-  // answerWindow.js). Cleared at the start of every new answer.
+  // full session transcript. Each entry is
+  // `{ text, start, duration, speakerTag }` (start/duration in audio-time
+  // seconds, possibly non-numbers; speakerTag possibly undefined — see
+  // answerWindow.js). This is EVERY accepted final, candidate and anyone
+  // else in the room alike — doneAnswer (AC-M2) is what splits it via
+  // partitionAnswerFinals before any metric is computed, never this ref.
+  // Cleared at the start of every new answer.
   const answerFinalsRef = useRef([]);
   const answerStartRef = useRef(0);
   // The freshest known position in the Deepgram audio stream (seconds since
@@ -193,6 +228,7 @@ export function usePracticeAnswer() {
     revokeReplay();
     setAnswerTranscript([]);
     setAnswerMetrics(null);
+    setOtherSpeakerFinals([]);
     answerFramesRef.current = [];
     setCritiqueStatus("idle");
     setCritique(null);
@@ -264,6 +300,13 @@ export function usePracticeAnswer() {
     bodySamplerRef.current = null;
     resetAnswerState();
     setQuestionScores(new Map());
+    // A fresh capture session is a fresh diarization — whatever tag USED to
+    // dominate the answer window under the PREVIOUS session's socket has no
+    // bearing on this one (Deepgram/ElevenLabs assign tags per-connection,
+    // not per-candidate), so this is the one place `myTag` resets. Every
+    // OTHER reset in this hook (resetAnswerState, via "Next question"/"Try
+    // again") deliberately leaves it alone — see myTag's own doc above.
+    setMyTag(null);
   }, [abandonInProgressAnswer, resetAnswerState]);
 
   // Unmounting (e.g. switching back to live mode) must not leave an answer
@@ -289,26 +332,40 @@ export function usePracticeAnswer() {
   // acceptedAnswerFinal — extracted to lib/copilot/answerWindow.js so it's
   // unit-testable outside this hook; this function keeps only the audio
   // clock and the ref itself, which have no meaning outside React.
-  const recordTranscriptEvent = useCallback(({ isFinal, transcript, start, duration, textAlreadyDelivered }) => {
-    if (typeof start === "number" && typeof duration === "number") {
-      const end = start + duration;
-      if (end > audioClockRef.current) audioClockRef.current = end;
-    }
+  //
+  // `speakerTag` (AC-M2) rides straight through to acceptedAnswerFinal and
+  // then into answerFinalsRef — this function does not examine it. Whose
+  // words a final belongs to is decided once, over the WHOLE answer, by
+  // partitionAnswerFinals in doneAnswer below; deciding it per-event here
+  // would be deciding it from a single final, which is exactly what AC-M2
+  // says cannot be judged in isolation. A caller that never supplies
+  // `speakerTag` at all (every existing practice session, until diarization
+  // is wired into this hook's caller) leaves it `undefined` here exactly as
+  // before this field existed.
+  const recordTranscriptEvent = useCallback(
+    ({ isFinal, transcript, start, duration, speakerTag, textAlreadyDelivered }) => {
+      if (typeof start === "number" && typeof duration === "number") {
+        const end = start + duration;
+        if (end > audioClockRef.current) audioClockRef.current = end;
+      }
 
-    const entry = acceptedAnswerFinal({
-      isFinal,
-      transcript,
-      start,
-      duration,
-      textAlreadyDelivered,
-      collecting: collectingRef.current,
-      answerStart: answerStartAudioRef.current,
-      answerEnd: answerDoneAudioRef.current,
-    });
-    if (!entry) return;
+      const entry = acceptedAnswerFinal({
+        isFinal,
+        transcript,
+        start,
+        duration,
+        speakerTag,
+        textAlreadyDelivered,
+        collecting: collectingRef.current,
+        answerStart: answerStartAudioRef.current,
+        answerEnd: answerDoneAudioRef.current,
+      });
+      if (!entry) return;
 
-    answerFinalsRef.current = [...answerFinalsRef.current, entry];
-  }, []);
+      answerFinalsRef.current = [...answerFinalsRef.current, entry];
+    },
+    [],
+  );
 
   // Starts recording the current question's answer over the given live
   // stream: marks the start time (wall clock and audio-time), clears
@@ -618,14 +675,38 @@ export function usePracticeAnswer() {
 
       const collected = answerFinalsRef.current;
       answerFinalsRef.current = [];
-      const lines = collected.map((f) => f.text);
 
-      const { firstStart, lastEnd } = deriveSpeechSpan(collected);
-      const speechDurationMs =
-        firstStart !== null && lastEnd !== null ? Math.max(0, (lastEnd - firstStart) * 1000) : 0;
+      // AC-M2/R-127: derive every delivery number below (word count, wpm,
+      // filler rate, speech span) from the candidate's half alone, never
+      // from `collected` as a whole. A mock interviewer's words landing in
+      // this answer's metrics is the R-127 shape again: word count is a SUM
+      // (contaminates visibly wrong once summed) but speechDurationMs is a
+      // min/max over spans (stays superficially plausible even when
+      // contaminated), so the two would silently disagree instead of the
+      // whole answer just being wrong. answerMetricsInputs
+      // (lib/copilot/answerSpeakers.js) is the tested composition of that
+      // split plus the text/span derivation built on top of it — moved out
+      // of this hook so it's reachable from this repo's node-only vitest
+      // config (see that module's own doc comment and
+      // answerMetricsInputs.test.js). It puts every UNTAGGED final into
+      // `mine` unconditionally, so a non-diarized session (every existing
+      // practice user) gets `lines`/`text` byte-identical to the
+      // pre-AC-M2 behavior and `others === []`.
+      const { lines, text, speechDurationMs, others, myTag: dominantTag } = answerMetricsInputs(collected);
+      // Final wave: learn (or reconfirm) the candidate's speaker tag from
+      // THIS answer — but only when this answer actually carried a tagged
+      // final. `null` here means nothing was tagged in THIS particular
+      // answer (an empty answer, a drain that caught nothing, or a
+      // non-diarized session), not "the candidate has no voice" — a stale
+      // learned tag from an earlier answer this session is far more likely
+      // correct than discarding it over one uninformative answer, so a null
+      // result never overwrites whatever was already learned (see myTag's
+      // own doc above for why "Next question"/"Try again" must not reset
+      // it either).
+      if (dominantTag !== null) setMyTag(dominantTag);
 
       const metrics = computeAnswerMetrics({
-        text: lines.join(" "),
+        text,
         durationMs,
         speechDurationMs,
         video: videoResult.summary,
@@ -639,6 +720,10 @@ export function usePracticeAnswer() {
 
       setAnswerTranscript(lines);
       setAnswerMetrics(metrics);
+      // AC-M2 (C): expose the non-candidate half for a later wave to scan
+      // for interviewer questions — this hook does nothing with it beyond
+      // handing it out. See otherSpeakerFinals' own doc comment above.
+      setOtherSpeakerFinals(others);
       answerFramesRef.current = videoResult.frames || [];
       setReplaySupported(recorderRef.current?.supported ?? true);
 
@@ -728,6 +813,8 @@ export function usePracticeAnswer() {
     settling,
     answerTranscript,
     answerMetrics,
+    otherSpeakerFinals,
+    myTag,
     replayUrl,
     replaySupported,
     answerFramesRef,

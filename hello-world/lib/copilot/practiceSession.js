@@ -7,6 +7,7 @@
 
 import { captureCameraAndMic, captureMicAudio, PcmPipeline } from "./capture";
 import { createSttStream } from "./stt";
+import { createUtteranceAssembly } from "./utteranceAssembly";
 
 // DeepgramStream's own status values ("connecting" | "open" | "closed") ->
 // the vocabulary CopilotSession.aggregateStatus already collapses "them"/
@@ -51,7 +52,15 @@ function micSelectionAwareError(err, micDeviceId) {
 }
 
 export class PracticeSession {
-  constructor({ withVideo = true, micDeviceId, onTranscript, onStatus, onError, onStream } = {}) {
+  constructor({
+    withVideo = true,
+    micDeviceId,
+    onTranscript,
+    onUtterance,
+    onStatus,
+    onError,
+    onStream,
+  } = {}) {
     this.withVideo = withVideo;
     // AC-J1.3: left as whatever the caller passed — including `undefined`
     // when omitted — rather than defaulted to `null` here, for the same
@@ -61,6 +70,16 @@ export class PracticeSession {
     // which falsy value means "no selection".
     this.micDeviceId = micDeviceId;
     this.onTranscript = onTranscript || (() => {});
+    // AC-M2: fired once per assembled per-speaker turn, mirroring
+    // CopilotSession's onUtterance for its "inperson" source (session.js).
+    // Unlike that source, diarize is requested unconditionally here (see the
+    // dg options below), so this fires for every practice session, not just
+    // ones built with a particular source. Detecting a question asked by
+    // someone else in the room has to happen LIVE, as they ask it — the
+    // end-of-answer partition in answerSpeakers.js only resolves once the
+    // candidate presses Done, by which point the moment to draft an answer
+    // has passed.
+    this.onUtterance = onUtterance || (() => {});
     this.onStatus = onStatus || (() => {});
     this.onError = onError || (() => {});
     this.onStream = onStream || (() => {});
@@ -69,6 +88,52 @@ export class PracticeSession {
     this._pipeline = null;
     this._dg = null;
     this._stopped = false;
+    // Owns the same per-tag assembly session.js uses for its "inperson"
+    // source (utteranceAssembly.js) — see R-147 in that module's header for
+    // why a speaker's buffer must drain on a speaker change as well as its
+    // own speechFinal. Created unconditionally, not lazily on start(), so
+    // stop() can always drain it safely even if start() never ran.
+    this._utteranceAssembly = createUtteranceAssembly();
+  }
+
+  // AC-M2/R-147: fires onUtterance for one completed turn. The only call
+  // site for onUtterance, fed exclusively by _handleUtteranceFrame below and
+  // by stop()'s drainAll — same discipline as CopilotSession's
+  // _emitUtterance for _handleInPersonFrame/drainAll.
+  _emitUtterance(tag, text) {
+    this.onUtterance({ speakerTag: tag, text });
+  }
+
+  // AC-M2: only a frame carrying a numeric speakerTag participates in
+  // assembly at all — an untagged frame (no diarization, or a provider that
+  // can't diarize; see stt/index.js's diarizationActive) fires no utterance,
+  // full stop. There is no "them" fallback to route it to the way
+  // session.js's _resolveSpeakerLabel has one: practice mode has exactly one
+  // stream, and reporting the candidate's own untagged speech as a room
+  // utterance would put a question nobody asked on their screen, the same
+  // false-positive this feature exists to avoid in the solo case (see
+  // roomQuestions.js's header).
+  //
+  // Only a LOCKED run (`isFinal`) feeds the buffer — Deepgram's interim runs
+  // for a still-settling span repeat and revise the same words as they firm
+  // up, and pushing every interim would duplicate text into the assembled
+  // utterance (the R-127 class of bug: see answerSpeakers.js's header).
+  _handleUtteranceFrame(frame) {
+    const tag = frame.speakerTag;
+    if (typeof tag !== "number") return;
+    if (!frame.isFinal) return;
+
+    const completed = this._utteranceAssembly.push(tag, frame.transcript);
+    if (completed) this._emitUtterance(completed.tag, completed.text);
+
+    // R-147: "whichever comes first" — a tag also drains on its OWN
+    // speechFinal, independent of whichever tag push() above just completed
+    // (if any). Without this, a speaker who simply stops talking without
+    // being interrupted by a different tag would never drain at all.
+    if (frame.speechFinal) {
+      const drained = this._utteranceAssembly.drain(tag);
+      if (drained) this._emitUtterance(drained.tag, drained.text);
+    }
   }
 
   async start() {
@@ -149,6 +214,18 @@ export class PracticeSession {
 
     const dg = await createSttStream({
       speaker: "you",
+      // AC-M2: requested unconditionally, unlike CopilotSession's "inperson"
+      // source (session.js), where diarize is tied to which capture source
+      // was picked. There is no such choice here — the mic is already the
+      // only source practice mode ever has — so the request costs nothing
+      // for the overwhelmingly common solo session: one voice diarizes to a
+      // single tag, and answerSpeakers.js's partitionAnswerFinals treats
+      // that exactly like no tag at all (every final is the candidate's
+      // either way). No warning is raised when the provider can't diarize
+      // (contrast session.js's onError when !dg.diarizationActive) — unlike
+      // an in-person live session, a solo practice user loses nothing
+      // observable either way, so there is nothing here worth surfacing.
+      diarize: true,
       onStatus: (s) => {
         // Once stopped, every further status from this socket is stale —
         // forwarding it could repaint an idle UI as "live", or re-run
@@ -172,6 +249,11 @@ export class PracticeSession {
       onTranscript: (t) => {
         if (this._stopped) return;
         this.onTranscript(t);
+        // AC-M2: every frame still reaches onTranscript unchanged, above,
+        // exactly as before this feature existed — this only ADDS the
+        // parallel per-speaker assembly path, it never replaces or gates
+        // the existing one.
+        this._handleUtteranceFrame(t);
       },
     });
     // Assigned to the instance BEFORE awaiting connect() so a stop() that
@@ -218,6 +300,15 @@ export class PracticeSession {
 
   async stop() {
     this._stopped = true;
+    // R-147: drainAll so a turn mid-flight when the session ends isn't
+    // silently stranded in the buffer for the rest of the process's life —
+    // same discipline as CopilotSession.stop(). Safe to call repeatedly
+    // (idempotent: an already-empty assembly drains to nothing) and safe
+    // before start() ever ran, since _utteranceAssembly is built in the
+    // constructor rather than lazily in start().
+    for (const { tag, text } of this._utteranceAssembly.drainAll()) {
+      this._emitUtterance(tag, text);
+    }
     if (this._dg) {
       try {
         this._dg.close();
