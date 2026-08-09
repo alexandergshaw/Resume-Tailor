@@ -24,6 +24,14 @@
 // with the same caching/gating rules (AC-H9.37). `answer` (the
 // server-derived prose join of `points`) is not carried here at all — this
 // UI renders bullets, not prose, so there is nothing here that needs it.
+// AC-N1.1: the shared grounding comparison — see answerGrounding.js's own
+// header for why this is now the ONE place "same grounding" is decided.
+// Only `cachedSampleAnswerFor` below is refactored to use it; `needsRedraft`
+// keeps its own inline three-field comparison deliberately (see its own
+// comment), so the two stay independent implementations of the same rule
+// rather than one function calling into the other under two names.
+import { cachedAnswerFor, groundingFor } from "./answerGrounding.js";
+
 export function emptySampleAnswer() {
   return {
     question: "",
@@ -96,6 +104,22 @@ export function activeSampleAnswer(state, question) {
 //               `applicationId` to this same comparison — a posting change
 //               invalidates a drafted sample answer exactly like a profile
 //               or interview-type change does.
+//
+// AC-N1.1: deliberately NOT routed through answerGrounding.js's
+// sameGrounding, unlike cachedSampleAnswerFor above. This function's "done"
+// branch is the exact same three-field comparison, and the two are already
+// cross-checked against each other for every combination of matching/
+// mismatching fields (see sampleAnswerState.test.js's "agrees with
+// needsRedraft" block, which drives both functions off one table of entries
+// and asserts they agree). If both delegated to the same shared comparison,
+// that cross-check would silently stop being able to catch the two
+// disagreeing — it would just be asserting the shared function equals
+// itself. Kept as an independent inline comparison so that test keeps its
+// teeth; the values it compares never include the undefined/null/""
+// call-sites that answerGrounding.js's normalisation exists for (this
+// function is only ever called with the interview-type/profile/applicationId
+// values a real practice session already resolved), so there's no drift risk
+// in practice — see this module's own tests.
 export function needsRedraft(active, profile, interviewType, applicationId, force = false) {
   if (force) return true;
   if (!active || active.status === "idle" || active.status === "error") return true;
@@ -134,32 +158,33 @@ export function needsRedraft(active, profile, interviewType, applicationId, forc
 // the only caller is a reveal. Priming the cache itself never touches
 // visibility — a pre-drafted answer for a question the user has not asked
 // to see must not put itself on screen.
+//
+// AC-N1.1: the emptiness check and the profile/interviewType/applicationId
+// comparison are delegated to answerGrounding.js's cachedAnswerFor, so this
+// function and live mode's own cache read can never disagree about what
+// counts as the same grounding — this is a straight refactor, not a
+// behaviour change: cachedAnswerFor's checks are byte-for-byte the same
+// checks this function used to run inline (down to returning the entry's
+// RAW `points` reference on a hit, never a filtered copy — see BUG-J6's
+// tests below), just reachable from one place instead of two.
 export function cachedSampleAnswerFor(entry, question, profile, interviewType, applicationId) {
-  if (!entry) return null;
-  const points = Array.isArray(entry.points) ? entry.points.filter((p) => typeof p === "string" && p.trim()) : [];
-  if (points.length === 0) return null;
-  if (
-    entry.profile !== profile ||
-    entry.interviewType !== interviewType ||
-    entry.applicationId !== applicationId
-  ) {
-    return null;
-  }
+  const hit = cachedAnswerFor(entry, groundingFor({ profile, interviewType, applicationId }));
+  if (!hit) return null;
   return {
     question,
     visible: true,
     status: "done",
-    points: entry.points,
+    points: hit.points,
     // AC-K1: an entry cached before these existed (a pre-draft primed earlier
     // in the same open session) has none of them, which resolves to the empty
     // shapes here — SampleAnswer.js then falls back to rendering the full
     // points and simply omits the two subsections, rather than showing a
     // header with nothing under it.
-    cues: Array.isArray(entry.cues) ? entry.cues : [],
-    buzzwords: Array.isArray(entry.buzzwords) ? entry.buzzwords : [],
-    anchor: entry.anchor || null,
-    idealProject: entry.idealProject || null,
-    grounding: entry.grounding || null,
+    cues: Array.isArray(hit.cues) ? hit.cues : [],
+    buzzwords: Array.isArray(hit.buzzwords) ? hit.buzzwords : [],
+    anchor: hit.anchor || null,
+    idealProject: hit.idealProject || null,
+    grounding: hit.grounding || null,
     error: "",
     profile,
     interviewType,

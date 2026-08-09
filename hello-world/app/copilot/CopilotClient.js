@@ -12,6 +12,7 @@ import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Typography from "@mui/material/Typography";
 import { normalizeQuestion } from "@/lib/copilot/questions";
+import { groundingFor } from "@/lib/copilot/answerGrounding";
 import { fmtClock } from "@/lib/copilot/clock";
 import { visuallyHidden } from "@/lib/copilot/answerStatus";
 import { listMicrophones, resolveStoredMicDeviceId, SYSTEM_DEFAULT_OPTION } from "@/lib/copilot/audioDevices";
@@ -117,7 +118,19 @@ export default function CopilotClient() {
   const [liveHeight, setLiveHeight] = useState(null); // Step 3: measured; null => "auto" pre-measurement/SSR
   const isMobile = useIsMobile();
 
-  const answerCacheRef = useRef(new Map()); // normalized question -> { points, type }
+  // AC-N1.5: normalized question -> { points, type, cues, buzzwords, anchor,
+  // idealProject, profile, interviewType, applicationId } — the reading aids
+  // (AC-K1) and the grounding the draft was actually built from (AC-N1.2)
+  // both landed here since this comment was last accurate; runDraft
+  // (useLiveSession.js) and onPrefetchedAnswer below are the two writers,
+  // and both now store every field a read (via answerGrounding.js's
+  // cachedAnswerFor) needs to decide whether an entry still applies.
+  const answerCacheRef = useRef(new Map());
+  // AC-N1.3: bumped whenever the posting or prep context changes (below) or
+  // a fresh session starts (useLiveSession.js's `start`) — see runDraft's
+  // own comment for why the cache alone (AC-N1.2) can't guard its OTHER
+  // write, the one straight onto the visible question card.
+  const draftGenRef = useRef(0);
   const liveWrapperRef = useRef(null); // Step 3: the bounded session column, measured below
 
   // AC-H2/AC-H3: loads the résumé and cover letter submitted for the
@@ -141,10 +154,16 @@ export default function CopilotClient() {
   // prior answers were grounded in the old background, so they must not
   // survive an edit to it (that cache-clearing logic is specific to the
   // live session's auto-draft flow, not something the shared hook should
-  // know about).
+  // know about). AC-N1.3: also bumps draftGenRef — the cache clear alone
+  // stops a stale entry from being SERVED later (and AC-N1.2's grounding
+  // comparison would catch that on its own regardless), but it does nothing
+  // about a draft already in flight against the OLD profile that is about to
+  // land directly on a question card via useLiveSession.js's runDraft — see
+  // that function's own comment for why that write needs its own guard.
   const onProfileChange = useCallback(
     (val) => {
       answerCacheRef.current.clear();
+      draftGenRef.current += 1;
       setProfileRaw(val);
     },
     [setProfileRaw],
@@ -155,11 +174,28 @@ export default function CopilotClient() {
   // draft was grounded in the OLD posting's documents (or the lack of any),
   // and must not be served once the selection has moved on. Covers both
   // "changing" and "clearing" since PostingPicker calls onChange with
-  // `null` for the latter.
+  // `null` for the latter. AC-N1.3: bumps draftGenRef too — see
+  // onProfileChange's own comment just above for why.
   const onPostingChange = useCallback((newPosting) => {
     answerCacheRef.current.clear();
+    draftGenRef.current += 1;
     setPosting(newPosting);
   }, []);
+
+  // AC-N1.4 (defense in depth for BUG 3): usePrepContext is a real external
+  // store (see usePrepContext.js's own header) — an edit made from PRACTICE
+  // mode's own editor (PracticeClient's `setProfile`, never this
+  // component's onProfileChange wrapper above) still lands in `profile`
+  // here through the shared subscription, but nothing clears answerCacheRef
+  // for that path. The load-bearing fix for a stale entry actually being
+  // SERVED is AC-N1.2's grounding comparison on read (runDraft already
+  // rejects an entry whose stored `profile` differs from the current one,
+  // regardless of which editor changed it) — this effect is only about not
+  // letting the cache keep growing entries that can never hit again once
+  // the prep context has moved on, from EITHER editor.
+  useEffect(() => {
+    answerCacheRef.current.clear();
+  }, [profile]);
 
   // Seed the interviewer-audio-source choice from localStorage, wrapped in
   // try/catch like the prep-context read above. A missing or unrecognized
@@ -315,16 +351,46 @@ export default function CopilotClient() {
   // prediction serves the SAME panel the question would have drafted on
   // demand — a cache hit that dropped the cues and subsections would make a
   // successful prediction look like a degraded answer.
-  const onPrefetchedAnswer = useCallback((question, { points, type, cues, buzzwords, resumeAnchor, idealProject }) => {
-    answerCacheRef.current.set(normalizeQuestion(question), {
-      points,
-      type,
-      cues: Array.isArray(cues) ? cues : [],
-      buzzwords: Array.isArray(buzzwords) ? buzzwords : [],
-      anchor: resumeAnchor || null,
-      idealProject: idealProject || null,
-    });
-  }, []);
+  // AC-N1.2: `profile`/`interviewType`/`applicationId` are
+  // useCopilotDashboard's own `draftedFrom` — read from its refs BEFORE its
+  // own await, the same discipline runDraft below follows for its cache
+  // write — what this pre-draft was ACTUALLY built from, not whatever is
+  // currently selected by the time it resolves. Previously destructured and
+  // discarded here; now folded through groundingFor and stored with the
+  // entry so a later read (via answerGrounding.js's cachedAnswerFor) can
+  // reject it once the posting or prep context it was built from is no
+  // longer selected.
+  const onPrefetchedAnswer = useCallback(
+    (
+      question,
+      {
+        points,
+        type,
+        cues,
+        buzzwords,
+        resumeAnchor,
+        idealProject,
+        profile: draftedProfile,
+        interviewType: draftedInterviewType,
+        applicationId: draftedApplicationId,
+      },
+    ) => {
+      answerCacheRef.current.set(normalizeQuestion(question), {
+        points,
+        type,
+        cues: Array.isArray(cues) ? cues : [],
+        buzzwords: Array.isArray(buzzwords) ? buzzwords : [],
+        anchor: resumeAnchor || null,
+        idealProject: idealProject || null,
+        ...groundingFor({
+          profile: draftedProfile,
+          interviewType: draftedInterviewType,
+          applicationId: draftedApplicationId,
+        }),
+      });
+    },
+    [],
+  );
 
   // AC-I2/AC-I3/AC-I4: live mode's dashboard — talking pace, the predicted
   // next question, and a pre-drafted answer for it. `active: live` (AC-I4
@@ -379,6 +445,7 @@ export default function CopilotClient() {
     sessionRef,
   } = useLiveSession({
     answerCacheRef,
+    draftGenRef,
     recordSpeechSample,
     resetForSession,
     status,

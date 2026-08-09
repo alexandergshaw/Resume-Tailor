@@ -6,6 +6,7 @@ import { detectQuestion, normalizeQuestion } from "@/lib/copilot/questions";
 import { confirmQuestion } from "@/lib/copilot/detectClient";
 import { draftAnswer } from "@/lib/copilot/answerClient";
 import { speakerDisplayLabel } from "@/lib/copilot/speakerIdentity";
+import { cachedAnswerFor, groundingFor } from "@/lib/copilot/answerGrounding";
 
 const CONTEXT_TURNS = 12;
 const MIN_WORDS_FOR_LLM = 4;
@@ -69,8 +70,20 @@ function resolveTranscriptLabel(row, snapshot) {
 // for `profile`/`posting`/`autoDraft`) and hands them down as controlled
 // state; every state TRANSITION for them (setStatus/setQuestions calls) still
 // lives entirely in this hook, exactly as the rest of the pipeline does.
+//
+// AC-N1.3: `draftGenRef` is the same story as `answerCacheRef` — created in
+// CopilotClient so its two writers outside this hook (onPostingChange,
+// onProfileChange) can bump it without needing anything this hook returns.
+// runDraft captures it before its own `await` and re-checks it before both
+// of its post-await writes (the cache write AC-N1.2 already guards via
+// grounding, and the direct `setQuestions(... status: "done" ...)` write,
+// which is not cache-mediated and so has no other guard at all — see
+// runDraft's own comment). `start` below bumps it too, so a draft still
+// resolving from a session the user has already left behind can't land in
+// the new one either.
 export function useLiveSession({
   answerCacheRef,
+  draftGenRef,
   recordSpeechSample,
   resetForSession,
   status,
@@ -192,10 +205,34 @@ export function useLiveSession({
   const runDraft = useCallback(
     async (id, question, { force = false } = {}) => {
       const norm = normalizeQuestion(question);
+      // AC-N1.2: what this draft is (or would be) built from, read from the
+      // refs ONCE, here — before the `await` further down. Re-reading
+      // profileRef/postingRef AFTER that await would report whatever the
+      // user has since selected, not what THIS draft actually used; capturing
+      // once and reusing the same value for the lookup below, the network
+      // call, and the eventual cache write is what AC-N1's correction to the
+      // original bug report is about. groundingFor folds live mode's
+      // always-absent interview type into the same "not applicable" value
+      // practice mode's own entries use (answerGrounding.js), so a write from
+      // one mode's cache can be read back correctly by the other's.
+      const grounding = groundingFor({
+        profile: profileRef.current,
+        applicationId: postingRef.current?.id || null,
+      });
+      // AC-N1.3: this draft's generation, also captured before the await.
+      // Bumped by onPostingChange/onProfileChange (CopilotClient.js) and by
+      // `start` below — re-checked past the await, before either write, so a
+      // draft still resolving when the user moves on can't land anywhere.
+      const gen = draftGenRef.current;
       // Reuse a prior answer for the same (normalized) question — interviewers
       // often circle back or rephrase — unless the user explicitly redrafts.
+      // AC-N1.2: cachedAnswerFor rejects an entry whose OWN grounding
+      // (however it was written) doesn't match `grounding` above — a mismatch
+      // is an ordinary miss, indistinguishable from "nothing cached", so it
+      // falls straight through to a fresh draft below with no error and no
+      // "reused" label.
       if (!force) {
-        const cached = answerCacheRef.current.get(norm);
+        const cached = cachedAnswerFor(answerCacheRef.current.get(norm), grounding);
         if (cached) {
           setQuestions((prev) =>
             prev.map((it) =>
@@ -238,17 +275,41 @@ export function useLiveSession({
           it.id === id ? { ...it, status: "loading", error: "", cached: false } : it,
         ),
       );
+      // AC-N1.3: what a superseded draft leaves the card as — back at
+      // "idle", never stuck at "loading" forever and never showing an
+      // answer/error built for a posting or prep context the user has since
+      // left. The existing "Draft answer" button is then the user's way back
+      // in; nothing here auto-retries, since by the time this fires the
+      // question may no longer even be the one on screen.
+      const revertToIdle = () => {
+        setQuestions((prev) =>
+          prev.map((it) => (it.id === id ? { ...it, status: "idle", error: "", cached: false } : it)),
+        );
+      };
       try {
         const { points, type, cues, buzzwords, resumeAnchor, idealProject } = await draftAnswer({
           question,
           context: buildContext(),
-          profile: profileRef.current,
+          profile: grounding.profile,
           // AC-H1.4/AC-H4: the selected posting's own id IS the application
           // id (see normalizePostingRows in lib/copilot/postings.js) — the
           // route uses it to fetch and ground in the submitted résumé/cover
           // letter itself; this client never sends document text.
-          applicationId: postingRef.current?.id || null,
+          // `|| null` undoes groundingFor's "not applicable" -> "" folding —
+          // this request must send exactly what postingRef held at capture
+          // time (null), not the normalized comparison value.
+          applicationId: grounding.applicationId || null,
         });
+        // AC-N1.3: a posting/profile change (or a fresh Start) landed while
+        // this draft was in flight — see revertToIdle's own comment above.
+        // Checked before EITHER write below: the cache write would be
+        // rejected on its next read anyway (AC-N1.2's grounding check), but
+        // the setQuestions write is not cache-mediated and has no other
+        // guard at all.
+        if (draftGenRef.current !== gen) {
+          revertToIdle();
+          return;
+        }
         // AC-K1: same defensive normalization the practice hook applies — a
         // missing or malformed field becomes the empty shape here, once, so
         // neither the cache nor the render layer has to re-guard its type.
@@ -258,13 +319,20 @@ export function useLiveSession({
           anchor: resumeAnchor || null,
           idealProject: idealProject || null,
         };
-        answerCacheRef.current.set(norm, { points, type, ...aids });
+        // AC-N1.2: the grounding this draft was ACTUALLY built from — the
+        // same `grounding` captured before the await above, not a fresh read
+        // of the refs now.
+        answerCacheRef.current.set(norm, { points, type, ...aids, ...grounding });
         setQuestions((prev) =>
           prev.map((it) =>
             it.id === id ? { ...it, status: "done", points, ...aids, type: it.type || type } : it,
           ),
         );
       } catch (err) {
+        if (draftGenRef.current !== gen) {
+          revertToIdle();
+          return;
+        }
         setQuestions((prev) =>
           prev.map((it) =>
             it.id === id
@@ -274,7 +342,7 @@ export function useLiveSession({
         );
       }
     },
-    [buildContext, answerCacheRef, setQuestions],
+    [buildContext, answerCacheRef, draftGenRef, setQuestions],
   );
 
   // AC-M1.3.5: `meta` is populated ONLY by the in-person path
@@ -455,6 +523,11 @@ export function useLiveSession({
     pendingRef.current = [];
     lastQNormRef.current = "";
     answerCacheRef.current.clear();
+    // AC-N1.3: invalidates a draft still resolving from the session just
+    // left behind — see runDraft's own comment for why the cache clear above
+    // isn't enough by itself (a superseded draft's direct setQuestions write
+    // isn't cache-mediated).
+    draftGenRef.current += 1;
     resetForSession();
     // Step 2/4: collapse both disclosures for THIS session, same as every
     // other per-session reset above.
@@ -591,6 +664,7 @@ export function useLiveSession({
     recordSpeechSample,
     resetForSession,
     answerCacheRef,
+    draftGenRef,
     setSetupExpanded,
     setShowHistory,
     setStatus,
