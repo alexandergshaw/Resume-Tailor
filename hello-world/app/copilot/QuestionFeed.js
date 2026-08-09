@@ -12,6 +12,16 @@ import { answerLines } from "@/lib/copilot/answerPoints";
 import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus";
 import AnswerAids from "./AnswerAids";
 import AnswerLines from "./AnswerLines";
+// BUG-3/R-121 group-L: the SAME "what's current" decision CopilotDashboard's
+// panels use, not a second hand-rolled copy of it — see latestQuestionEntry's
+// own doc for why `questions[questions.length - 1]` stopped being that
+// decision once the dashboard started preferring the last NON-provisional
+// entry. useCurrentQuestionAnnouncement is BUG-2's fix for composing this
+// region's text, reused here for the identical reason: now that this feed
+// can also land on an older, already-`done` entry instead of the array's
+// true last one, its region is exposed to the same collision that hook
+// exists to prevent.
+import { latestQuestionEntry, useCurrentQuestionAnnouncement } from "./dashboard/CopilotDashboard";
 
 const TYPE_LABEL = {
   behavioral: "Behavioral",
@@ -32,11 +42,27 @@ export default function QuestionFeed({ questions, onDraft }) {
   // Mounting this region here instead, outside the `questions.length === 0`
   // branch so it exists from the feed's very first render, means only its
   // TEXT ever changes from then on — a real text-change announcement even
-  // for a card whose first render is already "done". It always reads the
-  // LATEST question, which is also the one `addQuestion`/`runDraft` just
-  // acted on.
-  const latest = questions.length ? questions[questions.length - 1] : null;
+  // for a card whose first render is already "done".
+  //
+  // BUG-3/R-121 group-L: reads `latestQuestionEntry(questions)`, the SAME
+  // function CopilotDashboard's "Current question"/"Current answer" panels
+  // use, rather than the array's literal last element. Before this, the
+  // dashboard could be showing entry A (the last NON-provisional entry)
+  // while this region announced the status of entry B (the array's true
+  // last, provisional) — two components disagreeing about which question is
+  // current. `latestQuestionEntry` degrades to the array's true last entry
+  // whenever nothing non-provisional exists (its own fallback) or `questions`
+  // is empty/malformed (its own guard), so this is never less defensive than
+  // the direct-index read it replaces.
+  const latest = latestQuestionEntry(questions);
   const latestLines = answerLines(latest?.cues, latest?.points);
+  const latestStatusText = answerStatusMessage({ status: latest?.status, bulletCount: latestLines.length });
+  // BUG-2: see useCurrentQuestionAnnouncement's doc (CopilotDashboard.js) —
+  // `latest` can now swap to a different, already-`done` entry without a
+  // natural loading -> done transition, which a bare answerStatusMessage(...)
+  // call can render as silence (identical text) or as an ambiguous "same
+  // answer, new count" instead of "the current question changed".
+  const latestRegionText = useCurrentQuestionAnnouncement(latest, latestStatusText);
   return (
     <Box
       sx={{
@@ -64,7 +90,7 @@ export default function QuestionFeed({ questions, onDraft }) {
       </Typography>
 
       <Box component="span" role="status" aria-live="polite" sx={visuallyHidden}>
-        {answerStatusMessage({ status: latest?.status, bulletCount: latestLines.length })}
+        {latestRegionText}
       </Box>
 
       {questions.length === 0 ? (

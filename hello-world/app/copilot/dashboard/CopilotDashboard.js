@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
@@ -61,9 +61,52 @@ const FILLER_LABEL_COLOR = {
   heavy: "var(--warning)",
 };
 
-function latestQuestionEntry(questions) {
+// AC-M1.3.5: prefers the last NON-provisional entry, when one exists, over
+// the array's true last entry. `provisional` means "attributed to the voice
+// currently believed to be the user" (userTag !== null && q.speakerTag ===
+// userTag — see useLiveSession.js), no longer tied to confidence — a
+// question detected from the tag currently presumed to be the candidate is
+// recorded `provisional` regardless of how sure the app is of that tag.
+// Without this preference, the candidate's own "Does that answer your
+// question?" would evict the interviewer's live question and answer from
+// the panel the candidate is reading, mid-answer, exactly the failure this
+// AC exists to prevent. Falls back to the array's true last entry when
+// EVERY entry is provisional (nothing settled has been detected yet, or —
+// see BUG-1 below — the cold-start case where the interviewer spoke first
+// and became the provisional argmax on word count alone), so the panel
+// still shows the best guess available rather than nothing at all.
+//
+// BUG-3/R-121 group-L: exported so QuestionFeed.js can read the SAME
+// "what's current" decision instead of hand-rolling
+// `questions[questions.length - 1]` — before this export, the dashboard's
+// panels and the feed's live region could name two different entries as
+// current the moment a fallback was in effect, which is exactly the "one
+// decision, one place" standard that regression case's amendment sets.
+// Still not moved to lib/ — that directory is owned by a different agent
+// this round.
+//
+// BUG-4: guards both the element (`list[i] &&`) and the fallback return
+// (`|| null`). The previous version dereferenced `list[i].provisional`
+// unguarded, which throws on a null/undefined element instead of degrading
+// to the empty state — the one reader of `questions` whose throw would take
+// the whole dashboard down mid-interview, unlike the sibling
+// `askedQuestionsFor` (useCopilotDashboard.js), which already guards for
+// exactly this reason. Not reachable from today's two call sites, but cheap
+// insurance against a future one that isn't as careful.
+//
+// Practice mode never sets a `provisional` key at all (see PracticeClient's
+// `dashboardQuestions`), so `list[i] && !list[i].provisional` still
+// evaluates `true && !undefined === true` on the first (only) iteration and
+// returns that single entry — byte-identical to both the pre-guard version
+// and the pre-AC-M1.3.5 version, for the same reason `askedQuestionsFor`'s
+// guard never changes a well-formed caller's result.
+export function latestQuestionEntry(questions) {
   const list = Array.isArray(questions) ? questions : [];
-  return list.length ? list[list.length - 1] : null;
+  if (!list.length) return null;
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (list[i] && !list[i].provisional) return list[i];
+  }
+  return list[list.length - 1] || null;
 }
 
 // BUG-J6: shared by both answer panels below via lib/copilot/answerPoints.js
@@ -168,11 +211,19 @@ function RealPanel({ title, children }) {
 }
 
 // The two prediction panels' shared card look — an accent-tinted surface
-// plus an explicit "Prediction" chip repeated on BOTH, so a question and its
-// answer can never be read as something the interviewer actually said or
-// something already drafted for real (AC-I3.20, AC-I4's panel is "equally
-// clearly tied to the predicted question").
-function PredictionPanel({ title, children }) {
+// plus an explicit chip repeated on BOTH, so a question and its answer can
+// never be read as something the interviewer actually said or something
+// already drafted for real (AC-I3.20, AC-I4's panel is "equally clearly
+// tied to the predicted question").
+//
+// BUG-1: `chipLabel` defaults to "Prediction" — both existing callers below
+// pass nothing and are unaffected — but CurrentQuestionPanel's provisional
+// branch reuses this SAME wrapper with a different label (see that
+// function). "Prediction" would be a false statement there: a provisional
+// entry is a real detected utterance, not a guess at a future one. Reusing
+// the wrapper (not copying it) is what keeps the accent-plus-chip look
+// itself in exactly one place.
+function PredictionPanel({ title, children, chipLabel = "Prediction" }) {
   return (
     <Box
       sx={{
@@ -191,7 +242,7 @@ function PredictionPanel({ title, children }) {
         </Typography>
         <Chip
           size="small"
-          label="Prediction"
+          label={chipLabel}
           sx={{
             height: 18,
             fontSize: 10,
@@ -208,7 +259,45 @@ function PredictionPanel({ title, children }) {
   );
 }
 
+// BUG-1: `current` can be the array's true LAST entry even though it is
+// `provisional` — latestQuestionEntry's fallback for "every entry is
+// provisional" above. Before this branch existed, that fallback rendered
+// through RealPanel — the plain treatment, no chip, no accent, no caveat —
+// under the same "Current question" heading a confirmed entry gets. By
+// construction a provisional entry is one the app CURRENTLY attributes to
+// the candidate's own voice (see the AC-M1.3.5 doc above), so that plain
+// treatment presented the candidate's own speech as the interviewer's
+// question with nothing to tell them apart. This is not a rare edge case:
+// at cold start the interviewer speaks first and becomes the provisional
+// argmax on word count alone, so their genuine opening question is
+// routinely the one flagged provisional — which is exactly why the
+// fallback must keep rendering (never nothing) and instead be marked.
+//
+// R-106's bar is why this is BOTH the accent/chip treatment AND a sentence,
+// not one or the other: visual distinction alone is insufficient (a user
+// glancing mid-interview, or anyone who can't rely on color/border), text
+// alone is insufficient (a user skimming past the caption to the bold
+// question line). Reuses PredictionPanel rather than a new component so the
+// "uncertain content" look stays defined in one place; "Unconfirmed" (not
+// "Prediction") because this IS a real detected utterance, just of unclear
+// speaker — the opposite uncertainty from a prediction.
+//
+// Practice mode never sets `provisional` (see latestQuestionEntry's own
+// doc), so `current?.provisional` is always falsy there and this branch
+// never runs — practice always takes the plain `RealPanel` path below,
+// unchanged.
 function CurrentQuestionPanel({ current, copy }) {
+  if (current?.provisional) {
+    return (
+      <PredictionPanel title={copy.currentQuestionTitle} chipLabel="Unconfirmed">
+        <Typography sx={{ color: "var(--text-primary)", fontWeight: 600 }}>{current.question}</Typography>
+        <Typography variant="caption" sx={{ display: "block", mt: 0.75, color: "var(--text-secondary)" }}>
+          Not confirmed as the interviewer — this may be your own words, picked up while speaker identity is
+          still unsettled.
+        </Typography>
+      </PredictionPanel>
+    );
+  }
   return (
     <RealPanel title={copy.currentQuestionTitle}>
       {current ? (
@@ -220,6 +309,92 @@ function CurrentQuestionPanel({ current, copy }) {
       )}
     </RealPanel>
   );
+}
+
+// BUG-2/R-121 group-L: shared by CurrentAnswerPanel below AND QuestionFeed's
+// own feed-level region — once BUG-3 makes QuestionFeed derive "current"
+// through this file's exported `latestQuestionEntry` too, its region is
+// exposed to the exact same collision this hook exists to prevent, so the
+// fix for COMPOSING an informative announcement belongs in one place too,
+// not copied into QuestionFeed by hand.
+//
+// Before latestQuestionEntry's provisional fallback existed, `current`
+// could only change by a brand new entry being appended, and a new entry
+// always starts "loading"/"idle" — confirmed for both live's addQuestion
+// (useLiveSession.js) and practice's useSampleAnswer.js (a question that
+// doesn't match `state.question` falls back to `emptySampleAnswer()`;
+// nothing but an explicit reveal ever writes `status: "done"`) — so the
+// region's text always changed on its own. The fallback can now make
+// `current` swap to a DIFFERENT, already-`done` entry without the array
+// growing at all (the retroactive provisional remap in
+// useLiveSession.js's onSpeakerIdentity). If the two entries' bullet counts
+// happen to match, `answerStatusMessage` returns byte-identical text and
+// React bails out of the DOM update — the whole panel's contents change and
+// nothing is announced. If the counts differ, the text does change, but
+// "Answer ready, 3 points" reads as an edit to the SAME answer, not "the
+// current question changed".
+//
+// `answerStatusMessage` is pinned by R-123 and gains no parameter, so the
+// fix is composed here, at the surface: track the id of the entry rendered
+// last render, and — only when it changes AND the newly-current entry is
+// already `done` (the only way a swap can land on text that reads as an
+// in-place edit rather than a fresh draft starting from loading/idle) —
+// prefix the announcement with which question is now current. Gating on
+// "newly done" is what keeps this from ever firing on an ordinary
+// new-question append in EITHER mode: a brand new entry is never already
+// `done` on the render its id first appears (see above), so this can only
+// trigger for a swap between two entries that both already existed —
+// structurally impossible for practice mode's one-entry array (see
+// CopilotDashboard's own module doc), which is what keeps practice's
+// announcement text byte-identical to before this hook existed.
+//
+// `prevId`/`swapQuestion` are both plain STATE, compared and conditionally
+// re-set DURING RENDER — React's own documented "store information from
+// previous renders" recipe (a render-phase update, not an effect). Two
+// stricter rules in this repo's lint config rule out the two more obvious
+// alternatives: react-hooks/refs forbids reading `ref.current` while
+// rendering (a value read and mutated in the same render pass can disagree
+// with itself if React re-invokes the function body before committing —
+// exactly the bug this rule exists to catch), and react-hooks/set-state-in-
+// effect forbids the natural-looking "compare in an effect, setState if it
+// changed" version of this for the same reason: effects are for
+// synchronizing with something OUTSIDE React, not for deriving one piece of
+// render output from another. The render-phase-update form sidesteps both —
+// no ref, no effect — and is still applied before this render's return
+// value is computed, so there is no extra commit or visible lag.
+//
+// One consequence of not using an effect: there is no later tick to CLEAR
+// `swapQuestion` once it has been announced, so it stays set until the
+// NEXT id change rather than pulsing for a single commit. That is
+// deliberately left as-is rather than fought — the sentence below reads
+// correctly for as long as it's still true ("Current question: <X>" is
+// accurate whether X became current a moment ago or several renders ago),
+// and it still guarantees the one thing BUG-2 requires: the FIRST render
+// after any swap always differs from what was showing before, by more than
+// just `statusText`.
+export function useCurrentQuestionAnnouncement(current, statusText) {
+  const currentId = current?.id ?? null;
+  const [prevId, setPrevId] = useState(currentId);
+  const [swapQuestion, setSwapQuestion] = useState(null);
+
+  if (currentId !== prevId) {
+    setPrevId(currentId);
+    // A swap actually happened. Only "announce which question" when the
+    // newly-current entry arrived already `done` — see the module doc
+    // above for why that's the only shape a swap between two EXISTING
+    // entries can take, and why an ordinary new-question append (which
+    // always starts loading/idle, in both modes) never matches it, so
+    // `swapQuestion` stays `null` — and this hook a no-op — for the entire
+    // life of a session that never triggers the fallback at all (every
+    // practice session; most live sessions).
+    setSwapQuestion(current?.status === "done" ? current.question : null);
+  }
+
+  if (swapQuestion !== null) {
+    const prefix = `Current question: "${swapQuestion}".`;
+    return statusText ? `${prefix} ${statusText}` : prefix;
+  }
+  return statusText;
 }
 
 // AC-J2.3: `answerHidden` is practice mode's reveal gate, and it is checked
@@ -248,6 +423,15 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
   // answerLines call practice mode's SampleAnswer.js and live mode's
   // QuestionFeed.js card make, so all three read alike.
   const lines = answerLines(current?.cues, current?.points);
+  // BUG-2: computed here (not inline in the region below) so it can be fed
+  // to useCurrentQuestionAnnouncement above as well as used for its own
+  // sake — see that hook's doc for why the announcement can't simply be
+  // this string on every render.
+  const currentAnswerStatusText = answerStatusMessage({
+    status: answerHidden ? "idle" : current?.status,
+    bulletCount: lines.length,
+  });
+  const currentAnswerRegionText = useCurrentQuestionAnnouncement(current, currentAnswerStatusText);
 
   // F7: WCAG 2.4.3. Clicking the reveal button below UNMOUNTS it (the
   // `answerHidden` branch stops matching) and replaces it with the revealed
@@ -303,9 +487,13 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
           exactly the thing practice mode's reveal gate exists to withhold.
           Nothing is lost: the F7 focus move above already lands focus on the
           revealed container the moment the user presses reveal, which is
-          what announces the content at that point. */}
+          what announces the content at that point.
+          BUG-2: text comes from useCurrentQuestionAnnouncement above, not a
+          bare answerStatusMessage(...) call — see that hook's doc for why a
+          swap between two already-`done` entries needs more than the status
+          string alone to be announced correctly. */}
       <Box component="span" role="status" aria-live="polite" sx={visuallyHidden}>
-        {answerStatusMessage({ status: answerHidden ? "idle" : current?.status, bulletCount: lines.length })}
+        {currentAnswerRegionText}
       </Box>
       {!current ? (
         <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>

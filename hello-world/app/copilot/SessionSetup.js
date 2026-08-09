@@ -81,6 +81,30 @@ export default function SessionSetup({
         </Button>
       ) : null}
 
+      {/* BUG-4: moved OUTSIDE the Collapse below (it used to sit next to the
+          dismissible consent Alert, inside it). `start()` calls
+          setSetupExpanded(false), and MUI's fully-exited Collapse sets
+          `visibility: hidden` on its content — this file's own comment on
+          the Collapse below already documents that this removes content
+          from BOTH the accessibility tree and the tab order, not merely
+          from view. That made this notice disappear the moment recording
+          actually began: for the entire life of a live session — the whole
+          time a microphone is recording everyone in the room — there was no
+          recording notice on screen or reachable by a screen reader. AC-H6's
+          BUG-H4 lesson was that this disclosure must never be dismissible;
+          auto-hiding it on session start is the same failure by another
+          route, so it now renders unconditionally for as long as this
+          source stays selected, live or not, expanded or not — and still
+          carries no `onClose`, so it stays non-dismissible. */}
+      {source === "inperson" ? (
+        <Typography
+          variant="body2"
+          sx={{ color: "var(--text-secondary)", mb: 2, fontWeight: 600 }}
+        >
+          {`Everyone in the room is being recorded and transcribed${sttProviderName ? ` by ${sttProviderName}` : ""}. Say so out loud before you start: unlike a shared browser tab, there is nothing on screen for the other person to see happening.`}
+        </Typography>
+      ) : null}
+
       {/* AC-I1.7/Step 2: `Collapse` (not a bare clipped Box) so a screen
           reader and the tab order both agree with what's on screen while
           collapsed — MUI sets `visibility: hidden` on the fully-exited
@@ -112,6 +136,16 @@ export default function SessionSetup({
               <ToggleButton value="system" sx={{ textTransform: "none", px: 1.5 }}>
                 System audio (speakers)
               </ToggleButton>
+              {/* AC-M1.5 requirement 5: the in-person option, worded in the
+                  user's terms — never "diarization" — for the case where
+                  everyone is on the same microphone (in the room, or a
+                  phone/laptop on speaker) and there is no tab or system
+                  audio stream to separate the two voices structurally. Same
+                  ToggleButtonGroup shape, same `disabled={live}` as the two
+                  options above — nothing about that contract changes. */}
+              <ToggleButton value="inperson" sx={{ textTransform: "none", px: 1.5 }}>
+                In person (same microphone)
+              </ToggleButton>
             </ToggleButtonGroup>
           </Stack>
 
@@ -139,8 +173,22 @@ export default function SessionSetup({
                   selecting a posting left that fact stated nowhere. It now
                   renders in its own always-visible element below, next to the
                   PostingPicker (see postingGroundingNotice's derivation and
-                  its render site further down). */}
-              {`Recording notice: audio is streamed${sttProviderName ? ` to ${sttProviderName}` : ""} for transcription. Make sure everyone on the call consents before you start — some regions require all-party consent.`}
+                  its render site further down).
+
+                  AC-M1.5 requirement 6: in-person gets its own, strengthened
+                  wording here rather than reusing the tab/system sentence —
+                  a shared browser tab is something the other party can see
+                  is happening; a microphone sitting in a room is not, so the
+                  notice has to say that plainly instead of speaking of "the
+                  call". This Alert is still dismissible, though, so it is
+                  NOT the only place this is said — see the always-visible
+                  notice ABOVE the Collapse this Alert lives inside (BUG-4
+                  moved it there so it survives a live session's own
+                  auto-collapse), which is what actually satisfies BUG-H4 for
+                  this source. */}
+              {source === "inperson"
+                ? `Recording notice: this in-person conversation is recorded and streamed${sttProviderName ? ` to ${sttProviderName}` : ""} for transcription. Everyone in the room is being recorded, not just you, so get their consent before you start; some regions require all-party consent.`
+                : `Recording notice: audio is streamed${sttProviderName ? ` to ${sttProviderName}` : ""} for transcription. Make sure everyone on the call consents before you start — some regions require all-party consent.`}
             </Alert>
           ) : null}
 

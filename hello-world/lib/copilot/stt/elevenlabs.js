@@ -130,6 +130,16 @@ function deriveSpan(words) {
 }
 
 export class ElevenLabsStream {
+  // AC-M1.2.8: Scribe v2 Realtime is batch-only for diarization — the
+  // realtime protocol this module speaks has no diarization parameter and no
+  // per-word speaker field to read one from (see the module header above).
+  // Declared statically, mirroring DeepgramStream.supportsDiarization, so a
+  // caller (createSttStream in ./index.js) can tell the two providers apart
+  // without constructing either one. This is the ONLY change this class
+  // makes for AC-M1.2 — R-077 and R-078's assertions below must still pass
+  // unchanged.
+  static supportsDiarization = false;
+
   // `token`, if provided, is an already-minted, single-use credential from
   // one upstream fetch (see createSttStream in ./index.js) — connect()
   // below uses it as-is instead of minting its own. This matters more here

@@ -363,6 +363,8 @@ from a fail without judgement calls.
 
 **Expected:** `source: "system"` selects `captureSystemAudio`; `source: "tab"`, an omitted `source`, and an unrecognized value all select `captureTabAudio`. The constructor never throws on a bad source. The "them" source is still captured before the mic prompt, so its picker appears first.
 
+**Amended (group M):** a third source, `"inperson"`, now exists and does NOT go through `THEM_CAPTURE_BY_SOURCE` at all -- it calls no `getDisplayMedia` function whatsoever and captures only the microphone. The degradation rule above is unchanged and is what this case still protects: an unrecognized value must resolve to `captureTabAudio`, NOT to the new mic-only path. See R-144.
+
 ### R-035 | area: copilot-audio | parallel-safe: yes | automatable: yes
 
 **Summary:** System-audio capture requests the constraints Chrome actually needs, and fails with instructions specific to that path. A generic or tab-worded error here sends the user to the wrong checkbox in the share dialog.
@@ -402,6 +404,8 @@ from a fail without judgement calls.
 2. Run `npx vitest run --no-file-parallelism lib/copilot/session.test.js` from `hello-world/`.
 
 **Expected:** A failure of the "them" capture (tab or system) rejects out of `start()` and is fatal. A mic failure is soft: it reports through onError and the session continues with interviewer audio only. Each source still gets its own PcmPipeline and DeepgramStream, which is what provides speaker separation without diarization. The first audio track of every source still gets an "ended" listener so the browser's native "Stop sharing" tears the session down.
+
+**Amended (group M):** every sentence above still holds for `"tab"` and `"system"`, and that is now precisely the point of this case -- those two paths must stay byte-identical. It is NO LONGER true of the session as a whole. On the new `"inperson"` source there is exactly one source, the microphone is REQUIRED (its failure is fatal and rejects out of `start()`, with wording that must not reuse "continuing with interviewer audio only"), and speaker separation comes from diarization rather than from having two streams. See R-144 and R-147.
 
 ### R-039 | area: copilot-audio | parallel-safe: yes | automatable: yes
 
@@ -459,7 +463,7 @@ from a fail without judgement calls.
 **Summary:** The live interview session can never be stranded by leaving its view. The mode toggle keys off the session's existence rather than its status, because `status === "error"` leaves a `CopilotSession` holding the screen share and mic while the UI already shows "Start session".
 
 **Steps:**
-1. Read `onModeChange` and the unmount-cleanup effect in `hello-world/app/copilot/CopilotClient.js`.
+1. Read `onModeChange` in `hello-world/app/copilot/CopilotClient.js` and the unmount-cleanup effect in `hello-world/app/copilot/useLiveSession.js` (the session pipeline moved there in group M; `onModeChange` stayed behind and calls the hook's `stop`).
 2. Confirm the mode `ToggleButtonGroup` ignores a null value and is disabled while the live session is running.
 
 **Expected:** Switching to practice mode stops any existing live session first, keyed on `sessionRef.current` existing rather than on `status`. Unmounting `CopilotClient` (switching main tabs in `app/page.js`) also stops the session, mirroring `PracticeClient`. Nothing about the audio-source toggle, the `copilot-audio-source` storage key, the share-instruction wording, the `CopilotSession` wiring or the question/answer flow is changed by this — R-034 through R-039 all still hold.
@@ -1037,7 +1041,7 @@ R-064 is this case's successor for notice truthfulness and enumerates the same g
 **Summary:** Selecting a posting in live mode grounds the answers and invalidates drafts grounded in the previous one.
 
 **Steps:**
-1. Read `onPostingChange`, `runDraft`, and the `PostingPicker` render in `hello-world/app/copilot/CopilotClient.js`.
+1. Read `onPostingChange` and the `PostingPicker` render in `hello-world/app/copilot/CopilotClient.js`, and `runDraft` in `hello-world/app/copilot/useLiveSession.js` (group M moved the pipeline out; `answerCacheRef` and its invalidation deliberately stayed in the component).
 2. Read the `label` and `blankHint` defaults in `hello-world/app/copilot/PostingPicker.js`.
 
 **Expected:** The picker stays enabled at all times, including while a session is live — unlike the mode toggle and audio-source picker, which disable once live — because the user may realize mid-interview that they picked the wrong posting. Changing OR clearing the posting clears `answerCacheRef`, for the same reason editing the prep context does: every cached draft was grounded in the previous application's documents and must not be served afterwards. `runDraft` passes the selected posting's own id as `applicationId`, reading it from a ref so a stable callback's async body sees the latest selection. The picker's `label` and `blankHint` defaults are practice mode's exact original strings, so practice mode's rendering — including the composed "no tracked postings yet" helper text — is unchanged.
@@ -1084,7 +1088,7 @@ R-064 is this case's successor for notice truthfulness and enumerates the same g
 **Summary:** A correct prediction is free, not merely fast — the pre-drafted answer lands under the key the real draft looks up.
 
 **Steps:**
-1. Read `onPrefetchedAnswer` and `runDraft` in `hello-world/app/copilot/CopilotClient.js`.
+1. Read `onPrefetchedAnswer` in `hello-world/app/copilot/CopilotClient.js` and `runDraft` in `hello-world/app/copilot/useLiveSession.js`. Group M moved `runDraft` out of the component while the cache and the prefetch write stayed, so the two key expressions this case compares NOW LIVE IN DIFFERENT FILES - which is precisely why they must be read against each other rather than each in isolation.
 
 **Expected:** Both use `normalizeQuestion(question)` as the `answerCacheRef` key. This is the whole cost argument for the feature: pre-drafting roughly doubles model calls per detected question, and the cache hit is what pays that back when the interviewer actually asks the predicted question. If the two keys ever diverge the cache silently never hits, nothing errors, and every prediction becomes pure cost with the real question still paying full price — so the two expressions must be checked against each other, not merely each read in isolation. Pre-drafting happens only while the existing Auto-draft switch is on, since that switch already means "spend model calls automatically".
 
@@ -1271,7 +1275,7 @@ With nothing to build from — no posting selected, no submitted résumé, no pr
 1. Read `answerLines` in `hello-world/lib/copilot/answerPoints.js` and the shared `app/copilot/AnswerLines.js` component that renders its output.
 2. Confirm that pair is what produces the bullets in ALL FOUR answer surfaces: `app/copilot/practice/SampleAnswer.js`, `app/copilot/QuestionFeed.js`, and both `CurrentAnswerPanel` and `PredictedAnswerPanel` in `app/copilot/dashboard/CopilotDashboard.js`. No surface may hand-roll the `ul`/`li` markup.
 3. Confirm `app/copilot/AnswerAids.js` is the only place the buzzword and role/project subsections are rendered, and that `SampleAnswer.js`, `QuestionFeed.js` and `CurrentAnswerPanel` all render it.
-4. Read the cache writes in `app/copilot/practice/useSampleAnswer.js` (`request`'s then-handler and `prime`) and `app/copilot/CopilotClient.js` (`runDraft`'s success path and `onPrefetchedAnswer`), and the cache read in `runDraft`'s not-forced branch.
+4. Read the cache writes in `app/copilot/practice/useSampleAnswer.js` (`request`'s then-handler and `prime`), `app/copilot/CopilotClient.js` (`onPrefetchedAnswer`) and `app/copilot/useLiveSession.js` (`runDraft`'s success path), and the cache read in `runDraft`'s not-forced branch - `runDraft` moved to the hook in group M.
 
 **Expected:** `answerBullets(cues, points)` returns the cues when there are any and the full points otherwise, and no surface writes that choice out for itself. This is the same failure `cleanAnswerPoints` was extracted for (BUG-J6, where two copies of one filter had already drifted), applied to a decision made in twice as many places — a dashboard panel still rendering full sentences beside a card rendering cues would read as two different kinds of thing.
 
@@ -1311,7 +1315,7 @@ Every cache entry — a real draft, a pre-draft, and live mode's reused-answer p
 2. With NVDA or JAWS running, draft a FRESH answer (a question not asked before this session) on each of the four surfaces and confirm an announcement is heard once each draft finishes. (For `CurrentAnswerPanel` in practice mode, reveal the answer first — the hidden state is R-110/R-122's case, where this region is intentionally silent regardless of draft status.)
 3. On the SAME four surfaces, separately and explicitly ask a question a SECOND time (or otherwise trigger the R-111/R-121 cache — e.g. an interviewer repeating a question in live mode) so its card/panel resolves straight to `status: "done"` on its FIRST render, with no visible loading spinner in between. Confirm an announcement is STILL heard for this specific case. This step is not satisfied by step 2 and must not be skipped: a reviewer who only performs the structural check in step 1 and the fresh-draft check in step 2 has NOT exercised the cache-hit path this case exists for, and must run step 3 before marking R-124 passed.
 
-**Expected:** In every one of the four surfaces the status element is rendered UNCONDITIONALLY — never nested inside the surface's own `{visible/done/... ? (...) : null}` content block — styled with the shared `visuallyHidden` constant exported by `lib/copilot/answerStatus.js` (a plain object literal; NOT `@mui/utils`, which this repo does not depend on) rather than hand-rolled CSS, and fed `answerStatusMessage(...)` (`lib/copilot/answerStatus.js`, R-123) on every render. This is deliberate, not incidental: a live region that MOUNTS at the same moment its content is already inside it is not reliably announced by NVDA/JAWS — only a TEXT CHANGE on an already-mounted node is. `QuestionFeed.js` is the sharpest case for step 3: a REUSED answer's card starts life already `status: "done"` — `CopilotClient.js`'s `addQuestion` seeds `status: "loading"` (auto-draft is on by default) and synchronously calls `runDraft`, whose cache-hit branch sets `status: "done"` before any `await`, so React 18 batches both into the card's very first render. A region living on that card would therefore mount already carrying its final text and go unannounced — which is why its region instead lives one level up, at `QuestionFeed`, mounted outside the `questions.length === 0` branch (so it exists before any question does) and reading whichever entry is latest, so a reused answer's arrival is a text change on an already-mounted region rather than a new node appearing with its final text already inside it. `SampleAnswer.js` is the sharpest case for step 2: its whole answer panel is conditionally rendered on `visible`, so its status span sits OUTSIDE that conditional (immediately after the toggle button's `Stack`, mounted with `""` while hidden). Before this, the only thing announced in live mode was the draft button's own label changing ("Draft answer" -> "Drafting…" -> "Redraft") — which said nothing to a user not focused on that button, and nothing at all on the dashboard panels, which have no such button.
+**Expected:** In every one of the four surfaces the status element is rendered UNCONDITIONALLY — never nested inside the surface's own `{visible/done/... ? (...) : null}` content block — styled with the shared `visuallyHidden` constant exported by `lib/copilot/answerStatus.js` (a plain object literal; NOT `@mui/utils`, which this repo does not depend on) rather than hand-rolled CSS, and fed `answerStatusMessage(...)` (`lib/copilot/answerStatus.js`, R-123) on every render. This is deliberate, not incidental: a live region that MOUNTS at the same moment its content is already inside it is not reliably announced by NVDA/JAWS — only a TEXT CHANGE on an already-mounted node is. `QuestionFeed.js` is the sharpest case for step 3: a REUSED answer's card starts life already `status: "done"` — `useLiveSession.js`'s `addQuestion` (moved out of `CopilotClient.js` in group M) seeds `status: "loading"` (auto-draft is on by default) and synchronously calls `runDraft`, whose cache-hit branch sets `status: "done"` before any `await`, so React 18 batches both into the card's very first render. A region living on that card would therefore mount already carrying its final text and go unannounced — which is why its region instead lives one level up, at `QuestionFeed`, mounted outside the `questions.length === 0` branch (so it exists before any question does) and reading whichever entry is latest, so a reused answer's arrival is a text change on an already-mounted region rather than a new node appearing with its final text already inside it. `SampleAnswer.js` is the sharpest case for step 2: its whole answer panel is conditionally rendered on `visible`, so its status span sits OUTSIDE that conditional (immediately after the toggle button's `Stack`, mounted with `""` while hidden). Before this, the only thing announced in live mode was the draft button's own label changing ("Draft answer" -> "Drafting…" -> "Redraft") — which said nothing to a user not focused on that button, and nothing at all on the dashboard panels, which have no such button.
 
 ### R-125 | area: copilot-a11y | parallel-safe: yes | automatable: no
 
@@ -1341,7 +1345,7 @@ Every cache entry — a real draft, a pre-draft, and live mode's reused-answer p
 
 **Steps:**
 1. Read `_emitTranscript` in `hello-world/lib/copilot/stt/elevenlabs.js` and the `textAlreadyDelivered` field documented on `onTranscript` in `hello-world/lib/copilot/stt/index.js`.
-2. Read the guards in `hello-world/app/copilot/practice/usePracticeAnswer.js`'s `recordTranscriptEvent` (via `acceptedAnswerFinal` in `hello-world/lib/copilot/answerWindow.js`), `hello-world/app/copilot/practice/PracticeClient.js`'s `onTranscript` handler, and `hello-world/app/copilot/CopilotClient.js`'s `onTranscript` handler.
+2. Read the guards in `hello-world/app/copilot/practice/usePracticeAnswer.js`'s `recordTranscriptEvent` (via `acceptedAnswerFinal` in `hello-world/lib/copilot/answerWindow.js`), `hello-world/app/copilot/practice/PracticeClient.js`'s `onTranscript` handler, and `hello-world/app/copilot/useLiveSession.js`'s `onTranscript` handler (moved out of `CopilotClient.js` in group M).
 3. Run `npx vitest run --no-file-parallelism lib/copilot/stt/elevenlabs.test.js lib/copilot/stt/deepgram.test.js lib/copilot/answerWindow.test.js` from `hello-world/`.
 
 **Expected:** `ElevenLabsStream` retains the last isFinal:true frame's `{ text, start, duration }` it delivered; a later isFinal:true frame whose text, start, AND duration all exactly match it is still delivered (consumers need its `speechFinal: true`) but carries `textAlreadyDelivered: true`. The match requires all three fields — two genuinely different utterances that happen to share the same words but start at different times are both delivered, un-flagged, and a frame with no usable `words` array (start/duration both `undefined`) is never treated as a match either, since `undefined === undefined` proves nothing about whether it's really the same span. The flag is absent (never explicit `false`) on every other frame, so Deepgram's frames — proven by an explicit no-regression case — and any consumer written before the flag existed see byte-identical objects. `acceptedAnswerFinal` (answerWindow.js) rejects a final carrying the flag even when it is otherwise perfectly in-window and collecting; `usePracticeAnswer.js`'s `recordTranscriptEvent`, `PracticeClient.js`'s session-transcript append and pace-sampler feed, and `CopilotClient.js`'s `appendFinal`/`recordSpeechSample`/interviewer-utterance assembly all skip the TEXT for a flagged frame while still honouring `speechFinal` for question detection. Before this fix a five-entry answer transcript rendered as A, A, B, B, C and reported word count / filler count / words-per-minute at roughly double the true value.
@@ -1680,3 +1684,90 @@ The lesson generalises past this case: a test can assert the right rule against 
 **Amendment to R-142 — the measured height was viewport-relative.** `getBoundingClientRect().top` is measured from the viewport, so the `calc` was only correct at `scrollY === 0`, and the `ResizeObserver` on `document.body` can fire at ANY scroll position — an alert appearing, the history disclosure expanding. At a non-zero scroll the column was sized taller than the viewport, reintroducing exactly the page scrolling this layout removes, and with no scroll listener the wrong value persisted until the next resize. It now measures `rect.top + window.scrollY`, the wrapper's document-relative offset, which does not change with scroll — so no scroll listener is warranted, and adding one would be pure cost.
 
 **Amendment to R-139 — `computeLiveFillers` could report `NaN` as a measured reading.** Summing a sample whose `fillers` is not finite produced `{ fillerCount: NaN, fillerRate: NaN, fillerLabel: "noticeable", measured: true }`, because `fillerLabelFor(NaN)` falls through both comparisons — the UI would render "NaN% filler" beside "Some filler". Unreachable today (`appendSpeechSample` always sets the field), but the module's stated posture is that a signal it cannot measure is reported as unmeasured and never as a plausible number, so a non-finite sample now contributes nothing.
+
+### R-144 | area: copilot-audio | parallel-safe: yes | automatable: yes
+
+**Summary:** A live session can run on the microphone alone, for an in-person interview where there is no tab or system audio carrying the other person's voice. Before this, `start()` awaited the display-capture as its very first act, so an in-person interview could not start a session at all.
+
+**Steps:**
+1. Read `start`, `_startInPerson`, `_addSource` and `stop` in `hello-world/lib/copilot/session.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/session.inperson.test.js lib/copilot/session.test.js` from `hello-world/`.
+
+**Expected:** `source: "inperson"` calls NO `getDisplayMedia` function -- not `captureTabAudio`, not `captureSystemAudio` -- and opens exactly one transcription stream, requesting diarization on it. The microphone is REQUIRED in this mode: its failure rejects out of `start()` with wording saying the session cannot start, and never reuses `micFailureMessage`'s "Continuing with interviewer audio only", which is false when the mic IS the session. `withMic: false` is ignored rather than producing a zero-source session whose `aggregateStatus()` reads "idle" while nothing transcribes. The `_stopped` re-check still runs after the `captureMicAudio` await (R-041). An unrecognized source value still falls back to the tab path, never to mic-only. `"tab"` and `"system"` are unchanged: two sources, no diarization requested, the frame reaching `onTranscript` byte-identical to before with no `speakerTag` own-key, and `onUtterance` never fired.
+
+### R-145 | area: stt-diarization | parallel-safe: yes | automatable: yes
+
+**Summary:** Deepgram diarization is strictly additive, and a diarized frame is split per speaker. The pre-diarization wire behaviour is what R-076 pins, and this feature must not disturb a single byte of it.
+
+**Steps:**
+1. Read `DEFAULT_PARAMS`, `connect()` and `_emitDiarizedRuns` in `hello-world/lib/copilot/stt/deepgram.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/stt/` from `hello-world/`.
+
+**Expected:** With diarization off or unrequested, the query string equals the frozen literal `model=nova-3&encoding=linear16&sample_rate=16000&channels=1&interim_results=true&smart_format=true&punctuate=true&endpointing=300` exactly, and `speakerTag` is an ABSENT key on the emitted frame -- not `speakerTag: undefined`, which vitest's `toHaveBeenCalledWith` would ignore while the object shape silently changed. With diarization on, `diarize_model=v1` is appended and nothing else changes; the deprecated `diarize=true` boolean is never sent, and never both. A diarized frame emits one call per contiguous run of same-speaker words, preferring `punctuated_word`, with each run's own `start`/`duration` derived from its own first and last word -- both ABSENT, never a fabricated `0`, when the underlying timings are missing (R-078's lesson: a `0` corrupts every derived delivery number without throwing). The frame's `speech_final` lands on the LAST run actually emitted; blank runs are skipped; a frame whose runs are all blank emits nothing. An unusable `words` array -- missing, `[]`, or no numeric `speaker` on any entry -- falls back to today's single whole-frame call rather than to silence.
+
+### R-146 | area: copilot-speaker-identity | parallel-safe: yes | automatable: yes
+
+**Summary:** Deciding which voice on a shared microphone is the candidate. This is the case that protects against the copilot going silently deaf mid-interview, which is what the first version of this logic actually did.
+
+**Steps:**
+1. Read `scoreSpeakers`, the confidence clauses, `shouldEvaluateAsQuestion` and `labelFor` in `hello-world/lib/copilot/speakerIdentity.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/speakerIdentity.test.js` from `hello-world/`.
+
+**Expected:** `youScore = wordShare - (2 * questionRate)`, and BOTH the term and its coefficient are load-bearing: an implementation scoring on word share alone, or weighting the penalty at 1x, picks the wrong speaker in the pinned cases. `"high"` confidence requires all six clauses -- two distinct tags, four turns, somebody has asked a question, the argmax has asked NONE, the argmax has at least 40 words, and a margin of at least 0.15. Two counterexamples, both produced by running the original formula rather than imagined, must stay at `"low"`: (a) an interviewer's opening preamble (29 words, 3 turns, no questions from anyone) against the candidate's "Sounds good" scores 0.95 vs 0.05 and elected the INTERVIEWER; (b) a candidate opening with "Thanks for having me, how are you?" and "Great, shall we start?" trips `detectQuestion` twice, scoring -1.35 against the interviewer's 0.35, and elected the interviewer inside about fifteen seconds. Clause 5, the absolute 40-word floor, is the ONLY clause blocking (b) -- clauses 3 and 4 do not, because on that evidence the conversation genuinely looks inverted -- so it must not be replaced by another share-based test. The gate must still resolve a real interview (an interviewer asking twice, a candidate answering at length twice, resolves `"high"` to the candidate) or it has become useless rather than safe. `shouldEvaluateAsQuestion` returns false ONLY when the tag is the resolved user AND identity is overridden or genuinely `"high"` -- every tag is evaluated during cold start, because missing the interviewer's question is silent and permanent while over-evaluating the user's own speech is visible and bounded. `labelFor` and `shouldEvaluateAsQuestion` use DIFFERENT thresholds and must not be collapsed: with two voices heard and confidence still low, the transcript shows a best-guess label while BOTH voices are still evaluated. `labelFor` never returns `"you"` from a single observed voice.
+
+### R-147 | area: copilot-speaker-identity | parallel-safe: yes | automatable: yes
+
+**Summary:** Assembling per-speaker utterances from frames that can mix speakers. The drain rule exists because the obvious design deadlocks and silently loses the interviewer's question.
+
+**Steps:**
+1. Read `hello-world/lib/copilot/utteranceAssembly.js` and `_handleInPersonFrame` / `stop` in `hello-world/lib/copilot/session.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/utteranceAssembly.test.js lib/copilot/session.inperson.test.js` from `hello-world/`.
+
+**Expected:** A speaker's buffer drains when EITHER a different speaker starts -- on a shared mic a speaker change is the end of a turn -- OR that speaker's own `speechFinal` arrives, whichever comes first. The speaker-change rule is not optional: with `endpointing=300`, a frame carrying `speech_final` routinely also carries the next speaker's opening words, so the first speaker's run is not last, never receives `speechFinal`, and without this rule its buffer never drains at all -- the question the copilot exists to answer is lost, and its text is later glued onto an utterance from minutes afterwards. A two-speaker frame ending in `speech_final` must yield BOTH utterances. `drainAll()` on session stop emits anything still buffered, so a speaker who is mid-sentence when the user presses Stop does not have their last words discarded. Buffers do not leak for tags that stop speaking.
+
+### R-148 | area: copilot-speaker-identity | parallel-safe: yes | automatable: yes
+
+**Summary:** A question from someone else is detected and answered exactly as fully as before, and the candidate's own speech cannot evict it from the panel they are reading.
+
+**Steps:**
+1. Read `handleUtterance`, `evaluateUtterance` and `addQuestion` in `hello-world/app/copilot/useLiveSession.js`, and `latestQuestionEntry` in `hello-world/app/copilot/dashboard/CopilotDashboard.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/session.inperson.test.js` from `hello-world/`.
+
+**Expected:** In-person question routing keys off the session's `onUtterance` `evaluate` flag, NEVER off the `speaker` label -- the label is a best guess with a lower threshold, and routing on it reintroduces the silent-deafness failure. `"tab"`/`"system"` keep their existing `pendingRef` path untouched and are not double-detected. A confirmed question flows through the SAME path as before -- `confirmQuestion`, `addQuestion`, `runDraft`, `draftAnswer` -- so it still carries `points`, `type`, `cues`, `buzzwords`, `resumeAnchor`, `idealProject`, posting grounding via `applicationId`, and the `answerCacheRef` reuse keyed on `normalizeQuestion`; there is no parallel answering path. While identity is unsettled, a question detected from the provisionally-presumed user is marked provisional, and `latestQuestionEntry` prefers the last NON-provisional entry -- otherwise the candidate's own "Does that answer your question?" evicts the interviewer's live question and answer from the dashboard mid-answer. `recordSpeechSample` stays gated on the user's own speech only, so words-per-minute describes the candidate's delivery rather than the conversation.
+
+### R-149 | area: copilot-speaker-identity | parallel-safe: yes | automatable: no
+
+**Summary:** The transcript shows who it thinks is speaking, admits when it does not know, and lets the user correct it. Manual because this repo runs vitest with `environment: "node"` and has no jsdom, so no component here can be rendered by a test.
+
+**Steps:**
+1. Start the app, open the interview copilot, and select the in-person interviewer-audio option.
+2. Before starting a session, confirm the share instructions do not mention sharing a tab or screen, and that "Chrome or Edge only" is absent.
+3. Start a session with two people speaking into the one microphone. Watch the transcript labels and the always-visible "Who's talking" bar.
+4. Activate the correction control on the other person's chip and confirm every earlier turn from that voice relabels.
+5. Repeat with a keyboard only. Then repeat with a screen reader listening.
+6. Switch the source back to browser tab and compare the transcript against a pre-feature screenshot.
+
+**Expected:** A speaker label never falls back to "You" -- an unresolved voice reads "Unknown speaker", and a third voice reads "Speaker N" with a number that stays stable as more voices appear. While confidence is low the UI says it is still working out who is who. The correction control is a real button, reachable by keyboard with a visible focus ring, with an accessible name naming both the voice and the action, and it is reachable WITHOUT expanding the transcript disclosure (which live mode collapses by default). The chip for the voice already resolved as the user is NOT interactive -- there is no "mark yourself as yourself" action, and making it one adds a pointless tab stop on every one of the user's own turns. A correction is announced through a polite live region from EITHER surface it can be made from. The recording notice states plainly that everyone in the room is being recorded, and does not live only inside the dismissible consent alert. In tab and system mode nothing new renders at all and the transcript is pixel-identical to before.
+
+### R-150 | area: copilot-speaker-identity | parallel-safe: no | automatable: no
+
+**Summary:** Diarization actually works against Deepgram's live service. THIS HAS NEVER BEEN VERIFIED. Every automated test above proves the mapping and routing are correct GIVEN Deepgram's documented response shape; none of them prove Deepgram returns that shape for this account, model and audio.
+
+**Steps:**
+1. Ensure `STT_PROVIDER` is Deepgram (or unset) and `DEEPGRAM_API_KEY` is set.
+2. Start an in-person session with two real people speaking into one microphone, alternating naturally, and let the interviewer ask at least three questions.
+3. In devtools, inspect the Deepgram WebSocket frames. Confirm the request URL carries `diarize_model=v1` and that `channel.alternatives[0].words[]` entries carry an integer `speaker`.
+4. Specifically look for a frame where `speech_final` is true AND the words array contains more than one distinct `speaker`.
+5. Confirm each interviewer question was detected and drafted, and that none were missed.
+
+**Expected:** Speaker ids arrive per word and stay stable for the same voice across the session. Both speakers' utterances are transcribed and attributed. Every interviewer question is detected. Step 4 is the important one: the whole drain rule in R-147 is built on the assumption that `speech_final` frames genuinely mix speakers. If they never do, R-147's speaker-change rule is harmless but unnecessary; if they do, it is load-bearing and this case is the only evidence for it. Record the finding here either way. Until this case has actually been run, no commit message, code comment or report may state that diarization is confirmed working -- this repo has already shipped an STT provider that was wire-correct on paper and silently double-counted every utterance in production (R-127).
+
+### R-151 | area: copilot-speaker-identity | parallel-safe: yes | automatable: yes
+
+**Summary:** In-person mode on a provider that cannot diarize is a defined, useful, degraded mode -- not a broken one, and not one that pretends to work.
+
+**Steps:**
+1. Read the `diarizationActive` handling in `hello-world/lib/copilot/stt/index.js` and the warning it drives in `hello-world/lib/copilot/session.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/stt/index.diarize.test.js lib/copilot/session.inperson.test.js` from `hello-world/`.
+
+**Expected:** `DeepgramStream.supportsDiarization` is true and `ElevenLabsStream.supportsDiarization` is false -- ElevenLabs Scribe v2 Realtime has no realtime diarization at all, it is a batch-only feature. Requesting diarization from a provider that cannot do it is NOT an error: the stream connects and transcribes normally, and `diarizationActive` is false. `diarizationActive` is also false when the token fetch failed, even though that path falls back to Deepgram, because claiming diarization is live off an unverified fallback would be an overclaim. In that degraded mode the session still starts and still transcribes, every utterance routes as "them" so no question is missed, and a soft warning names the limitation and attributes it to the configured provider. The warning fires ONLY when diarization is genuinely inactive -- an unconditional warning cries wolf on every session. Two consequences are accepted and must stay stated rather than rediscovered: the transcript cannot attribute turns, and live pace and filler readings are not measured at all, since `recordSpeechSample` is gated on `speaker === "you"`; they report unmeasured rather than a fabricated 0.

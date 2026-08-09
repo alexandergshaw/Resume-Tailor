@@ -93,10 +93,27 @@
 //       this: its `speech_final` rides on the SAME message as `is_final`
 //       (see deepgram.js), so it has no separate "commit" message to
 //       re-deliver a span from in the first place.
+//     - `speakerTag` (AC-M1.1.1): the provider-assigned diarized speaker id —
+//       a non-negative integer, starting at 0, identifying which voice this
+//       frame's words came from. Only meaningful when diarization is both
+//       requested AND supported by the selected provider (see
+//       `diarizationActive` below) — Deepgram can diarize, ElevenLabs Scribe
+//       v2 Realtime cannot at all (batch-only). ABSENT — not present with
+//       value `undefined` — on every frame where diarization did not
+//       actually split this frame: a non-diarized connection, a diarizing
+//       connection whose provider degraded to the whole-frame fallback for
+//       this particular Results frame (see deepgram.js), or any ElevenLabs
+//       frame. `toHaveBeenCalledWith`-style assertions use `toEqual`
+//       semantics and IGNORE undefined-valued keys, so "always set the key,
+//       just to undefined when unknown" would silently pass those assertions
+//       while still changing the emitted object's shape — the key must be
+//       missing outright. Consumers who need to tell "diarization split this
+//       frame" apart from "diarization is simply off" check for the key's
+//       presence (`"speakerTag" in frame`), not merely its value.
 //
 // ## Provider selection
 //
-// createSttStream({ provider, speaker, onTranscript, onStatus, onError })
+// createSttStream({ provider, speaker, onTranscript, onStatus, onError, diarize })
 // resolves to an instance of the selected provider, not yet connected — the
 // caller still calls connect() on it itself, exactly as it would after
 // constructing a provider directly. Selection is a plain lookup by provider
@@ -104,6 +121,26 @@
 // unrecognized or omitted name falls back to Deepgram rather than throwing,
 // so a bad or missing value degrades to today's behavior instead of
 // breaking the session.
+//
+// `diarize` (AC-M1.1.3) defaults to false and is threaded straight through to
+// the constructed provider as-is — asking a provider that cannot diarize
+// (ElevenLabs) is not an error; it is simply ignored by that provider's
+// constructor and the connection proceeds exactly as it would have without
+// it (AC-M1.1.4). Because of that, the CALLER cannot tell from `diarize`
+// alone whether diarization is actually happening, so createSttStream also
+// sets **`diarizationActive`** on the returned instance — true only when
+// `diarize` was requested, the token fetch that decided provider selection
+// actually succeeded, and the selected provider's own
+// `ProviderClass.supportsDiarization` is true. The token-fetch-succeeded
+// condition matters on its own: if the fetch failed, selection fell back to
+// Deepgram by default rather than by a real server decision, and this
+// function has no way to know whether the session will even connect —
+// claiming diarization is active off the back of a fallback it cannot
+// verify would be exactly the kind of unearned certainty AC-M1's own
+// "Unverified" section warns against. The name is pinned:
+// `lib/copilot/session.inperson.test.js` reads it. A provider constructed
+// DIRECTLY (as stt/deepgram.test.js does, bypassing this function entirely)
+// never carries this property at all — only createSttStream sets it.
 //
 // `provider` is normally left for createSttStream to determine itself: it
 // fetches the token (./token.js), reads the `provider` field the server
@@ -144,13 +181,20 @@ export async function createSttStream({
   onTranscript,
   onStatus,
   onError,
+  diarize = false,
 } = {}) {
   let selected = provider;
   let token;
+  // AC-M1.1.3: diarizationActive additionally requires that provider
+  // selection was actually informed by a real server response, not just the
+  // Deepgram default a failed fetch falls back to — see the long comment on
+  // this in the "Provider selection" section above.
+  let tokenFetchSucceeded = false;
   try {
     const body = await fetchSttToken();
     token = body?.token;
     if (!selected) selected = body?.provider;
+    tokenFetchSucceeded = true;
   } catch {
     // Couldn't fetch a token at all — fall through with no token and let
     // the default provider's own connect() attempt (and fail) its own
@@ -159,5 +203,8 @@ export async function createSttStream({
     // caller even has a stream to call connect() on.
   }
   const ProviderClass = PROVIDERS[selected] || DeepgramStream;
-  return new ProviderClass({ speaker, onTranscript, onStatus, onError, token });
+  const stream = new ProviderClass({ speaker, onTranscript, onStatus, onError, token, diarize });
+  stream.diarizationActive =
+    tokenFetchSucceeded && !!diarize && ProviderClass.supportsDiarization === true;
+  return stream;
 }

@@ -11,11 +11,9 @@ import Switch from "@mui/material/Switch";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Typography from "@mui/material/Typography";
-import { CopilotSession } from "@/lib/copilot/session";
-import { detectQuestion, normalizeQuestion } from "@/lib/copilot/questions";
-import { confirmQuestion } from "@/lib/copilot/detectClient";
-import { draftAnswer } from "@/lib/copilot/answerClient";
+import { normalizeQuestion } from "@/lib/copilot/questions";
 import { fmtClock } from "@/lib/copilot/clock";
+import { visuallyHidden } from "@/lib/copilot/answerStatus";
 import { listMicrophones, resolveStoredMicDeviceId, SYSTEM_DEFAULT_OPTION } from "@/lib/copilot/audioDevices";
 import { useEngine } from "@/app/settings/engine";
 import { useIsMobile } from "@/app/hooks/useResponsive";
@@ -24,14 +22,14 @@ import TranscriptView from "./TranscriptView";
 import QuestionFeed from "./QuestionFeed";
 import StatusPill from "./StatusPill";
 import SessionSetup from "./SessionSetup";
+import SpeakerChip from "./SpeakerChip";
 import CopilotDashboard from "./dashboard/CopilotDashboard";
 import PracticeClient from "./practice/PracticeClient";
 import { usePrepContext } from "./usePrepContext";
 import { useApplicationDocs } from "./useApplicationDocs";
 import { useCopilotDashboard } from "./useCopilotDashboard";
+import { useLiveSession } from "./useLiveSession";
 
-const CONTEXT_TURNS = 12;
-const MIN_WORDS_FOR_LLM = 4;
 const SOURCE_STORAGE_KEY = "copilot-audio-source";
 // AC-I1.4: the selected microphone's own key — separate from
 // SOURCE_STORAGE_KEY (interviewer audio) and PrepContext's storage key, so
@@ -80,11 +78,13 @@ function submittedDocsClause(hasResume, hasCoverLetter) {
 // talking points as soon as a question is detected.
 export default function CopilotClient() {
   const [mode, setMode] = useState("live"); // "live" | "practice"
+  // Owned here rather than inside useLiveSession, despite being that hook's
+  // state in every other sense (every setStatus/setQuestions call lives
+  // there) — see useLiveSession.js's module doc: useCopilotDashboard below
+  // needs `live` (derived from `status`) and `questions` REACTIVELY, before
+  // useLiveSession is called, and this project's react-hooks/refs lint rule
+  // forbids reading a ref's `.current` during render as a substitute.
   const [status, setStatus] = useState("idle"); // idle | connecting | live | error
-  const [warning, setWarning] = useState("");
-  const [error, setError] = useState("");
-  const [finals, setFinals] = useState([]); // { id, speaker, text, at }
-  const [interims, setInterims] = useState({ them: "", you: "" });
   const [questions, setQuestions] = useState([]);
   const [autoDraft, setAutoDraft] = useState(true);
   const [profile, setProfileRaw] = usePrepContext();
@@ -93,14 +93,12 @@ export default function CopilotClient() {
   // application" panel and the grounding documents draftAnswer sends along
   // (see onPostingChange/runDraft below).
   const [posting, setPosting] = useState(null);
-  const [source, setSource] = useState("tab"); // "tab" | "system" — the interviewer's audio source
+  const [source, setSource] = useState("tab"); // "tab" | "system" | "inperson" — the interviewer's audio source
   // AC-I1: the selected microphone's device id, or `null` for "System
   // default" — audioDevices.js's SYSTEM_DEFAULT_OPTION.deviceId, and exactly
   // the value capture.js's captureMicAudio treats as "no deviceId
   // constraint at all" (AC-I1.3).
   const [micDeviceId, setMicDeviceId] = useState(null);
-  const [startedAt, setStartedAt] = useState(null);
-  const [now, setNow] = useState(0);
   const [showConsent, setShowConsent] = useState(true);
   // F2: which speech-to-text provider is actually live — `null` until the
   // mount-time probe below resolves. See the useEffect near the other
@@ -119,36 +117,8 @@ export default function CopilotClient() {
   const [liveHeight, setLiveHeight] = useState(null); // Step 3: measured; null => "auto" pre-measurement/SSR
   const isMobile = useIsMobile();
 
-  const sessionRef = useRef(null);
-  const idRef = useRef(0);
-  const qIdRef = useRef(0);
-  const recentRef = useRef([]); // rolling [{ speaker, text }] for answer context
-  const pendingRef = useRef([]); // interviewer segments awaiting speech_final
-  const lastQNormRef = useRef(""); // dedupe back-to-back identical questions
-  const questionsRef = useRef([]);
-  const autoDraftRef = useRef(true);
-  const profileRef = useRef("");
-  // AC-H1: mirrors `posting` for runDraft below, the same reason
-  // profileRef exists — runDraft is a stable useCallback whose async body
-  // must see the LATEST selection, not whatever was current when the
-  // callback identity was created (same pattern as PracticeClient's
-  // postingRef).
-  const postingRef = useRef(null);
   const answerCacheRef = useRef(new Map()); // normalized question -> { points, type }
   const liveWrapperRef = useRef(null); // Step 3: the bounded session column, measured below
-
-  useEffect(() => {
-    questionsRef.current = questions;
-  }, [questions]);
-  useEffect(() => {
-    autoDraftRef.current = autoDraft;
-  }, [autoDraft]);
-  useEffect(() => {
-    profileRef.current = profile;
-  }, [profile]);
-  useEffect(() => {
-    postingRef.current = posting;
-  }, [posting]);
 
   // AC-H2/AC-H3: loads the résumé and cover letter submitted for the
   // selected posting, the moment it changes — feeds the "Submitted for this
@@ -193,7 +163,20 @@ export default function CopilotClient() {
 
   // Seed the interviewer-audio-source choice from localStorage, wrapped in
   // try/catch like the prep-context read above. A missing or unrecognized
-  // value just leaves the "tab" default from useState in place.
+  // value just leaves the "tab" default from useState in place. The actual
+  // setSource call is deferred a microtask out (same shape the mic seed
+  // effect right below already uses via listMicrophones().then(...)) rather
+  // than called synchronously in the effect body, which is what keeps this
+  // clear of react-hooks/set-state-in-effect — this project's lint rule set
+  // only started surfacing this specific effect once CopilotClient.js's
+  // hook graph shrank enough for its whole-component analysis to complete;
+  // the pattern itself was always the thing the rule flags.
+  //
+  // AC-M1.5.2/R-037: "inperson" is a third valid stored value, alongside
+  // "tab"/"system" — omitting it here would mean a candidate who picked
+  // in-person mode loses that choice on every reload. The deferred
+  // Promise.resolve().then(...) shape above is kept exactly as it was;
+  // only the set of values considered valid grows.
   useEffect(() => {
     let stored = null;
     try {
@@ -201,7 +184,9 @@ export default function CopilotClient() {
     } catch {
       stored = null;
     }
-    if (stored === "tab" || stored === "system") setSource(stored);
+    if (stored === "tab" || stored === "system" || stored === "inperson") {
+      Promise.resolve().then(() => setSource(stored));
+    }
   }, []);
 
   // AC-I1.4/AC-I1.5: seed the selected microphone from localStorage, same
@@ -263,8 +248,11 @@ export default function CopilotClient() {
     };
   }, []);
 
+  // AC-M1.5.2/R-037: accepts "inperson" alongside the original two values —
+  // omitting it here is the OTHER half of what would make the new toggle
+  // option inert (the seeding effect above is the other half).
   const onSourceChange = useCallback((val) => {
-    if (val !== "tab" && val !== "system") return;
+    if (val !== "tab" && val !== "system" && val !== "inperson") return;
     setSource(val);
     try {
       window.localStorage.setItem(SOURCE_STORAGE_KEY, val);
@@ -368,34 +356,107 @@ export default function CopilotClient() {
     active: live,
   });
 
-  useEffect(() => {
-    if (!live || !startedAt) return undefined;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [live, startedAt]);
+  const {
+    warning,
+    setWarning,
+    error,
+    finals,
+    interims,
+    startedAt,
+    elapsed,
+    stop,
+    start,
+    onDraft,
+    clearAll,
+    copyTranscript,
+    // AC-M1.5.6/5.8/5.9: the in-person speaker-identity surface — see the
+    // identityProps/correction-bar derivations below for how these feed
+    // TranscriptView and the always-reachable correction control.
+    speakerSnapshot,
+    speakerLabelFor,
+    identityUnsettled,
+    onAssignUser,
+    sessionRef,
+  } = useLiveSession({
+    answerCacheRef,
+    recordSpeechSample,
+    resetForSession,
+    status,
+    setStatus,
+    questions,
+    setQuestions,
+    source,
+    micDeviceId,
+    profile,
+    posting,
+    autoDraft,
+    setSetupExpanded,
+    setShowHistory,
+  });
 
-  const stop = useCallback(async () => {
-    if (sessionRef.current) {
-      await sessionRef.current.stop();
-      sessionRef.current = null;
-    }
-    setInterims({ them: "", you: "" });
-    setStatus("idle");
-    // Step 2: mirrors start's setSetupExpanded(false) — `!live` must
-    // always mean "SessionSetup renders in full".
-    setSetupExpanded(true);
-  }, []);
-
-  // Unmounting (e.g. switching main tabs) must not leave the screen-share or
-  // mic running — stop whatever session is active on the way out.
-  useEffect(() => {
-    return () => {
-      if (sessionRef.current) {
-        sessionRef.current.stop();
-        sessionRef.current = null;
-      }
-    };
-  }, []);
+  // BUG-2: a correction made from the always-visible "Who's talking" bar
+  // (rendered below) must announce itself through a polite live region,
+  // exactly as TranscriptView.handleAssign already does for corrections
+  // made through the transcript — retroactively rewriting every label in
+  // the transcript is a change of meaning, and a user who cannot see it
+  // happen still needs to be told. This is a SEPARATE region from
+  // TranscriptView's own, not a second announcement of the same event:
+  // TranscriptView owns that region's state internally (it isn't reachable
+  // from here) and, more importantly, TranscriptView sits inside the
+  // `showHistory` Collapse — closed by default while a session is live —
+  // which is exactly the surface BUG-2 says goes unreachable mid-session.
+  // Each region only fires for a correction activated through its OWN
+  // surface (bar vs. transcript row); a single click can only ever go
+  // through one of the two, so nothing is ever announced twice.
+  //
+  // BUG-3: `{ text, nonce }`, not a plain string. React bails out of
+  // re-rendering a mounted node when setState receives a value that is
+  // `Object.is`-equal to what's already there — a plain string repeats
+  // that equality check on CONTENT, so two corrections that land on the
+  // identical sentence (reachable in any two-voice session: the only chip
+  // that is ever clickable is the one NOT currently "You", so its label
+  // going into the sentence is always "Them" — mark it, identity flips,
+  // mark the other one back, and the sentence is byte-identical both
+  // times) produce no text change on the live region, hence no
+  // announcement at all (see lib/copilot/answerStatus.js's header doc for
+  // this exact discipline elsewhere in this app). A fresh object literal is
+  // never `Object.is`-equal to the previous one no matter what `text` says,
+  // which is what actually guarantees a text change; only `.text` is
+  // rendered into the region below, so the sentence read aloud is
+  // unaffected — `nonce` never appears in it, it exists purely to make each
+  // state value a distinct object.
+  const [barAnnouncement, setBarAnnouncement] = useState({ text: "", nonce: 0 });
+  const barAnnouncementNonceRef = useRef(0);
+  const onAssignFromBar = useCallback(
+    (tag, label) => {
+      // BUG-2: only announce a REAL application of the correction —
+      // onAssignUser (useLiveSession.js) now reports whether a live session
+      // existed to apply it to. After Stop it does not (sessionRef.current
+      // is null), and this chip would otherwise still be a clickable button
+      // (see identityProps below) that announces success for a click that
+      // changed nothing.
+      if (!onAssignUser(tag)) return;
+      barAnnouncementNonceRef.current += 1;
+      setBarAnnouncement({
+        text: `Marked ${label} as you. Earlier turns from this voice are now labeled You.`,
+        nonce: barAnnouncementNonceRef.current,
+      });
+    },
+    [onAssignUser],
+  );
+  // BUG-3: also cleared at the start of every new session — without this,
+  // the FIRST correction of session 2 could repeat session 1's last
+  // announcement text verbatim and, by the same identical-string bailout
+  // above, say nothing. Wrapped around `start` here (not inside
+  // useLiveSession's own `start`, which owns none of CopilotClient's UI-only
+  // state) because this Start button is the only caller of `start` in this
+  // component — simpler than threading a fourth setter into that hook the
+  // way setSetupExpanded/setShowHistory already are for state THAT hook
+  // owns.
+  const onStartSession = useCallback(() => {
+    setBarAnnouncement({ text: "", nonce: 0 });
+    start();
+  }, [start]);
 
   // MUI's exclusive ToggleButtonGroup reports `null` when the currently
   // selected button is clicked again — ignore that so the mode can never end
@@ -410,283 +471,62 @@ export default function CopilotClient() {
       if (val === "practice" && sessionRef.current) stop();
       setMode(val);
     },
-    [stop],
+    [stop, sessionRef],
   );
-
-  const buildContext = useCallback(
-    () =>
-      recentRef.current
-        .slice(-CONTEXT_TURNS)
-        .map((t) => `${t.speaker === "them" ? "Them" : "You"}: ${t.text}`)
-        .join("\n"),
-    [],
-  );
-
-  const runDraft = useCallback(
-    async (id, question, { force = false } = {}) => {
-      const norm = normalizeQuestion(question);
-      // Reuse a prior answer for the same (normalized) question — interviewers
-      // often circle back or rephrase — unless the user explicitly redrafts.
-      if (!force) {
-        const cached = answerCacheRef.current.get(norm);
-        if (cached) {
-          setQuestions((prev) =>
-            prev.map((it) =>
-              it.id === id
-                ? {
-                    ...it,
-                    status: "done",
-                    points: cached.points,
-                    // AC-K1: served from cache exactly as they were drafted.
-                    // A reused answer that silently dropped its cues and
-                    // subsections would look like a WORSE answer than the
-                    // same question drafted fresh, which is not what "reused"
-                    // is meant to signal. An entry cached before these
-                    // existed resolves to the empty shapes, and the card
-                    // falls back to the full points.
-                    cues: cached.cues || [],
-                    buzzwords: cached.buzzwords || [],
-                    anchor: cached.anchor || null,
-                    idealProject: cached.idealProject || null,
-                    type: it.type || cached.type,
-                    cached: true,
-                  }
-                : it,
-            ),
-          );
-          return;
-        }
-      }
-      setQuestions((prev) =>
-        prev.map((it) =>
-          it.id === id ? { ...it, status: "loading", error: "", cached: false } : it,
-        ),
-      );
-      try {
-        const { points, type, cues, buzzwords, resumeAnchor, idealProject } = await draftAnswer({
-          question,
-          context: buildContext(),
-          profile: profileRef.current,
-          // AC-H1.4/AC-H4: the selected posting's own id IS the application
-          // id (see normalizePostingRows in lib/copilot/postings.js) — the
-          // route uses it to fetch and ground in the submitted résumé/cover
-          // letter itself; this client never sends document text.
-          applicationId: postingRef.current?.id || null,
-        });
-        // AC-K1: same defensive normalization the practice hook applies — a
-        // missing or malformed field becomes the empty shape here, once, so
-        // neither the cache nor the render layer has to re-guard its type.
-        const aids = {
-          cues: Array.isArray(cues) ? cues : [],
-          buzzwords: Array.isArray(buzzwords) ? buzzwords : [],
-          anchor: resumeAnchor || null,
-          idealProject: idealProject || null,
-        };
-        answerCacheRef.current.set(norm, { points, type, ...aids });
-        setQuestions((prev) =>
-          prev.map((it) =>
-            it.id === id ? { ...it, status: "done", points, ...aids, type: it.type || type } : it,
-          ),
-        );
-      } catch (err) {
-        setQuestions((prev) =>
-          prev.map((it) =>
-            it.id === id
-              ? { ...it, status: "error", error: err?.message || "Failed to draft." }
-              : it,
-          ),
-        );
-      }
-    },
-    [buildContext],
-  );
-
-  const addQuestion = useCallback(
-    (question, type, auto) => {
-      const id = (qIdRef.current += 1);
-      setQuestions((prev) => [
-        ...prev,
-        {
-          id,
-          question,
-          at: Date.now(),
-          status: auto ? "loading" : "idle",
-          points: null,
-          // AC-K1: seeded empty alongside `points` so an entry is a complete
-          // shape from the moment it exists, whichever status it is in.
-          cues: [],
-          buzzwords: [],
-          anchor: null,
-          idealProject: null,
-          type: type || null,
-          error: "",
-        },
-      ]);
-      if (auto) runDraft(id, question);
-    },
-    [runDraft],
-  );
-
-  // Confirm a completed interviewer utterance is a question, then queue it.
-  const evaluateUtterance = useCallback(
-    async (utterance) => {
-      if (!utterance) return;
-      const quick = detectQuestion(utterance);
-      const words = utterance.split(/\s+/).filter(Boolean).length;
-      // Pre-filter: skip short fragments that aren't obviously questions.
-      if (!quick.isQuestion && words < MIN_WORDS_FOR_LLM) return;
-
-      let result;
-      try {
-        result = await confirmQuestion({ utterance, context: buildContext() });
-      } catch {
-        // LLM unavailable — fall back to the heuristic (only if it fired).
-        if (!quick.isQuestion) return;
-        result = { isQuestion: true, question: quick.question, type: "general" };
-      }
-      if (!result.isQuestion) return;
-
-      const question = (result.question || utterance).trim();
-      const norm = normalizeQuestion(question);
-      if (norm === lastQNormRef.current) return;
-      lastQNormRef.current = norm;
-      addQuestion(question, result.type, autoDraftRef.current);
-    },
-    [buildContext, addQuestion],
-  );
-
-  const appendFinal = useCallback((speaker, text) => {
-    recentRef.current = [...recentRef.current, { speaker, text }].slice(-CONTEXT_TURNS * 2);
-    setFinals((prev) => [
-      ...prev,
-      { id: (idRef.current += 1), speaker, text, at: Date.now() },
-    ]);
-  }, []);
-
-  const start = useCallback(async () => {
-    setError("");
-    setWarning("");
-    setFinals([]);
-    setInterims({ them: "", you: "" });
-    setQuestions([]);
-    setStartedAt(null);
-    recentRef.current = [];
-    pendingRef.current = [];
-    lastQNormRef.current = "";
-    answerCacheRef.current.clear();
-    resetForSession();
-    // Step 2/4: collapse both disclosures for THIS session, same as every
-    // other per-session reset above.
-    setSetupExpanded(false);
-    setShowHistory(false);
-    setStatus("connecting");
-    try {
-      const session = new CopilotSession({
-        withMic: true,
-        source,
-        micDeviceId,
-        onStatus: (s) => {
-          setStatus(s);
-          if (s === "live") setStartedAt((prev) => prev || Date.now());
-        },
-        onError: (err) => setWarning(err.message),
-        onTranscript: ({
-          speaker,
-          transcript,
-          isFinal,
-          speechFinal,
-          start: spanStart,
-          duration,
-          textAlreadyDelivered,
-        }) => {
-          if (!isFinal) {
-            setInterims((prev) => ({ ...prev, [speaker]: transcript }));
-            return;
-          }
-          setInterims((prev) => ({ ...prev, [speaker]: "" }));
-
-          // R-127: textAlreadyDelivered re-delivers the text of the final
-          // that already went into appendFinal/recordSpeechSample/pendingRef
-          // for this same span (see lib/copilot/stt/index.js's onTranscript
-          // contract) — skip the TEXT accumulation below, but `speechFinal`
-          // is still honoured unconditionally further down: it is this
-          // frame's own end-of-turn signal regardless of whether its text
-          // was new.
-          if (!textAlreadyDelivered) {
-            appendFinal(speaker, transcript);
-
-            // AC-I2.10/11: feed the pace sampler from the user's own FINAL
-            // frames only — never the interviewer's, and never with a
-            // wall-clock substitute for missing audio timing.
-            // appendSpeechSample (via recordSpeechSample) already drops
-            // frames whose start/duration aren't usable numbers, so this
-            // passes them through as-is rather than pre-filtering here.
-            if (speaker === "you") {
-              recordSpeechSample({ text: transcript, start: spanStart, duration });
-            }
-
-            // Assemble the interviewer's segments into one utterance —
-            // evaluated below once Deepgram/ElevenLabs signals the end of
-            // speech, regardless of whether THIS particular frame's text
-            // was itself a re-delivery.
-            if (speaker === "them") {
-              pendingRef.current.push(transcript);
-            }
-          }
-
-          if (speaker === "them" && speechFinal) {
-            const utterance = pendingRef.current
-              .join(" ")
-              .replace(/\s+/g, " ")
-              .trim();
-            pendingRef.current = [];
-            evaluateUtterance(utterance);
-          }
-        },
-      });
-      sessionRef.current = session;
-      await session.start();
-    } catch (err) {
-      setError(err?.message || "Could not start capture.");
-      setStatus("error");
-      await stop();
-    }
-  }, [stop, appendFinal, evaluateUtterance, source, micDeviceId, recordSpeechSample, resetForSession]);
-
-  const onDraft = useCallback(
-    (id) => {
-      const q = questionsRef.current.find((it) => it.id === id);
-      // "Redraft" (already answered) forces a fresh generation; the first draft
-      // may reuse a cached answer.
-      if (q) runDraft(id, q.question, { force: q.status === "done" });
-    },
-    [runDraft],
-  );
-
-  const clearAll = useCallback(() => {
-    setFinals([]);
-    setInterims({ them: "", you: "" });
-    setQuestions([]);
-    recentRef.current = [];
-    pendingRef.current = [];
-    lastQNormRef.current = "";
-  }, []);
-
-  const copyTranscript = useCallback(() => {
-    const text = finals
-      .map((l) => `${l.speaker === "them" ? "Them" : "You"}: ${l.text}`)
-      .join("\n");
-    if (text) navigator.clipboard?.writeText(text).catch(() => {});
-  }, [finals]);
-
-  const elapsed = startedAt ? now - startedAt : 0;
 
   // The tab option keeps today's wording verbatim; the system option needs
   // different share-dialog instructions plus a note on when to reach for it.
+  // AC-M1.5.3: "inperson" has no share dialog at all — mic-only capture via
+  // getUserMedia — so neither the tab nor the system wording may render for
+  // it; this branch says so instead of describing a picker that never
+  // appears for this source.
   const shareInstructions =
-    source === "system"
-      ? 'Share your Entire Screen (with "Share system audio" enabled) and allow your mic — use this when the interview is running in a desktop app (Zoom, Teams, etc.) rather than a browser tab.'
-      : 'Share the meeting tab (with "Share tab audio" enabled) and allow your mic.';
+    source === "inperson"
+      ? // Extra (adversarial review): a period, not an em dash — this
+        // codebase's screen-reader rule (see other copilot notices' own
+        // comments) is that an em dash is not spoken as a pause at default
+        // punctuation settings, so a sentence whose two independent clauses
+        // depend on that pause for meaning is a defect, not a style choice.
+        "Everyone speaks into your selected microphone. There is no tab or screen to share."
+      : source === "system"
+        ? 'Share your Entire Screen (with "Share system audio" enabled) and allow your mic — use this when the interview is running in a desktop app (Zoom, Teams, etc.) rather than a browser tab.'
+        : 'Share the meeting tab (with "Share tab audio" enabled) and allow your mic.';
+
+  // AC-M1.5.6: TranscriptView's optional identity props — passed only for
+  // the in-person source, which is the pinned compatibility gate
+  // (TranscriptView treats `onAssignUser`'s mere PRESENCE as "render the
+  // correction UI"; leaving it undefined for tab/system is what keeps that
+  // mode byte-identical to HEAD, per TranscriptView's own doc). Spread onto
+  // both TranscriptView render sites below (live-collapsed and !live).
+  //
+  // BUG-5: `identityUnsettled` (from useLiveSession) is true from mount —
+  // the default snapshot's confidence is "unknown" — and stays true for the
+  // rest of the page's idle life, before a session has ever run and again
+  // after one ends. Gating the whole bundle on `source` alone let
+  // TranscriptView's "Still working out who is who in this conversation"
+  // caption render over an idle transcript that had not heard a word yet
+  // ("Transcript will appear here once the session starts…" directly under
+  // a claim about a conversation that hasn't happened), and again once a
+  // session ends. `speakerLabelFor`/`onAssignUser` stay gated on `source`
+  // alone as before — BUG-2's fix already makes `onAssignUser` a safe no-op
+  // once no session exists, so leaving the correction control reachable
+  // post-session is harmless, just inert. Only the CLAIM of unsettled
+  // identity needs an extra gate: `live` (a session is running right now)
+  // or `speakerSnapshot.tags.length > 0` (at least one voice has actually
+  // been observed) — the latter is belt-and-braces given stop() (BUG-2)
+  // resets `speakerSnapshot` back to its tags-less default the instant a
+  // session ends, so `live` alone already covers every reachable case; kept
+  // explicit so this reads correctly on its own, the same discipline
+  // useLiveSession.js's own `identityUnsettled` comment already follows for
+  // its `!overridden` half.
+  const identityProps =
+    source === "inperson"
+      ? {
+          speakerLabelFor,
+          identityUnsettled: identityUnsettled && (live || speakerSnapshot.tags.length > 0),
+          onAssignUser,
+        }
+      : {};
 
   // AC-H6.24/AC-H6.25 (BUG-H5): derived from CURRENT state, not hard-coded,
   // so it can never name a destination that isn't actually receiving data
@@ -826,9 +666,14 @@ export default function CopilotClient() {
                 flex children, not folded into the measured height — the
                 ResizeObserver above re-measures if they change the top. */}
             <Typography variant="body2" sx={{ color: "var(--text-secondary)", mb: 2 }}>
-              {shareInstructions} Both sides of the call are transcribed live; the
-              interviewer&apos;s questions are detected on the right and answered
-              automatically. Chrome or Edge only.
+              {shareInstructions} Both sides of the conversation are transcribed
+              live; the interviewer&apos;s questions are detected on the right and
+              answered automatically.
+              {/* AC-M1.5.3: mic-only capture is getUserMedia, which every
+                  modern browser supports — the tab/system Chrome-or-Edge
+                  caveat (screen/tab capture) does not apply and must not
+                  render for "inperson". */}
+              {source === "inperson" ? "" : " Chrome or Edge only."}
             </Typography>
 
             <SessionSetup
@@ -875,7 +720,10 @@ export default function CopilotClient() {
                   Stop
                 </Button>
               ) : (
-                <Button variant="contained" onClick={start}>
+                // BUG-3: onStartSession, not the bare `start` — see its own
+                // comment for why the bar's announcement must not survive
+                // into a new session.
+                <Button variant="contained" onClick={onStartSession}>
                   Start session
                 </Button>
               )}
@@ -921,6 +769,65 @@ export default function CopilotClient() {
                 Clear
               </Button>
             </Stack>
+
+            {/* AC-M1.5.9: the speaker-correction control has to be reachable
+                WITHOUT expanding the transcript disclosure below — live mode
+                collapses `showHistory` by default, and TranscriptView (the
+                only other place this control lives) sits entirely inside
+                that Collapse. This bar is a sibling of it, in the
+                always-rendered part of the tree, so a correction is
+                reachable the moment a second voice is heard even while the
+                full transcript stays collapsed. Renders nothing until at
+                least one voice has actually been observed
+                (`speakerSnapshot.tags`), and nothing at all for tab/system,
+                which never populate it. Reuses SpeakerChip — the exact same
+                control TranscriptView's own rows use — so "mark as me" means
+                the same thing and looks the same whichever surface it's
+                pressed from. */}
+            {source === "inperson" && speakerSnapshot.tags.length > 0 ? (
+              <Stack
+                direction="row"
+                spacing={1}
+                sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 0.75 }}
+              >
+                <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
+                  {identityUnsettled ? "Who's talking (still working out who is who):" : "Who's talking:"}
+                </Typography>
+                {speakerSnapshot.tags.map((tag) => {
+                  const label = speakerLabelFor(tag);
+                  const isYou = tag === speakerSnapshot.userTag;
+                  return (
+                    <SpeakerChip
+                      key={tag}
+                      label={label}
+                      resolved
+                      isYou={isYou}
+                      // BUG-1: the chip already resolved as the user is not
+                      // a control — there is no "mark yourself as yourself"
+                      // action. `onActivate: null` is what makes SpeakerChip
+                      // render the same non-interactive <Chip> the
+                      // tab/system path renders, instead of a self-
+                      // contradictory button. Only the OTHER voice's chip
+                      // corrects a wrong guess.
+                      onActivate={isYou ? null : () => onAssignFromBar(tag, label)}
+                    />
+                  );
+                })}
+                {/* BUG-2: mounted unconditionally alongside the bar itself —
+                    not only once a correction has actually happened — since
+                    a region that mounts already carrying its final text is
+                    not reliably announced; only a TEXT CHANGE on an
+                    already-mounted node is. Same discipline
+                    TranscriptView.js's own region and
+                    lib/copilot/answerStatus.js document.
+                    BUG-3: only `.text` is rendered — `.nonce` is state-only,
+                    never part of the announced sentence (see barAnnouncement's
+                    own derivation above). */}
+                <Box component="span" role="status" aria-live="polite" sx={visuallyHidden}>
+                  {barAnnouncement.text}
+                </Box>
+              </Stack>
+            ) : null}
 
             {/* AC-I5: the five-panel dashboard — current question/answer,
                 predicted next question/answer, and talking pace. Presentational
@@ -978,7 +885,12 @@ export default function CopilotClient() {
                   spacing={2}
                   sx={{ alignItems: "stretch", mt: 2 }}
                 >
-                  <TranscriptView finals={finals} interims={interims} startedAt={startedAt} />
+                  <TranscriptView
+                    finals={finals}
+                    interims={interims}
+                    startedAt={startedAt}
+                    {...identityProps}
+                  />
                   <QuestionFeed questions={questions} onDraft={onDraft} />
                 </Stack>
               </Collapse>
@@ -989,7 +901,12 @@ export default function CopilotClient() {
               spacing={2}
               sx={{ alignItems: "stretch", mt: 2 }}
             >
-              <TranscriptView finals={finals} interims={interims} startedAt={startedAt} />
+              <TranscriptView
+                finals={finals}
+                interims={interims}
+                startedAt={startedAt}
+                {...identityProps}
+              />
               <QuestionFeed questions={questions} onDraft={onDraft} />
             </Stack>
           )}
