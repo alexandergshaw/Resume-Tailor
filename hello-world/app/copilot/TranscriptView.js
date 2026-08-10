@@ -52,6 +52,19 @@ export default function TranscriptView({
 }) {
   const scrollRef = useRef(null);
   const stickRef = useRef(true);
+  // Below `md`, PHONE_PANE_SX (mobileSx.js) removes this pane's own height
+  // cap and sets `overflowY: "visible"` so the PAGE is the single scroll
+  // container on a phone (see that export's own doc for why). The moment
+  // that happens, `scrollHeight === clientHeight` on this element: the
+  // `el.scrollTop = el.scrollHeight` write below becomes inert and
+  // `onScroll` never fires, so `stickRef` alone can no longer keep the
+  // newest line in view. `pageStickRef`/`lastRowRef` are the page-scroll
+  // equivalent of `stickRef`/`scrollRef` for that regime — do not delete
+  // them thinking `stickRef` already covers it; the two regimes are
+  // genuinely disjoint (only one of them ever does anything on a given
+  // render) and BOTH are required for auto-follow to work at every width.
+  const pageStickRef = useRef(true);
+  const lastRowRef = useRef(null);
   // Requirement 3: a polite live region announcing a correction. Local
   // state rather than diffing `finals` for a label change, because the
   // click that triggers the retroactive rewrite is the one unambiguous
@@ -76,9 +89,55 @@ export default function TranscriptView({
   const [announcement, setAnnouncement] = useState({ text: "", nonce: 0 });
   const announcementNonceRef = useRef(0);
 
+  // Tracks whether the PAGE (not this pane) is scrolled near its own
+  // bottom, mirroring `onScroll` below one-for-one but for the regime
+  // where this pane isn't a scroll container of its own. Attached
+  // unconditionally (cheap, and the regime can change under a resize
+  // that crosses `md`) but only ever consulted from the page-scroll
+  // branch of the effect below.
+  useEffect(() => {
+    const onPageScroll = () => {
+      const doc = document.documentElement;
+      pageStickRef.current = doc.scrollHeight - window.scrollY - window.innerHeight < 48;
+    };
+    window.addEventListener("scroll", onPageScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onPageScroll);
+  }, []);
+
   useEffect(() => {
     const el = scrollRef.current;
-    if (el && stickRef.current) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    // Ground truth for which regime is live RIGHT NOW, read off the
+    // element rather than re-guessing PHONE_PANE_SX's `md` breakpoint in
+    // JS (which could silently drift from the CSS). Computed `overflowY`
+    // is what PHONE_PANE_SX actually flips between the two regimes
+    // ("visible" below `md`, "auto" at/above it), so it can't go stale
+    // the way comparing `scrollHeight`/`clientHeight` alone would: early
+    // in a session the transcript is short enough that this pane hasn't
+    // overflowed its `minHeight: 340` even at >= md, so that comparison
+    // alone can't tell "not scrolled yet" apart from "not a scroller at
+    // all" and would wrongly take the page-scroll branch on desktop.
+    const isOwnScroller = getComputedStyle(el).overflowY !== "visible";
+    if (isOwnScroller) {
+      // >= md: PHONE_PANE_SX's "auto" branch is live, so this pane is its
+      // own scroll container again. Unchanged from before this fix,
+      // unconditionally — same write, same `stickRef` guard.
+      if (stickRef.current) el.scrollTop = el.scrollHeight;
+    } else if (pageStickRef.current) {
+      // < md: this pane is no longer a scroll container (PHONE_PANE_SX
+      // set `overflowY: visible`, no height cap), so keeping the newest
+      // line in view means moving the PAGE, via the last row's own ref.
+      // `block: "nearest"` (never `"center"`/`"end"`) is required: it is
+      // a no-op once the row is already fully visible, so a transcript
+      // that is updating far faster than the user can read never yanks
+      // the page on every turn — only when the newest row has actually
+      // scrolled out of view does it move at all. `pageStickRef` (not
+      // `stickRef`, which tracks THIS element and is meaningless once it
+      // stops being a scroll container) gates it the same way `stickRef`
+      // gates the branch above: a user who has scrolled the page up to
+      // re-read something is not dragged back down by new lines arriving.
+      lastRowRef.current?.scrollIntoView({ block: "nearest" });
+    }
   }, [finals, interims]);
 
   const onScroll = () => {
@@ -220,13 +279,17 @@ export default function TranscriptView({
         </Typography>
       ) : (
         <Stack spacing={0.25}>
-          {rows.map((row) => (
+          {rows.map((row, i) => (
             <TranscriptRow
               key={row.id}
               row={row}
               startedAt={startedAt}
               speakerLabelFor={speakerLabelFor}
               onAssign={correctable ? handleAssign : null}
+              // Only the newest row needs to be findable for the
+              // page-scroll regime's scrollIntoView — see the effect
+              // above.
+              rowRef={i === rows.length - 1 ? lastRowRef : undefined}
             />
           ))}
         </Stack>
@@ -235,7 +298,7 @@ export default function TranscriptView({
   );
 }
 
-function TranscriptRow({ row, startedAt, speakerLabelFor, onAssign }) {
+function TranscriptRow({ row, startedAt, speakerLabelFor, onAssign, rowRef }) {
   // The pinned compatibility gate (requirement 1): `onAssign` is null
   // whenever `onAssignUser` was not supplied to TranscriptView, and this
   // whole branch reproduces HEAD's rendering byte-for-byte — same
@@ -244,7 +307,7 @@ function TranscriptRow({ row, startedAt, speakerLabelFor, onAssign }) {
   if (!onAssign) {
     const isThem = row.speaker === "them";
     return (
-      <Box sx={{ pt: row.groupStart ? 1 : 0 }}>
+      <Box ref={rowRef} sx={{ pt: row.groupStart ? 1 : 0 }}>
         {row.groupStart ? (
           <Stack
             direction="row"
@@ -309,7 +372,7 @@ function TranscriptRow({ row, startedAt, speakerLabelFor, onAssign }) {
   const canAssign = hasTag && !isYou;
 
   return (
-    <Box sx={{ pt: row.groupStart ? 1 : 0 }}>
+    <Box ref={rowRef} sx={{ pt: row.groupStart ? 1 : 0 }}>
       {row.groupStart ? (
         <Stack
           direction="row"

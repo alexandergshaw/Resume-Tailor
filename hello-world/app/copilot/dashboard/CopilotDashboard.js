@@ -6,14 +6,16 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
+import FormControlLabel from "@mui/material/FormControlLabel";
 import Stack from "@mui/material/Stack";
+import Switch from "@mui/material/Switch";
 import Typography from "@mui/material/Typography";
 
 import { answerLines } from "@/lib/copilot/answerPoints";
 import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus";
 import AnswerAids from "../AnswerAids";
 import AnswerLines from "../AnswerLines";
-import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "../mobileSx";
+import { BREAK_LONG_WORDS_SX, TOUCH_SWITCH_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "../mobileSx";
 
 // AC-I5/AC-J2: the copilot's dashboard — current question, its answer, the
 // predicted next question, that question's pre-drafted answer, and a
@@ -146,6 +148,10 @@ export const LIVE_COPY = {
   // Covers both readings in the strip below (speed and filler rate), not
   // speed alone any more — see DeliveryPanel.
   deliveryTitle: "Your delivery",
+  // Label for the header-row switch that hides/shows the two prediction
+  // panels (PredictedQuestionPanel/PredictedAnswerPanel) — see
+  // `showPredictions`/`onToggleShowPredictions` on the default export below.
+  togglePredictions: "Show predicted question and answer",
 };
 
 // AC-J2.2: practice mode's wording. Deliberately the SAME sentences
@@ -823,9 +829,18 @@ export default function CopilotDashboard({
   answerHidden = false,
   onRevealAnswer,
   revealLabel = "Show sample answer",
+  // Defaults to true so every existing call site (which passes neither of
+  // these) renders exactly as before. When `onToggleShowPredictions` is not
+  // a function, no toggle control is rendered at all — see the header row
+  // below — but `showPredictions` still governs what renders either way, so
+  // a caller could in principle pass `showPredictions={false}` with no
+  // callback to permanently hide the panels without offering a control.
+  showPredictions = true,
+  onToggleShowPredictions,
 }) {
   const current = latestQuestionEntry(questions);
   const text = { ...LIVE_COPY, ...(copy || {}) };
+  const canTogglePredictions = typeof onToggleShowPredictions === "function";
 
   return (
     <Box
@@ -839,10 +854,40 @@ export default function CopilotDashboard({
     >
       {/* F10: the dashboard's own section title, one level under the tab's
           h2 (TabHeader.js) — see RealPanel/PredictionPanel/DeliveryPanel
-          above for the panel titles nested another level under this one. */}
-      <Typography variant="subtitle2" component="h3" sx={{ mb: 1.5, color: "var(--text-secondary)", fontWeight: 700 }}>
-        {text.title}
-      </Typography>
+          above for the panel titles nested another level under this one.
+          The toggle switch shares this row rather than getting a row of its
+          own — same "beside the heading" placement as the Auto-draft switch
+          in CopilotClient.js's header row. WRAP_ROW_SX lets the switch drop
+          to its own line on a narrow screen instead of overflowing —
+          required to keep this tab's zero-horizontal-overflow measurement
+          at 320px intact. */}
+      <Stack
+        direction="row"
+        spacing={1}
+        sx={{ mb: 1.5, alignItems: "center", justifyContent: "space-between", ...WRAP_ROW_SX }}
+      >
+        <Typography variant="subtitle2" component="h3" sx={{ color: "var(--text-secondary)", fontWeight: 700 }}>
+          {text.title}
+        </Typography>
+        {canTogglePredictions ? (
+          <FormControlLabel
+            sx={{ ml: 0, mr: 0 }}
+            control={
+              <Switch
+                size="small"
+                checked={showPredictions}
+                onChange={(e) => onToggleShowPredictions(e.target.checked)}
+                sx={TOUCH_SWITCH_SX}
+              />
+            }
+            label={
+              <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
+                {text.togglePredictions}
+              </Typography>
+            }
+          />
+        ) : null}
+      </Stack>
 
       <Box
         sx={{
@@ -859,13 +904,15 @@ export default function CopilotDashboard({
         }}
       >
         <CurrentQuestionPanel current={current} copy={text} />
-        <PredictedQuestionPanel
-          status={predictionStatus}
-          question={predictedQuestion}
-          error={predictionError}
-          onRetry={onRetryPrediction}
-          copy={text}
-        />
+        {showPredictions ? (
+          <PredictedQuestionPanel
+            status={predictionStatus}
+            question={predictedQuestion}
+            error={predictionError}
+            onRetry={onRetryPrediction}
+            copy={text}
+          />
+        ) : null}
         <CurrentAnswerPanel
           current={current}
           copy={text}
@@ -873,16 +920,18 @@ export default function CopilotDashboard({
           onReveal={onRevealAnswer}
           revealLabel={revealLabel}
         />
-        <PredictedAnswerPanel
-          predictionStatus={predictionStatus}
-          predictedQuestion={predictedQuestion}
-          status={predictedAnswerStatus}
-          points={predictedPoints}
-          cues={predictedCues}
-          error={predictedAnswerError}
-          onRetry={onRetryPredraft}
-          copy={text}
-        />
+        {showPredictions ? (
+          <PredictedAnswerPanel
+            predictionStatus={predictionStatus}
+            predictedQuestion={predictedQuestion}
+            status={predictedAnswerStatus}
+            points={predictedPoints}
+            cues={predictedCues}
+            error={predictedAnswerError}
+            onRetry={onRetryPredraft}
+            copy={text}
+          />
+        ) : null}
       </Box>
 
       <Box sx={{ mt: 1.5 }}>

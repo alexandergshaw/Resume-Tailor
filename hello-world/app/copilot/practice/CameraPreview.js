@@ -43,16 +43,35 @@ export default function CameraPreview({ stream, hasVideo, cameraOff, compact = f
   // display:block parent did. `maxHeight` still caps it so it can't grow
   // past the visible viewport. `compact` (defect 2) uses a shorter cap so
   // the self-view above QuestionCard can't itself push the question off
-  // screen; `display: "flex"` centers the no-video text below exactly like
-  // the no-video branch already did, and now applies to the video branch's
-  // sizing too.
+  // screen; below `md`, `display: "flex"` centers the no-video text below
+  // exactly like the no-video branch already did, and also applies to the
+  // video branch's sizing.
+  //
+  // Bug fix (audit round): the mobile-vh values above are `vh`, which on
+  // iOS Safari is the LARGE-viewport height (URL bar collapsed) — a panel
+  // capped to it is taller than the visible area whenever the bar is
+  // expanded, the exact overflow this pass was meant to fix elsewhere. Each
+  // now carries a `dvh` companion as a plain CSS fallback pair: nesting the
+  // two-element array under the (always-matching) `xs` breakpoint key
+  // — rather than passing the array directly as `maxHeight`'s value — makes
+  // MUI emit both as stacked declarations for that one breakpoint
+  // (`max-height:45vh;max-height:45dvh;`, the later one winning wherever
+  // `dvh` is supported and silently dropped where it isn't) instead of
+  // treating the array as one responsive value per breakpoint the way a
+  // top-level array is read elsewhere in this sx system — verified against
+  // this repo's actual @mui/system + @emotion/serialize output, not assumed.
+  // `display: "flex"` is now scoped to below `md`: unscoped, it turned the
+  // <video> below from an in-flow block child into a flex item at every
+  // width, including desktop, which was never the intent — `{ xs: "flex",
+  // md: "block" }` restores plain block layout at `md` and up, exactly how
+  // this panel rendered before this pass touched it.
   const panelSx = {
     flex: 1,
     minWidth: 0,
     minHeight: compact ? 0 : { xs: 0, md: 340 },
     aspectRatio: compact ? "3 / 4" : { xs: "3 / 4", md: "auto" },
-    maxHeight: compact ? "26vh" : { xs: "45vh", md: "62vh" },
-    display: "flex",
+    maxHeight: compact ? { xs: ["26vh", "26dvh"] } : { xs: ["45vh", "45dvh"], md: "62vh" },
+    display: { xs: "flex", md: "block" },
     borderRadius: 2,
     border: "1px solid var(--border)",
     background: "var(--bg-surface)",

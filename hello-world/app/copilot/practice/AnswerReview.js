@@ -316,6 +316,15 @@ export default function AnswerReview({
         // Intentionally NOT mirrored, unlike the live self-view in
         // CameraPreview — a mirrored replay would misrepresent which way
         // the candidate actually looked during the answer.
+        // Bug fix (audit round): `vh` is the large-viewport height on iOS
+        // Safari (URL bar collapsed), so a plain `50vh` cap is taller than
+        // the visible area whenever the bar is expanded. `dvh` tracks the
+        // actual visible viewport; nested under `xs` as a two-element array
+        // it emits both `max-height:50vh;` then `max-height:50dvh;` for that
+        // breakpoint (verified against this repo's @mui/system +
+        // @emotion/serialize output), so the `dvh` value wins wherever it's
+        // supported and the plain `vh` value is the fallback everywhere else
+        // — no JS measurement needed for a static value like this one.
         <Box
           component="video"
           controls
@@ -323,7 +332,7 @@ export default function AnswerReview({
           sx={{
             display: "block",
             width: "100%",
-            maxHeight: { xs: "50vh", md: 320 },
+            maxHeight: { xs: ["50vh", "50dvh"], md: 320 },
             borderRadius: "8px",
             mb: 2,
           }}

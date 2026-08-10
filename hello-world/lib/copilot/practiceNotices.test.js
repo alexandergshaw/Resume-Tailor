@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { buildPrivacyNotice } from "./practiceNotices";
+import { preDraftDisclosureApplies } from "./predictionPrefs";
 
 // AC-J3: this extraction must be BYTE-IDENTICAL to the inline derivation
 // that used to live in PracticeClient.js. `oracle` below is an independent
@@ -348,5 +349,75 @@ describe("buildPrivacyNotice", () => {
         'While "Pre-draft predicted answer" is on, a predicted question and your prep context are sent to Gemini automatically, before you reveal anything. ' +
         "Your answer video is uploaded to your own Supabase storage, private to your account, and listed in your practice history until you delete it.",
     );
+  });
+});
+
+// Predictions can now be hidden (lib/copilot/predictionPrefs.js). Once they
+// are, the pre-draft switch can no longer fire the automatic send
+// preDraftClauseFor discloses — the caller is expected to route
+// `preDraftEnabled` through `preDraftDisclosureApplies(preDraftSwitchOn,
+// showPredictions)` (see PracticeClient.js) rather than passing the raw
+// switch value straight through, so this notice never keeps claiming a
+// transfer that hiding predictions has already prevented.
+describe("buildPrivacyNotice with preDraftEnabled gated by preDraftDisclosureApplies", () => {
+  const baseArgs = {
+    sttProviderName: "Deepgram",
+    isEmbedded: false,
+    framesWillUpload: false,
+    hasPosting: false,
+    docsSettled: false,
+    hasSubmittedResume: false,
+    hasSubmittedCoverLetter: false,
+    saveEnabled: true,
+  };
+
+  test("predictions hidden: the pre-draft switch being on is not enough — the sentence is absent entirely", () => {
+    const notice = buildPrivacyNotice({
+      ...baseArgs,
+      preDraftEnabled: preDraftDisclosureApplies(/* preDraftSwitchOn */ true, /* showPredictions */ false),
+    });
+    expect(notice).not.toContain('"Pre-draft predicted answer" is on');
+    expect(notice).not.toContain("automatically, before you reveal anything");
+  });
+
+  test("predictions visible: the pre-draft switch being on IS enough — the sentence is present", () => {
+    const notice = buildPrivacyNotice({
+      ...baseArgs,
+      preDraftEnabled: preDraftDisclosureApplies(/* preDraftSwitchOn */ true, /* showPredictions */ true),
+    });
+    expect(notice).toContain('"Pre-draft predicted answer" is on');
+    expect(notice).toContain("automatically, before you reveal anything");
+  });
+
+  // The load-bearing proof: hiding predictions must genuinely restore the
+  // narrower, pre-feature notice — not just reword the pre-draft clause into
+  // something that merely sounds less alarming. Byte-identical to the
+  // `preDraftEnabled: false` path (the same path the frozen-oracle sweep
+  // above pins against the pre-extraction original) is the only way to know
+  // no residue of the clause survives.
+  test("predictions hidden produces a notice byte-identical to preDraftEnabled: false, across every other flag combination", () => {
+    const STT_NAMES = [null, "Deepgram"];
+    const FLAG_COMBOS = [
+      { isEmbedded: false, framesWillUpload: false, hasPosting: false, docsSettled: false, hasSubmittedResume: false, hasSubmittedCoverLetter: false, saveEnabled: true },
+      { isEmbedded: false, framesWillUpload: true, hasPosting: true, docsSettled: false, hasSubmittedResume: false, hasSubmittedCoverLetter: false, saveEnabled: false },
+      { isEmbedded: false, framesWillUpload: false, hasPosting: true, docsSettled: true, hasSubmittedResume: true, hasSubmittedCoverLetter: false, saveEnabled: true },
+      { isEmbedded: false, framesWillUpload: false, hasPosting: true, docsSettled: true, hasSubmittedResume: true, hasSubmittedCoverLetter: true, saveEnabled: false },
+      { isEmbedded: true, framesWillUpload: false, hasPosting: true, docsSettled: true, hasSubmittedResume: false, hasSubmittedCoverLetter: false, saveEnabled: true },
+    ];
+    for (const sttProviderName of STT_NAMES) {
+      for (const flags of FLAG_COMBOS) {
+        const withGatedHelper = buildPrivacyNotice({
+          ...flags,
+          sttProviderName,
+          preDraftEnabled: preDraftDisclosureApplies(true, false),
+        });
+        const withExplicitFalse = buildPrivacyNotice({
+          ...flags,
+          sttProviderName,
+          preDraftEnabled: false,
+        });
+        expect(withGatedHelper).toBe(withExplicitFalse);
+      }
+    }
   });
 });

@@ -34,6 +34,13 @@ import { TOUCH_TARGET_SX, TOUCH_ICON_SX, BREAK_LONG_WORDS_SX } from "./mobileSx"
 // `onToggleExpanded`, the same contract as every other value here.
 const SETUP_REGION_ID = "copilot-session-setup-region";
 
+// Defect fix (adversarial review, AC-P7): stable id for the "why is this
+// disabled" sentence rendered below (see its render site further down), so
+// the two capability-gated ToggleButtons can each carry an
+// `aria-describedby` pointing at it. Same module-level-constant convention
+// as SETUP_REGION_ID directly above.
+const SOURCE_UNAVAILABLE_REASON_ID = "copilot-source-unavailable-reason";
+
 export default function SessionSetup({
   live,
   expanded,
@@ -42,7 +49,16 @@ export default function SessionSetup({
   micLabel,
   source,
   onSourceChange,
-  sourceAvailability,
+  // Defect fix (adversarial review): this file has exactly one caller today
+  // (CopilotClient), which always passes the full `{ tab, system }` shape —
+  // but nothing enforced that, and reading `.tab`/`.system` straight off an
+  // undefined prop would crash the instant a second caller rendered this
+  // component without a capability gate of its own. Defaulted right in the
+  // destructure, the same plain-default convention optional props already
+  // use elsewhere in this component tree (e.g. useCopilotDashboard.js's
+  // `active = false`), to the value that reproduces today's behaviour
+  // exactly: every source available, so the capability gate never trips.
+  sourceAvailability = { tab: true, system: true },
   sourceUnavailableReason,
   micDeviceId,
   onMicDeviceChange,
@@ -205,22 +221,58 @@ export default function SessionSetup({
                 },
               })}
             >
-              {/* AC-P7: disabled whenever this device can't run display
-                  capture at all (`getDisplayMedia` absent — see
-                  captureSupport.js), on top of the existing `disabled={live}`
-                  — individual ToggleButton `disabled` takes priority over the
-                  group's own, so this ORs the two conditions rather than
-                  losing the live-session gate. */}
+              {/* AC-P7, revised for the adversarial-review defect fix: this
+                  used to be one `disabled={live || !sourceAvailability.tab}`
+                  — a single native `disabled`, which SpeakerChip.js already
+                  documents the problem with (a `disabled` button drops out
+                  of the tab order and stops being focusable in most
+                  browsers). That cost a screen-reader user both the control
+                  AND the `sourceUnavailableReason` sentence explaining why
+                  it's missing, since browse-mode is the only way to reach
+                  text with nothing pointing at it.
+
+                  The two conditions are deliberately NOT folded back into
+                  one boolean. `live` keeps the real, native `disabled`:
+                  mid-session the source genuinely cannot change (rebuilding
+                  the capture pipeline is out of scope), and
+                  `sourceUnavailableReason` never describes "a session is
+                  running" — it only ever describes a capability gap — so
+                  there is nothing to announce for that case. The capability
+                  gate (`!sourceAvailability.tab`/`.system`) is the one that
+                  DOES have something to announce, so it uses `aria-disabled`
+                  plus the same inert-click-handler pattern SpeakerChip.js
+                  established, wired to `aria-describedby` — pointing at
+                  SOURCE_UNAVAILABLE_REASON_ID only while that reason is
+                  actually rendered below, never a dangling reference to an
+                  absent element. Either way, activating a capability-gated
+                  button must not change `source`: `handleInertSourceSelect`
+                  calls `event.preventDefault()`, which stops ToggleButton
+                  from ever forwarding the click to the group's own
+                  `onChange` (see ToggleButton's `handleChange`). */}
               <ToggleButton
                 value="tab"
-                disabled={live || !sourceAvailability.tab}
+                disabled={live}
+                aria-disabled={!live && !sourceAvailability.tab ? true : undefined}
+                aria-describedby={
+                  !live && !sourceAvailability.tab && sourceUnavailableReason
+                    ? SOURCE_UNAVAILABLE_REASON_ID
+                    : undefined
+                }
+                onClick={!live && !sourceAvailability.tab ? handleInertSourceSelect : undefined}
                 sx={{ textTransform: "none", px: 1.5, ...TOUCH_TARGET_SX }}
               >
                 Browser tab
               </ToggleButton>
               <ToggleButton
                 value="system"
-                disabled={live || !sourceAvailability.system}
+                disabled={live}
+                aria-disabled={!live && !sourceAvailability.system ? true : undefined}
+                aria-describedby={
+                  !live && !sourceAvailability.system && sourceUnavailableReason
+                    ? SOURCE_UNAVAILABLE_REASON_ID
+                    : undefined
+                }
+                onClick={!live && !sourceAvailability.system ? handleInertSourceSelect : undefined}
                 sx={{ textTransform: "none", px: 1.5, ...TOUCH_TARGET_SX }}
               >
                 System audio (speakers)
@@ -247,9 +299,14 @@ export default function SessionSetup({
           {/* AC-P7: real DOM text, not a title= or Tooltip — there is no
               hover on a touch device, which is exactly the device class this
               reason exists for. Only rendered when non-empty (usable device,
-              or the in-person fallback already covers this session). */}
+              or the in-person fallback already covers this session).
+              Defect fix: carries SOURCE_UNAVAILABLE_REASON_ID now, so the
+              two capability-gated ToggleButtons above can reference it via
+              `aria-describedby` — only while this branch is the one
+              actually rendering, so that reference is never dangling. */}
           {sourceUnavailableReason ? (
             <Typography
+              id={SOURCE_UNAVAILABLE_REASON_ID}
               variant="body2"
               sx={{ color: "var(--text-secondary)", mb: 2, ...BREAK_LONG_WORDS_SX }}
             >
@@ -351,4 +408,16 @@ export default function SessionSetup({
       </Collapse>
     </>
   );
+}
+
+// Defect fix (adversarial review): an explicit no-op, same reasoning as
+// SpeakerChip.js's own handleInertClick — a capability-disabled
+// ToggleButton stays a real, focusable, clickable element (so its
+// aria-disabled state and aria-describedby reason reach a screen reader),
+// but the click itself must never select that source. Calling
+// `preventDefault()` here is what stops ToggleButton's `handleChange` from
+// forwarding the event on to the ToggleButtonGroup's `onChange` — see the
+// comment at the two call sites above.
+function handleInertSourceSelect(event) {
+  event.preventDefault();
 }

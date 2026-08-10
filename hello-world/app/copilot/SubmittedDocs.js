@@ -52,8 +52,18 @@ function DocumentSection({ title, text, notFoundText }) {
       {text ? (
         <Box
           sx={{
-            maxHeight: { xs: "none", sm: SCROLL_MAX_HEIGHT },
-            overflowY: { xs: "visible", sm: "auto" },
+            // Re-keyed from `sm` to `md` (adversarial review, defect 2) so
+            // this panel's "no nested scroller below the breakpoint" rule
+            // lines up with TranscriptView/QuestionFeed's PHONE_PANE_SX,
+            // which uses `md`. Between 600-899px this used to still be a
+            // bounded, two-axis nested scroller while its siblings weren't
+            // — two definitions of one rule drifting apart, exactly what
+            // mobileSx.js exists to prevent. Deliberately NOT spread from
+            // PHONE_PANE_SX itself: its `minHeight: 340`/`maxHeight: 62vh`
+            // are wrong here, this panel keeps its own, smaller
+            // `SCROLL_MAX_HEIGHT` (260px) cap — only the breakpoint moved.
+            maxHeight: { xs: "none", md: SCROLL_MAX_HEIGHT },
+            overflowY: { xs: "visible", md: "auto" },
             p: 1.5,
             borderRadius: 1.5,
             border: "1px solid var(--border)",

@@ -1,6 +1,34 @@
 // Shared responsive `sx` fragments for the copilot UI, defined once so the
 // mobile rules can't drift between the components that need them. Plain
 // data module -- no "use client" needed, it exports only objects.
+//
+// Most of these constants are phone-only: TOUCH_TARGET_SX, TOUCH_SWITCH_SX,
+// TOUCH_PILL_SX, TOUCH_FIELD_SX, and TOUCH_ICON_SX all key their touch-target
+// enlargement to `xs`, and their `sm` (or higher) branch is the property's
+// actual CSS initial value -- never a plausible-looking `0` -- so rendering
+// at `sm` and up is unchanged. That has already broken once in this
+// codebase (`SpeakerChip`'s `minWidth: { xs: 44, sm: 0 }` removed a flex
+// item's shrink floor); treat any `sm`/`md` branch that isn't the real
+// initial value as a bug.
+//
+// Three constants are NOT phone-scoped, deliberately:
+//   - WRAP_ROW_SX (`flexWrap: "wrap", rowGap: 1`) applies at every width --
+//     rows should wrap wherever they don't fit, not just on phones.
+//   - BREAK_LONG_WORDS_SX (`overflowWrap: "anywhere"`) applies at every
+//     width for the same reason: a single unbroken token can overflow a
+//     narrow container at any breakpoint, not just on phones. This one is
+//     not inert on desktop even when nothing actually overflows: unlike
+//     `break-word`, `anywhere` also feeds into intrinsic min-content sizing,
+//     so it can shrink a box's computed minimum width at any breakpoint.
+//   - TOUCH_PILL_SX's `position: relative` and its `::after`'s `left: 0` /
+//     `right: 0` apply at every width -- they establish the positioning
+//     context and horizontal bounds the pseudo-element always needs; only
+//     its `top`/`bottom` offsets are phone-scoped.
+//
+// PHONE_PANE_SX is the one exception keyed to `md` instead of `sm`: it
+// deliberately extends its phone behaviour through the 600-899px tablet
+// band too (see its own comment for why), so it changes rendering in that
+// band on purpose.
 
 // CSS px, the iOS Human Interface Guidelines minimum tap target size.
 export const MOBILE_TAP_MIN = 44;
@@ -28,10 +56,10 @@ export const TOUCH_SWITCH_SX = {
   "& .MuiSwitch-switchBase::after": {
     content: '""',
     position: "absolute",
-    top: { xs: -10, sm: 0 },
-    bottom: { xs: -10, sm: 0 },
-    left: { xs: -10, sm: 0 },
-    right: { xs: -10, sm: 0 },
+    top: { xs: -10, sm: "auto" },
+    bottom: { xs: -10, sm: "auto" },
+    left: { xs: -10, sm: "auto" },
+    right: { xs: -10, sm: "auto" },
   },
 };
 
@@ -39,9 +67,23 @@ export const TOUCH_SWITCH_SX = {
 // unchanged while extending its hit area to roughly MOBILE_TAP_MIN on
 // phones. Requires the element itself to be `position: relative`, which is
 // why that key is included here -- the `::after` is positioned relative to
-// it. The pseudo-element is transparent (no content, no background) and
-// only exists to enlarge the hit area, so it must never intercept anything
-// else on the page.
+// it.
+//
+// Be precise about what this does, because an earlier version of this
+// comment claimed the pseudo-element "must never intercept anything else on
+// the page" and that is not something it can promise. The overlay is
+// transparent and paints nothing, but it DOES take pointer events -- that is
+// the entire mechanism, and `pointer-events: none` would defeat it. It
+// extends 12px above and below the pill (bounded horizontally to the pill's
+// own box, so side-by-side chips never collide), which means it can sit over
+// whatever is directly above or below.
+//
+// The invariant a caller owes: **do not use this where another interactive
+// control sits within 12px vertically.** Both current call sites satisfy it
+// -- SpeakerChip's rows in TranscriptView have only non-interactive text
+// above and below, and CopilotClient's who's-talking bar lays its chips out
+// horizontally. Put an interactive element under one of these and the pill
+// will quietly swallow taps meant for it.
 export const TOUCH_PILL_SX = {
   position: "relative",
   "&::after": {
@@ -49,8 +91,8 @@ export const TOUCH_PILL_SX = {
     position: "absolute",
     left: 0,
     right: 0,
-    top: { xs: -12, sm: 0 },
-    bottom: { xs: -12, sm: 0 },
+    top: { xs: -12, sm: "auto" },
+    bottom: { xs: -12, sm: "auto" },
   },
 };
 
@@ -100,8 +142,19 @@ export const BREAK_LONG_WORDS_SX = { overflowWrap: "anywhere" };
 // Removing the height cap and letting the pane grow with its content makes
 // the page the single scroller on phones; at `md` and up the original
 // bounded, internally-scrolling pane behaviour is unchanged.
+//
+// `minHeight: { xs: "auto", ... }` -- not `0` -- for the same real-initial-
+// value reason as everywhere else in this module. On phones this pane is a
+// flex item in a column Stack, where `min-height: auto` is the automatic
+// content-based floor (it stops a flex item from shrinking below its
+// content). Pairing `xs: 0` with the uncapped `maxHeight` and non-scrolling
+// `overflowY` above would not reintroduce the bounded-pane problem this
+// constant exists to fix, but it would hand away that floor for no reason;
+// `xs: "auto"` costs nothing here (the pane already grows with its content
+// and never scrolls internally below `md`) and keeps the constant honest
+// about which value is actually "off".
 export const PHONE_PANE_SX = {
-  minHeight: { xs: 0, md: 340 },
+  minHeight: { xs: "auto", md: 340 },
   maxHeight: { xs: "none", md: "62vh" },
   overflowY: { xs: "visible", md: "auto" },
 };

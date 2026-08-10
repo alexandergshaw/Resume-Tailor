@@ -31,6 +31,7 @@ import { useApplicationDocs } from "./useApplicationDocs";
 import { useCopilotDashboard } from "./useCopilotDashboard";
 import { useLiveSession } from "./useLiveSession";
 import { useCaptureSetup } from "./useCaptureSetup";
+import { usePredictionVisibility } from "./usePredictionVisibility";
 
 // AC-H1.2: live mode's own wording for the shared PostingPicker — its
 // defaults are practice mode's exact strings, so passing these explicitly
@@ -103,6 +104,15 @@ export default function CopilotClient() {
     sourceAvailability: interviewerSourceAvailability,
     sourceUnavailableReason: interviewerSourceUnavailableReason,
   } = useCaptureSetup();
+  // Whether the PREDICTED next question and its pre-drafted answer are
+  // shown at all — owned here for the same reason the microphone selection
+  // is (see useCaptureSetup.js's own comment just above): one preference,
+  // one storage key, shared by both modes rather than each mode keeping its
+  // own contradictory copy. Handed to useCopilotDashboard below (which both
+  // modes' dashboards are built from) as `predictionsEnabled`, to
+  // CopilotDashboard directly in live mode further down, and to
+  // PracticeClient as props alongside `micDeviceId`/`onMicDeviceChange`.
+  const { showPredictions, onToggleShowPredictions } = usePredictionVisibility();
   const [showConsent, setShowConsent] = useState(true);
   // F2: which speech-to-text provider is actually live — `null` until the
   // mount-time probe below resolves. See the useEffect near the other
@@ -331,6 +341,7 @@ export default function CopilotClient() {
     profile,
     onPrefetchedAnswer,
     active: live,
+    predictionsEnabled: showPredictions,
   });
 
   const {
@@ -623,6 +634,8 @@ export default function CopilotClient() {
           sttProviderName={sttProviderName}
           micDeviceId={micDeviceId}
           onMicDeviceChange={onMicDeviceChange}
+          showPredictions={showPredictions}
+          onToggleShowPredictions={onToggleShowPredictions}
         />
       ) : (
         <>
@@ -837,6 +850,8 @@ export default function CopilotClient() {
                 predictedCues={predictedCues}
                 predictedAnswerStatus={predictedAnswerStatus}
                 predictedAnswerError={predictedAnswerError}
+                showPredictions={showPredictions}
+                onToggleShowPredictions={onToggleShowPredictions}
               />
             </Box>
           </Box>

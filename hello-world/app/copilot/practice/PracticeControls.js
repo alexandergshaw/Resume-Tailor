@@ -40,6 +40,7 @@ export default function PracticeControls({
   onToggleSaveEnabled,
   preDraftPredicted,
   onPreDraftChange,
+  showPredictions,
 }) {
   return (
     <>
@@ -136,14 +137,27 @@ export default function PracticeControls({
           label the full row width; `ml: 0, mr: 0` on each FormControlLabel
           removes MUI's default asymmetric label margins (meant for a single
           switch inline with other controls) so the stack reads as a clean
-          left-aligned list. */}
+          left-aligned list.
+          Bug fix (audit round): that override used to apply at every width,
+          unscoped — FormControlLabel's own default is `marginLeft: -11px,
+          marginRight: 16px` (see node_modules/@mui/material/FormControlLabel/
+          FormControlLabel.js), so it was shifting all three switches ~11px
+          right and dropping 16px of trailing margin even at `sm` and up,
+          where the row is back to a normal inline flow and needed none of
+          this. Scoped via the same bounded `theme.breakpoints.down("sm")`
+          idiom SessionSetup.js uses for its ToggleButtonGroup, rather than
+          an `{ xs, sm }` object — an `xs` key is `min-width: 0` and applies
+          everywhere, so it can state "0 below sm" but never "MUI's default
+          again at sm+"; a bounded down("sm") query has an upper bound, so at
+          600px and up none of these declarations exist and the label's
+          normal margins are untouched. */}
       <Stack
         direction={{ xs: "column", sm: "row" }}
         useFlexGap
         sx={{ mb: 2, alignItems: { xs: "stretch", sm: "center" }, flexWrap: "wrap", gap: 1 }}
       >
         <FormControlLabel
-          sx={{ ml: 0, mr: 0 }}
+          sx={(theme) => ({ [theme.breakpoints.down("sm")]: { ml: 0, mr: 0 } })}
           control={
             <Switch
               size="small"
@@ -160,7 +174,7 @@ export default function PracticeControls({
           }
         />
         <FormControlLabel
-          sx={{ ml: 0, mr: 0 }}
+          sx={(theme) => ({ [theme.breakpoints.down("sm")]: { ml: 0, mr: 0 } })}
           control={
             <Switch size="small" checked={saveEnabled} onChange={onToggleSaveEnabled} sx={TOUCH_SWITCH_SX} />
           }
@@ -171,11 +185,12 @@ export default function PracticeControls({
           }
         />
         <FormControlLabel
-          sx={{ ml: 0, mr: 0 }}
+          sx={(theme) => ({ [theme.breakpoints.down("sm")]: { ml: 0, mr: 0 } })}
           control={
             <Switch
               size="small"
               checked={preDraftPredicted}
+              disabled={!showPredictions}
               onChange={onPreDraftChange}
               sx={TOUCH_SWITCH_SX}
             />
@@ -186,6 +201,18 @@ export default function PracticeControls({
             </Typography>
           }
         />
+        {/* The pre-draft switch above drafts an answer for the PREDICTED
+            question — with that prediction hidden there is nothing for it to
+            draft, so it is disabled and the reason is stated as plain DOM
+            text right beside it, not a `title=` attribute or a Tooltip: on a
+            phone there is no hover to reveal either of those, and this row
+            already renders another such caption below for the embedded
+            engine. */}
+        {!showPredictions ? (
+          <Typography variant="caption" sx={{ color: "var(--text-muted)" }}>
+            Pre-drafting only applies while the predicted question and answer are shown.
+          </Typography>
+        ) : null}
         {/* BUG-J2: this used to say "...separate from saving recordings
             below", which became wrong once the save switch moved into this
             same row (it reads as a locator, not a claim about coverage). It

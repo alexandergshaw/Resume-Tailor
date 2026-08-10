@@ -6,7 +6,9 @@ import {
   resolvePrediction,
   resolvePredraft,
   resolveDashboardState,
+  predraftKeyFor,
 } from "./useCopilotDashboard.js";
+import { speculativeWorkEnabled } from "@/lib/copilot/predictionPrefs";
 
 // The source file itself, read as raw bytes -- not imported, so this check
 // runs regardless of how the module above happens to be transformed by the
@@ -140,6 +142,30 @@ describe("predictionSignatureFor", () => {
       const raw = readFileSync(SOURCE_PATH);
       expect(raw.indexOf(0)).toBe(-1);
     });
+
+    // ...and THIS FILE, which the check above did not cover.
+    //
+    // That gap was not hypothetical: a raw NUL sat at line 237 of this very
+    // file, inside `naiveSignatureWithType`'s template literal, across
+    // several commits. The author of that helper needed the same delimiter
+    // the real function uses and typed the escape sequence, which came out
+    // as an actual code-point-0 byte -- the exact failure mode the comment
+    // on `NUL` at the top of this file exists to steer around.
+    //
+    // Nothing caught it. Git had already reclassified this file as binary,
+    // so every diff of it was unreviewable and the corruption was invisible
+    // in review; `git show <rev>:<path>` just answers "Binary file matches".
+    // ESLint, the full vitest suite and `npm run build` all pass with a NUL
+    // present, because a NUL is perfectly legal inside a string literal. And
+    // grep/ripgrep skip binary files by default, so a search for it reports
+    // clean having read nothing.
+    //
+    // Read as bytes, not as text, for the same reason as above: any decode
+    // step is free to normalise the thing being tested for.
+    it("this test file contains no literal NUL byte either", () => {
+      const raw = readFileSync(fileURLToPath(import.meta.url));
+      expect(raw.indexOf(0)).toBe(-1);
+    });
   });
 });
 
@@ -232,7 +258,7 @@ describe("predictionSignatureFor — interviewType parameter", () => {
       const postingKey = posting
         ? `${posting.title || ""}|${posting.company || ""}|${posting.description || ""}`
         : "";
-      const base = `${asked.join("\n")} ${postingKey}`;
+      const base = `${asked.join("\n")}\u0000${postingKey}`;
       return `${base}${interviewType || ""}`;
     }
 
@@ -343,5 +369,106 @@ describe("resolveDashboardState", () => {
       type: "general",
       error: "Could not predict the next question.",
     });
+  });
+
+  // useCopilotDashboard no longer passes its raw `active` prop as the third
+  // argument here — it passes `speculate`, the result of
+  // speculativeWorkEnabled(active, predictionsEnabled) from
+  // lib/copilot/predictionPrefs.js. resolveDashboardState itself stays a
+  // generic "idle when the gate is false" function (that's why its own
+  // parameter is still named `active` — it doesn't know or care what
+  // produced the boolean), but the case that actually matters for THIS
+  // feature is a session that IS running with predictions hidden: `active`
+  // alone would have been true there, and only feeding the combined gate in
+  // keeps the panels (and the spend behind them) off.
+  it("forces idle for a running session whose predictions are hidden, via the combined speculate gate", () => {
+    const result = {
+      forSignature: "sig-1",
+      outcome: "done",
+      question: "What is your greatest strength?",
+      type: "behavioral",
+      error: "",
+    };
+    const gate = speculativeWorkEnabled(true, false); // active, but predictions hidden
+    expect(gate).toBe(false);
+    const state = resolveDashboardState(result, "sig-1", gate, resolvePrediction, IDLE_PREDICTION_STATE);
+    expect(state).toEqual(IDLE_PREDICTION_STATE);
+  });
+
+  it("still resolves normally for a running session with predictions visible, via the combined speculate gate", () => {
+    const result = {
+      forSignature: "sig-1",
+      outcome: "done",
+      question: "What is your greatest strength?",
+      type: "behavioral",
+      error: "",
+    };
+    const gate = speculativeWorkEnabled(true, true); // active, predictions visible
+    expect(gate).toBe(true);
+    const state = resolveDashboardState(result, "sig-1", gate, resolvePrediction, IDLE_PREDICTION_STATE);
+    expect(state).toEqual({
+      status: "done",
+      question: "What is your greatest strength?",
+      type: "behavioral",
+      error: "",
+    });
+  });
+});
+
+// AC for the toggleable predicted panels: hiding them must stop the
+// speculative model calls, gated through
+// lib/copilot/predictionPrefs.js's speculativeWorkEnabled rather than a
+// second, possibly-drifting copy of the same truth table.
+describe("speculativeWorkEnabled — the truth table useCopilotDashboard now relies on", () => {
+  it("requires both a running session and visible predictions", () => {
+    expect(speculativeWorkEnabled(true, true)).toBe(true);
+    expect(speculativeWorkEnabled(true, false)).toBe(false);
+    expect(speculativeWorkEnabled(false, true)).toBe(false);
+    expect(speculativeWorkEnabled(false, false)).toBe(false);
+  });
+
+  it("defaults to true for predictionsEnabled, so an omitted value reproduces the pre-existing active-only gate", () => {
+    // useCopilotDashboard's own `predictionsEnabled = true` default means
+    // every call site that hasn't been updated to pass it yet behaves
+    // exactly as it did before this preference existed.
+    expect(speculativeWorkEnabled(true, true)).toBe(true);
+    expect(speculativeWorkEnabled(false, true)).toBe(false);
+  });
+});
+
+// predraftKeyFor is deliberately untouched by this work — it still only
+// depends on autoDraft, the prediction's own status, and the predicted
+// question text. It has no `active`/`predictionsEnabled`/`speculate`
+// parameter, and must never grow one: resolveDashboardState already forces
+// predictionState to "idle" whenever `speculate` is false, which alone
+// collapses predraftKeyFor's output to "" (see its own status === "done"
+// check) — folding the gate in here too would just be the same guarantee
+// stated twice, and a future refactor that quietly relied on THIS function
+// to enforce it (instead of the resolveDashboardState/speculate gate) would
+// have no test to catch the drift. Pinned here so that drift shows up as a
+// failing test rather than a silent behavior change.
+describe("predraftKeyFor — unchanged by the predictionsEnabled gate", () => {
+  it("returns the predicted question only when autoDraft is on and the prediction is done", () => {
+    expect(predraftKeyFor("done", "What is your greatest strength?", true)).toBe(
+      "What is your greatest strength?"
+    );
+  });
+
+  it("returns empty when autoDraft is off, regardless of prediction status", () => {
+    expect(predraftKeyFor("done", "What is your greatest strength?", false)).toBe("");
+  });
+
+  it("returns empty when the prediction is not done (loading/error/idle), regardless of autoDraft", () => {
+    expect(predraftKeyFor("loading", "What is your greatest strength?", true)).toBe("");
+    expect(predraftKeyFor("error", "What is your greatest strength?", true)).toBe("");
+    expect(predraftKeyFor("idle", "", true)).toBe("");
+  });
+
+  it("returns empty when there is no predicted question text, even if autoDraft is on and status is done", () => {
+    expect(predraftKeyFor("done", "", true)).toBe("");
+  });
+
+  it("has exactly three parameters — predictionStatus, predictedQuestion, autoDraft — with no fourth gate parameter", () => {
+    expect(predraftKeyFor.length).toBe(3);
   });
 });

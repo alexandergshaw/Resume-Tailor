@@ -6,6 +6,7 @@ import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import { interviewTypeLabel } from "@/lib/copilot/interviewTypes";
 import { buildPrivacyNotice } from "@/lib/copilot/practiceNotices";
+import { preDraftDisclosureApplies } from "@/lib/copilot/predictionPrefs";
 import { useEngine } from "@/app/settings/engine";
 import { useIsTablet } from "@/app/hooks/useResponsive";
 import TranscriptView from "../TranscriptView";
@@ -88,7 +89,13 @@ function roomQuestionPrivacyClause({
 // sampler, drain, generation guard, replay URL lifecycle, metrics/critique
 // state) lives in usePracticeAnswer (AC-C4-8) — this component owns the
 // capture session, the posting picker, the question, and the layout.
-export default function PracticeClient({ sttProviderName, micDeviceId, onMicDeviceChange } = {}) {
+export default function PracticeClient({
+  sttProviderName,
+  micDeviceId,
+  onMicDeviceChange,
+  showPredictions,
+  onToggleShowPredictions,
+} = {}) {
   const [status, setStatus] = useState("idle"); // idle | connecting | live | error
 
   const [posting, setPosting] = useState(null);
@@ -443,6 +450,7 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
     draftMode: "answer",
     autoDraft: preDraftPredicted,
     active: running,
+    predictionsEnabled: showPredictions,
     onPrefetchedAnswer,
   });
 
@@ -636,8 +644,15 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
     hasSubmittedResume,
     hasSubmittedCoverLetter,
     saveEnabled,
-    // BUG-J3: discloses the pre-draft switch's automatic Gemini send.
-    preDraftEnabled: preDraftPredicted,
+    // BUG-J3: discloses the pre-draft switch's automatic Gemini send — but
+    // only when that send can actually happen. Routed through
+    // preDraftDisclosureApplies (lib/copilot/predictionPrefs.js) rather than
+    // hand-written as `preDraftPredicted && showPredictions`: that helper is
+    // the same one speculativeWorkEnabled is checked against in its own
+    // test, so the notice and the actual work-gate are provably in
+    // agreement instead of two independent copies of the same condition
+    // that could drift apart.
+    preDraftEnabled: preDraftDisclosureApplies(preDraftPredicted, showPredictions),
   })} ${roomQuestionPrivacyClause({ isEmbedded, hasPosting, docsSettled, hasSubmittedResume, hasSubmittedCoverLetter })}`;
   // G2/AC-G2-C-6: resolved once here, from the CURRENT interview type,
   // rather than inside AnswerFeedback — changing interview type always
@@ -693,6 +708,7 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
         onToggleSaveEnabled={onToggleSaveEnabled}
         preDraftPredicted={preDraftPredicted}
         onPreDraftChange={(e) => setPreDraftPredicted(e.target.checked)}
+        showPredictions={showPredictions}
       />
 
       {/* Shown once at least one answer has been analyzed (AC-C4-6), and
@@ -750,6 +766,8 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
                 copy={PRACTICE_COPY}
                 pace={pace}
                 fillers={fillers}
+                showPredictions={showPredictions}
+                onToggleShowPredictions={onToggleShowPredictions}
                 predictedQuestion={predictedQuestion}
                 predictionStatus={predictionStatus}
                 predictionError={predictionError}

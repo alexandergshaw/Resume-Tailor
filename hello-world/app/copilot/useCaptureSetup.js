@@ -59,7 +59,9 @@ export function useCaptureSetup() {
   }, []);
 
   // Seed the interviewer-audio-source choice from localStorage, wrapped in
-  // try/catch like the prep-context read above. The actual setSource call is
+  // try/catch — a private-mode or quota error must not take the page down,
+  // the same discipline every other storage read in this app follows
+  // (usePrepContext.js is the closest example). The actual setSource call is
   // deferred a microtask out (same shape the mic seed effect right below
   // already uses via listMicrophones().then(...)) rather than called
   // synchronously in the effect body, which is what keeps this clear of
@@ -69,10 +71,15 @@ export function useCaptureSetup() {
   // pattern itself was always the thing the rule flags.
   //
   // AC-M1.5.2/R-037: "inperson" is a third valid stored value, alongside
-  // "tab"/"system" — omitting it here would mean a candidate who picked
-  // in-person mode loses that choice on every reload. The deferred
-  // Promise.resolve().then(...) shape above is kept exactly as it was;
-  // only the set of values considered valid grows.
+  // "tab"/"system" — omitting it would mean a candidate who picked in-person
+  // mode loses that choice on every reload. That requirement is now carried
+  // by resolveInterviewerSource's own vocabulary rather than by an inline
+  // check here (see AC-P7 below): the guard this comment used to describe —
+  // `stored === "tab" || stored === "system" || stored === "inperson"`,
+  // which left the useState default in place for anything else — no longer
+  // exists, and setSource is now called unconditionally with a value that
+  // module guarantees is runnable. Only the deferred
+  // Promise.resolve().then(...) shape is unchanged.
   //
   // AC-P7: a missing/unrecognized stored value, or a display-capture choice
   // ("tab"/"system") this device cannot run, is now resolved through

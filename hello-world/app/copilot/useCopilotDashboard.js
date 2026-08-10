@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fetchNextQuestion } from "@/lib/copilot/questionClient";
 import { draftAnswer } from "@/lib/copilot/answerClient";
 import { appendSpeechSample, computeLivePace, computeLiveFillers } from "@/lib/copilot/livePace";
+import { speculativeWorkEnabled } from "@/lib/copilot/predictionPrefs";
 
 // AC-I2/AC-I3/AC-I4/AC-N1: the copilot dashboard hook — talking pace, the
 // verbal-filler reading beside it, the predicted next question, and a
@@ -235,16 +236,23 @@ export function resolveDashboardState(result, key, active, resolveFn, idleState)
 //                        Selecting a posting or a question being detected
 //                        while merely looking at the page — before the user
 //                        has pressed Start — must not spend a model call.
-//                        Both the prediction effect and the pre-draft
-//                        effect below check this before firing, and both
-//                        derived states (predictionState/predraftState)
-//                        report "idle" whenever this is false, regardless
-//                        of whatever a PRIOR session already stored in
-//                        predictionResult/predraftResult — a session that
-//                        just ended must not keep showing its last
-//                        prediction as if it still applied. Defaults to
-//                        `false` (no requests) so an omitted value can never
-//                        accidentally re-enable firing.
+//                        Combined with `predictionsEnabled` below into the
+//                        single `speculate` gate (see its own comment),
+//                        which is what the prediction effect, the pre-draft
+//                        effect, and both derived states
+//                        (predictionState/predraftState) actually check —
+//                        a session that just ended, OR one whose user has
+//                        hidden the predicted panels, must not keep showing
+//                        a stale prediction as if it still applied. Defaults
+//                        to `false` (no requests) so an omitted value can
+//                        never accidentally re-enable firing.
+//   predictionsEnabled    whether the user has left the predicted-question
+//                        and pre-drafted-answer panels visible (the
+//                        `showPredictions` half of
+//                        lib/copilot/predictionPrefs.js's
+//                        speculativeWorkEnabled). Defaults to `true` so
+//                        every existing call site — none of which pass this
+//                        yet — reproduces today's behaviour unchanged.
 //   interviewType        AC-J2.7/AC-J2.8: practice mode's selected format,
 //                        forwarded to BOTH requests and folded into the
 //                        prediction signature. Live mode omits it (AC-I3.21
@@ -273,10 +281,24 @@ export function useCopilotDashboard({
   active = false,
   interviewType,
   draftMode,
+  predictionsEnabled = true,
 }) {
   const [speechSamples, setSpeechSamples] = useState([]);
   const [predictionResult, setPredictionResult] = useState(EMPTY_PREDICTION_RESULT);
   const [predraftResult, setPredraftResult] = useState(EMPTY_PREDRAFT_RESULT);
+
+  // The single gate the prediction effect, the pre-draft effect, both
+  // resolveDashboardState calls, and both retry callbacks now check instead
+  // of `active` alone. Pre-drafting sends a predicted question plus the
+  // user's prep context to Gemini AUTOMATICALLY, before anything is
+  // revealed, and roughly DOUBLES the model calls a detected question costs
+  // (R-105) — hiding the predicted panels while this speculative work kept
+  // running underneath would still pay that cost with nothing on screen to
+  // show for it, a silent bill rather than a saved one. Defaults preserved
+  // (`active = false`, `predictionsEnabled = true`) mean an omitted
+  // `predictionsEnabled` reproduces the pre-existing `active`-only gate
+  // exactly, so every call site that does not yet pass it is unaffected.
+  const speculate = speculativeWorkEnabled(active, predictionsEnabled);
 
   // Mirrors for the async work below, which must see the LATEST prop
   // values across an `await` rather than whatever was in scope when their
@@ -471,25 +493,29 @@ export function useCopilotDashboard({
   // actually changes — which is the effect's actual trigger (AC-I3.18).
   const signature = predictionSignatureFor(questions, posting, interviewType);
 
-  // Gated on `active`: a posting selected (or questions detected, though
-  // that can't happen before a session starts) while `active` is false must
-  // never fire a request — that's the whole point of this input. Once a
-  // session actually starts, `active` flips to true and this effect fires
-  // for whatever signature is already current, exactly as it would have
-  // fired immediately before this gate existed.
+  // Gated on `speculate`: a posting selected (or questions detected, though
+  // that can't happen before a session starts) while `speculate` is false
+  // must never fire a request — that's the whole point of this input, now
+  // true whenever either the session isn't running OR the user has hidden
+  // the predicted panels. Once a session actually starts AND predictions are
+  // visible, `speculate` flips to true and this effect fires for whatever
+  // signature is already current, exactly as it would have fired
+  // immediately before this gate existed.
   useEffect(() => {
-    if (!active || !signature) return;
+    if (!speculate || !signature) return;
     runPrediction(askedQuestionsFor(questionsRef.current), signature);
-  }, [active, signature, runPrediction]);
+  }, [speculate, signature, runPrediction]);
 
-  // Forced to "idle" whenever `active` is false, regardless of what
-  // predictionResult still holds from a session that just ended — a stored
-  // "done" result for a signature that happens to still match must not be
-  // reported as a live prediction once the session backing it is gone.
+  // Forced to "idle" whenever `speculate` is false, regardless of what
+  // predictionResult still holds from a session that just ended (or from
+  // before the user hid the predicted panels) — a stored "done" result for
+  // a signature that happens to still match must not be reported as a live
+  // prediction once the session backing it is gone, or once its panel is
+  // hidden.
   const predictionState = resolveDashboardState(
     predictionResult,
     signature,
-    active,
+    speculate,
     resolvePrediction,
     IDLE_PREDICTION_STATE
   );
@@ -497,9 +523,9 @@ export function useCopilotDashboard({
   const predraftKey = predraftKeyFor(predictionState.status, predictionState.question, autoDraft);
 
   useEffect(() => {
-    if (!active || !predraftKey) return;
+    if (!speculate || !predraftKey) return;
     runPredraft(predraftKey);
-  }, [active, predraftKey, runPredraft]);
+  }, [speculate, predraftKey, runPredraft]);
 
   // Same forced-idle treatment as predictionState above, and for the same
   // reason — predraftKey already collapses to "" once predictionState is
@@ -508,7 +534,7 @@ export function useCopilotDashboard({
   const predraftState = resolveDashboardState(
     predraftResult,
     predraftKey,
-    active,
+    speculate,
     resolvePredraft,
     IDLE_PREDRAFT_STATE
   );
@@ -518,14 +544,14 @@ export function useCopilotDashboard({
   // runPrediction's post-await continuation is exactly as safe as it is on
   // the effect-driven path above — this just calls the SAME function
   // in-line rather than waiting for `signature` to change again. Gated on
-  // `active` for the same reason the effect above is: the Retry action only
-  // ever renders while predictionState.status is "error", which is itself
-  // impossible while `active` is false (forced to "idle" above), but the
-  // guard is kept here too rather than relied on transitively.
+  // `speculate` for the same reason the effect above is: the Retry action
+  // only ever renders while predictionState.status is "error", which is
+  // itself impossible while `speculate` is false (forced to "idle" above),
+  // but the guard is kept here too rather than relied on transitively.
   const retryPrediction = useCallback(() => {
-    if (!active || !signature) return;
+    if (!speculate || !signature) return;
     runPrediction(askedQuestionsFor(questionsRef.current), signature);
-  }, [active, runPrediction, signature]);
+  }, [speculate, runPrediction, signature]);
 
   // Retry for the PRE-DRAFTED ANSWER specifically — the failed-pre-draft
   // dead end this was added to fix. The pre-draft effect above only re-fires
@@ -546,19 +572,20 @@ export function useCopilotDashboard({
   // flight when Retry is pressed (or a session reset that happens while
   // this one is pending) can never land after and overwrite a newer result.
   //
-  // Guarded by the same `!active || !predraftKey` check the pre-draft effect
-  // itself uses. `predraftKey` already collapses to "" whenever Auto-draft
-  // is off or no prediction has landed (see predraftKeyFor above), so this
-  // one check alone covers all three required no-op conditions: nothing to
-  // draft, Auto-draft off, and (via `active`) no session running. The
-  // button that calls this is only ever rendered in the pre-draft's error
-  // state, which cannot occur under any of those conditions either, but the
-  // guard is kept here too rather than relied on transitively — same
-  // reasoning as retryPrediction's own guard above.
+  // Guarded by the same `!speculate || !predraftKey` check the pre-draft
+  // effect itself uses. `predraftKey` already collapses to "" whenever
+  // Auto-draft is off or no prediction has landed (see predraftKeyFor
+  // above), so this one check alone covers all four required no-op
+  // conditions: nothing to draft, Auto-draft off, and (via `speculate`) no
+  // session running or predictions hidden. The button that calls this is
+  // only ever rendered in the pre-draft's error state, which cannot occur
+  // under any of those conditions either, but the guard is kept here too
+  // rather than relied on transitively — same reasoning as retryPrediction's
+  // own guard above.
   const retryPredraft = useCallback(() => {
-    if (!active || !predraftKey) return;
+    if (!speculate || !predraftKey) return;
     runPredraft(predraftKey);
-  }, [active, predraftKey, runPredraft]);
+  }, [speculate, predraftKey, runPredraft]);
 
   // Called by the caller when a new session starts. Bumps the generation
   // (so a request still in flight for the session just left behind can
