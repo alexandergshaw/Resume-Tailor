@@ -1926,6 +1926,19 @@ Detection is FEATURE detection (`typeof mediaDevices?.getDisplayMedia === "funct
 
 **`lib/copilot/session.js` is deliberately unchanged.** Its fallback of an unrecognized source to `captureTabAudio` is pinned by R-034/R-038/R-144 and must stay; this gate is in the UI only. On a device that DOES support display capture, `resolveInterviewerSource` reproduces today's behaviour exactly, including `"tab"` as the default -- pinned by its own assertion so a change to the default has to be deliberate rather than a side effect of this feature.
 
+
+**RUN AND PASSED (2026-08-09), including the manual steps.** Recorded here rather than left as "verified by reading", because the automated tests cover `captureSupport.js` in isolation and prove nothing about the wiring.
+
+Method, since the obstacle is real and will recur: the stub has to be installed BEFORE `CopilotClient`'s mount effect, which is where `displayCaptureSupported()` is called and the answer latched -- a `useEffect` in a wrapper races the child's own effect and loses. Two throwaway routes under `app/auth/` (public per `lib/supabase/middleware.js`), identical except that one shadows the method at MODULE scope, which evaluates during hydration before any render. Note `delete navigator.mediaDevices.getDisplayMedia` does NOT work: the method lives on `MediaDevices.prototype`, so deleting a non-existent own property returns true and changes nothing. `Object.defineProperty(navigator.mediaDevices, "getDisplayMedia", { value: undefined, configurable: true })` is what actually hides it. Both routes deleted after the run.
+
+Observed on the control (display capture present): all three options enabled, `"tab"` selected by default, no reason text rendered anywhere, Start enabled. With `localStorage["copilot-audio-source"] = "system"`, System audio came back selected -- stored source still honoured, unchanged by this feature.
+
+Observed on the crippled device: `getDisplayMedia` absent, Browser tab and System audio both `disabled`, In person selected, Start still enabled. The reason rendered as a real `<p>` in the DOM (not a `title=`, not a tooltip) reading "This browser can't share a tab or your screen. Pick the In person (same microphone) option instead, or open the copilot in desktop Chrome or Edge to capture a call.", and contains neither "denied" nor "permission". With a stored `"system"` AND separately a stored `"tab"`, both resolved to In person -- and **`localStorage` still held the original value afterwards**, so a laptop preference is not clobbered by being read on a phone.
+
+The sharpest part, and the reason step 5 exists: pressing Start with `getDisplayMedia` replaced by a getter that counts reads gave **zero accesses** -- the in-person path does not call it, and does not so much as look at it. `getUserMedia` was called exactly once, with `{audio: {echoCancellation, noiseSuppression, autoGainControl}}` and **no `deviceId` own-key at all** (System default, which is R-101's requirement, incidentally re-confirmed here). The session then failed on "Microphone unavailable (Permission denied)", which is the browser pane blocking microphone access and not a product fault; what matters is that it failed at the MICROPHONE and never at display capture. Before this feature that same click would have thrown `getDisplayMedia is not a function` as `start()`'s first act.
+
+A full end-to-end session still has not been run on a real phone -- that needs a device, a microphone grant, and an STT key. This case does not claim otherwise.
+
 ### R-161 | area: copilot-mobile | parallel-safe: yes | automatable: no
 
 **Summary:** Practice mode's drill is reachable on a phone, and its reordering moves the DOM rather than only the pixels.
