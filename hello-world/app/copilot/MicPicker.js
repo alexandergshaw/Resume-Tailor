@@ -7,6 +7,7 @@ import Select from "@mui/material/Select";
 import MenuItem from "@mui/material/MenuItem";
 import FormHelperText from "@mui/material/FormHelperText";
 import { listMicrophones, SYSTEM_DEFAULT_OPTION } from "@/lib/copilot/audioDevices";
+import { TOUCH_FIELD_SX } from "./mobileSx";
 
 // AC-I1: live mode's microphone picker. Modelled on PostingPicker.js — it
 // loads its own options on mount and the caller owns only the current
@@ -72,7 +73,15 @@ export default function MicPicker({ value, onChange, disabled }) {
   const showsPlaceholders = hasPlaceholderLabels(options);
 
   return (
-    <FormControl size="small" disabled={disabled} sx={{ minWidth: 220 }}>
+    <FormControl
+      size="small"
+      disabled={disabled}
+      sx={{
+        minWidth: { xs: 0, sm: 220 },
+        width: { xs: "100%", sm: "auto" },
+        ...TOUCH_FIELD_SX,
+      }}
+    >
       <InputLabel id="mic-picker-label">Microphone</InputLabel>
       <Select
         labelId="mic-picker-label"

@@ -9,6 +9,7 @@ import Divider from "@mui/material/Divider";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { videoWasReviewed } from "@/lib/copilot/answerProvenance";
+import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX } from "../mobileSx";
 
 const STAR_LABELS = [
   ["situation", "Situation"],
@@ -75,7 +76,12 @@ function BulletList({ title, items }) {
       </Typography>
       <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
         {items.map((item, i) => (
-          <Typography key={i} component="li" variant="body2" sx={{ mb: 0.5, color: "var(--text-primary)" }}>
+          <Typography
+            key={i}
+            component="li"
+            variant="body2"
+            sx={{ mb: 0.5, color: "var(--text-primary)", ...BREAK_LONG_WORDS_SX }}
+          >
             {item}
           </Typography>
         ))}
@@ -176,7 +182,7 @@ export default function AnswerFeedback({
           severity="error"
           sx={{ mb: 1.5 }}
           action={
-            <Button color="inherit" size="small" onClick={onRetry}>
+            <Button color="inherit" size="small" onClick={onRetry} sx={TOUCH_TARGET_SX}>
               Retry
             </Button>
           }
@@ -187,7 +193,11 @@ export default function AnswerFeedback({
 
       {status === "done" && feedback ? (
         <>
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: "baseline", mb: 1 }}>
+          <Stack
+            direction="row"
+            spacing={1.5}
+            sx={{ alignItems: "baseline", mb: 1, flexWrap: "wrap", rowGap: 0.5 }}
+          >
             {/* F10: this was the second half of the "h6 then h4 inside it"
                 defect — a numeric score is a data value, not a section
                 title, and was never meant to be a heading at all (a
@@ -206,8 +216,8 @@ export default function AnswerFeedback({
               size="small"
               label={SOURCE_LABEL[feedback.source] || feedback.source || "unknown"}
               sx={{
-                height: 22,
-                fontSize: 11,
+                height: { xs: 24, sm: 22 },
+                fontSize: { xs: 12, sm: 11 },
                 color: "var(--text-secondary)",
                 background: "var(--bg-soft)",
                 border: "1px solid var(--border)",
@@ -229,7 +239,7 @@ export default function AnswerFeedback({
           ) : null}
 
           {feedback.star ? (
-            <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: "wrap", rowGap: 1 }}>
+            <Stack direction="row" useFlexGap sx={{ mb: 2, flexWrap: "wrap", gap: 1 }}>
               {STAR_LABELS.map(([key, label]) => {
                 const present = !!feedback.star[key];
                 return (
@@ -270,7 +280,12 @@ export default function AnswerFeedback({
               <>
                 <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
                   {bodyLanguageNotes.map((item, i) => (
-                    <Typography key={i} component="li" variant="body2" sx={{ mb: 0.5, color: "var(--text-primary)" }}>
+                    <Typography
+                      key={i}
+                      component="li"
+                      variant="body2"
+                      sx={{ mb: 0.5, color: "var(--text-primary)", ...BREAK_LONG_WORDS_SX }}
+                    >
                       {item}
                     </Typography>
                   ))}
@@ -291,11 +306,19 @@ export default function AnswerFeedback({
         </>
       ) : null}
 
-      <Stack direction="row" spacing={1.5} sx={{ mt: 2 }}>
-        <Button variant="contained" onClick={onNext}>
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} sx={{ mt: 2 }}>
+        <Button
+          variant="contained"
+          onClick={onNext}
+          sx={{ ...TOUCH_TARGET_SX, width: { xs: "100%", sm: "auto" } }}
+        >
           Next question
         </Button>
-        <Button variant="outlined" onClick={onTryAgain}>
+        <Button
+          variant="outlined"
+          onClick={onTryAgain}
+          sx={{ ...TOUCH_TARGET_SX, width: { xs: "100%", sm: "auto" } }}
+        >
           Try again
         </Button>
       </Stack>

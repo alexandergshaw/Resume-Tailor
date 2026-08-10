@@ -12,6 +12,7 @@ import MicPicker from "./MicPicker";
 import PostingPicker from "./PostingPicker";
 import SubmittedDocs from "./SubmittedDocs";
 import PrepContext from "./PrepContext";
+import { TOUCH_TARGET_SX, TOUCH_ICON_SX, BREAK_LONG_WORDS_SX } from "./mobileSx";
 
 // R-129's known follow-up (see ../../docs/REGRESSION.md): live mode's own
 // pre-session setup block, extracted out of CopilotClient the same way
@@ -41,6 +42,8 @@ export default function SessionSetup({
   micLabel,
   source,
   onSourceChange,
+  sourceAvailability,
+  sourceUnavailableReason,
   micDeviceId,
   onMicDeviceChange,
   showConsent,
@@ -75,7 +78,13 @@ export default function SessionSetup({
           onClick={onToggleExpanded}
           aria-expanded={expanded}
           aria-controls={SETUP_REGION_ID}
-          sx={{ mb: 1, color: "var(--text-secondary)", textTransform: "none" }}
+          sx={{
+            mb: 1,
+            color: "var(--text-secondary)",
+            textTransform: "none",
+            ...TOUCH_TARGET_SX,
+            ...BREAK_LONG_WORDS_SX,
+          }}
         >
           {expanded ? "▾ Hide setup" : `▸ Show setup — ${postingSummary} · Mic: ${micLabel}`}
         </Button>
@@ -116,24 +125,104 @@ export default function SessionSetup({
       <Collapse in={expanded}>
         <Box id={SETUP_REGION_ID}>
           <Stack
-            direction="row"
+            direction={{ xs: "column", sm: "row" }}
             spacing={1.25}
-            sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
+            sx={{
+              mb: sourceUnavailableReason ? 1 : 2,
+              alignItems: { xs: "stretch", sm: "center" },
+              flexWrap: "wrap",
+              rowGap: 1,
+            }}
           >
             <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
               Interviewer audio:
             </Typography>
+            {/* AC-P7 (R-157): this group's single-line content is the
+                dominant cause of the whole page's horizontal overflow on a
+                phone — a ToggleButtonGroup is `inline-flex` and never wraps
+                internally, so the parent Stack's `flexWrap` only ever wrapped
+                BETWEEN the label and the group, never inside it. Measured
+                min-content here was 269.8px against 252px of available
+                content width at a 320px viewport.
+
+                Stacked via `sx` breakpoints rather than the `orientation`
+                prop. `orientation="vertical"` was tried first and did NOT
+                take effect in this MUI build: the committed fiber carried
+                `orientation: "vertical"` while the DOM still rendered
+                `MuiToggleButtonGroup-horizontal` with `flex-direction: row`,
+                at 320px, across a reload and a resize. CSS breakpoints on
+                this same page demonstrably DO work, so the layout is
+                expressed in the medium that is actually reliable here — and
+                as a bonus it needs no JS, no hydration pass, and no
+                `isMobile` prop threaded down from the parent.
+
+                Below `sm` each option becomes its own full-width pill. At `sm`
+                and up nothing here applies at all — see the `down("sm")` note
+                on the sx below for why that is written as a media query and
+                not as an `{ xs, sm }` object. */}
             <ToggleButtonGroup
               exclusive
               size="small"
               value={source}
               disabled={live}
               onChange={(_e, val) => onSourceChange(val)}
+              sx={(theme) => ({
+                // Scoped with an explicit `down("sm")` media query rather than
+                // an `{ xs, sm }` object, and that distinction is the whole
+                // reason this reads the way it does. In MUI's breakpoint
+                // objects `xs` compiles to `@media (min-width: 0px)`, which is
+                // true at EVERY width — so `{ xs: "8px", sm: undefined }` does
+                // not mean "8px only on phones", it means "8px everywhere,
+                // with nothing to switch it back off". Written that way first,
+                // and it silently shipped 8px radii and `margin-left: 0` to
+                // the desktop, replacing MUI's joined segmented control with
+                // three detached buttons at 1280px. `down("sm")` has an upper
+                // bound, so at 600px and up not one of these declarations
+                // exists and MUI's own horizontal grouping is genuinely
+                // untouched.
+                [theme.breakpoints.down("sm")]: {
+                  width: "100%",
+                  flexDirection: "column",
+                  rowGap: theme.spacing(0.75),
+                  // MUI's horizontal grouping zeroes the inner corner radii and
+                  // pulls the buttons together with `margin-left: -1px`; both
+                  // read as broken once the row becomes a column, so they are
+                  // reset on the same three classes MUI itself targets.
+                  "& .MuiToggleButtonGroup-firstButton, & .MuiToggleButtonGroup-middleButton, & .MuiToggleButtonGroup-lastButton":
+                    {
+                      marginLeft: 0,
+                      // Explicit px. `borderRadius` is one of the sx keys MUI
+                      // rescales: a bare number is multiplied by
+                      // theme.shape.borderRadius, so passing that value itself
+                      // rendered 8 * 8px = 64px pills. Same family of trap as
+                      // `width: 1` meaning 100% (see lib/copilot/answerStatus.js)
+                      // and `margin: -1` meaning -8px — in sx, a unitless number
+                      // is a multiplier far more often than it is pixels.
+                      borderRadius: `${theme.shape.borderRadius}px`,
+                      borderLeft: "1px solid var(--border)",
+                      width: "100%",
+                    },
+                },
+              })}
             >
-              <ToggleButton value="tab" sx={{ textTransform: "none", px: 1.5 }}>
+              {/* AC-P7: disabled whenever this device can't run display
+                  capture at all (`getDisplayMedia` absent — see
+                  captureSupport.js), on top of the existing `disabled={live}`
+                  — individual ToggleButton `disabled` takes priority over the
+                  group's own, so this ORs the two conditions rather than
+                  losing the live-session gate. */}
+              <ToggleButton
+                value="tab"
+                disabled={live || !sourceAvailability.tab}
+                sx={{ textTransform: "none", px: 1.5, ...TOUCH_TARGET_SX }}
+              >
                 Browser tab
               </ToggleButton>
-              <ToggleButton value="system" sx={{ textTransform: "none", px: 1.5 }}>
+              <ToggleButton
+                value="system"
+                disabled={live || !sourceAvailability.system}
+                sx={{ textTransform: "none", px: 1.5, ...TOUCH_TARGET_SX }}
+              >
                 System audio (speakers)
               </ToggleButton>
               {/* AC-M1.5 requirement 5: the in-person option, worded in the
@@ -142,21 +231,40 @@ export default function SessionSetup({
                   phone/laptop on speaker) and there is no tab or system
                   audio stream to separate the two voices structurally. Same
                   ToggleButtonGroup shape, same `disabled={live}` as the two
-                  options above — nothing about that contract changes. */}
-              <ToggleButton value="inperson" sx={{ textTransform: "none", px: 1.5 }}>
+                  options above — nothing about that contract changes.
+                  AC-P7: always runnable (getUserMedia-only), so it never
+                  gets the sourceAvailability gate the other two do. */}
+              <ToggleButton
+                value="inperson"
+                disabled={live}
+                sx={{ textTransform: "none", px: 1.5, ...TOUCH_TARGET_SX }}
+              >
                 In person (same microphone)
               </ToggleButton>
             </ToggleButtonGroup>
           </Stack>
+
+          {/* AC-P7: real DOM text, not a title= or Tooltip — there is no
+              hover on a touch device, which is exactly the device class this
+              reason exists for. Only rendered when non-empty (usable device,
+              or the in-person fallback already covers this session). */}
+          {sourceUnavailableReason ? (
+            <Typography
+              variant="body2"
+              sx={{ color: "var(--text-secondary)", mb: 2, ...BREAK_LONG_WORDS_SX }}
+            >
+              {sourceUnavailableReason}
+            </Typography>
+          ) : null}
 
           {/* AC-I1: your own microphone, the same kind of source control as
               "Interviewer audio" above and disabled the same way (AC-I1.7)
               — changing it mid-session would require tearing down and
               rebuilding the "you" capture pipeline, which is out of scope. */}
           <Stack
-            direction="row"
+            direction={{ xs: "column", sm: "row" }}
             spacing={1.25}
-            sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
+            sx={{ mb: 2, alignItems: { xs: "stretch", sm: "center" }, flexWrap: "wrap", rowGap: 1 }}
           >
             <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
               Your microphone:
@@ -165,7 +273,11 @@ export default function SessionSetup({
           </Stack>
 
           {showConsent ? (
-            <Alert severity="info" sx={{ mb: 2 }} onClose={onDismissConsent}>
+            <Alert
+              severity="info"
+              sx={{ mb: 2, "& .MuiAlert-action .MuiIconButton-root": { ...TOUCH_ICON_SX } }}
+              onClose={onDismissConsent}
+            >
               {/* F2: names the STT provider once known, never guesses one before
                   then. BUG-H4: the posting-grounding fact used to be appended
                   here too, but this alert is dismissible (onClose) and shown

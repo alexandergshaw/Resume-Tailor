@@ -13,6 +13,7 @@ import { answerLines } from "@/lib/copilot/answerPoints";
 import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus";
 import AnswerAids from "../AnswerAids";
 import AnswerLines from "../AnswerLines";
+import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "../mobileSx";
 
 // AC-I5/AC-J2: the copilot's dashboard — current question, its answer, the
 // predicted next question, that question's pre-drafted answer, and a
@@ -190,7 +191,7 @@ function RealPanel({ title, children }) {
   return (
     <Box
       sx={{
-        p: 1.75,
+        p: { xs: 1.25, sm: 1.75 },
         borderRadius: 2,
         border: "1px solid var(--border)",
         background: "var(--bg-soft)",
@@ -227,14 +228,24 @@ function PredictionPanel({ title, children, chipLabel = "Prediction" }) {
   return (
     <Box
       sx={{
-        p: 1.75,
+        p: { xs: 1.25, sm: 1.75 },
         borderRadius: 2,
         border: "1px solid var(--accent)",
         background: "var(--accent-soft)",
         minWidth: 0,
       }}
     >
-      <Stack direction="row" spacing={1} sx={{ mb: 1, alignItems: "center" }}>
+      {/* BLOCKER fix: this row previously had no flexWrap, and the Chip had
+          no flexShrink guard. MUI's Chip root carries `overflow: hidden`,
+          which zeroes its flex `min-width: auto` floor, so at ~140px of
+          available width (well under the row's natural ~262px) the Chip
+          shrank first and its label ellipsized down to nothing readable
+          ("PREDI…" or narrower). This badge is load-bearing (see the module
+          doc above and CurrentQuestionPanel's "Unconfirmed" reuse below) —
+          it is what stops a guess from being read as something the
+          interviewer actually asked — so it must never truncate. WRAP_ROW_SX
+          lets the badge drop to its own line intact instead. */}
+      <Stack direction="row" spacing={1} sx={{ mb: 1, alignItems: "center", ...WRAP_ROW_SX }}>
         {/* F10: same nesting level as RealPanel's title above — both sit
             directly under the dashboard's own h3 title. */}
         <Typography variant="subtitle2" component="h4" sx={{ color: "var(--text-secondary)", fontWeight: 700 }}>
@@ -244,13 +255,22 @@ function PredictionPanel({ title, children, chipLabel = "Prediction" }) {
           size="small"
           label={chipLabel}
           sx={{
-            height: 18,
-            fontSize: 10,
+            // `height: 18`/`fontSize: 10` unconditionally left no room for
+            // the label to wrap onto two lines even after the Stack above
+            // gained flexWrap, and 10px uppercase text is below a readable
+            // floor on a phone. `xs: "auto"` lets the label wrap; `sm` keeps
+            // the original compact pill on pointer-driven layouts.
+            height: { xs: "auto", sm: 18 },
+            fontSize: { xs: 11, sm: 10 },
             fontWeight: 700,
             letterSpacing: 0.3,
             textTransform: "uppercase",
             color: "var(--accent-contrast)",
             background: "var(--accent)",
+            // Keeps the badge itself from being the thing that shrinks when
+            // the row is tight — see the Stack comment above.
+            flexShrink: 0,
+            "& .MuiChip-label": { py: { xs: 0.25, sm: 0 } },
           }}
         />
       </Stack>
@@ -290,7 +310,9 @@ function CurrentQuestionPanel({ current, copy }) {
   if (current?.provisional) {
     return (
       <PredictionPanel title={copy.currentQuestionTitle} chipLabel="Unconfirmed">
-        <Typography sx={{ color: "var(--text-primary)", fontWeight: 600 }}>{current.question}</Typography>
+        <Typography sx={{ color: "var(--text-primary)", fontWeight: 600, ...BREAK_LONG_WORDS_SX }}>
+          {current.question}
+        </Typography>
         <Typography variant="caption" sx={{ display: "block", mt: 0.75, color: "var(--text-secondary)" }}>
           Not confirmed as the interviewer — this may be your own words, picked up while speaker identity is
           still unsettled.
@@ -301,7 +323,9 @@ function CurrentQuestionPanel({ current, copy }) {
   return (
     <RealPanel title={copy.currentQuestionTitle}>
       {current ? (
-        <Typography sx={{ color: "var(--text-primary)", fontWeight: 600 }}>{current.question}</Typography>
+        <Typography sx={{ color: "var(--text-primary)", fontWeight: 600, ...BREAK_LONG_WORDS_SX }}>
+          {current.question}
+        </Typography>
       ) : (
         <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>
           {copy.noQuestion}
@@ -500,7 +524,7 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
           {copy.noCurrentAnswer}
         </Typography>
       ) : answerHidden ? (
-        <Button size="small" variant="outlined" onClick={onReveal}>
+        <Button size="small" variant="outlined" onClick={onReveal} sx={TOUCH_TARGET_SX}>
           {revealLabel}
         </Button>
       ) : (
@@ -514,7 +538,7 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
         <Box ref={revealedRef} tabIndex={-1}>
           {current.status === "loading" ? (
             <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
-              <CircularProgress size={16} />
+              <CircularProgress size={16} sx={{ flexShrink: 0 }} />
               <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>
                 Drafting…
               </Typography>
@@ -552,16 +576,31 @@ function PredictedQuestionPanel({ status, question, error, onRetry, copy }) {
     <PredictionPanel title={copy.predictedQuestionTitle}>
       {status === "loading" ? (
         <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
-          <CircularProgress size={16} />
+          <CircularProgress size={16} sx={{ flexShrink: 0 }} />
           <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
             Guessing what might be asked next…
           </Typography>
         </Stack>
       ) : status === "error" ? (
+        // Inside a ~140px-wide phone panel, Alert padding + the severity
+        // icon + a reserved action slot left almost nothing for the message
+        // itself, and Retry is the only recovery path for a failed
+        // prediction — see the doc above PredictedAnswerPanel's identical
+        // error branch. Wrapping the action below the message on phones
+        // gives both the message and the (touch-sized) Retry button room.
         <Alert
           severity="error"
+          sx={{
+            flexWrap: { xs: "wrap", sm: "nowrap" },
+            "& .MuiAlert-action": {
+              pl: { xs: 0, sm: 2 },
+              ml: { xs: 0, sm: "auto" },
+              mr: 0,
+              width: { xs: "100%", sm: "auto" },
+            },
+          }}
           action={
-            <Button color="inherit" size="small" onClick={onRetry}>
+            <Button color="inherit" size="small" onClick={onRetry} sx={TOUCH_TARGET_SX}>
               Retry
             </Button>
           }
@@ -570,7 +609,9 @@ function PredictedQuestionPanel({ status, question, error, onRetry, copy }) {
         </Alert>
       ) : status === "done" && question ? (
         <>
-          <Typography sx={{ color: "var(--text-primary)", fontWeight: 600 }}>{question}</Typography>
+          <Typography sx={{ color: "var(--text-primary)", fontWeight: 600, ...BREAK_LONG_WORDS_SX }}>
+            {question}
+          </Typography>
           <Typography variant="caption" sx={{ display: "block", mt: 0.75, color: "var(--text-secondary)" }}>
             {copy.predictionDisclaimer}
           </Typography>
@@ -610,7 +651,7 @@ function PredictedAnswerPanel({ predictionStatus, predictedQuestion, status, poi
         </Typography>
       ) : status === "loading" ? (
         <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
-          <CircularProgress size={16} />
+          <CircularProgress size={16} sx={{ flexShrink: 0 }} />
           <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
             Drafting an answer to the predicted question…
           </Typography>
@@ -627,8 +668,17 @@ function PredictedAnswerPanel({ predictionStatus, predictedQuestion, status, poi
         // failed sample answer already does.
         <Alert
           severity="error"
+          sx={{
+            flexWrap: { xs: "wrap", sm: "nowrap" },
+            "& .MuiAlert-action": {
+              pl: { xs: 0, sm: 2 },
+              ml: { xs: 0, sm: "auto" },
+              mr: 0,
+              width: { xs: "100%", sm: "auto" },
+            },
+          }}
           action={
-            <Button color="inherit" size="small" onClick={onRetry}>
+            <Button color="inherit" size="small" onClick={onRetry} sx={TOUCH_TARGET_SX}>
               Retry
             </Button>
           }
@@ -665,7 +715,10 @@ function PredictedAnswerPanel({ predictionStatus, predictedQuestion, status, poi
 // "pace" stopped being an accurate name for what the whole strip shows.
 function ReadingSlot({ label, valueText, measuredCopy }) {
   return valueText ? (
-    <Stack direction="row" spacing={0.75} sx={{ alignItems: "baseline" }}>
+    // Without flexWrap, "125 words/min" + "Conversational" needed ~191px
+    // against ~182px available at 320px wide, so "words/min" broke
+    // mid-phrase instead of the whole label dropping to its own line.
+    <Stack direction="row" spacing={0.75} sx={{ alignItems: "baseline", flexWrap: "wrap", rowGap: 0.25 }}>
       <Typography sx={{ color: "var(--text-primary)", fontWeight: 600 }}>{valueText}</Typography>
       {label}
     </Stack>
@@ -777,7 +830,7 @@ export default function CopilotDashboard({
   return (
     <Box
       sx={{
-        p: 2,
+        p: { xs: 1.25, sm: 2 },
         borderRadius: 2,
         border: "1px solid var(--border)",
         background: "var(--bg-surface)",

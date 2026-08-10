@@ -6,6 +6,7 @@ import Divider from "@mui/material/Divider";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { MIN_LUMA_SAMPLES } from "@/lib/copilot/videoStats";
+import { BREAK_LONG_WORDS_SX } from "../mobileSx";
 
 // Top offending phrases worth naming individually — capped so a rambly
 // answer doesn't turn a row into a wall of text. Shared by the Fillers and
@@ -315,13 +316,18 @@ export default function AnswerReview({
         // Intentionally NOT mirrored, unlike the live self-view in
         // CameraPreview — a mirrored replay would misrepresent which way
         // the candidate actually looked during the answer.
-        <Box sx={{ mb: 2 }}>
-          <video
-            controls
-            src={replayUrl}
-            style={{ width: "100%", maxHeight: 320, borderRadius: 8, display: "block" }}
-          />
-        </Box>
+        <Box
+          component="video"
+          controls
+          src={replayUrl}
+          sx={{
+            display: "block",
+            width: "100%",
+            maxHeight: { xs: "50vh", md: 320 },
+            borderRadius: "8px",
+            mb: 2,
+          }}
+        />
       ) : (
         <Typography variant="body2" sx={{ color: "var(--text-muted)", mb: 2 }}>
           {replaySupported
@@ -337,7 +343,12 @@ export default function AnswerReview({
       {transcript && transcript.length ? (
         <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
           {transcript.map((line, i) => (
-            <Typography key={i} component="li" variant="body2" sx={{ mb: 0.5, color: "var(--text-primary)" }}>
+            <Typography
+              key={i}
+              component="li"
+              variant="body2"
+              sx={{ mb: 0.5, color: "var(--text-primary)", ...BREAK_LONG_WORDS_SX }}
+            >
               {line}
             </Typography>
           ))}
@@ -353,8 +364,12 @@ export default function AnswerReview({
 
 function MetricRow({ label, value }) {
   return (
-    <Stack direction="row" spacing={1} sx={{ alignItems: "baseline" }}>
-      <Typography variant="body2" sx={{ color: "var(--text-secondary)", minWidth: 140 }}>
+    <Stack
+      direction={{ xs: "column", sm: "row" }}
+      spacing={{ xs: 0, sm: 1 }}
+      sx={{ alignItems: { xs: "flex-start", sm: "baseline" } }}
+    >
+      <Typography variant="body2" sx={{ color: "var(--text-secondary)", minWidth: { xs: 0, sm: 140 } }}>
         {label}
       </Typography>
       <Typography variant="body2" sx={{ color: "var(--text-primary)", fontWeight: 500 }}>

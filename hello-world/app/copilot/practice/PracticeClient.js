@@ -7,6 +7,7 @@ import Stack from "@mui/material/Stack";
 import { interviewTypeLabel } from "@/lib/copilot/interviewTypes";
 import { buildPrivacyNotice } from "@/lib/copilot/practiceNotices";
 import { useEngine } from "@/app/settings/engine";
+import { useIsTablet } from "@/app/hooks/useResponsive";
 import TranscriptView from "../TranscriptView";
 import QuestionFeed from "../QuestionFeed";
 import CameraPreview from "./CameraPreview";
@@ -645,6 +646,15 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
   // against.
   const judgedInterviewTypeLabel = interviewTypeLabel(interviewType);
 
+  // Mobile shell (defects 1/2): below `md` the primary "Start answering" /
+  // "Done" loop and the self-view must both be reachable without scrolling
+  // past the five-panel dashboard first. `useIsTablet` (below `md`, i.e. the
+  // SAME cutoff the camera/transcript Stack's own `{ xs, md }` direction
+  // switches on below) rather than `useIsMobile` (below `sm`) so this and
+  // the CSS `order` values a few lines down never disagree about which
+  // width phones-and-small-tablets belongs to.
+  const isTablet = useIsTablet();
+
   return (
     <Box>
       <PracticeSetup
@@ -696,68 +706,104 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
         </Alert>
       ) : null}
 
-      {/* AC-J2.1: the same five-panel dashboard live mode shows, so a
-          candidate rehearses against the instrument they will be reading
-          during a real interview — see CopilotDashboard.js's own module doc
-          for why the layout, states, and copy stay identical between modes.
-          Does NOT replace QuestionCard below, which keeps its own Next
-          question / Start answering / Done / sample-answer controls. */}
-      <Box sx={{ mb: 2 }}>
-        <CopilotDashboard
-          questions={dashboardQuestions}
-          copy={PRACTICE_COPY}
-          pace={pace}
-          fillers={fillers}
-          predictedQuestion={predictedQuestion}
-          predictionStatus={predictionStatus}
-          predictionError={predictionError}
-          onRetryPrediction={retryPrediction}
-          onRetryPredraft={retryPredraft}
-          predictedPoints={predictedPoints}
-          predictedCues={predictedCues}
-          predictedAnswerStatus={predictedAnswerStatus}
-          predictedAnswerError={predictedAnswerError}
-          // AC-J2.3: gated behind the SAME useSampleAnswer instance
-          // QuestionCard's own sample-answer panel uses below, so revealing
-          // the answer in either place reveals it in both — practice mode's
-          // whole drill is answering cold, and the dashboard must not put
-          // the model's answer on screen before the candidate asks for it.
-          answerHidden={!sampleAnswer.visible}
-          onRevealAnswer={sampleAnswer.toggle}
-          revealLabel="Show sample answer"
-        />
-      </Box>
+      {/* Defect 1 (mobile shell, BLOCKER): below `md` the five-panel
+          dashboard is ~1100px tall on its own, which buried QuestionCard's
+          Start answering / Done controls multiple screens down.
+          Defect 2 (BLOCKER): the compact self-view sits ahead of
+          QuestionCard, so a phone user can see the question and their own
+          face together without scrolling — practice mode's whole premise is
+          watching yourself answer. It is the ONLY CameraPreview rendered
+          below `md`; the full-size instance further down (the
+          camera/transcript Stack) only mounts at `md`+ (see `isTablet`
+          there), so a given MediaStream is never handed to two <video>
+          elements at once.
 
-      <Box sx={{ mb: 2 }}>
-        <QuestionCard
-          question={currentQuestion?.question || ""}
-          type={currentQuestion?.type || "general"}
-          loading={questionLoading}
-          error={questionError}
-          exhausted={exhausted}
-          sessionActive={running}
-          hasPosting={!!posting}
-          live={status === "live"}
-          answering={answering}
-          settling={settling}
-          onNext={onNextQuestion}
-          onRetry={onRetryQuestion}
-          onStartAnswer={onStartAnswer}
-          onDoneAnswer={onDoneAnswer}
-          sampleVisible={sampleAnswer.visible}
-          sampleStatus={sampleAnswer.status}
-          sampleAnswerPoints={sampleAnswer.points}
-          sampleCues={sampleAnswer.cues}
-          sampleBuzzwords={sampleAnswer.buzzwords}
-          sampleAnchor={sampleAnswer.anchor}
-          sampleIdealProject={sampleAnswer.idealProject}
-          sampleGrounding={sampleAnswer.grounding}
-          sampleError={sampleAnswer.error}
-          isEmbedded={isEmbedded}
-          onToggleSample={sampleAnswer.toggle}
-          onRetrySample={sampleAnswer.retry}
-          onRegenerateSample={sampleAnswer.regenerate}
-        />
+          This reorders the DOM, NOT just the paint order. The first version
+          of this fix used breakpoint-keyed CSS `order` on a flex column,
+          which moves the pixels and leaves the DOM alone — so below `md` a
+          keyboard or screen-reader user met the dashboard (including its
+          "Show sample answer" button) BEFORE the question card, while every
+          sighted user saw the opposite. That is a visual/focus order
+          mismatch, WCAG 2.4.3 and 1.3.2, and it is exactly the trap CSS
+          `order` sets. Reordering the array instead keeps the two in
+          agreement.
+
+          The `key`s are what make this safe: React matches keyed children
+          across a reorder, so crossing the breakpoint MOVES these two
+          elements rather than unmounting and remounting them. That matters
+          beyond cheapness — CopilotDashboard's panels carry `aria-live`
+          regions, and a region that remounts already holding its final text
+          is not announced (see lib/copilot/answerStatus.js), so a remount
+          here would silently drop announcements on every rotation. */}
+      <Box>
+        {isTablet ? (
+          <Box sx={{ mb: 2 }}>
+            <CameraPreview stream={stream} hasVideo={hasVideo} cameraOff={cameraOff} compact />
+          </Box>
+        ) : null}
+
+        {(isTablet ? ["question", "dashboard"] : ["dashboard", "question"]).map((slot) =>
+          slot === "dashboard" ? (
+            <Box key="dashboard" sx={{ mb: 2 }}>
+              <CopilotDashboard
+                questions={dashboardQuestions}
+                copy={PRACTICE_COPY}
+                pace={pace}
+                fillers={fillers}
+                predictedQuestion={predictedQuestion}
+                predictionStatus={predictionStatus}
+                predictionError={predictionError}
+                onRetryPrediction={retryPrediction}
+                onRetryPredraft={retryPredraft}
+                predictedPoints={predictedPoints}
+                predictedCues={predictedCues}
+                predictedAnswerStatus={predictedAnswerStatus}
+                predictedAnswerError={predictedAnswerError}
+                // AC-J2.3: gated behind the SAME useSampleAnswer instance
+                // QuestionCard's own sample-answer panel uses below, so
+                // revealing the answer in either place reveals it in both —
+                // practice mode's whole drill is answering cold, and the
+                // dashboard must not put the model's answer on screen before
+                // the candidate asks for it.
+                answerHidden={!sampleAnswer.visible}
+                onRevealAnswer={sampleAnswer.toggle}
+                revealLabel="Show sample answer"
+              />
+            </Box>
+          ) : (
+            <Box key="question" sx={{ mb: 2 }}>
+              <QuestionCard
+                question={currentQuestion?.question || ""}
+                type={currentQuestion?.type || "general"}
+                loading={questionLoading}
+                error={questionError}
+                exhausted={exhausted}
+                sessionActive={running}
+                hasPosting={!!posting}
+                live={status === "live"}
+                answering={answering}
+                settling={settling}
+                onNext={onNextQuestion}
+                onRetry={onRetryQuestion}
+                onStartAnswer={onStartAnswer}
+                onDoneAnswer={onDoneAnswer}
+                sampleVisible={sampleAnswer.visible}
+                sampleStatus={sampleAnswer.status}
+                sampleAnswerPoints={sampleAnswer.points}
+                sampleCues={sampleAnswer.cues}
+                sampleBuzzwords={sampleAnswer.buzzwords}
+                sampleAnchor={sampleAnswer.anchor}
+                sampleIdealProject={sampleAnswer.idealProject}
+                sampleGrounding={sampleAnswer.grounding}
+                sampleError={sampleAnswer.error}
+                isEmbedded={isEmbedded}
+                onToggleSample={sampleAnswer.toggle}
+                onRetrySample={sampleAnswer.retry}
+                onRegenerateSample={sampleAnswer.regenerate}
+              />
+            </Box>
+          ),
+        )}
       </Box>
 
       {!answering && !settling && answerMetrics ? (
@@ -823,7 +869,17 @@ export default function PracticeClient({ sttProviderName, micDeviceId, onMicDevi
         spacing={2}
         sx={{ alignItems: "stretch" }}
       >
-        <CameraPreview stream={stream} hasVideo={hasVideo} cameraOff={cameraOff} />
+        {/* Defect 2: below `md` the self-view already renders, compact,
+            above QuestionCard (see the flex-order wrapper above this
+            component's Alert/dashboard/QuestionCard block) — rendering it a
+            second time here too would mount two <video> elements against
+            the same MediaStream at once, which CameraPreview's own
+            srcObject effect is not built to share. `isTablet` is that same
+            wrapper's cutoff, so the two never disagree about which one a
+            given width renders. */}
+        {isTablet ? null : (
+          <CameraPreview stream={stream} hasVideo={hasVideo} cameraOff={cameraOff} />
+        )}
         <TranscriptView
           finals={finals}
           interims={{ them: "", you: interim }}

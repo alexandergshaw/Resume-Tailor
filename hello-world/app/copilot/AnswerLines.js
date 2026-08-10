@@ -3,6 +3,8 @@
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 
+import { BREAK_LONG_WORDS_SX } from "./mobileSx";
+
 // AC-K1.1/AC-L1: the one place a drafted answer's lines are actually
 // rendered. The reported bug was exactly this markup existing as four
 // hand-rolled copies — CopilotDashboard.js's CurrentAnswerPanel and
@@ -45,7 +47,12 @@ export default function AnswerLines({ lines }) {
   return (
     <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
       {lines.map((line, i) => (
-        <Typography key={i} component="li" variant="body2" sx={{ mb: 0.5, color: "var(--text-primary)" }}>
+        <Typography
+          key={i}
+          component="li"
+          variant="body2"
+          sx={{ mb: 0.5, color: "var(--text-primary)", ...BREAK_LONG_WORDS_SX }}
+        >
           {line.cue ? (
             <>
               <strong>

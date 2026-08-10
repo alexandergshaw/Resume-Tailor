@@ -9,6 +9,8 @@ import Collapse from "@mui/material/Collapse";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
+import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX } from "./mobileSx";
+
 // Bounded so a long submitted résumé or cover letter can never push the
 // rest of the copilot screen down indefinitely (AC-H3.13) — it scrolls
 // inside its own container instead.
@@ -50,15 +52,18 @@ function DocumentSection({ title, text, notFoundText }) {
       {text ? (
         <Box
           sx={{
-            maxHeight: SCROLL_MAX_HEIGHT,
-            overflowY: "auto",
+            maxHeight: { xs: "none", sm: SCROLL_MAX_HEIGHT },
+            overflowY: { xs: "visible", sm: "auto" },
             p: 1.5,
             borderRadius: 1.5,
             border: "1px solid var(--border)",
             background: "var(--bg-surface)",
           }}
         >
-          <Typography variant="body2" sx={{ color: "var(--text-primary)", whiteSpace: "pre-wrap" }}>
+          <Typography
+            variant="body2"
+            sx={{ color: "var(--text-primary)", whiteSpace: "pre-wrap", ...BREAK_LONG_WORDS_SX }}
+          >
             {text}
           </Typography>
         </Box>
@@ -98,7 +103,7 @@ export default function SubmittedDocs({ status, resume, coverLetter, error, onRe
         size="small"
         variant="text"
         onClick={() => setOpen((o) => !o)}
-        sx={{ color: "var(--text-secondary)" }}
+        sx={{ color: "var(--text-secondary)", ...TOUCH_TARGET_SX }}
       >
         {open ? "▾" : "▸"} Submitted for this application
         {statusSuffix(status, resume, coverLetter)}
@@ -117,8 +122,17 @@ export default function SubmittedDocs({ status, resume, coverLetter, error, onRe
           {status === "error" ? (
             <Alert
               severity="error"
+              sx={{
+                flexWrap: { xs: "wrap", sm: "nowrap" },
+                "& .MuiAlert-action": {
+                  pl: { xs: 0, sm: 2 },
+                  ml: { xs: 0, sm: "auto" },
+                  mr: 0,
+                  width: { xs: "100%", sm: "auto" },
+                },
+              }}
               action={
-                <Button color="inherit" size="small" onClick={onRetry}>
+                <Button color="inherit" size="small" onClick={onRetry} sx={TOUCH_TARGET_SX}>
                   Retry
                 </Button>
               }

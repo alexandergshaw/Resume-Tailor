@@ -35,13 +35,13 @@ export default function NavTabs({ value, onChange, tabs, size = "main", sx }) {
       onChange={(_e, v) => onChange(v)}
       variant="scrollable"
       scrollButtons="auto"
-      allowScrollButtonsMobile
       sx={{
         mb: s.mb,
         minHeight: 0,
         borderBottom: s.border,
         "& .MuiTab-root": {
           minHeight: 0,
+          minWidth: { xs: 0, sm: 90 },
           py: 1.25,
           px: s.px,
           fontWeight: s.fontWeight,

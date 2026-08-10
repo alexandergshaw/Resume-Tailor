@@ -1850,3 +1850,128 @@ A confirmed question runs the same pipeline live mode runs and produces the same
 2. Run `npx vitest run --no-file-parallelism lib/copilot/practiceSession.test.js lib/copilot/practiceSession.diarize.test.js lib/copilot/answerMetrics.test.js` from `hello-world/`.
 
 **Expected:** Diarization is requested unconditionally, unlike live mode where it is tied to the in-person source: the microphone is already the only source, the parameter costs nothing, and a solo session yields a single speaker tag which the answer partition treats exactly as it treats no tag. So a solo user's metrics are byte-identical to before the feature. No warning is raised when the provider cannot diarize - unlike live mode, practice mode loses nothing a solo user would notice, and warning on every session would cry wolf. Frames still reach consumers with `speaker: "you"`, with `speakerTag` riding alongside, so nothing downstream had to learn a second vocabulary.
+
+### R-157 | area: copilot-mobile | parallel-safe: yes | automatable: no
+
+**Summary:** The interview copilot has no horizontal overflow anywhere between 320px and 430px, in either mode, through either entry point.
+
+**Steps:**
+1. Open the copilot BOTH ways: the `/copilot` route, and the "Interview Copilot" tab in the main nav (`app/page.js`, `mainTab === "copilot"`). The nav-tab path adds two more padding layers (`.page` and `.main` in `app/page.module.css`) and is the stricter case.
+2. In device emulation, at each of 320, 375, 390 and 430 CSS px wide, in live mode and practice mode, run in the console:
+
+       const vw = innerWidth;
+       [...document.querySelectorAll('main *')]
+         .filter(el => { const r = el.getBoundingClientRect(); return (r.width || r.height) && r.right > vw + 0.5; })
+         .map(el => [el.tagName, el.textContent.trim().slice(0, 40)]);
+
+3. Repeat with a live session started, and with practice mode showing a completed answer's review and feedback.
+
+**Expected:** The array is empty every time. **Measure by element bounds, never by looking for a scrollbar.** `app/globals.css:20` sets `html { overflow-x: hidden }` -- deliberately, and scoped to `html` rather than `body` so the sticky header still pins -- so horizontal overflow here is silently CLIPPED AND UNREACHABLE rather than scrollable. A visual check cannot distinguish "fits" from "the right-hand third was deleted", which is how this shipped: measured at a 320px shell, the copilot's root Box had a min-content width of 327.8px against a 256px content box, and because `.main` is a flex column (so the child's `min-width: auto` floor applies) it overflowed by ~72px with no scrollbar and no visible symptom.
+
+The dominant contributor was the three-option "Interviewer audio" `ToggleButtonGroup` in `SessionSetup.js`: a `ToggleButtonGroup` is `inline-flex` and never wraps internally, so the parent `Stack`'s `flexWrap` -- which was already present -- only ever wrapped BETWEEN the label and the group. **Adding `flexWrap` to a parent does nothing for a non-wrapping child**; the group itself has to change `orientation`. Note `orientation` is a plain string prop and does NOT accept a responsive breakpoint object the way `Stack`'s `direction` does -- passing one renders the container un-oriented, changing nothing -- so it is driven by `useIsMobile()` threaded down as a prop. The second contributor was `MicPicker.js`'s hard `minWidth: 220` `FormControl`, the only fixed px width in the live file set.
+
+### R-158 | area: copilot-mobile | parallel-safe: yes | automatable: no
+
+**Summary:** Every interactive control in the copilot is at least 44 CSS px tall on a phone.
+
+**Steps:**
+1. At 375px wide, in live mode and practice mode, run:
+
+       const SEL = 'button, a[href], input:not([type=hidden]), select, textarea, [role=button], [role=tab], [role=switch], .MuiSwitch-switchBase';
+       [...document.querySelectorAll('main ' + SEL.split(', ').join(', main '))]
+         .map(el => ({ h: el.getBoundingClientRect().height, label: (el.getAttribute('aria-label') || el.textContent || el.type || '').trim().slice(0, 40) }))
+         .filter(x => x.h && x.h < 44);
+
+2. Expand every disclosure first (setup, transcript history, submitted docs, prep context, sample answer) and start a practice answer, so their controls exist to be measured.
+3. For `SpeakerChip`'s "Mark ... as me" button, the visual pill stays 20px on purpose -- verify its HIT area instead by tapping 10px above and 10px below it and confirming both activate it.
+
+**Expected:** The filtered array is empty apart from `SpeakerChip`'s button, whose hit area is extended by a transparent `::after` (`TOUCH_PILL_SX` in `app/copilot/mobileSx.js`) rather than by growing the pill -- a chip grown to 44px would dominate every transcript row. Twelve controls measured under 44px in live mode idle alone before this work, including both disclosure buttons, each of which is the ONLY route to its content while a session is live.
+
+The mobile rules live in ONE place (`app/copilot/mobileSx.js`) rather than being restated per call site, the same argument that makes `livePace.js` import `answerMetrics.js`'s thresholds instead of repeating them: two definitions of "big enough to tap" will drift.
+
+**Every value in that module is breakpoint-scoped so that at 600px and above the rendering is unchanged, and that is a hard requirement rather than a nicety.** `SpeakerChip` shipped a first version of this fix with `minWidth: { xs: 44, sm: 0 }`; the button had previously had no `min-width` at all, i.e. `auto`, which on a flex item is exactly what stops it being squeezed below its own label. `0` handed that floor back at every desktop width to buy nothing. Check any `sm`/`md` value that reads as "off" -- `0`, `none`, `visible` -- against what the property's INITIAL value actually was.
+
+### R-159 | area: copilot-mobile | parallel-safe: yes | automatable: no
+
+**Summary:** On a phone the page is the single scroll container -- no copilot pane is its own nested scroller, and no viewport-height math reaches a phone.
+
+**Steps:**
+1. At 375x812 in live mode, scroll the page with a drag that starts INSIDE the transcript pane, then inside the question feed, then inside the "Submitted for this application" panel.
+2. Confirm `TranscriptView`, `QuestionFeed` and `SubmittedDocs` compute no `overflow-y: auto` and no height cap below `md`.
+3. Widen past 900px and confirm all three return to being bounded, internally-scrolling panes.
+4. In practice mode, confirm the camera preview does not exceed the viewport on a short or landscape phone.
+
+**Expected:** Every drag scrolls the page. Below `md` the three panes grow with their content (`PHONE_PANE_SX`); at `md`+ their previous `minHeight: 340` / `maxHeight: 62vh` / `overflowY: auto` behaviour is unchanged. Two independent reasons, each sufficient on its own: a nested touch scroller steals the page-scroll gesture and makes the page feel stuck, and `62vh` is the LARGE-viewport height on iOS Safari, so a pane sized to it is taller than the visible area whenever the URL bar is expanded and its bottom rows sit under the chrome. Note it was plain `vh`, not `dvh` -- `CopilotClient.js` already does the `CSS.supports("height", "1dvh")` dance for its own live column, so the idiom existed and had simply not been applied here.
+
+`SubmittedDocs` is the sharpest case: setting `overflow-y: auto` while `overflow-x` stays `visible` makes the computed `overflow-x` `auto` as well (CSS overflow spec), and its resume text is `white-space: pre-wrap`, which preserves the document's own long lines -- so it was a 260px-tall TWO-AXIS nested scroller on a ~250px-wide screen.
+
+`CopilotClient.js`'s live-height block was already correctly gated (`measureLiveHeight = live && !isMobile`, plus `height: { xs: "auto", sm: ... }`) -- that guard is complete at both the JS and CSS layers and must stay. Only its sibling `overflow` key had been left ungated, and that single omission is what made every other overflow on this page invisible while a session was live.
+
+### R-160 | area: copilot-mobile | parallel-safe: yes | automatable: yes
+
+**Summary:** A device that cannot capture a display surface is not offered the two sources that require one, and a source chosen on another device resolves to something runnable.
+
+**Steps:**
+1. Read `hello-world/lib/copilot/captureSupport.js` and how `CopilotClient.js` seeds `source` from `localStorage` through `resolveInterviewerSource`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/captureSupport.test.js` from `hello-world/`.
+3. In a desktop browser, confirm all three "Interviewer audio" options are enabled and stored-source behaviour is unchanged.
+4. In devtools, delete `navigator.mediaDevices.getDisplayMedia` and reload. Confirm "Browser tab" and "System audio (speakers)" are disabled, that a visible sentence in the DOM explains why, and that the selection has become "In person (same microphone)".
+5. Set `localStorage["copilot-audio-source"] = "tab"` on that same crippled profile, reload, and confirm the session still starts.
+
+**Expected:** `getDisplayMedia` is unsupported on EVERY mobile browser -- Safari on iOS, Chrome for Android, Samsung Internet, Android Browser and Opera Mobile are all unsupported per caniuse. `lib/copilot/session.js`'s `THEM_CAPTURE_BY_SOURCE` maps `tab` and `system` straight onto functions that call it, and `start()` awaits `captureThem()` as its first act, so before this those two options were controls on a phone that could only ever throw.
+
+Detection is FEATURE detection (`typeof mediaDevices?.getDisplayMedia === "function"`), never user-agent sniffing, and a key that merely exists is not enough -- a non-callable value would still throw. The explanation must be real text in the DOM: a `title=` or a `Tooltip` has no touch equivalent, so on the exact devices this exists for it would never be seen. The wording states a capability gap and never says "denied" or "permission" -- the browser never gets far enough to prompt -- and the test asserts those words are absent.
+
+`unavailableSourceReason` is deliberately called with the fixed string `"tab"`, never with the current `source` state. `"tab"` and `"system"` share an identical reason, `"inperson"` always returns `""`, and a device without display capture is exactly the case where `source` has already been resolved to `"inperson"` -- so reading the reason off the selected source would go silent precisely when it is needed. The seed effect depends on `displayCapture` rather than `[]` for the same reason: detection lands after the first render, and without the re-run a phone's stored or default `"tab"` would never self-correct.
+
+**`lib/copilot/session.js` is deliberately unchanged.** Its fallback of an unrecognized source to `captureTabAudio` is pinned by R-034/R-038/R-144 and must stay; this gate is in the UI only. On a device that DOES support display capture, `resolveInterviewerSource` reproduces today's behaviour exactly, including `"tab"` as the default -- pinned by its own assertion so a change to the default has to be deliberate rather than a side effect of this feature.
+
+### R-161 | area: copilot-mobile | parallel-safe: yes | automatable: no
+
+**Summary:** Practice mode's drill is reachable on a phone, and its reordering moves the DOM rather than only the pixels.
+
+**Steps:**
+1. At 390x844 in practice mode with a posting selected, confirm the question card appears above the five-panel dashboard, with the compact self-view above both.
+2. **Tab through the page from the top and confirm the focus order matches the visual order** -- "Start answering" must be reached before the dashboard's "Show sample answer", not after it.
+3. Widen past 900px and confirm the order returns to exactly what it was before this work: dashboard above the question card, full-size camera preview beside the transcript in the bottom row.
+4. Confirm only ONE `<video>` element is bound to the camera stream at any width: check `document.querySelectorAll('video').length` and which have a `srcObject`.
+5. Rotate/resize across the 900px boundary while a sample answer is revealed and confirm it stays revealed.
+
+**Expected:** Before this work the dashboard sat between the controls and the question card, putting "Start answering" ~1990px down (about 2.9 screens) and the self-view ~2100-3400px down -- so a candidate could never see the question and their own face at once, which is practice mode's entire premise.
+
+**Step 2 is the point of this case.** The first implementation used breakpoint-keyed CSS `order` on a flex column. That moves the paint order and leaves the DOM alone, so below `md` a keyboard or screen-reader user met the dashboard -- including its "Show sample answer" button -- BEFORE the question card while every sighted user saw the opposite: a visual/focus order mismatch, WCAG 2.4.3 and 1.3.2. Reordering the rendered array instead keeps the two in agreement. The `key`s on those two blocks are load-bearing: React matches keyed children across a reorder, so crossing the breakpoint MOVES them rather than remounting them, and `CopilotDashboard`'s panels carry `aria-live` regions that go unannounced if they remount already holding their final text.
+
+The reveal gate must survive the reorder: the dashboard and the question card share ONE `useSampleAnswer` instance, because a second visibility flag would let them disagree about whether the model's answer is on screen. Likewise only one `<video>` may hold the stream -- the compact self-view is the same component re-placed, not a second copy.
+
+**What must NOT be done to shorten the scroll:** the privacy notice at the top of `PracticeSetup.js` is the largest single block of height, and collapsing it behind a disclosure is forbidden. This codebase has shipped that failure twice -- a posting-grounding fact appended to a dismissible consent `Alert` (BUG-H4), and a recording notice that vanished the moment `start()` collapsed the setup block (BUG-4). A disclosure may not live inside a dismissible or collapsible container, and "it was too tall on mobile" is not an exception.
+
+### R-162 | area: copilot-a11y | parallel-safe: yes | automatable: yes
+
+**Summary:** The copilot's visually-hidden live regions are 1px boxes, not full-size elements, because MUI's `sx` reinterprets bare numbers.
+
+**Steps:**
+1. Read `visuallyHidden` in `hello-world/lib/copilot/answerStatus.js`.
+2. Run `npx vitest run --no-file-parallelism lib/copilot/answerStatus.test.js` from `hello-world/`.
+3. In a browser at any width, evaluate `getComputedStyle` width for every `span[role="status"]` in the copilot.
+
+**Expected:** Every one reports `1px`. This object is consumed only as an `sx` value, at six call sites across the copilot, and **MUI's `sx` does not read a bare number as pixels**: `width`/`height` go through `sizingTransform`, where any number in 0..1 means a percentage, and `margin` goes through the spacing system, where `-1` means -8px. Verified directly in `node_modules/@mui/system/styleFunctionSx/defaultSxConfig.js` -- `width` carries `transform: sizingTransform`, while `top`/`right`/`bottom`/`left` have empty configs and DO pass raw numbers through as px (which is why `TOUCH_PILL_SX`'s `top: -12` is correct as written). So the plain-CSS reading of the old object -- a 1px box nudged 1px -- was not what shipped; it computed to `width: 100%; height: 100%; margin: -8px`, measured in a browser as a real 320x900px element.
+
+Nothing looked wrong, because `clip` and `overflow: hidden` still hid it. What it did instead was silently extend the document's scroll width, which on a phone is indistinguishable from a layout bug precisely because `app/globals.css:20` clips horizontal overflow at the root (R-157).
+
+The test asserts UNITS, not values: each length must be a unit-bearing string, so the numbers can be tuned without the assertion going stale, while a "simplification" back to bare numbers fails. Sabotage it by restoring `width: 1` and `margin: -1` and confirm it goes red -- it does, naming the property. The three properties that do the actual hiding (`position`, `overflow`, `clip`) are pinned in the same block, because losing one of those turns a screen-reader-only region into visible text, and it is only the fact that they kept working that let the sizing bug hide for so long.
+
+### R-163 | area: copilot-practice | parallel-safe: yes | automatable: yes
+
+**Summary:** Practice mode renders at all, and `no-undef` is the gate that keeps it that way.
+
+**Steps:**
+1. Run `npx eslint .` from `hello-world/`. It must report 0 errors and 0 warnings.
+2. Delete the `const [replayUrl, setReplayUrl] = useState("")` declaration from `hello-world/app/copilot/practice/usePracticeAnswer.js` and re-run `npx eslint .`.
+3. Restore it.
+4. Open the copilot and switch to Practice. The setup, controls and question card must render.
+
+**Expected:** Step 2 fails with three `no-undef` errors naming `setReplayUrl` twice and `replayUrl` once. This case exists because exactly that shipped to main: the declaration was lost in the extraction that split PracticeClient's hooks apart (commit d0dc09c), leaving `replayUrl`/`setReplayUrl` as free variables, and practice mode threw `ReferenceError: replayUrl is not defined` on its first render — the entire tab was a blank crash.
+
+**Nothing caught it, and the reasons are the point of this case.** `eslint-config-next` leaves `no-undef` OFF, on the assumption that TypeScript does that job; this project has no `tsconfig.json` at all, and the development-loop notes already record that `tsc --noEmit` is vacuous here. `npm run build` passed, because an undeclared reference is legal SYNTAX and only fails at runtime. All 2816 tests passed, because `vitest.config.js` is `environment: "node"` with no jsdom, so no test in this repo can render a component or a hook — the same structural gap recorded in R-152 and R-153.
+
+So three green gates said nothing was wrong while half the feature was dead. `no-undef` is now enabled in `eslint.config.mjs`; enabling it produced **zero** errors anywhere else in the codebase, so it costs nothing and closes the whole class. Do not disable it, and do not add a `tsconfig.json` to "do it properly" — there are no TypeScript sources here for one to check.

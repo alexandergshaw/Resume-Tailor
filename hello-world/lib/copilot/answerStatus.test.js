@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { answerStatusMessage } from "./answerStatus.js";
+import { answerStatusMessage, visuallyHidden } from "./answerStatus.js";
 
 describe("answerStatusMessage — idle", () => {
   it('returns "" for status "idle"', () => {
@@ -61,5 +61,37 @@ describe("answerStatusMessage — error", () => {
   it('returns "" for status "error", leaving the announcement to the sibling Alert', () => {
     expect(answerStatusMessage({ status: "error" })).toBe("");
     expect(answerStatusMessage({ status: "error", bulletCount: 3 })).toBe("");
+  });
+});
+
+describe("visuallyHidden", () => {
+  // This object is only ever consumed as a MUI `sx` value (six call sites
+  // across the copilot). MUI's sx reinterprets bare numbers -- `width: 1`
+  // becomes "100%" via the sizing system, `margin: -1` becomes -8px via the
+  // spacing system -- so writing it the way plain CSS would read is exactly
+  // what breaks it. It shipped that way and computed to a full-size absolutely
+  // positioned element, which stayed invisible (clip still works) while
+  // silently extending the document's scroll width.
+  //
+  // These assertions are about the units, not the numbers: a length here must
+  // be a string the CSS parser reads the same way MUI hands it over.
+  it("expresses every length with an explicit unit so sx cannot reinterpret it", () => {
+    for (const key of ["width", "height", "margin"]) {
+      expect(
+        typeof visuallyHidden[key],
+        `visuallyHidden.${key} must be a unit-bearing string, not a bare number`,
+      ).toBe("string");
+      expect(visuallyHidden[key]).toMatch(/^-?\d*\.?\d+(px|em|rem)$/);
+    }
+  });
+
+  it("still hides the element by clipping it out of the visual layer", () => {
+    // The three properties that actually do the hiding. If any of these is
+    // dropped the region becomes visible text rather than a screen-reader-only
+    // announcement, which is a far louder bug than the sizing one above -- but
+    // it is the reason the sizing bug went unnoticed, so pin them together.
+    expect(visuallyHidden.position).toBe("absolute");
+    expect(visuallyHidden.overflow).toBe("hidden");
+    expect(visuallyHidden.clip).toBe("rect(0 0 0 0)");
   });
 });

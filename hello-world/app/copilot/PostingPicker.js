@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Autocomplete from "@mui/material/Autocomplete";
 import TextField from "@mui/material/TextField";
 import { fetchPracticePostings } from "@/lib/copilot/postings";
+import { TOUCH_FIELD_SX, TOUCH_ICON_SX } from "./mobileSx";
 
 const DEFAULT_LABEL = "Practice for";
 const DEFAULT_BLANK_HINT = "Leave blank to practice with generic questions.";
@@ -100,7 +101,16 @@ export default function PostingPicker({
           error={!!error}
         />
       )}
-      sx={{ maxWidth: 480 }}
+      // Touch-target fix: the popup/clear indicators are MUI's own
+      // `IconButton`s, reachable through the Autocomplete's slot API rather
+      // than a DOM class selector, so `TOUCH_ICON_SX` is handed to them
+      // through `slotProps` the same way it would be passed as a plain `sx`
+      // prop directly on an IconButton.
+      slotProps={{
+        popupIndicator: { sx: TOUCH_ICON_SX },
+        clearIndicator: { sx: TOUCH_ICON_SX },
+      }}
+      sx={{ maxWidth: 480, ...TOUCH_FIELD_SX }}
     />
   );
 }

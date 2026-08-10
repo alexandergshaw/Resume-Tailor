@@ -7,6 +7,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { visuallyHidden } from "@/lib/copilot/answerStatus";
 import SpeakerChip from "./SpeakerChip";
+import { BREAK_LONG_WORDS_SX, PHONE_PANE_SX } from "./mobileSx";
 
 // Formats ms-since-start as m:ss for the per-turn timestamp.
 function fmtElapsed(ms) {
@@ -170,9 +171,8 @@ export default function TranscriptView({
       onScroll={onScroll}
       sx={{
         flex: 1,
-        minHeight: 340,
-        maxHeight: "62vh",
-        overflowY: "auto",
+        minWidth: 0,
+        ...PHONE_PANE_SX,
         p: 2,
         borderRadius: 2,
         border: "1px solid var(--border)",
@@ -206,7 +206,8 @@ export default function TranscriptView({
             display: "block",
             mb: 1,
             color: "var(--text-secondary)",
-            fontStyle: "italic",
+            fontStyle: { xs: "normal", sm: "italic" },
+            fontSize: { xs: 13, sm: "0.75rem" },
           }}
         >
           Still working out who is who in this conversation.
@@ -279,6 +280,7 @@ function TranscriptRow({ row, startedAt, speakerLabelFor, onAssign }) {
             pl: 0.25,
             color: row.interim ? "var(--text-muted)" : "var(--text-primary)",
             fontStyle: row.interim ? "italic" : "normal",
+            ...BREAK_LONG_WORDS_SX,
           }}
         >
           {row.text}
@@ -353,6 +355,7 @@ function TranscriptRow({ row, startedAt, speakerLabelFor, onAssign }) {
           pl: 0.25,
           color: row.interim ? "var(--text-muted)" : "var(--text-primary)",
           fontStyle: row.interim ? "italic" : "normal",
+          ...BREAK_LONG_WORDS_SX,
         }}
       >
         {row.text}

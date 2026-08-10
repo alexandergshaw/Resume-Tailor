@@ -9,6 +9,7 @@ import Typography from "@mui/material/Typography";
 import { fmtClock } from "@/lib/copilot/clock";
 import StatusPill from "../StatusPill";
 import MicPicker from "../MicPicker";
+import { TOUCH_SWITCH_SX, TOUCH_TARGET_SX } from "../mobileSx";
 
 // Presentational block for practice mode's session controls: the "Your
 // microphone" row, the Start/Stop row (status pill, elapsed clock,
@@ -52,8 +53,8 @@ export default function PracticeControls({
           mode's Start/Stop row. */}
       <Stack
         direction="row"
-        spacing={1.25}
-        sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
+        useFlexGap
+        sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", gap: 1.25 }}
       >
         <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
           Your microphone:
@@ -63,15 +64,15 @@ export default function PracticeControls({
 
       <Stack
         direction="row"
-        spacing={1.5}
-        sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
+        useFlexGap
+        sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", gap: 1.5 }}
       >
         {running ? (
-          <Button variant="outlined" color="error" onClick={onStop}>
+          <Button variant="outlined" color="error" onClick={onStop} sx={TOUCH_TARGET_SX}>
             Stop
           </Button>
         ) : (
-          <Button variant="contained" onClick={onStart}>
+          <Button variant="contained" onClick={onStart} sx={TOUCH_TARGET_SX}>
             Start practice
           </Button>
         )}
@@ -84,7 +85,13 @@ export default function PracticeControls({
             {fmtClock(elapsed)}
           </Typography>
         ) : null}
-        <Box sx={{ flex: 1 }} />
+        {/* Defect 6: `flex: 1` alone is `flex-basis: 0%`, which contributes
+            nothing to line packing — in a wrapping row it just absorbs free
+            space on whichever wrapped line it lands on, making the row's
+            wrap points unpredictable as labels change. Hidden below `sm`
+            instead, where this row already wraps onto multiple lines and a
+            zero-basis spacer has nothing meaningful to push against. */}
+        <Box sx={{ flex: 1, display: { xs: "none", sm: "block" } }} />
         <FormControlLabel
           control={
             <Switch
@@ -92,6 +99,7 @@ export default function PracticeControls({
               checked={!cameraOff}
               disabled={!controlsEnabled || !hasVideo}
               onChange={onToggleCamera}
+              sx={TOUCH_SWITCH_SX}
             />
           }
           label={
@@ -107,6 +115,7 @@ export default function PracticeControls({
               checked={micMuted}
               disabled={!controlsEnabled}
               onChange={onToggleMic}
+              sx={TOUCH_SWITCH_SX}
             />
           }
           label={
@@ -119,15 +128,29 @@ export default function PracticeControls({
 
       {/* AC-J2.7: "Pre-draft predicted answer" shares this row with the two
           switches it was named alongside — camera frames and save
-          recordings — rather than a third row of its own. */}
-      <Stack direction="row" spacing={1} sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 0.5 }}>
+          recordings — rather than a third row of its own.
+          Defect 4: three long-labelled switches don't fit one row at
+          320px — max-content is ~788px against ~272px available, so labels
+          wrapped to two lines with a 24px switch floating beside them below
+          `sm`. Stacking them in a column below `sm` instead gives each
+          label the full row width; `ml: 0, mr: 0` on each FormControlLabel
+          removes MUI's default asymmetric label margins (meant for a single
+          switch inline with other controls) so the stack reads as a clean
+          left-aligned list. */}
+      <Stack
+        direction={{ xs: "column", sm: "row" }}
+        useFlexGap
+        sx={{ mb: 2, alignItems: { xs: "stretch", sm: "center" }, flexWrap: "wrap", gap: 1 }}
+      >
         <FormControlLabel
+          sx={{ ml: 0, mr: 0 }}
           control={
             <Switch
               size="small"
               checked={sendFrames}
               disabled={isEmbedded}
               onChange={onSendFramesChange}
+              sx={TOUCH_SWITCH_SX}
             />
           }
           label={
@@ -137,8 +160,9 @@ export default function PracticeControls({
           }
         />
         <FormControlLabel
+          sx={{ ml: 0, mr: 0 }}
           control={
-            <Switch size="small" checked={saveEnabled} onChange={onToggleSaveEnabled} />
+            <Switch size="small" checked={saveEnabled} onChange={onToggleSaveEnabled} sx={TOUCH_SWITCH_SX} />
           }
           label={
             <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
@@ -147,11 +171,13 @@ export default function PracticeControls({
           }
         />
         <FormControlLabel
+          sx={{ ml: 0, mr: 0 }}
           control={
             <Switch
               size="small"
               checked={preDraftPredicted}
               onChange={onPreDraftChange}
+              sx={TOUCH_SWITCH_SX}
             />
           }
           label={

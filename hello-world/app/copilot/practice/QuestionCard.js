@@ -8,6 +8,7 @@ import CircularProgress from "@mui/material/CircularProgress";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import SampleAnswer from "./SampleAnswer";
+import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX } from "../mobileSx";
 
 const TYPE_LABEL = {
   behavioral: "Behavioral",
@@ -97,17 +98,24 @@ export default function QuestionCard({
           // tab's other top-level panel titles — `component=` changes only
           // the rendered element, never the `variant` that governs how this
           // looks.
-          <Typography variant="h6" component="h3" sx={{ flex: 1, fontWeight: 600, color: "var(--text-primary)" }}>
+          <Typography
+            variant="h6"
+            component="h3"
+            sx={{ flex: 1, fontWeight: 600, color: "var(--text-primary)", ...BREAK_LONG_WORDS_SX }}
+          >
             {question || emptyText}
           </Typography>
         )}
         {!loading && question && type ? (
+          // Defect 10: not interactive (no onClick/onDelete/clickable), so
+          // the 44px touch-target rule doesn't apply here — bumped only for
+          // legibility on phones.
           <Chip
             size="small"
             label={TYPE_LABEL[type] || "General"}
             sx={{
-              height: 22,
-              fontSize: 11,
+              height: { xs: 24, sm: 22 },
+              fontSize: { xs: 12, sm: 11 },
               color: "var(--text-secondary)",
               background: "var(--bg-soft)",
               border: "1px solid var(--border)",
@@ -121,7 +129,7 @@ export default function QuestionCard({
           severity="error"
           sx={{ mb: 1.5 }}
           action={
-            <Button color="inherit" size="small" onClick={onRetry}>
+            <Button color="inherit" size="small" onClick={onRetry} sx={TOUCH_TARGET_SX}>
               Retry
             </Button>
           }
@@ -136,8 +144,17 @@ export default function QuestionCard({
         </Alert>
       ) : null}
 
-      <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", flexWrap: "wrap", rowGap: 1 }}>
-        <Button variant="contained" onClick={onNext} disabled={loading || exhausted || answering || settling}>
+      <Stack
+        direction="row"
+        useFlexGap
+        sx={{ alignItems: "center", flexWrap: "wrap", gap: 1.5 }}
+      >
+        <Button
+          variant="contained"
+          onClick={onNext}
+          disabled={loading || exhausted || answering || settling}
+          sx={TOUCH_TARGET_SX}
+        >
           Next question
         </Button>
         {answering ? (
@@ -145,7 +162,7 @@ export default function QuestionCard({
             <Typography variant="body2" sx={{ color: "var(--danger)", fontWeight: 600 }}>
               ● Recording your answer…
             </Typography>
-            <Button variant="outlined" color="error" onClick={onDoneAnswer}>
+            <Button variant="outlined" color="error" onClick={onDoneAnswer} sx={TOUCH_TARGET_SX}>
               Done
             </Button>
           </>
@@ -157,7 +174,12 @@ export default function QuestionCard({
             </Typography>
           </Stack>
         ) : (
-          <Button variant="outlined" onClick={onStartAnswer} disabled={!canStartAnswering}>
+          <Button
+            variant="outlined"
+            onClick={onStartAnswer}
+            disabled={!canStartAnswering}
+            sx={TOUCH_TARGET_SX}
+          >
             Start answering
           </Button>
         )}

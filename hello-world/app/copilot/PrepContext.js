@@ -7,6 +7,8 @@ import Collapse from "@mui/material/Collapse";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 
+import { TOUCH_TARGET_SX } from "./mobileSx";
+
 // Collapsible panel where the candidate keeps the background the copilot uses to
 // personalize answers: a resume summary, the target job description, and any
 // prep notes. Seeded from the user's saved context and persisted locally by the
@@ -21,7 +23,7 @@ export default function PrepContext({ value, onChange }) {
         size="small"
         variant="text"
         onClick={() => setOpen((o) => !o)}
-        sx={{ color: "var(--text-secondary)" }}
+        sx={{ color: "var(--text-secondary)", ...TOUCH_TARGET_SX }}
       >
         {open ? "▾" : "▸"} Your prep context
         {chars > 0 ? ` (${chars.toLocaleString()} chars)` : " — add resume & role"}
@@ -30,7 +32,12 @@ export default function PrepContext({ value, onChange }) {
         <Box sx={{ mt: 1 }}>
           <Typography
             variant="caption"
-            sx={{ color: "var(--text-muted)", display: "block", mb: 0.75 }}
+            sx={{
+              color: "var(--text-muted)",
+              display: "block",
+              mb: 0.75,
+              fontSize: { xs: 13, sm: "0.75rem" },
+            }}
           >
             Paste a resume summary, the job description, and any notes. Answers are
             grounded in this. Stored only in this browser.

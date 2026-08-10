@@ -11,6 +11,7 @@ import { answerLines } from "@/lib/copilot/answerPoints";
 import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus";
 import AnswerAids from "../AnswerAids";
 import AnswerLines from "../AnswerLines";
+import { TOUCH_TARGET_SX, WRAP_ROW_SX } from "../mobileSx";
 
 // G1: the toggleable sample answer for practice mode's current question.
 // Purely presentational — every bit of state (whether it's shown, whether a
@@ -91,12 +92,21 @@ export default function SampleAnswer({
 
   return (
     <Box sx={{ mt: 1.5 }}>
-      <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-        <Button size="small" variant="outlined" onClick={onToggle} aria-expanded={visible}>
+      {/* Defect 7: "Hide sample answer" (~150px) + "Regenerate" (~95px) =
+          257px against a ~232px inner width at 320px, so the toggle label
+          wrapped to two lines whenever `canRegenerate` was true. */}
+      <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", ...WRAP_ROW_SX }}>
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={onToggle}
+          aria-expanded={visible}
+          sx={TOUCH_TARGET_SX}
+        >
           {visible ? "Hide sample answer" : "Show sample answer"}
         </Button>
         {canRegenerate ? (
-          <Button size="small" variant="text" onClick={onRegenerate}>
+          <Button size="small" variant="text" onClick={onRegenerate} sx={TOUCH_TARGET_SX}>
             Regenerate
           </Button>
         ) : null}

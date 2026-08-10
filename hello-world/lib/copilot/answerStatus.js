@@ -60,12 +60,25 @@ export function answerStatusMessage({ status, bulletCount } = {}) {
 // is free to break that. This module is already the one thing every one of
 // those call sites imports, so the style lives here instead of adding a
 // dependency for one object literal.
+// Every length here carries an EXPLICIT unit, and that is load-bearing rather
+// than stylistic. All six call sites pass this object to MUI's `sx`, which
+// reinterprets bare numbers: in the sizing system `width: 1` / `height: 1`
+// mean "100%" (any number in 0..1 is a fraction), and in the spacing system
+// `margin: -1` means -1 * 8px = -8px. So the plain-CSS reading of this object
+// -- a 1px box nudged 1px -- is not what shipped. It computed to
+// `width: 100%; height: 100%; margin: -8px`, i.e. a full-size absolutely
+// positioned element at its static position, measured in the browser as a real
+// 320x900px box. It stayed invisible (clip + overflow still do their job), so
+// nothing looked wrong; what it did instead was silently extend the document's
+// scroll width, which on a phone is indistinguishable from a layout bug
+// because app/globals.css:20 clips horizontal overflow at the root.
+// Do not "simplify" these back to bare numbers.
 export const visuallyHidden = {
   position: "absolute",
-  width: 1,
-  height: 1,
+  width: "1px",
+  height: "1px",
   padding: 0,
-  margin: -1,
+  margin: "-1px",
   overflow: "hidden",
   clip: "rect(0 0 0 0)",
   whiteSpace: "nowrap",

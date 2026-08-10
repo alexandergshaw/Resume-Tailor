@@ -2,6 +2,7 @@
 
 import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
+import { MOBILE_TAP_MIN, TOUCH_PILL_SX } from "./mobileSx";
 
 // AC-M1.5 requirement 2: the transcript's per-turn speaker chip, and — once
 // an in-person session offers a correction — the control that fixes it.
@@ -100,6 +101,7 @@ export default function SpeakerChip({ label, resolved, isYou, onActivate, disabl
       aria-label={`Mark ${label} as me`}
       sx={{
         ...baseSx,
+        ...TOUCH_PILL_SX,
         display: "inline-flex",
         alignItems: "center",
         lineHeight: "20px",
@@ -109,6 +111,16 @@ export default function SpeakerChip({ label, resolved, isYou, onActivate, disabl
         cursor: disabled ? "default" : "pointer",
         opacity: disabled ? 0.65 : 1,
         fontFamily: "inherit",
+        fontSize: { xs: 13, sm: 11 },
+        // `sm: "auto"`, NOT `sm: 0`. This button is a flex item in both of
+        // its call sites (TranscriptView's per-turn row and CopilotClient's
+        // who's-talking bar), and before the mobile pass it carried no
+        // `min-width` at all — i.e. the initial value `auto`, which on a flex
+        // item is precisely what stops it being squeezed below its own label.
+        // Writing `0` here would hand back that floor at every width above
+        // 600px to buy nothing, since the phone case is already covered by
+        // the `xs` value. A mobile fix must not cost the desktop anything.
+        minWidth: { xs: MOBILE_TAP_MIN, sm: "auto" },
         "&:focus-visible": {
           outline: "2px solid var(--accent)",
           outlineOffset: "2px",

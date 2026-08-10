@@ -15,7 +15,6 @@ import { normalizeQuestion } from "@/lib/copilot/questions";
 import { groundingFor } from "@/lib/copilot/answerGrounding";
 import { fmtClock } from "@/lib/copilot/clock";
 import { visuallyHidden } from "@/lib/copilot/answerStatus";
-import { listMicrophones, resolveStoredMicDeviceId, SYSTEM_DEFAULT_OPTION } from "@/lib/copilot/audioDevices";
 import { useEngine } from "@/app/settings/engine";
 import { useIsMobile } from "@/app/hooks/useResponsive";
 import TabHeader from "@/app/components/TabHeader";
@@ -24,20 +23,15 @@ import QuestionFeed from "./QuestionFeed";
 import StatusPill from "./StatusPill";
 import SessionSetup from "./SessionSetup";
 import SpeakerChip from "./SpeakerChip";
+import { TOUCH_TARGET_SX, TOUCH_SWITCH_SX } from "./mobileSx";
 import CopilotDashboard from "./dashboard/CopilotDashboard";
 import PracticeClient from "./practice/PracticeClient";
 import { usePrepContext } from "./usePrepContext";
 import { useApplicationDocs } from "./useApplicationDocs";
 import { useCopilotDashboard } from "./useCopilotDashboard";
 import { useLiveSession } from "./useLiveSession";
+import { useCaptureSetup } from "./useCaptureSetup";
 
-const SOURCE_STORAGE_KEY = "copilot-audio-source";
-// AC-I1.4: the selected microphone's own key — separate from
-// SOURCE_STORAGE_KEY (interviewer audio) and PrepContext's storage key, so
-// the three controls persist independently. Follows the exact same
-// seed-from-storage/persist pattern as SOURCE_STORAGE_KEY below (try/catch,
-// a bad or missing value falling back to the default).
-const MIC_STORAGE_KEY = "copilot-mic-device";
 // AC-H1.2: live mode's own wording for the shared PostingPicker — its
 // defaults are practice mode's exact strings, so passing these explicitly
 // here is what keeps the two modes worded differently without touching
@@ -94,12 +88,21 @@ export default function CopilotClient() {
   // application" panel and the grounding documents draftAnswer sends along
   // (see onPostingChange/runDraft below).
   const [posting, setPosting] = useState(null);
-  const [source, setSource] = useState("tab"); // "tab" | "system" | "inperson" — the interviewer's audio source
-  // AC-I1: the selected microphone's device id, or `null` for "System
-  // default" — audioDevices.js's SYSTEM_DEFAULT_OPTION.deviceId, and exactly
-  // the value capture.js's captureMicAudio treats as "no deviceId
-  // constraint at all" (AC-I1.3).
-  const [micDeviceId, setMicDeviceId] = useState(null);
+  // Interviewer-audio-source and microphone SETUP — seed-from-storage,
+  // persist-on-change, and the derived availability facts SessionSetup
+  // needs — lives in useCaptureSetup (split out to keep this file under the
+  // 1000-line cap). Everything here that merely READS `source` afterwards
+  // stays below; this destructure just renames the two derived
+  // availability fields back to their original local names.
+  const {
+    source,
+    onSourceChange,
+    micDeviceId,
+    onMicDeviceChange,
+    micLabel,
+    sourceAvailability: interviewerSourceAvailability,
+    sourceUnavailableReason: interviewerSourceUnavailableReason,
+  } = useCaptureSetup();
   const [showConsent, setShowConsent] = useState(true);
   // F2: which speech-to-text provider is actually live — `null` until the
   // mount-time probe below resolves. See the useEffect near the other
@@ -197,63 +200,6 @@ export default function CopilotClient() {
     answerCacheRef.current.clear();
   }, [profile]);
 
-  // Seed the interviewer-audio-source choice from localStorage, wrapped in
-  // try/catch like the prep-context read above. A missing or unrecognized
-  // value just leaves the "tab" default from useState in place. The actual
-  // setSource call is deferred a microtask out (same shape the mic seed
-  // effect right below already uses via listMicrophones().then(...)) rather
-  // than called synchronously in the effect body, which is what keeps this
-  // clear of react-hooks/set-state-in-effect — this project's lint rule set
-  // only started surfacing this specific effect once CopilotClient.js's
-  // hook graph shrank enough for its whole-component analysis to complete;
-  // the pattern itself was always the thing the rule flags.
-  //
-  // AC-M1.5.2/R-037: "inperson" is a third valid stored value, alongside
-  // "tab"/"system" — omitting it here would mean a candidate who picked
-  // in-person mode loses that choice on every reload. The deferred
-  // Promise.resolve().then(...) shape above is kept exactly as it was;
-  // only the set of values considered valid grows.
-  useEffect(() => {
-    let stored = null;
-    try {
-      stored = window.localStorage.getItem(SOURCE_STORAGE_KEY);
-    } catch {
-      stored = null;
-    }
-    if (stored === "tab" || stored === "system" || stored === "inperson") {
-      Promise.resolve().then(() => setSource(stored));
-    }
-  }, []);
-
-  // AC-I1.4/AC-I1.5: seed the selected microphone from localStorage, same
-  // try/catch discipline as the source seed above. A stored id can't just be
-  // trusted, though — the device it names may no longer be plugged in — so
-  // this resolves it against a FRESH device list via
-  // resolveStoredMicDeviceId (wave 1's audioDevices.js) before adopting it,
-  // falling back to System default (`null`, already today's useState
-  // default) rather than leaving a stale id in place that would later throw
-  // OverconstrainedError. listMicrophones() only calls enumerateDevices(),
-  // never getUserMedia, so this never prompts for permission on its own —
-  // same guarantee MicPicker's own mount-time load relies on.
-  useEffect(() => {
-    let stored = null;
-    try {
-      stored = window.localStorage.getItem(MIC_STORAGE_KEY);
-    } catch {
-      stored = null;
-    }
-    if (!stored) return undefined;
-    let cancelled = false;
-    listMicrophones().then((options) => {
-      if (cancelled) return;
-      const resolved = resolveStoredMicDeviceId(stored, options);
-      if (resolved) setMicDeviceId(resolved);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   // F2: learn which speech-to-text provider is actually live, purely so the
   // privacy notices below (and the one PracticeClient renders, which reads
   // this as a prop) can name it instead of unconditionally saying
@@ -284,37 +230,6 @@ export default function CopilotClient() {
     };
   }, []);
 
-  // AC-M1.5.2/R-037: accepts "inperson" alongside the original two values —
-  // omitting it here is the OTHER half of what would make the new toggle
-  // option inert (the seeding effect above is the other half).
-  const onSourceChange = useCallback((val) => {
-    if (val !== "tab" && val !== "system" && val !== "inperson") return;
-    setSource(val);
-    try {
-      window.localStorage.setItem(SOURCE_STORAGE_KEY, val);
-    } catch {
-      // ignore quota / privacy-mode errors
-    }
-  }, []);
-
-  // AC-I1.4: `id` is `null` for "System default" (MicPicker's own
-  // SYSTEM_DEFAULT_OPTION.deviceId) — that's the useState default already,
-  // so there is nothing meaningful to persist for it; only a real device id
-  // is written to storage, and choosing System default clears whatever was
-  // stored before.
-  const onMicDeviceChange = useCallback((id) => {
-    setMicDeviceId(id || null);
-    try {
-      if (id) {
-        window.localStorage.setItem(MIC_STORAGE_KEY, id);
-      } else {
-        window.localStorage.removeItem(MIC_STORAGE_KEY);
-      }
-    } catch {
-      // ignore quota / privacy-mode errors
-    }
-  }, []);
-
   const live = status === "live" || status === "connecting";
 
   // Step 2/4: disclosure toggles — click handlers, not effects, so these
@@ -324,11 +239,7 @@ export default function CopilotClient() {
   const onToggleHistory = useCallback(() => setShowHistory((v) => !v), []);
 
   // Step 2: the two facts SessionSetup's collapsed summary keeps visible.
-  // `micLabel` skips a second device-enumeration lookup (MicPicker.js's own
-  // job, out of scope here) for a fact that's always true without one:
-  // whether a specific device is selected.
   const postingSummary = posting?.title || "No posting selected";
-  const micLabel = micDeviceId ? "custom microphone" : SYSTEM_DEFAULT_OPTION.label;
 
   // AC-H3: reshaped into the shape SubmittedDocs/PracticeSetup.js's own
   // `submittedDocs` prop already takes (useApplicationDocs returns it
@@ -657,7 +568,7 @@ export default function CopilotClient() {
   }, [measureLiveHeight]);
 
   return (
-    <Box sx={{ maxWidth: 1180, mx: "auto", p: 3 }}>
+    <Box sx={{ maxWidth: 1180, mx: "auto", p: { xs: 1.5, sm: 3 } }}>
       <TabHeader
         title="Interview copilot"
         description={
@@ -690,10 +601,10 @@ export default function CopilotClient() {
           disabled={live}
           onChange={(_e, val) => onModeChange(val)}
         >
-          <ToggleButton value="live" sx={{ textTransform: "none", px: 1.5 }}>
+          <ToggleButton value="live" sx={{ textTransform: "none", px: 1.5, ...TOUCH_TARGET_SX }}>
             Live interview
           </ToggleButton>
-          <ToggleButton value="practice" sx={{ textTransform: "none", px: 1.5 }}>
+          <ToggleButton value="practice" sx={{ textTransform: "none", px: 1.5, ...TOUCH_TARGET_SX }}>
             Practice
           </ToggleButton>
         </ToggleButtonGroup>
@@ -726,7 +637,7 @@ export default function CopilotClient() {
               flexDirection: "column",
               minHeight: 0,
               height: { xs: "auto", sm: live && liveHeight ? liveHeight : "auto" },
-              overflow: live ? "hidden" : "visible",
+              overflow: { xs: "visible", sm: live ? "hidden" : "visible" },
             }}
           >
             {/* shareInstructions and the error/warning Alerts are ordinary
@@ -751,6 +662,8 @@ export default function CopilotClient() {
               micLabel={micLabel}
               source={source}
               onSourceChange={onSourceChange}
+              sourceAvailability={interviewerSourceAvailability}
+              sourceUnavailableReason={interviewerSourceUnavailableReason}
               micDeviceId={micDeviceId}
               onMicDeviceChange={onMicDeviceChange}
               showConsent={showConsent}
@@ -783,14 +696,14 @@ export default function CopilotClient() {
               sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
             >
               {live ? (
-                <Button variant="outlined" color="error" onClick={stop}>
+                <Button variant="outlined" color="error" onClick={stop} sx={TOUCH_TARGET_SX}>
                   Stop
                 </Button>
               ) : (
                 // BUG-3: onStartSession, not the bare `start` — see its own
                 // comment for why the bar's announcement must not survive
                 // into a new session.
-                <Button variant="contained" onClick={onStartSession}>
+                <Button variant="contained" onClick={onStartSession} sx={TOUCH_TARGET_SX}>
                   Start session
                 </Button>
               )}
@@ -803,13 +716,14 @@ export default function CopilotClient() {
                   {fmtClock(elapsed)}
                 </Typography>
               ) : null}
-              <Box sx={{ flex: 1 }} />
+              <Box sx={{ flex: 1, display: { xs: "none", sm: "block" } }} />
               <FormControlLabel
                 control={
                   <Switch
                     size="small"
                     checked={autoDraft}
                     onChange={(e) => setAutoDraft(e.target.checked)}
+                    sx={TOUCH_SWITCH_SX}
                   />
                 }
                 label={
@@ -824,6 +738,7 @@ export default function CopilotClient() {
                 variant="text"
                 onClick={copyTranscript}
                 disabled={finals.length === 0}
+                sx={TOUCH_TARGET_SX}
               >
                 Copy
               </Button>
@@ -832,6 +747,7 @@ export default function CopilotClient() {
                 variant="text"
                 onClick={clearAll}
                 disabled={finals.length === 0 && questions.length === 0}
+                sx={TOUCH_TARGET_SX}
               >
                 Clear
               </Button>
@@ -939,7 +855,7 @@ export default function CopilotClient() {
                 onClick={onToggleHistory}
                 aria-expanded={showHistory}
                 aria-controls={HISTORY_REGION_ID}
-                sx={{ mt: 2, color: "var(--text-secondary)", textTransform: "none" }}
+                sx={{ mt: 2, color: "var(--text-secondary)", textTransform: "none", ...TOUCH_TARGET_SX }}
               >
                 {showHistory
                   ? "▾ Hide transcript and question history"

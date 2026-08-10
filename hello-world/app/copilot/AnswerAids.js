@@ -5,6 +5,8 @@ import Chip from "@mui/material/Chip";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
+import { BREAK_LONG_WORDS_SX } from "./mobileSx";
+
 // AC-K1.2/AC-K1.3: the two groups that sit UNDER a drafted answer's cues —
 // what the candidate actually has (the role and project their answer came
 // from), then what the posting wants (its vocabulary, and a benchmark
@@ -39,17 +41,28 @@ import Typography from "@mui/material/Typography";
 // grid style and one row component (`Aid`) below so the two groups cannot
 // visually drift apart from each other.
 
-// Below `sm` the grid collapses to one column ordered dt, dd, dt, dd — a
+// Below `md` the grid collapses to one column ordered dt, dd, dt, dd — a
 // single uniform rowGap would put a label exactly as far from its OWN value
 // as from the next label, and the pairing that makes this readable would
 // vanish. `rowGap` is tightened at `xs` only; `Aid` below adds the matching
-// top margin that reopens the gap BETWEEN pairs. At `sm` and up the grid is
+// top margin that reopens the gap BETWEEN pairs. At `md` and up the grid is
 // two columns (label, value side by side) so this collapse never applies.
+//
+// Was keyed to `sm` (600px). At exactly 600px the dashboard's own panel grid
+// (CopilotDashboard.js) ALSO flips to two columns, halving each panel's
+// content width to ~174px right as this grid tried to reserve 150px+ for the
+// label column alone — the value column collapsed to a few px and degraded
+// to one word per line. Raising the breakpoint to `md` keeps this grid
+// single-column through the 600-899px band, where the dashboard is already
+// two panels wide, so the value column always has real room before this
+// grid goes two-up. `xs: "1fr"` and the `rowGap`/`mt` pairing below move
+// with it so the single-column pairing logic stays correct throughout that
+// band.
 const AID_GRID_SX = {
   display: "grid",
-  gridTemplateColumns: { xs: "1fr", sm: "minmax(0, 150px) minmax(0, 1fr)" },
+  gridTemplateColumns: { xs: "1fr", md: "minmax(0, 150px) minmax(0, 1fr)" },
   columnGap: 2,
-  rowGap: { xs: 0.25, sm: 1.25 },
+  rowGap: { xs: 0.25, md: 1.25 },
   alignItems: "start",
   m: 0,
 };
@@ -97,17 +110,18 @@ function Aid({ label, children, ddSx }) {
           fontWeight: 700,
           letterSpacing: 0.2,
           // Reopens the gap the tightened `rowGap` above closed, but only
-          // ABOVE this label and only at `xs` — the first label of each
-          // group must not drift down from the divider/group top, so
-          // `:first-of-type` (scoped per `<dl>`, since each group is its
-          // own grid container) zeroes it back out for the first row.
-          mt: { xs: 1.25, sm: 0 },
+          // ABOVE this label and only below `md` (matching AID_GRID_SX's
+          // own breakpoint) — the first label of each group must not drift
+          // down from the divider/group top, so `:first-of-type` (scoped
+          // per `<dl>`, since each group is its own grid container) zeroes
+          // it back out for the first row.
+          mt: { xs: 1.25, md: 0 },
           "&:first-of-type": { mt: 0 },
         }}
       >
         {label}
       </Typography>
-      <Box component="dd" sx={{ m: 0, ...ddSx }}>
+      <Box component="dd" sx={{ m: 0, ...BREAK_LONG_WORDS_SX, ...ddSx }}>
         {children}
       </Box>
     </>
@@ -264,8 +278,16 @@ export default function AnswerAids({ buzzwords, anchor, idealProject }) {
                 // point; `listStyle: none` is exactly what breaks it.
                 role="list"
                 direction="row"
-                spacing={0.75}
-                sx={{ flexWrap: "wrap", rowGap: 0.75, listStyle: "none", m: 0, p: 0 }}
+                // MUI v9's Stack `spacing` prop compiles to a margin on every
+                // child but the first (`useFlexGap` defaults to false), which
+                // is fine unwrapped but breaks under `flexWrap`: the first
+                // chip of each WRAPPED row still inherits that left margin,
+                // indenting every wrapped row by the spacing amount. `gap`
+                // (via `useFlexGap`) applies evenly in both directions
+                // instead, which is also why `rowGap` alone was already
+                // needed here for the vertical axis.
+                useFlexGap
+                sx={{ flexWrap: "wrap", gap: 0.75, listStyle: "none", m: 0, p: 0 }}
               >
                 {terms.map((term) => (
                   <Chip
@@ -284,6 +306,7 @@ export default function AnswerAids({ buzzwords, anchor, idealProject }) {
                         whiteSpace: "normal",
                         textOverflow: "clip",
                         py: 0.5,
+                        ...BREAK_LONG_WORDS_SX,
                       },
                     }}
                   />

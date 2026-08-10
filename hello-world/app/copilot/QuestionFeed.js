@@ -22,6 +22,7 @@ import AnswerLines from "./AnswerLines";
 // true last one, its region is exposed to the same collision that hook
 // exists to prevent.
 import { latestQuestionEntry, useCurrentQuestionAnnouncement } from "./dashboard/CopilotDashboard";
+import { BREAK_LONG_WORDS_SX, PHONE_PANE_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "./mobileSx";
 
 const TYPE_LABEL = {
   behavioral: "Behavioral",
@@ -68,9 +69,7 @@ export default function QuestionFeed({ questions, onDraft }) {
       sx={{
         flex: 1,
         minWidth: 0,
-        minHeight: 340,
-        maxHeight: "62vh",
-        overflowY: "auto",
+        ...PHONE_PANE_SX,
         p: 2,
         borderRadius: 2,
         border: "1px solid var(--border)",
@@ -126,8 +125,21 @@ function QuestionCard({ q, onDraft }) {
         background: "var(--bg-soft)",
       }}
     >
-      <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start", mb: 0.75 }}>
-        <Typography sx={{ flex: 1, fontWeight: 600, color: "var(--text-primary)" }}>
+      <Stack
+        direction="row"
+        spacing={1}
+        sx={{ alignItems: "flex-start", mb: 0.75, ...WRAP_ROW_SX, rowGap: 0.5 }}
+      >
+        <Typography
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            flexBasis: { xs: "100%", sm: 0 },
+            fontWeight: 600,
+            color: "var(--text-primary)",
+            ...BREAK_LONG_WORDS_SX,
+          }}
+        >
           {q.question}
         </Typography>
         {done && q.cached ? (
@@ -179,6 +191,7 @@ function QuestionCard({ q, onDraft }) {
         onClick={() => onDraft(q.id)}
         disabled={loading}
         startIcon={loading ? <CircularProgress size={14} color="inherit" /> : null}
+        sx={TOUCH_TARGET_SX}
       >
         {loading ? "Drafting…" : done ? "Redraft" : "Draft answer"}
       </Button>

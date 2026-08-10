@@ -14,6 +14,7 @@ import {
   listPracticeAnswers,
   signedVideoUrl,
 } from "@/lib/supabase/practiceAnswers";
+import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX } from "../mobileSx";
 
 function fmtDate(value) {
   if (!value) return "";
@@ -89,16 +90,25 @@ function HistoryRow({ row, onDeleted }) {
 
   return (
     <Box sx={{ py: 1.5 }}>
-      <Typography variant="body1" sx={{ fontWeight: 600, color: "var(--text-primary)" }}>
+      <Typography
+        variant="body1"
+        sx={{ fontWeight: 600, color: "var(--text-primary)", ...BREAK_LONG_WORDS_SX }}
+      >
         {row.question || "Untitled question"}
       </Typography>
-      <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>
+      <Typography variant="body2" sx={{ color: "var(--text-muted)", ...BREAK_LONG_WORDS_SX }}>
         {[meta, score].filter(Boolean).join(" · ")}
       </Typography>
 
-      <Stack direction="row" spacing={1.5} sx={{ mt: 1, alignItems: "center", flexWrap: "wrap", rowGap: 1 }}>
+      <Stack direction="row" useFlexGap sx={{ mt: 1, alignItems: "center", flexWrap: "wrap", gap: 1.5 }}>
         {row.video_path ? (
-          <Button size="small" variant="outlined" onClick={onReplay} disabled={video.status === "loading"}>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={onReplay}
+            disabled={video.status === "loading"}
+            sx={TOUCH_TARGET_SX}
+          >
             {video.status === "loading" ? "Loading…" : "Replay"}
           </Button>
         ) : (
@@ -108,11 +118,21 @@ function HistoryRow({ row, onDeleted }) {
         )}
 
         {!confirming ? (
-          <Button size="small" color="error" variant="text" onClick={() => setConfirming(true)}>
+          <Button
+            size="small"
+            color="error"
+            variant="text"
+            onClick={() => setConfirming(true)}
+            sx={TOUCH_TARGET_SX}
+          >
             Delete
           </Button>
         ) : (
-          <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={1}
+            sx={{ alignItems: { xs: "stretch", sm: "center" }, width: { xs: "100%", sm: "auto" } }}
+          >
             {/* BUG-12: worded to match what's ACTUALLY being deleted — a row
                 with no video is not "a recording", and claiming otherwise
                 overstates what the user is about to lose. */}
@@ -121,10 +141,23 @@ function HistoryRow({ row, onDeleted }) {
                 ? "Delete this recording? This cannot be undone."
                 : "Delete this history entry — its transcript, metrics and critique? This cannot be undone."}
             </Typography>
-            <Button size="small" color="error" variant="contained" onClick={onDelete} disabled={deleting}>
+            <Button
+              size="small"
+              color="error"
+              variant="contained"
+              onClick={onDelete}
+              disabled={deleting}
+              sx={{ ...TOUCH_TARGET_SX, width: { xs: "100%", sm: "auto" } }}
+            >
               {deleting ? "Deleting…" : "Delete"}
             </Button>
-            <Button size="small" variant="text" onClick={() => setConfirming(false)} disabled={deleting}>
+            <Button
+              size="small"
+              variant="text"
+              onClick={() => setConfirming(false)}
+              disabled={deleting}
+              sx={{ ...TOUCH_TARGET_SX, width: { xs: "100%", sm: "auto" } }}
+            >
               Cancel
             </Button>
           </Stack>
@@ -142,13 +175,18 @@ function HistoryRow({ row, onDeleted }) {
         </Alert>
       ) : null}
       {video.status === "ready" ? (
-        <Box sx={{ mt: 1 }}>
-          <video
-            controls
-            src={video.url}
-            style={{ width: "100%", maxHeight: 320, borderRadius: 8, display: "block" }}
-          />
-        </Box>
+        <Box
+          component="video"
+          controls
+          src={video.url}
+          sx={{
+            display: "block",
+            width: "100%",
+            maxHeight: { xs: "50vh", md: 320 },
+            borderRadius: "8px",
+            mt: 1,
+          }}
+        />
       ) : null}
       {deleteError ? (
         <Alert severity="error" sx={{ mt: 1 }}>
