@@ -3,9 +3,14 @@
 // QuestionFeed.js's single feed-level region, CopilotDashboard.js's
 // CurrentAnswerPanel and PredictedAnswerPanel, and practice mode's
 // SampleAnswer.js. Pure and side-effect free so it is reachable from this
-// repo's node-only vitest setup at all (no jsdom anywhere in the suite —
-// the same discipline answerPoints.js and answerProvenance.js already
-// follow).
+// repo's node-only vitest setup at all (the suite defaults to
+// `environment: "node"` — the same discipline answerPoints.js and
+// answerProvenance.js already follow). Amended: this used to read "no jsdom
+// anywhere in the suite", which is no longer true — a single file can opt
+// in with a `// @vitest-environment jsdom` docblock (see vitest.config.js's
+// own comment). That does not change anything here: keeping this pure is
+// still the right call, and the escape hatch is for wiring no pure function
+// can express, not for retreating from extraction.
 //
 // A REAL SUBTLETY this module exists to get right: a live region that
 // MOUNTS at the same moment its final text is already inside it usually
