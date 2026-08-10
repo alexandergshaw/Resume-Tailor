@@ -10,6 +10,17 @@ const eslintConfig = defineConfig([
   {
     files: ["**/*.{js,jsx,ts,tsx}"],
     rules: {
+      // eslint-config-next leaves `no-undef` off (it assumes TypeScript does
+      // this job, and this project has no tsconfig — see the development-loop
+      // note that `tsc --noEmit` is vacuous here). That left a whole class of
+      // defect with no gate at all: `usePracticeAnswer.js` shipped on main
+      // referencing an undeclared `replayUrl`/`setReplayUrl`, which took
+      // practice mode down with a ReferenceError on first render. It passed
+      // lint, passed `npm run build` (an undeclared reference is legal syntax,
+      // not a compile error), and passed 2816 tests, because vitest runs with
+      // `environment: "node"` and no jsdom, so no test in this repo can render
+      // a component or a hook. This rule is the only thing that catches it.
+      "no-undef": "error",
       "no-restricted-syntax": [
         "error",
         {

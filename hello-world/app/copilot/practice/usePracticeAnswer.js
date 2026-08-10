@@ -69,6 +69,17 @@ export function usePracticeAnswer() {
   // session; only resetForSession (a fresh capture session, a fresh
   // diarization) clears it back to `null`.
   const [myTag, setMyTag] = useState(null);
+  // Object URL for the last completed answer's recorded clip, or "" when
+  // there is nothing to replay. Written alongside replayUrlRef below (which
+  // mirrors it for synchronous revocation) and read by AnswerReview's
+  // <video>. Its declaration was lost in the extraction that split this
+  // hook's callers apart, leaving `replayUrl`/`setReplayUrl` referencing a
+  // free variable — practice mode threw ReferenceError on first render, and
+  // nothing caught it: eslint-config-next leaves `no-undef` off, an
+  // undeclared reference is legal syntax so the build succeeds, and no test
+  // in this repo can render a hook (vitest `environment: "node"`, no jsdom).
+  // See the `no-undef` rule now enabled in eslint.config.mjs.
+  const [replayUrl, setReplayUrl] = useState("");
   // Whether AnswerRecorder actually supports recording in this browser, as
   // of the last completed answer — distinguishes "this browser can't
   // record" from "recording just produced nothing this time" (BUG-10).
