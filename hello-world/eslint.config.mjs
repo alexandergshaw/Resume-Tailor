@@ -32,6 +32,23 @@ const eslintConfig = defineConfig([
       ],
     },
   },
+  // eslint-plugin-react-hooks v7 (pulled in by eslint-config-next's
+  // core-web-vitals preset) ships the React Compiler's component-purity
+  // rules, which assume every capitalized function is production render
+  // code. jsdom hook-test harnesses in this repo (the pattern established by
+  // app/copilot/useCopilotDashboard.wiring.test.js) use a small `Probe`
+  // component purely to call a hook under `act()` and, when the test needs
+  // to inspect what the hook returned between actions, assign that return
+  // value to an outer-scope variable so assertions can read it. That's
+  // exactly what react-hooks/globals exists to catch in real components, but
+  // it's the intended shape of this test-only pattern, not a bug -- scoped
+  // to test files so the rule stays fully active for actual app code.
+  {
+    files: ["**/*.test.js"],
+    rules: {
+      "react-hooks/globals": "off",
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:

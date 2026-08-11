@@ -7,6 +7,34 @@ export default defineConfig({
       "@": fileURLToPath(new URL("./", import.meta.url)),
     },
   },
+  // This repo's ".js" files freely mix JSX (every component under app/ is a
+  // plain .js file, per the "no TypeScript, no .jsx extension" convention --
+  // there are no .jsx/.ts/.tsx files anywhere in the tree). That's invisible
+  // for as long as no test actually imports a component -- until
+  // app/components/JobDescriptionTab.test.js (jsdom, first-of-its-kind:
+  // earlier jsdom tests like useCopilotDashboard.wiring.test.js only render
+  // hooks via createElement, never import a JSX-bearing source file) needed
+  // to import JobDescriptionTab.js itself.
+  //
+  // Vite 8 transforms source through Oxc by default, and Oxc's own default
+  // filter treats ".js" as plain JS (only .jsx/.tsx get JSX parsing), with
+  // no supported way to widen that from the documented `oxc` options (the
+  // "lang" switch that actually selects JSX-capable parsing is typed but
+  // deliberately omitted from vite's public OxcOptions -- and setting
+  // `esbuild.loader` instead doesn't help: vite auto-converts an `esbuild`
+  // config into an `oxc` one when `oxc` isn't itself a plain object, and
+  // that converter only carries over jsx-RUNTIME options, silently
+  // dropping `loader`). Passing `lang: "jsx"` straight through in `oxc`
+  // (untyped, but honored at runtime) is what actually works. Oxc's "jsx"
+  // lang is a strict superset of plain JS, so this is a no-op for every
+  // file that doesn't use JSX. Scoped to this project's own source
+  // (excluding node_modules) to keep the blast radius to exactly the files
+  // this repo owns.
+  oxc: {
+    lang: "jsx",
+    include: /\.js$/,
+    exclude: /node_modules/,
+  },
   test: {
     // The default for the whole suite, and it should stay that way: almost
     // every test here exercises a pure function, and `node` is faster and
@@ -33,5 +61,8 @@ export default defineConfig({
     // can express. Extracting the DECISION into `lib/` remains the first
     // choice, not the fallback.
     environment: "node",
+    // See vitest.setup.js: jsdom implements no `CSS` global at all, which a
+    // jsdom test that resolves a `<label for>` association needs.
+    setupFiles: ["./vitest.setup.js"],
   },
 });

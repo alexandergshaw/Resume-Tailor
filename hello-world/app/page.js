@@ -42,10 +42,13 @@ import { parseEmploymentHistory } from "../lib/resume/parseEmployment";
 import { editFingerprint } from "../lib/tailor/editMining";
 import { recordMatchGaps, annotateAndRank, promotedEditRules } from "../lib/tailor/localSignals";
 import { emailPreviewText } from "../lib/tailor/documentScopes";
+import { runWithConcurrency } from "../lib/tailor/runWithConcurrency";
 import { useProfileEntries } from "./hooks/useProfileEntries";
 import { useScreenshots } from "./hooks/useScreenshots";
 import { useCompanyResearch } from "./hooks/useCompanyResearch";
 import { useDocumentPreview } from "./hooks/useDocumentPreview";
+import { useManualTailor } from "./hooks/useManualTailor";
+import { useManualPostings } from "./hooks/useManualPostings";
 import { useChat } from "./hooks/useChat";
 import { useApplicationDialogs } from "./hooks/useApplicationDialogs";
 import {
@@ -125,12 +128,11 @@ export default function Home() {
     candidates: [],
     selectedIds: [],
   });
-  const [jobPosting, setJobPosting] = useState("");
-  // Manual (job-description) tailoring surface. Results flow through the shared
-  // tailoringMap → StatusBar chip + preview dialog, so only submit status/error
-  // live here.
-  const [manualIsSubmitting, setManualIsSubmitting] = useState(false);
-  const [manualError, setManualError] = useState("");
+  // Manual (job-description) tailoring: the queue's own state lives in
+  // app/hooks/useManualPostings.js, and the shared pipeline's submit/error
+  // state lives in app/hooks/useManualTailor.js -- both instantiated below,
+  // once the functions/state they close over (updateTailoringJob, preview,
+  // maybeOfferLibraryUpdate, ...) exist.
   // URL tailoring surface (same story as the manual surface above).
   const [urlPosting, setUrlPosting] = useState("");
   const [urlIsSubmitting, setUrlIsSubmitting] = useState(false);
@@ -201,7 +203,7 @@ export default function Home() {
   const { engine: tailorEngine } = useEngine();
   // External-engine "review fields" flow: fetched proposal slots the user can
   // edit before generating the document with those `values`.
-  const [slotReview, setSlotReview] = useState({ open: false, loading: false, error: "", slots: [] });
+  const [slotReview, setSlotReview] = useState({ open: false, loading: false, error: "", slots: [], posting: "" });
   // Floating "AI Help" chat panel (thread, pinned context, attachments, size).
   const chat = useChat({ resumeFile, applicationData, applicationStages, mainTab, activeSection });
 
@@ -472,7 +474,6 @@ export default function Home() {
       const kwRaw = localStorage.getItem("jobKeywords");
       const legacyQuery = localStorage.getItem("jobQuery");
       const url = localStorage.getItem("urlPosting");
-      const manual = localStorage.getItem("jobPosting");
       if (kwRaw) {
         try {
           const parsed = JSON.parse(kwRaw);
@@ -519,7 +520,6 @@ export default function Home() {
         } catch {}
       }
       if (url) setUrlPosting(url);
-      if (manual) setJobPosting(manual);
     } catch {}
   }, []);
 
@@ -1364,7 +1364,6 @@ export default function Home() {
   }, [jobKeywords]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { localStorage.setItem("urlPosting", urlPosting); }, [urlPosting]);
-  useEffect(() => { localStorage.setItem("jobPosting", jobPosting); }, [jobPosting]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -1741,6 +1740,44 @@ export default function Home() {
     updateTailoringJob,
   });
 
+  // The manual (job-description) tailoring pipeline. Called directly by a
+  // StatusBar chip's "Regenerate" and by the reviewed-fields flow below, AND
+  // -- with `queued: true` -- once per posting by the multi-posting queue
+  // (manualPostings, right below) so every posting tracks its own outcome
+  // instead of fighting over one tab-wide submitting/error state.
+  const manualTailor = useManualTailor({
+    resumeFile,
+    coverLetterFile,
+    contextFiles,
+    additionalContext,
+    aggressiveness,
+    tailorEngine,
+    currentUser,
+    setTrackedJobs,
+    updateTailoringJob,
+    maybeOfferLibraryUpdate,
+    withClearedEditedScopes,
+    finishByOpeningPreview: preview.finishByOpeningPreview,
+  });
+
+  // Manual Applying › Job Description: several posting boxes, each tracked
+  // and tailored independently through manualTailor.tailorPosting, capped at
+  // 3 concurrent /api/tailor calls (lib/tailor/runWithConcurrency.js).
+  const manualPostings = useManualPostings({
+    tailorPosting: (opts) => manualTailor.tailorPosting(null, opts),
+    resumeFile,
+    tailoringMap,
+    openResumePreview: preview.openResumePreview,
+    previewScopeAvailable: preview.previewScopeAvailable,
+    // manualPostings only clears its OWN error -- manualTailor.error (set by,
+    // say, a failed StatusBar chip regenerate) is invisible to it, and since
+    // the tab renders `manualTailor.error || manualPostings.error`, a stale
+    // message would otherwise survive a fully successful run forever. This is
+    // the one place both hooks are visible, so the clear belongs here -- same
+    // idea as the pre-multi-posting handleManualSubmit's setManualError("")
+    // at the top of every submit.
+    onRunRequested: () => manualTailor.setError(""),
+  });
 
   // "Apply" action for an auto-tailored row: download the tailored resume,
   // open the posting in a new tab, and bump the application status from
@@ -1998,7 +2035,7 @@ export default function Home() {
       return;
     }
     if (typeof job.id === "string" && job.id.startsWith("manual-") && job.description) {
-      handleManualSubmit(null, { overridePosting: job.description, syntheticJobId: job.id, scope });
+      manualTailor.tailorPosting(null, { overridePosting: job.description, syntheticJobId: job.id, scope });
     }
   }
 
@@ -2355,25 +2392,6 @@ export default function Home() {
     }
   }
 
-  // Concurrency-limited batch runner: tailor every job in `jobs` in parallel,
-  // capped at `limit` simultaneous requests so we don't hammer Gemini.
-  async function runWithConcurrency(items, limit, worker) {
-    const queue = items.slice();
-    const runners = new Array(Math.min(limit, queue.length)).fill(null).map(async () => {
-      while (queue.length > 0) {
-        const next = queue.shift();
-        try {
-          await worker(next);
-        } catch {
-          // worker is responsible for surfacing its own errors via
-          // updateTailoringJob; swallow so one failure doesn't kill the batch.
-        }
-        setBatchTailorState((s) => ({ ...s, completed: s.completed + 1 }));
-      }
-    });
-    await Promise.all(runners);
-  }
-
   async function handleTailorAllVisible(jobs) {
     if (!resumeFile) {
       setJobSearchError("Upload a resume first before batch tailoring.");
@@ -2405,7 +2423,12 @@ export default function Home() {
     if (chosen.length === 0) return;
     setBatchTailorState({ running: true, total: chosen.length, completed: 0 });
     try {
-      await runWithConcurrency(chosen, 3, (job) => handleTailorJob(job, { skipDownload, markAsAutoTailor: true }));
+      await runWithConcurrency(
+        chosen,
+        3,
+        (job) => handleTailorJob(job, { skipDownload, markAsAutoTailor: true }),
+        () => setBatchTailorState((s) => ({ ...s, completed: s.completed + 1 })),
+      );
     } finally {
       setBatchTailorState((s) => ({ ...s, running: false }));
       // Force one more refresh after all jobs settle so the Auto Tailor tab
@@ -2576,10 +2599,14 @@ export default function Home() {
   async function openSlotReview(postingText) {
     const posting = String(postingText || "").trim();
     if (!posting) {
-      setManualError("Please provide a job posting first.");
+      manualTailor.setError("Please provide a job posting first.");
       return;
     }
-    setSlotReview({ open: true, loading: true, error: "", slots: [] });
+    // Stash the reviewed posting's text so generateWithReviewedValues can
+    // pass it through as overridePosting -- the tab may hold several posting
+    // boxes by the time the user clicks Generate, so there is no single
+    // "the current posting" state to fall back on anymore.
+    setSlotReview({ open: true, loading: true, error: "", slots: [], posting });
     try {
       const res = await fetch("/api/tailor/proposals", {
         method: "POST",
@@ -2608,162 +2635,11 @@ export default function Home() {
   // Generate the document with the reviewed slot values via the manual pipeline.
   function generateWithReviewedValues(values) {
     setSlotReview((prev) => ({ ...prev, open: false }));
-    handleManualSubmit(null, { values });
-  }
-
-  async function handleManualSubmit(event, opts = {}) {
-    if (event && typeof event.preventDefault === "function") event.preventDefault();
-
-    const scope = opts.scope || "both";
-    const applyResume = scope !== "cover";
-    const applyCover = scope !== "resume";
-    const sourcePosting = opts.overridePosting ?? jobPosting;
-
-    if (!sourcePosting.trim()) {
-      setManualError("Please provide a job posting.");
-      return;
-    }
-
-    if (!resumeFile) {
-      setManualError("Please upload a resume file.");
-      return;
-    }
-
-    setManualError("");
-    setManualIsSubmitting(true);
-
-    const syntheticJobId = opts.syntheticJobId ?? `manual-${Date.now()}`;
-    setTrackedJobs((prev) =>
-      prev.some((j) => j.id === syntheticJobId)
-        ? prev
-        : [
-            ...prev,
-            { id: syntheticJobId, title: "Generating from posting…", company: "", url: "", description: sourcePosting },
-          ],
-    );
-    updateTailoringJob(syntheticJobId, { status: "tailoring" });
-
-    try {
-      const formData = new FormData();
-      formData.append("jobPosting", sourcePosting);
-      formData.append("additionalContext", additionalContext);
-      formData.append("aggressiveness", String(aggressiveness));
-      formData.append("engine", tailorEngine);
-      // Promoted recurring hand-edits (localStorage) — the embedded engine
-      // applies them document-wide so consistent fixes are pre-made.
-      if (tailorEngine === "embedded") {
-        const editRules = promotedEditRules();
-        if (editRules.length > 0) formData.append("editRules", JSON.stringify(editRules));
-      }
-      if (opts.values && typeof opts.values === "object") {
-        formData.append("values", JSON.stringify(opts.values));
-      }
-      const templateLines = await buildTemplateLinesForUpload(resumeFile);
-      formData.append("templateLines", JSON.stringify(templateLines));
-      contextFiles.forEach((file) => formData.append("contextFiles", file));
-      formData.append("resume", resumeFile);
-
-      if (coverLetterFile) {
-        const coverLetterTemplateLines = await buildTemplateLinesForUpload(coverLetterFile);
-        formData.append("coverLetterTemplateLines", JSON.stringify(coverLetterTemplateLines));
-        formData.append("coverLetter", coverLetterFile);
-      }
-
-      const response = await fetch("/api/tailor", { method: "POST", body: formData });
-      const payload = await response.json();
-
-      if (!response.ok) throw new Error(payload.error || "Failed to generate a response.");
-      maybeOfferLibraryUpdate(payload, syntheticJobId);
-
-      const nextResult = payload.result?.trim() || "No output returned from Gemini.";
-      const nextResultLines = Array.isArray(payload.resultLines) ? payload.resultLines : [];
-      const nextJobTitle = typeof payload.jobTitle === "string" ? payload.jobTitle.trim() : "";
-      const nextCompany = typeof payload.company === "string" ? payload.company.trim() : "";
-      const nextCoverLetterResultLines = Array.isArray(payload.coverLetterResultLines) ? payload.coverLetterResultLines : [];
-      const nextCoverLetterResult =
-        typeof payload.coverLetterResult === "string" && payload.coverLetterResult
-          ? payload.coverLetterResult
-          : nextCoverLetterResultLines.join("\n");
-      const nextCoverLetterError = typeof payload.coverLetterError === "string" ? payload.coverLetterError : "";
-      const nextEngine = typeof payload.engine === "string" ? payload.engine : "";
-      const nextDocxB64 = typeof payload.docxB64 === "string" ? payload.docxB64 : "";
-      const nextCoverLetterDocxB64 = typeof payload.coverLetterDocxB64 === "string" ? payload.coverLetterDocxB64 : "";
-      // Hiring-team email (session state only — see AC-8 note in route.js).
-      const nextEmailSubject = typeof payload.emailSubject === "string" ? payload.emailSubject : "";
-      const nextEmailResultLines = Array.isArray(payload.emailResultLines) ? payload.emailResultLines : [];
-
-      if (nextCoverLetterError) setManualError(nextCoverLetterError);
-
-      // Update the synthesized tracked job's title/company now that we have them.
-      const syntheticJob = {
-        id: syntheticJobId,
-        title: nextJobTitle || "Untitled role",
-        company: nextCompany,
-        url: "",
-        description: sourcePosting,
-      };
-      setTrackedJobs((prev) =>
-        prev.map((j) =>
-          j.id === syntheticJobId
-            ? { ...j, title: syntheticJob.title, company: syntheticJob.company || j.company }
-            : j,
-        ),
-      );
-      updateTailoringJob(syntheticJobId, (entry) => ({
-        ...entry,
-        status: "done",
-        generatedJobTitle: nextJobTitle,
-        engine: nextEngine,
-        // AC-3: clear only the scope(s) this run actually regenerated.
-        edited: withClearedEditedScopes(entry, [
-          ...(applyResume ? ["resume"] : []),
-          ...(applyCover ? ["cover"] : []),
-        ]),
-        emailSubject: nextEmailSubject,
-        emailResultLines: nextEmailResultLines,
-        ...(applyResume ? { result: nextResult, resultLines: nextResultLines, docxB64: nextDocxB64 } : {}),
-        ...(applyCover ? { coverLetterResultLines: nextCoverLetterResultLines, coverLetterDocxB64: nextCoverLetterDocxB64 } : {}),
-      }));
-
-      // Persist the generated resume + cover letter and link them to an application.
-      if (currentUser) {
-        const supabase = createClient();
-        const positionId = await upsertPosition(supabase, syntheticJob);
-        if (positionId) {
-          await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "applied" });
-        }
-        await persistGeneratedDocuments(supabase, {
-          userId: currentUser.id,
-          positionId,
-          resume: applyResume ? { content: nextResult, contentLines: nextResultLines, docxB64: nextDocxB64 } : null,
-          coverLetter:
-            applyCover && nextCoverLetterResultLines.length > 0
-              ? { content: nextCoverLetterResult, contentLines: nextCoverLetterResultLines }
-              : null,
-          sourceResumePath: `${currentUser.id}/resume`,
-          additionalContext: additionalContext || null,
-        });
-      }
-
-      preview.finishByOpeningPreview({
-        jobId: syntheticJobId,
-        jobTitle: nextJobTitle,
-        company: nextCompany,
-        posting: sourcePosting || "",
-        applyResume,
-        applyCover,
-        coverLetterResultLines: nextCoverLetterResultLines,
-      });
-    } catch (err) {
-      setManualError(err.message || "Unexpected error.");
-      updateTailoringJob(syntheticJobId, { status: "error" });
-    } finally {
-      setManualIsSubmitting(false);
-    }
+    manualTailor.tailorPosting(null, { values, overridePosting: slotReview.posting });
   }
 
   // Tailor a résumé + cover letter for a Live Feed posting. Mirrors
-  // handleUrlSubmit/handleManualSubmit so the shared StatusBar chip and the
+  // handleUrlSubmit/manualTailor.tailorPosting so the shared StatusBar chip and the
   // tailoring pipeline behave identically. Prefers the posting URL; falls back
   // to the posting description text when no URL is available. Returns an error
   // message string on failure (or null on success) so the caller can surface it.
@@ -3012,14 +2888,30 @@ export default function Home() {
 
         {activeSection === "manual" ? (
           <JobDescriptionTab
-            jobPosting={jobPosting}
-            setJobPosting={setJobPosting}
-            manualIsSubmitting={manualIsSubmitting}
-            manualError={manualError}
-            handleManualSubmit={handleManualSubmit}
+            entries={manualPostings.entries}
+            // A4: split, rather than the old single `running` that combined
+            // both -- `running` is this tab's own queue (the only thing
+            // completed/total are meaningful for); `busy` is anything that
+            // should disable controls, including a StatusBar chip's
+            // "Regenerate" running through manualTailor alone. Reading the
+            // combined flag as if it always meant "this queue is running"
+            // was what let a chip regenerate make the Generate button read
+            // a stale "Tailoring 3 of 3…" for one unrelated job.
+            running={manualPostings.running}
+            busy={manualTailor.submitting || manualPostings.running}
+            completed={manualPostings.completed}
+            total={manualPostings.total}
+            lastRun={manualPostings.lastRun}
+            error={manualTailor.error || manualPostings.error}
+            onAddPosting={manualPostings.addPosting}
+            onRemovePosting={manualPostings.removePosting}
+            onChangePosting={manualPostings.setPostingText}
+            onSubmit={manualPostings.submitAll}
+            onRetryFailed={manualPostings.retryFailed}
+            onPreviewEntry={manualPostings.previewEntry}
             askAiAbout={chat.askAiAbout}
             tailorEngine={tailorEngine}
-            onReviewFields={() => openSlotReview(jobPosting)}
+            onReviewFields={openSlotReview}
           />
         ) : activeSection === "screenshots" ? (
           <ScreenshotTab
@@ -3387,7 +3279,7 @@ export default function Home() {
         slots={slotReview.slots}
         onClose={closeSlotReview}
         onGenerate={generateWithReviewedValues}
-        busy={manualIsSubmitting}
+        busy={manualTailor.submitting}
       />
 
       <LibraryUpdateDialog

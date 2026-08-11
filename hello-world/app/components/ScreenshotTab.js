@@ -12,44 +12,11 @@ import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import AddPhotoAlternateIcon from "@mui/icons-material/AddPhotoAlternate";
 import EmptyState from "./EmptyState";
+import StatusPill from "./StatusPill";
 
 import styles from "../page.module.css";
 
 const ACCEPT = "image/png,image/jpeg,image/webp";
-
-// Per-status presentation. "processing" covers reading the image + finding the
-// URL + tailoring; the item's statusLabel carries the specific step.
-const STATUS_STYLE = {
-  pending: { color: "var(--text-muted)", bg: "rgba(0,0,0,0.04)", label: "Queued" },
-  processing: { color: "var(--accent-hover)", bg: "var(--accent-soft)", label: "Working…" },
-  done: { color: "var(--success)", bg: "var(--success-soft)", label: "Ready" },
-  error: { color: "var(--danger-hover)", bg: "var(--danger-soft)", label: "Failed" },
-};
-
-function StatusPill({ status, statusLabel }) {
-  const s = STATUS_STYLE[status] || STATUS_STYLE.pending;
-  return (
-    <Box
-      component="span"
-      sx={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 0.5,
-        fontSize: "0.72rem",
-        fontWeight: 600,
-        color: s.color,
-        bgcolor: s.bg,
-        borderRadius: 999,
-        px: 1,
-        py: 0.25,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {status === "processing" ? <CircularProgress size={11} thickness={6} /> : null}
-      {statusLabel || s.label}
-    </Box>
-  );
-}
 
 export default function ScreenshotTab({
   items = [],
