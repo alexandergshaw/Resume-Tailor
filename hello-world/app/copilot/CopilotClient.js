@@ -20,6 +20,7 @@ import { useIsMobile } from "@/app/hooks/useResponsive";
 import TabHeader from "@/app/components/TabHeader";
 import TranscriptView from "./TranscriptView";
 import QuestionFeed from "./QuestionFeed";
+import ManualQuestion from "./ManualQuestion";
 import StatusPill from "./StatusPill";
 import SessionSetup from "./SessionSetup";
 import SpeakerChip from "./SpeakerChip";
@@ -355,6 +356,7 @@ export default function CopilotClient() {
     stop,
     start,
     onDraft,
+    addManualQuestion,
     clearAll,
     copyTranscript,
     // AC-M1.5.6/5.8/5.9: the in-person speaker-identity surface — see the
@@ -824,6 +826,39 @@ export default function CopilotClient() {
                 </Box>
               </Stack>
             ) : null}
+
+            {/* AC-O2: reachable WITHOUT expanding "Show transcript and
+                question history" below — that disclosure is collapsed by
+                default for every session and QuestionFeed lives entirely
+                inside it, so putting this control next to the feed would
+                hide it exactly when it's most needed. A sibling of the
+                dashboard instead, inside the same bounded live wrapper,
+                right after the who's-talking bar above.
+
+                Rendered in BOTH live and idle states — never gated on
+                `live`. The realistic reason to type a question is that
+                detection missed it, or the interviewer is on a channel this
+                tab can't hear, and that's exactly as true before Start as
+                during a session.
+
+                helperText only while `!live`: commit 5258564 made live mode
+                fit the viewport without scrolling (see the `liveHeight`
+                measuring effect above) — a permanent row spent on a
+                sentence already read by the time a session starts would eat
+                into that same budget for nothing. */}
+            <Box sx={{ mb: 2 }}>
+              <ManualQuestion
+                onSubmit={addManualQuestion}
+                label="Type a question the interviewer asked"
+                buttonLabel="Add"
+                confirmLabel="Added to detected questions"
+                helperText={
+                  live
+                    ? undefined
+                    : "It joins the detected questions and gets an answer drafted, just like one the copilot hears."
+                }
+              />
+            </Box>
 
             {/* AC-I5: the five-panel dashboard — current question/answer,
                 predicted next question/answer, and talking pace. Presentational

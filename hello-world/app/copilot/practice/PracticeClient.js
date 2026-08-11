@@ -7,10 +7,12 @@ import Stack from "@mui/material/Stack";
 import { interviewTypeLabel } from "@/lib/copilot/interviewTypes";
 import { buildPrivacyNotice } from "@/lib/copilot/practiceNotices";
 import { preDraftDisclosureApplies } from "@/lib/copilot/predictionPrefs";
+import { submitPracticeQuestion } from "@/lib/copilot/manualQuestion";
 import { useEngine } from "@/app/settings/engine";
 import { useIsTablet } from "@/app/hooks/useResponsive";
 import TranscriptView from "../TranscriptView";
 import QuestionFeed from "../QuestionFeed";
+import ManualQuestion from "../ManualQuestion";
 import CameraPreview from "./CameraPreview";
 import { useApplicationDocs } from "../useApplicationDocs";
 import CopilotDashboard, { PRACTICE_COPY } from "../dashboard/CopilotDashboard";
@@ -59,6 +61,20 @@ function roomQuestionDocsWord(hasResume, hasCoverLetter) {
 // happen, not after. Follows the exact same hedge (docs not yet settled) /
 // assert (docs found) / omit (no posting, or none found) discipline as
 // practiceNotices.js's own submittedDocsToGeminiClauseFor.
+//
+// AC-O5: a typed question runs through the exact same draftAnswer call as a
+// room question (useRoomQuestions.js's addManualQuestion feeds addQuestion
+// exactly like evaluateUtterance does) — but "what they SAY" doesn't cover
+// text the candidate types, and this codebase has already shipped a bug of
+// exactly this shape (a new feature silently falsifying an existing
+// disclosure — BUG-H5 again). The one sentence appended below says only what
+// hasn't already been said: typing goes through the same path, MINUS the
+// detect step (addManualQuestion never calls confirmQuestion, unlike a room
+// question), so it must not claim "detected" the way the sentence above it
+// does. It says nothing about documents — whatever the branches above
+// already decided about those applies unchanged, since it's the same
+// draftAnswer call either way, and repeating that decision here would be
+// exactly the restatement this discipline exists to avoid.
 function roomQuestionPrivacyClause({
   isEmbedded,
   hasPosting,
@@ -67,19 +83,21 @@ function roomQuestionPrivacyClause({
   hasSubmittedCoverLetter,
 }) {
   if (isEmbedded) {
-    return "If someone else in the room asks a question, it is detected and answered on this server too, with no AI provider involved.";
+    return "If someone else in the room asks a question, it is detected and answered on this server too, with no AI provider involved. A question you type yourself skips detection and is drafted here the same way.";
   }
   const base =
     "If someone else in the room asks a question, what they say is sent to Gemini to detect and draft a response, along with your prep context";
-  if (!hasPosting) return `${base}.`;
+  const typedClause =
+    " A question you type yourself skips the detect step and is sent to Gemini to draft a response the same way.";
+  if (!hasPosting) return `${base}.${typedClause}`;
   if (!docsSettled) {
-    return `${base}, and may also send any resume or cover letter you submitted for the selected posting.`;
+    return `${base}, and may also send any resume or cover letter you submitted for the selected posting.${typedClause}`;
   }
   if (hasSubmittedResume || hasSubmittedCoverLetter) {
     const label = roomQuestionDocsWord(hasSubmittedResume, hasSubmittedCoverLetter);
-    return `${base}, and the ${label} you submitted for the selected posting.`;
+    return `${base}, and the ${label} you submitted for the selected posting.${typedClause}`;
   }
-  return `${base}.`;
+  return `${base}.${typedClause}`;
 }
 
 // Practice mode's capture layer: camera + mic, transcribed as "you", plus a
@@ -125,6 +143,7 @@ export default function PracticeClient({
     invalidateInFlight,
     clearForNewSession,
     invalidateAndClearLoading,
+    setManualQuestion,
   } = usePracticeQuestions({ posting, interviewType });
 
   // Same shared prep-context hook the live session uses (AC-C4-7) — grounds
@@ -481,6 +500,31 @@ export default function PracticeClient({
     retryFetch();
   }, [abandonInProgressAnswer, resetAnswerState, retryFetch]);
 
+  // AC-O5: typing a question does everything detecting one does — the drill
+  // question AND a fully drafted feed entry — by calling
+  // submitPracticeQuestion (lib/copilot/manualQuestion.js) with this
+  // component's own five pieces. See that function's own module doc for why
+  // the five-call sequence lives there rather than inline here: this
+  // component cannot be rendered under test, so a reordering inline would be
+  // unfalsifiable.
+  //
+  // Deliberately does NOT set armedRef/armedFromRef the way onNextQuestion
+  // does — those arm the recorder to auto-start the instant the new question
+  // lands, which is right for a press that means "give me something to
+  // answer", but wrong here: the user's hands are on the keyboard, typing,
+  // not signalling they're ready to speak.
+  const onManualQuestion = useCallback(
+    (text) =>
+      submitPracticeQuestion(text, {
+        advanceAsked,
+        abandonAnswer: abandonInProgressAnswer,
+        resetAnswer: resetAnswerState,
+        setDrillQuestion: setManualQuestion,
+        addToFeed: roomQuestions.addManualQuestion,
+      }),
+    [advanceAsked, abandonInProgressAnswer, resetAnswerState, setManualQuestion, roomQuestions.addManualQuestion],
+  );
+
   // The picker can be changed at any time, including while live. Changing
   // the posting clears the question flow via resetQuestions (see its own
   // doc) and the answer flow — the question just changed out from under it.
@@ -819,6 +863,21 @@ export default function PracticeClient({
                 onRetrySample={sampleAnswer.retry}
                 onRegenerateSample={sampleAnswer.regenerate}
               />
+              {/* AC-O5: lives directly below the drill card, not beside the
+                  feed at the bottom — this slot block already reorders so
+                  the question card comes first on phones, and a typed
+                  question's primary effect IS that card (submitPracticeQuestion
+                  sets it as the drill question); the feed entry below is the
+                  secondary effect. */}
+              <Box sx={{ mt: 2 }}>
+                <ManualQuestion
+                  onSubmit={onManualQuestion}
+                  label="Type your own question"
+                  buttonLabel="Use question"
+                  confirmLabel="Set as your practice question and added to detected questions"
+                  helperText="It becomes the question on the card above, and also gets an answer drafted in the detected questions below."
+                />
+              </Box>
             </Box>
           ),
         )}

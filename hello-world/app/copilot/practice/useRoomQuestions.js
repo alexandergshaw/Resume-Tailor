@@ -5,6 +5,7 @@ import { shouldTreatAsRoomQuestion } from "@/lib/copilot/roomQuestions";
 import { detectQuestion, normalizeQuestion } from "@/lib/copilot/questions";
 import { confirmQuestion } from "@/lib/copilot/detectClient";
 import { draftAnswer } from "@/lib/copilot/answerClient";
+import { normalizeManualQuestion } from "@/lib/copilot/manualQuestion";
 
 // Final wave (AC-M2): practice mode's counterpart of live mode's own
 // detected-question pipeline (app/copilot/useLiveSession.js's
@@ -265,6 +266,48 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
     [runDraft],
   );
 
+  // AC-O3: the manual-entry counterpart of onUtterance/evaluateUtterance
+  // above, but deliberately stops short of the gates those two run through:
+  //
+  //   - It does not call confirmQuestion, and it deliberately skips the
+  //     detectQuestion/MIN_WORDS_FOR_LLM pre-filter evaluateUtterance runs.
+  //     Those exist to decide IS-THIS-A-QUESTION for a fragment of speech;
+  //     typing it is that decision, already made by the person who knows.
+  //   - It does not go through shouldTreatAsRoomQuestion (onUtterance's own
+  //     gate). That gate guesses, from speaker tags, whether a turn belonged
+  //     to someone other than the candidate — and while the candidate's own
+  //     answer is recording it attributes every turn to them and reacts to
+  //     none. Typing is an explicit statement about someone else's question;
+  //     running it through a voice-attribution guess would silently swallow
+  //     it in exactly the state manual entry exists to route around (see
+  //     this file's own manual test pinning this).
+  //   - It passes `null` as the type, not a guess of its own: runDraft
+  //     resolves `type: q.type || type`, so a pre-set type here would win
+  //     over the drafted answer's own classification — `null` is what makes
+  //     a typed entry's card end up identical to a detected one's.
+  //
+  // It still WRITES lastQNormRef, the same dedupe guard evaluateUtterance
+  // reads above — a room question repeating a moment later (someone
+  // rephrasing, or confirmQuestion normalizing onto the same wording) is
+  // suppressed by it exactly as if the repeat had come from the room first.
+  // But it never READS the guard before adding, and that asymmetry is
+  // deliberate, the same as useLiveSession.js's own addManualQuestion: an
+  // explicit typed submit must never vanish with no feedback, so typing the
+  // same question twice on purpose always lands as a second card. Unlike
+  // live mode, this hook has no answer cache — there is no equivalent to
+  // answerCacheRef here — so that second card is a second full draftAnswer
+  // round trip, not a free one.
+  const addManualQuestion = useCallback(
+    (text) => {
+      const { ok, question } = normalizeManualQuestion(text);
+      if (!ok) return false;
+      lastQNormRef.current = normalizeQuestion(question);
+      addQuestion(question, null);
+      return true;
+    },
+    [addQuestion],
+  );
+
   // Called by PracticeClient at the start of every fresh capture session
   // (folded into the same resetForSession usePracticeAnswer already exposes
   // — see PracticeClient.js) — a room question detected during a PREVIOUS
@@ -275,5 +318,5 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
     lastQNormRef.current = "";
   }, []);
 
-  return { questions, onUtterance, onDraft, resetForSession };
+  return { questions, onUtterance, onDraft, addManualQuestion, resetForSession };
 }

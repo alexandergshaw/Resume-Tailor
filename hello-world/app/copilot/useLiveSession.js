@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CopilotSession } from "@/lib/copilot/session";
 import { detectQuestion, normalizeQuestion } from "@/lib/copilot/questions";
+import { normalizeManualQuestion } from "@/lib/copilot/manualQuestion";
 import { confirmQuestion } from "@/lib/copilot/detectClient";
 import { draftAnswer } from "@/lib/copilot/answerClient";
 import { speakerDisplayLabel } from "@/lib/copilot/speakerIdentity";
@@ -383,6 +384,48 @@ export function useLiveSession({
     [runDraft, setQuestions],
   );
 
+  // AC-O2: live mode's half of "typing a question is the same as detecting
+  // one" — the manual counterpart to evaluateUtterance below, skipping
+  // straight to addQuestion instead of running its confirmQuestion pipeline.
+  //
+  // Does NOT call confirmQuestion: that client exists to decide IS THIS A
+  // QUESTION for a fragment of speech. Typing it is that decision, already
+  // made by the person who knows it. A round trip to have the model
+  // second-guess it is both slower and capable of throwing the entry away
+  // outright — and MIN_WORDS_FOR_LLM, the pre-filter that exists purely to
+  // avoid paying for that round trip, is skipped for the same reason.
+  //
+  // Passes `null` as the type, not a locally-classified one: runDraft
+  // resolves `type: it.type || type` — a pre-set type would WIN over the
+  // drafted answer's own classification, so leaving it null here is what
+  // makes a typed question's card end up identical to a detected one's.
+  //
+  // Writes lastQNormRef, but — unlike evaluateUtterance below — never reads
+  // it, and that asymmetry is deliberate. The common case is typing what
+  // you just heard while the interviewer is still speaking, with the
+  // transcript producing the same question a second later; writing the
+  // guard here is what suppresses that follow-on detection. But an
+  // explicit typed submit must never itself vanish with no feedback, so
+  // this never checks lastQNormRef before adding — a deliberate repeat (the
+  // user submits the same question twice on purpose) always lands as a
+  // second card. That second card costs no second model call: runDraft
+  // serves it straight out of answerCacheRef.
+  //
+  // No `meta` argument: a manual entry has no speaker to attribute, so
+  // addQuestion runs with its default `{}` — the entry gets
+  // `speakerTag: null, provisional: false`, exactly like a tab/system
+  // detection.
+  const addManualQuestion = useCallback(
+    (text) => {
+      const { ok, question } = normalizeManualQuestion(text);
+      if (!ok) return false;
+      lastQNormRef.current = normalizeQuestion(question);
+      addQuestion(question, null, autoDraftRef.current);
+      return true;
+    },
+    [addQuestion],
+  );
+
   // Confirm a completed interviewer utterance is a question, then queue it.
   // AC-M1.6.3: the ONE path either source funnels through —
   // evaluateUtterance -> confirmQuestion -> addQuestion -> runDraft ->
@@ -731,6 +774,9 @@ export function useLiveSession({
     start,
     stop,
     onDraft,
+    // AC-O2: CopilotClient wires this to ManualQuestion's onSubmit — see
+    // addManualQuestion's own comment above for what it deliberately skips.
+    addManualQuestion,
     clearAll,
     copyTranscript,
     // AC-M1.5.6/5.8: the in-person speaker-identity surface — CopilotClient

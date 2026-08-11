@@ -189,6 +189,34 @@ export function usePracticeQuestions({ posting, interviewType }) {
     reqGenRef.current += 1;
   }, []);
 
+  // AC-O4: the manual-entry counterpart of requestQuestion above. Bumps the
+  // SAME generation token every other caller in this hook bumps — a
+  // generated question already in flight when the user types their own must
+  // not land on top of it once that fetch resolves (see this file's own
+  // manual test, which resolves a pending fetchNextQuestion afterward and
+  // asserts the typed question survives). Also clears questionLoading,
+  // questionError, and exhausted: left standing beside a freshly typed
+  // question, a stale spinner/error reads as belonging to it, and the
+  // exhausted notice disables "Next question", stranding the user beside a
+  // question they just typed with no way to move on.
+  const setManualQuestion = useCallback((question, type) => {
+    reqGenRef.current += 1;
+    setQuestionLoading(false);
+    setQuestionError("");
+    setExhausted(false);
+    setCurrentQuestion({ question, type });
+    // Written synchronously here, not left to the mirroring effect above:
+    // usePracticeAnswerActions reads currentQuestionRef (not the state value)
+    // to stamp which question a recording belongs to, and the effect only
+    // fires after a render has flushed. This is the one path where the user
+    // can press "Use question" and "Start answering" back to back with
+    // nothing in between to force that flush — so without this line, whether
+    // the ref is current at that moment depends on flush ordering nothing
+    // here states or guarantees. The effect stays exactly as it is; it is
+    // still what keeps the ref correct for every other path.
+    currentQuestionRef.current = { question, type };
+  }, []);
+
   return {
     currentQuestion,
     // Convenience derived from `currentQuestion` alone — returned here
@@ -212,5 +240,6 @@ export function usePracticeQuestions({ posting, interviewType }) {
     invalidateInFlight,
     clearForNewSession,
     invalidateAndClearLoading,
+    setManualQuestion,
   };
 }
