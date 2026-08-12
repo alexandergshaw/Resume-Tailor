@@ -2367,3 +2367,150 @@ Live mode passes `helperText` only while idle. Commit 5258564 made live mode fit
 
 - **Practice mode shows the same question's answer twice, at two different reveal levels.** The typed question lands on the drill card with its sample answer hidden behind "Show sample answer" (the drill is answering cold), while the same question's fully drafted answer sits in the feed lower down the page. This dual exposure already existed for genuinely overheard room questions; typing makes it trivially easy to trigger for your own drill question. Accepted because the user asked for both effects explicitly. The smallest fix, if it is ever judged worth one, is to land the feed entry at `status: "idle"` so it needs a "Draft answer" press.
 - **A typed question does not arm auto-start.** `onNextQuestion` sets `armedRef`/`armedFromRef` so the recorder starts by itself once the question lands; manual entry deliberately does not, because the user's hands are on the keyboard and they have not signalled they are ready to speak.
+
+### R-187 | area: experience-tree | parallel-safe: yes | automatable: yes
+
+**Summary:** The Professional Experience page tree orders siblings deterministically, never loses a page to a broken parent link, and produces minimal move updates.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/experience/tree.test.js`.
+
+**Expected:** 27 tests pass. Six of them exist because a peer audit mutated a reference implementation 29 ways against an earlier draft of this file and those six defects survived; they are marked `[S1]`..`[S6]` in the source and must not be weakened:
+
+- `[S1]` a tree node carries the WHOLE row, not `{id, children}`. The tab and the editor render `title` and `body` straight off these nodes, and an implementation that dropped them passed every other assertion.
+- `[S2]` a tied `position` falls through to `created_at` BEFORE `id`. The fixture's ids sort opposite to its timestamps, so skipping `created_at` gives the wrong answer rather than accidentally the right one.
+- `[S3]` `collectDescendantIds` is depth-first. The fixture's deep branch is deliberately not the last branch, so breadth-first returns a different sequence.
+- `[S4]` `moveNode` is minimal on the DESTINATION side as well as the vacated side. Applying the update set makes a redundant update indistinguishable from no update, so this is asserted on the raw set and cannot be checked through the apply helper.
+- `[S5]` `canMove`'s reason codes have a precedence order (`unknown-page`, `self-parent`, `unknown-parent`, `cycle`); the route puts the code in front of the user in a 400.
+- `[S6]` no page ever disappears. A row whose parent is absent, is itself, or sits in a loop is promoted to a root. The ids in the tree are exactly the ids in the input, each once.
+
+Also pinned: a row with no `created_at` still sorts deterministically. `Date.parse(undefined)` is `NaN`, `NaN !== NaN` is true, and the resulting `NaN` comparator result is coerced to `0` by the sort spec, silently skipping the `id` tiebreaker. The column is `not null` in the database, so this only arises for a page created optimistically on the client before its insert returns, which is exactly when the user is watching it appear.
+
+### R-188 | area: experience-api | parallel-safe: yes | automatable: yes
+
+**Summary:** The knowledge base routes take ownership from the session only, and tell a caller nothing about rows that are not theirs.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run app/api/experience/routes.contract.test.js`.
+
+**Expected:** 11 tests pass, covering:
+
+- Every route answers 401 without a session AND never calls the data layer at all. Paired with a positive control, so a route that 401s unconditionally fails.
+- `user_id` always comes from the session. A `user_id` in the request body is ignored and must not appear anywhere in the arguments passed to the data layer.
+- A `parent_id` the caller does not own returns **404, not 403** - 403 would confirm the row exists to someone who cannot see it. Paired with a positive control on a parent the caller does own.
+- `POST /api/experience/move` refuses a body that omits the `newParentId` KEY, rather than treating the omission as "move to top level". The tree layer treats `undefined` as `null` deliberately; the route must not let a caller reach that by dropping a key.
+- A move the tree rejects comes back as 400 carrying the machine `reason` code, and never reaches the store.
+
+### R-189 | area: experience-schema | parallel-safe: no | automatable: no
+
+**Summary:** `experience_pages` applies cleanly, isolates users, and cascades a subtree delete.
+
+**Steps:**
+1. Apply `hello-world/supabase/migrations/20260812000000_experience_pages.sql` (merge to main runs `.github/workflows/supabase-migrations.yml`, or start it by hand from the Actions tab).
+2. Run it a second time and confirm it succeeds again - every statement is written to be idempotent.
+3. In the SQL editor confirm: the table exists with all nine columns; `rowsecurity` is true for it in `pg_tables`; four policies exist on it in `pg_policies`; and index `experience_pages_user_parent_position_idx` exists and is NOT unique.
+4. As user A, insert a page and a child of it. As user B, select from `experience_pages` and attempt to update user A's row by id.
+5. As user A, delete the parent row.
+
+**Expected:** Step 2 succeeds with no error. Step 4 returns zero rows for user B and the update affects zero rows. Step 5 removes the child as well, via `on delete cascade`.
+
+**Why this case is manual:** no test in the repo executes this SQL, so a green `npx vitest run` says nothing about any of it. The index being non-unique is deliberate and load-bearing: a move is applied as several sequential row updates, so two siblings can briefly share a position mid-move, and a unique index would make the order those updates land in decide whether the write succeeds. Do not "tighten" it.
+
+### R-190 | area: experience-tree-keyboard | parallel-safe: yes | automatable: yes
+
+**Summary:** The Professional Experience page tree implements the W3C APG tree view keyboard pattern, and the component actually dispatches what the pure model decides.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/experience/treeNav.test.js app/components/experience/PageTree.test.js`.
+
+**Expected:** All tests pass. The decisions live in `lib/experience/treeNav.js` and are asserted without a DOM; `PageTree.test.js` asserts the WIRING, which neither pure test can see - two individually-correct halves joined wrong is a defect this codebase has shipped before.
+
+Load-bearing specifics, each of which was a surviving mutant in an earlier draft:
+
+- `nextFocus` returns all five fields every time (`focusId`, `expand`, `collapse`, `activate`, `handled`). Asserting `focusId` alone let eight defects through, including ArrowDown quietly expanding every collapsed node it passed - a keyboard user unfolding the tree behind themselves.
+- `handled: false` for keys the tree does not own. A tree that calls `preventDefault` on Tab is a keyboard trap; `defaultPrevented` is the ONLY way to see the difference in jsdom, and the event must be created with `cancelable: true` or `preventDefault` is a silent no-op and the test passes against anything.
+- Space activates and never reaches type-ahead. The fixture deliberately contains a title starting with a space and one starting with "Shift" so the "these keys are not type-ahead" test can actually fail.
+- Type-ahead matches a PREFIX of the visible TITLE, searching forward from the current node. The fixture's ids and titles are deliberately different strings; an earlier draft used `title: id.toUpperCase()` and could not tell the two fields apart.
+- `aria-expanded` on parents only - never on a leaf, where it would announce a collapsed parent that never opens - and exactly ONE node at `tabindex="0"`.
+- All four row actions (add sub-page, rename, delete, move) are in the tab order for the row holding the roving tabindex, and only that row. Re-parenting was pointer-only when first shipped; three more actions were found the same way by the accessibility pass afterwards.
+
+### R-191 | area: experience-markdown | parallel-safe: yes | automatable: yes
+
+**Summary:** The page-body markdown parser cannot emit a navigable dangerous URL from any block context, and never silently discards what the user typed.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/experience/markdown.test.js app/components/experience/MarkdownPreview.test.js`.
+
+**Expected:** All tests pass, including:
+
+- Every dangerous scheme tried in EVERY block context - heading, list item, task item, ordered item, blockquote, inside emphasis, nested list - not just a bare paragraph. An implementation that parsed first and sanitized the tree afterwards, visiting only paragraph blocks, passed an earlier draft while leaving live `javascript:` links in all the others.
+- URLs are checked STRUCTURALLY by walking the tree for any href-like property, not by searching JSON for the substring `"link"`. A token renamed to `unsafe-link` passed the earlier draft with its href fully intact, because the character before `link` was a hyphen rather than a quote.
+- An ALLOWLIST (http, https, mailto, single-leading-slash paths). `file:`, `blob:`, `about:`, `view-source:`, `intent:`, `filesystem:`, `//evil.com` and `/\evil.com` are all rejected. The last one is protocol-relative via the WHATWG backslash equivalence and was found during verification; it had been marked SAME-ORIGIN, which also stripped it of `rel="noopener noreferrer"`.
+- Safe URLs in non-canonical form (uppercase scheme, leading whitespace, leading C0 control, a tab inside the scheme) STILL produce links. Under an allowlist those defences are invisible to a dangerous-scheme fixture, so without these positive controls three real defects survived - each of which would silently turn a pasted link into plain text.
+- CRLF input parses identically to LF. In JavaScript `.` does not match `\r`, so a regex anchored `(.*)$` fails on every line of a document pasted from Word or Outlook, dropping a fenced code block's entire contents. Windows machine; that paste is the common case.
+- Malformed input keeps the user's characters. A mutant that deleted any paragraph containing a bracket or a pipe passed an earlier draft, because "did not throw" and "is an array" are both true of an empty array.
+- `MarkdownPreview` shifts body headings down one level so the page title stays the only `h1`, puts `rel="noopener noreferrer"` on external links only, and renders no `<script>` element for `<script>` text while still showing that text.
+
+### R-192 | area: experience-attachments | parallel-safe: yes | automatable: yes
+
+**Summary:** An uploaded file's storage key can never escape its owner's prefix, and a rejected upload explains itself.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/experience/attachments.test.js app/components/experience/AttachmentPanel.test.js`.
+
+**Expected:** All tests pass. The safety invariant runs 30 hostile filenames and checks each against BOTH the literal segment and `segment.normalize("NFKC")` - the normalized form is the general statement, because a key containing no separator today is worthless if one downstream normalization pass would create one.
+
+Specifics that were each a real defect:
+
+- The sanitize pipeline order is fixed: normalize and percent-decode to a FIXED POINT together, then strip forbidden characters, collapse separators, strip `..` repeatedly, trim leading dots and trailing dots/spaces, rename Windows reserved device names, and truncate LAST. Normalizing once at the start still let `%EF%BC%8F` through as a fullwidth solidus, because nothing re-normalized what the decode produced.
+- The attachment's uuid is IN the key. Seven inputs - four of them fixtures in an earlier draft - collapsed onto the single key `file`, so any junk-named upload could overwrite a real note.
+- Caps are INCLUSIVE (exactly 100 MB of video is accepted) and the reason names both the limit and the filename on every path.
+- Every delete button's accessible name includes its own file name; N attachments produce N distinct names.
+- A failed notes save shows a visible error with Retry and does NOT roll back the typed text. The notes field is the only thing a model ever sees about a video, since video bytes are never sent as context.
+
+### R-193 | area: experience-tab | parallel-safe: no | automatable: no
+
+**Summary:** The whole tab works end to end against a real signed-in account and a real database.
+
+**Steps:**
+1. Sign in, open the Professional Experience tab.
+2. Create a top-level page; rename it; type a markdown body with a heading, a list, a task item, a fenced code block and a link; switch to Preview.
+3. Create a sub-page under it, then a sub-sub-page. Collapse and expand each level.
+4. Drag a page onto another to re-parent it; then move a different page using the Move dialog.
+5. Upload an image, a PDF and a short video to a page. Type notes on each. Reload the page and confirm all three, and the notes, survive.
+6. Delete a page that HAS sub-pages. Read the confirmation text before confirming.
+7. Reload the browser while on this tab.
+
+**Expected:** Every operation persists across the reload. The delete confirmation names the exact number of sub-pages that will go with it. Step 7 returns to the Professional Experience tab rather than bouncing to Materials - the same restore-whitelist bug that silently affected Interview Copilot until this feature fixed it.
+
+**Why manual:** the app is auth-gated and no test in the repo drives a real Supabase session or real Storage. A green suite says nothing about whether upload, signed-URL playback, or the delete cascade actually work against the live services.
+
+### R-194 | area: experience-tab | parallel-safe: no | automatable: no
+
+**Summary:** Every operation in the tab can be performed with the keyboard alone.
+
+**Steps:**
+1. Unplug or ignore the mouse entirely. Sign in and Tab to the Professional Experience tab.
+2. Enter the tree. Using only arrows, Home, End and type-ahead, move to a nested page.
+3. From the focused row, Tab to its action buttons and use each one: add a sub-page, rename, move (via the dialog), delete.
+4. Tab into the editor, type a body, switch to Preview and back.
+5. Tab into the attachments panel, reach the file input, and open the picker with the keyboard.
+6. Tab out of the tree entirely and confirm focus leaves rather than cycling inside it.
+
+**Expected:** Every step is possible. Focus is visible at all times. No step requires a drag. Tab is never swallowed.
+
+**Why this case exists:** re-parenting shipped as drag-and-drop only, which is unreachable by keyboard and invisible to assistive technology. It was fixed, and an accessibility sweep then found three MORE actions with hardcoded `tabIndex={-1}` in the same file. Automated tests assert the attribute; only walking it end to end proves the whole path is usable.
+
+### R-195 | area: experience-schema | parallel-safe: no | automatable: no
+
+**Summary:** `experience_attachments` applies cleanly, isolates users, and cascades from its page.
+
+**Steps:**
+1. Apply `hello-world/supabase/migrations/20260812010000_experience_attachments.sql`, then run it a second time and confirm it succeeds again.
+2. Confirm RLS is enabled and four owner-scoped policies exist, as for `experience_pages`.
+3. As user A, upload an attachment. As user B, attempt to select it by id and attempt to DELETE it by id through the API.
+4. As user A, delete the parent PAGE.
+
+**Expected:** Step 3 returns nothing for user B and the delete returns 404, not 403 - 403 would confirm the row exists to someone who cannot see it. Step 4 removes the attachment rows via `on delete cascade`.
+
+**Why manual:** no test executes this SQL, and the ownership-before-storage-delete ordering can only really be proven against a live bucket.

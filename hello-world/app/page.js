@@ -11,6 +11,7 @@ import NavTabs from "./components/NavTabs";
 import TrackingTab from "./components/TrackingTab";
 import LiveFeedTab from "./components/LiveFeedTab";
 import LibraryEditor from "./components/LibraryEditor";
+import ExperienceTab from "./components/experience/ExperienceTab";
 import CopilotClient from "./copilot/CopilotClient";
 import ChatPanel from "./components/ChatPanel";
 import StatusBar from "./components/StatusBar";
@@ -254,7 +255,9 @@ export default function Home() {
       savedTab === "manualApplying" ||
       savedTab === "interviewing" ||
       savedTab === "feed" ||
-      savedTab === "library"
+      savedTab === "library" ||
+      savedTab === "experience" ||
+      savedTab === "copilot"
     ) {
       setMainTab(savedTab);
     }
@@ -2830,6 +2833,7 @@ export default function Home() {
             { value: "interviewing", label: "Tracking" },
             { value: "copilot", label: "Interview Copilot" },
             { value: "library", label: "Library" },
+            { value: "experience", label: "Professional Experience" },
           ]}
         />
 
@@ -3031,6 +3035,7 @@ export default function Home() {
 
         {mainTab === "copilot" && <CopilotClient />}
         {mainTab === "library" && <LibraryEditor />}
+        {mainTab === "experience" && <ExperienceTab />}
 
         {/* Always-mounted dialogs (not gated by active main tab). */}
         <BatchTailorDialog
