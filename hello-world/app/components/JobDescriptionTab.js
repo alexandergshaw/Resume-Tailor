@@ -18,6 +18,7 @@ import {
   submittableEntries,
   failedEntries,
 } from "../../lib/tailor/postingQueue";
+import { enqueueTargets } from "../../lib/tailor/rollingQueue";
 
 import styles from "../page.module.css";
 
@@ -25,6 +26,23 @@ import styles from "../page.module.css";
 // explains why "Review & edit fields" refuses to run, not any one posting --
 // so a plain constant id is fine; nothing here needs to be per-posting.
 const REVIEW_CAPTION_ID = "job-description-review-caption";
+
+// Chunk 11: explains why the Tailor button is disabled once every posting is
+// already queued, in flight, or finished -- as opposed to `busy` alone,
+// which used to be the button's ENTIRE disabled reason and gave no hint that
+// pressing it again would do nothing.
+const NOTHING_NEW_CAPTION_ID = "job-description-nothing-new-caption";
+
+// A posting's own row is locked (its box and its remove control) exactly
+// while ITS OWN worker owns it -- queued or actively running -- never for
+// the whole tab just because a run is happening somewhere in it (chunk 11,
+// AC-4: per-entry locking, not global). `busy` still locks every row when
+// the thing running is NOT this tab's own queue (`running` false) -- a
+// StatusBar chip's Regenerate, which this tab has no per-row visibility
+// into.
+function rowLocked(entry, running, busy) {
+  return entry.status === "pending" || entry.status === "processing" || (busy && !running);
+}
 
 // The one `role="status" aria-live="polite"` region AC-10 requires: what to
 // say while a run is in flight, and what to say once it ends. Rendered even
@@ -81,6 +99,24 @@ export default function JobDescriptionTab({
   // flight), but neither one gets a real `disabled` attribute -- see the
   // button below.
   const reviewBlocked = !canReviewOne || busy;
+
+  // Chunk 11 / A6: the Tailor button stays enabled DURING this tab's own run
+  // whenever there is something new `enqueueTargets` would actually submit
+  // -- pressing it again while running is how a second (or third) posting
+  // gets added to the run. It is disabled, with a stated reason, once there
+  // is nothing left to submit; it also stays disabled for as long as
+  // something OTHER than this tab's own queue is busy (`busy` without
+  // `running` -- a StatusBar chip's Regenerate), which has nothing to do
+  // with whether this tab has new work.
+  const hasNewWork = enqueueTargets(entries).length > 0;
+  const submitBlockedElsewhere = busy && !running;
+  const submitDisabled = !hasNewWork || submitBlockedElsewhere;
+  // The caption only applies to the "nothing left to submit" reason, and
+  // only once something has actually been attempted -- a pristine, never-run
+  // blank box is not "nothing new", it just hasn't been typed into yet, and
+  // the existing blank-box guardrail (shown on click) already covers that.
+  const nothingNewToSubmit =
+    !running && !hasNewWork && !submitBlockedElsewhere && entries.some((e) => e.status !== "idle");
 
   // B4: focus is dropped to <body> when a posting is removed, because the
   // element that had it (that posting's own remove button) is removed along
@@ -187,13 +223,18 @@ export default function JobDescriptionTab({
                     fullWidth
                     placeholder="Paste the full job posting here..."
                     value={entry.text}
-                    // A2: `busy`, not `running` -- disabled for a chip
-                    // regenerate started elsewhere too, not just this tab's
-                    // own queue. Without it, typing resets the entry to
-                    // idle while an in-flight worker for the OLD text is
-                    // still running; that worker's patch then lands "done",
-                    // a job id and a title on top of the NEW text.
-                    disabled={busy}
+                    // Chunk 11 / A6: per-ROW, not the blanket `busy` flag --
+                    // this box is locked only while its OWN worker owns it
+                    // (queued or processing), or while something other than
+                    // this tab's own queue is busy elsewhere. Every other
+                    // row stays editable while the run continues; that is
+                    // the whole point of being able to keep pasting.
+                    // Without the per-row lock, typing into a QUEUED/
+                    // processing box would reset that entry to idle while
+                    // its in-flight worker for the OLD text is still
+                    // running; that worker's patch then lands "done", a
+                    // job id and a title on top of the NEW text.
+                    disabled={rowLocked(entry, running, busy)}
                     error={entry.status === "error"}
                     // A plain `aria-describedby` prop on TextField lands on
                     // the root FormControl, not the actual <textarea> a
@@ -226,7 +267,11 @@ export default function JobDescriptionTab({
                         <IconButton
                           aria-label={`Remove job posting ${index + 1}`}
                           onClick={() => handleRemove(entry.id, index)}
-                          disabled={busy}
+                          // Chunk 11 / A4: per-row, same as the field above --
+                          // removing a posting that is not this run's
+                          // concern must stay possible while the run
+                          // continues.
+                          disabled={rowLocked(entry, running, busy)}
                           sx={{ flexShrink: 0, mt: { sm: 0.5 } }}
                         >
                           <CloseIcon sx={{ fontSize: 18 }} />
@@ -279,11 +324,18 @@ export default function JobDescriptionTab({
         </Box>
 
         <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+          {/* Chunk 11: deliberately no `busy`/`running` guard here. A brand
+              new box is EMPTY -- no text, no status -- so it cannot conflict
+              with any worker, in this tab's own run or one started
+              elsewhere. Blocking it used to be necessary only because the
+              old batch runner could not grow once started; a rolling queue
+              has no such limit, and "submit one, press Tailor, then submit
+              another while the first is being tailored" requires being able
+              to create that second box WHILE the first is still going. */}
           <Button
             variant="outlined"
             startIcon={<AddIcon />}
             onClick={onAddPosting}
-            disabled={busy}
             ref={addButtonRef}
           >
             Add another posting
@@ -291,7 +343,12 @@ export default function JobDescriptionTab({
         </Box>
 
         <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "flex-start" }}>
-          <Button type="submit" variant="contained" disabled={busy}>
+          <Button
+            type="submit"
+            variant="contained"
+            disabled={submitDisabled}
+            aria-describedby={nothingNewToSubmit ? NOTHING_NEW_CAPTION_ID : undefined}
+          >
             {busy ? (running ? `Tailoring ${completed} of ${total}…` : "Generating…") : "Generate"}
           </Button>
           {failedCount > 0 ? (
@@ -336,6 +393,16 @@ export default function JobDescriptionTab({
           <Typography id={REVIEW_CAPTION_ID} sx={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
             Review &amp; edit fields works one posting at a time — leave exactly one box filled in
             to use it.
+          </Typography>
+        ) : null}
+        {/* Chunk 11 / A6: the Tailor button's own disabled state has no
+            visible explanation on its own -- this is the stated reason for
+            exactly the "nothing left to submit" case (every posting is
+            already queued, running, or finished), not for the ordinary
+            blank-box guardrail, which already speaks up on click. */}
+        {nothingNewToSubmit ? (
+          <Typography id={NOTHING_NEW_CAPTION_ID} sx={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+            Nothing new to submit — edit a posting to run it again.
           </Typography>
         ) : null}
 

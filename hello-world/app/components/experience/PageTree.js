@@ -5,6 +5,11 @@ import Box from "@mui/material/Box";
 import { visibleNodes, nextFocus } from "../../../lib/experience/treeNav";
 import PageTreeItem from "./PageTreeItem";
 
+// See PageTreeItem.js's identical constant/comment - a single shared empty
+// Set rather than a fresh `new Set()` allocated on every render this prop
+// is left at its default.
+const EMPTY_SELECTION = new Set();
+
 // Renders the W3C APG tree view pattern for the sidebar page tree:
 // https://www.w3.org/WAI/ARIA/apg/patterns/treeview/
 //
@@ -36,6 +41,9 @@ export default function PageTree({
   onDeleteRequest = () => {},
   onMoveRequest = () => {},
   onMove = () => {},
+  selectedPageIds = EMPTY_SELECTION,
+  onToggleSelect = () => {},
+  onClearSelection = () => {},
 }) {
   const rootRef = useRef(null);
   // `tree` (not the `nodes` fallback below) is the useMemo dependency: a
@@ -71,6 +79,17 @@ export default function PageTree({
   }
 
   function handleKeyDown(event) {
+    // Escape clears the bulk-selection checkbox set, and is checked BEFORE
+    // the currentId gate below on purpose: unlike the four action buttons
+    // (which the early return below also silently ignores keys from), the
+    // checkbox is a real keyboard destination a user lands on to check a
+    // box, and Escape has to work from there too, not only from the row
+    // <li> itself. Escape is not a key nextFocus owns (isOwnedKey treats
+    // any multi-character name other than the named arrow/Home/End/Enter/
+    // Space keys as "not handled"), so this never calls preventDefault -
+    // it only ever piggybacks the same keypress to also clear selection.
+    if (event.key === "Escape") onClearSelection();
+
     // Events from inside an open rename <input> bubble here too, but that
     // input has no data-page-id, so this bails out and lets it handle its
     // own keys (Enter to commit, Escape to cancel) untouched.
@@ -111,6 +130,8 @@ export default function PageTree({
           onDeleteRequest={onDeleteRequest}
           onMoveRequest={onMoveRequest}
           onMove={onMove}
+          selectedPageIds={selectedPageIds}
+          onToggleSelect={onToggleSelect}
         />
       ))}
       {nodes.length > 0 && (

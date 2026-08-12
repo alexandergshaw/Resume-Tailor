@@ -898,3 +898,322 @@ describe("useManualPostings -- persistence (AC-8)", () => {
     expect(window.localStorage.getItem("jobPosting")).toBe("Legacy posting");
   });
 });
+
+// Chunk 11: keep pasting while the manual tab tailors. Every guard in this
+// hook used to protect a batch (runWithConcurrency) that could not grow --
+// see lib/tailor/rollingQueue.js for the pure rules. These tests are the
+// composition proof that the hook actually drives that reducer the way the
+// acceptance criteria describe: submitting mid-run adds to the SAME run
+// instead of starting a second pool, `running` goes false exactly once, a
+// posting that already succeeded is not re-tailored, editing/removing a
+// DIFFERENT posting is unaffected by another one still being in flight, and
+// the lone-posting auto-open does not fire twice.
+describe("useManualPostings -- the rolling queue (chunk 11)", () => {
+  it("adds a posting submitted mid-run to the SAME run, instead of starting a second pool", async () => {
+    const releases = [];
+    const props = baseProps({
+      tailorPosting: vi.fn(
+        (opts) => new Promise((resolve) => { releases.push(() => resolve({ ok: true, jobId: opts.syntheticJobId })); }),
+      ),
+    });
+    await mount(props);
+    await typePostings(["A", "B"]);
+
+    let first;
+    await act(async () => {
+      first = api.submitAll();
+    });
+    expect(api.running).toBe(true);
+    expect(api.total).toBe(2);
+    expect(props.tailorPosting).toHaveBeenCalledTimes(2);
+
+    // Paste a third posting and press Tailor again while A and B are still
+    // running.
+    await act(async () => {
+      api.addPosting();
+    });
+    const thirdId = api.entries[2].id;
+    await act(async () => {
+      api.setPostingText(thirdId, "C");
+    });
+
+    let second;
+    await act(async () => {
+      second = api.submitAll();
+    });
+    // Adds to the run: total grows, completed is NOT reset, running stays
+    // true across the whole period, and this is still one pool -- three
+    // tailorPosting calls total, never a fourth from a second independent
+    // run.
+    expect(api.total).toBe(3);
+    expect(api.completed).toBe(0);
+    expect(api.running).toBe(true);
+    expect(props.tailorPosting).toHaveBeenCalledTimes(3);
+
+    const runningSamples = [];
+
+    await act(async () => {
+      releases[0](); // A finishes
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    runningSamples.push(api.running);
+    expect(api.completed).toBe(1);
+
+    await act(async () => {
+      releases[1](); // B finishes
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    runningSamples.push(api.running);
+    expect(api.completed).toBe(2);
+
+    await act(async () => {
+      releases[2](); // C finishes
+      await first;
+      await second;
+    });
+    runningSamples.push(api.running);
+
+    // running stays true while ANY item of the period remains, and flips to
+    // false exactly once -- at the very end, not when A and B (the original
+    // submission) finish while C is still going.
+    expect(runningSamples).toEqual([true, true, false]);
+    expect(api.completed).toBe(3);
+    expect(api.running).toBe(false);
+    expect(api.lastRun).toEqual({ done: 3, failed: 0 });
+  });
+
+  it("does not re-submit a posting that already succeeded when a new one is added", async () => {
+    const props = baseProps();
+    await mount(props);
+    await typePostings(["First"]);
+    await act(async () => {
+      await api.submitAll();
+    });
+    expect(api.entries[0].status).toBe("done");
+    const firstJobId = api.entries[0].jobId;
+    props.tailorPosting.mockClear();
+
+    await act(async () => {
+      api.addPosting();
+    });
+    const secondId = api.entries[1].id;
+    await act(async () => {
+      api.setPostingText(secondId, "Second");
+    });
+    await act(async () => {
+      await api.submitAll();
+    });
+
+    // Only the new posting goes through the pipeline -- a second wasted
+    // model call on "First" (and its result being replaced) is exactly the
+    // A3 defect this excludes.
+    expect(props.tailorPosting).toHaveBeenCalledTimes(1);
+    expect(props.tailorPosting.mock.calls[0][0].overridePosting).toBe("Second");
+    expect(api.entries[0].status).toBe("done");
+    expect(api.entries[0].jobId).toBe(firstJobId);
+    expect(api.entries[1].status).toBe("done");
+  });
+
+  it("lets a posting that is NOT in flight be edited while another one is, and the in-flight one still lands on its own row", async () => {
+    const releases = [];
+    const props = baseProps({
+      tailorPosting: vi.fn(
+        (opts) => new Promise((resolve) => { releases.push(() => resolve({ ok: true, jobId: opts.syntheticJobId })); }),
+      ),
+    });
+    await mount(props);
+    await typePostings(["A"]);
+    await act(async () => {
+      api.addPosting();
+    });
+    const secondId = api.entries[1].id;
+
+    let run;
+    await act(async () => {
+      run = api.submitAll(); // only "A" is non-blank, so only it goes in flight
+    });
+    expect(api.entries[0].status).toBe("processing");
+
+    // The second box was never submitted (still blank) -- it must stay
+    // freely editable while the first is in flight.
+    await act(async () => {
+      api.setPostingText(secondId, "typed during the run");
+    });
+    expect(api.entries[1].text).toBe("typed during the run");
+    // Untouched by the edit to the OTHER row.
+    expect(api.entries[0].status).toBe("processing");
+    expect(api.entries[0].text).toBe("A");
+
+    await act(async () => {
+      releases.forEach((r) => r());
+      await run;
+    });
+    await flush(2);
+
+    // The in-flight posting's result lands correctly on its own row, and
+    // the edited row is untouched by the run it was never part of.
+    expect(api.entries[0].status).toBe("done");
+    expect(api.entries[0].text).toBe("A");
+    expect(api.entries[1].text).toBe("typed during the run");
+    expect(api.entries[1].status).toBe("idle");
+  });
+
+  it("lets a posting that is NOT in flight be removed while another one is", async () => {
+    const releases = [];
+    const props = baseProps({
+      tailorPosting: vi.fn(
+        (opts) => new Promise((resolve) => { releases.push(() => resolve({ ok: true, jobId: opts.syntheticJobId })); }),
+      ),
+    });
+    await mount(props);
+    await typePostings(["A", "B"]);
+    // A third, still-blank box -- never submitted, so it must stay idle
+    // (and therefore removable) no matter what A and B are doing.
+    await act(async () => {
+      api.addPosting();
+    });
+    const thirdId = api.entries[2].id;
+
+    let run;
+    await act(async () => {
+      run = api.submitAll(); // A and B go in flight; the blank box is skipped
+    });
+    expect(api.entries[2].status).toBe("idle");
+
+    await act(async () => {
+      api.removePosting(thirdId);
+    });
+    expect(api.entries).toHaveLength(2);
+    expect(api.entries.some((e) => e.id === thirdId)).toBe(false);
+    // The two in-flight rows are untouched by removing an unrelated one.
+    expect(api.entries[0].status).toBe("processing");
+    expect(api.entries[1].status).toBe("processing");
+
+    await act(async () => {
+      releases.forEach((r) => r());
+      await run;
+    });
+    await flush(2);
+    expect(api.entries.every((e) => e.status === "done")).toBe(true);
+  });
+
+  it("does not auto-open the preview for a posting submitted while a lone posting's run is still in flight", async () => {
+    const releases = [];
+    const props = baseProps({
+      tailorPosting: vi.fn(
+        (opts) => new Promise((resolve) => { releases.push(() => resolve({ ok: true, jobId: opts.syntheticJobId })); }),
+      ),
+    });
+    await mount(props);
+    await typePostings(["Only one"]);
+
+    let first;
+    await act(async () => {
+      first = api.submitAll();
+    });
+    expect(props.tailorPosting.mock.calls[0][0].openPreview).toBe(true);
+
+    await act(async () => {
+      api.addPosting();
+    });
+    const secondId = api.entries[1].id;
+    await act(async () => {
+      api.setPostingText(secondId, "Second");
+    });
+
+    let second;
+    await act(async () => {
+      second = api.submitAll();
+    });
+    // Two results must never fight over the one preview.
+    expect(props.tailorPosting.mock.calls[1][0].openPreview).toBe(false);
+
+    await act(async () => {
+      releases.forEach((r) => r());
+      await first;
+      await second;
+    });
+  });
+
+  // This is the request in the user's own words: "submit one, press tailor,
+  // then submit another while the first is being tailored." Every rule
+  // above (enqueueTargets excluding done, per-row locking, the pump/settle
+  // machinery, the corrected unguarded addPosting) was proved in isolation;
+  // this test is the one that proves they actually compose into that
+  // journey, starting from the tab's true initial state -- ONE empty box --
+  // rather than from a scenario that already has a spare box waiting.
+  it("walks the whole journey end to end: paste one, Tailor, add a second box mid-run, paste, Tailor again -- one pool, one running transition, a tally of two", async () => {
+    const releases = [];
+    const props = baseProps({
+      tailorPosting: vi.fn(
+        (opts) => new Promise((resolve) => { releases.push(() => resolve({ ok: true, jobId: opts.syntheticJobId })); }),
+      ),
+    });
+    await mount(props);
+    expect(api.entries).toHaveLength(1); // the tab's real starting point
+
+    // Paste into the only box there is, and press Tailor.
+    await typePostings(["First posting"]);
+    let first;
+    await act(async () => {
+      first = api.submitAll();
+    });
+    expect(api.running).toBe(true);
+    expect(api.total).toBe(1);
+    expect(props.tailorPosting).toHaveBeenCalledTimes(1);
+    expect(api.entries[0].status).toBe("processing");
+
+    // The only box is now locked -- pasting a second posting requires a new
+    // box, and creating one must be possible WHILE the first is tailoring.
+    await act(async () => {
+      api.addPosting();
+    });
+    expect(api.entries).toHaveLength(2);
+    const secondId = api.entries[1].id;
+    expect(api.entries[1].status).toBe("idle");
+
+    await act(async () => {
+      api.setPostingText(secondId, "Second posting");
+    });
+    expect(api.entries[1].text).toBe("Second posting");
+
+    let second;
+    await act(async () => {
+      second = api.submitAll();
+    });
+    // Added to the SAME run: total grows to 2, completed is not reset, and
+    // this is still one pool -- exactly two tailorPosting calls total, never
+    // a third from a second independent run.
+    expect(api.total).toBe(2);
+    expect(api.completed).toBe(0);
+    expect(api.running).toBe(true);
+    expect(props.tailorPosting).toHaveBeenCalledTimes(2);
+
+    const runningSamples = [];
+
+    await act(async () => {
+      releases[0](); // the first posting finishes
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    runningSamples.push(api.running);
+    expect(api.completed).toBe(1);
+
+    await act(async () => {
+      releases[1](); // the second posting finishes
+      await first;
+      await second;
+    });
+    runningSamples.push(api.running);
+
+    // running goes false exactly once -- at the very end, never in between.
+    expect(runningSamples).toEqual([true, false]);
+    expect(api.completed).toBe(2);
+    expect(api.running).toBe(false);
+    expect(api.lastRun).toEqual({ done: 2, failed: 0 });
+    expect(api.entries.map((e) => e.status)).toEqual(["done", "done"]);
+    expect(api.entries.map((e) => e.text)).toEqual(["First posting", "Second posting"]);
+  });
+});

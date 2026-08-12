@@ -382,3 +382,89 @@ describe("inline rename focus (D4)", () => {
     expect(document.activeElement).toBe(itemFor("a2"));
   });
 });
+
+// Chunk 8: a checkbox per row for bulk selection, kept deliberately separate
+// from `selectedId`/aria-selected (which page is open in the editor) and
+// from the tree's own roving tabindex model (which row is the Tab stop).
+describe("bulk-selection checkboxes", () => {
+  const checkboxFor = (id) => itemFor(id).querySelector('input[type="checkbox"]');
+
+  it("gives every row's checkbox a distinct accessible name naming the page", async () => {
+    await render(baseProps({ selectedId: "a2" }));
+    const boxes = items().map((el) => el.querySelector('input[type="checkbox"]'));
+    expect(boxes.every(Boolean)).toBe(true);
+    const names = boxes.map((b) => b.getAttribute("aria-label"));
+    expect(names).toEqual(["Select Alpha", "Select A1", "Select A2", "Select Beta"]);
+    expect(new Set(names).size).toBe(names.length);
+  });
+
+  it("checks only the rows named in selectedPageIds, independently of aria-selected", async () => {
+    // a2 is the SELECTED (viewed) page; a1 is the CHECKED (bulk-selection)
+    // page. If either idea leaked into the other, one of these two
+    // assertions would flip.
+    await render(baseProps({ selectedId: "a2", selectedPageIds: new Set(["a1"]) }));
+    expect(checkboxFor("a1").checked).toBe(true);
+    expect(checkboxFor("a2").checked).toBe(false);
+    expect(itemFor("a1").getAttribute("aria-selected")).toBe("false");
+    expect(itemFor("a2").getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("does not implicitly check a parent's children", async () => {
+    // alpha has two children (a1, a2); checking alpha alone must not also
+    // show a1/a2 as checked - the parent component owns exactly what
+    // `selectedPageIds` contains, and this row must render precisely that.
+    await render(baseProps({ selectedId: "a2", selectedPageIds: new Set(["alpha"]) }));
+    expect(checkboxFor("alpha").checked).toBe(true);
+    expect(checkboxFor("a1").checked).toBe(false);
+    expect(checkboxFor("a2").checked).toBe(false);
+  });
+
+  it("reports which row was toggled without touching page selection", async () => {
+    const props = baseProps({ selectedId: "a2", onToggleSelect: vi.fn() });
+    await render(props);
+    await act(async () => {
+      checkboxFor("a1").click();
+    });
+    expect(props.onToggleSelect).toHaveBeenCalledWith("a1");
+    expect(props.onSelect).not.toHaveBeenCalled();
+  });
+
+  it("follows the roving tabindex, exactly like the four row action buttons", async () => {
+    const props = baseProps({ selectedId: "alpha" });
+    await render(props);
+    const alpha = itemFor("alpha");
+    alpha.focus();
+    await press(alpha, "ArrowDown");
+    expect(document.activeElement).toBe(itemFor("a1"));
+
+    expect(checkboxFor("a1").getAttribute("tabindex")).toBe("0");
+    for (const id of ["alpha", "a2", "beta"]) {
+      expect(checkboxFor(id).getAttribute("tabindex")).toBe("-1");
+    }
+  });
+
+  it("never makes every row's checkbox a tab stop at once", async () => {
+    await render(baseProps({ selectedId: "a2" }));
+    const zero = items()
+      .map((el) => el.querySelector('input[type="checkbox"]'))
+      .filter((b) => b.getAttribute("tabindex") === "0");
+    expect(zero).toHaveLength(1);
+  });
+
+  it("clears the whole selection on Escape from a focused row", async () => {
+    const props = baseProps({ selectedId: "a1", onClearSelection: vi.fn() });
+    await render(props);
+    const a1 = itemFor("a1");
+    a1.focus();
+    await press(a1, "Escape");
+    expect(props.onClearSelection).toHaveBeenCalledTimes(1);
+  });
+
+  it("also clears on Escape when focus is on a row's own checkbox", async () => {
+    const props = baseProps({ selectedId: "a1", onClearSelection: vi.fn() });
+    await render(props);
+    checkboxFor("a1").focus();
+    await press(checkboxFor("a1"), "Escape");
+    expect(props.onClearSelection).toHaveBeenCalledTimes(1);
+  });
+});

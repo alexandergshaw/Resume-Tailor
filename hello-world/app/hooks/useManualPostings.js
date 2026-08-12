@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { runWithConcurrency } from "../../lib/tailor/runWithConcurrency";
 import {
   createEntry,
   addEntry,
@@ -14,6 +13,14 @@ import {
   restorePostingTexts,
   serializeEntries,
 } from "../../lib/tailor/postingQueue";
+import {
+  enqueueTargets,
+  createQueueState,
+  enqueue,
+  startNext,
+  finish,
+  isIdle,
+} from "../../lib/tailor/rollingQueue";
 
 const CONCURRENCY_LIMIT = 3;
 const POSTINGS_KEY = "jobPostings";
@@ -22,9 +29,25 @@ const LEGACY_POSTING_KEY = "jobPosting"; // written by the old single-textarea t
 // The multi-posting Job Description tab's queue: several posting boxes, each
 // tracked + tailored independently through `tailorPosting` (the manual
 // pipeline, app/hooks/useManualTailor.js), capped at CONCURRENCY_LIMIT
-// simultaneous /api/tailor calls via runWithConcurrency. All the state-shape
-// rules (what's submittable, what a retry re-runs, what a reload restores)
-// live in lib/tailor/postingQueue.js; this hook is the wiring around them.
+// simultaneous /api/tailor calls -- but ROLLING, not batched: pressing
+// Tailor again while a run is already going ADDS to that run instead of
+// waiting for it to finish or starting a second pool. lib/tailor/postingQueue.js
+// still owns the entry state-shape rules (what a retry re-runs, what a
+// reload restores); lib/tailor/rollingQueue.js owns the pool's own
+// bookkeeping (what's eligible to enqueue, how many run at once across
+// submissions, when the pool has actually drained). This hook is the wiring
+// between the two, plus the async work itself.
+//
+// Why not runWithConcurrency (lib/tailor/runWithConcurrency.js) here
+// anymore: it is a BATCH primitive -- a fixed array in, resolved when that
+// array drains -- with no way to hand it more work mid-flight. Every guard
+// that used to live in this file (submitAll/retryFailed refusing to run at
+// all while busy, setPostingText/removePosting refusing EVERY entry mid-run)
+// existed only to protect a batch that could not grow. runWithConcurrency
+// itself is UNCHANGED -- app/page.js and other callers still use it
+// correctly for genuinely fixed batches, and rewriting a shared primitive to
+// serve this one caller would put every one of those callers in the blast
+// radius.
 export function useManualPostings({
   tailorPosting,
   resumeFile,
@@ -86,11 +109,42 @@ export function useManualPostings({
   // answer for once the run is over.
   const [lastRun, setLastRun] = useState(null);
 
-  // A ref twin of `running`, checked synchronously by the re-entrancy guard
-  // in submitAll/retryFailed -- state updates are batched/async, so a guard
-  // that read `running` state instead could still let a second submit
-  // through before the first render committed.
-  const runningRef = useRef(false);
+  // The rolling pool's own bookkeeping (lib/tailor/rollingQueue.js), kept in
+  // a ref rather than state: `startNext`/`finish` must be read and updated
+  // SYNCHRONOUSLY from within the pump below (React state is batched/async,
+  // and the pump starts several workers back-to-back in the same tick, the
+  // same reason `runWithConcurrency` used to start its runners
+  // synchronously). `total`/`completed`/`running` state below are mirrors of
+  // this ref, pushed out after every transition so the component re-renders.
+  const queueRef = useRef(createQueueState());
+
+  // This active period's own done/failed tally. Reset only when a period
+  // STARTS (the queue was idle right before this enqueue) -- not per
+  // submission, so a posting added mid-run is folded into the same tally
+  // rather than starting a second one. Read once, when the period drains.
+  const periodOutcomeRef = useRef({ done: 0, failed: 0 });
+
+  // AC-4/A5: which single entry (if any) should auto-open its preview when
+  // it finishes. Set only when the enqueue that STARTS a period contains
+  // exactly one submittable posting in the whole tab (mirroring the old
+  // single-run rule: based on every submittable posting, not just this
+  // run's targets, so a retry of one failure out of several still does not
+  // pop the preview open) -- and cleared by ANY later submission during the
+  // same period, since two results would otherwise fight over the preview.
+  const autoOpenEntryIdRef = useRef(null);
+
+  // Each pending/in-flight id's own resolver, created the moment it is
+  // enqueued (not when it actually starts) and resolved the moment its
+  // worker finishes -- so a submit() call can await ALL of its own targets,
+  // including ones that don't get a free concurrency slot until later,
+  // because the cap is on the whole period and a pump triggered by an
+  // earlier submission's completion may be what actually starts them.
+  const settleRef = useRef(new Map());
+
+  // The text a worker actually sends, captured at enqueue time. A target's
+  // entry is locked (no edits allowed) for as long as it is pending or
+  // processing, so this stays correct for the id's entire time in the pool.
+  const targetTextRef = useRef(new Map());
 
   // Restore any saved postings once on mount. Conditional on something
   // actually being saved: with nothing to restore, the initial single blank
@@ -105,7 +159,6 @@ export function useManualPostings({
       // A mount-time restore-from-storage is exactly what this effect is
       // for (same as app/hooks/useScreenshots.js's auto-run effect); it's
       // not a derived-state smell.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setEntries(texts.map((text) => createEntry(nextEntryId(), text)));
     } catch {
       // Keep the default single empty box.
@@ -152,136 +205,198 @@ export function useManualPostings({
     setEntries((prev) => addEntry(prev, nextEntryId()));
   }
 
+  function isLocked(id) {
+    const target = entries.find((e) => e.id === id);
+    return target ? target.status === "pending" || target.status === "processing" : false;
+  }
+
   function removePosting(id) {
-    // A no-op while a run is in flight, even if called anyway (AC-1) -- the
-    // UI disables the control, but this is the backstop that keeps the
-    // queue from desyncing from an in-progress run.
-    if (runningRef.current) return;
+    // A4: a no-op ONLY for the entry that is pending or processing (AC-1),
+    // even if called anyway -- the UI disables the control per-row, but
+    // this is the backstop that keeps the queue from desyncing from an
+    // in-progress worker for THAT entry. Every other row stays removable
+    // while the run continues.
+    if (isLocked(id)) return;
     setEntries((prev) => removeEntry(prev, id));
   }
 
   function setPostingText(id, text) {
-    // A2's hook-level backstop, same reasoning as removePosting's above: the
-    // UI disables the field mid-run, but without this a call that slips
-    // through anyway would reset the entry to idle while an in-flight
-    // worker for the OLD text is still running -- that worker's patchEntry
-    // then lands "done", a job id and a title on top of the NEW text, so
-    // Preview describes a document generated from text that's no longer on
-    // screen or in localStorage.
-    if (runningRef.current) return;
+    // A4's hook-level backstop, same reasoning as removePosting's above: the
+    // UI disables the field per-row, but without this a call that slips
+    // through anyway would reset a pending/processing entry to idle while
+    // its worker is still running for the OLD text -- that worker's
+    // patchEntry then lands "done", a job id and a title on top of the NEW
+    // text, so Preview describes a document generated from text that's no
+    // longer on screen or in localStorage. Every other row stays editable.
+    if (isLocked(id)) return;
     setEntries((prev) => setEntryText(prev, id, text));
   }
 
-  // Run `targets` (a subset of `entries`) through the tailoring pipeline,
-  // at most CONCURRENCY_LIMIT at once. Shared by submitAll and retryFailed
-  // so both honor the same cap, the same per-entry status transitions, and
-  // the same auto-open rule.
-  async function runQueue(targets) {
-    setError("");
-    runningRef.current = true;
-    setRunning(true);
-    setTotal(targets.length);
-    setCompleted(0);
-    // AC-4: the preview only auto-opens for a lone posting -- with several
-    // in flight it would fight the other results. Based on every submittable
-    // posting, not just this run's targets, so a retry of one failure (out
-    // of a queue of several) still does not pop the preview open.
-    const openPreview = submittableEntries(entries).length === 1;
-    setEntries((prev) => markQueued(prev, targets.map((e) => e.id)));
+  // Start as many pending ids as the shared cap allows, right now. Called
+  // once synchronously by every submit() (so newly enqueued work gets a
+  // chance to run immediately) and again from a worker's own completion (so
+  // the next pending id takes the slot that just freed up) -- this IS the
+  // "rolling" in rolling queue.
+  function pump() {
+    const { state, started } = startNext(queueRef.current, CONCURRENCY_LIMIT);
+    queueRef.current = state;
+    started.forEach((id) => {
+      // Not awaited: a worker runs to completion on its own and re-pumps
+      // when it finishes (see runWorker's `finally` below). Awaiting it here
+      // would serialize what is supposed to be a concurrent pool.
+      runWorker(id);
+    });
+  }
 
-    // A4: this run's own done/failed tally, kept as a plain local (not
-    // state) because it only needs to exist once, at the end -- reading it
-    // back out of `entries` afterwards would require filtering to just this
-    // run's target ids (entries also holds postings from earlier runs) and
-    // would race the same batched-setEntries timing that makes `completed`
-    // unsuitable for anything but live progress.
-    const outcome = { done: 0, failed: 0 };
-
+  // The unit of work for one queued id: call the pipeline, patch that one
+  // entry's status/result, then tell the pool this id is done -- which
+  // either ends the active period (nothing left pending or in flight) or
+  // pumps the next pending id into the slot this one just freed.
+  async function runWorker(id) {
+    const text = targetTextRef.current.get(id) ?? "";
+    // A5: fixed at the moment this id actually starts (this synchronous
+    // call), not re-checked later -- a later submission cancels the ref for
+    // anything not yet dispatched, but cannot retroactively change an
+    // openPreview that has already been sent to the pipeline.
+    const openPreview = autoOpenEntryIdRef.current === id;
+    const syntheticJobId = nextJobId();
+    setEntries((prev) => patchEntry(prev, id, { status: "processing" }));
     try {
-      await runWithConcurrency(
-        targets,
-        CONCURRENCY_LIMIT,
-        async (target) => {
-          const syntheticJobId = nextJobId();
-          setEntries((prev) => patchEntry(prev, target.id, { status: "processing" }));
-          try {
-            const result = await tailorPosting({
-              syntheticJobId,
-              overridePosting: target.text,
-              openPreview,
-              queued: true,
-            });
-            if (result?.ok) {
-              outcome.done += 1;
-              setEntries((prev) =>
-                patchEntry(prev, target.id, {
-                  status: "done",
-                  error: "",
-                  warning: result.warning || "",
-                  jobId: result.jobId || syntheticJobId,
-                  jobTitle: result.jobTitle || "",
-                  company: result.company || "",
-                }),
-              );
-            } else {
-              outcome.failed += 1;
-              setEntries((prev) =>
-                patchEntry(prev, target.id, {
-                  status: "error",
-                  error: result?.error || "Tailoring failed.",
-                }),
-              );
-            }
-          } catch (err) {
-            // One posting's pipeline rejecting outright must never take the
-            // others down with it.
-            outcome.failed += 1;
-            setEntries((prev) =>
-              patchEntry(prev, target.id, {
-                status: "error",
-                error: err?.message || "Tailoring failed.",
-              }),
-            );
-          }
-        },
-        () => setCompleted((c) => c + 1),
+      const result = await tailorPosting({
+        syntheticJobId,
+        overridePosting: text,
+        openPreview,
+        queued: true,
+      });
+      if (result?.ok) {
+        periodOutcomeRef.current.done += 1;
+        setEntries((prev) =>
+          patchEntry(prev, id, {
+            status: "done",
+            error: "",
+            warning: result.warning || "",
+            jobId: result.jobId || syntheticJobId,
+            jobTitle: result.jobTitle || "",
+            company: result.company || "",
+          }),
+        );
+      } else {
+        periodOutcomeRef.current.failed += 1;
+        setEntries((prev) =>
+          patchEntry(prev, id, {
+            status: "error",
+            error: result?.error || "Tailoring failed.",
+          }),
+        );
+      }
+    } catch (err) {
+      // One posting's pipeline rejecting outright must never take the
+      // others down with it.
+      periodOutcomeRef.current.failed += 1;
+      setEntries((prev) =>
+        patchEntry(prev, id, {
+          status: "error",
+          error: err?.message || "Tailoring failed.",
+        }),
       );
     } finally {
-      runningRef.current = false;
-      setRunning(false);
-      setLastRun({ done: outcome.done, failed: outcome.failed });
+      targetTextRef.current.delete(id);
+      queueRef.current = finish(queueRef.current, id);
+      setCompleted(queueRef.current.completed);
+      // A2: draining is a race -- the period is only actually over once
+      // NOTHING is pending AND nothing is in flight (isIdle checks both).
+      // Checking just one would end the period early, mid-flight.
+      if (isIdle(queueRef.current)) {
+        setRunning(false);
+        setLastRun({ done: periodOutcomeRef.current.done, failed: periodOutcomeRef.current.failed });
+        autoOpenEntryIdRef.current = null;
+      } else {
+        pump();
+      }
+      const settle = settleRef.current.get(id);
+      settleRef.current.delete(id);
+      settle?.();
     }
+  }
+
+  // Enqueue `targets` and let the pump take it from there. Shared by
+  // submitAll and retryFailed so both honor the same cap, the same
+  // per-entry status transitions, and the same auto-open rule -- whether
+  // this call STARTS a fresh period or ADDS to one already running.
+  async function submit(targets) {
+    const ids = targets.map((t) => t.id);
+    const wasIdle = isIdle(queueRef.current);
+
+    if (wasIdle) {
+      // A2/A4: a fresh period starts here -- this run's own tally begins at
+      // zero rather than carrying over whatever the previous, already-drained
+      // period left behind.
+      periodOutcomeRef.current = { done: 0, failed: 0 };
+    }
+    // A5: auto-open only when THIS enqueue starts the period AND it is the
+    // one and only submittable posting in the whole tab (matching the old
+    // single-run rule -- a retry of one failure out of several must still
+    // not pop the preview open). Any submission that does NOT start a fresh
+    // period is, by definition, later work arriving during an active one,
+    // and cancels whatever auto-open was armed.
+    autoOpenEntryIdRef.current = wasIdle && submittableEntries(entries).length === 1 ? ids[0] : null;
+
+    const waits = ids.map((id) => {
+      targetTextRef.current.set(id, targets.find((t) => t.id === id).text);
+      let resolve;
+      const promise = new Promise((res) => {
+        resolve = res;
+      });
+      settleRef.current.set(id, resolve);
+      return promise;
+    });
+
+    setEntries((prev) => markQueued(prev, ids));
+    queueRef.current = enqueue(queueRef.current, ids);
+    setTotal(queueRef.current.total);
+    setCompleted(queueRef.current.completed);
+    setRunning(true);
+
+    pump();
+
+    await Promise.all(waits);
   }
 
   async function submitAll(event) {
     if (event && typeof event.preventDefault === "function") event.preventDefault();
-    // Checked before anything else touches the queue: a second submit while
-    // one is already running must not reset any status or the progress
-    // counter (AC-6).
-    if (runningRef.current) return;
 
-    onRunRequested?.();
-
-    // Blank is checked before the missing-résumé guard, matching the
-    // single-textarea version's own guard order (app/page.js:2622).
-    const targets = submittableEntries(entries);
+    // A7: the re-entrancy guard moves from "is anything running" to "is
+    // THIS entry already pending or processing" -- enqueueTargets already
+    // encodes that, so a submission that adds nothing new is silently
+    // ignored EXACTLY when a period is already active (a double-click on a
+    // posting that is already going). When nothing is running at all, an
+    // empty target list is the genuine "nothing to submit" guardrail below,
+    // which does announce itself.
+    const targets = enqueueTargets(entries);
     if (targets.length === 0) {
-      setError("Please provide a job posting.");
+      if (isIdle(queueRef.current)) {
+        onRunRequested?.();
+        // Blank is checked before the missing-résumé guard, matching the
+        // single-textarea version's own guard order (app/page.js:2622).
+        setError("Please provide a job posting.");
+      }
       return;
     }
+
+    onRunRequested?.();
     if (!resumeFile) {
       setError("Please upload a resume file.");
       return;
     }
-
-    await runQueue(targets);
+    setError("");
+    await submit(targets);
   }
 
   async function retryFailed() {
-    if (runningRef.current) return;
-    onRunRequested?.();
-    const targets = failedEntries(entries);
+    const targets = enqueueTargets(failedEntries(entries));
     if (targets.length === 0) return;
+
+    onRunRequested?.();
     // A5: submitAll has always guarded a missing résumé; retryFailed didn't.
     // Reachable by re-picking the résumé file and cancelling the dialog
     // between runs -- unguarded, every retried posting would reach the
@@ -291,7 +406,8 @@ export function useManualPostings({
       setError("Please upload a resume file.");
       return;
     }
-    await runQueue(targets);
+    setError("");
+    await submit(targets);
   }
 
   // Open a finished posting's documents. Deliberately NOT memoized with a

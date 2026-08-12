@@ -559,3 +559,183 @@ describe("ExperienceTab -- a live region announces page create and rename (D5)",
     expect(withoutZwsp(liveRegion().textContent)).toContain('Renamed to "Renamed Root"');
   });
 });
+
+// Chunk 8: checkbox selection and the bulk actions bar. PageTree.test.js
+// already proves the checkbox wiring in isolation (accessible names,
+// roving tabindex, aria-selected independence) and BulkActionsBar.test.js
+// already proves the bar's own dialogs in isolation - what can only be
+// observed here, through the REAL tree and the REAL useExperiencePages
+// hook together, is the end-to-end path: checking boxes actually shows the
+// bar, and a bulk action actually reaches the network the right number of
+// times for an overlapping (parent + its own child) selection.
+describe("ExperienceTab -- bulk selection and the bulk actions bar (chunk 8)", () => {
+  function checkboxFor(id) {
+    return container.querySelector(`[role="treeitem"][data-page-id="${id}"] input[type="checkbox"]`);
+  }
+
+  it("shows the labelled bulk actions bar and announces the count once a row is checked", async () => {
+    global.fetch = vi.fn().mockResolvedValue(jsonResponse(200, { pages: [PAGE_ROOT, PAGE_SIBLING] }));
+    await render();
+    await flush();
+
+    expect(container.querySelector('[role="region"][aria-label="Bulk actions"]')).toBeNull();
+
+    await act(async () => {
+      checkboxFor("p1").click();
+    });
+
+    const region = container.querySelector('[role="region"][aria-label="Bulk actions"]');
+    expect(region).not.toBeNull();
+    expect(region.textContent).toContain("1 selected");
+    expect(withoutZwsp(liveRegion().textContent)).toContain("1 page selected");
+  });
+
+  it("re-announces the count even when it repeats non-consecutively (3 -> 2 -> 3)", async () => {
+    const PAGE_THIRD = {
+      ...PAGE_SIBLING,
+      id: "p4",
+      title: "Third Page",
+      position: 2,
+      created_at: "2026-01-04T00:00:00.000Z",
+    };
+    global.fetch = vi.fn().mockResolvedValue(jsonResponse(200, { pages: [PAGE_ROOT, PAGE_SIBLING, PAGE_THIRD] }));
+    await render();
+    await flush();
+
+    // 1 selected -> 2 -> 3 -> 2 -> 3 again. Every step in this sequence is a
+    // SEPARATE, genuinely observable commit - the defect this guards
+    // against (React bailing out of a setState whose value is
+    // Object.is-unchanged) would show up as some CONSECUTIVE pair in this
+    // sequence rendering identical raw text, most plausibly right at the
+    // "-> 3 again" step this test is named for.
+    const snapshots = [];
+    for (const id of ["p1", "p3", "p4", "p4", "p4"]) {
+      await act(async () => {
+        checkboxFor(id).click();
+      });
+      snapshots.push(liveRegion().textContent);
+    }
+    const [afterOne, afterTwo, afterThreeFirst, afterTwoAgain, afterThreeSecond] = snapshots;
+
+    expect(withoutZwsp(afterOne)).toContain("1 page selected");
+    expect(withoutZwsp(afterTwo)).toContain("2 pages selected");
+    expect(withoutZwsp(afterThreeFirst)).toContain("3 pages selected");
+    expect(withoutZwsp(afterTwoAgain)).toContain("2 pages selected");
+    expect(withoutZwsp(afterThreeSecond)).toContain("3 pages selected");
+
+    // No two CONSECUTIVE snapshots are byte-for-byte identical - proof that
+    // every single toggle produced its own distinguishable DOM commit,
+    // including the final "-> 3 again" transition immediately off the back
+    // of "2 selected".
+    for (let i = 1; i < snapshots.length; i += 1) {
+      expect(snapshots[i]).not.toBe(snapshots[i - 1]);
+    }
+  });
+
+  it("Escape clears the whole selection and hides the bar", async () => {
+    global.fetch = vi.fn().mockResolvedValue(jsonResponse(200, { pages: [PAGE_ROOT, PAGE_SIBLING] }));
+    await render();
+    await flush();
+
+    const rootItem = container.querySelector('[role="treeitem"][data-page-id="p1"]');
+    await act(async () => {
+      checkboxFor("p1").click();
+    });
+    expect(container.querySelector('[role="region"][aria-label="Bulk actions"]')).not.toBeNull();
+
+    await act(async () => {
+      rootItem.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+
+    expect(container.querySelector('[role="region"][aria-label="Bulk actions"]')).toBeNull();
+  });
+
+  it("bulk delete issues one DELETE per selection ROOT, not per selected descendant, and announces the root count", async () => {
+    // p1 and its own child p2 are BOTH checked - deleting p1 already
+    // cascades p2 away server-side, so a second DELETE for p2 must never be
+    // sent (it would 404 against a row that is already gone).
+    global.fetch = vi.fn((url, options) => {
+      if (!options) {
+        return Promise.resolve(jsonResponse(200, { pages: [PAGE_ROOT, PAGE_CHILD, PAGE_SIBLING] }));
+      }
+      if (options.method === "DELETE") {
+        return Promise.resolve(jsonResponse(200, {}));
+      }
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+    await render();
+    await flush();
+
+    const rootItem = container.querySelector('[role="treeitem"][data-page-id="p1"]');
+    const chevron = rootItem.firstElementChild.firstElementChild;
+    await click(chevron);
+    expect(container.querySelector('[role="treeitem"][data-page-id="p2"]')).not.toBeNull();
+
+    await act(async () => {
+      checkboxFor("p1").click();
+    });
+    await act(async () => {
+      checkboxFor("p2").click();
+    });
+
+    const deleteSelectedBtn = buttons().find((b) => b.textContent.trim() === "Delete selected");
+    expect(deleteSelectedBtn).toBeDefined();
+    await click(deleteSelectedBtn);
+    await flush();
+
+    const confirmBtn = documentButtons().find((b) => b.textContent.trim() === "Delete");
+    expect(confirmBtn).toBeDefined();
+    await click(confirmBtn);
+    await flush();
+
+    const deleteCalls = global.fetch.mock.calls.filter(([, o]) => o && o.method === "DELETE");
+    expect(deleteCalls).toHaveLength(1);
+    expect(deleteCalls[0][0]).toBe("/api/experience/pages/p1");
+
+    expect(container.querySelector('[role="treeitem"][data-page-id="p1"]')).toBeNull();
+    expect(container.querySelector('[role="treeitem"][data-page-id="p3"]')).not.toBeNull();
+    expect(withoutZwsp(liveRegion().textContent)).toContain("Deleted 1 page");
+  });
+
+  it("bulk move issues one move per selection ROOT, moving it (and its still-checked child along with it) to the chosen destination", async () => {
+    global.fetch = vi.fn((url, options) => {
+      if (!options) {
+        return Promise.resolve(jsonResponse(200, { pages: [PAGE_ROOT, PAGE_CHILD, PAGE_SIBLING] }));
+      }
+      if (url === "/api/experience/move") {
+        return Promise.resolve(jsonResponse(200, { pages: [PAGE_ROOT, PAGE_CHILD, PAGE_SIBLING] }));
+      }
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+    await render();
+    await flush();
+
+    const rootItem = container.querySelector('[role="treeitem"][data-page-id="p1"]');
+    const chevron = rootItem.firstElementChild.firstElementChild;
+    await click(chevron);
+
+    await act(async () => {
+      checkboxFor("p1").click();
+    });
+    await act(async () => {
+      checkboxFor("p2").click();
+    });
+
+    const moveSelectedBtn = buttons().find((b) => b.textContent.trim() === "Move selected");
+    expect(moveSelectedBtn).toBeDefined();
+    expect(moveSelectedBtn.getAttribute("aria-disabled")).toBeNull();
+    await click(moveSelectedBtn);
+    await flush();
+
+    const dialogTarget = [...document.querySelectorAll('[aria-label="Move to"] [role="button"]')].find(
+      (b) => b.textContent.trim() === "Sibling Page",
+    );
+    expect(dialogTarget).toBeDefined();
+    await click(dialogTarget);
+    await flush();
+
+    const moveCalls = global.fetch.mock.calls.filter(([u]) => u === "/api/experience/move");
+    expect(moveCalls).toHaveLength(1);
+    expect(JSON.parse(moveCalls[0][1].body)).toMatchObject({ id: "p1", newParentId: "p3" });
+  });
+});

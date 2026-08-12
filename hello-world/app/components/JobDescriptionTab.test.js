@@ -167,7 +167,23 @@ describe("JobDescriptionTab -- the boxes (AC-1, AC-10)", () => {
     expect(props.onRemovePosting).toHaveBeenCalledWith("p2");
   });
 
-  it("disables adding and removing while a run is in flight", async () => {
+  // Chunk 11 corrects what used to be ONE test ("disables adding and
+  // removing while a run is in flight"). That combined assertion pinned in
+  // place the OLD single-run invariant -- nothing about the tab could change
+  // while it ran -- which this chunk exists specifically to remove. The two
+  // controls turn out to need OPPOSITE treatment under a rolling queue, so
+  // they are now two tests:
+  //   - Adding a posting must stay possible during a run: a brand new box is
+  //     EMPTY (no text, no status), so it cannot conflict with any in-flight
+  //     worker. Without this, "submit one, press Tailor, then submit another
+  //     while the first is being tailored" is impossible whenever the tab
+  //     only has one box to begin with -- there would be nowhere left to
+  //     paste the second posting into.
+  //   - Removing stays blocked, but only for the ROW a worker actually owns
+  //     (pending/processing) -- the original reason (a worker's result
+  //     landing on a row the user has since removed) is still real for that
+  //     one row, it just no longer justifies locking every row.
+  it("keeps 'Add another posting' enabled during a run -- a brand new box has no text or status to conflict with", async () => {
     await render(
       baseProps({
         entries: [entry("p1", "A", { status: "processing" }), entry("p2", "B", { status: "pending" })],
@@ -177,8 +193,21 @@ describe("JobDescriptionTab -- the boxes (AC-1, AC-10)", () => {
         completed: 0,
       }),
     );
-    expect(buttonNamed(/add another posting/i).disabled).toBe(true);
+    expect(buttonNamed(/add another posting/i).disabled).toBe(false);
+  });
+
+  it("still blocks removing a row a worker owns, for every status that counts as owned", async () => {
+    await render(
+      baseProps({
+        entries: [entry("p1", "A", { status: "processing" }), entry("p2", "B", { status: "pending" })],
+        running: true,
+        busy: true,
+        total: 2,
+        completed: 0,
+      }),
+    );
     expect(buttonNamed(/^remove job posting 1$/i).disabled).toBe(true);
+    expect(buttonNamed(/^remove job posting 2$/i).disabled).toBe(true);
   });
 
   it("stops the user typing into a posting that is already being tailored", async () => {
@@ -571,5 +600,117 @@ describe("JobDescriptionTab -- tab-wide error (AC-6)", () => {
   it("shows nothing when there is no error", async () => {
     await render(baseProps());
     expect(container.querySelector(".MuiAlert-root")).toBeNull();
+  });
+});
+
+// Chunk 11: keep pasting while the manual tab tailors. The Tailor button and
+// each row's own controls must react to what THAT row (or `enqueueTargets`)
+// actually says, not to the blanket `busy` flag that used to lock everything
+// uniformly the instant any run started.
+describe("JobDescriptionTab -- the rolling queue (chunk 11)", () => {
+  it("keeps the submit button enabled mid-run when a posting is new", async () => {
+    await render(
+      baseProps({
+        entries: [
+          entry("p1", "A", { status: "done", jobId: "manual-1" }),
+          entry("p2", "B", { status: "processing" }),
+          entry("p3", "New one"), // idle, non-blank -- enqueueTargets includes it
+        ],
+        running: true,
+        busy: true,
+        completed: 1,
+        total: 2,
+      }),
+    );
+    const submit = buttons().find((b) => b.type === "submit");
+    expect(submit.disabled).toBe(false);
+  });
+
+  it("disables the submit button, with a stated reason, once nothing is left to submit", async () => {
+    await render(
+      baseProps({
+        entries: [
+          entry("p1", "A", { status: "done", jobId: "manual-1" }),
+          entry("p2", "B", { status: "done", jobId: "manual-2" }),
+        ],
+        running: false,
+        busy: false,
+      }),
+    );
+    const submit = buttons().find((b) => b.type === "submit");
+    expect(submit.disabled).toBe(true);
+    const describedBy = submit.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    const reason = container.querySelector(`#${CSS.escape(describedBy)}`);
+    expect(reason).not.toBeNull();
+    expect(reason.textContent).toMatch(/nothing new/i);
+  });
+
+  it("still disables the submit button while busy elsewhere, even with a fresh posting typed", async () => {
+    // busy from a StatusBar chip regenerate (running:false) must still block
+    // a brand new manual submission -- unrelated to this tab's own queue.
+    await render(
+      baseProps({
+        entries: [entry("p1", "Fresh text")],
+        running: false,
+        busy: true,
+      }),
+    );
+    const submit = buttons().find((b) => b.type === "submit");
+    expect(submit.disabled).toBe(true);
+  });
+
+  it("leaves an idle, done, or failed row's box editable while a different row is being tailored", async () => {
+    await render(
+      baseProps({
+        entries: [
+          entry("p1", "A", { status: "processing" }),
+          entry("p2", "B", { status: "idle" }),
+          entry("p3", "C", { status: "done", jobId: "manual-3" }),
+          entry("p4", "D", { status: "error", error: "nope" }),
+        ],
+        running: true,
+        busy: true,
+        completed: 0,
+        total: 1,
+      }),
+    );
+    const boxes = postingBoxes();
+    expect(boxes[0].disabled).toBe(true); // the one actually in flight
+    expect(boxes[1].disabled).toBe(false);
+    expect(boxes[2].disabled).toBe(false);
+    expect(boxes[3].disabled).toBe(false);
+  });
+
+  it("leaves an idle, done, or failed row's remove control enabled while a different row is being tailored", async () => {
+    await render(
+      baseProps({
+        entries: [
+          entry("p1", "A", { status: "processing" }),
+          entry("p2", "B", { status: "idle" }),
+          entry("p3", "C", { status: "done", jobId: "manual-3" }),
+        ],
+        running: true,
+        busy: true,
+        completed: 0,
+        total: 1,
+      }),
+    );
+    expect(buttonNamed(/^remove job posting 1$/i).disabled).toBe(true);
+    expect(buttonNamed(/^remove job posting 2$/i).disabled).toBe(false);
+    expect(buttonNamed(/^remove job posting 3$/i).disabled).toBe(false);
+  });
+
+  it("locks a QUEUED (pending) row's box too, not only the one actively processing", async () => {
+    await render(
+      baseProps({
+        entries: [entry("p1", "A", { status: "processing" }), entry("p2", "B", { status: "pending" })],
+        running: true,
+        busy: true,
+        completed: 0,
+        total: 2,
+      }),
+    );
+    postingBoxes().forEach((box) => expect(box.disabled).toBe(true));
   });
 });

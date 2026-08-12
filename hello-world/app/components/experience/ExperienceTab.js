@@ -15,7 +15,9 @@ import DeletePageDialog from "./DeletePageDialog";
 import MovePageDialog from "./MovePageDialog";
 import PageEditor from "./PageEditor";
 import AttachmentPanel from "./AttachmentPanel";
+import BulkActionsBar from "./BulkActionsBar";
 import { useExperiencePages } from "../../hooks/useExperiencePages";
+import { toggleSelected, selectionSummary } from "../../../lib/experience/bulkSelection";
 
 // Mirrors PageEditor.js's ANNOUNCE_TOGGLE exactly, and for the same reason:
 // built explicitly rather than typed as a literal character in source, so
@@ -120,10 +122,17 @@ export default function ExperienceTab() {
   const [deleteTargetId, setDeleteTargetId] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [moveTargetId, setMoveTargetId] = useState(null);
+  // The bulk-selection checkbox set (chunk 8) - deliberately separate state
+  // from `selectedId` above, which is "the page open in the editor". A page
+  // can be open AND unchecked, or checked AND not open; the tree only ever
+  // reads this to decide which checkboxes render checked, never to decide
+  // aria-selected.
+  const [selectedPageIds, setSelectedPageIds] = useState(() => new Set());
   // { text, seq } - same pattern as PageEditor.js's own status region.
-  // Covers the four PAGE-level operations this file owns: created, renamed,
-  // deleted, moved. Attachment upload/delete belong to AttachmentPanel.js,
-  // a different agent's file, and are NOT covered by this region.
+  // Covers the PAGE-level operations this file owns: created, renamed,
+  // deleted, moved, and (chunk 8) the bulk-selection count and bulk
+  // delete/move. Attachment upload/delete belong to AttachmentPanel.js, a
+  // different agent's file, and are NOT covered by this region.
   const [announcement, setAnnouncement] = useState({ text: "", seq: 0 });
   // { type: "page", pageId } | { type: "emptyState" } | null - a focus
   // target requested by a delete or a move, carried out by the effect
@@ -141,6 +150,100 @@ export default function ExperienceTab() {
 
   function announce(text) {
     setAnnouncement((prev) => ({ text, seq: prev.seq + 1 }));
+  }
+
+  // Toggles one page's bulk-selection checkbox. `announce` is called
+  // unconditionally on every toggle, never skipped because the resulting
+  // count happens to repeat a PREVIOUS count - `announce` always bumps
+  // `seq`, so React never bails out on an unchanged setState the way it
+  // would for a bare repeated string, which is what makes going
+  // 3 selected -> 2 -> 3 announce the second 3. The count itself comes from
+  // `selectionSummary`'s own ghost-id filtering, so a page deleted
+  // elsewhere while still checked here can never inflate what gets spoken.
+  function toggleSelect(id) {
+    const next = toggleSelected(selectedPageIds, id);
+    setSelectedPageIds(next);
+    const count = selectionSummary(pages, next).selected;
+    announce(count > 0 ? `${count} page${count === 1 ? "" : "s"} selected` : "Selection cleared");
+  }
+
+  function clearSelection() {
+    if (selectedPageIds.size === 0) return;
+    setSelectedPageIds(new Set());
+    announce("Selection cleared");
+  }
+
+  // The ids a bulk action should actually act on: every selected id that is
+  // NOT itself a descendant of some OTHER selected id. Deleting (or moving)
+  // a selected parent already cascades to a selected child by construction
+  // - acting on the child too would either error (delete: the row is
+  // already gone server-side by the time its own request lands) or, worse
+  // for a move, silently flatten it out from under its still-selected
+  // parent into a direct child of the destination instead of moving WITH
+  // its parent, which is what the user's two checkmarks actually implied.
+  function selectionRoots(ids) {
+    const idSet = new Set(ids);
+    return ids.filter((id) => !breadcrumbFor(id).slice(0, -1).some((ancestor) => idSet.has(ancestor.id)));
+  }
+
+  // Awaited by BulkActionsBar's own confirm dialog, mirroring
+  // handleDeleteConfirm below: stays open with an error on partial or total
+  // failure, closes (by the selection emptying, which is what the bar's own
+  // visibility is keyed on) only once every root page is actually gone.
+  async function handleBulkDelete(ids) {
+    const roots = selectionRoots(ids);
+    const removedIds = new Set(roots.flatMap((id) => [id, ...descendantsOf(id)]));
+    const anchorId = roots[0] ?? null;
+    const nextFocusId = anchorId ? pickNextFocusId(tree, anchorId, removedIds) : null;
+    const remainingCount = pages.length - removedIds.size;
+
+    const results = [];
+    for (const id of roots) {
+      // Sequential, not Promise.all: each DELETE is itself a full-subtree
+      // server-side cascade, and there is no correctness reason to race N
+      // of them at once for what is already a fire-once confirmed action.
+      results.push(await deletePage(id));
+    }
+
+    const failed = results.filter((r) => !r.ok).length;
+    if (failed > 0) {
+      return {
+        ok: false,
+        error: `${failed} of ${roots.length} page${roots.length === 1 ? "" : "s"} could not be deleted.`,
+      };
+    }
+
+    if (selectedId && removedIds.has(selectedId)) setSelectedId(null);
+    setSelectedPageIds(new Set());
+    announce(`Deleted ${roots.length} page${roots.length === 1 ? "" : "s"}`);
+    if (remainingCount <= 0) {
+      setFocusRequest({ type: "emptyState" });
+    } else if (nextFocusId) {
+      setFocusRequest({ type: "page", pageId: nextFocusId });
+    }
+    return { ok: true };
+  }
+
+  // Mirrors MovePageDialog's own choose(): fires the move(s) and lets the
+  // dialog close immediately rather than making the user wait on a
+  // spinner - a failure surfaces through the SAME shared error Alert a
+  // single move already uses (movePage's own setError calls below), not a
+  // bespoke one here.
+  function handleBulkMove(ids, destinationId) {
+    const roots = selectionRoots(ids);
+    if (destinationId) setExpandedIds((prev) => new Set(prev).add(destinationId));
+    setSelectedPageIds(new Set());
+    (async () => {
+      let succeeded = 0;
+      for (const id of roots) {
+        // Sequential on purpose - see handleBulkDelete above.
+        const result = await movePage(id, destinationId);
+        if (result.ok) succeeded += 1;
+      }
+      if (succeeded > 0) {
+        announce(`Moved ${succeeded} page${succeeded === 1 ? "" : "s"}`);
+      }
+    })();
   }
 
   // Carries out a pending focus request once its target actually exists in
@@ -299,8 +402,9 @@ export default function ExperienceTab() {
         sx={{ mb: 2.5 }}
       />
 
-      {/* Announces the four page-level operations this file owns - create,
-          rename, delete, move - to assistive tech. Attachment upload/delete
+      {/* Announces the page-level operations this file owns - create,
+          rename, delete, move, and (chunk 8) the bulk-selection count and
+          bulk delete/move - to assistive tech. Attachment upload/delete
           announcements belong to AttachmentPanel.js, a different agent's
           file, and are intentionally NOT covered here. Visually hidden:
           these are one-shot confirmations with no sighted-user surface of
@@ -317,6 +421,17 @@ export default function ExperienceTab() {
           {error}
         </Alert>
       ) : null}
+
+      {/* Rendered ahead of the sidebar tree entirely (not nested inside its
+          box) so it sits early in DOM/tab order - reachable without tabbing
+          through any tree row - and vanishes on its own once nothing is
+          checked (BulkActionsBar returns null for an empty selection). */}
+      <BulkActionsBar
+        pages={pages}
+        selectedIds={selectedPageIds}
+        onDeleteSelected={handleBulkDelete}
+        onMoveSelected={handleBulkMove}
+      />
 
       {pages.length === 0 ? (
         <Box sx={{ border: "1px dashed var(--border)", borderRadius: 1.5, py: 6, textAlign: "center" }}>
@@ -359,6 +474,9 @@ export default function ExperienceTab() {
               onDeleteRequest={setDeleteTargetId}
               onMoveRequest={setMoveTargetId}
               onMove={handleMove}
+              selectedPageIds={selectedPageIds}
+              onToggleSelect={toggleSelect}
+              onClearSelection={clearSelection}
             />
           </Box>
 

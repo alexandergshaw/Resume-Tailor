@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import Box from "@mui/material/Box";
+import Checkbox from "@mui/material/Checkbox";
 import IconButton from "@mui/material/IconButton";
 import InputBase from "@mui/material/InputBase";
 import Tooltip from "@mui/material/Tooltip";
@@ -12,6 +13,13 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import DriveFileMoveOutlinedIcon from "@mui/icons-material/DriveFileMoveOutlined";
 import EditIcon from "@mui/icons-material/Edit";
 
+// A stable empty-Set default for `selectedPageIds` - a literal `new Set()`
+// as a default parameter value would still be a NEW object every render,
+// which is harmless here (this component doesn't memoize on it) but there
+// is no reason to allocate one per row per render when a single shared
+// instance reads identically.
+const EMPTY_SELECTION = new Set();
+
 // One row of the sidebar page tree, and (recursively) its expanded children.
 // This is where the APG roles/attributes actually land on DOM nodes -
 // role="treeitem"/"group", aria-expanded only on parents, aria-selected on
@@ -19,6 +27,13 @@ import EditIcon from "@mui/icons-material/Edit";
 // computed once by PageTree.js). Which key does what is decided in
 // lib/experience/treeNav.js and dispatched by PageTree.js's onKeyDown; this
 // file never calls nextFocus itself.
+//
+// `selectedPageIds` is the BULK-SELECTION checkbox set - deliberately named
+// apart from `selectedId`/`isSelected` below, which is aria-selected: "this
+// is the page currently being viewed" (one row at most, and mouse/keyboard
+// driven). The two are unrelated ideas that happen to both live on a
+// treeitem: a page can be the one open in the editor AND unchecked, or
+// checked AND not the one open in the editor.
 export default function PageTreeItem({
   node,
   depth,
@@ -35,6 +50,8 @@ export default function PageTreeItem({
   onDeleteRequest,
   onMoveRequest,
   onMove,
+  selectedPageIds = EMPTY_SELECTION,
+  onToggleSelect = () => {},
 }) {
   const hasChildren = Array.isArray(node.children) && node.children.length > 0;
   const isExpanded = hasChildren && expandedIds.has(node.id);
@@ -138,6 +155,29 @@ export default function PageTreeItem({
               transform: isExpanded ? "rotate(90deg)" : "none",
               transition: "transform 120ms",
             }}
+          />
+        </Box>
+
+        {/* Bulk-selection checkbox. Wrapped in its own Box so a click (or
+            the synthetic click a Space keypress fires on a native checkbox)
+            never bubbles up to the row's own onClick, which would also
+            select this page as the one being VIEWED - the exact conflation
+            the "selection is independent of aria-selected" rule forbids.
+            tabIndex mirrors the four action buttons below (and nothing
+            else): 0 only for the row currently holding the tree's roving
+            tabindex, -1 for every other row. A hardcoded 0 here would add a
+            tab stop per row - a 40-page tree becoming 40 extra stops is
+            exactly what that rule exists to prevent; a hardcoded -1 would
+            make the checkbox mouse-only, the same class of bug the four
+            action buttons' own comment documents. */}
+        <Box onClick={(event) => event.stopPropagation()} sx={{ display: "flex", flexShrink: 0 }}>
+          <Checkbox
+            size="small"
+            checked={selectedPageIds.has(node.id)}
+            tabIndex={node.id === activeId ? 0 : -1}
+            onChange={() => onToggleSelect(node.id)}
+            slotProps={{ input: { "aria-label": `Select ${node.title}` } }}
+            sx={{ p: 0.5 }}
           />
         </Box>
 
@@ -304,6 +344,8 @@ export default function PageTreeItem({
               onDeleteRequest={onDeleteRequest}
               onMoveRequest={onMoveRequest}
               onMove={onMove}
+              selectedPageIds={selectedPageIds}
+              onToggleSelect={onToggleSelect}
             />
           ))}
         </Box>
