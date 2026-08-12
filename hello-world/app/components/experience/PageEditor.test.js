@@ -589,6 +589,31 @@ describe("PageEditor -- keyboard behaviour in the body field", () => {
   });
 });
 
+describe("PageEditor -- Ask AI", () => {
+  // The whole point of pinning "the CURRENT title/body, not the last-saved
+  // page prop": a user who typed a fresh sentence and pressed Ask AI before
+  // the 800ms autosave debounce fired must not have that sentence silently
+  // missing from what gets pinned. Asserting the exact object onAskAi was
+  // called with (not merely "was called") is what catches an implementation
+  // that pins the stale `page` prop instead of local state.
+  it("hands the LIVE (possibly still-debouncing) title and body to onAskAi when pressed", async () => {
+    const onAskAi = vi.fn();
+    await render(baseProps({ onAskAi, page: page({ title: "Original title", body: "Original body" }) }));
+
+    await type(bodyField(), "Original body, plus a fresh unsaved edit");
+
+    const askAiBtn = buttonNamed(/^ask ai$/i);
+    expect(askAiBtn).toBeDefined();
+    await click(askAiBtn);
+
+    expect(onAskAi).toHaveBeenCalledTimes(1);
+    expect(onAskAi).toHaveBeenCalledWith({
+      title: "Original title",
+      body: "Original body, plus a fresh unsaved edit",
+    });
+  });
+});
+
 describe("PageEditor -- the preview pane is a named region (D7)", () => {
   // Switching to Preview mode used to swap the entire content area for a
   // plain, unnamed Box - focus stays on the Preview button (aria-pressed

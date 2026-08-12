@@ -43,11 +43,21 @@ function flushPendingSave(pendingFlushRef, timerRef, latestRef) {
   if (result && typeof result.catch === "function") result.catch(() => {});
 }
 
-// <PageEditor page={row} onChange={fn} /> - the fixed contract from chunk 1.
+// <PageEditor page={row} onChange={fn} onAskAi={fn} /> - the fixed contract
+// from chunk 1, extended (see this feature's own header) with `onAskAi`:
+// called with the CURRENT on-screen { title, body } - not the possibly-stale
+// `page` prop - so a press of Ask AI always pins exactly what the user sees,
+// including an edit still sitting in the 800ms autosave debounce window.
 // `row` is an experience_pages row ({ id, title, body, ... }); `onChange`
-// takes a partial { title?, body? } and may return a promise. Chunk 2 imports
-// and renders this component and never edits its contents.
-export default function PageEditor({ page, onChange }) {
+// takes a partial { title?, body? } and may return a promise.
+//
+// `onAskAi` is called directly, never `onAskAi?.(...)`: this app has shipped
+// a callback prop that was never threaded from its owner before, twice, and
+// both times an optional-chained call was what let it stay silently inert.
+// A caller that renders this component without wiring `onAskAi` gets a loud
+// failure the moment Ask AI is pressed, not a button that quietly does
+// nothing.
+export default function PageEditor({ page, onChange, onAskAi }) {
   const pageId = page?.id ?? null;
 
   const [mode, setMode] = useState("edit");
@@ -174,6 +184,16 @@ export default function PageEditor({ page, onChange }) {
     if (pendingRef.current) performSave(pendingRef.current);
   }
 
+  // The whole point of "Ask AI": one press, no dialog, no confirmation -
+  // pins the CURRENT title/body (local state, which may be ahead of the
+  // last-saved `page` prop by up to the debounce window) and lets the
+  // caller do the rest (breadcrumb, child pages, attachments - none of
+  // which this component owns). See this file's own header for why this is
+  // a hard call rather than `onAskAi?.(...)`.
+  function handleAskAi() {
+    onAskAi({ title, body });
+  }
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", height: 1 }}>
       <Stack direction="row" spacing={1} sx={{ mb: 1.5, alignItems: "center" }}>
@@ -198,6 +218,15 @@ export default function PageEditor({ page, onChange }) {
           Preview
         </Button>
         <Box sx={{ flexGrow: 1 }} />
+        <Button
+          variant="outlined"
+          size="small"
+          disableElevation
+          onClick={handleAskAi}
+          sx={{ textTransform: "none", borderRadius: 1.5 }}
+        >
+          Ask AI
+        </Button>
         <Box
           component="span"
           role="status"

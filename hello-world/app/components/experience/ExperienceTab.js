@@ -18,6 +18,19 @@ import AttachmentPanel from "./AttachmentPanel";
 import BulkActionsBar from "./BulkActionsBar";
 import { useExperiencePages } from "../../hooks/useExperiencePages";
 import { toggleSelected, selectionSummary } from "../../../lib/experience/bulkSelection";
+import { buildPageContext } from "../../../lib/experience/pageContext";
+import { createClient } from "../../../lib/supabase/client";
+
+// Attachment kinds whose bytes are actually downloaded and handed to the
+// chat as a real file. Mirrors app/api/chat/route.js exactly: text/.docx get
+// extracted, image/pdf get sent as inline data - video is never forwarded
+// (its base64 would also blow the request size), so it is deliberately
+// absent from this set. lib/experience/pageContext.js still describes a
+// video in the pinned TEXT (name, notes, transcript) - this set is only
+// about which kinds get their BYTES downloaded.
+const DOWNLOADABLE_ATTACHMENT_KINDS = new Set(["text", "image", "pdf"]);
+
+const ATTACHMENTS_BUCKET = "resumes";
 
 // Mirrors PageEditor.js's ANNOUNCE_TOGGLE exactly, and for the same reason:
 // built explicitly rather than typed as a literal character in source, so
@@ -94,12 +107,23 @@ function queryTreeItem(root, id) {
 // The tab shell for the "Professional Experience" knowledge base: a sidebar
 // page tree (PageTree.js, wired through lib/experience/treeNav.js) next to
 // the markdown editor and attachments panel for whichever page is selected.
-// PageEditor and AttachmentPanel are contract stubs owned by chunks 3 and 4 -
-// this file imports them by their fixed prop signature and never edits them.
+// AttachmentPanel is a contract stub owned by chunk 4 - this file imports it
+// by its fixed prop signature and never edits it. PageEditor is now also
+// wired for "Ask AI" (see handleAskAi below).
 //
 // Loading/signed-out states follow app/components/LibraryEditor.js's shape:
 // a spinner, then an Alert severity="info" for a 401.
-export default function ExperienceTab() {
+//
+// `askAiAbout` / `addChatAttachments`: the same two chat-hook functions
+// every other "Ask AI" button in this app is wired through (see e.g.
+// app/page.js's own askAiAboutMaterial) - pin context and open the chat
+// panel, and text-extract-or-inline a File onto that same conversation.
+// This component only ever calls them through handleAskAi below, and it
+// calls them DIRECTLY (never `askAiAbout?.(...)`): app/page.js is the only
+// place that can actually pass the real chat instance down, and if some
+// future change to that call site drops these props, Ask AI must fail
+// loudly the moment it's pressed, not silently do nothing.
+export default function ExperienceTab({ askAiAbout, addChatAttachments }) {
   const {
     pages,
     tree,
@@ -107,6 +131,7 @@ export default function ExperienceTab() {
     signedOut,
     error,
     setError,
+    reload,
     createPage,
     renamePage,
     savePage,
@@ -356,6 +381,74 @@ export default function ExperienceTab() {
     }
   }
 
+  // PageEditor's own onAskAi callback: `{ title, body }` as currently shown
+  // on screen (see PageEditor.js's own comment - it may be ahead of the
+  // last-saved row by up to its 800ms autosave debounce). This is the ONE
+  // place breadcrumb, child pages and attachments all come together with
+  // that live text into a single pinned context - none of the three pieces
+  // live in PageEditor, and AttachmentPanel keeps its own attachment list
+  // private (a different agent's file), so this fetches its own copy from
+  // the same GET route AttachmentPanel itself calls rather than reaching
+  // into that component's state.
+  async function handleAskAi({ title, body }) {
+    if (!selectedPage) return;
+    const pageId = selectedPage.id;
+    const childPages = pages.filter((p) => (p.parent_id ?? null) === pageId);
+
+    let attachments = [];
+    try {
+      const res = await fetch(`/api/experience/attachments?pageId=${encodeURIComponent(pageId)}`);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) attachments = Array.isArray(data.attachments) ? data.attachments : [];
+    } catch {
+      // Best-effort: a page's title/body/breadcrumb/child-pages are still
+      // worth pinning even when the attachment inventory could not be
+      // fetched - see lib/experience/pageContext.js, which treats a missing
+      // `attachments` array as simply empty rather than throwing.
+      attachments = [];
+    }
+
+    const { label, content } = buildPageContext({
+      page: { id: pageId, title, body },
+      breadcrumb: crumbs,
+      childPages,
+      attachments,
+    });
+
+    // Hard call - see this component's own header comment on why this is
+    // never `askAiAbout?.(...)`.
+    askAiAbout({ label, content });
+
+    // Video is deliberately excluded here (see DOWNLOADABLE_ATTACHMENT_KINDS'
+    // own comment) - its bytes are never sent to the model, only the notice
+    // pageContext.js already wrote into `content` above.
+    const downloadable = attachments.filter(
+      (a) => a && DOWNLOADABLE_ATTACHMENT_KINDS.has(a.kind) && a.storage_path,
+    );
+    if (downloadable.length === 0) return;
+
+    const supabase = createClient();
+    const files = (
+      await Promise.all(
+        downloadable.map(async (a) => {
+          try {
+            const { data, error } = await supabase.storage.from(ATTACHMENTS_BUCKET).download(a.storage_path);
+            if (error || !data) return null;
+            // Mirrors app/page.js's askAiAboutMaterial exactly: wrap the
+            // downloaded Blob in a File so addChatAttachments' own
+            // extension/mime sniffing (isDocxResume/isTextResume/image/pdf)
+            // works unchanged.
+            return new File([data], a.name, { type: data.type || a.mime || undefined });
+          } catch {
+            return null;
+          }
+        }),
+      )
+    ).filter(Boolean);
+
+    if (files.length > 0) await addChatAttachments(files);
+  }
+
   if (loading) {
     return (
       <Box sx={{ p: 4, textAlign: "center" }}>
@@ -431,6 +524,12 @@ export default function ExperienceTab() {
         selectedIds={selectedPageIds}
         onDeleteSelected={handleBulkDelete}
         onMoveSelected={handleBulkMove}
+        // Research report (chunk 9) creates its new child pages entirely
+        // server-side - this is the only way this tab's own `pages` state
+        // (and therefore the tree) learns about them, the same reload()
+        // already used on mount and by the create/edit dialogs elsewhere in
+        // this file.
+        onPagesChanged={reload}
       />
 
       {pages.length === 0 ? (
@@ -512,6 +611,7 @@ export default function ExperienceTab() {
                   // other, and the loser's stale reply silently overwrote
                   // the winner's just-saved text in local state.
                   onChange={(patch) => savePage(selectedPage.id, patch)}
+                  onAskAi={handleAskAi}
                 />
 
                 <Box sx={{ mt: 3 }}>

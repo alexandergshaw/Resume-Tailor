@@ -25,7 +25,12 @@ vi.mock("./PageEditor", () => ({
   // PageEditor's actual performSave, which always sends `{...latestRef}` in
   // full - this is the D2 defect's wiring test: ExperienceTab must turn
   // that ONE patch into exactly ONE PATCH request, not two.
-  default: function MockPageEditor({ page, onChange }) {
+  //
+  // `onAskAi` is exposed the same way, through its own on-demand button -
+  // mirroring the REAL PageEditor's own Ask AI button, which hands
+  // `{ title, body }` (the current on-screen text) to its `onAskAi` prop,
+  // never the raw `page` prop.
+  default: function MockPageEditor({ page, onChange, onAskAi }) {
     return createElement(
       "div",
       { "data-testid": "mock-page-editor", "data-page-id": page ? page.id : "", "data-page-body": page ? page.body : "" },
@@ -39,6 +44,15 @@ vi.mock("./PageEditor", () => ({
         },
         "Trigger save",
       ),
+      createElement(
+        "button",
+        {
+          type: "button",
+          "data-testid": "mock-page-editor-ask-ai",
+          onClick: () => onAskAi({ title: page.title, body: page.body }),
+        },
+        "Trigger ask ai",
+      ),
     );
   },
 }));
@@ -47,6 +61,20 @@ vi.mock("./AttachmentPanel", () => ({
   default: function MockAttachmentPanel({ pageId }) {
     return createElement("div", { "data-testid": "mock-attachment-panel", "data-page-id": pageId || "" });
   },
+}));
+
+// The Ask AI wiring downloads readable attachments straight from Supabase
+// Storage (mirrors lib/supabase/materials.js's own downloadMaterialBlob) -
+// `downloadMock` is `vi.hoisted` so the `vi.mock` factory below (which is
+// itself hoisted above this file's own imports) can close over it, and each
+// test configures its own return value per storage path.
+const { downloadMock } = vi.hoisted(() => ({ downloadMock: vi.fn() }));
+vi.mock("../../../lib/supabase/client", () => ({
+  createClient: () => ({
+    storage: {
+      from: () => ({ download: downloadMock }),
+    },
+  }),
 }));
 
 import ExperienceTab from "./ExperienceTab.js";
@@ -60,6 +88,7 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
+  downloadMock.mockReset();
 });
 
 afterEach(async () => {
@@ -80,9 +109,9 @@ async function flush(times = 5) {
   }
 }
 
-async function render() {
+async function render(props) {
   await act(async () => {
-    root.render(createElement(ExperienceTab));
+    root.render(createElement(ExperienceTab, props));
   });
 }
 
@@ -737,5 +766,248 @@ describe("ExperienceTab -- bulk selection and the bulk actions bar (chunk 8)", (
     const moveCalls = global.fetch.mock.calls.filter(([u]) => u === "/api/experience/move");
     expect(moveCalls).toHaveLength(1);
     expect(JSON.parse(moveCalls[0][1].body)).toMatchObject({ id: "p1", newParentId: "p3" });
+  });
+});
+
+// Chunk 9's wiring gap: BulkActionsBar's Research report action calls its
+// `onPagesChanged` prop after a batch finishes so the new child page it just
+// created server-side shows up in the tree without the user navigating away
+// - but `onPagesChanged` is called through `?.()` (genuinely optional, so
+// BulkActionsBar itself never breaks without it). That optionality is
+// exactly what let a missing/wrong wire-up stay invisible before: eslint,
+// BulkActionsBar's own tests (which pass a mock), and even `npm run build`
+// all stay green whether this prop is wired to useExperiencePages' `reload`,
+// to nothing, or to some other function entirely. Only an assertion on the
+// OBSERVABLE result - a second GET actually happening and the new page
+// actually reaching the DOM - can tell those apart, which is what this test
+// asserts instead of asserting a prop was merely passed.
+describe("ExperienceTab -- research report refetches the page list (chunk 9)", () => {
+  it("issues a second GET /api/experience after a research report completes, and the new child page reaches the tree", async () => {
+    const PAGE_REPORT = {
+      id: "r1",
+      parent_id: "p1",
+      title: "Research: Root Page (2026-08-12)",
+      body: "# What this project appears to be\n\n...",
+      position: 1,
+      archived_at: null,
+      created_at: "2026-08-12T00:00:00.000Z",
+      updated_at: "2026-08-12T00:00:00.000Z",
+    };
+
+    let getCount = 0;
+    global.fetch = vi.fn((url, options) => {
+      const method = options?.method || "GET";
+      if (method === "GET") {
+        getCount += 1;
+        const pages = getCount === 1 ? [PAGE_ROOT, PAGE_CHILD] : [PAGE_ROOT, PAGE_CHILD, PAGE_REPORT];
+        return Promise.resolve(jsonResponse(200, { pages }));
+      }
+      if (url === "/api/experience/research" && method === "POST") {
+        return Promise.resolve(jsonResponse(200, { page: PAGE_REPORT }));
+      }
+      throw new Error(`Unexpected fetch call: ${url} (${method})`);
+    });
+
+    await render();
+    await flush();
+
+    // p2 starts collapsed under p1 - expand it first (same precondition the
+    // breadcrumb and chunk-8 tests above use) so p1 is already a member of
+    // expandedIds by the time the reload lands. Without that, the new
+    // sibling page landing in `pages` would still be invisible - it would
+    // exist in the fetched data but render nothing, which would make this
+    // test indistinguishable from the defect it exists to catch.
+    const rootItem = container.querySelector('[role="treeitem"][data-page-id="p1"]');
+    const chevron = rootItem.firstElementChild.firstElementChild;
+    await click(chevron);
+    expect(container.querySelector('[role="treeitem"][data-page-id="p2"]')).not.toBeNull();
+
+    await act(async () => {
+      rootItem.querySelector('input[type="checkbox"]').click();
+    });
+
+    const researchBtn = buttons().find((b) => b.textContent.trim() === "Research report");
+    expect(researchBtn).toBeDefined();
+    expect(researchBtn.getAttribute("aria-disabled")).toBeNull();
+    await click(researchBtn);
+    await flush();
+
+    expect(getCount).toBe(2);
+    expect(container.querySelector('[role="treeitem"][data-page-id="r1"]')).not.toBeNull();
+    expect(container.textContent).toContain("Research: Root Page (2026-08-12)");
+  });
+});
+
+// The Ask AI feature: pressing it on a project page pins the whole page -
+// body, breadcrumb, child pages, and an inventory of its attachments - as
+// chat context, then downloads and attaches whatever attachments the chat
+// can actually read (text/image/pdf - never video, see
+// lib/experience/pageContext.js and app/api/chat/route.js for why). This
+// exercises the REAL wiring end to end: the real useExperiencePages hook,
+// the real GET /api/experience/attachments fetch, the real
+// lib/experience/pageContext.buildPageContext, and the real download path -
+// only PageEditor and AttachmentPanel are mocked (their own contracts are
+// covered by their own test files).
+describe("ExperienceTab -- Ask AI", () => {
+  const PAGE_WITH_BODY = {
+    ...PAGE_CHILD,
+    body: "We migrated payments off the legacy processor.",
+  };
+  const PAGE_GRANDCHILD = {
+    id: "p2c",
+    parent_id: "p2",
+    title: "Grandchild Page",
+    body: "",
+    position: 0,
+    archived_at: null,
+    created_at: "2026-01-02T12:00:00.000Z",
+    updated_at: "2026-01-02T12:00:00.000Z",
+  };
+
+  const ATTACHMENTS = [
+    {
+      id: "a1",
+      name: "topology.png",
+      mime: "image/png",
+      kind: "image",
+      bytes: 100,
+      storage_path: "u1/experience/p2/a1-topology.png",
+      notes: "before the migration",
+      transcript: "",
+    },
+    {
+      id: "a2",
+      name: "spec.pdf",
+      mime: "application/pdf",
+      kind: "pdf",
+      bytes: 200,
+      storage_path: "u1/experience/p2/a2-spec.pdf",
+      notes: "",
+      transcript: "",
+    },
+    {
+      id: "a3",
+      name: "notes.txt",
+      mime: "text/plain",
+      kind: "text",
+      bytes: 50,
+      storage_path: "u1/experience/p2/a3-notes.txt",
+      notes: "read me first",
+      transcript: "",
+    },
+    {
+      id: "a4",
+      name: "demo.mp4",
+      mime: "video/mp4",
+      kind: "video",
+      bytes: 900,
+      storage_path: "u1/experience/p2/a4-demo.mp4",
+      notes: "",
+      transcript: "",
+    },
+  ];
+
+  function mockFetchWithAttachments() {
+    return vi.fn((url) => {
+      if (url === "/api/experience") {
+        return Promise.resolve(jsonResponse(200, { pages: [PAGE_ROOT, PAGE_WITH_BODY, PAGE_GRANDCHILD] }));
+      }
+      if (url.startsWith("/api/experience/attachments")) {
+        expect(url).toBe(`/api/experience/attachments?pageId=${PAGE_WITH_BODY.id}`);
+        return Promise.resolve(jsonResponse(200, { attachments: ATTACHMENTS }));
+      }
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+  }
+
+  async function selectChildPage() {
+    // p2 sits under p1, collapsed by default - expand p1 first (same
+    // precondition every other test in this file that reaches a nested row
+    // uses), then select p2 itself.
+    const rootItem = container.querySelector('[role="treeitem"][data-page-id="p1"]');
+    const chevron = rootItem.firstElementChild.firstElementChild;
+    await click(chevron);
+    await click(container.querySelector('[role="treeitem"][data-page-id="p2"]'));
+  }
+
+  it("pins the body, breadcrumb, child page and attachment inventory, and attaches only the downloadable files", async () => {
+    global.fetch = mockFetchWithAttachments();
+    downloadMock.mockImplementation(async (path) => {
+      const found = ATTACHMENTS.find((a) => a.storage_path === path);
+      return { data: new Blob(["bytes"], { type: found?.mime || "application/octet-stream" }), error: null };
+    });
+
+    const askAiAbout = vi.fn();
+    const addChatAttachments = vi.fn();
+    await render({ askAiAbout, addChatAttachments });
+    await flush();
+
+    await selectChildPage();
+
+    const askAiBtn = container.querySelector('[data-testid="mock-page-editor-ask-ai"]');
+    expect(askAiBtn).not.toBeNull();
+    await click(askAiBtn);
+    await flush();
+
+    expect(askAiAbout).toHaveBeenCalledTimes(1);
+    const pinned = askAiAbout.mock.calls[0][0];
+    expect(pinned.label).toContain("Child Page");
+    expect(pinned.content).toContain("We migrated payments off the legacy processor.");
+    expect(pinned.content).toContain("Root Page / Child Page");
+    expect(pinned.content).toContain("Grandchild Page");
+    expect(pinned.content).toContain("topology.png");
+    expect(pinned.content).toContain("before the migration");
+    expect(pinned.content).toContain("spec.pdf");
+    expect(pinned.content).toContain("notes.txt");
+    expect(pinned.content).toContain("read me first");
+    expect(pinned.content).toContain("demo.mp4");
+    // The video has no notes and no transcript - pageContext.js's own
+    // contract says so in plain words rather than a bare filename that
+    // would read as though the model watched it.
+    expect(pinned.content.toLowerCase()).toMatch(/no transcript|not transcribed|no notes/);
+    // Never the storage path or a signed URL.
+    expect(pinned.content).not.toContain("u1/experience");
+
+    expect(addChatAttachments).toHaveBeenCalledTimes(1);
+    const attachedFiles = addChatAttachments.mock.calls[0][0];
+    expect(attachedFiles.map((f) => f.name).sort()).toEqual(["notes.txt", "spec.pdf", "topology.png"]);
+
+    // The video's bytes are never downloaded at all.
+    const downloadedPaths = downloadMock.mock.calls.map(([path]) => path);
+    expect(downloadedPaths).not.toContain("u1/experience/p2/a4-demo.mp4");
+    expect(downloadedPaths.sort()).toEqual(
+      ["u1/experience/p2/a1-topology.png", "u1/experience/p2/a2-spec.pdf", "u1/experience/p2/a3-notes.txt"].sort(),
+    );
+  });
+
+  it("still pins the page (title, body, breadcrumb) when the attachments fetch fails, and does not call addChatAttachments", async () => {
+    global.fetch = vi.fn((url) => {
+      if (url === "/api/experience") {
+        return Promise.resolve(jsonResponse(200, { pages: [PAGE_ROOT, PAGE_WITH_BODY] }));
+      }
+      if (url.startsWith("/api/experience/attachments")) {
+        return Promise.resolve(jsonResponse(500, { error: "boom" }));
+      }
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+
+    const askAiAbout = vi.fn();
+    const addChatAttachments = vi.fn();
+    await render({ askAiAbout, addChatAttachments });
+    await flush();
+
+    await selectChildPage();
+
+    const askAiBtn = container.querySelector('[data-testid="mock-page-editor-ask-ai"]');
+    await click(askAiBtn);
+    await flush();
+
+    expect(askAiAbout).toHaveBeenCalledTimes(1);
+    const pinned = askAiAbout.mock.calls[0][0];
+    expect(pinned.content).toContain("We migrated payments off the legacy processor.");
+    expect(pinned.content).toContain("Root Page / Child Page");
+
+    expect(addChatAttachments).not.toHaveBeenCalled();
+    expect(downloadMock).not.toHaveBeenCalled();
   });
 });

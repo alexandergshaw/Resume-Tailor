@@ -17,7 +17,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createElement, act } from "react";
 import { createRoot } from "react-dom/client";
-import AttachmentPanel from "./AttachmentPanel.js";
+import AttachmentPanel, { UNDO_WINDOW_MS } from "./AttachmentPanel.js";
 
 // D1's own test (below, "the GET route itself supplies kind") calls the
 // real route handler instead of trusting a fixture. Only the Supabase
@@ -65,6 +65,12 @@ afterEach(async () => {
   });
   container.remove();
   vi.restoreAllMocks();
+  // Several tests below (the undo-window ones) call vi.useFakeTimers()
+  // themselves and never restore real ones on their own success path -
+  // mirrors PageEditor.test.js's own afterEach, for the same reason: left
+  // enabled, fake timers would silently break the NEXT test's `mount()`,
+  // whose own load effect waits out a real setTimeout.
+  vi.useRealTimers();
   delete global.fetch;
 });
 
@@ -168,6 +174,17 @@ async function pickFile(input, file) {
 async function blur(el) {
   await act(async () => {
     el.dispatchEvent(new window.FocusEvent("focusout", { bubbles: true }));
+  });
+}
+
+// Drives vi's fake timers forward AND lets any already-pending microtask
+// (the `await fetch(...)` inside finalizeDelete/flushPendingDeletes)
+// resolve, all inside act() so React's resulting state updates are flushed
+// before the assertion runs. Identical in shape to PageEditor.test.js's own
+// `advance` helper, for the same reason it exists there.
+async function advance(ms) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
   });
 }
 
@@ -341,6 +358,14 @@ describe("a repeated identical notes-save failure", () => {
   });
 });
 
+// Since AttachmentPanel grew an undo window (see UNDO_WINDOW_MS), a click
+// on the delete icon no longer fires the DELETE straight away - it has to
+// be re-clicked (the row, and its own delete icon, come back once
+// finalizeDelete's failure restores it) and its own undo window run out a
+// SECOND time before a second identical failure can even happen. Fake
+// timers plus `advance(UNDO_WINDOW_MS)` after each click is the only
+// change from this test's original shape; every assertion below is
+// unchanged.
 describe("a repeated identical attachment-delete failure", () => {
   it("keeps the announcement's alternating parity across the clear-before-retry cycle, instead of resetting every time", async () => {
     const list = [attachment({ id: "a1", name: "resume-draft.pdf", kind: "pdf", url: null })];
@@ -351,11 +376,13 @@ describe("a repeated identical attachment-delete failure", () => {
       return Promise.resolve({ ok: true, json: async () => ({}) });
     });
     await mount({ pageId: "page-1" });
+    vi.useFakeTimers();
 
-    const deleteButton = container.querySelector('[aria-label="Delete resume-draft.pdf"]');
+    const deleteButton = () => container.querySelector('[aria-label="Delete resume-draft.pdf"]');
     await act(async () => {
-      deleteButton.click();
+      deleteButton().click();
     });
+    await advance(UNDO_WINDOW_MS);
     const firstAlert = [...container.querySelectorAll('[role="alert"]')].find(
       (el) => el.textContent.includes("resume-draft.pdf") && el.textContent.includes("Could not delete"),
     );
@@ -363,8 +390,9 @@ describe("a repeated identical attachment-delete failure", () => {
     const afterFirst = firstAlert.textContent;
 
     await act(async () => {
-      deleteButton.click();
+      deleteButton().click();
     });
+    await advance(UNDO_WINDOW_MS);
     const secondAlert = [...container.querySelectorAll('[role="alert"]')].find(
       (el) => el.textContent.includes("resume-draft.pdf") && el.textContent.includes("Could not delete"),
     );
@@ -763,6 +791,7 @@ describe("a failed attachment delete", () => {
     });
 
     await mount({ pageId: "page-1" });
+    vi.useFakeTimers();
 
     const deleteButton = container.querySelector('[aria-label="Delete resume-draft.pdf"]');
     expect(deleteButton).not.toBeNull();
@@ -770,10 +799,18 @@ describe("a failed attachment delete", () => {
     await act(async () => {
       deleteButton.click();
     });
+    // The undo window has not elapsed yet - the DELETE this click
+    // schedules must not have gone out already. A delete that fires right
+    // away and one that fires after the window are both "called" by the
+    // end of this test, which is exactly why this checks the COUNT here
+    // (0), not just whether it was ever called.
+    expect(deleteCalls).toBe(0);
+
+    await advance(UNDO_WINDOW_MS);
 
     expect(deleteCalls).toBe(1);
-    // The row is still there (the delete did not take) - and now something
-    // besides its continued presence actually says so.
+    // The row is back (the delete did not take, so finalizeDelete restored
+    // it) - and now something besides its presence actually says so.
     expect(container.querySelector('[aria-label="Delete resume-draft.pdf"]')).not.toBeNull();
     const retryButton = [...container.querySelectorAll("button")].find((b) => b.textContent.trim() === "Retry");
     expect(retryButton).toBeTruthy();
@@ -876,5 +913,300 @@ describe("an upload that resolves after the user has switched pages", () => {
 
     // It must not have landed on page two's list.
     expect(container.textContent).not.toContain("late-upload.txt");
+  });
+});
+
+// Everything below covers the undo window a deletion now goes through: one
+// click removes the row and starts a timer (UNDO_WINDOW_MS), an Undo
+// affordance is available for the duration, and the actual DELETE only
+// fires once that window elapses (or is force-flushed early — see the
+// page-change/unmount describes further down).
+
+describe("clicking delete", () => {
+  it("removes the row immediately and does not call DELETE until the undo window elapses, then calls it exactly once", async () => {
+    const list = [attachment({ id: "a1", name: "resume-draft.pdf", kind: "pdf", url: null })];
+    let deleteCalls = 0;
+    global.fetch = vi.fn((url, options = {}) => {
+      const method = (options && options.method) || "GET";
+      if (method === "GET") return Promise.resolve({ ok: true, json: async () => ({ attachments: list }) });
+      if (method === "DELETE") {
+        deleteCalls += 1;
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    });
+    await mount({ pageId: "page-1" });
+    vi.useFakeTimers();
+
+    await act(async () => {
+      container.querySelector('[aria-label="Delete resume-draft.pdf"]').click();
+    });
+
+    // Gone from view right away...
+    expect(container.querySelector('[aria-label="Delete resume-draft.pdf"]')).toBeNull();
+    // ...but not yet actually sent. A delete that fires immediately and one
+    // that fires after the window are both "called" by the end of this
+    // test — asserting the COUNT at each point, not just "was it called",
+    // is what actually distinguishes them.
+    expect(deleteCalls).toBe(0);
+
+    await advance(UNDO_WINDOW_MS);
+
+    expect(deleteCalls).toBe(1);
+  });
+});
+
+describe("the undo affordance", () => {
+  it("names the file being removed, and distinguishes several pending deletions from each other", async () => {
+    const list = [
+      attachment({ id: "a1", name: "one.pdf", kind: "pdf", url: null }),
+      attachment({ id: "a2", name: "two.pdf", kind: "pdf", url: null }),
+    ];
+    installFetch({ list });
+    await mount({ pageId: "page-1" });
+    vi.useFakeTimers();
+
+    await act(async () => {
+      container.querySelector('[aria-label="Delete one.pdf"]').click();
+    });
+    await act(async () => {
+      container.querySelector('[aria-label="Delete two.pdf"]').click();
+    });
+
+    const undoButtons = [...container.querySelectorAll("button")].filter((b) => b.textContent.trim() === "Undo");
+    expect(undoButtons).toHaveLength(2);
+    expect(container.textContent).toContain("one.pdf");
+    expect(container.textContent).toContain("two.pdf");
+  });
+});
+
+describe("undo", () => {
+  it("restores the row at its original position, not appended to the end, and cancels the pending DELETE", async () => {
+    const list = [
+      attachment({ id: "a1", name: "one.pdf", kind: "pdf", url: null }),
+      attachment({ id: "a2", name: "two.pdf", kind: "pdf", url: null }),
+      attachment({ id: "a3", name: "three.pdf", kind: "pdf", url: null }),
+    ];
+    let deleteCalls = 0;
+    global.fetch = vi.fn((url, options = {}) => {
+      const method = (options && options.method) || "GET";
+      if (method === "GET") return Promise.resolve({ ok: true, json: async () => ({ attachments: list }) });
+      if (method === "DELETE") {
+        deleteCalls += 1;
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    });
+    await mount({ pageId: "page-1" });
+    vi.useFakeTimers();
+
+    // Delete the MIDDLE row.
+    await act(async () => {
+      container.querySelector('[aria-label="Delete two.pdf"]').click();
+    });
+
+    const undoButton = [...container.querySelectorAll("button")].find((b) => b.textContent.trim() === "Undo");
+    await act(async () => {
+      undoButton.click();
+    });
+
+    const names = [...container.querySelectorAll('[aria-label^="Delete "]')].map((b) =>
+      b.getAttribute("aria-label").replace("Delete ", ""),
+    );
+    // Back in the MIDDLE, between one.pdf and three.pdf — not appended
+    // after three.pdf.
+    expect(names).toEqual(["one.pdf", "two.pdf", "three.pdf"]);
+
+    // Cancelled: advancing well past the window must not fire the DELETE.
+    await advance(UNDO_WINDOW_MS * 2);
+    expect(deleteCalls).toBe(0);
+  });
+});
+
+describe("multiple pending deletions", () => {
+  it("gives each its own timer, so undoing one does not affect the other and each fires independently", async () => {
+    const list = [
+      attachment({ id: "a1", name: "one.pdf", kind: "pdf", url: null }),
+      attachment({ id: "a2", name: "two.pdf", kind: "pdf", url: null }),
+    ];
+    const deleteUrls = [];
+    global.fetch = vi.fn((url, options = {}) => {
+      const method = (options && options.method) || "GET";
+      if (method === "GET") return Promise.resolve({ ok: true, json: async () => ({ attachments: list }) });
+      if (method === "DELETE") {
+        deleteUrls.push(url);
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    });
+    await mount({ pageId: "page-1" });
+    vi.useFakeTimers();
+
+    await act(async () => {
+      container.querySelector('[aria-label="Delete one.pdf"]').click();
+    });
+    await act(async () => {
+      container.querySelector('[aria-label="Delete two.pdf"]').click();
+    });
+
+    // Undo only the first (one.pdf's Undo row was added first, so it's
+    // first in render order).
+    const undoButtons = () => [...container.querySelectorAll("button")].filter((b) => b.textContent.trim() === "Undo");
+    await act(async () => {
+      undoButtons()[0].click();
+    });
+
+    expect(container.querySelector('[aria-label="Delete one.pdf"]')).not.toBeNull();
+    expect(deleteUrls).toHaveLength(0);
+
+    await advance(UNDO_WINDOW_MS);
+
+    // two.pdf's own timer still fired on schedule — undoing one.pdf's
+    // pending deletion did not cancel or delay it.
+    expect(deleteUrls).toHaveLength(1);
+    expect(deleteUrls[0]).toContain("a2");
+    expect(container.querySelector('[aria-label="Delete one.pdf"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Delete two.pdf"]')).toBeNull();
+  });
+});
+
+describe("the undo affordance's own success announcement", () => {
+  it("announces the restore through the same polite status region used for removal", async () => {
+    const list = [attachment({ id: "a1", name: "one.pdf", kind: "pdf", url: null })];
+    installFetch({ list });
+    await mount({ pageId: "page-1" });
+    vi.useFakeTimers();
+
+    const status = container.querySelector('[role="status"]');
+
+    await act(async () => {
+      container.querySelector('[aria-label="Delete one.pdf"]').click();
+    });
+    expect(withoutZwsp(status.textContent)).toContain("one.pdf");
+    expect(withoutZwsp(status.textContent).toLowerCase()).toContain("remov");
+
+    const undoButton = [...container.querySelectorAll("button")].find((b) => b.textContent.trim() === "Undo");
+    await act(async () => {
+      undoButton.click();
+    });
+
+    expect(withoutZwsp(status.textContent)).toContain("one.pdf");
+    expect(withoutZwsp(status.textContent).toLowerCase()).toContain("restor");
+  });
+});
+
+// Mirrors the existing "a repeated identical upload rejection" test's own
+// finding, applied to the delete announcement now that scheduleDelete
+// reuses bumpAnnouncement/{text, seq} for "Removed" too: two SAME-NAMED
+// attachments removed back to back would otherwise render the identical
+// string in the status region twice in a row, which React's own
+// reconciler leaves as a single, unchanged text node — silence to a screen
+// reader on the second removal.
+describe("consecutive identical delete announcements", () => {
+  it("gives a screen reader a real DOM mutation when two same-named attachments are removed back to back", async () => {
+    const list = [
+      attachment({ id: "a1", name: "dup.pdf", kind: "pdf", url: null }),
+      attachment({ id: "a2", name: "dup.pdf", kind: "pdf", url: null }),
+    ];
+    installFetch({ list });
+    await mount({ pageId: "page-1" });
+    vi.useFakeTimers();
+
+    const status = container.querySelector('[role="status"]');
+    const deleteButton = () => container.querySelector('[aria-label="Delete dup.pdf"]');
+
+    await act(async () => {
+      deleteButton().click();
+    });
+    const afterFirst = status.textContent;
+    expect(withoutZwsp(afterFirst)).toContain("dup.pdf");
+
+    let records = [];
+    const observer = new window.MutationObserver((list) => {
+      records.push(...list);
+    });
+    observer.observe(status, { childList: true, characterData: true, subtree: true, characterDataOldValue: true });
+
+    await act(async () => {
+      // The other dup.pdf — the first one is already gone from the DOM.
+      deleteButton().click();
+    });
+    records.push(...observer.takeRecords());
+    observer.disconnect();
+
+    const afterSecond = status.textContent;
+    expect(withoutZwsp(afterSecond)).toBe(withoutZwsp(afterFirst));
+    const sawARealMutation = records.length > 0;
+    const finalTextDiffers = afterSecond !== afterFirst;
+    expect(sawARealMutation || finalTextDiffers).toBe(true);
+  });
+});
+
+// D-undo: neither unmounting nor switching pages may silently swallow a
+// pending deletion — the row must not stay vanished from the UI while the
+// object survives forever in storage with nothing left to ever delete or
+// restore it. AttachmentPanel.js's own comments (on the pageId effect and
+// the dedicated unmount effect) explain the choice made here: FLUSH the
+// pending DELETE immediately in both cases, rather than cancel it, because
+// `attachments` is either about to be replaced by a different page's load
+// or the whole panel is going away — there is no list left for a
+// cancel-and-restore to usefully land in.
+describe("a pending deletion when the page changes", () => {
+  it("flushes the pending DELETE instead of leaving it stranded or silently cancelling it", async () => {
+    const list = [attachment({ id: "a1", name: "one.pdf", kind: "pdf", url: null })];
+    let deleteCalls = 0;
+    global.fetch = vi.fn((url, options = {}) => {
+      const method = (options && options.method) || "GET";
+      if (method === "GET") return Promise.resolve({ ok: true, json: async () => ({ attachments: list }) });
+      if (method === "DELETE") {
+        deleteCalls += 1;
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    });
+    await mount({ pageId: "page-1" });
+
+    await act(async () => {
+      container.querySelector('[aria-label="Delete one.pdf"]').click();
+    });
+    expect(deleteCalls).toBe(0);
+
+    // Switch pages well within the undo window - real timers, no advance()
+    // - the flush must not depend on the window ever elapsing.
+    await mount({ pageId: "page-2" });
+
+    expect(deleteCalls).toBe(1);
+  });
+});
+
+describe("a pending deletion when the panel unmounts", () => {
+  it("flushes the pending DELETE on unmount instead of leaving the object stranded in storage with no UI left to undo or complete it", async () => {
+    const list = [attachment({ id: "a1", name: "one.pdf", kind: "pdf", url: null })];
+    let deleteCalls = 0;
+    global.fetch = vi.fn((url, options = {}) => {
+      const method = (options && options.method) || "GET";
+      if (method === "GET") return Promise.resolve({ ok: true, json: async () => ({ attachments: list }) });
+      if (method === "DELETE") {
+        deleteCalls += 1;
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    });
+    await mount({ pageId: "page-1" });
+
+    await act(async () => {
+      container.querySelector('[aria-label="Delete one.pdf"]').click();
+    });
+    expect(deleteCalls).toBe(0);
+
+    // Unmounts AttachmentPanel without destroying `root` itself (so the
+    // shared afterEach's own root.unmount() still has a live root to call)
+    // - rendering null at the root is what actually runs the component's
+    // unmount cleanup effects.
+    await act(async () => {
+      root.render(null);
+    });
+
+    expect(deleteCalls).toBe(1);
   });
 });

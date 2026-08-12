@@ -3035,7 +3035,9 @@ export default function Home() {
 
         {mainTab === "copilot" && <CopilotClient />}
         {mainTab === "library" && <LibraryEditor />}
-        {mainTab === "experience" && <ExperienceTab />}
+        {mainTab === "experience" && (
+          <ExperienceTab askAiAbout={chat.askAiAbout} addChatAttachments={chat.addChatAttachments} />
+        )}
 
         {/* Always-mounted dialogs (not gated by active main tab). */}
         <BatchTailorDialog

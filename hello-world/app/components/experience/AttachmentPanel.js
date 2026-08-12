@@ -25,6 +25,17 @@ import { classifyAttachment } from "../../../lib/experience/attachments";
 
 const KIND_LABEL = { image: "Image", pdf: "PDF", video: "Video", text: "Text", other: "File" };
 
+// How long a deletion stays reversible before its DELETE actually goes
+// out - see scheduleDelete/finalizeDelete below. The product decision this
+// implements (see this file's own header: drag-and-drop is layered ON TOP
+// of a real control, never instead of it - this is the same "minimize
+// clicks without losing the safety net" instinct applied to deletion) was
+// explicitly NOT a confirmation dialog: a dialog taxes the common,
+// correct, single-file case to guard a rarer slip. Exported so the test
+// file can advance fake timers by the exact same value instead of a
+// second, possibly-drifting copy of "5000".
+export const UNDO_WINDOW_MS = 5000;
+
 // Built explicitly rather than typed as a literal character in source, for
 // the same reason PageEditor.js's own ANNOUNCE_TOGGLE is: an invisible
 // unicode character embedded directly in a source file is easy to lose or
@@ -69,6 +80,87 @@ function nextSeqFor(seqRef, id) {
   const next = (seqRef.current[id] ?? 0) + 1;
   seqRef.current[id] = next;
   return next;
+}
+
+// Reinserts `attachment` into `list` immediately before the entry whose id
+// is `nextId` - the id of whichever attachment immediately followed it in
+// the list at the moment it was removed (see scheduleDelete, which records
+// it) - or at the end if `nextId` is null (it was last) or no longer
+// present (its own neighbour has since been removed too, by an
+// independent delete or because it hasn't been restored yet either).
+// Deliberately never an unconditional `[...list, attachment]`: appending
+// unconditionally IS the "jumps to the bottom of the list" bug an Undo
+// must not have.
+function insertAtAnchor(list, attachment, nextId) {
+  const idx = nextId ? list.findIndex((a) => a.id === nextId) : -1;
+  if (idx === -1) return [...list, attachment];
+  const next = [...list];
+  next.splice(idx, 0, attachment);
+  return next;
+}
+
+// Records (or clears) one pending deletion in BOTH pendingDeletesRef and
+// the `pendingDeletes` state it mirrors, in the same synchronous call -
+// unlike pageIdRef elsewhere in this file, which mirrors a PROP in an
+// effect because a ref genuinely cannot be written any other way when the
+// value comes from a parent, `pendingDeletes` is this component's own
+// state, changed only by functions this component calls directly, so
+// there is no reason to let the ref lag behind state by even one effect
+// pass. The ref half is what lets finalizeDelete (fired from a
+// setTimeout created long before this specific entry existed) and the
+// unmount/page-change flush effects (whose own closures may be even
+// older) read the CURRENT map instead of whatever existed when their own
+// useCallback/effect was first created - mirrors nextSeqFor and
+// PageEditor.js's flushPendingSave, both in this same codebase, taking
+// their ref as an explicit argument for the identical reason.
+function setPendingDelete(pendingDeletesRef, setPendingDeletes, id, value) {
+  pendingDeletesRef.current = { ...pendingDeletesRef.current, [id]: value };
+  setPendingDeletes((prev) => ({ ...prev, [id]: value }));
+}
+
+function clearPendingDelete(pendingDeletesRef, pendingDeleteTimersRef, setPendingDeletes, id) {
+  if (pendingDeleteTimersRef.current[id]) {
+    clearTimeout(pendingDeleteTimersRef.current[id]);
+    delete pendingDeleteTimersRef.current[id];
+  }
+  if (id in pendingDeletesRef.current) {
+    const next = { ...pendingDeletesRef.current };
+    delete next[id];
+    pendingDeletesRef.current = next;
+  }
+  setPendingDeletes((prev) => {
+    if (!(id in prev)) return prev;
+    const next = { ...prev };
+    delete next[id];
+    return next;
+  });
+}
+
+// Fires every currently pending deletion's DELETE request right now,
+// instead of waiting out the rest of its undo window - used when the
+// window can no longer meaningfully run out from under the user (see the
+// pageId-change and unmount effects below). Not finalizeDelete reused
+// as-is: a fetch failure here has no page left to show deleteErrors
+// against (the caller is either about to replace `attachments` with a
+// different page's load, or the whole panel is unmounting), so - exactly
+// like PageEditor.js's own flushPendingSave swallowing a flushed save's
+// rejection - it is dropped rather than surfaced. This does not leave the
+// object mysteriously undeletable either: the next time this same page is
+// loaded, `load()` re-fetches from the server and will show the
+// attachment again on its own if the delete genuinely didn't take, which
+// is what actually reconciles the view with storage - not a local error
+// message aimed at a page nobody is looking at any more.
+function flushPendingDeletes(pendingDeletesRef, pendingDeleteTimersRef) {
+  const ids = Object.keys(pendingDeletesRef.current);
+  for (const id of ids) {
+    const entry = pendingDeletesRef.current[id];
+    if (pendingDeleteTimersRef.current[id]) {
+      clearTimeout(pendingDeleteTimersRef.current[id]);
+      delete pendingDeleteTimersRef.current[id];
+    }
+    delete pendingDeletesRef.current[id];
+    fetch(`/api/experience/attachments/${entry.attachment.id}`, { method: "DELETE" }).catch(() => {});
+  }
 }
 
 function formatBytes(bytes) {
@@ -122,6 +214,19 @@ export default function AttachmentPanel({ pageId }) {
   // they announce.
   const notesErrorSeqRef = useRef({});
   const deleteErrorSeqRef = useRef({});
+  // Attachment id -> { attachment, nextId } for a deletion that has been
+  // optimistically applied (removed from `attachments`) but whose DELETE
+  // has not gone out yet — see scheduleDelete. `pendingDeletesRef` is the
+  // ref half of this same data, written synchronously alongside the state
+  // by setPendingDelete/clearPendingDelete above; see that pair's own
+  // comment for why this one does NOT follow pageIdRef's effect-synced
+  // pattern.
+  const pendingDeletesRef = useRef({});
+  const [pendingDeletes, setPendingDeletes] = useState({});
+  // { [id]: timeoutHandle } — kept out of React state, like
+  // notesErrorSeqRef/deleteErrorSeqRef just above, because a timer handle
+  // is never itself rendered.
+  const pendingDeleteTimersRef = useRef({});
   // The panel otherwise has no live region at all: a successful upload or
   // delete is silent to a screen reader even though both failure paths
   // (uploadError, deleteErrors) are announced. { text, seq } for the same
@@ -172,13 +277,47 @@ export default function AttachmentPanel({ pageId }) {
   // own effect above, so this is never a setState call landing
   // synchronously within the effect body itself (react-hooks/set-state-in-effect
   // flags that shape).
+  //
+  // A deletion still pending FOR THE PAGE BEING LEFT is flushed first
+  // (synchronously, not deferred — flushPendingDeletes calls no state
+  // setter itself, only fetch, so react-hooks/set-state-in-effect does not
+  // apply to it) rather than silently cancelled or left ticking in the
+  // background: `attachments` is about to be replaced outright by the new
+  // page's own load, so a cancel-and-restore here would restore a row into
+  // a list that's discarded before it could ever be seen, and doing
+  // nothing would leave a timer bound to a page the user is no longer
+  // looking at as the only thing standing between the object and actually
+  // being deleted. See flushPendingDeletes' own comment for why a failure
+  // here is swallowed rather than surfaced. pendingDeletes itself (the
+  // render-facing copy) is cleared in the same deferred pass as the two
+  // error maps, so a page switch never leaves a stale Undo row on screen
+  // for an attachment that belongs to the page just left.
   useEffect(() => {
+    flushPendingDeletes(pendingDeletesRef, pendingDeleteTimersRef);
     const handle = setTimeout(() => {
       setNotesErrors({});
       setDeleteErrors({});
+      setPendingDeletes({});
     }, 0);
     return () => clearTimeout(handle);
   }, [pageId]);
+
+  // Flushes any still-pending deletions if the panel unmounts mid-window,
+  // rather than just cancelling their timers — app/page.js can unmount
+  // this whole tab outright (mirrors PageEditor.js's own identically-
+  // reasoned separate unmount effect, kept distinct from its pageId-reset
+  // effect for the same reason this one is kept distinct from the effect
+  // just above: a component can unmount without pageId ever changing). A
+  // cancel-only cleanup here would leave the underlying object sitting in
+  // storage with no UI left anywhere to ever show it as still there, for
+  // the rest of an undo window nobody watching can act on — flushing is
+  // what keeps "the row is gone from the screen" and "the object is gone
+  // from storage" from drifting apart forever instead of just briefly.
+  useEffect(() => {
+    return () => {
+      flushPendingDeletes(pendingDeletesRef, pendingDeleteTimersRef);
+    };
+  }, []);
 
   const load = useCallback(async () => {
     if (!pageId) {
@@ -318,9 +457,15 @@ export default function AttachmentPanel({ pageId }) {
     }
   }, []);
 
-  // Mirrors saveNotes' own shape exactly (clear any previous error for this
-  // id before trying again; on failure, set one naming the file) rather
-  // than inventing a second error pattern for the same kind of failure.
+  // The Retry action on a failed delete's own alert — see finalizeDelete
+  // below, which is what puts an attachment into `deleteErrors` in the
+  // first place now. Retrying is an explicit, deliberate second click
+  // AFTER a real failure was already shown, not a fresh accidental one, so
+  // it re-issues the DELETE immediately rather than reopening a whole new
+  // undo window. Mirrors saveNotes' own shape exactly (clear any previous
+  // error for this id before trying again; on failure, set one naming the
+  // file) rather than inventing a second error pattern for the same kind
+  // of failure.
   const removeAttachment = useCallback(async (attachment) => {
     setDeleteErrors((prev) => {
       if (!(attachment.id in prev)) return prev;
@@ -345,6 +490,102 @@ export default function AttachmentPanel({ pageId }) {
       }));
     }
   }, []);
+
+  // Fires once scheduleDelete's undo window has actually run out (or once
+  // a flush forces it early — see flushPendingDeletes, which bypasses this
+  // function entirely and swallows its own failures instead of reaching
+  // here). `entry` may already be gone — Undo clears it synchronously — in
+  // which case the setTimeout that scheduled this call was already
+  // cancelled and this is unreachable in practice; the guard is cheap
+  // insurance against that, not something a normal user path can trigger.
+  const finalizeDelete = useCallback(async (id) => {
+    const entry = pendingDeletesRef.current[id];
+    if (!entry) return;
+    const { attachment, nextId } = entry;
+    try {
+      const res = await fetch(`/api/experience/attachments/${attachment.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error();
+      // Success: the row was already removed from `attachments` at click
+      // time, and its removal already announced then (see scheduleDelete)
+      // — nothing left to change here besides this id's own bookkeeping.
+      clearPendingDelete(pendingDeletesRef, pendingDeleteTimersRef, setPendingDeletes, id);
+    } catch {
+      // Failure: restore the row — at its ORIGINAL position, via the same
+      // nextId anchor Undo itself uses, never appended — and hand off to
+      // the exact same deleteErrors alert (and its Retry, via
+      // removeAttachment above) that an immediate delete failure already
+      // used before this file had an undo window at all, rather than
+      // inventing a second failure UI for the same kind of failure.
+      clearPendingDelete(pendingDeletesRef, pendingDeleteTimersRef, setPendingDeletes, id);
+      setAttachments((prev) => insertAtAnchor(prev, attachment, nextId));
+      setDeleteErrors((prev) => ({
+        ...prev,
+        [id]: {
+          text: `Could not delete "${attachment.name}". Try again.`,
+          seq: nextSeqFor(deleteErrorSeqRef, id),
+        },
+      }));
+    }
+  }, []);
+
+  // Cancels a still-pending deletion and puts the row back exactly where
+  // it was — see insertAtAnchor's own comment for why "where it was" is
+  // tracked by neighbour id rather than a numeric index. Reuses
+  // bumpAnnouncement/the same `statusAnnouncement` region scheduleDelete's
+  // own "Removed" announcement already uses, rather than a second
+  // mechanism, so two consecutive identical announcements (e.g. two
+  // same-named attachments removed back to back) keep getting the real DOM
+  // mutation that region's toggle exists for.
+  const undoDelete = useCallback((id) => {
+    const entry = pendingDeletesRef.current[id];
+    if (!entry) return;
+    clearPendingDelete(pendingDeletesRef, pendingDeleteTimersRef, setPendingDeletes, id);
+    setAttachments((prev) => insertAtAnchor(prev, entry.attachment, entry.nextId));
+    setStatusAnnouncement((prev) => bumpAnnouncement(prev.seq, `Restored "${entry.attachment.name}"`));
+  }, []);
+
+  // The delete IconButton's own handler. Removes the row from
+  // `attachments` right away (one click, no dialog — see UNDO_WINDOW_MS's
+  // own comment on why) and schedules the actual DELETE for
+  // UNDO_WINDOW_MS later via finalizeDelete, rather than sending it now.
+  // `nextId` is captured off `attachments` as it stands the instant before
+  // removal, not read again later, so a subsequent Undo (or this same
+  // entry's own failure-restore in finalizeDelete) reinserts next to the
+  // SAME neighbour this row actually had — not wherever the array happens
+  // to end at whatever later moment Undo is clicked, which could easily be
+  // a different position once other deletions or undos have happened in
+  // between.
+  const scheduleDelete = useCallback(
+    (attachment) => {
+      const id = attachment.id;
+      if (pendingDeleteTimersRef.current[id]) return;
+      const idx = attachments.findIndex((a) => a.id === id);
+      const nextId = idx === -1 ? null : (attachments[idx + 1]?.id ?? null);
+
+      setAttachments((prev) => prev.filter((a) => a.id !== id));
+      // The delete IconButton stays clickable even on a row currently
+      // showing a PRIOR failed delete's own alert (finalizeDelete restores
+      // the row without hiding it) - clearing any stale entry here, the
+      // same way removeAttachment/saveNotes clear their own error at the
+      // start of every fresh attempt, is what stops that old failure from
+      // reappearing next to this row if THIS new attempt is later undone
+      // rather than left to finalize.
+      setDeleteErrors((prev) => {
+        if (!(id in prev)) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setPendingDelete(pendingDeletesRef, setPendingDeletes, id, { attachment, nextId });
+      setStatusAnnouncement((prev) => bumpAnnouncement(prev.seq, `Removed "${attachment.name}"`));
+
+      pendingDeleteTimersRef.current[id] = setTimeout(() => {
+        delete pendingDeleteTimersRef.current[id];
+        finalizeDelete(id);
+      }, UNDO_WINDOW_MS);
+    },
+    [attachments, finalizeDelete],
+  );
 
   if (loading) {
     return (
@@ -412,6 +653,24 @@ export default function AttachmentPanel({ pageId }) {
         >
           {announcedText(uploadError)}
         </Alert>
+      )}
+
+      {Object.keys(pendingDeletes).length > 0 && (
+        <Stack spacing={1} sx={{ mb: 2 }}>
+          {Object.values(pendingDeletes).map(({ attachment }) => (
+            <Alert
+              key={attachment.id}
+              severity="info"
+              action={
+                <Button color="inherit" size="small" onClick={() => undoDelete(attachment.id)}>
+                  Undo
+                </Button>
+              }
+            >
+              Removed &quot;{attachment.name}&quot;
+            </Alert>
+          ))}
+        </Stack>
       )}
 
       {attachments.length === 0 && !loadError && (
@@ -514,7 +773,7 @@ export default function AttachmentPanel({ pageId }) {
                 </Box>
                 <IconButton
                   aria-label={`Delete ${attachment.name}`}
-                  onClick={() => removeAttachment(attachment)}
+                  onClick={() => scheduleDelete(attachment)}
                   size="small"
                 >
                   <DeleteIcon fontSize="small" />
