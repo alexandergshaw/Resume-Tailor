@@ -716,3 +716,91 @@ describe("research report", () => {
     expect(document.body.textContent.toLowerCase()).toContain("gemini engine");
   });
 });
+
+// "Add to library" opens ImportToLibraryDialog.js (a sibling chunk) over
+// whichever pages are selected. lib/experience/tailorSources.js's own gate
+// test (lib/experience/tailorSources.test.js) already pins the mining rules
+// themselves - in particular that a page with any generated_kind set is
+// NEVER a source. This file's job is only the WIRING: does the button
+// reflect what the CURRENT selection would actually yield, and does the
+// dialog it opens see fragments mined from the real selected rows (body,
+// generated_kind and all - the same rows GET /api/experience already
+// returns, per useExperiencePages.js) rather than a stub.
+describe("add to library", () => {
+  function pageWithBody(id, title, body, overrides = {}) {
+    return { ...row(id, null, title), body, ...overrides };
+  }
+
+  it("is aria-disabled with a stated reason when the selection has no accomplishment material", async () => {
+    const pages = [pageWithBody("b1", "Empty project", "")];
+    await render(baseProps({ pages, selectedIds: new Set(["b1"]) }));
+
+    const btn = findButton("Add to library");
+    expect(btn).toBeDefined();
+    expect(btn.getAttribute("aria-disabled")).toBe("true");
+    const describedBy = btn.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy).textContent).toContain("No accomplishment");
+
+    await click(btn);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("opens a review dialog with candidate bullets mined only from the selected page(s)", async () => {
+    const pages = [
+      pageWithBody("b1", "Payments migration", "- Cut settlement from three days to one"),
+      pageWithBody("b2", "Other project", "- Some other unrelated bullet that should not appear"),
+    ];
+    await render(baseProps({ pages, selectedIds: new Set(["b1"]) }));
+
+    const btn = findButton("Add to library");
+    expect(btn.getAttribute("aria-disabled")).toBeNull();
+    await click(btn);
+
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.body.textContent).toContain("Cut settlement from three days to one");
+    expect(document.body.textContent).not.toContain("Some other unrelated bullet");
+  });
+
+  it("never mines a selected page whose generated_kind is set, even though the page sits right there in the selection", async () => {
+    const pages = [
+      pageWithBody(
+        "b1",
+        "Research: Payments (2026-08-12)",
+        "- Adopt logical replication for zero-downtime cutover",
+        { generated_kind: "research" },
+      ),
+    ];
+    await render(baseProps({ pages, selectedIds: new Set(["b1"]) }));
+
+    const btn = findButton("Add to library");
+    expect(btn.getAttribute("aria-disabled")).toBe("true");
+  });
+
+  it("posts only the fragments the user keeps to the content-library endpoint", async () => {
+    global.fetch = vi.fn().mockResolvedValue(jsonResponse(200, { row: {} }));
+    const pages = [
+      pageWithBody(
+        "b1",
+        "Payments migration",
+        "- Cut settlement from three days to one\n- Retired the legacy processor",
+      ),
+    ];
+    await render(baseProps({ pages, selectedIds: new Set(["b1"]) }));
+
+    await click(findButton("Add to library"));
+    const boxes = [...document.querySelectorAll('input[type="checkbox"]')];
+    expect(boxes).toHaveLength(2);
+    await act(async () => {
+      boxes[1].click();
+    });
+
+    await click(findButton("Add 1 to library"));
+    await flush();
+
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    const [url, opts] = global.fetch.mock.calls[0];
+    expect(url).toBe("/api/library/content-library");
+    expect(JSON.parse(opts.body).text).toBe("Cut settlement from three days to one");
+  });
+});

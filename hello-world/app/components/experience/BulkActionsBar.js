@@ -20,6 +20,8 @@ import { outlineFromPages } from "../../../lib/experience/deckOutline.js";
 import { buildDeck } from "../../../lib/experience/pptxWriter.js";
 import { fetchDeckTemplate, uploadDeckTemplate } from "../../../lib/experience/deckTemplateStore.js";
 import { triggerBlobDownload, sanitizeFileNamePart } from "../../../lib/document/docx.js";
+import { fragmentsFromPages } from "../../../lib/experience/tailorSources.js";
+import ImportToLibraryDialog from "./ImportToLibraryDialog.js";
 
 // Ids for the visible explanations disabled actions point at via
 // aria-describedby - same B3 fix JobDescriptionTab.js already shipped: a
@@ -35,6 +37,7 @@ const MOVE_CAPTION_ID = "bulk-actions-move-caption";
 const RESEARCH_CAPTION_ID = "bulk-actions-research-caption";
 const DECK_CAPTION_ID = "bulk-actions-deck-caption";
 const TEMPLATE_CAPTION_ID = "bulk-actions-template-caption";
+const LIBRARY_CAPTION_ID = "bulk-actions-library-caption";
 
 // Runs research requests RESEARCH_CONCURRENCY at a time, matching this
 // chunk's own AC: a grounded search takes tens of seconds, so the client
@@ -156,6 +159,12 @@ export default function BulkActionsBar({ pages, selectedIds, onDeleteSelected, o
   const [templateStatus, setTemplateStatus] = useState("");
   const [templateBusy, setTemplateBusy] = useState(false);
   const templateInputRef = useRef(null);
+  // Whether ImportToLibraryDialog (a sibling chunk) is open. No per-run
+  // status lives here - the dialog owns its own import progress/results,
+  // the same division of labour PowerPoint's `deck` state above does NOT
+  // have (that one has to report back to THIS bar because it has no dialog
+  // of its own); this action always has one.
+  const [libraryOpen, setLibraryOpen] = useState(false);
 
   const summary = selectionSummary(pages, selectedIds);
   if (summary.selected === 0) return null;
@@ -165,6 +174,17 @@ export default function BulkActionsBar({ pages, selectedIds, onDeleteSelected, o
   const moveBlocked = targets.length === 0;
   const researchRunning = !!research?.running;
   const deckRunning = deck?.status === "generating";
+
+  // The real selected ROWS (body, generated_kind and all - see
+  // useExperiencePages.js's listPages, which already selects "*"), not just
+  // their ids - fragmentsFromPages needs generated_kind to enforce its own
+  // exclusion rule, and needs body to have anything to mine at all. Computed
+  // eagerly (fragmentsFromPages is pure and cheap) so the button itself can
+  // reflect whether the CURRENT selection has any candidate material, the
+  // same aria-disabled-with-a-reason pattern Move already uses above.
+  const librarySelectedPages = ids.map((id) => pages.find((p) => p.id === id)).filter(Boolean);
+  const libraryFragments = fragmentsFromPages(librarySelectedPages);
+  const libraryBlocked = libraryFragments.length === 0;
 
   function closeDialog() {
     setDialog(null);
@@ -438,6 +458,27 @@ export default function BulkActionsBar({ pages, selectedIds, onDeleteSelected, o
             PowerPoint
           </Button>
 
+          {/* Opens ImportToLibraryDialog over the current selection's
+              candidate fragments (lib/experience/tailorSources.js). A
+              resume bullet goes out under the user's name, so - unlike
+              every other action on this bar - this one always stops at a
+              review dialog rather than firing on the first click; see that
+              dialog's own header comment for why that friction is
+              deliberate here specifically. */}
+          <Button
+            variant="outlined"
+            size="small"
+            aria-disabled={libraryBlocked || undefined}
+            aria-describedby={libraryBlocked ? LIBRARY_CAPTION_ID : undefined}
+            onClick={() => {
+              if (libraryBlocked) return;
+              setLibraryOpen(true);
+            }}
+            sx={{ textTransform: "none", ...(libraryBlocked ? DISABLED_LOOK_SX : {}) }}
+          >
+            Add to library
+          </Button>
+
           {/* Changing the template is its OWN secondary control, never a
               step the "PowerPoint" click above makes the user pass through
               - the last uploaded template (lib/experience/deckTemplateStore.js)
@@ -469,6 +510,11 @@ export default function BulkActionsBar({ pages, selectedIds, onDeleteSelected, o
         {moveBlocked ? (
           <Typography id={MOVE_CAPTION_ID} sx={{ fontSize: "0.72rem", color: "var(--text-muted)", width: 1 }}>
             No destination fits every selected page.
+          </Typography>
+        ) : null}
+        {libraryBlocked ? (
+          <Typography id={LIBRARY_CAPTION_ID} sx={{ fontSize: "0.72rem", color: "var(--text-muted)", width: 1 }}>
+            No accomplishment lines found in the selected pages.
           </Typography>
         ) : null}
         {researchCaption ? (
@@ -557,6 +603,19 @@ export default function BulkActionsBar({ pages, selectedIds, onDeleteSelected, o
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Re-keyed on the selection itself so opening this dialog on a NEW
+          selection always starts from a clean review (every fragment
+          checked, no stale import results from a previous selection) - the
+          same key-driven reset LibraryEditor.js already uses for ProfileTab,
+          rather than an effect that has to be told to ignore `fragments`
+          changing identity on every render. */}
+      <ImportToLibraryDialog
+        key={ids.slice().sort().join(",")}
+        open={libraryOpen}
+        onClose={() => setLibraryOpen(false)}
+        fragments={libraryFragments}
+      />
     </>
   );
 }
