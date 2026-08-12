@@ -28,7 +28,7 @@ import { parseMarkdown } from "./markdown.js";
 // ("ok", "TODO", "-") rather than a sentence someone could put on a resume.
 const MIN_FRAGMENT_LENGTH = 10;
 
-function isGeneratedPage(page) {
+export function isGeneratedPage(page) {
   const kind = page?.generated_kind;
   return kind !== null && kind !== undefined && String(kind).trim() !== "";
 }

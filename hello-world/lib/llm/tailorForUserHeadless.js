@@ -3,6 +3,26 @@ import { getEngine, resolveEngineName } from "@/lib/llm/engines";
 
 const MAX_RESUME_CHARS = 20000;
 
+// DECISION, left ungrounded on purpose: app/api/tailor/route.js now feeds the
+// caller's own Professional Experience project pages into the Gemini prompt
+// as extra context (lib/experience/tailorContext.js's buildTailorContextBlock,
+// fetched there via lib/supabase/experiencePages.js's listPages, scoped by the
+// route's own authenticated `supabase` client). This headless path — used by
+// the cron/auto-apply feed via lib/feed/tailorAndQueue.js's tailorAndQueueOne
+// — deliberately does NOT get that same context, even though it already has
+// `userId` and could in principle look pages up itself.
+//
+// Doing it properly means threading a Supabase client through to here: this
+// module has no client of its own, and its only caller (tailorAndQueueOne in
+// lib/feed/tailorAndQueue.js, which already holds a service-role `admin`
+// client) would need to pass it down to `tailorResumeHeadless`/
+// `tailorCoverLetterHeadless`. That caller is outside this change's editable
+// scope, so wiring it here without also updating there would either require
+// exceeding that scope or minting a fresh Supabase client inside this module
+// with its own connection/config concerns — a pattern this codebase avoids
+// (every other data-access site is handed the caller's own client). Left as a
+// known, documented gap rather than done partially or out of scope.
+
 // The cron/auto-apply path has no per-request override, so it follows the
 // server default engine (RESUME_ENGINE). If "external" is selected but not
 // configured, fall back to Gemini so background tailoring never stalls.

@@ -8,6 +8,8 @@ import { getServerEnv } from "@/lib/config/env";
 import { fetchUrlContent } from "@/lib/scrape/fetchUrlContent";
 import { extractPostingMeta } from "@/lib/llm/postingMeta";
 import { createClient } from "@/lib/supabase/server";
+import { listPages } from "@/lib/supabase/experiencePages";
+import { buildTailorContextBlock } from "@/lib/experience/tailorContext";
 
 export const runtime = "nodejs";
 
@@ -179,10 +181,14 @@ function parseTemplateLines(rawTemplateLines) {
 export async function POST(request) {
   try {
     // The signed-in user (if any) selects which tailor library the embedded engine
-    // reads. No user -> the engine falls back to the bundled defaults.
+    // reads. No user -> the engine falls back to the bundled defaults. `supabase`
+    // is kept in this outer scope (not just inside the try) because it is also
+    // reused below to fetch this same user's own Professional Experience project
+    // pages for the tailor-context block.
     let userId;
+    let supabase;
     try {
-      const supabase = await createClient();
+      supabase = await createClient();
       const { data: { user } } = await supabase.auth.getUser();
       userId = user?.id;
     } catch {
@@ -198,6 +204,44 @@ export async function POST(request) {
     const steeringInstructions = parseAdditionalContext(formData.get("steeringInstructions"));
     const aggressiveness = parseAggressiveness(formData.get("aggressiveness"));
     const contextDocuments = await parseContextDocuments(formData);
+
+    // Feed the caller's own "Professional Experience" project pages into the
+    // Gemini prompt as extra context (title + whole body prose — never the
+    // deterministic engine's mined fragments; see
+    // lib/experience/tailorContext.js's header comment for why). Pages are
+    // ALWAYS fetched server-side, scoped to this session's own userId via the
+    // one function this codebase uses to query the pages table
+    // (lib/supabase/experiencePages.js's listPages) — never read from the
+    // request body. Skipped entirely for a signed-out caller or on any fetch
+    // error, so the prompt those callers get is unaffected by this feature.
+    let projectPagesBlock = "";
+    let projectPagesTruncated = false;
+    if (userId && supabase) {
+      try {
+        const { pages } = await listPages(supabase, userId);
+        const built = buildTailorContextBlock(Array.isArray(pages) ? pages : []);
+        projectPagesBlock = built.block;
+        projectPagesTruncated = built.truncated;
+      } catch {
+        projectPagesBlock = "";
+        projectPagesTruncated = false;
+      }
+    }
+    // Appended as one more contextDocuments entry rather than a new prompt
+    // block of its own — tailorResume.js's buildTailorPrompt already
+    // documents (hard constraint 11) that a claim may be grounded in "the
+    // source resume or provided context", which already covers this, so
+    // nothing in tailorResume.js needs to change. Only appended when there is
+    // something to add, so a caller with no eligible pages (including every
+    // signed-out caller) gets a byte-identical contextDocuments array, and
+    // therefore a byte-identical prompt, to one that never called this.
+    const contextDocumentsWithProjectPages = projectPagesBlock
+      ? [
+          ...contextDocuments,
+          { name: "Your project pages (Professional Experience)", content: projectPagesBlock },
+        ]
+      : contextDocuments;
+
     const templateLines = parseTemplateLines(
       formData.get("templateLines")?.toString() || "",
     );
@@ -322,7 +366,8 @@ export async function POST(request) {
       templateLines,
       additionalContext,
       aggressiveness,
-      contextDocuments,
+      // Includes the project-pages entry appended above, when there was one.
+      contextDocuments: contextDocumentsWithProjectPages,
       values,
       steeringInstructions,
       editRules,
@@ -379,7 +424,14 @@ export async function POST(request) {
           tailoredResume,
           templateLines: coverLetterTemplateLines,
           additionalContext,
-          contextDocuments,
+          // DECISION: contextDocuments here is the SAME array passed to
+          // tailorResume above, so the cover letter is deliberately also
+          // grounded in the caller's project pages — desirable, since the
+          // letter draws its substance from the same tailored résumé this
+          // context helps produce. tailorHiringEmail below does NOT receive
+          // contextDocuments at all (that asymmetry already existed before
+          // this change; see the comment at that call site).
+          contextDocuments: contextDocumentsWithProjectPages,
           steeringInstructions,
           editRules,
           focusArea,
@@ -415,6 +467,11 @@ export async function POST(request) {
     // throwing — see lib/llm/engines/index.js. NOTE: the email is session
     // state only for now (no generated_emails table / persistence — that is
     // deliberately out of scope for this pass, not an oversight).
+    // NOTE: unlike tailorResume/tailorCoverLetter above, this call does not
+    // (and, per the pre-existing shape of this function, never did) pass
+    // contextDocuments at all — the hiring email is grounded only in the
+    // tailored résumé. That asymmetry predates the project-pages context
+    // added in this change and is left as-is here rather than widened.
     let emailSubject = "";
     let emailResultLines = [];
     let emailError = "";
@@ -442,6 +499,14 @@ export async function POST(request) {
     }
 
     const warnings = [...engineWarnings, ...(Array.isArray(result.warnings) ? result.warnings : [])];
+    // Real budget, not a silent slice: buildTailorContextBlock already says so
+    // inside the prompt content itself (what the model sees); this is the
+    // same fact surfaced to the caller (what the response's warning needs).
+    if (projectPagesTruncated) {
+      warnings.push(
+        "Some of your project pages were too large to fit in the AI's context budget and were left out.",
+      );
+    }
 
     // Posting↔output match (embedded engine attaches report.match per document).
     // The weakest document drives the response-level score; below the threshold
