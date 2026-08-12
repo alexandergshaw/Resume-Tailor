@@ -2514,3 +2514,91 @@ Specifics that were each a real defect:
 **Expected:** Step 3 returns nothing for user B and the delete returns 404, not 403 - 403 would confirm the row exists to someone who cannot see it. Step 4 removes the attachment rows via `on delete cascade`.
 
 **Why manual:** no test executes this SQL, and the ownership-before-storage-delete ordering can only really be proven against a live bucket.
+
+### R-196 | area: experience-bulk | parallel-safe: yes | automatable: yes
+
+**Summary:** Selecting several project pages counts their blast radius once, and a bulk action acts on selection roots rather than every ticked row.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/experience/bulkSelection.test.js app/components/experience/BulkActionsBar.test.js app/components/experience/ExperienceTab.test.js`.
+
+**Expected:** All pass, including:
+
+- Selecting a page AND one of its children reports the deduplicated total. A naive sum says six pages will be deleted from a tree that loses four; over-stating trains the user to ignore the number, under-stating loses their work. A disjoint pair is asserted separately so the dedup cannot hide as a blanket under-count.
+- Execution filters to selection ROOTS, so a selected parent and child fire ONE request. Otherwise the second DELETE 404s after the cascade, or a move flattens a child out from under a parent that is still moving.
+- `bulkMoveTargets` is the intersection across every selected page - a destination legal for one and illegal for another is excluded - and legitimately returns empty, which disables the action WITH an explanation rather than hiding it.
+- Selecting a parent never implicitly selects its children.
+
+### R-197 | area: experience-research | parallel-safe: yes | automatable: yes
+
+**Summary:** A research report cites only sources the search actually visited, and refuses rather than fabricating when it cannot search.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/experience/researchReport.test.js app/api/experience/research/route.test.js`.
+
+**Expected:** All pass, including:
+
+- A citation absent from `groundingMetadata` is demoted to plain text with its claim intact. Fabricated citations are worse than none because they look checkable - this is the lesson `app/api/company-research/route.js` already records in its own comments.
+- A grounded source still matches when the metadata carries tracking parameters, a fragment or a trailing slash the model's citation lacks. Comparing raw strings drops REAL citations and teaches the reader to distrust the filter instead of the model.
+- A different path on the same host is NOT corroborated - host-only matching would wave through any page on a site the search happened to touch.
+- No grounding at all marks the report ungrounded rather than presenting it as researched.
+- The embedded engine refuses and creates no page. There is no offline equivalent of a web search; fabricating one from the page's own text and calling it research is the failure this guards.
+- The route is owner-scoped: another user's page is a 404.
+
+### R-198 | area: experience-deck | parallel-safe: yes | automatable: yes
+
+**Summary:** A generated deck follows an uploaded template and opens without repair.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/experience/deckOutline.test.js lib/experience/pptxTemplate.test.js lib/experience/pptxWriter.test.js lib/experience/deckTemplateStore.test.js`.
+
+**Expected:** All pass, including:
+
+- The template's `ppt/theme/*`, `ppt/slideMasters/*` and `ppt/slideLayouts/*` come through BYTE-IDENTICAL and the new slides reference them. Regenerating those parts is exactly how a templated deck comes out looking like a default deck, and it passes any test that only counts slides.
+- Layouts are chosen by OOXML type, then by name, then by falling back to the first - never by a fixed index, which is why generated decks come out wrong against an unfamiliar template.
+- Every slide is declared in `[Content_Types].xml`, referenced from the presentation rels, and listed in `sldIdLst`. An undeclared part makes PowerPoint call the file corrupt.
+- An image extension is declared once per extension, and an image whose bytes are missing degrades to a caption-only slide with NO dangling relationship. A dangling rel is the other thing PowerPoint reports as corruption.
+- Ampersands and angle brackets in a title are escaped. A project called R&D is ordinary and an unescaped ampersand makes the file unopenable.
+- Prose before the first heading survives, and a video becomes a NAMED placeholder rather than being silently omitted - otherwise the user presents a deck missing something they attached and believed was included.
+
+### R-199 | area: experience-askai | parallel-safe: yes | automatable: yes
+
+**Summary:** Ask AI pins the whole page, spends its context budget deliberately, and is honest about what the model cannot see.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/experience/pageContext.test.js app/components/experience/PageEditor.test.js app/components/experience/ExperienceTab.test.js`.
+
+**Expected:** All pass, including:
+
+- The title, breadcrumb and attachment inventory survive even when a long body must be cut, and the truncation is STATED. The chat route truncates silently, and a model answering from a body cut mid-sentence gives a confident answer about half a project with nobody aware.
+- Attachment bytes, storage paths and signed URLs never enter the pinned context.
+- A video contributes its notes and any cached transcript, and says so when it has NEITHER - the bytes are not forwarded to the model, so a bare filename would read as though the model had watched it.
+
+### R-200 | area: experience-attachments | parallel-safe: yes | automatable: yes
+
+**Summary:** Deleting an attachment is undoable for five seconds, and leaving the page resolves the pending deletion rather than losing track of it.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run app/components/experience/AttachmentPanel.test.js`.
+
+**Expected:** All pass, including: the DELETE has NOT fired before the window elapses (asserted by call count - a delete that fires immediately and one that fires after five seconds are both "called"); Undo restores the row to its ORIGINAL position, anchored by its neighbour's id rather than an index, so cascading undos land correctly; several deletions can be pending independently; and a page switch or unmount FLUSHES pending deletions rather than cancelling them, so the user's view and the database never diverge.
+
+### R-201 | area: manual-tailoring | parallel-safe: yes | automatable: yes
+
+**Summary:** The manual tab accepts new postings while a tailor run is in flight.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/tailor/rollingQueue.test.js app/hooks/useManualPostings.test.js app/components/JobDescriptionTab.test.js`.
+
+**Expected:** All pass, including the full journey in one test: paste, press Tailor, ADD A NEW BOX mid-run, paste, press Tailor again, and both postings tailor within a single pool with `running` transitioning to false exactly once.
+
+Load-bearing specifics:
+
+- `runWithConcurrency` is untouched. It is a batch primitive - a fixed array in, resolved when it drains - and its other callers depend on that. The rolling queue replaced it for this hook only.
+- Enqueuing something already waiting does not inflate the total, or the progress readout never reaches its own target.
+- The cap applies across the whole active period, not per press: two submissions of two must not put four model calls in flight.
+- The period ends only when nothing is pending AND nothing is in flight. Checking one alone ends it early, sets the tally mid-flight, and flips the UI to idle while results are still arriving.
+- A posting that already succeeded is not re-submitted.
+- Locking is PER-ROW: only the box a worker owns is frozen.
+
+**One correction recorded here deliberately:** a pre-existing test required the Add button to stay disabled during a run - the batch-era invariant this change removes. It was corrected into the two rules that now apply rather than deleted, and the reason is written into the test itself. Without that correction the feature was inert: you could not create the box for the second posting.
