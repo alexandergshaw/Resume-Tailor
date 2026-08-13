@@ -1,6 +1,7 @@
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { parseModelJson } from "@/lib/llm/extractEmployment";
+import { pointsFromPartialJson } from "@/lib/copilot/answerStream";
 import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
 import { wantsEmbedded } from "@/lib/llm/featureEngine";
 import { draftAnswerLocal, deriveAnswerFromPoints } from "@/lib/copilot/answerLocal";
@@ -285,6 +286,122 @@ async function answerAids({ postingDescription, resume, profile, question, point
   };
 }
 
+// AC-P2.3-P2.5: the streaming half of this route — Gemini only (the embedded
+// branch never reaches this; see POST's own stream-flag check) and an
+// ADDITION to the route, not a rewrite: the prompt builders, system
+// instructions, cues/answer derivation and answerAids above are the exact
+// same functions the non-streaming branches call, so the two can never drift
+// on what an answer IS, only on how it's delivered.
+//
+// Wraps a NDJSON body around `producer`, which writes `{t:"points",...}` /
+// `{t:"done",...}` / `{t:"error",...}` frames via `write`. `start()` runs
+// with nothing awaited ahead of it — no posting lookup, no worked-example
+// call — so the very first points frame is never sat behind anything but the
+// model call itself.
+function ndjsonResponse(producer) {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const write = (frame) => controller.enqueue(encoder.encode(`${JSON.stringify(frame)}\n`));
+      try {
+        await producer(write);
+      } catch (err) {
+        // Safety net only — `producer` below already catches its own
+        // failures and writes an `error` frame itself. This guards against a
+        // bug in producer leaving the stream open with no terminal frame.
+        write({ t: "error", error: err?.message || "Answer request failed." });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+  return new Response(stream, {
+    headers: { "Content-Type": "application/x-ndjson; charset=utf-8" },
+  });
+}
+
+// Streams the Gemini call for either mode, emitting a `points` frame every
+// time pointsFromPartialJson reports a longer prefix than the last one sent
+// (so every frame is a strict superset of the one before it), then a single
+// terminal `done` (full payload, same shape the non-streaming branch
+// returns) or `error` frame.
+//
+// AC-N3/AC-P3.2: the Gemini-generated worked example (generateIdealProject
+// Example) normally rides ALONGSIDE the main call so its latency is the
+// slower of the two requests, not their sum — but here there is no later
+// point in the wire protocol for it to land on without either blocking the
+// first points frame on it (forbidden, see this route's own streaming
+// tests) or inventing a THIRD frame type nothing downstream reads. The
+// streaming path settles for the same deterministic idealProjectFor()
+// result every OTHER failure mode of that call already falls back to
+// (no posting, a network error, a rejected response) — never the
+// Gemini-enriched one. See this function's own report for why.
+async function streamAnswer({ mode, question, context, profile, descriptor, resume, coverLetter, posting, grounding }) {
+  const { geminiModel } = getServerEnv();
+  const client = getGeminiClient();
+  const isAnswerMode = mode === "answer";
+  const promptText = isAnswerMode
+    ? buildAnswerPrompt({ question, context, profile, resume, coverLetter, descriptor })
+    : buildPointsPrompt(question, context, profile, descriptor, resume, coverLetter);
+  const systemInstruction = isAnswerMode ? ANSWER_SYSTEM : POINTS_SYSTEM;
+  const pointsCap = isAnswerMode ? MAX_ANSWER_POINTS : 6;
+
+  return ndjsonResponse(async (write) => {
+    let stream;
+    try {
+      stream = await client.models.generateContentStream({
+        model: geminiModel,
+        contents: [{ role: "user", parts: [{ text: promptText }] }],
+        config: { systemInstruction, responseMimeType: "application/json" },
+      });
+    } catch (err) {
+      write({ t: "error", error: err?.message || "Could not generate an answer." });
+      return;
+    }
+
+    let raw = "";
+    let lastCount = 0;
+    try {
+      for await (const chunk of stream) {
+        raw += chunk?.text || "";
+        const partial = pointsFromPartialJson(raw);
+        if (partial.length > lastCount) {
+          lastCount = partial.length;
+          write({ t: "points", points: partial });
+        }
+      }
+    } catch (err) {
+      write({ t: "error", error: err?.message || "Could not generate an answer." });
+      return;
+    }
+
+    const parsed = parseModelJson(raw.trim());
+    const points = Array.isArray(parsed?.points)
+      ? parsed.points
+          .filter((p) => typeof p === "string" && p.trim())
+          .map((p) => p.trim())
+          .slice(0, pointsCap)
+      : [];
+    if (points.length === 0) {
+      write({ t: "error", error: "Could not generate an answer." });
+      return;
+    }
+    const type = VALID_TYPES.includes(parsed?.type) ? parsed.type : "general";
+    const aids = await answerAids({ postingDescription: posting, resume, profile, question, points });
+    const done = isAnswerMode
+      ? {
+          points,
+          cues: resolveCues(parsed?.cues, points),
+          answer: deriveAnswerFromPoints(points).slice(0, MAX_ANSWER_CHARS),
+          type,
+          grounding,
+          ...aids,
+        }
+      : { points, cues: deriveCues(points), type, ...aids };
+    write({ t: "done", ...done });
+  });
+}
+
 export async function POST(request) {
   try {
     const supabase = await createSupabaseServerClient();
@@ -332,6 +449,15 @@ export async function POST(request) {
     const resume = docs.resume.slice(0, MAX_RESUME_CHARS);
     const coverLetter = docs.coverLetter.slice(0, MAX_COVER_LETTER_CHARS);
     const posting = postingDescription.slice(0, MAX_POSTING_CHARS);
+
+    // AC-P2.3/AC-P2.4: streaming is opt-in and Gemini-only — the embedded
+    // engine ignores `stream` entirely and answers on-device exactly as it
+    // does today (its branches below never call a model at all, so there is
+    // nothing in them to stream), and a request with no `stream: true` falls
+    // straight through to the untouched JSON branches beneath this.
+    if (body?.stream === true && !wantsEmbedded(body?.engine)) {
+      return streamAnswer({ mode, question, context, profile, descriptor, resume, coverLetter, posting, grounding });
+    }
 
     if (mode === "answer") {
       // Embedded engine: assemble the spoken answer on-device — no LLM.

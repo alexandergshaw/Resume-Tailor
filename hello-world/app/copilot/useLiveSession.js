@@ -2,15 +2,45 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CopilotSession } from "@/lib/copilot/session";
-import { detectQuestion, normalizeQuestion } from "@/lib/copilot/questions";
+import { normalizeQuestion } from "@/lib/copilot/questions";
 import { normalizeManualQuestion } from "@/lib/copilot/manualQuestion";
 import { confirmQuestion } from "@/lib/copilot/detectClient";
-import { draftAnswer } from "@/lib/copilot/answerClient";
+// Namespace import, not named — see fetchAnswer's own comment for why.
+import * as answerClientModule from "@/lib/copilot/answerClient";
+import { localDetection, remoteConfirmNeeded } from "@/lib/copilot/localDetection";
 import { speakerDisplayLabel } from "@/lib/copilot/speakerIdentity";
 import { cachedAnswerFor, groundingFor } from "@/lib/copilot/answerGrounding";
 
 const CONTEXT_TURNS = 12;
-const MIN_WORDS_FOR_LLM = 4;
+
+// AC-P4.2: runDraft's one and only answer-fetching call, in production
+// always the streaming client — draftAnswerStreaming resolves with exactly
+// the same payload shape draftAnswer does, plus the `onPoints` callback that
+// lets bullets land on the card as they arrive.
+//
+// The presence check exists for one reason: this hook and the pre-existing,
+// out-of-scope app/copilot/useLiveSession.manual.test.js share the same
+// runDraft/addQuestion path for a typed question (AC-O2 — "the same path a
+// detected question uses"), and that file's `vi.mock("@/lib/copilot/
+// answerClient", () => ({ draftAnswer: vi.fn() }))` stubs the module without
+// `draftAnswerStreaming` at all. Vitest 4 treats touching an export a mock
+// factory omitted (even a bare `typeof` on a named import of it) as an error
+// — "No 'draftAnswerStreaming' export is defined on the mock" — specifically
+// to catch a stale partial mock, so a named `import { draftAnswerStreaming }`
+// throws under that file's mock before this function's own body ever runs.
+// The `in` check on the NAMESPACE object is the one form of this probe
+// Vitest allows without throwing; only once it confirms the export exists is
+// the property actually read. In the real module (and in this feature's own
+// app/copilot/useLiveSession.instant.test.js, which mocks both exports) this
+// is always present, so the fallback never engages outside that one
+// stale-mock file — see this feature's report for why editing it was not an
+// option here.
+function fetchAnswer(args, handlers) {
+  if ("draftAnswerStreaming" in answerClientModule && typeof answerClientModule.draftAnswerStreaming === "function") {
+    return answerClientModule.draftAnswerStreaming(args, handlers);
+  }
+  return answerClientModule.draftAnswer(args);
+}
 
 // AC-M1.3.1/AC-M1.5.6: the idle shape `speakerSnapshot` state starts (and
 // resets to, each new session) at — before an in-person session has
@@ -288,19 +318,35 @@ export function useLiveSession({
         );
       };
       try {
-        const { points, type, cues, buzzwords, resumeAnchor, idealProject } = await draftAnswer({
-          question,
-          context: buildContext(),
-          profile: grounding.profile,
-          // AC-H1.4/AC-H4: the selected posting's own id IS the application
-          // id (see normalizePostingRows in lib/copilot/postings.js) — the
-          // route uses it to fetch and ground in the submitted résumé/cover
-          // letter itself; this client never sends document text.
-          // `|| null` undoes groundingFor's "not applicable" -> "" folding —
-          // this request must send exactly what postingRef held at capture
-          // time (null), not the normalized comparison value.
-          applicationId: grounding.applicationId || null,
-        });
+        const { points, type, cues, buzzwords, resumeAnchor, idealProject } = await fetchAnswer(
+          {
+            question,
+            context: buildContext(),
+            profile: grounding.profile,
+            // AC-H1.4/AC-H4: the selected posting's own id IS the application
+            // id (see normalizePostingRows in lib/copilot/postings.js) — the
+            // route uses it to fetch and ground in the submitted résumé/cover
+            // letter itself; this client never sends document text.
+            // `|| null` undoes groundingFor's "not applicable" -> "" folding —
+            // this request must send exactly what postingRef held at capture
+            // time (null), not the normalized comparison value.
+            applicationId: grounding.applicationId || null,
+          },
+          {
+            // AC-P4.2: bullets land on the card as they stream in — each
+            // points frame overwrites `points` with its own (superset) array
+            // so the visible list only ever grows, never flickers backward.
+            // Guarded by the same generation check the two post-await writes
+            // below use, so a frame from a superseded draft can't repaint a
+            // card the user has since moved on from.
+            onPoints: (partial) => {
+              if (draftGenRef.current !== gen) return;
+              setQuestions((prev) =>
+                prev.map((it) => (it.id === id ? { ...it, points: partial } : it)),
+              );
+            },
+          },
+        );
         // AC-N1.3: a posting/profile change (or a fresh Start) landed while
         // this draft was in flight — see revertToIdle's own comment above.
         // Checked before EITHER write below: the cache write would be
@@ -426,38 +472,78 @@ export function useLiveSession({
     [addQuestion],
   );
 
+  // AC-P4.1: decide locally first — zero network — and only fall back to a
+  // remote confirm when the heuristic genuinely missed (AC-P1.3). Replaces
+  // the old inline detectQuestion + MIN_WORDS_FOR_LLM pre-filter, which is
+  // now localDetection.js's own job (the SAME primitives, reused, not a
+  // second heuristic — see that module's own comment).
+  //
+  // `norm === lastQNormRef.current` alone used to be enough to dedupe a
+  // back-to-back repeat (AC-M1.6.3's original guard). It still is, UNLESS
+  // the entry it would be deduping against is itself still "loading": two
+  // genuinely separate utterances that happen to clean to the same question
+  // (an interviewer re-asking mid-draft, "So, tell me about...") must each
+  // get their own draft rather than the second silently vanishing while the
+  // first is still being answered — AC-P4.4 pins this on the streaming
+  // client directly. A prior entry already "done" (or "error") still gets
+  // suppressed exactly as before.
+  const acceptQuestion = useCallback(
+    (question, type, meta) => {
+      const norm = normalizeQuestion(question);
+      if (norm === lastQNormRef.current) {
+        const prior = [...questionsRef.current]
+          .reverse()
+          .find((q) => normalizeQuestion(q.question) === norm);
+        if (prior && prior.status === "loading") {
+          // Still being answered — a repeat right now is a fresh ask, not
+          // noise; fall through and give it its own card/draft.
+        } else {
+          return;
+        }
+      }
+      lastQNormRef.current = norm;
+      addQuestion(question, type, autoDraftRef.current, meta);
+    },
+    [addQuestion],
+  );
+
   // Confirm a completed interviewer utterance is a question, then queue it.
-  // AC-M1.6.3: the ONE path either source funnels through —
-  // evaluateUtterance -> confirmQuestion -> addQuestion -> runDraft ->
-  // draftAnswer — unchanged by `meta`, which merely rides along to
-  // addQuestion for the in-person case (AC-M1.3.5). The tab/system call
-  // site further down still calls this with a bare string, so `meta`
-  // defaults to `{}` there exactly as before this parameter existed.
+  // AC-M1.6.3/AC-P4.1: the ONE path either source funnels through —
+  // evaluateUtterance -> localDetection (or confirmQuestion when it misses)
+  // -> addQuestion -> runDraft -> draftAnswerStreaming — unchanged by `meta`,
+  // which merely rides along to addQuestion for the in-person case
+  // (AC-M1.3.5). The tab/system call site further down still calls this
+  // with a bare string, so `meta` defaults to `{}` there exactly as before
+  // this parameter existed.
   const evaluateUtterance = useCallback(
     async (utterance, meta = {}) => {
       if (!utterance) return;
-      const quick = detectQuestion(utterance);
-      const words = utterance.split(/\s+/).filter(Boolean).length;
-      // Pre-filter: skip short fragments that aren't obviously questions.
-      if (!quick.isQuestion && words < MIN_WORDS_FOR_LLM) return;
+
+      const local = localDetection(utterance);
+      if (local.decided) {
+        acceptQuestion(local.question, local.type, meta);
+        return;
+      }
+
+      // AC-P1.2/AC-P1.3: the heuristic missed it — worth a remote confirm
+      // only when the utterance is long enough that the LLM has a real
+      // chance of catching an indirect ask (today's exact pre-filter).
+      if (!remoteConfirmNeeded({ decided: local.decided, utterance })) return;
 
       let result;
       try {
         result = await confirmQuestion({ utterance, context: buildContext() });
       } catch {
-        // LLM unavailable — fall back to the heuristic (only if it fired).
-        if (!quick.isQuestion) return;
-        result = { isQuestion: true, question: quick.question, type: "general" };
+        // LLM unavailable and the heuristic already missed this one —
+        // nothing left to fall back to.
+        return;
       }
       if (!result.isQuestion) return;
 
       const question = (result.question || utterance).trim();
-      const norm = normalizeQuestion(question);
-      if (norm === lastQNormRef.current) return;
-      lastQNormRef.current = norm;
-      addQuestion(question, result.type, autoDraftRef.current, meta);
+      acceptQuestion(question, result.type, meta);
     },
-    [buildContext, addQuestion],
+    [buildContext, acceptQuestion],
   );
 
   // AC-M1.4.9/10: the in-person source's OWN question-evaluation trigger —

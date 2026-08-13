@@ -3,8 +3,7 @@ import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { parseModelJson } from "@/lib/llm/extractEmployment";
 import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
 import { wantsEmbedded } from "@/lib/llm/featureEngine";
-import { detectQuestion, cleanQuestion } from "@/lib/copilot/questions";
-import { classifyQuestionType } from "@/lib/copilot/questionType";
+import { localDetection } from "@/lib/copilot/localDetection";
 
 const SYSTEM = [
   "You classify the interviewer's latest utterance during a LIVE job interview.",
@@ -55,12 +54,15 @@ export async function POST(request) {
     // Embedded engine: classify with the zero-cost heuristic detector — no LLM.
     // The detected question is tidied like the LLM path tidies it (fillers,
     // lead-ins, stutters, punctuation) so the card reads clean.
+    //
+    // AC-P1.1: localDetection.js is THE one implementation of this decision
+    // — this route and the client-side zero-network path (useLiveSession.js)
+    // both call it rather than each carrying their own copy of
+    // detectQuestion + cleanQuestion + classifyQuestionType, so the two can
+    // never quietly disagree about what counts as a question.
     if (wantsEmbedded(body?.engine)) {
-      const det = detectQuestion(utterance);
-      const isQuestion = !!det.isQuestion && !!det.question;
-      const question = isQuestion ? cleanQuestion(det.question) : "";
-      const type = isQuestion ? classifyQuestionType(question) : "general";
-      return Response.json({ isQuestion: isQuestion && !!question, question, type });
+      const local = localDetection(utterance);
+      return Response.json({ isQuestion: local.decided, question: local.question, type: local.type });
     }
 
     const { geminiModel } = getServerEnv();

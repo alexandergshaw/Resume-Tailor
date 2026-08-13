@@ -152,6 +152,22 @@ describe("the embedded engine", () => {
 
 describe("happy path", () => {
   it("builds the prompt from title, body, breadcrumb, child titles and attachment name+notes (never bytes), then creates a titled child page", async () => {
+    // The route stamps the report title with the REAL current date
+    // (reportTitle(pageTitle, new Date()) in route.js, not this file's fixed
+    // `T` fixture — that constant only ever seeds page.created_at/updated_at
+    // above). A hardcoded "2026-08-12" here only ever matched by coincidence
+    // on the day this test was written, and broke the instant the calendar
+    // moved past it — a real, observed failure, not a hypothetical one.
+    // Freezing the clock removes the dependency on which day the suite
+    // happens to run entirely, rather than merely computing "today" a second
+    // way that could still race the route's own `new Date()` across a
+    // midnight boundary; the expected title is then derived with the exact
+    // same `toISOString().slice(0, 10)` formula reportTitle uses, so this
+    // still fails if the route's own formatting ever changes.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-12T15:00:00.000Z"));
+    const expectedTitle = `Research: Payments migration (${new Date().toISOString().slice(0, 10)})`;
+
     const supabase = signedIn("user-1");
     const parent = page("parent", null, { title: "Payments migration", body: "# Notes\nLegacy processor." });
     const child = page("child", "parent", { title: "Rollout plan" });
@@ -169,11 +185,12 @@ describe("happy path", () => {
     );
     getGeminiClient.mockReturnValue({ models: { generateContent } });
 
-    store.createPage.mockResolvedValue({ page: page("report1", "parent", { title: "Research: Payments migration (2026-08-12)" }), error: null });
-    store.updatePage.mockResolvedValue({ page: page("report1", "parent", { title: "Research: Payments migration (2026-08-12)", body: "irrelevant" }), error: null });
+    store.createPage.mockResolvedValue({ page: page("report1", "parent", { title: expectedTitle }), error: null });
+    store.updatePage.mockResolvedValue({ page: page("report1", "parent", { title: expectedTitle, body: "irrelevant" }), error: null });
 
     const res = await POST(jsonRequest({ pageId: "parent", engine: "gemini" }));
     const json = await res.json();
+    vi.useRealTimers();
 
     expect(res.status).toBe(200);
 
@@ -193,7 +210,7 @@ describe("happy path", () => {
     // The report is created as a CHILD of the researched page, titled per
     // C9.4's exact format.
     expect(store.createPage).toHaveBeenCalledWith(expect.anything(), "user-1", {
-      title: "Research: Payments migration (2026-08-12)",
+      title: expectedTitle,
       parentId: "parent",
     });
     expect(store.updatePage).toHaveBeenCalledWith(
