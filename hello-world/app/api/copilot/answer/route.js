@@ -296,11 +296,12 @@ async function answerAids({ postingDescription, resume, profile, question, point
   // yielded anything to name a role from — so an eligible project page never
   // displaces real résumé/prep material, it only fills a gap that would
   // otherwise be `resumeAnchor: null`. Deliberately does NOT populate `title`,
-  // `company`, or `description`, and the reason is NOT the one this comment
-  // used to give. AnswerAids.js once mislabelled any source other than "prep"
-  // as the résumé, so leaving these empty was a workaround; that component now
-  // attributes each source honestly (see its own test) and the workaround is no
-  // longer needed. These stay empty on their own merits:
+  // `company`, or `description` — and NOT because the aid would mislabel them.
+  // AnswerAids.js reads a SOURCE_WHERE map keyed on `source` (it knows
+  // PROJECT_PAGE_SOURCE and renders "on a project page") from both roleLabel()
+  // and the no-role label, so page material is attributed honestly wherever it
+  // appears. Leaving these empty was once a workaround for that; it is not one
+  // now. They stay empty on their own merits:
   //
   //   - `title`/`company` model a job ROLE — AnswerAids renders them as
   //     "Closest role" / "Most recent role". A project page's title is a

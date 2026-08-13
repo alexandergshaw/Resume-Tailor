@@ -783,9 +783,19 @@ describe("POST /api/copilot/answer (project pages)", () => {
     expect(data.resumeAnchor).not.toBeNull();
     expect(data.resumeAnchor.source).not.toBe("resume");
     expect(data.resumeAnchor.source).not.toBe("prep");
-    // Never populated from a page — see route.js's answerAids comment on why:
-    // AnswerAids.js would render either as if the material were on the
-    // candidate's résumé, which it is not.
+    // Never populated from a page, and NOT because AnswerAids.js would
+    // mislabel them — it no longer would. Its roleLabel() and no-role label
+    // both read a SOURCE_WHERE map keyed on `source`, which knows
+    // PROJECT_PAGE_SOURCE and renders "on a project page".
+    //
+    // These stay empty because `title`/`company` model a job ROLE — the label
+    // around them literally reads "Closest role" / "Most recent role" — and a
+    // project page's title is a PROJECT name with no employer behind it.
+    // Filling them would present a project as a role: a different category
+    // error, not a leftover workaround. `description` has no second value to
+    // put there either; the route computes exactly one shortened line and it
+    // goes to `project`. See route.js's answerAids comment for the full
+    // reasoning.
     expect(data.resumeAnchor.title).toBe("");
     expect(data.resumeAnchor.company).toBe("");
     expect(data.resumeAnchor.description).toEqual([]);
