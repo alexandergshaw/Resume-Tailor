@@ -6,6 +6,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
 import { BREAK_LONG_WORDS_SX } from "./mobileSx";
+import { PROJECT_PAGE_SOURCE } from "../../lib/copilot/projectStories.js";
 
 // AC-K1.2/AC-K1.3: the two groups that sit UNDER a drafted answer's cues —
 // what the candidate actually has (the role and project their answer came
@@ -72,18 +73,47 @@ const AID_GRID_SX = {
 // its metrics line. One constant so no row invents its own spacing.
 const LINE_GAP = 0.5;
 
+// WHERE a piece of material came from, in words — the single source of
+// attribution truth, read by BOTH `roleLabel` below and the no-role fallback
+// label (~line 220) so a source can never be told honestly in one place and
+// dishonestly in the other. Keyed on the exact `source` values the route
+// actually sets (app/api/copilot/answer/route.js): "resume", "prep", and
+// PROJECT_PAGE_SOURCE for a page-derived aid (lib/copilot/projectStories.js —
+// its own header explains why page material must never borrow "resume" or
+// "prep"). An absent/unrecognised source — anything not a key here — falls
+// back to RESUME_WHERE. That fallback is deliberate, existing, and pinned by
+// AnswerAids.test.js ("attribution when the source is unknown"): the résumé
+// wording is what renders sooner than "undefined" ever could, not a claim
+// that unlabelled material IS résumé material.
+const RESUME_WHERE = "on your resume";
+const SOURCE_WHERE = {
+  prep: "in your prep notes",
+  [PROJECT_PAGE_SOURCE]: "on a project page",
+};
+
+function sourceWhere(source) {
+  return SOURCE_WHERE[source] || RESUME_WHERE;
+}
+
 // The label above the role. Says plainly WHY this role is the one being
 // shown: `matched: false` means nothing in the question or the draft overlaps
 // any role on file, so this is simply the most recent one — calling that a
 // "closest match" would be claiming a relevance that was never computed.
-// `source` says plainly WHERE it came from: with no posting selected — the
-// common live-mode case — the role is mined from the free-text prep-context
-// textarea, not an actual résumé, and claiming "on your resume" there would
-// be false. An absent/unknown source falls back to the résumé wording so
-// nothing ever renders "undefined".
+// WHERE it came from is `sourceWhere` above — not a second ternary here,
+// so a new source can never be taught to this half of the label and not the
+// other.
 function roleLabel(matched, source) {
-  const where = source === "prep" ? "in your prep notes" : "on your resume";
+  const where = sourceWhere(source);
   return matched ? `Closest role ${where}` : `Most recent role ${where}`;
+}
+
+// The no-role fallback label (~line 220) reads as a standalone label, not a
+// sentence continuing "Closest role"/"Most recent role" — so it capitalizes
+// `sourceWhere`'s phrase instead of prefixing it, the same map, just a
+// different sentence position. "On your resume" / "In your prep notes" /
+// "On a project page", never a second copy of SOURCE_WHERE's values.
+function capitalizeFirst(text) {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 function roleText(anchor) {
@@ -136,14 +166,19 @@ export default function AnswerAids({ buzzwords, anchor, idealProject }) {
   // `company` both "" while `project`/`description` still carry real
   // content. `role` being falsy is therefore NOT the same thing as "nothing
   // from the résumé" — it only means there's no role LINE, which is why the
-  // row below falls back to a generic "From your resume" label instead of
-  // disappearing whenever description phrases are still present.
+  // row below falls back to a generic label — still driven by `sourceWhere`,
+  // never hardcoded to the résumé — instead of disappearing whenever
+  // description phrases are still present.
   const role = roleText(anchor);
   const project = (anchor?.project || "").trim();
   // BUG-K2: an ARRAY of independently-shortened phrases, one per source
   // bullet — never joined into one string, which is how two different
   // bullets got spliced into a single fabricated sentence with no separator
-  // between them. Each element renders on its own line.
+  // between them. Each element renders on its own line, and — see the
+  // bullet-marker comment where these render below — carries a leading
+  // bullet character for the same reason: two adjacent phrases must never
+  // read as one run-on, whether by string concatenation or by two DOM text
+  // nodes sitting back to back with nothing between them.
   const description = (Array.isArray(anchor?.description) ? anchor.description : []).filter(
     (d) => typeof d === "string" && d.trim(),
   );
@@ -217,7 +252,7 @@ export default function AnswerAids({ buzzwords, anchor, idealProject }) {
       {hasResumeGroup ? (
         <Box component="dl" sx={AID_GRID_SX}>
           {hasRoleRow ? (
-            <Aid label={role ? roleLabel(!!anchor?.matched, anchor?.source) : "From your resume"}>
+            <Aid label={role ? roleLabel(!!anchor?.matched, anchor?.source) : capitalizeFirst(sourceWhere(anchor?.source))}>
               <Stack spacing={LINE_GAP}>
                 {role ? (
                   <Typography variant="body2" sx={{ color: "var(--text-primary)", fontWeight: 600 }}>
@@ -225,8 +260,19 @@ export default function AnswerAids({ buzzwords, anchor, idealProject }) {
                   </Typography>
                 ) : null}
                 {description.map((phrase, i) => (
+                  // A leading bullet is real text content, not a `::marker`
+                  // pseudo-element — deliberately, so it survives being
+                  // flattened (a screen reader's braille output, a
+                  // copy-paste, this component's own test suite reading
+                  // `container.textContent`). Two Typography elements sitting
+                  // next to each other in the DOM produce no separator on
+                  // their own; without this, "Cut settlement to one day" and
+                  // a second phrase read back to back as one run-on sentence
+                  // — the exact failure mode BUG-K2 (above) already banned
+                  // for the array shape, reachable again here through the
+                  // rendering instead of the data.
                   <Typography key={i} variant="body2" sx={{ color: "var(--text-secondary)" }}>
-                    {phrase}
+                    {`• ${phrase}`}
                   </Typography>
                 ))}
               </Stack>

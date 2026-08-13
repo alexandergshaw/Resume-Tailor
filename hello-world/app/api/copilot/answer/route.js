@@ -296,14 +296,23 @@ async function answerAids({ postingDescription, resume, profile, question, point
   // yielded anything to name a role from — so an eligible project page never
   // displaces real résumé/prep material, it only fills a gap that would
   // otherwise be `resumeAnchor: null`. Deliberately does NOT populate `title`,
-  // `company`, or `description`: AnswerAids.js's roleLabel() falls back to
-  // wording a role "on your resume" for any `source` other than "prep", and
-  // its bare `role` fallback renders the hardcoded string "From your resume"
-  // whenever `description` is non-empty — both would mislabel page-derived
-  // material as résumé material with no way to override them from here. Only
-  // `project` is set, which AnswerAids.js renders under the source-agnostic
-  // "Project to talk about" label, so a page-derived project can never be
-  // shown as if it came from a résumé the candidate never wrote it on.
+  // `company`, or `description`, and the reason is NOT the one this comment
+  // used to give. AnswerAids.js once mislabelled any source other than "prep"
+  // as the résumé, so leaving these empty was a workaround; that component now
+  // attributes each source honestly (see its own test) and the workaround is no
+  // longer needed. These stay empty on their own merits:
+  //
+  //   - `title`/`company` model a job ROLE — AnswerAids renders them as
+  //     "Closest role" / "Most recent role". A project page's title is a
+  //     PROJECT name and it has no employer at all, so filling them would
+  //     present a project as a role: a different category error, not a fix.
+  //   - `description` has no already-computed second value here; the route
+  //     derives exactly one shortened line, and it goes to `project`.
+  //
+  // So only `project` is set, rendered under the source-neutral "Project to
+  // talk about" label. If you are here because you want richer page-derived
+  // aids, that is a content feature (choosing and shortening more bullets),
+  // not a matter of deleting this restraint.
   let resumeAnchorAid = anchor ? { ...anchor, source: resume ? "resume" : "prep" } : null;
   if (!resumeAnchorAid) {
     const story = selectBestStory(pages, { question, points });
