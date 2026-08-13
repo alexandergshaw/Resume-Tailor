@@ -9,11 +9,18 @@ import { draftSampleAnswerLocal } from "@/lib/copilot/sampleAnswerLocal";
 import { fetchApplicationDocs, fetchPostingDescription } from "@/lib/copilot/applicationDocs";
 import { submittedDocsPromptParts } from "@/lib/copilot/applicationDocsPrompt";
 import { normalizeInterviewType, interviewType } from "@/lib/copilot/interviewTypes";
-import { deriveCues, resolveCues } from "@/lib/copilot/answerCues";
+import { deriveCues, resolveCues, shortenToCue } from "@/lib/copilot/answerCues";
 import { postingBuzzwords } from "@/lib/copilot/postingBuzzwords";
-import { resumeAnchor } from "@/lib/copilot/resumeAnchor";
+import { resumeAnchor, MAX_PROJECT_WORDS } from "@/lib/copilot/resumeAnchor";
 import { idealProject as idealProjectFor } from "@/lib/copilot/idealProject";
 import { buildIdealProjectPrompt, IDEAL_PROJECT_SYSTEM, normalizeIdealProject } from "@/lib/copilot/idealProjectPrompt";
+import { listPages } from "@/lib/supabase/experiencePages";
+import {
+  buildProjectStoriesBlock,
+  selectBestStory,
+  starPointsFromStory,
+  PROJECT_PAGE_SOURCE,
+} from "@/lib/copilot/projectStories";
 
 // Two modes on one route (AC-G2-D-1). "points" (default, and the only mode
 // live mode ever sends — CopilotClient/QuestionFeed call draftAnswer with no
@@ -58,7 +65,7 @@ const POINTS_SYSTEM = [
   "You are an interview coach helping a candidate answer questions during a LIVE interview.",
   "Given the question the interviewer just asked, produce concise talking points the candidate can glance at and speak from — NOT a script to read aloud.",
   "Return 3-5 short bullet points; each is one phrase or short sentence, specific and substantive.",
-  "When a CANDIDATE BACKGROUND section is provided, ground the points in it — reference their real companies, projects, metrics, and skills rather than inventing generic ones. Never fabricate experience the background does not support; if it is thin, give strong generic points instead.",
+  "When a CANDIDATE BACKGROUND section or a YOUR OWN PROJECT PAGES section is provided, ground the points in it — reference their real companies, projects, metrics, and skills rather than inventing generic ones. For a \"tell me about a time...\" question, prefer a concrete story from YOUR OWN PROJECT PAGES when one is provided — it is the candidate's own account of a real project, more specific than a resume bullet. Never fabricate experience the background does not support; if it is thin, give strong generic points instead.",
   "For behavioral questions (\"tell me about a time...\"), prefix each point with its STAR label — \"Situation:\", \"Task:\", \"Action:\", \"Result:\".",
   "Keep every point skimmable — a person on camera must absorb it in a glance.",
 ].join(" ");
@@ -70,7 +77,7 @@ const POINTS_SYSTEM = [
 // (deriveAnswerFromPoints, AC-H9.33).
 const ANSWER_SYSTEM = [
   "You are an interview coach drafting the sample answer a candidate could actually say out loud in a real interview, as a sequence of complete sentences — never glanceable fragments.",
-  "The answer must be built only from the material provided below — the candidate's prep notes and, when available, the résumé and cover letter they actually submitted for this application — never invented.",
+  "The answer must be built only from the material provided below — the candidate's prep notes, their own project pages, and, when available, the résumé and cover letter they actually submitted for this application — never invented.",
   "Return 3-6 points; each point is one complete, natural spoken sentence, first person, and together they are the whole answer — no headings, no stage directions, nothing that isn't meant to be spoken aloud.",
   "For behavioral questions (\"tell me about a time...\"), prefix each point with its STAR label — \"Situation:\", \"Task:\", \"Action:\", \"Result:\".",
   // AC-K1.1: the cue is what the candidate actually reads mid-question; the
@@ -117,7 +124,13 @@ function interviewFormatLines(descriptor) {
 // here would itself break this exact byte-identity requirement — see that
 // module's own comment on checking groundingFlags and simply not calling
 // submittedDocsPromptParts when it doesn't apply.
-function buildPointsPrompt(question, context, profile, descriptor, resume, coverLetter) {
+// `projectStories` (lib/copilot/projectStories.js's buildProjectStoriesBlock
+// output) is "" whenever the caller has no eligible project pages, in which
+// case the block below is never added and this function's output is
+// byte-identical to what it produced before project pages existed as a
+// source (mirroring AC-H4.17's byte-identity guarantee for the submitted-docs
+// block above it).
+function buildPointsPrompt(question, context, profile, descriptor, resume, coverLetter, projectStories) {
   const parts = [`The interviewer asked: "${question}"`, "", ...interviewFormatLines(descriptor)];
   if (profile) {
     parts.push(
@@ -128,6 +141,13 @@ function buildPointsPrompt(question, context, profile, descriptor, resume, cover
   }
   if (resume || coverLetter) {
     parts.push(...submittedDocsPromptParts({ resume, coverLetter }));
+  }
+  if (projectStories) {
+    parts.push(
+      "",
+      "--- YOUR OWN PROJECT PAGES (real projects they've documented; may ground a concrete story) ---",
+      projectStories,
+    );
   }
   if (context) {
     parts.push("", "Recent conversation (most recent last), for context:", context);
@@ -163,7 +183,14 @@ function answerShapeInstruction(descriptor) {
 // prose `answer` field. The route derives `answer` from those points itself
 // (deriveAnswerFromPoints, AC-H9.33); the model is never asked to generate
 // prose separately.
-function buildAnswerPrompt({ question, context, profile, resume, coverLetter, descriptor }) {
+// `projectStories` (lib/copilot/projectStories.js's buildProjectStoriesBlock
+// output) is "" whenever the caller has no eligible project pages. Every
+// place it changes this function's output — the block itself, the "no
+// submitted resume or cover letter" notice, and the authority sentence naming
+// where a claim may come from — is gated on it being truthy, so with no
+// eligible pages this function's output is byte-identical to what it
+// produced before project pages existed as a source.
+function buildAnswerPrompt({ question, context, profile, resume, coverLetter, descriptor, projectStories }) {
   const parts = [`The interviewer asked: "${question}"`, "", ...interviewFormatLines(descriptor)];
   if (profile) {
     parts.push("", "--- CANDIDATE PREP NOTES (their own notes on background / target role) ---", profile);
@@ -174,21 +201,29 @@ function buildAnswerPrompt({ question, context, profile, resume, coverLetter, de
   if (coverLetter) {
     parts.push("", "--- SUBMITTED COVER LETTER (for this application) ---", coverLetter);
   }
+  if (projectStories) {
+    parts.push("", "--- YOUR OWN PROJECT PAGES (real projects they've documented) ---", projectStories);
+  }
   if (context) {
     parts.push("", "Recent conversation (most recent last), for context:", context);
   }
   if (!resume && !coverLetter) {
     parts.push(
       "",
-      "No submitted resume or cover letter was available for this application — build the answer from the candidate prep notes and conversation context alone.",
+      projectStories
+        ? "No submitted resume or cover letter was available for this application — build the answer from the candidate prep notes, YOUR OWN PROJECT PAGES above, and conversation context."
+        : "No submitted resume or cover letter was available for this application — build the answer from the candidate prep notes and conversation context alone.",
     );
   }
+  const authoritySources = projectStories
+    ? "CANDIDATE PREP NOTES, SUBMITTED RESUME, SUBMITTED COVER LETTER, or YOUR OWN PROJECT PAGES"
+    : "CANDIDATE PREP NOTES, SUBMITTED RESUME, or SUBMITTED COVER LETTER";
   parts.push(
     "",
     `Write the actual spoken answer the candidate should give, as 3-6 points — each one a complete, speakable sentence, not a fragment — together totalling roughly ${descriptor.lengthTarget.minWords}-${descriptor.lengthTarget.maxWords} words.`,
     "Each point is first person, spoken register — no bullet markers beyond the STAR label where it applies, no headings, no stage directions, nothing but words meant to be said out loud.",
     answerShapeInstruction(descriptor),
-    "Every claim must come from the CANDIDATE PREP NOTES, SUBMITTED RESUME, or SUBMITTED COVER LETTER above — select, order, and phrase freely, but never invent an employer, project, metric, or credential that isn't there. If the material is thin, give a shorter, honest answer rather than inventing detail.",
+    `Every claim must come from the ${authoritySources} above — select, order, and phrase freely, but never invent an employer, project, metric, or credential that isn't there. If the material is thin, give a shorter, honest answer rather than inventing detail.`,
     'Return ONLY JSON of this exact shape: { "points": string[], "cues": string[], "type": "behavioral" | "technical" | "general" }',
     "cues: exactly one per point, same order — a 2-6 word prompt for that point, with the same STAR label where the point has one.",
   );
@@ -248,7 +283,7 @@ async function generateIdealProjectExample({ client, geminiModel, description, q
 // never has one), is awaited here rather than started here, so it and the
 // main points/answer call are genuinely concurrent instead of one waiting on
 // the other.
-async function answerAids({ postingDescription, resume, profile, question, points, generatedProjectPromise }) {
+async function answerAids({ postingDescription, resume, profile, question, points, generatedProjectPromise, pages }) {
   const anchorText = resume || profile;
   const anchor = resumeAnchor(anchorText, { question, points });
   // The FALLBACK, computed exactly as it always has been — never skipped,
@@ -256,14 +291,44 @@ async function answerAids({ postingDescription, resume, profile, question, point
   // candidate with an example rather than nothing.
   const deterministicProject = idealProjectFor(postingDescription, { question, points });
   const generatedProject = generatedProjectPromise ? await generatedProjectPromise : null;
+  // Page-derived fallback for the résumé-anchor aid: only reachable when
+  // `anchor` above is null — i.e. neither a submitted résumé nor prep notes
+  // yielded anything to name a role from — so an eligible project page never
+  // displaces real résumé/prep material, it only fills a gap that would
+  // otherwise be `resumeAnchor: null`. Deliberately does NOT populate `title`,
+  // `company`, or `description`: AnswerAids.js's roleLabel() falls back to
+  // wording a role "on your resume" for any `source` other than "prep", and
+  // its bare `role` fallback renders the hardcoded string "From your resume"
+  // whenever `description` is non-empty — both would mislabel page-derived
+  // material as résumé material with no way to override them from here. Only
+  // `project` is set, which AnswerAids.js renders under the source-agnostic
+  // "Project to talk about" label, so a page-derived project can never be
+  // shown as if it came from a résumé the candidate never wrote it on.
+  let resumeAnchorAid = anchor ? { ...anchor, source: resume ? "resume" : "prep" } : null;
+  if (!resumeAnchorAid) {
+    const story = selectBestStory(pages, { question, points });
+    if (story) {
+      const projectText = story.bullets[0] || story.title;
+      resumeAnchorAid = {
+        title: "",
+        company: "",
+        matched: story.matched,
+        project: shortenToCue(projectText, MAX_PROJECT_WORDS),
+        description: [],
+        source: PROJECT_PAGE_SOURCE,
+      };
+    }
+  }
   return {
     buzzwords: postingBuzzwords(postingDescription, { question, points }),
     // AC-K1.3 correction: `anchor` is mined from whichever of `resume` /
     // `profile` was actually non-empty — with no posting selected (the
     // common live-mode case), that is the free-text prep-context textarea,
     // not a résumé. `source` reports which one so the UI can word the label
-    // honestly instead of always claiming "on your resume".
-    resumeAnchor: anchor ? { ...anchor, source: resume ? "resume" : "prep" } : null,
+    // honestly instead of always claiming "on your resume". A third value,
+    // PROJECT_PAGE_SOURCE, marks the page-derived fallback above — never
+    // "resume", never "prep" (lib/copilot/projectStories.js's own contract).
+    resumeAnchor: resumeAnchorAid,
     // BUG: `generatedProject` is `normalizeIdealProject`'s return value — the
     // shape of `idealProjectFor()`'s `project` FIELD ({ title, sections,
     // outcomes }), never the shape of the aid itself ({ shape, summary,
@@ -336,13 +401,25 @@ function ndjsonResponse(producer) {
 // result every OTHER failure mode of that call already falls back to
 // (no posting, a network error, a rejected response) — never the
 // Gemini-enriched one. See this function's own report for why.
-async function streamAnswer({ mode, question, context, profile, descriptor, resume, coverLetter, posting, grounding }) {
+async function streamAnswer({
+  mode,
+  question,
+  context,
+  profile,
+  descriptor,
+  resume,
+  coverLetter,
+  posting,
+  grounding,
+  pages,
+  projectStories,
+}) {
   const { geminiModel } = getServerEnv();
   const client = getGeminiClient();
   const isAnswerMode = mode === "answer";
   const promptText = isAnswerMode
-    ? buildAnswerPrompt({ question, context, profile, resume, coverLetter, descriptor })
-    : buildPointsPrompt(question, context, profile, descriptor, resume, coverLetter);
+    ? buildAnswerPrompt({ question, context, profile, resume, coverLetter, descriptor, projectStories })
+    : buildPointsPrompt(question, context, profile, descriptor, resume, coverLetter, projectStories);
   const systemInstruction = isAnswerMode ? ANSWER_SYSTEM : POINTS_SYSTEM;
   const pointsCap = isAnswerMode ? MAX_ANSWER_POINTS : 6;
 
@@ -387,7 +464,7 @@ async function streamAnswer({ mode, question, context, profile, descriptor, resu
       return;
     }
     const type = VALID_TYPES.includes(parsed?.type) ? parsed.type : "general";
-    const aids = await answerAids({ postingDescription: posting, resume, profile, question, points });
+    const aids = await answerAids({ postingDescription: posting, resume, profile, question, points, pages });
     const done = isAnswerMode
       ? {
           points,
@@ -441,14 +518,32 @@ export async function POST(request) {
     // through its OWN call, deliberately — see fetchPostingDescription's doc
     // in lib/copilot/applicationDocs.js. It is passed only to answerAids
     // below; no prompt builder in this file ever receives it.
-    const [docs, postingDescription] = await Promise.all([
+    //
+    // The caller's own "Professional Experience" project pages are fetched
+    // the same way — server-side, scoped to `user.id` (never a client-
+    // supplied id, for the same injection reason applicationId's own comment
+    // above gives for resume/coverLetter) — and joined into this SAME
+    // Promise.all rather than awaited afterward: this route fires mid-
+    // question, so a sequential fetch here would be latency the candidate
+    // feels directly. lib/supabase/experiencePages.js's listPages never
+    // throws (it degrades to `{ pages: null, error }` on any failure), so a
+    // broken or empty pages table never breaks the request that depends on
+    // this.
+    const [docs, postingDescription, pagesResult] = await Promise.all([
       fetchApplicationDocs(supabase, { applicationId, userId: user.id }),
       fetchPostingDescription(supabase, { applicationId, userId: user.id }),
+      listPages(supabase, user.id),
     ]);
     const grounding = { resume: !!docs.resume, coverLetter: !!docs.coverLetter };
     const resume = docs.resume.slice(0, MAX_RESUME_CHARS);
     const coverLetter = docs.coverLetter.slice(0, MAX_COVER_LETTER_CHARS);
     const posting = postingDescription.slice(0, MAX_POSTING_CHARS);
+    const pages = Array.isArray(pagesResult?.pages) ? pagesResult.pages : [];
+    // buildProjectStoriesBlock's own contract: "" (never a header with
+    // nothing under it) whenever there is nothing eligible, which is what
+    // keeps every prompt below byte-identical to today for a caller with no
+    // project pages (lib/copilot/projectStories.js's own tests pin this).
+    const { block: projectStories } = buildProjectStoriesBlock(pages);
 
     // AC-P2.3/AC-P2.4: streaming is opt-in and Gemini-only — the embedded
     // engine ignores `stream` entirely and answers on-device exactly as it
@@ -456,19 +551,51 @@ export async function POST(request) {
     // nothing in them to stream), and a request with no `stream: true` falls
     // straight through to the untouched JSON branches beneath this.
     if (body?.stream === true && !wantsEmbedded(body?.engine)) {
-      return streamAnswer({ mode, question, context, profile, descriptor, resume, coverLetter, posting, grounding });
+      return streamAnswer({
+        mode,
+        question,
+        context,
+        profile,
+        descriptor,
+        resume,
+        coverLetter,
+        posting,
+        grounding,
+        pages,
+        projectStories,
+      });
     }
 
     if (mode === "answer") {
       // Embedded engine: assemble the spoken answer on-device — no LLM.
       if (wantsEmbedded(body?.engine)) {
-        const { points, answer, type } = draftSampleAnswerLocal({
+        // `points`/`answer` are reassigned below when a project page's own
+        // STAR story replaces them.
+        let { points, answer, type } = draftSampleAnswerLocal({
           question,
           profile,
           resume,
           coverLetter,
           interviewType: interviewTypeValue,
         });
+        // The embedded engine has no model to weave project pages into a
+        // narrative with (draftSampleAnswerLocal above never sees them), so
+        // this is deliberately narrow rather than an attempt at the same
+        // grounding the Gemini path gets: for a behavioral "tell me about a
+        // time..." question, pick the ONE best-matching project page and
+        // speak its own title as the Situation beat and its own bullets as
+        // Action/Result — real, user-authored text, never a paraphrase.
+        // Requires an actual bulleted story (starPointsFromStory returns null
+        // for a title with no bullets), so a page that cannot support a real
+        // STAR shape never displaces draftSampleAnswerLocal's own result.
+        if (type === "behavioral") {
+          const story = selectBestStory(pages, { question });
+          const storyPoints = starPointsFromStory(story);
+          if (storyPoints) {
+            points = storyPoints;
+            answer = deriveAnswerFromPoints(points);
+          }
+        }
         if (points.length === 0) {
           return Response.json({ error: "Could not generate an answer." }, { status: 502 });
         }
@@ -484,7 +611,7 @@ export async function POST(request) {
           // established rule for every AI feature in this repo is that
           // engine choice governs whether a feature calls a model, and
           // idealProjectFor's deterministic path is this one's.
-          ...(await answerAids({ postingDescription: posting, resume, profile, question, points })),
+          ...(await answerAids({ postingDescription: posting, resume, profile, question, points, pages })),
         });
       }
 
@@ -495,7 +622,9 @@ export async function POST(request) {
         contents: [
           {
             role: "user",
-            parts: [{ text: buildAnswerPrompt({ question, context, profile, resume, coverLetter, descriptor }) }],
+            parts: [
+              { text: buildAnswerPrompt({ question, context, profile, resume, coverLetter, descriptor, projectStories }) },
+            ],
           },
         ],
         config: { systemInstruction: ANSWER_SYSTEM, responseMimeType: "application/json" },
@@ -532,7 +661,7 @@ export async function POST(request) {
         answer,
         type,
         grounding,
-        ...(await answerAids({ postingDescription: posting, resume, profile, question, points, generatedProjectPromise })),
+        ...(await answerAids({ postingDescription: posting, resume, profile, question, points, generatedProjectPromise, pages })),
       });
     }
 
@@ -551,7 +680,7 @@ export async function POST(request) {
         type,
         // Embedded engine: no model call at all — see the answer-mode
         // branch above for the same rule stated once already.
-        ...(await answerAids({ postingDescription: posting, resume, profile, question, points })),
+        ...(await answerAids({ postingDescription: posting, resume, profile, question, points, pages })),
       });
     }
 
@@ -560,7 +689,12 @@ export async function POST(request) {
     const responsePromise = client.models.generateContent({
       model: geminiModel,
       contents: [
-        { role: "user", parts: [{ text: buildPointsPrompt(question, context, profile, descriptor, resume, coverLetter) }] },
+        {
+          role: "user",
+          parts: [
+            { text: buildPointsPrompt(question, context, profile, descriptor, resume, coverLetter, projectStories) },
+          ],
+        },
       ],
       config: { systemInstruction: POINTS_SYSTEM, responseMimeType: "application/json" },
     });
@@ -585,14 +719,15 @@ export async function POST(request) {
     }
     const type = VALID_TYPES.includes(parsed?.type) ? parsed.type : "general";
 
-    // Points mode's PROMPT is untouched (AC-H4.17/R-095's byte-identity
-    // requirement still holds — nothing above this line changed) — the model
+    // Points mode's PROMPT still carries R-095's byte-identity guarantee for
+    // a caller with none of resume/coverLetter/projectStories — buildPoints
+    // Prompt only ever adds a block when it has something to add — the model
     // is not asked for cues here, so they are always derived.
     return Response.json({
       points,
       cues: deriveCues(points),
       type,
-      ...(await answerAids({ postingDescription: posting, resume, profile, question, points, generatedProjectPromise })),
+      ...(await answerAids({ postingDescription: posting, resume, profile, question, points, generatedProjectPromise, pages })),
     });
   } catch (err) {
     return Response.json(

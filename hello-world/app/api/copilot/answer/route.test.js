@@ -29,16 +29,32 @@ function mockUser(id = "user-1") {
 // lookup finds (or null for "no such application"); `resumeContent` /
 // `coverLetterContent` are what the two document tables hand back for the
 // row's resume_used_id / cover_letter_id.
+//
+// Also answers lib/supabase/experiencePages.js's listPages query against
+// `experience_pages` — `.select("*").eq("user_id", ...).is("archived_at",
+// null).order("position", ...)` — which the applications/resumes/cover-
+// letters lookups above never call, so `is`/`order` are additions rather than
+// a replacement for the existing `maybeSingle` terminator. Real supabase-js
+// query builders are themselves awaitable (no `.single()`/`.maybeSingle()`
+// needed at the end), so `order` here returns a THENABLE — a plain resolved
+// value works the same under `await`, and is simplest — carrying
+// `{ data: pages, error: null }` rather than another link in the chain.
+// `pages` defaults to `[]`, so every one of the ~15 existing callers of this
+// helper that never pass it keep asserting exactly what they asserted before
+// project pages existed as a source.
 function mockUserWithApplicationDocs({
   id = "user-1",
   application = null,
   resumeContent = null,
   coverLetterContent = null,
+  pages = [],
 } = {}) {
   const from = vi.fn((table) => {
     const chain = {
       select: vi.fn(() => chain),
       eq: vi.fn(() => chain),
+      is: vi.fn(() => chain),
+      order: vi.fn(async () => ({ data: table === "experience_pages" ? pages : null, error: null })),
       maybeSingle: vi.fn(async () => {
         if (table === "applications") return { data: application, error: null };
         if (table === "generated_resumes") {
@@ -645,5 +661,222 @@ describe("POST /api/copilot/answer (reading aids, AC-K1)", () => {
     expect(data.resumeAnchor).toBeNull();
     expect(data.idealProject).toBeNull();
     expect(data.cues).toEqual(["A generic point"]);
+  });
+});
+
+// The caller's own "Professional Experience" project pages
+// (lib/copilot/projectStories.js) as material for "tell me about a time..."
+// questions. Fetched server-side by the signed-in user's id, alongside the
+// existing applications/posting lookups — never from the request body.
+describe("POST /api/copilot/answer (project pages)", () => {
+  const PROJECT_PAGE = {
+    id: "page-1",
+    title: "Payments migration",
+    body: [
+      "Led the settlement rewrite end to end.",
+      "",
+      "- Cut settlement time from three days to one",
+      "- Mentored two junior engineers on the rollout",
+    ].join("\n"),
+    generated_kind: null,
+    archived_at: null,
+  };
+
+  const GENERATED_PAGE = {
+    id: "page-2",
+    title: "Research: Payments industry",
+    body: "- The payments industry grew 12% last year",
+    generated_kind: "research",
+    archived_at: null,
+  };
+
+  // Byte-identity, AC-style: with no eligible project pages (mockUser()'s
+  // fake client has no `.from` at all, so listPages degrades to `pages: []`
+  // exactly like a real "user has none" response), buildPointsPrompt and
+  // buildAnswerPrompt must add NOTHING — every place either function's
+  // output can change is gated on a truthy `projectStories`, and
+  // lib/copilot/projectStories.js's own tests already pin
+  // buildProjectStoriesBlock([]).block === "".
+  it("the points-mode prompt carries no trace of project pages when there are none", async () => {
+    mockUser();
+    mockGemini({ points: ["Point one."], type: "general" });
+    const res = await POST(jsonRequest({ question: "Tell me about yourself.", engine: "gemini" }));
+    expect(res.status).toBe(200);
+    const client = getGeminiClient();
+    const promptText = client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
+    expect(promptText).not.toContain("PROJECT PAGES");
+  });
+
+  it("the answer-mode prompt carries no trace of project pages when there are none", async () => {
+    mockUser();
+    mockGemini({ points: ["A generic sample point."], type: "general" });
+    const res = await POST(jsonRequest({ question: "Tell me about yourself.", mode: "answer", engine: "gemini" }));
+    expect(res.status).toBe(200);
+    const client = getGeminiClient();
+    const promptText = client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
+    expect(promptText).not.toContain("PROJECT PAGES");
+    expect(promptText).toContain("CANDIDATE PREP NOTES, SUBMITTED RESUME, or SUBMITTED COVER LETTER");
+  });
+
+  it("a generated page never reaches either prompt, even though its row exists", async () => {
+    mockUserWithApplicationDocs({ pages: [GENERATED_PAGE] });
+    mockGemini({ points: ["Point one."], type: "general" });
+    const res = await POST(jsonRequest({ question: "Tell me about yourself.", engine: "gemini" }));
+    expect(res.status).toBe(200);
+    const client = getGeminiClient();
+    const promptText = client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
+    expect(promptText).not.toContain("Research: Payments industry");
+    expect(promptText).not.toContain("payments industry grew 12%");
+  });
+
+  it("an eligible project page reaches the points-mode prompt, labelled distinctly from resume/cover letter", async () => {
+    mockUserWithApplicationDocs({ pages: [PROJECT_PAGE] });
+    mockGemini({ points: ["Point one."], type: "general" });
+    const res = await POST(jsonRequest({ question: "Tell me about a time you led a project.", engine: "gemini" }));
+    expect(res.status).toBe(200);
+    const client = getGeminiClient();
+    const promptText = client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
+    expect(promptText).toContain("YOUR OWN PROJECT PAGES");
+    expect(promptText).toContain("Payments migration");
+    expect(promptText).toContain("Cut settlement time from three days to one");
+  });
+
+  it("an eligible project page reaches the answer-mode prompt, and the authority sentence names it", async () => {
+    mockUserWithApplicationDocs({ pages: [PROJECT_PAGE] });
+    mockGemini({ points: ["Situation: I led it.", "Result: It worked."], type: "behavioral" });
+    const res = await POST(
+      jsonRequest({ question: "Tell me about a time you led a project.", mode: "answer", engine: "gemini" }),
+    );
+    expect(res.status).toBe(200);
+    const client = getGeminiClient();
+    const promptText = client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
+    expect(promptText).toContain("YOUR OWN PROJECT PAGES");
+    expect(promptText).toContain("Payments migration");
+    expect(promptText).toContain(
+      "CANDIDATE PREP NOTES, SUBMITTED RESUME, SUBMITTED COVER LETTER, or YOUR OWN PROJECT PAGES",
+    );
+  });
+
+  it("a client-supplied `pages` field in the request body is ignored — only the server-side fetch can ground a prompt", async () => {
+    mockUserWithApplicationDocs({ pages: [PROJECT_PAGE] });
+    mockGemini({ points: ["Point one."], type: "general" });
+    const res = await POST(
+      jsonRequest({
+        question: "Tell me about yourself.",
+        engine: "gemini",
+        pages: [{ title: "INJECTED PAGE", body: "INJECTED BODY" }],
+      }),
+    );
+    expect(res.status).toBe(200);
+    const client = getGeminiClient();
+    const promptText = client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
+    expect(promptText).not.toContain("INJECTED PAGE");
+    expect(promptText).not.toContain("INJECTED BODY");
+    expect(promptText).toContain("Payments migration");
+  });
+
+  it("resumeAnchor.source is a third value — never 'resume', never 'prep' — when the aid is built from a project page with no resume/profile on file", async () => {
+    mockUserWithApplicationDocs({ pages: [PROJECT_PAGE] });
+    mockGemini({ points: ["Point one."], type: "general" });
+    const res = await POST(jsonRequest({ question: "Tell me about a time you led a project.", engine: "gemini" }));
+    const data = await res.json();
+    expect(data.resumeAnchor).not.toBeNull();
+    expect(data.resumeAnchor.source).not.toBe("resume");
+    expect(data.resumeAnchor.source).not.toBe("prep");
+    // Never populated from a page — see route.js's answerAids comment on why:
+    // AnswerAids.js would render either as if the material were on the
+    // candidate's résumé, which it is not.
+    expect(data.resumeAnchor.title).toBe("");
+    expect(data.resumeAnchor.company).toBe("");
+    expect(data.resumeAnchor.description).toEqual([]);
+    expect(data.resumeAnchor.project).toBeTruthy();
+  });
+
+  it("resumeAnchor stays resume-sourced when a résumé is on file, even though eligible project pages also exist", async () => {
+    mockUserWithApplicationDocs({
+      application: { id: "app-1", resume_used_id: "resume-1", cover_letter_id: null },
+      resumeContent: RESUME_DOC,
+      pages: [PROJECT_PAGE],
+    });
+    mockGemini({ points: ["Point one."], type: "general" });
+    const res = await POST(
+      jsonRequest({ question: "Tell me about a time you led a project.", engine: "gemini", applicationId: "app-1" }),
+    );
+    const data = await res.json();
+    expect(data.resumeAnchor.source).toBe("resume");
+    expect(data.resumeAnchor.company).toBe("Quantum Robotics");
+  });
+
+  it("embedded engine, answer mode: a behavioral question with an eligible project page and no resume/profile speaks the page's own title and bullets as a STAR story", async () => {
+    mockUserWithApplicationDocs({ pages: [PROJECT_PAGE] });
+    const res = await POST(
+      jsonRequest({ question: "Tell me about a time you led a project.", mode: "answer", engine: "embedded" }),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.points[0]).toBe("Situation: Payments migration.");
+    expect(data.points).toContain("Action: Cut settlement time from three days to one.");
+    expect(data.points).toContain("Result: Mentored two junior engineers on the rollout.");
+    expect(data.answer).toContain("Payments migration");
+    expect(data.answer).toContain("Cut settlement time from three days to one");
+  });
+
+  it("embedded engine, answer mode: a non-behavioral question ignores project pages and drafts exactly as before", async () => {
+    mockUserWithApplicationDocs({ pages: [PROJECT_PAGE] });
+    const question = "How would you design a rate limiter?";
+    const res = await POST(jsonRequest({ question, mode: "answer", engine: "embedded" }));
+    const data = await res.json();
+    const expected = draftSampleAnswerLocal({
+      question,
+      profile: "",
+      resume: "",
+      coverLetter: "",
+      interviewType: normalizeInterviewType(undefined),
+    });
+    expect(data.type).not.toBe("behavioral");
+    expect(data.points).toEqual(expected.points);
+    expect(data.answer).toBe(expected.answer);
+  });
+
+  it("embedded engine, answer mode: a project page with a title but no bullet lines never displaces the existing draft", async () => {
+    const noBullets = { id: "p3", title: "No bullets here", body: "Just prose, no list at all.", generated_kind: null, archived_at: null };
+    mockUserWithApplicationDocs({ pages: [noBullets] });
+    const question = "Tell me about a time you led a project.";
+    const res = await POST(jsonRequest({ question, mode: "answer", engine: "embedded" }));
+    const data = await res.json();
+    const expected = draftSampleAnswerLocal({
+      question,
+      profile: "",
+      resume: "",
+      coverLetter: "",
+      interviewType: normalizeInterviewType(undefined),
+    });
+    expect(data.points).toEqual(expected.points);
+    expect(data.answer).toBe(expected.answer);
+  });
+});
+
+// lib/copilot/answerLocal.js's profileMetric fix: a team-size mention
+// ("led a team of 6 engineers") is a statement of SCOPE, not an achieved
+// OUTCOME, and must never be spoken as a "Result:" metric. Exercised here
+// (not in a dedicated answerLocal.test.js case, which is out of scope for
+// this change) through the public route, over the plain prep-profile path —
+// independent of project pages, which never reach profileMetric at all.
+describe("POST /api/copilot/answer (profileMetric team-size fix)", () => {
+  it("a team-size mention in the prep profile is never presented as a Result metric", async () => {
+    mockUser();
+    const profile = [
+      "Senior Engineer, Acme Corp",
+      "Jan 2020 - Present",
+      "Led a team of 6 engineers to rebuild the checkout system.",
+    ].join("\n");
+    const res = await POST(
+      jsonRequest({ question: "Tell me about a time you led a team.", profile, engine: "embedded" }),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    const resultPoint = data.points.find((p) => p.startsWith("Result:"));
+    expect(resultPoint).toBeTruthy();
+    expect(resultPoint).not.toMatch(/6 engineers/i);
   });
 });

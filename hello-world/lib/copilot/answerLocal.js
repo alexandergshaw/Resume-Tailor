@@ -86,9 +86,18 @@ export function profileHeadline(profile) {
 
 // A quantified achievement to gesture at ("40%", "$2M", "10k users"). Empty when
 // the profile has no obvious metric.
+//
+// The noun list deliberately excludes "people"/"engineers"/"reports" — a
+// digit next to one of those ("led a team of 6 engineers") states the SCOPE
+// of a role, not an outcome of it, and project pages (which this same
+// function mines via draftAnswerLocal/draftSampleAnswerLocal, see
+// combineMaterial) are dense with exactly that phrasing. Presenting a team
+// size as a "Result:" metric was a real, reported defect; the fix is to never
+// treat that shape as an achievement figure, not to special-case any one
+// caller.
 export function profileMetric(profile) {
   const m = String(profile || "").match(
-    /(\d+(?:\.\d+)?%|\$\s?\d[\d,.]*\s?[kmb]?\b|\b\d[\d,]*\+?\s*(?:users|customers|clients|requests|deals|hires|people|engineers|reports|hours|days|x)\b)/i,
+    /(\d+(?:\.\d+)?%|\$\s?\d[\d,.]*\s?[kmb]?\b|\b\d[\d,]*\+?\s*(?:users|customers|clients|requests|deals|hires|hours|days|x)\b)/i,
   );
   return m ? m[0].trim() : "";
 }
