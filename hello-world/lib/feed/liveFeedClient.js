@@ -41,6 +41,69 @@ export const SINCE_LABELS = {
   30: "Last 30 days",
 };
 
+// Human-readable labels for every source ingestFeed writes (docs/REGRESSION.md
+// R-209). The Live Feed used to render `posting.source` raw, so a card showed
+// a database value like "highered_rss" instead of anything a person would
+// recognize.
+export const SOURCE_LABELS = {
+  greenhouse: "Greenhouse",
+  lever: "Lever",
+  ashby: "Ashby",
+  highered_rss: "Higher Ed Job Board",
+  ai_search: "AI Search",
+};
+
+// Falls back to the raw value for a source this map hasn't caught up to yet —
+// hiding an unknown source behind "Unknown" erases the only clue anyone
+// debugging a new adapter has. Missing entirely (not merely unrecognized)
+// renders as "" rather than the literal word "undefined".
+export function sourceLabel(source) {
+  if (!source) return "";
+  return SOURCE_LABELS[source] || source;
+}
+
+// The trust signal for a model-proposed posting, shown as visible text on
+// every ai_search card (not tooltip-only — a tooltip is unreachable on touch
+// and easy to miss). lib/feed/llmSearch.js proves the URL resolves to a page
+// that reads like an individual posting; it proves nothing about the role's
+// quality and nothing about whether the job is still open, so this must not
+// overstate what happened. Every other source came straight from a company's
+// own ATS and has no verification story to tell, hence "".
+export function sourceProvenance(source) {
+  if (source !== "ai_search") return "";
+  return "Verified: we opened and checked the posting page.";
+}
+
+// The toolbar chip used to read `sourceHealth?.greenhouse?.failures` alone,
+// so a total outage of Lever, Ashby, the RSS feeds or AI search displayed as
+// perfect health — wrong the moment a second source was added. Sums failures
+// across every source in the health report. A `skipped` source (the AI-search
+// cadence gate saying "not this run", R-205) is not a failure and must not be
+// counted, or every correctly-configured deploy shows a warning.
+export function sourceHealthFailureCount(sourceHealth) {
+  if (!sourceHealth || typeof sourceHealth !== "object") return 0;
+  let total = 0;
+  for (const entry of Object.values(sourceHealth)) {
+    if (!entry || typeof entry !== "object") continue;
+    if (entry.skipped) continue;
+    if (typeof entry.failures === "number" && Number.isFinite(entry.failures)) {
+      total += entry.failures;
+    }
+  }
+  return total;
+}
+
+// The toolbar's freshness status text. Staleness used to be signalled ONLY by
+// a dot changing from green to amber — colour carrying meaning with no text
+// equivalent (WCAG 1.4.1). The stale and fresh strings must differ in words,
+// both carry the relative time, and the before-first-ingest state (no
+// lastUpdatedAt yet) stays distinct from both.
+export function freshnessLabel({ lastUpdatedAt, isStale, relativeLabel }) {
+  if (!lastUpdatedAt) return "Awaiting first ingest";
+  if (isStale) return `Feed data may be out of date — last updated ${relativeLabel}`;
+  return `Updated ${relativeLabel}`;
+}
+
 export function loadFilters() {
   if (typeof window === "undefined") return DEFAULT_FILTERS;
   try {

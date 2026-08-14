@@ -3,31 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
-import TextField from "@mui/material/TextField";
-import FormControl from "@mui/material/FormControl";
-import InputLabel from "@mui/material/InputLabel";
-import Select from "@mui/material/Select";
-import MenuItem from "@mui/material/MenuItem";
-import IconButton from "@mui/material/IconButton";
-import Tooltip from "@mui/material/Tooltip";
-import Chip from "@mui/material/Chip";
 import Skeleton from "@mui/material/Skeleton";
 import Alert from "@mui/material/Alert";
 import CircularProgress from "@mui/material/CircularProgress";
 import Typography from "@mui/material/Typography";
-import Badge from "@mui/material/Badge";
 import Divider from "@mui/material/Divider";
 import Paper from "@mui/material/Paper";
-import FormControlLabel from "@mui/material/FormControlLabel";
-import Switch from "@mui/material/Switch";
-import RefreshIcon from "@mui/icons-material/Refresh";
-import OpenInNewIcon from "@mui/icons-material/OpenInNew";
-import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
-import DescriptionIcon from "@mui/icons-material/Description";
-import TuneIcon from "@mui/icons-material/Tune";
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import ExpandLessIcon from "@mui/icons-material/ExpandLess";
-import FilterAltOffIcon from "@mui/icons-material/FilterAltOff";
 import Collapse from "@mui/material/Collapse";
 import Snackbar from "@mui/material/Snackbar";
 import TabHeader from "./TabHeader";
@@ -36,9 +17,13 @@ import JobFilterControls from "./JobFilterControls";
 import SavedSearchStrip from "./SavedSearchStrip";
 import AutoApplyQueueTab from "./AutoApplyQueueTab";
 import AutofillProfileDialog from "./AutofillProfileDialog";
+import FeedPostingCard from "./feed/FeedPostingCard";
+import FeedToolbar from "./feed/FeedToolbar";
+import FeedFilterSummary from "./feed/FeedFilterSummary";
+import FeedEmailAlerts from "./feed/FeedEmailAlerts";
+import FeedSearchFields from "./feed/FeedSearchFields";
 import { buildBookmarklet, profileHasValues } from "@/lib/autofill/buildBookmarklet";
 import { openPostingBeside } from "@/lib/window/openPostingBeside";
-import { parseSalary, formatSalary } from "@/lib/feed/salary";
 import {
   FILTERS_STORAGE_KEY,
   ADVANCED_STORAGE_KEY,
@@ -55,6 +40,8 @@ import {
   loadPanelOpen,
   buildQueryString,
   formatRelative,
+  sourceHealthFailureCount,
+  freshnessLabel,
 } from "@/lib/feed/liveFeedClient";
 
 export default function LiveFeedTab({
@@ -648,146 +635,39 @@ export default function LiveFeedTab({
     return formatRelative(lastUpdatedAt, nowTs);
   }, [lastUpdatedAt, nowTs]);
 
+  // Toolbar status text (WCAG 1.4.1 -- staleness must be legible without the
+  // dot's colour) and the total failure count across every source, not just
+  // Greenhouse (a total Lever/Ashby/RSS/AI-search outage used to read as
+  // perfect health). See lib/feed/liveFeedClient.js for both.
+  const freshnessText = freshnessLabel({
+    lastUpdatedAt,
+    isStale,
+    relativeLabel: lastUpdatedLabel,
+  });
+  const sourceFailureCount = sourceHealthFailureCount(sourceHealth);
+
   return (
     <section className={styles.tabPanel}>
       <TabHeader
         title="Auto applying"
         description="A live job feed from your saved searches, with auto-tailored applications."
         actions={
-          <Box
-            sx={{
-              display: "flex",
-              flexWrap: "wrap",
-              alignItems: "center",
-              gap: 1,
-            }}
-          >
-            <Tooltip title="Refresh now">
-              <span>
-                <IconButton
-                  onClick={handleManualRefresh}
-                  disabled={refreshing}
-                  size="small"
-                  color="primary"
-                >
-                  {refreshing ? <CircularProgress size={18} /> : <RefreshIcon />}
-                </IconButton>
-              </span>
-            </Tooltip>
-
-            {/* Freshness indicator dot */}
-            <Box
-              sx={{
-                width: 8,
-                height: 8,
-                borderRadius: "50%",
-                flexShrink: 0,
-                bgcolor: !lastUpdatedAt
-                  ? "grey.400"
-                  : isStale
-                    ? "warning.main"
-                    : "success.main",
-                boxShadow: (theme) =>
-                  !lastUpdatedAt
-                    ? "none"
-                    : `0 0 0 3px ${
-                        isStale
-                          ? "var(--warning-soft)"
-                          : "var(--success-soft)"
-                      }`,
-              }}
-            />
-            <Typography variant="caption" color="text.secondary">
-              {lastUpdatedAt
-                ? `Updated ${lastUpdatedLabel}`
-                : "Awaiting first ingest"}
-            </Typography>
-            {sourceHealth?.greenhouse?.failures > 0 && (
-              <Tooltip
-                title={`${sourceHealth.greenhouse.failures} source(s) failed on the last ingest`}
-              >
-                <Chip
-                  size="small"
-                  color="warning"
-                  variant="outlined"
-                  label={`${sourceHealth.greenhouse.failures} src errors`}
-                />
-              </Tooltip>
-            )}
-
-            {/* Feed vs. Auto-Apply Queue toggle */}
-            <Box
-              sx={{
-                display: "inline-flex",
-                borderRadius: 1.5,
-                border: "1px solid",
-                borderColor: "divider",
-                overflow: "hidden",
-              }}
-            >
-              <Button
-                size="small"
-                disableElevation
-                variant={view === "feed" ? "contained" : "text"}
-                color={view === "feed" ? "primary" : "inherit"}
-                onClick={() => setView("feed")}
-                sx={{ textTransform: "none", fontWeight: 600, borderRadius: 0, px: 1.75 }}
-              >
-                Feed
-              </Button>
-              <Button
-                size="small"
-                disableElevation
-                variant={view === "queue" ? "contained" : "text"}
-                color={view === "queue" ? "primary" : "inherit"}
-                onClick={() => setView("queue")}
-                sx={{ textTransform: "none", fontWeight: 600, borderRadius: 0, px: 1.75 }}
-              >
-                <Badge
-                  badgeContent={queueCount}
-                  color="secondary"
-                  sx={{ "& .MuiBadge-badge": { right: -10, top: -2 } }}
-                >
-                  Queue
-                </Badge>
-              </Button>
-            </Box>
-
-            <Badge
-              badgeContent={activeFilterCount}
-              color="primary"
-              overlap="rectangular"
-              sx={{ "& .MuiBadge-badge": { right: 4, top: 4 } }}
-            >
-              <Button
-                size="small"
-                variant={advancedOpen || activeFilterCount > 0 ? "contained" : "outlined"}
-                color={activeFilterCount > 0 ? "primary" : "inherit"}
-                disableElevation
-                startIcon={<TuneIcon />}
-                endIcon={advancedOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                onClick={() => setAdvancedOpen((v) => !v)}
-                sx={{ textTransform: "none", fontWeight: 600, px: 1.75 }}
-              >
-                Filters
-              </Button>
-            </Badge>
-
-            {currentUser && (
-              <Tooltip title="Edit the profile used by Auto Fill and get your bookmarklet">
-                <Button
-                  size="small"
-                  variant="outlined"
-                  color="inherit"
-                  disableElevation
-                  onClick={() => setAutofillDialogOpen(true)}
-                  sx={{ textTransform: "none", fontWeight: 600, px: 1.75 }}
-                >
-                  Autofill profile
-                </Button>
-              </Tooltip>
-            )}
-          </Box>
+          <FeedToolbar
+            refreshing={refreshing}
+            onRefresh={handleManualRefresh}
+            hasUpdated={!!lastUpdatedAt}
+            isStale={isStale}
+            freshnessText={freshnessText}
+            failureCount={sourceFailureCount}
+            view={view}
+            onChangeView={setView}
+            queueCount={queueCount}
+            activeFilterCount={activeFilterCount}
+            advancedOpen={advancedOpen}
+            onToggleAdvanced={() => setAdvancedOpen((v) => !v)}
+            currentUser={currentUser}
+            onOpenAutofillProfile={() => setAutofillDialogOpen(true)}
+          />
         }
       />
 
@@ -819,139 +699,16 @@ export default function LiveFeedTab({
             saveLabel="current feed search"
           />
 
-          {currentUser && typeof setSavedSearchAutoTailor === "function" && savedSearches.length > 0 && (
-            <Box sx={{ mt: 1.5 }}>
-              <Typography
-                variant="overline"
-                color="text.secondary"
-                sx={{ display: "block", letterSpacing: 0.6, mb: 0.5 }}
-              >
-                Email alerts
-              </Typography>
-              <Typography sx={{ color: "text.secondary", fontSize: "0.78rem", mb: 1 }}>
-                Get an email whenever a saved search matches a newly fetched posting.
-              </Typography>
-              <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
-                {savedSearches.map((entry) => {
-                  const isServerBacked =
-                    typeof entry.id === "string" && !entry.id.startsWith("ss-");
-                  return (
-                    <Box
-                      key={entry.id}
-                      sx={{
-                        p: 1,
-                        border: "1px solid",
-                        borderColor: "divider",
-                        borderRadius: 1,
-                        bgcolor: "background.paper",
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 0.5,
-                      }}
-                    >
-                      <Box sx={{ fontWeight: 600, fontSize: "0.82rem" }}>{entry.name}</Box>
-                      {isServerBacked ? (
-                        <>
-                          <FormControlLabel
-                            control={
-                              <Switch
-                                size="small"
-                                checked={!!entry.emailOnNewJobs}
-                                onChange={(e) =>
-                                  setSavedSearchAutoTailor(entry.id, {
-                                    emailOnNewJobs: e.target.checked,
-                                  })
-                                }
-                              />
-                            }
-                            label={<Box sx={{ fontSize: "0.78rem" }}>Email me new jobs</Box>}
-                            sx={{ m: 0 }}
-                          />
-                          {entry.emailOnNewJobs && (
-                            <TextField
-                              type="email"
-                              size="small"
-                              placeholder="Account email (default)"
-                              value={entry.notifyEmail ?? ""}
-                              onChange={(e) =>
-                                setSavedSearchAutoTailor(entry.id, {
-                                  notifyEmail: e.target.value,
-                                  persist: false,
-                                })
-                              }
-                              onBlur={(e) =>
-                                setSavedSearchAutoTailor(entry.id, {
-                                  notifyEmail: e.target.value.trim(),
-                                })
-                              }
-                              slotProps={{ htmlInput: { style: { padding: "4px 6px", fontSize: "0.75rem" } } }}
-                              sx={{ "& .MuiOutlinedInput-root": { borderRadius: 1 } }}
-                            />
-                          )}
-                        </>
-                      ) : (
-                        <Box
-                          sx={{
-                            color: "text.disabled",
-                            fontSize: "0.72rem",
-                            fontStyle: "italic",
-                          }}
-                        >
-                          Sign-in–only saved search (local). Re-save while signed in to enable email alerts.
-                        </Box>
-                      )}
-                    </Box>
-                  );
-                })}
-              </Box>
-            </Box>
-          )}
+          <FeedEmailAlerts
+            currentUser={currentUser}
+            setSavedSearchAutoTailor={setSavedSearchAutoTailor}
+            savedSearches={savedSearches}
+          />
 
           <Divider sx={{ my: 2 }} />
 
           {/* Active filter summary chips */}
-          {activeFilterChips.length > 0 && (
-            <Box sx={{ mb: 2 }}>
-              <Box
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 1,
-                  mb: 1,
-                }}
-              >
-                <Typography
-                  variant="overline"
-                  color="text.secondary"
-                  sx={{ letterSpacing: 0.6 }}
-                >
-                  Active filters
-                </Typography>
-                <Button
-                  size="small"
-                  color="inherit"
-                  startIcon={<FilterAltOffIcon fontSize="small" />}
-                  onClick={clearAllFilters}
-                  sx={{ textTransform: "none", color: "text.secondary" }}
-                >
-                  Clear all
-                </Button>
-              </Box>
-              <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75 }}>
-                {activeFilterChips.map((chip) => (
-                  <Chip
-                    key={chip.key}
-                    label={chip.label}
-                    size="small"
-                    variant="outlined"
-                    onDelete={chip.onDelete}
-                    sx={{ maxWidth: 240 }}
-                  />
-                ))}
-              </Box>
-            </Box>
-          )}
+          <FeedFilterSummary chips={activeFilterChips} onClearAll={clearAllFilters} />
 
           {/* Search section */}
           <Typography
@@ -961,71 +718,7 @@ export default function LiveFeedTab({
           >
             Search
           </Typography>
-          <Box
-            sx={{
-              display: "grid",
-              gridTemplateColumns: {
-                xs: "1fr",
-                sm: "repeat(2, 1fr)",
-                md: "repeat(4, 1fr)",
-              },
-              gap: 1.5,
-            }}
-          >
-            <TextField
-              size="small"
-              fullWidth
-              label="Search title or company"
-              value={filters.q}
-              onChange={(e) => updateFilter("q", e.target.value)}
-            />
-            <TextField
-              size="small"
-              fullWidth
-              label="Location"
-              value={filters.location}
-              onChange={(e) => updateFilter("location", e.target.value)}
-            />
-            <FormControl size="small" fullWidth>
-              <InputLabel>Work type</InputLabel>
-              <Select
-                label="Work type"
-                value={filters.remote}
-                onChange={(e) => updateFilter("remote", e.target.value)}
-              >
-                <MenuItem value="">Any</MenuItem>
-                <MenuItem value="remote">Remote</MenuItem>
-                <MenuItem value="hybrid">Hybrid</MenuItem>
-                <MenuItem value="onsite">On-site</MenuItem>
-              </Select>
-            </FormControl>
-            <FormControl size="small" fullWidth>
-              <InputLabel>Posted</InputLabel>
-              <Select
-                label="Posted"
-                value={filters.since}
-                onChange={(e) => updateFilter("since", e.target.value)}
-              >
-                <MenuItem value="">Any time</MenuItem>
-                <MenuItem value="1">Last 24h</MenuItem>
-                <MenuItem value="3">Last 3 days</MenuItem>
-                <MenuItem value="7">Last 7 days</MenuItem>
-                <MenuItem value="30">Last 30 days</MenuItem>
-              </Select>
-            </FormControl>
-            <FormControl size="small" fullWidth>
-              <InputLabel>Sort</InputLabel>
-              <Select
-                label="Sort"
-                value={filters.sort}
-                onChange={(e) => updateFilter("sort", e.target.value)}
-              >
-                <MenuItem value="newest">Newest</MenuItem>
-                <MenuItem value="relevance">Relevance</MenuItem>
-                <MenuItem value="company">Company A–Z</MenuItem>
-              </Select>
-            </FormControl>
-          </Box>
+          <FeedSearchFields filters={filters} updateFilter={updateFilter} />
 
           <Divider sx={{ my: 2 }} />
 
@@ -1113,177 +806,19 @@ export default function LiveFeedTab({
       {/* Feed list */}
       {!loading && items.length > 0 && (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-          {items.map((posting) => {
-            const busy = !!busyIds[posting.id];
-            // Prefer the salary columns populated during ingestion; for any
-            // posting still missing them, fall back to parsing the snippet.
-            let salaryMin = posting.salary_min;
-            let salaryMax = posting.salary_max;
-            if (salaryMin == null && salaryMax == null) {
-              const parsed = parseSalary(posting.description_snippet || "");
-              salaryMin = parsed.min;
-              salaryMax = parsed.max;
-            }
-            const salaryLabel = formatSalary(salaryMin, salaryMax);
-            return (
-              <Box
-                key={posting.id}
-                sx={{
-                  border: "1px solid var(--border)",
-                  borderRadius: 1.5,
-                  p: 1.5,
-                  display: "flex",
-                  gap: 1.5,
-                  alignItems: "flex-start",
-                  bgcolor: "background.paper",
-                  transition: "box-shadow 120ms ease",
-                  "&:hover": { boxShadow: 2 },
-                }}
-              >
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Box
-                    sx={{
-                      display: "flex",
-                      alignItems: "baseline",
-                      gap: 1,
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <Box
-                      sx={{
-                        fontWeight: 700,
-                        fontSize: "0.98rem",
-                        color: "text.primary",
-                      }}
-                    >
-                      {posting.title || "Untitled role"}
-                    </Box>
-                    <Box sx={{ color: "text.secondary", fontSize: "0.88rem" }}>
-                      {posting.company || "—"}
-                    </Box>
-                  </Box>
-
-                  <Box
-                    sx={{
-                      display: "flex",
-                      gap: 0.75,
-                      flexWrap: "wrap",
-                      mt: 0.5,
-                      alignItems: "center",
-                    }}
-                  >
-                    {salaryLabel && (
-                      <Chip
-                        size="small"
-                        label={salaryLabel}
-                        sx={{
-                          fontWeight: 700,
-                          bgcolor: "var(--success-soft)",
-                          color: "var(--success)",
-                          border: "1px solid var(--success-soft)",
-                        }}
-                      />
-                    )}
-                    {posting.location && (
-                      <Chip size="small" label={posting.location} variant="outlined" />
-                    )}
-                    {posting.remote_type && posting.remote_type !== "unknown" && (
-                      <Chip
-                        size="small"
-                        label={posting.remote_type}
-                        color={posting.remote_type === "remote" ? "success" : "default"}
-                        variant="outlined"
-                      />
-                    )}
-                    <Chip size="small" label={posting.source} variant="outlined" />
-                    {posting.posted_at && (
-                      <Box sx={{ fontSize: "0.78rem", color: "text.secondary" }}>
-                        {formatRelative(posting.posted_at, nowTs)}
-                      </Box>
-                    )}
-                  </Box>
-
-                  {posting.description_snippet && (
-                    <Box
-                      sx={{
-                        mt: 0.75,
-                        fontSize: "0.84rem",
-                        color: "text.secondary",
-                        display: "-webkit-box",
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: "vertical",
-                        overflow: "hidden",
-                      }}
-                    >
-                      {posting.description_snippet}
-                    </Box>
-                  )}
-                </Box>
-
-                <Box sx={{ display: "flex", flexDirection: "column", gap: 0.25 }}>
-                  {posting.url && (
-                    <Tooltip title="Open posting">
-                      <IconButton
-                        size="small"
-                        component="a"
-                        href={posting.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        <OpenInNewIcon fontSize="small" />
-                      </IconButton>
-                    </Tooltip>
-                  )}
-                  <Tooltip
-                    title={
-                      canTailor
-                        ? "Tailor Resume and Cover Letter"
-                        : "Upload a resume first to tailor"
-                    }
-                  >
-                    <span>
-                      <IconButton
-                        size="small"
-                        disabled={!currentUser || !canTailor || busy}
-                        onClick={() => handleTailorPosting(posting)}
-                        color="primary"
-                      >
-                        {busy ? (
-                          <CircularProgress size={18} />
-                        ) : (
-                          <DescriptionIcon fontSize="small" />
-                        )}
-                      </IconButton>
-                    </span>
-                  </Tooltip>
-                  <Tooltip title="Open the posting and copy the autofill bookmarklet">
-                    <span>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        disabled={!currentUser || busy || !posting.url}
-                        onClick={() => handleAutoFill(posting)}
-                        sx={{ textTransform: "none", minWidth: 0, px: 1, py: 0.25, fontSize: "0.72rem" }}
-                      >
-                        Auto Fill
-                      </Button>
-                    </span>
-                  </Tooltip>
-                  <Tooltip title="Hide">
-                    <span>
-                      <IconButton
-                        size="small"
-                        disabled={!currentUser || busy}
-                        onClick={() => handleHide(posting)}
-                      >
-                        <VisibilityOffIcon fontSize="small" />
-                      </IconButton>
-                    </span>
-                  </Tooltip>
-                </Box>
-              </Box>
-            );
-          })}
+          {items.map((posting) => (
+            <FeedPostingCard
+              key={posting.id}
+              posting={posting}
+              busy={!!busyIds[posting.id]}
+              canTailor={canTailor}
+              currentUser={currentUser}
+              nowTs={nowTs}
+              onTailor={handleTailorPosting}
+              onAutoFill={handleAutoFill}
+              onHide={handleHide}
+            />
+          ))}
 
           {nextCursor != null && (
             <Box sx={{ display: "flex", justifyContent: "center", py: 1.5 }}>
