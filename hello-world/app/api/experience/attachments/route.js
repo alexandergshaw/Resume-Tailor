@@ -74,7 +74,7 @@ export async function POST(request) {
     return Response.json({ error: classification.reason, kind: classification.kind }, { status: 400 });
   }
 
-  const { attachment, error } = await createAttachment(supabase, userId, {
+  const { attachment, error, stage } = await createAttachment(supabase, userId, {
     id,
     pageId,
     file,
@@ -84,12 +84,32 @@ export async function POST(request) {
     notes: typeof notes === "string" ? notes : "",
   });
   if (error) {
+    if (stage === "upload") {
+      // Safe to report verbatim, unlike every other error below: this is
+      // about the caller's OWN file (a storage-key or bucket-restriction
+      // refusal), never about another tenant's row, so there is no
+      // existence-oracle risk here - see createAttachment's own comment on
+      // why "upload" is the one stage that gets this treatment. Naming the
+      // file matters too, since a page can have more than one upload in
+      // flight at once. Still worth a server-side log: a storage refusal
+      // can point at a bucket misconfiguration nobody would otherwise see.
+      // NOTE: a transient storage outage also reports as stage "upload" and
+      // so also becomes a 400 here rather than a 5xx - the store cannot yet
+      // tell "bad key" apart from "Supabase had a blip", and making the
+      // common, actionable case (a rejected filename) actionable is worth
+      // that imprecision on the rare transient one.
+      console.error("experience attachment upload failed:", error);
+      return Response.json({ error: `Could not upload "${file.name}": ${error}` }, { status: 400 });
+    }
     // Never forward a database error verbatim here: an id collision on
     // insert returns Postgres's "duplicate key value violates unique
     // constraint" message, which is a cross-tenant existence oracle for
     // attachment ids (this feature's own rule is 404, never 403 - a
     // distinguishable error is the same class of leak). Log the real
-    // reason server-side and answer with a generic message instead.
+    // reason server-side and answer with a generic message instead. Also
+    // the fallback for a store that returns an error without a `stage` at
+    // all (or `stage: "unknown"`) - the safe default when the failure
+    // can't be attributed to the caller's own file.
     console.error("experience attachment create failed:", error);
     return Response.json({ error: "Could not save this attachment." }, { status: 500 });
   }

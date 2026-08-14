@@ -50,7 +50,12 @@ export async function createAttachment(supabase, userId, { id, pageId, file, nam
       upsert: false,
     });
     if (uploadError) {
-      return { attachment: null, error: uploadError.message || "Could not upload this file." };
+      // stage: "upload" - this failure is about the caller's OWN file (a
+      // storage-key or bucket-restriction refusal), never about another
+      // tenant's row, so the route is safe to report it verbatim. Distinct
+      // from the "insert" stage below, whose message can carry a duplicate-
+      // key error that names another user's existing row.
+      return { attachment: null, error: uploadError.message || "Could not upload this file.", stage: "upload" };
     }
 
     const { data, error } = await supabase
@@ -69,19 +74,28 @@ export async function createAttachment(supabase, userId, { id, pageId, file, nam
       .single();
 
     if (error) {
+      // stage: "insert" on both branches below - this is the failure that
+      // can carry Postgres's "duplicate key value violates unique
+      // constraint" text, a cross-tenant existence oracle for attachment
+      // ids, so the route must keep genericizing it no matter which of
+      // these two shapes it took.
       const { error: cleanupError } = await supabase.storage.from(BUCKET).remove([storagePath]);
       if (cleanupError) {
         return {
           attachment: null,
           error: `${error.message || "Could not save this attachment."} The uploaded file also could not be cleaned up (${cleanupError.message || "storage error"}) and may remain in storage without an entry.`,
+          stage: "insert",
         };
       }
-      return { attachment: null, error: error.message || "Could not save this attachment." };
+      return { attachment: null, error: error.message || "Could not save this attachment.", stage: "insert" };
     }
 
     return { attachment: data, error: null };
   } catch (err) {
-    return { attachment: null, error: err?.message || "Could not save this attachment." };
+    // stage: "unknown" - could be either exit above (or something neither
+    // anticipated, e.g. a network throw), so the route cannot assume this
+    // is safe to report verbatim and must keep genericizing it too.
+    return { attachment: null, error: err?.message || "Could not save this attachment.", stage: "unknown" };
   }
 }
 

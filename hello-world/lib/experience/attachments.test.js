@@ -312,6 +312,15 @@ describe("classifyAttachment: PowerPoint and Excel", () => {
   });
 });
 
+// The character set Supabase Storage accepts in an object key, from
+// storage-api's own isValidKey. Note the absence of a `u` flag on `\w`: it is
+// ASCII [A-Za-z0-9_] only, so every non-ASCII character is outside the set
+// too. @supabase/storage-js does no client-side key validation (there is no
+// isValidKey anywhere in node_modules/@supabase), so a key outside this set is
+// refused by the server at upload time - which the API route then reported as
+// a bare "Could not save this attachment."
+const STORAGE_KEY_SAFE = /^(\w|\/|!|-|\.|\*|'|\(|\)| |&|\$|@|=|;|:|\+|,|\?)*$/;
+
 describe("storagePathFor", () => {
   const ID = "att-0001";
   const PREFIX = "u1/experience/p1/";
@@ -420,6 +429,11 @@ describe("storagePathFor", () => {
       // encoded fixtures asserted nothing, because %2e%2e%2f contains no
       // literal separator or dot pair for the other assertions to catch.
       expect(/%[0-9a-fA-F]{2}/.test(segment), label).toBe(false);
+      // A key outside the storage charset is refused at upload time, so a
+      // segment that satisfies every traversal rule above and still cannot be
+      // written is worth nothing. Asserted over the WHOLE path, not just the
+      // segment, so the owner/page prefix is covered too.
+      expect(STORAGE_KEY_SAFE.test(path), label).toBe(true);
       expect(forbiddenCharIn(segment), label).toBeNull();
       expect(segment.length, label).toBeGreaterThan(0);
       // Length is checked AFTER every transform: NFKC can expand one character
@@ -457,6 +471,99 @@ describe("storagePathFor", () => {
     expect(a).not.toBe(b);
     expect(a).toContain("january");
     expect(a.endsWith(".pdf")).toBe(true);
+  });
+
+  it("escapes the characters PowerPoint itself puts in a file name", () => {
+    // The exact upload that failed in real use. PowerPoint appends
+    // "[Autosaved]" on its own - twice, here - and square brackets are outside
+    // the storage charset, so the object was refused and the API route
+    // reported only "Could not save this attachment."
+    const real = "Centralized PR Standards [Autosaved] [Autosaved].pptx";
+    const key = storagePathFor("u1", "p1", ID, real);
+
+    expect(STORAGE_KEY_SAFE.test(key)).toBe(true);
+    // REPLACED, not deleted, and asserted as the replacement rather than as
+    // "contains Autosaved": simply dropping every unsafe character also
+    // yields a charset-safe key containing "Centralized PR Standards" and
+    // "Autosaved" with no brackets, so the obvious spelling of this test
+    // passes against a sanitizer that silently eats characters.
+    expect(key).toContain("Centralized PR Standards _Autosaved_ _Autosaved_.pptx");
+    expect(key.endsWith(".pptx")).toBe(true);
+    expect(key.includes("[")).toBe(false);
+    expect(key.includes("]")).toBe(false);
+  });
+
+  it("escapes rather than deletes, even when the whole stem is unsafe", () => {
+    // Deletion is only visibly wrong once nothing safe is left: "会社概要.pptx"
+    // would collapse to ".pptx", whose leading dot the trim stage then eats,
+    // leaving the bare word "pptx" - a key with no extension at all, so the
+    // download cannot be opened. The name part must survive as SOMETHING.
+    const key = storagePathFor("u1", "p1", ID, `${String.fromCodePoint(0x4f1a, 0x793e)}.pptx`);
+    expect(STORAGE_KEY_SAFE.test(key)).toBe(true);
+    expect(key.endsWith(".pptx")).toBe(true);
+    expect(key).toContain("u4f1au793e");
+  });
+
+  it("escapes an astral character as one code point, not two surrogate halves", () => {
+    // Iterating by UTF-16 unit escapes an emoji as its two surrogates
+    // ("ud83cudf89"), which is still pure ASCII and still passes every
+    // charset assertion above - so only naming the expected code point
+    // catches it.
+    const key = storagePathFor("u1", "p1", ID, `party${String.fromCodePoint(0x1f389)}.pptx`);
+    expect(key).toContain("partyu1f389.pptx");
+    expect(key.includes("ud83c")).toBe(false);
+  });
+
+  it("keeps two same-length names in different scripts apart", () => {
+    // The older "does not merge names that differ only by case or by script"
+    // case below happens to contrast a two-character name with a
+    // three-character one, so collapsing all non-ASCII to a single "_" still
+    // yields different keys ("__" vs "___") and survives it. Same length is
+    // what actually forces the escape to carry the code points.
+    const a = storagePathFor("u1", "p1", ID, `${String.fromCodePoint(0x4e2d, 0x6587)}.png`);
+    const b = storagePathFor("u1", "p1", ID, `${String.fromCodePoint(0x65e5, 0x672c)}.png`);
+    expect(a).not.toBe(b);
+  });
+
+  it("keeps every key inside the character set Supabase Storage accepts", () => {
+    const names = [
+      "Centralized PR Standards [Autosaved] [Autosaved].pptx",
+      "Q3 Review [Compatibility Mode].xlsx",
+      "budget #3 & forecast.xlsx",
+      "50% margin.xlsx",
+      "notes{draft}.md",
+      "a<b>c.txt",
+      "pipe|name.txt",
+      "back`tick.md",
+      "caret^name.png",
+      "tilde~name.png",
+      "Übersicht Ergebnisse.xlsx",
+      "会社概要.pptx",
+      "emoji-deck.pptx".replace("deck", String.fromCodePoint(0x1f389)),
+    ];
+    for (const name of names) {
+      const key = storagePathFor("u1", "p1", ID, name);
+      expect(STORAGE_KEY_SAFE.test(key), name).toBe(true);
+      const namePart = key.slice(PREFIX.length + ID.length + 1);
+      expect(namePart.length, name).toBeGreaterThan(0);
+    }
+  });
+
+  it("leaves an ordinary name completely alone", () => {
+    // Positive control for the two tests above: escaping everything, or
+    // replacing the whole segment with a constant, would satisfy both. Every
+    // character in these names is already inside the storage charset and must
+    // survive verbatim.
+    for (const name of [
+      "notes.md",
+      "Q3 Review (final) v2.pptx",
+      "R&D deck.pptx",
+      "report.2026.final.pptx",
+      "report-january.pdf",
+      "budget+forecast,v2.xlsx",
+    ]) {
+      expect(storagePathFor("u1", "p1", ID, name), name).toBe(`${PREFIX}${ID}-${name}`);
+    }
   });
 
   it("does not merge names that differ only by case or by script", () => {

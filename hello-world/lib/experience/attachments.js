@@ -300,6 +300,59 @@ function collapseSeparators(s) {
   return s.replace(/[/\\]+/g, "_");
 }
 
+// Every character a storage key segment keeps must be inside Supabase
+// Storage's own key charset — storage-api's isValidKey, copied into this
+// file's test as STORAGE_KEY_SAFE:
+//   /^(\w|\/|!|-|\.|\*|'|\(|\)| |&|\$|@|=|;|:|\+|,|\?)*$/
+// `\w` there carries no `u` flag, so it is ASCII [A-Za-z0-9_] only — every
+// non-ASCII code point is outside the set too. @supabase/storage-js does no
+// client-side check for this, so a key outside the set was refused
+// server-side at upload time, and the API route reported that refusal as a
+// bare "Could not save this attachment." — this is the real failure:
+// PowerPoint appends "[Autosaved]" to its own autosave copies, and "[" / "]"
+// are outside the set.
+//
+// Two replacement rules, not one, because collapsing everything to a single
+// "_" would merge "中文.png" and "日本語.png" onto the identical name part —
+// forbidden by "does not merge names that differ only by case or by script"
+// below, the same mistake lower-casing made for "Notes.MD" vs "notes.md" in
+// the first draft (see this file's header comment).
+//  - Disallowed ASCII (brackets, braces, angle brackets, quote, pipe, caret,
+//    tilde, backtick, #, %, ...) -> "_", so "[Autosaved]" reads as
+//    "_Autosaved_" instead of disappearing — this key is internal (the
+//    user-facing name is the unmodified `name` column), so validity matters
+//    more than readability, but "_" still keeps it recognisable.
+//  - Non-ASCII -> "u" followed by its lowercase hex code point, left-padded
+//    to at least 4 digits ("Ü" -> "u00dc", "中" -> "u4e2d", an emoji outside
+//    the BMP -> "u1f389", ...), which keeps every script and every emoji
+//    distinguishable from every other while staying pure ASCII. Excludes
+//    "/" from the allowed set even though STORAGE_KEY_SAFE permits it
+//    elsewhere in the full path: this function only ever sees one flat
+//    segment (collapseSeparators, just above, already removed any slash),
+//    so treating "/" as unsafe here is a second, independent guarantee this
+//    stage cannot manufacture a separator, not merely a consequence of
+//    running after collapseSeparators.
+//
+// Iterates by CODE POINT, not UTF-16 unit — codePointAt over a for...of
+// loop, same pattern as stripForbidden above — or an emoji's surrogate pair
+// is escaped as two separate, broken halves instead of one.
+const STORAGE_SAFE_ASCII_RE = /^[A-Za-z0-9_!\-.*'() &$@=;:+,?]$/;
+
+function escapeUnsafeChars(s) {
+  let out = "";
+  for (const ch of s) {
+    const cp = ch.codePointAt(0);
+    if (cp > 0x7f) {
+      out += `u${cp.toString(16).padStart(4, "0")}`;
+    } else if (STORAGE_SAFE_ASCII_RE.test(ch)) {
+      out += ch;
+    } else {
+      out += "_";
+    }
+  }
+  return out;
+}
+
 // Removes every occurrence of the literal substring ".." anywhere in the
 // string, repeating until none remain. A single non-repeated pass can leave
 // ".." behind (removing the first two dots of a four-dot run one pair at a
@@ -350,13 +403,21 @@ function truncatePreservingExtension(s, maxLen) {
 
 // The pipeline order is part of the contract (see the file-header comment):
 // NFKC normalize -> percent-decode to exhaustion -> strip forbidden
-// characters -> collapse separators -> strip ".." repeatedly -> trim
-// leading dots and trailing dots/spaces -> rename reserved device names ->
-// truncate. (The first two stages run as one fixed-point loop — see
-// normalizeAndDecodeToExhaustion's own comment for why.) A name that loop
-// cannot converge on in 15 rounds never reaches stage three at all: it is
-// hostile by construction (still changing on every round), so it is
-// replaced with a safe generated name instead of being sanitized further.
+// characters -> collapse separators -> escape characters outside the
+// storage charset -> strip ".." repeatedly -> trim leading dots and
+// trailing dots/spaces -> rename reserved device names -> truncate. (The
+// first two stages run as one fixed-point loop — see
+// normalizeAndDecodeToExhaustion's own comment for why.) The charset-escape
+// stage sits BEFORE the ".." pass and AFTER collapseSeparators — its two
+// outputs are "_" and "u<hex>" text, and neither can ever contain ".", "/"
+// or "\", so it cannot manufacture a traversal (see escapeUnsafeChars' own
+// comment for why it also refuses to treat "/" as safe on its own account).
+// A name that loop cannot converge on in 15 rounds never reaches stage
+// three at all: it is hostile by construction (still changing on every
+// round), so it is replaced with a safe generated name instead of being
+// sanitized further. Truncation stays LAST — a hex escape turns one code
+// point into five, so a name that measured short before this stage can
+// overflow MAX_SEGMENT only after it, never before.
 function sanitizeSegment(fileName, maxLen) {
   let s = typeof fileName === "string" ? fileName : String(fileName ?? "");
   const decoded = normalizeAndDecodeToExhaustion(s);
@@ -372,6 +433,7 @@ function sanitizeSegment(fileName, maxLen) {
   s = decoded.value;
   s = stripForbidden(s);
   s = collapseSeparators(s);
+  s = escapeUnsafeChars(s);
   s = stripDotDotRepeatedly(s);
   s = trimDotsAndSpaces(s);
   if (!s) s = "file";

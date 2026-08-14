@@ -2794,3 +2794,30 @@ Load-bearing specifics, each of which was a real defect or one an audit proved c
 - **The extension and mime tables are looked up with `hasOwnProperty`, not `table[key]`.** A plain-object lookup walks the prototype chain, so `notes.constructor` resolved to a FUNCTION - truthy, not the string `"other"` - and sailed through the unsupported-type check into an accepted upload with a function as its kind. `payload.__proto__` did the same with an object. Both survive `extensionOf`'s lower-casing, which is what makes them reachable at all. Pre-existing, found while verifying this change, and fixed at all three lookup sites.
 
 **Known gap, deliberately not closed here:** `lib/experience/deckOutline.js` returns no slides for these kinds, so an attached `.pptx` does not appear in a deck generated FROM that page. That matches how `pdf` and `text` already behave; changing it needs a new slide kind in `deckOutline.js` and a matching branch in both of `pptxWriter.js`'s switches.
+
+### R-215 | area: experience-attachments | parallel-safe: yes | automatable: yes
+
+**Summary:** A file whose name contains characters Supabase Storage refuses can still be attached, and an upload that does fail says which file and why.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/experience/attachments.test.js lib/supabase/experienceAttachments.test.js app/api/experience/attachments/route.upload.test.js`.
+
+**Expected:** All pass.
+
+**The report that produced this case:** uploading `Centralized PR Standards [Autosaved] [Autosaved].pptx` to a project page answered `Could not save this attachment.` and nothing else. Two independent defects had to line up for that:
+
+- **`storagePathFor` built a key storage refuses.** storage-api's `isValidKey` accepts only `` /^(\w|\/|!|-|\.|\*|'|\(|\)| |&|\$|@|=|;|:|\+|,|\?)*$/ ``, and that `\w` carries no `u` flag, so it is ASCII `[A-Za-z0-9_]` and every non-ASCII character is outside the set too. Square brackets are outside it. `@supabase/storage-js` does no client-side key validation, so the object was refused server-side. PowerPoint appends `[Autosaved]` to its own autosave copies, and `[Compatibility Mode]` likewise, so this is an ordinary filename rather than an exotic one.
+- **The route reported every cause with one string.** The genericization is half-right and stays: a failed INSERT can carry Postgres's `duplicate key value violates unique constraint`, which tells a caller that someone else's row holds that id. But it was applied to the storage-upload failure too, which is about the caller's own file. Two different causes - a rejected key and a bucket restriction - were indistinguishable to the user and to anyone diagnosing it.
+
+Load-bearing specifics, several of which are here because a mutation run proved the first draft of these tests could not catch them:
+
+- **The charset assertion runs over all 30 hostile names**, added INTO the existing R-192 invariant loop rather than beside it. A key that satisfies every traversal rule and still cannot be written is worth nothing.
+- **Characters are escaped, never deleted.** Asserting `contains "Autosaved"` and `no brackets` passes just as well against a sanitizer that silently eats characters, so the test names the replacement (`_Autosaved_`) instead. Deletion is visibly wrong only once nothing safe is left: a wholly non-ASCII stem would collapse to `.pptx`, whose leading dot the trim stage then eats, leaving a key with no extension.
+- **Two replacement rules, deliberately.** Disallowed ASCII becomes `_`, so the common case reads naturally. Non-ASCII becomes `u<hex code point>`, which keeps different scripts distinct. The older "does not merge names that differ only by case or by script" case cannot enforce that on its own: it contrasts a two-character name with a three-character one, so collapsing everything to `_` still yields different keys and survives it. A same-length pair is what forces the code points to be carried.
+- **Escaping iterates by code point.** By UTF-16 unit an emoji becomes its two surrogate halves - still pure ASCII, still passing every charset assertion - so the test names the expected `u1f389`.
+- **Truncation stays last.** A hex escape turns one code point into five, so a name that measured short before the escape can overflow `MAX_SEGMENT` only after it.
+- **An ordinary name is returned byte-for-byte.** `notes.md`, `Q3 Review (final) v2.pptx`, `R&D deck.pptx`, `budget+forecast,v2.xlsx` keep every character - the positive control that stops "escape everything" from passing.
+- **Only the upload stage is reported verbatim.** `createAttachment` returns `stage: "upload" | "insert" | "unknown"`; the route answers 400 naming the file and carrying the storage reason for `"upload"`, and keeps the generic 500 for everything else, including an error carrying no stage at all.
+- **`lib/supabase/experienceAttachments.test.js` exists because the route test cannot cover this.** That test mocks this module and supplies a `stage` of its own invention, so it pins what the route DOES with a stage and nothing about whether the store produces the right one. Deleting the `stage: "upload"` tag, or mislabelling the INSERT failure as an upload - which would hand Postgres's duplicate-key text straight to the client - left the entire route suite green.
+
+**Known gap:** `lib/supabase/materials.js`'s `safeMaterialName` replaces only path separators, so the supplementary-materials locker still refuses the same filenames. It cannot take this same fix as-is: its storage key has no id in it and doubles as the displayed file name, and it uploads with `upsert: true`, so any non-injective escape silently overwrites one file with another and any escape at all changes what the user sees in their list.
