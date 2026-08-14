@@ -153,6 +153,165 @@ describe("classifyAttachment", () => {
   });
 });
 
+// A project page is where the work itself lives, and most of that work leaves
+// a deck or a spreadsheet behind. Both were rejected outright as `other`
+// before this block existed - the user saw "not a supported file type" for the
+// two formats a project is most likely to have produced.
+//
+// They get their own kinds rather than joining `text`: `text` is this file's
+// word for "readable as-is", which is precisely what a zip of OOXML parts is
+// not. See lib/experience/pageContext.js, whose inventory line for these two
+// kinds has to say the contents were never read.
+describe("classifyAttachment: PowerPoint and Excel", () => {
+  // The mime types a browser actually reports.
+  //
+  // Every fixture below deliberately carries an extension the module does NOT
+  // know (".bin"), so the mime type is the only thing that can decide the
+  // kind. An earlier draft of this block named them "deck.pptx", "book.xlsx"
+  // and so on - and an audit proved that deleting the ENTIRE mime table left
+  // the spreadsheet case green, because `kindOf` fell through to the
+  // extension and reached the same answer. Twelve of the fourteen mime
+  // strings this block exists to pin were unfalsifiable.
+  //
+  // The two exceptions keep their real names on purpose: "apple.key" because
+  // ".key" is deliberately absent from the extension table (see the private
+  // key case below), so the Keynote mime is the only thing that can classify
+  // it either way.
+  //
+  // The macro-enabled types are written in the casing Windows really sends
+  // ("macroEnabled"), not folded to lower case first, because kindFromMime
+  // lowercases its input before looking anything up - a table keyed on this
+  // literal casing would never match, and a fixture that pre-folded the
+  // string would hide that.
+  const SLIDE_FILES = [
+    ["pres.bin", "application/vnd.openxmlformats-officedocument.presentationml.presentation"],
+    ["theme.bin", "application/vnd.openxmlformats-officedocument.presentationml.template"],
+    ["slideshow.bin", "application/vnd.openxmlformats-officedocument.presentationml.slideshow"],
+    ["macro-pptm.bin", "application/vnd.ms-powerpoint.presentation.macroEnabled.12"],
+    ["legacy-ppt.bin", "application/vnd.ms-powerpoint"],
+    ["opendoc-odp.bin", "application/vnd.oasis.opendocument.presentation"],
+    ["apple.key", "application/vnd.apple.keynote"],
+  ];
+
+  const SHEET_FILES = [
+    ["book.bin", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+    ["tmpl.bin", "application/vnd.openxmlformats-officedocument.spreadsheetml.template"],
+    ["macro-xlsm.bin", "application/vnd.ms-excel.sheet.macroEnabled.12"],
+    ["macro-xlsb.bin", "application/vnd.ms-excel.sheet.binary.macroEnabled.12"],
+    ["legacy-xls.bin", "application/vnd.ms-excel"],
+    ["opendoc-ods.bin", "application/vnd.oasis.opendocument.spreadsheet"],
+    ["apple-numbers.bin", "application/vnd.apple.numbers"],
+  ];
+
+  it("recognises a slide deck from its mime type", () => {
+    for (const [name, type] of SLIDE_FILES) {
+      expect(classifyAttachment(file(name, type, MB)), name).toMatchObject({ kind: "slides", ok: true });
+    }
+  });
+
+  it("recognises a spreadsheet from its mime type", () => {
+    for (const [name, type] of SHEET_FILES) {
+      expect(classifyAttachment(file(name, type, MB)), name).toMatchObject({ kind: "sheet", ok: true });
+    }
+  });
+
+  it("falls back to the extension when the browser reports no mime type", () => {
+    // Safari and several file managers hand over an empty `type` for OOXML.
+    for (const name of ["deck.pptx", "legacy.ppt", "macro.pptm", "theme.potx", "show.ppsx", "show.pps", "open.odp"]) {
+      expect(classifyAttachment(file(name, "", MB)), name).toMatchObject({ kind: "slides", ok: true });
+    }
+    for (const name of ["book.xlsx", "legacy.xls", "macro.xlsm", "binary.xlsb", "tmpl.xltx", "open.ods", "apple.numbers"]) {
+      expect(classifyAttachment(file(name, "", MB)), name).toMatchObject({ kind: "sheet", ok: true });
+    }
+    // Case-insensitively, like every other extension this module knows.
+    expect(classifyAttachment(file("DECK.PPTX", "", MB)).kind).toBe("slides");
+    expect(classifyAttachment(file("BOOK.XLSX", "", MB)).kind).toBe("sheet");
+  });
+
+  it("does not treat a bare .key file as a Keynote deck", () => {
+    // "server.key" is a PEM private key far more often than it is a
+    // presentation, and this module's own rule is that an unrecognised binary
+    // is never waved through - only the unambiguous Keynote MIME type is.
+    expect(classifyAttachment(file("server.key", "", MB))).toMatchObject({ kind: "other", ok: false });
+    expect(classifyAttachment(file("apple.key", "application/vnd.apple.keynote", MB)).kind).toBe("slides");
+  });
+
+  it("keeps a .csv reported as an Excel type a text file", () => {
+    // Windows reports application/vnd.ms-excel for .csv whenever Excel is the
+    // registered handler, which is the common case. Letting that legacy
+    // family type win would relabel every csv upload a spreadsheet - and, per
+    // pageContext, tell the model its contents were not read when in fact a
+    // csv is exactly the kind of file that IS readable.
+    expect(classifyAttachment(file("rows.csv", "application/vnd.ms-excel", MB)).kind).toBe("text");
+    // Positive controls: that same legacy type still decides when the
+    // extension agrees with it, and when there is no known extension at all.
+    // Without these, simply ignoring application/vnd.ms-excel would pass.
+    expect(classifyAttachment(file("book.xls", "application/vnd.ms-excel", MB)).kind).toBe("sheet");
+    expect(classifyAttachment(file("export.bin", "application/vnd.ms-excel", MB)).kind).toBe("sheet");
+  });
+
+  it("still lets an unambiguous mime type override the extension", () => {
+    // The csv rule above is deliberately narrow. Flipping precedence
+    // wholesale - extension always wins - would misread a real PDF or PNG
+    // that happens to arrive under a .txt name, which is the behaviour this
+    // module has always had.
+    expect(classifyAttachment(file("notes.txt", "application/pdf", MB)).kind).toBe("pdf");
+    expect(classifyAttachment(file("frame.txt", "image/png", MB)).kind).toBe("image");
+    // And the exception is exactly one mime wide. Its PowerPoint sibling is
+    // not misapplied to anything the way vnd.ms-excel is to csv, so it keeps
+    // ordinary precedence: a deck served under a .txt name is still a deck.
+    // Without this, widening the exception to the whole vnd.ms-* family - a
+    // tempting "symmetry" - goes unnoticed.
+    expect(classifyAttachment(file("deck.txt", "application/vnd.ms-powerpoint", MB)).kind).toBe("slides");
+  });
+
+  it("holds both kinds to the 25 MB cap, inclusively, and still names the kind when it refuses", () => {
+    const deckMime = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    const sheetMime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    expect(classifyAttachment(file("edge.pptx", deckMime, 25 * MB)).ok).toBe(true);
+    expect(classifyAttachment(file("edge.xlsx", sheetMime, 25 * MB)).ok).toBe(true);
+
+    const deck = classifyAttachment(file("big.pptx", deckMime, 25 * MB + 1));
+    expect(deck.ok).toBe(false);
+    expect(deck.kind).toBe("slides");
+    expect(deck.reason).toContain("25 MB");
+    expect(deck.reason).toContain("big.pptx");
+
+    const sheet = classifyAttachment(file("big.xlsx", sheetMime, 25 * MB + 1));
+    expect(sheet.ok).toBe(false);
+    expect(sheet.kind).toBe("sheet");
+    expect(sheet.reason).toContain("25 MB");
+    expect(sheet.reason).toContain("big.xlsx");
+  });
+
+  it("does not accept a file whose extension is a name on Object's prototype", () => {
+    // `EXTENSION_KIND[extensionOf(name)]` is a plain-object lookup, so
+    // "notes.constructor" resolves through the prototype chain to a FUNCTION,
+    // which is truthy, is not the string "other", and therefore sails through
+    // the unsupported-type check into an accepted upload with a function as
+    // its kind. `.__proto__` does the same and yields an object. Both survive
+    // extensionOf's lower-casing, which is what makes them reachable at all.
+    for (const name of ["notes.constructor", "payload.__proto__"]) {
+      const result = classifyAttachment(file(name, "", MB));
+      expect(typeof result.kind, name).toBe("string");
+      expect(result, name).toMatchObject({ kind: "other", ok: false });
+    }
+  });
+
+  it("does not widen the door for anything else", () => {
+    // Positive control on the whole block: an implementation that simply
+    // stopped rejecting `other` would pass every test above.
+    expect(classifyAttachment(file("setup.exe", "application/octet-stream", MB))).toMatchObject({
+      kind: "other",
+      ok: false,
+    });
+    expect(classifyAttachment(file("archive.zip", "application/zip", MB))).toMatchObject({
+      kind: "other",
+      ok: false,
+    });
+  });
+});
+
 describe("storagePathFor", () => {
   const ID = "att-0001";
   const PREFIX = "u1/experience/p1/";

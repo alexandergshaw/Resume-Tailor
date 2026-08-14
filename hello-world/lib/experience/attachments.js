@@ -27,6 +27,12 @@ const DEFAULT_CAP_BYTES = 25 * MB;
 // Extension -> kind, consulted only when the mime type (if any) doesn't
 // already say what this is. Case is normalized before lookup, so "shot.PNG"
 // and "shot.png" resolve the same way.
+//
+// ".key" is deliberately absent: "server.key" is a PEM private key far more
+// often than it is a Keynote file, so a bare .key with no mime must fall
+// through to "other" rather than being waved through as a deck. Only the
+// unambiguous application/vnd.apple.keynote mime (in FIXED_MIME_KIND below)
+// yields "slides" for a Keynote file.
 const EXTENSION_KIND = {
   png: "image",
   jpg: "image",
@@ -55,7 +61,34 @@ const EXTENSION_KIND = {
   docx: "text",
   pages: "text",
   odt: "text",
+  ppt: "slides",
+  pptx: "slides",
+  pptm: "slides",
+  potx: "slides",
+  ppsx: "slides",
+  pps: "slides",
+  odp: "slides",
+  xls: "sheet",
+  xlsx: "sheet",
+  xlsm: "sheet",
+  xlsb: "sheet",
+  xltx: "sheet",
+  ods: "sheet",
+  numbers: "sheet",
 };
+
+// table[key] on a plain object literal walks the prototype chain, so a name
+// like "notes.constructor" or "payload.__proto__" resolves to a built-in
+// function/object instead of undefined - truthy, not the string "other", and
+// therefore sails past the unsupported-type check into an accepted upload
+// with a function or object as its kind. Both EXTENSION_KIND lookups in
+// kindOf (the plain case and the ambiguous-mime override) and the
+// FIXED_MIME_KIND lookup in kindFromMime go through this guard for that
+// reason - a mime of exactly "constructor" is the same hazard as an
+// extension of "constructor".
+function ownLookup(table, key) {
+  return Object.prototype.hasOwnProperty.call(table, key) ? table[key] : undefined;
+}
 
 function extensionOf(name) {
   const s = String(name);
@@ -64,25 +97,72 @@ function extensionOf(name) {
   return s.slice(dot + 1).toLowerCase();
 }
 
-function kindFromMime(mime) {
-  const m = String(mime || "").toLowerCase().trim();
-  if (!m) return "";
-  if (m.startsWith("image/")) return "image";
-  if (m === "application/pdf") return "pdf";
-  if (m.startsWith("video/")) return "video";
-  if (m.startsWith("text/")) return "text";
-  if (
-    m === "application/msword" ||
-    m === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
-    m === "application/rtf"
-  ) {
-    return "text";
-  }
-  return "";
+function normalizeMime(mime) {
+  return String(mime || "").toLowerCase().trim();
 }
 
+// Fixed mime -> kind mappings that aren't a simple "type/" prefix. Every key
+// here MUST be written lower-case: kindFromMime lowercases the incoming mime
+// before it looks anything up, so a table entry in its "real" casing (e.g.
+// Windows sending "...macroEnabled.12") could never match.
+const FIXED_MIME_KIND = {
+  "application/pdf": "pdf",
+  "application/msword": "text",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "text",
+  "application/rtf": "text",
+  // PowerPoint / Keynote / OpenDocument presentations (AC1).
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "slides",
+  "application/vnd.openxmlformats-officedocument.presentationml.template": "slides",
+  "application/vnd.openxmlformats-officedocument.presentationml.slideshow": "slides",
+  "application/vnd.ms-powerpoint.presentation.macroenabled.12": "slides",
+  "application/vnd.ms-powerpoint": "slides",
+  "application/vnd.oasis.opendocument.presentation": "slides",
+  "application/vnd.apple.keynote": "slides",
+  // Excel / Numbers / OpenDocument spreadsheets (AC2). application/vnd.ms-excel
+  // is also listed here, but kindOf below overrides it for a file whose
+  // extension disagrees - see AMBIGUOUS_SHEET_MIME.
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "sheet",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.template": "sheet",
+  "application/vnd.ms-excel.sheet.macroenabled.12": "sheet",
+  "application/vnd.ms-excel.sheet.binary.macroenabled.12": "sheet",
+  "application/vnd.ms-excel": "sheet",
+  "application/vnd.oasis.opendocument.spreadsheet": "sheet",
+  "application/vnd.apple.numbers": "sheet",
+};
+
+function kindFromMime(mime) {
+  const m = normalizeMime(mime);
+  if (!m) return "";
+  if (m.startsWith("image/")) return "image";
+  if (m.startsWith("video/")) return "video";
+  if (m.startsWith("text/")) return "text";
+  return ownLookup(FIXED_MIME_KIND, m) || "";
+}
+
+// application/vnd.ms-excel is the one mime this file treats as ambiguous:
+// Windows reports it for a plain .csv whenever Excel is the registered
+// handler (see attachments.test.js, "keeps a .csv reported as an Excel type
+// a text file"), and a csv IS readable text - the whole point of the "text"
+// kind, per classifyAttachment's own note that an unrecognized binary must
+// never be handed to a model as if it were readable. This is
+// deliberately the ONLY exception: every other mime keeps today's
+// precedence of mime-beats-extension (see that same test file's "still lets
+// an unambiguous mime type override the extension"), so do not generalize
+// this into a wholesale precedence flip.
+const AMBIGUOUS_SHEET_MIME = "application/vnd.ms-excel";
+
 function kindOf(name, mime) {
-  return kindFromMime(mime) || EXTENSION_KIND[extensionOf(name)] || "other";
+  const ext = extensionOf(name);
+
+  // When the mime is the ambiguous Excel type AND the extension has its own
+  // known mapping, trust the extension instead (rows.csv -> "text", not
+  // "sheet"). When there's no known extension (e.g. export.bin), the mime
+  // still decides, because that's the only signal available.
+  if (normalizeMime(mime) === AMBIGUOUS_SHEET_MIME && ownLookup(EXTENSION_KIND, ext)) {
+    return ownLookup(EXTENSION_KIND, ext);
+  }
+
+  return kindFromMime(mime) || ownLookup(EXTENSION_KIND, ext) || "other";
 }
 
 function capFor(kind) {

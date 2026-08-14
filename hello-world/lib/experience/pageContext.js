@@ -79,6 +79,8 @@ function attachmentKindLabel(kind) {
   if (kind === "pdf") return "PDF";
   if (kind === "video") return "video";
   if (kind === "text") return "text file";
+  if (kind === "slides") return "slide deck";
+  if (kind === "sheet") return "spreadsheet";
   return "file";
 }
 
@@ -110,6 +112,23 @@ function formatAttachment(attachment) {
   }
 
   const label = attachmentKindLabel(kind);
+
+  // slides/sheet, and only these two, get a per-line "contents not read".
+  // Everything else in DOWNLOADABLE_ATTACHMENT_KINDS (image, pdf, text - see
+  // app/components/experience/ExperienceTab.js) is downloaded and handed to
+  // the model as a real file in the SAME Ask AI request that pins this
+  // context, so disclaiming those three would tell the model the opposite of
+  // what just happened. A deck or a spreadsheet is downloaded by nothing (no
+  // path here parses OOXML), so its name and notes are genuinely the whole
+  // of what the model ever learns - the one kind of claim this file must get
+  // right per line, not on a shared header that would misdescribe the other
+  // three.
+  if (kind === "slides" || kind === "sheet") {
+    return notes
+      ? `- ${name} (${label}) - contents not read - notes: ${notes}`
+      : `- ${name} (${label}) - contents not read`;
+  }
+
   return notes ? `- ${name} (${label}) - notes: ${notes}` : `- ${name} (${label})`;
 }
 

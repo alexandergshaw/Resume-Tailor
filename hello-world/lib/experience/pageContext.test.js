@@ -32,6 +32,14 @@ const attachment = (over = {}) => ({
   ...over,
 });
 
+// The single inventory line an attachment contributes, picked out of the
+// assembled context by file name. Asserting on one line rather than on the
+// whole string is what lets a test say "this kind's line changed and no
+// other's did".
+function lineFor(content, name) {
+  return content.split("\n").find((line) => line.includes(name)) || "";
+}
+
 describe("buildPageContext", () => {
   it("labels the pin with the page title", () => {
     expect(buildPageContext({ page: page() }).label).toContain("Payments migration");
@@ -80,6 +88,90 @@ describe("buildPageContext", () => {
     }).content;
     expect(without).toContain("silent.mp4");
     expect(without.toLowerCase()).toMatch(/no transcript|not transcribed|no notes/);
+  });
+
+  it("names a deck and a spreadsheet by what they are", () => {
+    // The parenthesised kind is what tells the model a .pptx is a deck rather
+    // than a stray binary. Pinned by position (startsWith), not by
+    // toContain: "slide deck" appearing anywhere on the line is also
+    // satisfied by a sentence further along it, which leaves the label itself
+    // free to be wrong.
+    const { content } = buildPageContext({
+      page: page(),
+      attachments: [
+        attachment({ id: "d1", name: "kickoff.pptx", kind: "slides", notes: "the launch deck" }),
+        attachment({ id: "s1", name: "q3.xlsx", kind: "sheet", notes: "" }),
+      ],
+    });
+
+    expect(lineFor(content, "kickoff.pptx")).toBe(
+      "- kickoff.pptx (slide deck) - contents not read - notes: the launch deck",
+    );
+    expect(lineFor(content, "q3.xlsx")).toBe("- q3.xlsx (spreadsheet) - contents not read");
+  });
+
+  it("says 'not read' about the files the model really did not get, and not about the ones it did", () => {
+    // This is a claim about the model's actual input, so it has to track what
+    // is actually sent. Pressing Ask AI does two things in one handler
+    // (app/components/experience/ExperienceTab.js): it pins this context, and
+    // then it DOWNLOADS every attachment whose kind is in
+    // DOWNLOADABLE_ATTACHMENT_KINDS - image, pdf, text - and hands the bytes
+    // to addChatAttachments, which turns them into inline data and extracted
+    // text on the same turn. So for those three the model does read the file.
+    //
+    // A deck or a spreadsheet is downloaded by nothing: OOXML is a zip of XML
+    // that no path here parses. Their name and the user's notes are the whole
+    // of what the model ever learns, which is exactly why the line has to say
+    // so - "- q3.xlsx (spreadsheet)" on its own reads as though the numbers
+    // are available, and that is how a model ends up quoting a figure nobody
+    // supplied.
+    //
+    // An earlier draft of this test put the disclaimer on the whole
+    // inventory. That was wrong in the more dangerous direction: it told the
+    // model it had not read three files it was being handed in the same
+    // request.
+    const { content } = buildPageContext({
+      page: page(),
+      attachments: [
+        attachment({ id: "d1", name: "kickoff.pptx", kind: "slides" }),
+        attachment({ id: "s1", name: "q3.xlsx", kind: "sheet" }),
+        attachment({ id: "i1", name: "topology.png", kind: "image", notes: "before the migration" }),
+        attachment({ id: "p1", name: "spec.pdf", kind: "pdf" }),
+        attachment({ id: "t1", name: "rows.csv", kind: "text" }),
+      ],
+    });
+
+    expect(lineFor(content, "kickoff.pptx").toLowerCase()).toMatch(/not read/);
+    expect(lineFor(content, "q3.xlsx").toLowerCase()).toMatch(/not read/);
+    // The three kinds Ask AI actually uploads must not carry it.
+    expect(lineFor(content, "topology.png").toLowerCase()).not.toMatch(/not read/);
+    expect(lineFor(content, "spec.pdf").toLowerCase()).not.toMatch(/not read/);
+    expect(lineFor(content, "rows.csv").toLowerCase()).not.toMatch(/not read/);
+    // And nothing above the list claims it on everything's behalf.
+    expect(content.split("\n")[0].toLowerCase()).not.toMatch(/not read/);
+
+    // Positive control: a page with no attachments at all says nothing about
+    // reading anything. Without it, hard-coding the phrase somewhere fixed
+    // would satisfy the two assertions above.
+    expect(buildPageContext({ page: page() }).content.toLowerCase()).not.toMatch(/not read/);
+  });
+
+  it("leaves the lines for every other kind exactly as they were", () => {
+    // Positive control for the test above: stamping "contents not read" onto
+    // every attachment line would satisfy it while quietly changing what the
+    // model is told about an image or a PDF. Frozen literals, not a
+    // toContain - the shape of these lines is the thing being pinned.
+    const { content } = buildPageContext({
+      page: page(),
+      attachments: [
+        attachment({ id: "i1", name: "topology.png", kind: "image", notes: "before the migration" }),
+        attachment({ id: "p1", name: "spec.pdf", kind: "pdf", notes: "" }),
+        attachment({ id: "t1", name: "rows.csv", kind: "text", notes: "" }),
+      ],
+    });
+    expect(lineFor(content, "topology.png")).toBe("- topology.png (image) - notes: before the migration");
+    expect(lineFor(content, "spec.pdf")).toBe("- spec.pdf (PDF)");
+    expect(lineFor(content, "rows.csv")).toBe("- rows.csv (text file)");
   });
 
   it("never includes attachment bytes or storage paths", () => {

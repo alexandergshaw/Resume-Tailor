@@ -21,9 +21,19 @@ import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import DeleteIcon from "@mui/icons-material/Delete";
 import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
+import SlideshowIcon from "@mui/icons-material/Slideshow";
+import TableChartIcon from "@mui/icons-material/TableChart";
 import { classifyAttachment } from "../../../lib/experience/attachments";
 
-const KIND_LABEL = { image: "Image", pdf: "PDF", video: "Video", text: "Text", other: "File" };
+const KIND_LABEL = {
+  image: "Image",
+  pdf: "PDF",
+  video: "Video",
+  text: "Text",
+  slides: "Slides",
+  sheet: "Spreadsheet",
+  other: "File",
+};
 
 // How long a deletion stays reversible before its DELETE actually goes
 // out - see scheduleDelete/finalizeDelete below. The product decision this
@@ -630,7 +640,7 @@ export default function AttachmentPanel({ pageId }) {
         }}
       >
         <Typography component="label" htmlFor="attachment-file-input" variant="body2" sx={{ display: "block", mb: 1 }}>
-          Add a file, image or video
+          Add a file, image, video, PowerPoint deck, or Excel spreadsheet
         </Typography>
         <input ref={inputRef} id="attachment-file-input" type="file" onChange={onInputChange} disabled={uploading} />
         <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
@@ -702,7 +712,16 @@ export default function AttachmentPanel({ pageId }) {
                       sx={{ width: 1, borderRadius: 1, display: "block" }}
                     />
                   )}
-                  {(attachment.kind !== "image" && attachment.kind !== "video") && (
+                  {/* Slides/sheet get their own icon, distinct from each other and from
+                      the generic InsertDriveFileIcon every other non-preview kind still
+                      falls back to — the text label just below already says the kind, so
+                      neither icon needs (or gets) an aria-hidden-defeating titleAccess. */}
+                  {attachment.kind === "slides" && <SlideshowIcon fontSize="large" color="action" />}
+                  {attachment.kind === "sheet" && <TableChartIcon fontSize="large" color="action" />}
+                  {(attachment.kind !== "image" &&
+                    attachment.kind !== "video" &&
+                    attachment.kind !== "slides" &&
+                    attachment.kind !== "sheet") && (
                     <InsertDriveFileIcon fontSize="large" color="action" />
                   )}
                 </Box>
