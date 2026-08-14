@@ -9,11 +9,17 @@ import { postingToJob } from "@/lib/feed/selectQueueCandidates";
 // (manual "Auto-apply" button on a Live Feed card). Keeping this in one place
 // guarantees identical behaviour across both entry points.
 
-// Map a normalized job into a positions row.
-function jobToPositionRow(job) {
+// Map a normalized job into a positions row. Exported so a caller building a
+// job outside postingToJob reuses this mapping rather than hand-rolling one,
+// and so the provenance rule below can be pinned directly by a test.
+export function jobToPositionRow(job) {
   return {
     external_id: String(job.id),
-    source: String(job.id).startsWith("gh-") ? "greenhouse" : "jsearch",
+    // Prefer the feed row's own source (carried through by postingToJob). Older
+    // callers — the single-posting API route among them — still hand over jobs
+    // built without a source, so the id-prefix inference stays as a fallback;
+    // changing its behaviour would silently reclassify their existing rows.
+    source: job.source || (String(job.id).startsWith("gh-") ? "greenhouse" : "jsearch"),
     title: job.title ?? null,
     company: job.company ?? null,
     location: job.location ?? null,

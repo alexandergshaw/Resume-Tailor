@@ -64,3 +64,18 @@ export function getSttProvider() {
 export function getElevenLabsApiKey() {
   return process.env.ELEVENLABS_API_KEY || null;
 }
+
+// The AI-search ingest source's cadence (lib/feed/llmSearch.js,
+// lib/feed/ingestFeed.js): how many minutes must pass between grounded
+// Gemini + Google Search calls for the same source. /api/cron/feed-ingest
+// runs every minute (docs/REGRESSION.md R-202), so without this gate a
+// single saved-search query would cost 1440 model calls a day. Read
+// directly, like getDeepgramApiKey() above, so a deploy with no Gemini key
+// configured (the source is skipped in that case anyway) doesn't need this
+// knob set to boot. Default of 60 minutes trades "new postings show up
+// within the hour" against grounded-search cost; override per deployment
+// with LLM_SEARCH_INTERVAL_MINUTES.
+export function getLlmSearchIntervalMinutes() {
+  const n = Number.parseInt(process.env.LLM_SEARCH_INTERVAL_MINUTES, 10);
+  return Number.isFinite(n) && n > 0 ? n : 60;
+}

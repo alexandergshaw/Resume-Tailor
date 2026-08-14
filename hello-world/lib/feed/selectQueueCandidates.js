@@ -98,6 +98,7 @@ export function postingToJob(posting) {
     "";
   return {
     id: postingExternalId(posting),
+    source: posting.source,
     title: posting.title || "",
     company: posting.company || "",
     location: posting.location || "",

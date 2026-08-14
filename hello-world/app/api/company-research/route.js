@@ -4,6 +4,13 @@ import { getServerEnv } from "@/lib/config/env";
 import { fetchUrlContent } from "@/lib/scrape/fetchUrlContent";
 import { wantsEmbedded } from "@/lib/llm/featureEngine";
 import { researchCompanyLocal, researchUrlLocal } from "@/lib/research/companyResearchLocal";
+import { extractGroundingSources } from "@/lib/llm/grounding";
+
+// Re-exported (not just used internally) because this route's own test file
+// imports extractGroundingSources from "./route.js", and lib/llm/grounding.test.js
+// asserts this is the SAME function reference as the shared module's export —
+// proof this route no longer keeps a private copy.
+export { extractGroundingSources };
 
 export const runtime = "nodejs";
 
@@ -42,18 +49,6 @@ export function parseArticles(rawText) {
     }
   }
   return [];
-}
-
-// Real source links Gemini grounded on (proof it actually searched). Returns the
-// grounded web URIs/titles, used to gate hallucination and enrich missing URLs.
-export function extractGroundingSources(response) {
-  const chunks = response?.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-  const out = [];
-  for (const c of chunks) {
-    const web = c?.web;
-    if (web?.uri) out.push({ uri: String(web.uri), title: String(web.title || "") });
-  }
-  return out;
 }
 
 // --- Grounded-source reconciliation -----------------------------------------

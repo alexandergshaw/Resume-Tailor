@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   getServerEnv,
   getDeepgramApiKey,
   getSttProvider,
   getElevenLabsApiKey,
+  getLlmSearchIntervalMinutes,
 } from "./env.js";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -74,6 +75,37 @@ describe("getElevenLabsApiKey", () => {
     process.env.ELEVENLABS_API_KEY = "el-secret-token";
     expect(() => getElevenLabsApiKey()).not.toThrow();
     expect(getElevenLabsApiKey()).toBe("el-secret-token");
+  });
+});
+
+describe("getLlmSearchIntervalMinutes", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("defaults to 60 when LLM_SEARCH_INTERVAL_MINUTES is unset", () => {
+    vi.stubEnv("LLM_SEARCH_INTERVAL_MINUTES", undefined);
+    expect(getLlmSearchIntervalMinutes()).toBe(60);
+  });
+
+  it("honours a valid override", () => {
+    vi.stubEnv("LLM_SEARCH_INTERVAL_MINUTES", "15");
+    expect(getLlmSearchIntervalMinutes()).toBe(15);
+  });
+
+  it("falls back to 60 for a non-numeric value", () => {
+    vi.stubEnv("LLM_SEARCH_INTERVAL_MINUTES", "soon");
+    expect(getLlmSearchIntervalMinutes()).toBe(60);
+  });
+
+  it("falls back to 60 for a zero value", () => {
+    vi.stubEnv("LLM_SEARCH_INTERVAL_MINUTES", "0");
+    expect(getLlmSearchIntervalMinutes()).toBe(60);
+  });
+
+  it("falls back to 60 for a negative value", () => {
+    vi.stubEnv("LLM_SEARCH_INTERVAL_MINUTES", "-10");
+    expect(getLlmSearchIntervalMinutes()).toBe(60);
   });
 });
 

@@ -6,8 +6,15 @@ import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { getServerEnv } from "@/lib/config/env";
 import { wantsEmbedded } from "@/lib/llm/featureEngine";
 import { buildResearchPrompt, reconcileCitations } from "@/lib/experience/researchReport";
+import { extractGroundingSources } from "@/lib/llm/grounding";
 
 export const runtime = "nodejs";
+
+// Re-exported so lib/llm/grounding.test.js can assert this route exposes the
+// SAME function reference as the shared module, not a fourth copy — this used
+// to be a byte-identical private copy of app/api/company-research/route.js's
+// implementation before both moved to lib/llm/grounding.js.
+export { extractGroundingSources };
 
 // "how could current technology improve this project" — one page per
 // request (see this chunk's own AC: a grounded search takes tens of
@@ -18,22 +25,6 @@ export const runtime = "nodejs";
 function reportTitle(pageTitle, when) {
   const iso = when.toISOString().slice(0, 10);
   return `Research: ${pageTitle || "Untitled page"} (${iso})`;
-}
-
-// Copied from app/api/company-research/route.js (read-only there, per this
-// chunk's file list) rather than imported — Next.js route modules are not
-// meant to be imported from one another, and this is the same handful of
-// lines that file's own comment explains: groundingChunks is the proof
-// Gemini's googleSearch tool actually searched, and the real URLs it
-// visited, as opposed to whatever the model's own text claims.
-function extractGroundingSources(response) {
-  const chunks = response?.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-  const out = [];
-  for (const c of chunks) {
-    const web = c?.web;
-    if (web?.uri) out.push({ uri: String(web.uri), title: String(web.title || "") });
-  }
-  return out;
 }
 
 export async function POST(request) {

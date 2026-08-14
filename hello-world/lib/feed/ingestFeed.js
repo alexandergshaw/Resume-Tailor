@@ -13,6 +13,13 @@ import { ASHBY_COMPANIES } from "@/lib/ashby/companies";
 import { fetchAshbyPostings } from "@/lib/ashby/fetchPostings";
 import { HIGHERED_RSS_FEEDS } from "@/lib/highered/feeds";
 import { fetchHigheredRssPostings } from "@/lib/highered/fetchPostings";
+import { getGeminiClient } from "@/lib/llm/geminiClient";
+import { getServerEnv, getLlmSearchIntervalMinutes } from "@/lib/config/env";
+import { wantsEmbedded } from "@/lib/llm/featureEngine";
+import { fetchUrlContent } from "@/lib/scrape/fetchUrlContent";
+import { buildSearchQueries } from "@/lib/feed/llmSearchQueries";
+import { fetchLlmSearchPostings, shouldRunLlmSearch } from "@/lib/feed/llmSearch";
+import { canonicalPostingUrl, rejectDuplicateUrls } from "@/lib/feed/canonicalUrl";
 
 // ---------------------------------------------------------------------------
 // Live Feed ingestion service.
@@ -31,6 +38,30 @@ const LOCK_KEY = "feed:ingest:lock";
 const LOCK_TTL_SECONDS = 110; // shorter than the cron interval guard
 const CURSOR_KEY = "feed:ingest:cursor";
 const META_KEY = "feed:meta";
+// Named alongside CURSOR_KEY/META_KEY above: when the AI-search source last
+// issued a grounded model call, so shouldRunLlmSearch() can gate the next
+// one. See lib/feed/llmSearch.js for why this cadence exists at all.
+const AI_SEARCH_LAST_RUN_KEY = "feed:ingest:ai-search:last-run";
+// Total page-verification fetches (fetchUrlContent calls) the AI-search
+// source may spend in a single run, enforced HERE rather than only inside
+// fetchLlmSearchPostings's own per-query maxPostings. /api/cron/feed-ingest
+// runs every minute (docs/REGRESSION.md R-202); with several saved-search
+// queries due in the same run, a per-query-only cap could still add up to an
+// unbounded total for the run, so the budget below is split across whatever
+// queries are actually due this run instead.
+const AI_SEARCH_MAX_FETCHES_PER_RUN = 10;
+// Cross-source dedupe (see buildAiSearchTasks below) reads every known
+// feed_postings.url so an AI-search candidate can be checked against it.
+// Left unbounded that is a full-table read inside a serverless function, and
+// if PostgREST's own row ceiling ever truncated it first, the dedupe would
+// silently cover an arbitrary subset with no error anywhere. Bounding it
+// here — ordered by ingested_at descending — makes the truncation behavior
+// predictable instead of arbitrary: when the table is under this size the
+// dedupe is exact, and above it the rows kept are the most recently
+// ingested, i.e. the ones most likely to collide with a posting found
+// today. Cross-source dedupe is therefore best-effort above this bound, not
+// a guarantee, by construction.
+const AI_SEARCH_DEDUPE_URL_SCAN_LIMIT = 5000;
 
 // How many companies to scan per run. Keeps a single serverless invocation
 // fast while the rotating cursor guarantees full coverage over several runs.
@@ -193,6 +224,99 @@ async function writeMeta(redis, meta) {
   }
 }
 
+async function readAiSearchLastRun(redis) {
+  if (!redis) return null; // no Redis configured -> permissive, like every other cadence helper here
+  try {
+    return await redis.get(AI_SEARCH_LAST_RUN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+async function writeAiSearchLastRun(redis, value) {
+  if (!redis) return;
+  try {
+    await redis.set(AI_SEARCH_LAST_RUN_KEY, value);
+  } catch {
+    // non-fatal
+  }
+}
+
+// Decide whether the AI-search source runs this cycle, and if so build its
+// runSource() tasks. Split out from ingestFeed() itself so its several exit
+// points (embedded engine, no key, cadence, no queries) read as a flat list
+// of early returns rather than nested conditionals.
+async function buildAiSearchTasks({ admin, redis }) {
+  // Engine choice governs every AI feature in this app, not just tailoring
+  // (see lib/llm/featureEngine.js). No per-request override exists in a cron
+  // context, so this reads only the server default / key presence.
+  if (wantsEmbedded()) {
+    return { tasks: [], skipped: "embedded engine" };
+  }
+
+  let model;
+  let client;
+  try {
+    model = getServerEnv().geminiModel;
+    client = getGeminiClient();
+  } catch {
+    client = null; // no Gemini key configured
+  }
+  if (!client) {
+    return { tasks: [], skipped: "no Gemini API key" };
+  }
+
+  const intervalMinutes = getLlmSearchIntervalMinutes();
+  const lastRunAt = await readAiSearchLastRun(redis);
+  if (!shouldRunLlmSearch({ lastRunAt, now: Date.now(), intervalMinutes })) {
+    return { tasks: [], skipped: `cadence: not due for ${intervalMinutes}m` };
+  }
+
+  const { data: savedSearches, error: searchesErr } = await admin
+    .from("saved_searches")
+    .select("*");
+  if (searchesErr) {
+    return { tasks: [], skipped: `saved_searches query failed: ${searchesErr.message}` };
+  }
+
+  const queries = buildSearchQueries(savedSearches || []);
+  if (queries.length === 0) {
+    return { tasks: [], skipped: "no saved search wants automated work" };
+  }
+
+  // Cross-source identity: dedup_key is namespaced per source (R-202), so a
+  // Greenhouse posting and the same job found by AI search don't collide
+  // there. URL is the only shared identity, so postings this source
+  // verifies still have to be checked against every URL already ingested.
+  const { data: existingRows } = await admin
+    .from("feed_postings")
+    .select("url")
+    .order("ingested_at", { ascending: false })
+    .limit(AI_SEARCH_DEDUPE_URL_SCAN_LIMIT);
+  const knownUrlKeySet = new Set(
+    (existingRows || []).map((r) => canonicalPostingUrl(r?.url)).filter(Boolean),
+  );
+
+  const perQueryMaxPostings = Math.max(
+    1,
+    Math.floor(AI_SEARCH_MAX_FETCHES_PER_RUN / queries.length),
+  );
+
+  const tasks = queries.map(async (query) => {
+    const result = await fetchLlmSearchPostings({
+      query,
+      client,
+      model,
+      fetchUrl: fetchUrlContent,
+      maxPostings: perQueryMaxPostings,
+    });
+    if (!result.ok) return result;
+    return { ...result, postings: rejectDuplicateUrls(result.postings, knownUrlKeySet) };
+  });
+
+  return { tasks, skipped: null };
+}
+
 /**
  * Read the latest ingest metadata (lastIngestedAt + per-source health).
  * Safe to call from read paths; returns null when unavailable.
@@ -290,6 +414,21 @@ export async function ingestFeed(admin) {
       HIGHERED_RSS_FEEDS.map((feed) => fetchHigheredRssPostings(feed)),
     );
 
+    // Unlike the sources above, AI search may issue zero model calls this
+    // run (engine choice, missing key, or the cadence gate below) — see
+    // buildAiSearchTasks. It still goes through the same runSource() so its
+    // rows share the lock/dedupe/upsert/prune/health every other source gets
+    // for free, and an empty task list simply reports attempted/fetched: 0.
+    const { tasks: aiTasks, skipped: aiSkipReason } = await buildAiSearchTasks({ admin, redis });
+    const aiHealth = await runSource("ai_search", aiTasks);
+    if (aiTasks.length > 0) {
+      // Stamp the cadence window only when a run actually happened (was
+      // attempted, whether or not it succeeded) — a skipped run must not
+      // consume it, or a persistently failing model call would burn the
+      // window every minute right along with it.
+      await writeAiSearchLastRun(redis, Date.now());
+    }
+
     const deduped = dedupeByKey(collected);
     const upserted = await upsertPostings(admin, deduped);
     const pruned = await prunePostings(admin);
@@ -339,6 +478,20 @@ export async function ingestFeed(admin) {
           fetched: higheredHealth.fetched,
           failures: higheredHealth.failures.length,
           sampleErrors: higheredHealth.failures.slice(0, 5),
+        },
+        ai_search: {
+          lastSuccessAt:
+            aiHealth.attempted > 0 && aiHealth.failures.length < aiHealth.attempted
+              ? finishedAt
+              : null,
+          attempted: aiHealth.attempted,
+          fetched: aiHealth.fetched,
+          failures: aiHealth.failures.length,
+          sampleErrors: aiHealth.failures.slice(0, 5),
+          // A skip (embedded engine, no key, cadence, no queries) is not a
+          // failure — reported so callers can tell "chose not to run" apart
+          // from "ran and found nothing" without treating either as an error.
+          ...(aiSkipReason ? { skipped: aiSkipReason } : {}),
         },
       },
     };
