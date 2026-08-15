@@ -65,23 +65,43 @@ export async function POST(request) {
       return Response.json({ isQuestion: local.decided, question: local.question, type: local.type });
     }
 
-    const { geminiModel } = getServerEnv();
-    const client = getGeminiClient();
-    const response = await client.models.generateContent({
-      model: geminiModel,
-      contents: [{ role: "user", parts: [{ text: buildPrompt(utterance, context) }] }],
-      config: { systemInstruction: SYSTEM, responseMimeType: "application/json" },
-    });
+    // AC-R2.2 (defect #4): a broken LLM path here has nothing to do with
+    // THIS request — no API key configured (getServerEnv throws), the
+    // client failing to construct, or the model call itself erroring out —
+    // so none of it should surface as a 500. useLiveSession.js's catch on
+    // confirmQuestion is a bare `return;`, so a 500 here means the
+    // interviewer's question silently never gets detected. Degrade instead:
+    // fall back to the same zero-cost heuristic the embedded engine uses,
+    // and say so via `degraded` so a caller CAN surface it, without this
+    // route needing to change again to add that later.
+    try {
+      const { geminiModel } = getServerEnv();
+      const client = getGeminiClient();
+      const response = await client.models.generateContent({
+        model: geminiModel,
+        contents: [{ role: "user", parts: [{ text: buildPrompt(utterance, context) }] }],
+        config: { systemInstruction: SYSTEM, responseMimeType: "application/json" },
+      });
 
-    const parsed = parseModelJson(response.text?.trim() || "") || {};
-    const isQuestion = parsed.isQuestion === true;
-    const question =
-      isQuestion && typeof parsed.question === "string" && parsed.question.trim()
-        ? parsed.question.trim()
-        : "";
-    const type = VALID_TYPES.includes(parsed.type) ? parsed.type : "general";
+      const parsed = parseModelJson(response.text?.trim() || "") || {};
+      const isQuestion = parsed.isQuestion === true;
+      const question =
+        isQuestion && typeof parsed.question === "string" && parsed.question.trim()
+          ? parsed.question.trim()
+          : "";
+      const type = VALID_TYPES.includes(parsed.type) ? parsed.type : "general";
 
-    return Response.json({ isQuestion: isQuestion && !!question, question, type });
+      return Response.json({ isQuestion: isQuestion && !!question, question, type });
+    } catch (llmErr) {
+      const local = localDetection(utterance);
+      return Response.json({
+        isQuestion: local.decided,
+        question: local.question,
+        type: local.type,
+        degraded: true,
+        degradedReason: llmErr?.message || "LLM detection unavailable.",
+      });
+    }
   } catch (err) {
     return Response.json(
       { error: err?.message || "Detection request failed." },

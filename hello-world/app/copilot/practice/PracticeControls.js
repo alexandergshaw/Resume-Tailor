@@ -41,6 +41,8 @@ export default function PracticeControls({
   preDraftPredicted,
   onPreDraftChange,
   showPredictions,
+  onDownloadLog,
+  downloadLogEnabled,
 }) {
   return (
     <>
@@ -84,6 +86,32 @@ export default function PracticeControls({
             sx={{ color: "var(--text-muted)", fontVariantNumeric: "tabular-nums" }}
           >
             {fmtClock(elapsed)}
+          </Typography>
+        ) : null}
+        {/* AC-Q7.5: one button, no confirmation, no format menu — reuses
+            downloadSessionLogArchive (via PracticeClient's sessionLog),
+            which already zips the Markdown record and the raw JSON into
+            the single file it triggers. Visible whether or not a session
+            is currently running (it sits outside the `running ? Stop :
+            Start` branch above), and disabled only when nothing has been
+            recorded yet — never behind a Tooltip on a disabled span, which
+            this codebase's own a11y trap (MUI Tooltip stealing a control's
+            accessible name) would apply to; the reason is instead plain DOM
+            text right beside it, the same idiom the pre-draft switch's own
+            caption below already uses for the identical problem. */}
+        <Button
+          variant="outlined"
+          size="small"
+          onClick={onDownloadLog}
+          disabled={!downloadLogEnabled}
+          aria-describedby={!downloadLogEnabled ? "practice-download-log-reason" : undefined}
+          sx={TOUCH_TARGET_SX}
+        >
+          Download session log
+        </Button>
+        {!downloadLogEnabled ? (
+          <Typography id="practice-download-log-reason" variant="caption" sx={{ color: "var(--text-muted)" }}>
+            Available once a practice session has started.
           </Typography>
         ) : null}
         {/* Defect 6: `flex: 1` alone is `flex-basis: 0%`, which contributes

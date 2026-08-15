@@ -5,7 +5,7 @@
 // about what counts as a question — moving detection to the client is a
 // LATENCY change, never a BEHAVIOR change.
 
-import { detectQuestion, cleanQuestion } from "./questions.js";
+import { detectQuestion, cleanQuestion, hasStarterOpener } from "./questions.js";
 import { classifyQuestionType } from "./questionType.js";
 
 // Mirrors useLiveSession.js's own pre-filter for whether an utterance the
@@ -36,19 +36,30 @@ export function localDetection(utterance) {
   const direct = attempt(utterance);
   if (direct) return direct;
 
-  // detectQuestion's STARTERS check only ever looks at position 0 of the raw
-  // text, so an interview lead-in ("Okay, so, um,") sitting in front of a
-  // genuine starter phrase blocks it — cleanQuestion strips exactly that
-  // lead-in. Retried once against the cleaned text so a lead-in never costs
-  // a detection the embedded engine would still make after cleaning, but
-  // trusted ONLY when the retry's own reason is "starter" — the same kind of
-  // match the raw text would have produced had the lead-in not been in the
-  // way. A retry reason of "punctuation" is a materially weaker signal here:
-  // it means cleanQuestion itself SYNTHESIZED a "?" for an interrogative
-  // opener that never actually carried one, not a question mark the
-  // interviewer actually spoke, and is left to the remote confirm instead.
-  const retry = attempt(cleanQuestion(utterance));
-  return retry && retry.reason === "starter" ? retry : notDecided();
+  // AC-R1.1 (defect #1): detectQuestion's STARTERS check only ever looks at
+  // position 0 of the raw text, so an interview lead-in ("Okay, so, um,")
+  // sitting in front of a genuine starter phrase blocks it — cleanQuestion
+  // strips exactly that lead-in. Retried once against the cleaned text so a
+  // lead-in never costs a detection the embedded engine would still make
+  // after cleaning.
+  //
+  // The retry is trusted by asking hasStarterOpener directly against the
+  // cleaned text, NOT by re-running it through detectQuestion and checking
+  // `reason === "starter"` (the previous, broken rule). cleanQuestion
+  // synthesizes a trailing "?" for any interrogative opener that never
+  // actually carried one ("why do you want to work here" -> "...here?"), and
+  // detectQuestion's punctuation check runs BEFORE its starter check — so
+  // detectQuestion(cleaned) would ALWAYS report "punctuation" for exactly
+  // these spoken utterances, never "starter", and the old rule discarded
+  // every one of them. hasStarterOpener asks the narrower question instead —
+  // does what's left after cleaning open with a real starter word? — which
+  // is still a STARTERS match and nothing else: a bare statement that picks
+  // up a synthesized "." or "?" while cleaning still can't pass, because it
+  // still has to open with one of STARTERS, exactly like the raw-text path
+  // above. Nothing here loosens what counts as a starter.
+  const cleaned = cleanQuestion(utterance);
+  if (!cleaned || !hasStarterOpener(cleaned)) return notDecided();
+  return { decided: true, question: cleaned, type: classifyQuestionType(cleaned), reason: "starter" };
 }
 
 // AC-P1.2: whether a locally-undecided utterance is still worth a network

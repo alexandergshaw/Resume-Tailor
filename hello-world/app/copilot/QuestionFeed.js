@@ -30,6 +30,19 @@ const TYPE_LABEL = {
   general: "General",
 };
 
+// D10: the accessible name for one card's draft/redraft button — the plain
+// visible label ("Draft answer"/"Redraft"/"Drafting…") plus which question
+// it belongs to, so a screen-reader user tabbing through several cards
+// hears a distinct name for each one instead of "Draft answer button"
+// repeated once per question. No ellipsis here even though the visible
+// "Drafting…" label carries one — this string is written fresh for
+// aria-label, and this codebase avoids ellipsis in anything a screen
+// reader will read aloud.
+function draftButtonAriaLabel(q, loading, done) {
+  const action = loading ? "Drafting" : done ? "Redraft" : "Draft answer";
+  return `${action}: ${q.question}`;
+}
+
 // Right-hand feed of detected questions. Each card shows the question and, on
 // demand, the drafted answer: a few-word cue per beat (AC-K1.1), the posting
 // buzzwords to work in, and the resume role and project it came out of.
@@ -185,12 +198,19 @@ function QuestionCard({ q, onDraft }) {
         </Box>
       ) : null}
 
+      {/* D10: every card in this feed renders a button with the SAME
+          visible text ("Draft answer"/"Redraft") — a screen-reader user
+          tabbing through a multi-question session heard "Draft answer
+          button", "Draft answer button", ... with nothing to tell them
+          apart. `aria-label` names which question this one drafts, on top
+          of (not instead of) the plain visible label above. */}
       <Button
         size="small"
         variant={done ? "text" : "contained"}
         onClick={() => onDraft(q.id)}
         disabled={loading}
         startIcon={loading ? <CircularProgress size={14} color="inherit" /> : null}
+        aria-label={draftButtonAriaLabel(q, loading, done)}
         sx={TOUCH_TARGET_SX}
       >
         {loading ? "Drafting…" : done ? "Redraft" : "Draft answer"}

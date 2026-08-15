@@ -162,8 +162,21 @@ export async function captureSystemAudio() {
 // getUserMedia reject with OverconstrainedError when the id doesn't match
 // any current device — a failure CopilotSession handles explicitly (see
 // session.js) rather than a silent wrong-device substitution.
+// AC-S4.2 / defect 6: captureMicAudio used to hand back whatever
+// getUserMedia gave it, raw — every sibling capture function above already
+// runs its stream through requireAudioTrack. A stream with zero audio
+// tracks (a device that granted permission but produced no audio track —
+// seen on some virtual/loopback devices) flowed on silently and the live
+// in-person session that depends on this mic never transcribed anything.
 export async function captureMicAudio(deviceId) {
-  return navigator.mediaDevices.getUserMedia({ audio: micAudioConstraints(deviceId) });
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: micAudioConstraints(deviceId),
+  });
+  return requireAudioTrack(
+    stream,
+    () =>
+      "No microphone audio was captured. This session needs your microphone to transcribe the conversation.",
+  );
 }
 
 // The audio half of both getUserMedia paths, extracted so captureMicAudio
@@ -216,7 +229,16 @@ export class PcmPipeline {
   // each ArrayBuffer of PCM16. Routing the (silent) worklet output through a
   // zero-gain node to the destination keeps the graph "live" so process() keeps
   // firing, without echoing the captured audio back out the speakers.
-  async start(stream, onChunk) {
+  //
+  // `sourceLabel` (D2) names whatever `stream` actually is, for the
+  // AudioContext-resume failure message below. Defaults to "Microphone
+  // capture" because every caller that omits it (practiceSession.js's own
+  // mic+camera capture, and this file's own tests) IS in fact capturing a
+  // microphone — this class also backs captureTabAudio/captureSystemAudio
+  // via session.js's _addSource, though, which passes its own label rather
+  // than falling back to this default: a tab or screen share failing here
+  // must not be misreported as a microphone problem.
+  async start(stream, onChunk, sourceLabel = "Microphone capture") {
     this._stopped = false;
 
     const ctx = new AudioContext({ sampleRate: 16000 });
@@ -236,6 +258,53 @@ export class PcmPipeline {
     // the graph.
     if (this._stopped) {
       return null;
+    }
+
+    // AC-S4.1 / defect 5: a suspended AudioContext never runs its worklet —
+    // zero PCM bytes ever reach onChunk, and nothing about that state throws
+    // or logs anywhere in this file. That is exactly how the reported bug
+    // looked from the user's side: status pinned at "Live" with nothing ever
+    // transcribed and no error shown. The in-person path builds this context
+    // three async boundaries after the user's click (a permission prompt, a
+    // token fetch, a socket handshake) — precisely where a mobile browser's
+    // sticky user-activation window can run out, leaving the context created
+    // in the "suspended" state instead of resuming automatically.
+    //
+    // Gated on `typeof ctx.state === "string"`: a real AudioContext always
+    // reports `.state`, so this check runs unconditionally in production.
+    // It's guarded here only because this class is also constructed by
+    // PracticeSession (lib/copilot/practiceSession.js — out of scope for
+    // this change) against fakes in lib/copilot/practiceSessionTestDoubles.js
+    // that predate this AC and never modelled `.state` at all; skipping the
+    // check when the double doesn't report a state leaves those suites
+    // exactly as they were rather than requiring an edit outside this
+    // defect's file list.
+    if (typeof ctx.state === "string" && ctx.state !== "running") {
+      try {
+        await ctx.resume();
+      } catch {
+        // Reported by the state check right below either way — resume()
+        // rejecting and resume() silently not helping look identical from
+        // here, and both must reach the same "still not running" report.
+      }
+      // A stop() can land while the resume() above was pending; that is not
+      // a capture failure, it is a normal teardown racing this async call —
+      // bail out the same way the _stopped check above already does, rather
+      // than report a fatal error for a session the user chose to end.
+      if (this._stopped) {
+        return null;
+      }
+      if (ctx.state !== "running") {
+        // AC-S4.1: this is the "REPORTED failure, not a silent one" —
+        // thrown (the same channel requireAudioTrack in this file already
+        // uses for a fatal capture problem) so it propagates out of
+        // PcmPipeline.start(), out of CopilotSession._addSource, and
+        // rejects start() instead of leaving the UI pinned at "Live"
+        // forever.
+        throw new Error(
+          `${sourceLabel} could not start: the browser's audio pipeline is stuck "${ctx.state}" and would not resume. Try tapping or clicking the page, then start the session again.`,
+        );
+      }
     }
 
     const source = ctx.createMediaStreamSource(stream);

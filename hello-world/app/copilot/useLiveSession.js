@@ -5,42 +5,19 @@ import { CopilotSession } from "@/lib/copilot/session";
 import { normalizeQuestion } from "@/lib/copilot/questions";
 import { normalizeManualQuestion } from "@/lib/copilot/manualQuestion";
 import { confirmQuestion } from "@/lib/copilot/detectClient";
-// Namespace import, not named — see fetchAnswer's own comment for why.
-import * as answerClientModule from "@/lib/copilot/answerClient";
 import { localDetection, remoteConfirmNeeded } from "@/lib/copilot/localDetection";
 import { speakerDisplayLabel } from "@/lib/copilot/speakerIdentity";
-import { cachedAnswerFor, groundingFor } from "@/lib/copilot/answerGrounding";
+// AC-Q6/AC-Q6.9/AC-P4/AC-N1: two wiring surfaces, each split into its own
+// file to keep this one under the line cap — see their own module docs.
+// useSessionLogRecorder owns the diagnostic log; useDraftAnswer owns turning
+// a question into a drafted answer (the answer cache, the in-flight-
+// generation guard, and fetchAnswer's draftAnswerStreaming/draftAnswer
+// compatibility shim, which moved there with it since nothing else in this
+// file ever called it).
+import { useSessionLogRecorder } from "./useSessionLogRecorder";
+import { useDraftAnswer } from "./useDraftAnswer";
 
 const CONTEXT_TURNS = 12;
-
-// AC-P4.2: runDraft's one and only answer-fetching call, in production
-// always the streaming client — draftAnswerStreaming resolves with exactly
-// the same payload shape draftAnswer does, plus the `onPoints` callback that
-// lets bullets land on the card as they arrive.
-//
-// The presence check exists for one reason: this hook and the pre-existing,
-// out-of-scope app/copilot/useLiveSession.manual.test.js share the same
-// runDraft/addQuestion path for a typed question (AC-O2 — "the same path a
-// detected question uses"), and that file's `vi.mock("@/lib/copilot/
-// answerClient", () => ({ draftAnswer: vi.fn() }))` stubs the module without
-// `draftAnswerStreaming` at all. Vitest 4 treats touching an export a mock
-// factory omitted (even a bare `typeof` on a named import of it) as an error
-// — "No 'draftAnswerStreaming' export is defined on the mock" — specifically
-// to catch a stale partial mock, so a named `import { draftAnswerStreaming }`
-// throws under that file's mock before this function's own body ever runs.
-// The `in` check on the NAMESPACE object is the one form of this probe
-// Vitest allows without throwing; only once it confirms the export exists is
-// the property actually read. In the real module (and in this feature's own
-// app/copilot/useLiveSession.instant.test.js, which mocks both exports) this
-// is always present, so the fallback never engages outside that one
-// stale-mock file — see this feature's report for why editing it was not an
-// option here.
-function fetchAnswer(args, handlers) {
-  if ("draftAnswerStreaming" in answerClientModule && typeof answerClientModule.draftAnswerStreaming === "function") {
-    return answerClientModule.draftAnswerStreaming(args, handlers);
-  }
-  return answerClientModule.draftAnswer(args);
-}
 
 // AC-M1.3.1/AC-M1.5.6: the idle shape `speakerSnapshot` state starts (and
 // resets to, each new session) at — before an in-person session has
@@ -134,6 +111,13 @@ export function useLiveSession({
   const [finals, setFinals] = useState([]); // { id, speaker, text, at, speakerTag }
   const [interims, setInterims] = useState({ them: "", you: "" });
   const [startedAt, setStartedAt] = useState(null);
+  // D2: the moment THIS session started connecting — set in `start()`,
+  // before `setStatus("connecting")` — as distinct from `startedAt`, which
+  // only lands once status actually reaches "live". A session whose socket
+  // hangs at "connecting" has `live === true` and `startedAt === null`
+  // forever; `liveSince` is what lets hearingState() (lib/copilot/
+  // liveHearing.js) still measure silence in exactly that case.
+  const [liveSince, setLiveSince] = useState(null);
   const [now, setNow] = useState(0);
   // AC-M1.5.6/AC-M1.5.8: the in-person speaker-identity snapshot, updated
   // from CopilotSession's `onSpeakerIdentity` callback (session.js) — both
@@ -151,18 +135,12 @@ export function useLiveSession({
   const lastQNormRef = useRef(""); // dedupe back-to-back identical questions
   const questionsRef = useRef([]);
   const autoDraftRef = useRef(true);
-  const profileRef = useRef("");
-  // AC-H1: mirrors `posting` for runDraft below, the same reason
-  // profileRef exists — runDraft is a stable useCallback whose async body
-  // must see the LATEST selection, not whatever was current when the
-  // callback identity was created (same pattern as PracticeClient's
-  // postingRef).
-  const postingRef = useRef(null);
   // BUG-6: mirrors `speakerSnapshot` for buildContext below, same reason
-  // profileRef/postingRef exist — buildContext is a stable useCallback
-  // (empty dep array; see its own comment) whose closure must resolve
-  // against the LATEST identity snapshot, not whichever one was current
-  // when the callback identity was created.
+  // useDraftAnswer.js keeps its own profileRef/postingRef mirrors of
+  // `profile`/`posting` — buildContext is a stable useCallback (empty dep
+  // array; see its own comment) whose closure must resolve against the
+  // LATEST identity snapshot, not whichever one was current when the
+  // callback identity was created.
   const speakerSnapshotRef = useRef(DEFAULT_SPEAKER_SNAPSHOT);
 
   useEffect(() => {
@@ -172,22 +150,30 @@ export function useLiveSession({
     autoDraftRef.current = autoDraft;
   }, [autoDraft]);
   useEffect(() => {
-    profileRef.current = profile;
-  }, [profile]);
-  useEffect(() => {
-    postingRef.current = posting;
-  }, [posting]);
-  useEffect(() => {
     speakerSnapshotRef.current = speakerSnapshot;
   }, [speakerSnapshot]);
 
+  // AC-Q6/AC-Q6.9/D9: the session-log wiring surface — see
+  // useSessionLogRecorder.js. `speakerSnapshotRef` is threaded through so
+  // downloadLog can hand the CURRENT identity snapshot to the archive
+  // builder — see that hook's own doc for why the renderer needs it as an
+  // argument rather than recovering it from the log's own events.
+  const { startLog, logEvent, sessionLogSnapshot, downloadLog, hasEvents: sessionLogHasEvents } =
+    useSessionLogRecorder(source, speakerSnapshotRef);
+
   const live = status === "live" || status === "connecting";
 
+  // D2: used to be gated on `!startedAt` alone, which stayed true (frozen
+  // `now`) for the entire life of a session stuck "connecting" — the clock
+  // hearingState() needs to ever notice that silence never had a chance to
+  // tick. `liveSince` is set in `start()` at the same moment `status`
+  // becomes "connecting", so it is already true by the time `live` first
+  // is — this only ever needs one of the two clocks to exist, not both.
   useEffect(() => {
-    if (!live || !startedAt) return undefined;
+    if (!live || (!startedAt && !liveSince)) return undefined;
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
-  }, [live, startedAt]);
+  }, [live, startedAt, liveSince]);
 
   const stop = useCallback(async () => {
     if (sessionRef.current) {
@@ -233,164 +219,20 @@ export function useLiveSession({
     [],
   );
 
-  const runDraft = useCallback(
-    async (id, question, { force = false } = {}) => {
-      const norm = normalizeQuestion(question);
-      // AC-N1.2: what this draft is (or would be) built from, read from the
-      // refs ONCE, here — before the `await` further down. Re-reading
-      // profileRef/postingRef AFTER that await would report whatever the
-      // user has since selected, not what THIS draft actually used; capturing
-      // once and reusing the same value for the lookup below, the network
-      // call, and the eventual cache write is what AC-N1's correction to the
-      // original bug report is about. groundingFor folds live mode's
-      // always-absent interview type into the same "not applicable" value
-      // practice mode's own entries use (answerGrounding.js), so a write from
-      // one mode's cache can be read back correctly by the other's.
-      const grounding = groundingFor({
-        profile: profileRef.current,
-        applicationId: postingRef.current?.id || null,
-      });
-      // AC-N1.3: this draft's generation, also captured before the await.
-      // Bumped by onPostingChange/onProfileChange (CopilotClient.js) and by
-      // `start` below — re-checked past the await, before either write, so a
-      // draft still resolving when the user moves on can't land anywhere.
-      const gen = draftGenRef.current;
-      // Reuse a prior answer for the same (normalized) question — interviewers
-      // often circle back or rephrase — unless the user explicitly redrafts.
-      // AC-N1.2: cachedAnswerFor rejects an entry whose OWN grounding
-      // (however it was written) doesn't match `grounding` above — a mismatch
-      // is an ordinary miss, indistinguishable from "nothing cached", so it
-      // falls straight through to a fresh draft below with no error and no
-      // "reused" label.
-      if (!force) {
-        const cached = cachedAnswerFor(answerCacheRef.current.get(norm), grounding);
-        if (cached) {
-          setQuestions((prev) =>
-            prev.map((it) =>
-              it.id === id
-                ? {
-                    ...it,
-                    status: "done",
-                    // BUG-7: a cache hit must clear a PRIOR error, not merely
-                    // omit it — omitting it left whatever error string the
-                    // fresh-draft path's catch block had set still sitting on
-                    // this entry (that path only clears it via the loading
-                    // transition just above, which this cache-hit branch
-                    // returns before ever reaching), so a question that
-                    // failed once and later served from cache rendered its
-                    // answer WITH a stale "Failed to draft." alert above it.
-                    error: "",
-                    points: cached.points,
-                    // AC-K1: served from cache exactly as they were drafted.
-                    // A reused answer that silently dropped its cues and
-                    // subsections would look like a WORSE answer than the
-                    // same question drafted fresh, which is not what "reused"
-                    // is meant to signal. An entry cached before these
-                    // existed resolves to the empty shapes, and the card
-                    // falls back to the full points.
-                    cues: cached.cues || [],
-                    buzzwords: cached.buzzwords || [],
-                    anchor: cached.anchor || null,
-                    idealProject: cached.idealProject || null,
-                    type: it.type || cached.type,
-                    cached: true,
-                  }
-                : it,
-            ),
-          );
-          return;
-        }
-      }
-      setQuestions((prev) =>
-        prev.map((it) =>
-          it.id === id ? { ...it, status: "loading", error: "", cached: false } : it,
-        ),
-      );
-      // AC-N1.3: what a superseded draft leaves the card as — back at
-      // "idle", never stuck at "loading" forever and never showing an
-      // answer/error built for a posting or prep context the user has since
-      // left. The existing "Draft answer" button is then the user's way back
-      // in; nothing here auto-retries, since by the time this fires the
-      // question may no longer even be the one on screen.
-      const revertToIdle = () => {
-        setQuestions((prev) =>
-          prev.map((it) => (it.id === id ? { ...it, status: "idle", error: "", cached: false } : it)),
-        );
-      };
-      try {
-        const { points, type, cues, buzzwords, resumeAnchor, idealProject } = await fetchAnswer(
-          {
-            question,
-            context: buildContext(),
-            profile: grounding.profile,
-            // AC-H1.4/AC-H4: the selected posting's own id IS the application
-            // id (see normalizePostingRows in lib/copilot/postings.js) — the
-            // route uses it to fetch and ground in the submitted résumé/cover
-            // letter itself; this client never sends document text.
-            // `|| null` undoes groundingFor's "not applicable" -> "" folding —
-            // this request must send exactly what postingRef held at capture
-            // time (null), not the normalized comparison value.
-            applicationId: grounding.applicationId || null,
-          },
-          {
-            // AC-P4.2: bullets land on the card as they stream in — each
-            // points frame overwrites `points` with its own (superset) array
-            // so the visible list only ever grows, never flickers backward.
-            // Guarded by the same generation check the two post-await writes
-            // below use, so a frame from a superseded draft can't repaint a
-            // card the user has since moved on from.
-            onPoints: (partial) => {
-              if (draftGenRef.current !== gen) return;
-              setQuestions((prev) =>
-                prev.map((it) => (it.id === id ? { ...it, points: partial } : it)),
-              );
-            },
-          },
-        );
-        // AC-N1.3: a posting/profile change (or a fresh Start) landed while
-        // this draft was in flight — see revertToIdle's own comment above.
-        // Checked before EITHER write below: the cache write would be
-        // rejected on its next read anyway (AC-N1.2's grounding check), but
-        // the setQuestions write is not cache-mediated and has no other
-        // guard at all.
-        if (draftGenRef.current !== gen) {
-          revertToIdle();
-          return;
-        }
-        // AC-K1: same defensive normalization the practice hook applies — a
-        // missing or malformed field becomes the empty shape here, once, so
-        // neither the cache nor the render layer has to re-guard its type.
-        const aids = {
-          cues: Array.isArray(cues) ? cues : [],
-          buzzwords: Array.isArray(buzzwords) ? buzzwords : [],
-          anchor: resumeAnchor || null,
-          idealProject: idealProject || null,
-        };
-        // AC-N1.2: the grounding this draft was ACTUALLY built from — the
-        // same `grounding` captured before the await above, not a fresh read
-        // of the refs now.
-        answerCacheRef.current.set(norm, { points, type, ...aids, ...grounding });
-        setQuestions((prev) =>
-          prev.map((it) =>
-            it.id === id ? { ...it, status: "done", points, ...aids, type: it.type || type } : it,
-          ),
-        );
-      } catch (err) {
-        if (draftGenRef.current !== gen) {
-          revertToIdle();
-          return;
-        }
-        setQuestions((prev) =>
-          prev.map((it) =>
-            it.id === id
-              ? { ...it, status: "error", error: err?.message || "Failed to draft." }
-              : it,
-          ),
-        );
-      }
-    },
-    [buildContext, answerCacheRef, draftGenRef, setQuestions],
-  );
+  // AC-P4/AC-N1/AC-Q6.9: split out into useDraftAnswer.js purely to keep
+  // this file under the 1000-line cap — see that file's own module doc.
+  // Owns the answer-drafting flow end to end: the cache, the in-flight-
+  // generation guard, and fetchAnswer's draftAnswerStreaming/draftAnswer
+  // compatibility shim.
+  const runDraft = useDraftAnswer({
+    profile,
+    posting,
+    answerCacheRef,
+    draftGenRef,
+    buildContext,
+    setQuestions,
+    logEvent,
+  });
 
   // AC-M1.3.5: `meta` is populated ONLY by the in-person path
   // (handleUtterance below) — `{ speakerTag, provisional }`. The tab/system
@@ -425,9 +267,11 @@ export function useLiveSession({
           provisional: !!meta.provisional,
         },
       ]);
+      // AC-Q6.2: every card the user sees, detected or typed alike.
+      logEvent("question.added", { id, question, type: type || null, auto: !!auto });
       if (auto) runDraft(id, question);
     },
-    [runDraft, setQuestions],
+    [runDraft, setQuestions, logEvent],
   );
 
   // AC-O2: live mode's half of "typing a question is the same as detecting
@@ -498,13 +342,19 @@ export function useLiveSession({
           // Still being answered — a repeat right now is a fresh ask, not
           // noise; fall through and give it its own card/draft.
         } else {
+          // D8: a real, detected question that ends here with NO card and,
+          // before this, no event either — indistinguishable in the log
+          // from a question the pipeline never heard at all. This is the
+          // back-to-back dedupe guard firing, not localDetection or
+          // confirmQuestion rejecting it, so it gets its own reason.
+          logEvent("question.rejected", { utterance: question, reason: "duplicate" });
           return;
         }
       }
       lastQNormRef.current = norm;
       addQuestion(question, type, autoDraftRef.current, meta);
     },
-    [addQuestion],
+    [addQuestion, logEvent],
   );
 
   // Confirm a completed interviewer utterance is a question, then queue it.
@@ -528,7 +378,13 @@ export function useLiveSession({
       // AC-P1.2/AC-P1.3: the heuristic missed it — worth a remote confirm
       // only when the utterance is long enough that the LLM has a real
       // chance of catching an indirect ask (today's exact pre-filter).
-      if (!remoteConfirmNeeded({ decided: local.decided, utterance })) return;
+      if (!remoteConfirmNeeded({ decided: local.decided, utterance })) {
+        // AC-Q6.11: exactly one event for an utterance that never becomes a
+        // card — "too short to bother the LLM with" is itself the answer to
+        // "why didn't it hear that question".
+        logEvent("question.rejected", { utterance, reason: "too short" });
+        return;
+      }
 
       let result;
       try {
@@ -536,14 +392,18 @@ export function useLiveSession({
       } catch {
         // LLM unavailable and the heuristic already missed this one —
         // nothing left to fall back to.
+        logEvent("question.rejected", { utterance, reason: "confirm unavailable" });
         return;
       }
-      if (!result.isQuestion) return;
+      if (!result.isQuestion) {
+        logEvent("question.rejected", { utterance, reason: "not a question" });
+        return;
+      }
 
       const question = (result.question || utterance).trim();
       acceptQuestion(question, result.type, meta);
     },
-    [buildContext, acceptQuestion],
+    [buildContext, acceptQuestion, logEvent],
   );
 
   // AC-M1.4.9/10: the in-person source's OWN question-evaluation trigger —
@@ -562,7 +422,19 @@ export function useLiveSession({
   // this utterance existed.
   const handleUtterance = useCallback(
     ({ speakerTag, text, evaluate }) => {
-      if (!evaluate) return;
+      if (!evaluate) {
+        // D8: this is the silent-deafness scenario itself — an utterance
+        // that never even reaches localDetection/confirmQuestion because
+        // speaker identity currently attributes this voice to the
+        // candidate, not the interviewer (AC-M1.4.9's `evaluate` gate,
+        // above). Before this, NOTHING was recorded here: no card, no log
+        // entry — a session that suppressed every real question this way
+        // looked, in its own downloaded log, identical to one that
+        // correctly heard no questions at all. That is exactly the "why
+        // didn't it act" question this log exists to answer.
+        logEvent("question.rejected", { utterance: text, speakerTag, reason: "speaker identity suppressed" });
+        return;
+      }
       const snap = sessionRef.current?.speakerSnapshot() || DEFAULT_SPEAKER_SNAPSHOT;
       // AC-M1.3.5: provisional exactly when this utterance came from the
       // tag identity currently presumes IS the user, but confidence has not
@@ -578,7 +450,7 @@ export function useLiveSession({
         !snap.overridden;
       evaluateUtterance(text, { speakerTag, provisional });
     },
-    [evaluateUtterance],
+    [evaluateUtterance, logEvent],
   );
 
   // AC-M1.5.7: `speakerTag` rides alongside the existing four fields — it is
@@ -641,12 +513,29 @@ export function useLiveSession({
   const identityUnsettled = speakerSnapshot.confidence !== "high" && !speakerSnapshot.overridden;
 
   const start = useCallback(async () => {
+    // AC-Q6.1/Q6.6: a fresh log the instant Start is pressed, before any
+    // other per-session reset below — so even a session that fails inside
+    // the try block still has a session.start entry to explain what it was.
+    startLog();
+    logEvent("session.start", { source });
     setError("");
     setWarning("");
     setFinals([]);
     setInterims({ them: "", you: "" });
     setQuestions([]);
     setStartedAt(null);
+    // AC-S3/D2: a fresh session's own clock — without this, `now` could
+    // still hold a stale timestamp from a PRIOR session (this state is
+    // otherwise only advanced by the ticking interval above, at most once a
+    // second), which would let hearingState's very first evaluation of a
+    // new session compare a brand-new `startedAt`/`liveSince` against an
+    // old `now`, understating (or even negating) elapsed silence for up to
+    // a second. `liveSince` is stamped with the SAME timestamp — this is
+    // the "Start was pressed" moment `startedAt` cannot yet stand in for,
+    // since it only lands once status reaches "live".
+    const sessionStartTs = Date.now();
+    setNow(sessionStartTs);
+    setLiveSince(sessionStartTs);
     setSpeakerSnapshot(DEFAULT_SPEAKER_SNAPSHOT);
     recentRef.current = [];
     pendingRef.current = [];
@@ -660,6 +549,18 @@ export function useLiveSession({
     resetForSession();
     // Step 2/4: collapse both disclosures for THIS session, same as every
     // other per-session reset above.
+    //
+    // AC-S3.9: `setShowHistory(false)` stays — it must NOT stop collapsing
+    // the transcript. What changed is its SCOPE, at the call site in
+    // CopilotClient.js (AC-S3.8): `showHistory` now gates only
+    // <TranscriptView>, the one genuinely tall element this disclosure
+    // exists to keep off the default screen. <QuestionFeed> and the
+    // always-visible hearing strip (AC-S3.6) both moved OUTSIDE the
+    // Collapse there and render unconditionally regardless of this value —
+    // so collapsing it here no longer hides anything the user needs to see
+    // that a live session is working. Un-collapsing it too (or dropping
+    // this call) would bring back the exact scrolling problem the
+    // disclosure was built to avoid, for a bug this fix does not touch.
     setSetupExpanded(false);
     setShowHistory(false);
     setStatus("connecting");
@@ -670,9 +571,17 @@ export function useLiveSession({
         micDeviceId,
         onStatus: (s) => {
           setStatus(s);
+          // AC-Q6.11: the resolved status transitions — the exact signal
+          // the reported bug hinged on (went to "Live" and then nothing).
+          logEvent("status", { status: s });
           if (s === "live") setStartedAt((prev) => prev || Date.now());
         },
-        onError: (err) => setWarning(err.message),
+        onError: (err) => {
+          setWarning(err.message);
+          // AC-Q6.4: type matches /warn|error/i, and the message the user
+          // was actually shown rides along verbatim.
+          logEvent("session.warning", { message: err?.message || "" });
+        },
         // AC-M1.4.9/10: fired only for the "inperson" source, once per
         // utterance CopilotSession itself assembles — see handleUtterance
         // above for why this, not `speaker === "them"`, is what drives
@@ -727,6 +636,19 @@ export function useLiveSession({
             setInterims((prev) => ({ ...prev, [speaker]: transcript }));
             return;
           }
+          // AC-Q6.2/Q6.11: every finalized frame, including a provider's raw
+          // re-delivery of the same span (R-127 below) — a diagnostic log's
+          // job is to show what the pipeline actually received, not only
+          // the de-duplicated text on screen.
+          logEvent("transcript", {
+            text: transcript,
+            speaker,
+            isFinal,
+            speechFinal,
+            speakerTag,
+            start: spanStart,
+            duration,
+          });
           setInterims((prev) => ({ ...prev, [speaker]: "" }));
 
           // R-127: textAlreadyDelivered re-delivers the text of the final
@@ -798,6 +720,8 @@ export function useLiveSession({
     setShowHistory,
     setStatus,
     setQuestions,
+    logEvent,
+    startLog,
   ]);
 
   const onDraft = useCallback(
@@ -836,19 +760,25 @@ export function useLiveSession({
 
   const elapsed = startedAt ? now - startedAt : 0;
 
-  // Extra (adversarial review): `now`, `buildContext`, `runDraft`,
-  // `addQuestion`, `evaluateUtterance`, and `appendFinal` used to be
-  // exported here too, but CopilotClient.js — the only caller — never
-  // destructures any of them (`elapsed` is the only thing outside this hook
-  // that ever needed `now`, and it's computed above). This module boundary
+  // Extra (adversarial review): `buildContext`, `runDraft`, `addQuestion`,
+  // `evaluateUtterance`, and `appendFinal` are NOT exported here — CopilotClient.js,
+  // the only caller, never destructures any of them. This module boundary
   // exists to bound CopilotClient.js's file size (see the module doc at the
   // top); a public surface nothing uses just invites a future caller to
   // reach into the pipeline's internals instead of going through
-  // start/stop/onDraft/etc. All six stay as ordinary local bindings — every
+  // start/stop/onDraft/etc. All five stay as ordinary local bindings — every
   // one of them is still used INSIDE this hook (runDraft by onDraft and
   // addQuestion, evaluateUtterance by handleUtterance, appendFinal by
   // start's onTranscript, buildContext by runDraft/evaluateUtterance/
   // copyTranscript) — only the return object shrinks.
+  //
+  // `now` USED to be cut for the same reason (nothing outside this hook
+  // destructured it, `elapsed` above was the only consumer). AC-S3.6 changed
+  // that: LiveHearingStrip.js (via CopilotClient.js) needs the same ticking
+  // clock this hook already advances to evaluate hearingState() on every
+  // tick, not just the one derived `elapsed` number — re-deriving a second
+  // independent clock in CopilotClient.js instead would risk the two
+  // drifting out of sync with each other for no reason.
   return {
     warning,
     setWarning,
@@ -856,6 +786,12 @@ export function useLiveSession({
     finals,
     interims,
     startedAt,
+    // D2: LiveHearingStrip.js's own clock, alongside startedAt — see
+    // hearingState's (lib/copilot/liveHearing.js) doc for why a session
+    // stuck "connecting" needs this second, earlier timestamp to measure
+    // silence from at all.
+    liveSince,
+    now,
     elapsed,
     start,
     stop,
@@ -885,5 +821,20 @@ export function useLiveSession({
     // than off `status`/`live` — see onModeChange's own comment for why an
     // errored session still needs this distinct check.
     sessionRef,
+    // AC-Q6: the wiring surface CopilotClient's "Download session log"
+    // control uses — see this hook's own sessionLogSnapshot/downloadLog
+    // above. Tests (useLiveSession.log.test.js) still read the log through
+    // sessionLogSnapshot() directly; CopilotClient itself no longer reads
+    // it — see sessionLogHasEvents below, D7's fix for the control's
+    // enabled state.
+    sessionLogSnapshot,
+    downloadLog,
+    // D7: a real, reactive boolean — flipped true inside useSessionLogRecorder's
+    // startLog(), not derived by deep-cloning sessionLogSnapshot() on every
+    // render (that clone used to run at least once a second from the
+    // ticking clock plus once per interim frame, over up to 500 events of
+    // up to 4000 chars each, purely to compute one boolean CopilotClient
+    // never even displayed).
+    sessionLogHasEvents,
   };
 }

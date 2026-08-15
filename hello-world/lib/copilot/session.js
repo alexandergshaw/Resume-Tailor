@@ -23,7 +23,20 @@
 //     response shape, not that Deepgram returns that shape for this
 //     account/model/audio. That gap is the user's manual regression case.
 //
-// A single aggregated status is reported to the UI regardless of source.
+// A single aggregated status is reported to the UI regardless of source. Not
+// every source is equally load-bearing, though (D1): "tab"/"system" sessions
+// have an ESSENTIAL "them" source (the interviewer's audio — what the
+// session is FOR) and an OPTIONAL "you" source (the user's own mic, already
+// soft-failed at start() below if it never opens at all); "inperson" has
+// exactly one source, the mic, which is simultaneously the only and
+// therefore ESSENTIAL source there. aggregateStatus() below only escalates
+// to "error" — which the UI reads as "kill the whole session" — off an
+// ESSENTIAL source's failure. A non-essential source failing mid-session
+// (e.g. an unexpected close on the optional mic socket, see
+// stt/deepgram.js's unexpected-close handling) still reaches the user
+// through the normal onError warning channel; it just doesn't take the
+// healthy essential source down with it.
+//
 // Transcript events reach `onTranscript` tagged with the two-value `speaker`
 // ("them"/"you") every existing consumer already understands; "inperson"
 // additionally fires a second callback, `onUtterance`, once per assembled
@@ -49,6 +62,19 @@ import { createUtteranceAssembly } from "./utteranceAssembly";
 const THEM_CAPTURE_BY_SOURCE = {
   tab: captureTabAudio,
   system: captureSystemAudio,
+};
+
+// D2: mirrors THEM_CAPTURE_BY_SOURCE above, one-for-one, so _addSource's
+// PcmPipeline failure message names the capture that's actually running
+// (see captureLabel on _addSource) instead of always claiming to be the
+// microphone — a tab or screen share failing at the AudioContext-resume
+// check in capture.js used to be misreported as a mic problem. Same
+// fallback rule as THEM_CAPTURE_BY_SOURCE: an unrecognized `source` degrades
+// to the tab wording, matching the tab capture function it actually falls
+// back to.
+const THEM_CAPTURE_LABEL_BY_SOURCE = {
+  tab: "Tab audio capture",
+  system: "System audio capture",
 };
 
 // AC-I1.8: a getUserMedia rejection whose `.name` is "OverconstrainedError"
@@ -106,6 +132,9 @@ export class CopilotSession {
     // opinion about which falsy value means "no selection".
     this.micDeviceId = micDeviceId;
     this.captureThem = THEM_CAPTURE_BY_SOURCE[source] || captureTabAudio;
+    // D2: paired with captureThem above so a PcmPipeline failure on the
+    // "them" source names the right capture.
+    this.captureThemLabel = THEM_CAPTURE_LABEL_BY_SOURCE[source] || THEM_CAPTURE_LABEL_BY_SOURCE.tab;
     this.onTranscript = onTranscript || (() => {});
     // AC-M1.4.9: fired only for the "inperson" source, once per utterance
     // assembled by utteranceAssembly.js. "tab"/"system" never call this.
@@ -122,7 +151,23 @@ export class CopilotSession {
     this.onStatus = onStatus || (() => {});
     this.onError = onError || (() => {});
     this._sources = []; // { key, stream, pipeline, dg }
+    // AC-S4.3 / defect 7: every MediaStream this session has ever captured,
+    // recorded the moment it is captured — BEFORE _addSource is attempted,
+    // not after it succeeds. If _addSource throws partway through (the STT
+    // provider's connect() rejecting because e.g. the token route 503'd is
+    // the reported case), the stream never reaches `_sources` above, and
+    // stop() used to only ever walk that array — the browser's own
+    // recording indicator stayed lit for the rest of the page's life with
+    // nothing left that could ever turn it off. stop() below stops every
+    // track recorded here regardless of whether its source finished wiring.
+    this._openStreams = [];
     this._statuses = {}; // key -> connecting | open | closed | error
+    // D1: key -> whether that source is ESSENTIAL to the session (see the
+    // essential-source rule in the file header comment above, and
+    // aggregateStatus() below). Populated by _addSource before it opens
+    // anything for that key, so it's always present by the time any status
+    // callback for that key can fire.
+    this._essential = {};
     this._stopped = false;
 
     // AC-M1.4.9: ownership of both the speaker-identity and utterance-
@@ -143,12 +188,35 @@ export class CopilotSession {
   }
 
   // Collapse per-source socket states into one status for the UI.
+  //
+  // D1 / R-038: a failure on a non-essential source must DEGRADE the
+  // session, not KILL it — only an "error" on an ESSENTIAL source (see the
+  // file header comment's essential-source rule, and `this._essential`
+  // above) escalates the whole aggregate to "error". Concretely: on a
+  // "tab"/"system" session an unexpected close of the optional "you" mic
+  // socket must leave the aggregate exactly where the interviewer's own
+  // "them" socket says it is (still "live" if "them" is still open) — the
+  // mic error is still told to the user, just through onError (see
+  // _addSource's onError handler below), not by tearing down a session
+  // that's still doing its job. A "them" failure, and the sole "mic" source
+  // failing on an "inperson" session, are essential by contrast and DO
+  // escalate — they are not silently downgraded.
+  //
+  // A non-essential source that ended in "error" is otherwise treated like
+  // "closed" for the rest of this computation (the `effective` map below):
+  // it must not itself keep the aggregate stuck at "connecting", and it
+  // must not stop an all-other-sources-closed session from correctly
+  // reporting "idle".
   aggregateStatus() {
-    const vals = Object.values(this._statuses);
-    if (vals.length === 0) return "idle";
-    if (vals.some((v) => v === "error")) return "error";
-    if (vals.every((v) => v === "closed")) return "idle";
-    if (vals.some((v) => v === "open")) return "live";
+    const entries = Object.entries(this._statuses);
+    if (entries.length === 0) return "idle";
+    const essentialFailed = entries.some(
+      ([key, v]) => v === "error" && this._essential[key] !== false,
+    );
+    if (essentialFailed) return "error";
+    const effective = entries.map(([, v]) => (v === "error" ? "closed" : v));
+    if (effective.every((v) => v === "closed")) return "idle";
+    if (effective.some((v) => v === "open")) return "live";
     return "connecting";
   }
 
@@ -158,7 +226,23 @@ export class CopilotSession {
   // arm, which is byte-identical to what this method did before "inperson"
   // existed (AC-M1.4.7). Returns the connected stream so a caller that needs
   // to inspect it post-connect (AC-M1.4.11's diarizationActive check) can.
-  async _addSource({ key, speaker, stream, diarize = false, onFrame }) {
+  //
+  // `essential` (D1, defaults true) records, in `this._essential`, whether
+  // THIS source is allowed to take the whole session down with it when its
+  // socket errors — see the essential-source rule in the file header
+  // comment and aggregateStatus() above. Set before anything is opened for
+  // this key, since a status/error callback for it can in principle fire as
+  // early as createSttStream's own onStatus("connecting").
+  //
+  // `captureLabel` (D2) names the actual thing being captured — "Tab audio
+  // capture" / "System audio capture" / "Microphone capture" — so a failure
+  // inside pipeline.start() (see capture.js's PcmPipeline) reports itself
+  // correctly instead of always claiming to be the microphone. Defaults to
+  // PcmPipeline's own default, which is "Microphone capture" — every
+  // non-"them" call site here is in fact a microphone, so only the "them"
+  // call site needs to override it.
+  async _addSource({ key, speaker, stream, diarize = false, onFrame, essential = true, captureLabel }) {
+    this._essential[key] = essential;
     const dg = await createSttStream({
       speaker,
       diarize,
@@ -169,10 +253,39 @@ export class CopilotSession {
       },
       onTranscript: onFrame || ((t) => this.onTranscript(t)),
     });
-    await dg.connect();
 
-    const pipeline = new PcmPipeline();
-    await pipeline.start(stream, (chunk) => dg.send(chunk));
+    // D2: from here down, `dg`'s socket can be OPEN (once connect() below
+    // resolves) and the PcmPipeline's AudioContext can be live (once
+    // pipeline.start() resolves) before either has ever reached
+    // `this._sources` — the ONLY place stop() looks to close them. A throw
+    // anywhere in this window (pipeline.start()'s AudioContext-resume check
+    // in capture.js, AC-S4.1, is the reported case, but this guards the
+    // whole window, not just that one call) used to leak both: the socket
+    // stayed open and billed, and the AudioContext stayed live, for the
+    // rest of the page's life, because nothing ever ran that had a
+    // reference to either. Catch, release both, then rethrow so start()
+    // still rejects exactly as it did before — callers' existing
+    // `.rejects.toThrow(...)` expectations are unchanged.
+    let pipeline;
+    try {
+      await dg.connect();
+      pipeline = new PcmPipeline();
+      await pipeline.start(stream, (chunk) => dg.send(chunk), captureLabel);
+    } catch (err) {
+      try {
+        dg.close();
+      } catch {
+        // ignore — best-effort teardown of a source that's already failing
+      }
+      if (pipeline) {
+        try {
+          await pipeline.stop();
+        } catch {
+          // ignore — same best-effort teardown
+        }
+      }
+      throw err;
+    }
 
     // Native "Stop sharing" button or an unplugged mic ends the track — tear the
     // whole session down so the UI returns to idle.
@@ -233,8 +346,21 @@ export class CopilotSession {
     // against repeating.
     if (!frame.isFinal) return;
 
-    const completed = this._utteranceAssembly.push(tag, frame.transcript);
-    if (completed) this._emitUtterance(completed.tag, completed.text);
+    // AC-S4.4 / defect 8: mirrors app/copilot/useLiveSession.js:739's own
+    // guard on the exact same field. `textAlreadyDelivered` (see
+    // stt/index.js's onTranscript contract) means this frame's TEXT is an
+    // exact re-delivery of a final this instance already pushed — ElevenLabs'
+    // commit_strategy=vad re-sends a final utterance's text a second time
+    // purely to carry `speechFinal: true`. Pushing it again would double
+    // every assembled in-person utterance built from such frames, the same
+    // R-127 bug useLiveSession.js already guards against on its own
+    // accumulation path. `speechFinal` below is still honoured
+    // unconditionally — it is this frame's own end-of-turn signal
+    // regardless of whether its text was new.
+    if (!frame.textAlreadyDelivered) {
+      const completed = this._utteranceAssembly.push(tag, frame.transcript);
+      if (completed) this._emitUtterance(completed.tag, completed.text);
+    }
 
     // AC-M1.6.2: a tag also drains on its OWN speechFinal, independent of
     // whichever tag push() above just completed (if any) — "whichever comes
@@ -268,12 +394,20 @@ export class CopilotSession {
       return;
     }
 
+    // AC-S4.3: recorded before _addSource is attempted (see the
+    // _openStreams comment in the constructor) — if the STT connect() call
+    // inside _addSource throws, this is what stop() still finds to release.
+    this._openStreams.push(micStream);
+
     const dg = await this._addSource({
       key: "mic",
       speaker: "mic",
       stream: micStream,
       diarize: true,
       onFrame: (frame) => this._handleInPersonFrame(frame),
+      // D1: the mic is this session's ONLY source — simultaneously the only
+      // and therefore essential one (see the file header comment) — so its
+      // default of `essential: true` is left implicit here.
     });
 
     if (!dg.diarizationActive) {
@@ -329,7 +463,19 @@ export class CopilotSession {
       themStream.getTracks().forEach((t) => t.stop());
       return;
     }
-    await this._addSource({ key: "them", speaker: "them", stream: themStream });
+    // AC-S4.3: recorded before _addSource is attempted — see the
+    // _openStreams comment in the constructor for why `_sources` alone
+    // cannot be trusted to release this stream on a later stop().
+    this._openStreams.push(themStream);
+    // D1: essential — a failure here is fatal and rejects start() (R-038),
+    // so `essential` is left at its default of true. D2: captureLabel names
+    // the actual capture (tab vs. system) rather than the mic default.
+    await this._addSource({
+      key: "them",
+      speaker: "them",
+      stream: themStream,
+      captureLabel: this.captureThemLabel,
+    });
 
     if (this.withMic) {
       try {
@@ -338,7 +484,11 @@ export class CopilotSession {
           micStream.getTracks().forEach((t) => t.stop());
           return;
         }
-        await this._addSource({ key: "you", speaker: "you", stream: micStream });
+        this._openStreams.push(micStream);
+        // D1: NOT essential — the mic is optional on this source (see the
+        // file header comment); an error on this socket must degrade, not
+        // kill, the session. See aggregateStatus() for how that's enforced.
+        await this._addSource({ key: "you", speaker: "you", stream: micStream, essential: false });
       } catch (err) {
         // The mic is optional — keep the tab transcript running and surface a
         // soft warning rather than failing the whole session, regardless of
@@ -380,14 +530,27 @@ export class CopilotSession {
       } catch {
         // ignore
       }
+    }
+
+    // AC-S4.3 / defect 7: stops every track from every stream this session
+    // ever captured — not just the ones whose source finished wiring into
+    // `_sources` above. A stream that was captured but never made it that
+    // far (its _addSource call threw) is exactly the leak this closes: the
+    // browser's own "microphone/screen in use" indicator otherwise stays lit
+    // for the rest of the page's life, reading to the user as a session
+    // that is somehow still live.
+    for (const stream of this._openStreams) {
       try {
-        src.stream.getTracks().forEach((t) => t.stop());
+        stream.getTracks().forEach((t) => t.stop());
       } catch {
         // ignore
       }
     }
+
     this._sources = [];
+    this._openStreams = [];
     this._statuses = {};
+    this._essential = {};
     this.onStatus("idle");
   }
 }

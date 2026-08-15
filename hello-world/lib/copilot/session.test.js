@@ -46,6 +46,11 @@ function makeStream(hasAudio) {
 // surface PcmPipeline.start()/stop() actually touches.
 class FakeAudioContext {
   constructor() {
+    // AC-S4.1: a real AudioContext always has `.state`, and PcmPipeline.start()
+    // now checks it before treating capture as running (see capture.js) —
+    // "running" here reproduces the ordinary case every test in this file
+    // wants, same as an already-active real AudioContext needing no resume().
+    this.state = "running";
     this.audioWorklet = { addModule: vi.fn().mockResolvedValue(undefined) };
     this.destination = {};
   }

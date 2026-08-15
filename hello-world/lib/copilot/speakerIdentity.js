@@ -252,6 +252,23 @@ export function createSpeakerIdentity() {
     // module; this function only ever answers "should detection run", never
     // "how should the result be treated".
     if (userTag === null || t === null || t !== userTag) return true;
+
+    // AC-S2.5 — PROPERTY: identity may suppress a tag only while some OTHER
+    // tag remains observed to carry the evaluation. Suppressing userTag is
+    // only ever a claim of the form "skip this one, the other voice is
+    // covered" — and that claim is false whenever userTag is the ONLY tag
+    // evidence has ever seen. On a shared room mic diarization very often
+    // resolves everyone to a single tag; if that lone tag also happens to be
+    // userTag (a user correction, or even scoreSpeakers' single-voice
+    // argmax), honoring overridden/"high" here would suppress the only voice
+    // there is — not "the interviewer minus the user", but everyone,
+    // permanently, with no way for the user to notice. That is strictly
+    // worse than the failure mode this whole module exists to avoid (see the
+    // module header and speakerIdentity.deafness.test.js), so evaluation has
+    // to win whenever no other tag is there to pick up the slack.
+    const anotherTagObserved = Object.keys(evidence).some((key) => toTagNumber(key) !== userTag);
+    if (!anotherTagObserved) return true;
+
     return !(overridden || confidence === "high");
   }
 
@@ -269,7 +286,18 @@ export function createSpeakerIdentity() {
     const other = Object.keys(evidence)
       .map(Number)
       .find((t) => t !== userTag);
-    if (other !== undefined) userTag = other;
+
+    // AC-S2.6: do not claim a correction that could not actually be made. If
+    // there is no other observed tag, there is nothing to swap TO — leave
+    // userTag and the override state exactly as they were and let the caller
+    // discover nothing changed. Setting confidence/overridden anyway would
+    // pin a belief nobody expressed, and — per the AC-S2.5 property above —
+    // userTag would then be the only tag in evidence, so
+    // shouldEvaluateAsQuestion would suppress it and go deaf for the rest of
+    // the session for no reason at all.
+    if (other === undefined) return;
+
+    userTag = other;
     confidence = "high";
     overridden = true;
   }

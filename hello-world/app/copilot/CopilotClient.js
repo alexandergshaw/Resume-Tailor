@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
-import Collapse from "@mui/material/Collapse";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import Stack from "@mui/material/Stack";
 import Switch from "@mui/material/Switch";
@@ -18,8 +17,8 @@ import { visuallyHidden } from "@/lib/copilot/answerStatus";
 import { useEngine } from "@/app/settings/engine";
 import { useIsMobile } from "@/app/hooks/useResponsive";
 import TabHeader from "@/app/components/TabHeader";
-import TranscriptView from "./TranscriptView";
-import QuestionFeed from "./QuestionFeed";
+import LiveHearingStrip from "./LiveHearingStrip";
+import TranscriptDisclosure from "./TranscriptDisclosure";
 import ManualQuestion from "./ManualQuestion";
 import StatusPill from "./StatusPill";
 import SessionSetup from "./SessionSetup";
@@ -47,10 +46,6 @@ const POSTING_PICKER_BLANK_HINT =
 // hardcoded into the notices below, so they can never claim a destination
 // that isn't actually receiving the audio (AC-F2-5).
 const STT_PROVIDER_NAMES = { deepgram: "Deepgram", elevenlabs: "ElevenLabs" };
-
-// Step 4: links the transcript/question-history disclosure's Button
-// (aria-controls) to the region it shows/hides.
-const HISTORY_REGION_ID = "copilot-history-region";
 
 // BUG-H5/AC-H6.25: names only the document(s) actually found for the
 // selected application — never both when only one exists — the same
@@ -352,6 +347,8 @@ export default function CopilotClient() {
     finals,
     interims,
     startedAt,
+    liveSince, // D2: LiveHearingStrip's second clock — see useLiveSession.js's own doc.
+    now,
     elapsed,
     stop,
     start,
@@ -367,6 +364,11 @@ export default function CopilotClient() {
     identityUnsettled,
     onAssignUser,
     sessionRef,
+    downloadLog,
+    // D7: a real, reactive boolean — backs the "Download session log"
+    // control's disabled state below, replacing a per-render deep clone of
+    // the whole log (see this variable's old derivation, removed).
+    sessionLogHasEvents,
   } = useLiveSession({
     answerCacheRef,
     draftGenRef,
@@ -655,6 +657,32 @@ export default function CopilotClient() {
               overflow: { xs: "visible", sm: live ? "hidden" : "visible" },
             }}
           >
+            {/* D1: the single most important signal on the page, at the
+                very top of the bounded, no-scroll wrapper — above
+                SessionSetup, above the dashboard, above everything. It used
+                to render OUTSIDE this wrapper entirely (only inside
+                `{live ? ... : ...}`, itself below the wrapper's own closing
+                tag), which put it below the fold on desktop by
+                construction: a working copilot and a completely deaf one
+                looked identical on the default screen, and R-142's
+                no-scroll requirement was broken for the one element that
+                exists to prove the session is alive. Rendered unconditionally
+                (not gated on `live`) — it renders nothing visible while
+                `!live` (see its own component), but D5 needs it MOUNTED
+                before a session ever starts so its hidden live regions are
+                already in the DOM the instant they have their first
+                sentence to announce. */}
+            <LiveHearingStrip
+              live={live}
+              finals={finals}
+              interims={interims}
+              startedAt={startedAt}
+              liveSince={liveSince}
+              now={now}
+              speakerSnapshot={speakerSnapshot}
+              source={source}
+            />
+
             {/* shareInstructions and the error/warning Alerts are ordinary
                 flex children, not folded into the measured height — the
                 ResizeObserver above re-measures if they change the top. */}
@@ -766,6 +794,36 @@ export default function CopilotClient() {
               >
                 Clear
               </Button>
+              {/* AC-Q6.8/D6: one button, one file, no confirmation, no format
+                  menu; this row renders both while `live` and after Stop. No
+                  Tooltip (mui-a11y-traps: it would steal or rename this
+                  button's visible name). D6: the disabled reason used to
+                  live ONLY as an `aria-label` on this natively-disabled
+                  button — out of the tab order, so neither a keyboard/
+                  screen-reader user nor a sighted user (a greyed button with
+                  no visible text at all) could ever reach it. Mirrors
+                  practice/PracticeControls.js's own "Download session log"
+                  control exactly: `aria-describedby` pointing at a sibling
+                  VISIBLE caption, rendered under the same condition, so
+                  every user gets the same explanation through whichever
+                  channel they're using. Renamed to "Download session log" —
+                  the old "Download log" name meant practice mode and live
+                  mode named the same feature two different things. */}
+              <Button
+                size="small"
+                variant="text"
+                onClick={downloadLog}
+                disabled={!sessionLogHasEvents}
+                aria-describedby={sessionLogHasEvents ? undefined : "live-download-log-reason"}
+                sx={TOUCH_TARGET_SX}
+              >
+                Download session log
+              </Button>
+              {!sessionLogHasEvents ? (
+                <Typography id="live-download-log-reason" variant="caption" sx={{ color: "var(--text-muted)" }}>
+                  Available once the session has recorded something.
+                </Typography>
+              ) : null}
             </Stack>
 
             {/* AC-M1.5.9: the speaker-correction control has to be reachable
@@ -891,58 +949,25 @@ export default function CopilotClient() {
             </Box>
           </Box>
 
-          {/* Step 4: transcript + question history — the tallest content on
-              this page, and the region the user left out of the
-              always-visible set. Same disclosure pattern as SessionSetup's,
-              collapsed by default per session, only while `live` (otherwise
-              unchanged from today). Kept OUTSIDE the bounded wrapper so
-              opting in is free to scroll — only DEFAULT scrolling must stop. */}
-          {live ? (
-            <>
-              <Button
-                size="small"
-                variant="text"
-                onClick={onToggleHistory}
-                aria-expanded={showHistory}
-                aria-controls={HISTORY_REGION_ID}
-                sx={{ mt: 2, color: "var(--text-secondary)", textTransform: "none", ...TOUCH_TARGET_SX }}
-              >
-                {showHistory
-                  ? "▾ Hide transcript and question history"
-                  : "▸ Show transcript and question history"}
-              </Button>
-              <Collapse in={showHistory}>
-                <Stack
-                  id={HISTORY_REGION_ID}
-                  direction={{ xs: "column", md: "row" }}
-                  spacing={2}
-                  sx={{ alignItems: "stretch", mt: 2 }}
-                >
-                  <TranscriptView
-                    finals={finals}
-                    interims={interims}
-                    startedAt={startedAt}
-                    {...identityProps}
-                  />
-                  <QuestionFeed questions={questions} onDraft={onDraft} />
-                </Stack>
-              </Collapse>
-            </>
-          ) : (
-            <Stack
-              direction={{ xs: "column", md: "row" }}
-              spacing={2}
-              sx={{ alignItems: "stretch", mt: 2 }}
-            >
-              <TranscriptView
-                finals={finals}
-                interims={interims}
-                startedAt={startedAt}
-                {...identityProps}
-              />
-              <QuestionFeed questions={questions} onDraft={onDraft} />
-            </Stack>
-          )}
+          {/* D1/AC-S3.11: split into its own file (TranscriptDisclosure.js)
+              purely to keep this file under the 1000-line cap — see that
+              component's own module doc for the full D1 reasoning (why
+              <QuestionFeed> moved back inside this disclosure, alongside
+              <TranscriptView>, rather than staying "unconditional" inside
+              the bounded wrapper above, where it was actually clipped
+              off-screen on desktop). Rendered OUTSIDE that bounded wrapper
+              so opting in to either is free to scroll. */}
+          <TranscriptDisclosure
+            live={live}
+            showHistory={showHistory}
+            onToggleHistory={onToggleHistory}
+            finals={finals}
+            interims={interims}
+            startedAt={startedAt}
+            identityProps={identityProps}
+            questions={questions}
+            onDraft={onDraft}
+          />
         </>
       )}
     </Box>

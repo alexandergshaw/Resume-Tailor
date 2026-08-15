@@ -92,10 +92,48 @@ export class DeepgramStream {
     const ws = new WebSocket(`${LISTEN_URL}?${qs}`, ["token", token]);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
+    // AC-S1.1: guards the persistent "error" listener below — a pre-open
+    // error is already surfaced by the connect() promise's own one-time
+    // listener (and its caller's catch of the rejected connect() call), so
+    // this stays false until "open" actually fires to avoid reporting that
+    // same single failure a second time.
+    this._opened = false;
+    // AC-S1.1/S1.2: set the first time either listener below actually
+    // reports something, so a real WebSocket's "error" immediately followed
+    // by "close" (the normal pairing browsers use) is told to the user once,
+    // not twice.
+    this._reportedFailure = false;
     this.onStatus("connecting");
 
-    ws.addEventListener("close", () => {
-      if (!this._closing) this.onStatus("closed");
+    // AC-S1.2 / defect 2: any close this instance did not itself ask for
+    // (close() below sets `_closing` before touching the socket) is reported
+    // through onError, not just a status flip — aggregateStatus() in
+    // session.js collapses a single-source "closed" straight to "idle",
+    // which otherwise reads to the user as a clean stop rather than the
+    // dropped connection it actually is. A clean, provider-initiated close
+    // (code 1000, wasClean) is not treated as a failure on its own.
+    ws.addEventListener("close", (evt) => {
+      if (this._closing) return;
+      this.onStatus("closed");
+      if (this._reportedFailure) return;
+      const clean = !!evt && evt.wasClean === true && evt.code === 1000;
+      if (clean) return;
+      this._reportedFailure = true;
+      const code = evt?.code;
+      const reason = evt?.reason ? `: ${evt.reason}` : "";
+      this.onError(new Error(`Deepgram connection closed unexpectedly (code ${code}${reason}).`));
+    });
+
+    // AC-S1.1 / defect 1: the connect() promise below settles on the FIRST
+    // open or error, and its own "error" listener is `{ once: true }` — once
+    // that promise has settled, a later "error" event calling that listener's
+    // reject is a no-op, which is exactly how a live session went silent
+    // after the socket opened. This second, persistent listener is what
+    // actually reaches the user for every error from that point on.
+    ws.addEventListener("error", () => {
+      if (!this._opened || this._closing || this._reportedFailure) return;
+      this._reportedFailure = true;
+      this.onError(new Error("Deepgram reported a connection error."));
     });
 
     ws.addEventListener("message", (evt) => {
@@ -105,53 +143,17 @@ export class DeepgramStream {
       } catch {
         return;
       }
-      // Ignore Metadata / UtteranceEnd / SpeechStarted frames — we only care
-      // about transcript Results here.
-      if (msg.type && msg.type !== "Results") return;
-      const alt = msg.channel?.alternatives?.[0];
-
-      // AC-M1.2.4/.7: diarization changes where the frame's TEXT comes from.
-      // Only attempt the words[]-based split when diarization was actually
-      // requested — a non-diarized connection must never even inspect
-      // `words`, so a frame that happens to carry per-word `speaker` ids
-      // (real Deepgram responses can) still produces exactly today's single,
-      // whole-frame call with no `speakerTag` key at all.
-      if (this._diarize) {
-        const words = Array.isArray(alt?.words) ? alt.words : [];
-        const hasDiarizedWords = words.some((w) => typeof w?.speaker === "number");
-        if (hasDiarizedWords) {
-          this._emitDiarizedRuns(msg, words);
-          return;
-        }
-        // Falls through to the whole-frame path below: missing/empty words,
-        // or a words array with no numeric `speaker` on any entry, is a
-        // provider hiccup, not a reason to go silent (AC-M1.2.7).
+      // AC-S1.5 / defect 4: everything past the parse can throw — a consumer
+      // callback (onTranscript, or speaker-identity code further downstream
+      // in session.js) blowing up on one frame must not silently deafen
+      // every frame after it. Caught here and reported once through onError;
+      // the listener itself stays registered so the next "message" event
+      // still reaches it.
+      try {
+        this._handleFrame(msg);
+      } catch (err) {
+        this.onError(err instanceof Error ? err : new Error(String(err)));
       }
-
-      const transcript = alt?.transcript?.trim();
-      if (!transcript) return;
-      this.onTranscript({
-        speaker: this.speaker,
-        transcript,
-        isFinal: !!msg.is_final,
-        speechFinal: !!msg.speech_final,
-        // Purely additive: `start` and `duration` are the audio-time offset
-        // (seconds since this connection's first audio) and length of the
-        // window this Results frame covers — present on every frame,
-        // interim or final. Existing consumers (the live copilot session,
-        // and practice mode before this change) destructure only the
-        // fields above and simply ignore these, so forwarding them changes
-        // nothing for them. Practice mode's answer collector uses them to
-        // bound an answer by when the words were actually SPOKEN rather
-        // than by when this event happened to arrive — see
-        // PracticeClient.js.
-        start: typeof msg.start === "number" ? msg.start : undefined,
-        duration: typeof msg.duration === "number" ? msg.duration : undefined,
-        // No `speakerTag` key here at all — see the AC-M1.1.6 comment on
-        // _emitDiarizedRuns below for why `speakerTag: undefined` would be
-        // the wrong fix and would still pass toHaveBeenCalledWith-style
-        // assertions while quietly changing this object's shape.
-      });
     });
 
     // Resolve once the socket is actually open (or reject if it errors first).
@@ -159,6 +161,7 @@ export class DeepgramStream {
       ws.addEventListener(
         "open",
         () => {
+          this._opened = true;
           this.onStatus("open");
           resolve();
         },
@@ -169,6 +172,69 @@ export class DeepgramStream {
         () => reject(new Error("Could not connect to Deepgram.")),
         { once: true },
       );
+    });
+  }
+
+  // Split out of the "message" listener above so that listener can wrap the
+  // whole thing in one try/catch (AC-S1.5) — this method itself assumes
+  // `msg` is already-parsed JSON and never touches the socket.
+  _handleFrame(msg) {
+    // AC-S1.3 / defect 3: `if (msg.type && msg.type !== "Results") return;`
+    // below used to discard every typed non-Results frame, including
+    // Deepgram's own error payloads (`{ type: "Error", description: "..." }`)
+    // — the provider was telling us exactly what was wrong and nothing ever
+    // relayed it. Metadata / UtteranceEnd / SpeechStarted and any other
+    // known-benign type still fall through to that same silent return.
+    if (msg.type === "Error") {
+      this.onError(
+        new Error(msg.description || msg.message || "Deepgram reported an error."),
+      );
+      return;
+    }
+    if (msg.type && msg.type !== "Results") return;
+    const alt = msg.channel?.alternatives?.[0];
+
+    // AC-M1.2.4/.7: diarization changes where the frame's TEXT comes from.
+    // Only attempt the words[]-based split when diarization was actually
+    // requested — a non-diarized connection must never even inspect
+    // `words`, so a frame that happens to carry per-word `speaker` ids
+    // (real Deepgram responses can) still produces exactly today's single,
+    // whole-frame call with no `speakerTag` key at all.
+    if (this._diarize) {
+      const words = Array.isArray(alt?.words) ? alt.words : [];
+      const hasDiarizedWords = words.some((w) => typeof w?.speaker === "number");
+      if (hasDiarizedWords) {
+        this._emitDiarizedRuns(msg, words);
+        return;
+      }
+      // Falls through to the whole-frame path below: missing/empty words,
+      // or a words array with no numeric `speaker` on any entry, is a
+      // provider hiccup, not a reason to go silent (AC-M1.2.7).
+    }
+
+    const transcript = alt?.transcript?.trim();
+    if (!transcript) return;
+    this.onTranscript({
+      speaker: this.speaker,
+      transcript,
+      isFinal: !!msg.is_final,
+      speechFinal: !!msg.speech_final,
+      // Purely additive: `start` and `duration` are the audio-time offset
+      // (seconds since this connection's first audio) and length of the
+      // window this Results frame covers — present on every frame,
+      // interim or final. Existing consumers (the live copilot session,
+      // and practice mode before this change) destructure only the
+      // fields above and simply ignore these, so forwarding them changes
+      // nothing for them. Practice mode's answer collector uses them to
+      // bound an answer by when the words were actually SPOKEN rather
+      // than by when this event happened to arrive — see
+      // PracticeClient.js.
+      start: typeof msg.start === "number" ? msg.start : undefined,
+      duration: typeof msg.duration === "number" ? msg.duration : undefined,
+      // No `speakerTag` key here at all — see the AC-M1.1.6 comment on
+      // _emitDiarizedRuns below for why `speakerTag: undefined` would be
+      // the wrong fix and would still pass toHaveBeenCalledWith-style
+      // assertions while quietly changing this object's shape.
     });
   }
 

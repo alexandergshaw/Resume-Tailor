@@ -65,6 +65,27 @@ export function usePracticeCaptureSession({
 
   const sessionRef = useRef(null);
   const idRef = useRef(0);
+  // AC-Q7.9: a per-session identity, bumped synchronously as the very FIRST
+  // thing `start()` does — strictly before the `await sessionRef.current.
+  // stop()` a restart-without-stop press has to sit through (see that
+  // block's own comment: idempotent restart is a supported path, not an
+  // edge case). A stray final that the OLD session's socket still delivers
+  // during that await window is stamped with the OLD id by the closure
+  // below (captured at ITS OWN start() call, before this ref's next bump),
+  // so usePracticeSessionLog.js can tell "belongs to the session the log
+  // has already moved on from" apart from "belongs to the session just
+  // started" by comparing stamped identity, never by an array index/counter
+  // — the shape of bug this AC exists to rule out, since an index is only
+  // ever correct if paired resets land in the same render, which this exact
+  // await window is proof they need not. A ref, not state, because
+  // `mySessionId` below has to be the synchronously-incremented, guaranteed-
+  // unique value available BEFORE any state update this same start() call
+  // makes could possibly commit — `activeSessionId` (state, below) is the
+  // read-during-render-safe twin exposed for the rest of this hook's return
+  // value, mirrored from this ref rather than read directly (React forbids
+  // reading a ref's `.current` while rendering).
+  const sessionIdRef = useRef(0);
+  const [activeSessionId, setActiveSessionId] = useState(0);
 
   const running = status === "live" || status === "connecting";
 
@@ -108,6 +129,15 @@ export function usePracticeCaptureSession({
   }, []);
 
   const start = useCallback(async () => {
+    // AC-Q7.9: mint THIS press's session identity before anything else —
+    // including invalidateInFlight() and the old session's own teardown
+    // below — so it is already the CURRENT id for the rest of this
+    // function's life, and so a frame the OLD session's onTranscript
+    // closure (captured on ITS OWN earlier call to start(), holding the
+    // PREVIOUS value) delivers after this point is provably stamped with a
+    // value that no longer matches.
+    const mySessionId = (sessionIdRef.current += 1);
+    setActiveSessionId(mySessionId);
     // Invalidate any question request already in flight (e.g. from a Stop
     // that just happened, or a still-resolving request from before) before
     // any of the async work below runs — a response for the OLD session
@@ -197,9 +227,14 @@ export function usePracticeCaptureSession({
           // (same discipline CopilotClient's own onTranscript handler
           // follows for live mode).
           recordSpeechSample({ text: transcript, start: audioStart, duration: audioDuration });
+          // AC-Q7.9: `mySessionId` is THIS closure's own captured value —
+          // fixed at the moment THIS session's start() minted it, never
+          // read fresh off the ref — so a frame this exact session delivers
+          // is stamped with the id it was actually produced under, whatever
+          // sessionIdRef has since moved on to.
           setFinals((prev) => [
             ...prev,
-            { id: (idRef.current += 1), speaker: "you", text: transcript, at: Date.now() },
+            { id: (idRef.current += 1), speaker: "you", text: transcript, at: Date.now(), sessionId: mySessionId },
           ]);
         },
         // Published as soon as capture succeeds, well before the Deepgram
@@ -264,6 +299,7 @@ export function usePracticeCaptureSession({
     warning,
     setWarning,
     finals,
+    activeSessionId,
     interim,
     startedAt,
     elapsed,

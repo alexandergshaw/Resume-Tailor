@@ -248,11 +248,6 @@ describe("useLiveSession — manually typed questions (AC-O2)", () => {
     // left this whole file green. This is the only jsdom coverage live
     // detection currently has, since useLiveSession.instant.test.js is red
     // for unrelated reasons and gates nothing.
-    confirmQuestion.mockResolvedValueOnce({
-      isQuestion: true,
-      question: "How do you handle ambiguity?",
-      type: "general",
-    });
     const { state } = mountProbe();
     await act(async () => {
       await state.start();
@@ -261,7 +256,36 @@ describe("useLiveSession — manually typed questions (AC-O2)", () => {
       speakAsInterviewer("so how do you handle ambiguity");
     });
     expect(state.questions.map((q) => q.question)).toEqual(["How do you handle ambiguity?"]);
+    // AC-R1.1: this used to assert `confirmQuestion` was called once, and
+    // that assertion was documenting the defect rather than guarding
+    // against it. A lead-in in front of an interrogative is the single
+    // commonest shape of spoken interview speech, and it is now decided by
+    // the local heuristic with no network at all — so the card arriving
+    // WITHOUT a round trip is the property worth pinning here. The card
+    // itself (the line above) is what makes this a positive control; the
+    // absence below is only meaningful because of it.
+    expect(confirmQuestion).not.toHaveBeenCalled();
+  });
+
+  it("still asks the model about an utterance the heuristic cannot place", async () => {
+    // The other half of the control: the remote confirm must stay wired up
+    // for the indirect asks the heuristic genuinely cannot see. Without
+    // this case, deleting the confirmQuestion call entirely would leave the
+    // whole file green.
+    confirmQuestion.mockResolvedValueOnce({
+      isQuestion: true,
+      question: "What drew you to this role?",
+      type: "general",
+    });
+    const { state } = mountProbe();
+    await act(async () => {
+      await state.start();
+    });
+    await act(async () => {
+      speakAsInterviewer("i guess the thing i keep coming back to is your motivation here");
+    });
     expect(confirmQuestion).toHaveBeenCalledTimes(1);
+    expect(state.questions.map((q) => q.question)).toEqual(["What drew you to this role?"]);
   });
 
   it("suppresses the same question arriving from detection right after", async () => {
