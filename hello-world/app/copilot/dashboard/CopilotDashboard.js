@@ -13,6 +13,7 @@ import Typography from "@mui/material/Typography";
 
 import { answerLines } from "@/lib/copilot/answerPoints";
 import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus";
+import { pinnedQuestionEntry } from "@/lib/copilot/currentQuestion";
 import AnswerAids from "../AnswerAids";
 import AnswerLines from "../AnswerLines";
 import { BREAK_LONG_WORDS_SX, TOUCH_SWITCH_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "../mobileSx";
@@ -64,53 +65,16 @@ const FILLER_LABEL_COLOR = {
   heavy: "var(--warning)",
 };
 
-// AC-M1.3.5: prefers the last NON-provisional entry, when one exists, over
-// the array's true last entry. `provisional` means "attributed to the voice
-// currently believed to be the user" (userTag !== null && q.speakerTag ===
-// userTag — see useLiveSession.js), no longer tied to confidence — a
-// question detected from the tag currently presumed to be the candidate is
-// recorded `provisional` regardless of how sure the app is of that tag.
-// Without this preference, the candidate's own "Does that answer your
-// question?" would evict the interviewer's live question and answer from
-// the panel the candidate is reading, mid-answer, exactly the failure this
-// AC exists to prevent. Falls back to the array's true last entry when
-// EVERY entry is provisional (nothing settled has been detected yet, or —
-// see BUG-1 below — the cold-start case where the interviewer spoke first
-// and became the provisional argmax on word count alone), so the panel
-// still shows the best guess available rather than nothing at all.
-//
-// BUG-3/R-121 group-L: exported so QuestionFeed.js can read the SAME
-// "what's current" decision instead of hand-rolling
-// `questions[questions.length - 1]` — before this export, the dashboard's
-// panels and the feed's live region could name two different entries as
-// current the moment a fallback was in effect, which is exactly the "one
-// decision, one place" standard that regression case's amendment sets.
-// Still not moved to lib/ — that directory is owned by a different agent
-// this round.
-//
-// BUG-4: guards both the element (`list[i] &&`) and the fallback return
-// (`|| null`). The previous version dereferenced `list[i].provisional`
-// unguarded, which throws on a null/undefined element instead of degrading
-// to the empty state — the one reader of `questions` whose throw would take
-// the whole dashboard down mid-interview, unlike the sibling
-// `askedQuestionsFor` (useCopilotDashboard.js), which already guards for
-// exactly this reason. Not reachable from today's two call sites, but cheap
-// insurance against a future one that isn't as careful.
-//
-// Practice mode never sets a `provisional` key at all (see PracticeClient's
-// `dashboardQuestions`), so `list[i] && !list[i].provisional` still
-// evaluates `true && !undefined === true` on the first (only) iteration and
-// returns that single entry — byte-identical to both the pre-guard version
-// and the pre-AC-M1.3.5 version, for the same reason `askedQuestionsFor`'s
-// guard never changes a well-formed caller's result.
-export function latestQuestionEntry(questions) {
-  const list = Array.isArray(questions) ? questions : [];
-  if (!list.length) return null;
-  for (let i = list.length - 1; i >= 0; i -= 1) {
-    if (list[i] && !list[i].provisional) return list[i];
-  }
-  return list[list.length - 1] || null;
-}
+// AC-T1.9: `latestQuestionEntry` moved to lib/copilot/currentQuestion.js —
+// see that module for its full doc comment (AC-M1.3.5's provisional
+// preference, BUG-3/R-121's "one decision, one place", BUG-4's null-element
+// guard). Re-exported here, as the SAME function object (not a wrapper), so
+// QuestionFeed.js's existing `import { latestQuestionEntry } from
+// "./dashboard/CopilotDashboard"` keeps resolving with no edit to that
+// file. This is an existing import path kept working, not a second place
+// the decision is made — the component's own internal use above imports
+// directly from lib/ instead of reading its own re-export.
+export { latestQuestionEntry } from "@/lib/copilot/currentQuestion";
 
 // BUG-J6: shared by both answer panels below via lib/copilot/answerPoints.js
 // rather than a module-local copy — cachedSampleAnswerFor
@@ -285,6 +249,68 @@ function PredictionPanel({ title, children, chipLabel = "Prediction" }) {
   );
 }
 
+// AC-T1.16/I6: the held treatment for the current-question panel. Reuses
+// PredictionPanel's wrapper/Chip mechanics (WRAP_ROW_SX avoids the "PREDI…"
+// ellipsis bug) but with the WARNING accent — `--warning-soft` on
+// `--bg-surface` measures only 1.08:1, so the border, badge and release
+// control are ALL required, never colour alone (AC-X2). The release button
+// is the count-bearing element, one click, uncapped (OpenShift/Mastodon/
+// Guardian all ship this pattern); its caption says what is STILL
+// happening, so a frozen display doesn't read as broken.
+function HeldQuestionPanel({ title, newerCount, onRelease, live, children }) {
+  const releaseLabel =
+    newerCount > 0
+      ? `Release hold and show ${newerCount} newer question${newerCount === 1 ? "" : "s"}`
+      : "Release hold";
+  return (
+    <Box
+      sx={{ p: { xs: 1.25, sm: 1.75 }, borderRadius: 2, border: "1px solid var(--warning)", background: "var(--warning-soft)", minWidth: 0 }}
+    >
+      <Stack direction="row" spacing={1} sx={{ mb: 1, alignItems: "center", ...WRAP_ROW_SX }}>
+        <Typography variant="subtitle2" component="h4" sx={{ flex: 1, minWidth: 0, color: "var(--text-secondary)", fontWeight: 700 }}>
+          {title}
+        </Typography>
+        <Chip
+          size="small"
+          label="Held on screen"
+          sx={{
+            height: { xs: "auto", sm: 18 },
+            fontSize: { xs: 11, sm: 10 },
+            fontWeight: 700,
+            letterSpacing: 0.3,
+            textTransform: "uppercase",
+            color: "var(--warning)",
+            background: "transparent",
+            border: "1px solid var(--warning)",
+            flexShrink: 0,
+            "& .MuiChip-label": { py: { xs: 0.25, sm: 0 } },
+          }}
+        />
+      </Stack>
+      {children}
+      <Button
+        size="small"
+        variant="outlined"
+        onClick={onRelease}
+        sx={{ mt: 1, textTransform: "none", borderColor: "var(--warning)", color: "var(--warning)", ...TOUCH_TARGET_SX }}
+      >
+        {releaseLabel}
+      </Button>
+      {/* Defect 3 fix: was unconditional — a false "is it broken?" claim
+          once the session had actually ended (see useLiveSession.js's own
+          defect-3 fix for how a hold used to outlive its session).
+          Belt-and-suspenders: that fix already keeps `held` from being true
+          while `!live`. Adds a live/not-live axis without collapsing the
+          existing three states: not held, held, held-with-N-newer. */}
+      <Typography variant="caption" sx={{ display: "block", mt: 0.75, color: "var(--text-secondary)" }}>
+        {live
+          ? "Detection and drafting keep running behind the hold; only this panel's display is frozen."
+          : "This session has ended, so nothing is running behind this hold anymore — release it to see the dashboard's normal idle state."}
+      </Typography>
+    </Box>
+  );
+}
+
 // BUG-1: `current` can be the array's true LAST entry even though it is
 // `provisional` — latestQuestionEntry's fallback for "every entry is
 // provisional" above. Before this branch existed, that fallback rendered
@@ -311,8 +337,27 @@ function PredictionPanel({ title, children, chipLabel = "Prediction" }) {
 // Practice mode never sets `provisional` (see latestQuestionEntry's own
 // doc), so `current?.provisional` is always falsy there and this branch
 // never runs — practice always takes the plain `RealPanel` path below,
-// unchanged.
-function CurrentQuestionPanel({ current, copy }) {
+// unchanged. AC-T1.16: `held` is checked FIRST, above the provisional
+// branch — a held entry gets the warning treatment above regardless of
+// whether it also happens to be provisional; practice mode passes no
+// `pinnedId` (so `held` is always false there), which is what keeps it
+// byte-identical to before this prop existed.
+function CurrentQuestionPanel({ current, copy, held, newerCount, onReleasePin, live }) {
+  if (held) {
+    return (
+      <HeldQuestionPanel title={copy.currentQuestionTitle} newerCount={newerCount} onRelease={onReleasePin} live={live}>
+        {current ? (
+          <Typography sx={{ color: "var(--text-primary)", fontWeight: 600, ...BREAK_LONG_WORDS_SX }}>
+            {current.question}
+          </Typography>
+        ) : (
+          <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
+            {copy.noQuestion}
+          </Typography>
+        )}
+      </HeldQuestionPanel>
+    );
+  }
   if (current?.provisional) {
     return (
       <PredictionPanel title={copy.currentQuestionTitle} chipLabel="Unconfirmed">
@@ -805,6 +850,17 @@ function DeliveryPanel({ pace, fillers, copy }) {
 
 export default function CopilotDashboard({
   questions,
+  // AC-T1.16..T1.18: the pin/hold surface. `pinnedId` degrades to
+  // latestQuestionEntry(questions) inside pinnedQuestionEntry when it is
+  // `null`/`undefined` — practice mode passes none of these four props at
+  // all, which is what keeps it byte-identical to before the pin existed.
+  pinnedId,
+  held = false,
+  newerQuestionCount: newerCount = 0,
+  onReleasePin,
+  // Defect 3 fix: whether the SESSION is live — gates HeldQuestionPanel's
+  // caption above. Defaults `true` (practice mode never passes `held: true`).
+  live = true,
   pace,
   // Verbal-filler reading beside pace in DeliveryPanel — see the contract
   // atop FILLER_LABEL_TEXT/COLOR above. May be `undefined` from a caller
@@ -838,7 +894,7 @@ export default function CopilotDashboard({
   showPredictions = true,
   onToggleShowPredictions,
 }) {
-  const current = latestQuestionEntry(questions);
+  const current = pinnedQuestionEntry(questions, pinnedId);
   const text = { ...LIVE_COPY, ...(copy || {}) };
   const canTogglePredictions = typeof onToggleShowPredictions === "function";
 
@@ -903,7 +959,7 @@ export default function CopilotDashboard({
           gap: 1.5,
         }}
       >
-        <CurrentQuestionPanel current={current} copy={text} />
+        <CurrentQuestionPanel current={current} copy={text} held={held} newerCount={newerCount} onReleasePin={onReleasePin} live={live} />
         {showPredictions ? (
           <PredictedQuestionPanel
             status={predictionStatus}

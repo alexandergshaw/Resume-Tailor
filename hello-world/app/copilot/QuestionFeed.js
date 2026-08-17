@@ -10,6 +10,7 @@ import Typography from "@mui/material/Typography";
 
 import { answerLines } from "@/lib/copilot/answerPoints";
 import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus";
+import { pinnedQuestionEntry } from "@/lib/copilot/currentQuestion";
 import AnswerAids from "./AnswerAids";
 import AnswerLines from "./AnswerLines";
 // BUG-3/R-121 group-L: the SAME "what's current" decision CopilotDashboard's
@@ -21,7 +22,7 @@ import AnswerLines from "./AnswerLines";
 // can also land on an older, already-`done` entry instead of the array's
 // true last one, its region is exposed to the same collision that hook
 // exists to prevent.
-import { latestQuestionEntry, useCurrentQuestionAnnouncement } from "./dashboard/CopilotDashboard";
+import { useCurrentQuestionAnnouncement } from "./dashboard/CopilotDashboard";
 import { BREAK_LONG_WORDS_SX, PHONE_PANE_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "./mobileSx";
 
 const TYPE_LABEL = {
@@ -46,7 +47,17 @@ function draftButtonAriaLabel(q, loading, done) {
 // Right-hand feed of detected questions. Each card shows the question and, on
 // demand, the drafted answer: a few-word cue per beat (AC-K1.1), the posting
 // buzzwords to work in, and the resume role and project it came out of.
-export default function QuestionFeed({ questions, onDraft }) {
+export default function QuestionFeed({
+  questions,
+  onDraft,
+  // AC-T1.16..T1.18/I9: the pin/hold surface. `pinnedId` degrades to
+  // latestQuestionEntry(questions) inside pinnedQuestionEntry when unset —
+  // TranscriptDisclosure's idle call site passes none of these three, which
+  // is what keeps that render byte-identical to before the pin existed.
+  pinnedId = null,
+  held = false,
+  newerQuestionCount: newerCount = 0,
+}) {
   // F9/R-124: ONE status region for the whole feed, not one per card. A
   // REUSED answer (CopilotClient.js's `addQuestion` seeding `status:
   // "loading"` then `runDraft`'s cache-hit path landing on `status: "done"`
@@ -68,15 +79,29 @@ export default function QuestionFeed({ questions, onDraft }) {
   // whenever nothing non-provisional exists (its own fallback) or `questions`
   // is empty/malformed (its own guard), so this is never less defensive than
   // the direct-index read it replaces.
-  const latest = latestQuestionEntry(questions);
+  const latest = pinnedQuestionEntry(questions, pinnedId);
   const latestLines = answerLines(latest?.cues, latest?.points);
   const latestStatusText = answerStatusMessage({ status: latest?.status, bulletCount: latestLines.length });
   // BUG-2: see useCurrentQuestionAnnouncement's doc (CopilotDashboard.js) —
   // `latest` can now swap to a different, already-`done` entry without a
   // natural loading -> done transition, which a bare answerStatusMessage(...)
   // call can render as silence (identical text) or as an ambiguous "same
-  // answer, new count" instead of "the current question changed".
-  const latestRegionText = useCurrentQuestionAnnouncement(latest, latestStatusText);
+  // answer, new count" instead of "the current question changed". Called
+  // unconditionally (Rules of Hooks) even while held, though its text is
+  // only USED below when not held — see the I9 override just after it.
+  const swapAwareRegionText = useCurrentQuestionAnnouncement(latest, latestStatusText);
+  // I9: while held, the pinned entry's OWN status does not change when a
+  // newer question arrives — its `points`/`status` are untouched by an
+  // arrival behind it — so `swapAwareRegionText` above can render identical
+  // text across an arrival and React bails out of the DOM update: sighted
+  // users get CopilotDashboard's badge, screen-reader users get nothing.
+  // The held region instead announces the hold state and the arrival count
+  // directly, which DOES change every time `newerCount` does.
+  const latestRegionText = held
+    ? newerCount > 0
+      ? `Held on screen. ${newerCount} newer question${newerCount === 1 ? "" : "s"} detected.`
+      : "Held on screen."
+    : swapAwareRegionText;
   return (
     <Box
       sx={{
@@ -89,6 +114,10 @@ export default function QuestionFeed({ questions, onDraft }) {
         background: "var(--bg-surface)",
         boxShadow: "var(--shadow-soft)",
       }}
+      // I9: the feed container carries aria-busy for the duration of the
+      // hold — detection and drafting keep running behind it, only what
+      // this feed DISPLAYS as "current" is frozen.
+      aria-busy={held ? "true" : undefined}
     >
       {/* F10: one level under the tab's h2 (TabHeader.js) — `component=`
           only changes the rendered element, never the `variant` that

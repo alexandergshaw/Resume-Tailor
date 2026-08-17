@@ -10,9 +10,13 @@ import Switch from "@mui/material/Switch";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Typography from "@mui/material/Typography";
+import useMediaQuery from "@mui/material/useMediaQuery";
+import { useTheme } from "@mui/material/styles";
 import { normalizeQuestion } from "@/lib/copilot/questions";
 import { groundingFor } from "@/lib/copilot/answerGrounding";
 import { fmtClock } from "@/lib/copilot/clock";
+import { postingGroundingNotice as _postingGroundingNotice } from "@/lib/copilot/groundingNotice";
+import { briefStatusMessage } from "@/lib/copilot/companyBrief";
 import { visuallyHidden } from "@/lib/copilot/answerStatus";
 import { useEngine } from "@/app/settings/engine";
 import { useIsMobile } from "@/app/hooks/useResponsive";
@@ -22,7 +26,9 @@ import TranscriptDisclosure from "./TranscriptDisclosure";
 import ManualQuestion from "./ManualQuestion";
 import StatusPill from "./StatusPill";
 import SessionSetup from "./SessionSetup";
-import SpeakerChip from "./SpeakerChip";
+import SpeakerBar from "./SpeakerBar";
+import VoiceCueSidebar from "./VoiceCueSidebar";
+import CompanyBriefPanel from "./CompanyBriefPanel";
 import { TOUCH_TARGET_SX, TOUCH_SWITCH_SX } from "./mobileSx";
 import CopilotDashboard from "./dashboard/CopilotDashboard";
 import PracticeClient from "./practice/PracticeClient";
@@ -31,38 +37,29 @@ import { useApplicationDocs } from "./useApplicationDocs";
 import { useCopilotDashboard } from "./useCopilotDashboard";
 import { useLiveSession } from "./useLiveSession";
 import { useCaptureSetup } from "./useCaptureSetup";
+import { useCompanyBrief } from "./useCompanyBrief";
 import { usePredictionVisibility } from "./usePredictionVisibility";
+import { useLiveColumnHeight } from "./useLiveColumnHeight";
+
+// I1: 280px rail + a usable main column needs 824px minimum, so the
+// breakpoint is `md` (900), not `sm`. `noSsr: true` matches useIsMobile/useIsTablet.
+function useIsRailBelowMd() {
+  const theme = useTheme();
+  return useMediaQuery(theme.breakpoints.down("md"), { noSsr: true });
+}
 
 // AC-H1.2: live mode's own wording for the shared PostingPicker — its
 // defaults are practice mode's exact strings, so passing these explicitly
 // here is what keeps the two modes worded differently without touching
 // PostingPicker's defaults (which practice mode still relies on).
 const POSTING_PICKER_LABEL = "Interviewing for";
-const POSTING_PICKER_BLANK_HINT =
-  "Leave blank to keep talking points grounded in your prep context only.";
+const POSTING_PICKER_BLANK_HINT = "Leave blank to keep talking points grounded in your prep context only.";
 // F2: display name for whichever speech-to-text provider the server has
 // selected (STT_PROVIDER, see lib/config/env.js's getSttProvider) — kept
 // here, keyed off the token response's `provider` field, rather than
 // hardcoded into the notices below, so they can never claim a destination
 // that isn't actually receiving the audio (AC-F2-5).
 const STT_PROVIDER_NAMES = { deepgram: "Deepgram", elevenlabs: "ElevenLabs" };
-
-// BUG-H5/AC-H6.25: names only the document(s) actually found for the
-// selected application — never both when only one exists — the same
-// discipline SubmittedDocs.js's statusSuffix and
-// practice/SampleAnswer.js's sourceCaption already apply to the read-only
-// panel and the sample-answer caption respectively. Only called once at
-// least one of the two is known to be present; callers decide what to say
-// when neither is.
-function submittedDocsClause(hasResume, hasCoverLetter) {
-  if (hasResume && hasCoverLetter) {
-    return "the résumé and cover letter you submitted for it are also sent to Google Gemini to ground your talking points";
-  }
-  if (hasResume) {
-    return "the résumé you submitted for it is also sent to Google Gemini to ground your talking points";
-  }
-  return "the cover letter you submitted for it is also sent to Google Gemini to ground your talking points";
-}
 
 // Phase 4: assemble the interviewer's speech into complete utterances (on
 // Deepgram's speech_final endpoint), confirm/normalize questions with an LLM
@@ -124,7 +121,6 @@ export default function CopilotClient() {
   // meaningful while `live` (reset `false` in `start`); the `!live` branch
   // renders that row unconditionally, ignoring this.
   const [showHistory, setShowHistory] = useState(false);
-  const [liveHeight, setLiveHeight] = useState(null); // Step 3: measured; null => "auto" pre-measurement/SSR
   const isMobile = useIsMobile();
 
   // AC-N1.5: normalized question -> { points, type, cues, buzzwords, anchor,
@@ -140,7 +136,6 @@ export default function CopilotClient() {
   // own comment for why the cache alone (AC-N1.2) can't guard its OTHER
   // write, the one straight onto the visible question card.
   const draftGenRef = useRef(0);
-  const liveWrapperRef = useRef(null); // Step 3: the bounded session column, measured below
 
   // AC-H2/AC-H3: loads the résumé and cover letter submitted for the
   // selected posting, the moment it changes — feeds the "Submitted for this
@@ -157,6 +152,14 @@ export default function CopilotClient() {
   } = useApplicationDocs(posting?.id || null);
   const { engine } = useEngine();
   const isEmbedded = engine === "embedded";
+
+  const isRailBelowMd = useIsRailBelowMd();
+
+  // T2: created before useLiveSession below — its `onCompanyCue` input needs
+  // `companyBrief.openBrief` to already exist. Fires no request on mount or
+  // on a posting change, only from openBrief()/refresh().
+  const companyBrief = useCompanyBrief(posting);
+  const hasCompany = !!String(posting?.company || "").trim();
 
   // Prep context (seed-from-storage/fallback/persist) lives in
   // usePrepContext — this wraps its setter to also drop the answer cache:
@@ -237,6 +240,21 @@ export default function CopilotClient() {
   }, []);
 
   const live = status === "live" || status === "connecting";
+
+  // I3: the rail auto-collapses once live and auto-expands once idle again
+  // (AC-T3.5: learnable before Start, then out of the dashboard's way) — the
+  // sidebar's own toggle can still override this within a session. Same
+  // render-phase state-adjustment idiom CopilotDashboard.js's
+  // useCurrentQuestionAnnouncement uses — not an effect (react-hooks/
+  // set-state-in-effect) and not a ref (react-hooks/refs forbids `.current`
+  // reads during render).
+  const [railCollapsed, setRailCollapsed] = useState(false);
+  const [prevLiveForRail, setPrevLiveForRail] = useState(live);
+  if (live !== prevLiveForRail) {
+    setPrevLiveForRail(live);
+    setRailCollapsed(live);
+  }
+  const onToggleRailCollapsed = useCallback(() => setRailCollapsed((v) => !v), []);
 
   // Step 2/4: disclosure toggles — click handlers, not effects, so these
   // are the only place besides start/stop that setupExpanded/showHistory
@@ -340,6 +358,16 @@ export default function CopilotClient() {
     predictionsEnabled: showPredictions,
   });
 
+  // AC-T1.18/E4: declines (and reports it) when no posting is selected at
+  // all, the same way pinCurrentQuestion declines with no question yet
+  // (AC-T1.14). A posting with no company still opens the panel, which
+  // explains that itself (CompanyBriefPanel's own idle/no-company branch).
+  const onCompanyCue = useCallback(() => {
+    if (!posting) return false;
+    companyBrief.openBrief();
+    return true;
+  }, [posting, companyBrief]);
+
   const {
     warning,
     setWarning,
@@ -369,6 +397,14 @@ export default function CopilotClient() {
     // control's disabled state below, replacing a per-render deep clone of
     // the whole log (see this variable's old derivation, removed).
     sessionLogHasEvents,
+    // AC-T1.16..T1.18: the pin/hold surface, read by CopilotDashboard's held
+    // treatment and QuestionFeed's held region.
+    pinnedId,
+    newerQuestionCount: pinnedNewerCount,
+    held,
+    pinCurrentQuestion,
+    unpinQuestion,
+    cueAnnouncement = { text: "" }, // I10: voice-only; defaulted for older mocks.
   } = useLiveSession({
     answerCacheRef,
     draftGenRef,
@@ -385,69 +421,17 @@ export default function CopilotClient() {
     autoDraft,
     setSetupExpanded,
     setShowHistory,
+    onCompanyCue,
   });
 
-  // BUG-2: a correction made from the always-visible "Who's talking" bar
-  // (rendered below) must announce itself through a polite live region,
-  // exactly as TranscriptView.handleAssign already does for corrections
-  // made through the transcript — retroactively rewriting every label in
-  // the transcript is a change of meaning, and a user who cannot see it
-  // happen still needs to be told. This is a SEPARATE region from
-  // TranscriptView's own, not a second announcement of the same event:
-  // TranscriptView owns that region's state internally (it isn't reachable
-  // from here) and, more importantly, TranscriptView sits inside the
-  // `showHistory` Collapse — closed by default while a session is live —
-  // which is exactly the surface BUG-2 says goes unreachable mid-session.
-  // Each region only fires for a correction activated through its OWN
-  // surface (bar vs. transcript row); a single click can only ever go
-  // through one of the two, so nothing is ever announced twice.
-  //
-  // BUG-3: `{ text, nonce }`, not a plain string. React bails out of
-  // re-rendering a mounted node when setState receives a value that is
-  // `Object.is`-equal to what's already there — a plain string repeats
-  // that equality check on CONTENT, so two corrections that land on the
-  // identical sentence (reachable in any two-voice session: the only chip
-  // that is ever clickable is the one NOT currently "You", so its label
-  // going into the sentence is always "Them" — mark it, identity flips,
-  // mark the other one back, and the sentence is byte-identical both
-  // times) produce no text change on the live region, hence no
-  // announcement at all (see lib/copilot/answerStatus.js's header doc for
-  // this exact discipline elsewhere in this app). A fresh object literal is
-  // never `Object.is`-equal to the previous one no matter what `text` says,
-  // which is what actually guarantees a text change; only `.text` is
-  // rendered into the region below, so the sentence read aloud is
-  // unaffected — `nonce` never appears in it, it exists purely to make each
-  // state value a distinct object.
-  const [barAnnouncement, setBarAnnouncement] = useState({ text: "", nonce: 0 });
-  const barAnnouncementNonceRef = useRef(0);
-  const onAssignFromBar = useCallback(
-    (tag, label) => {
-      // BUG-2: only announce a REAL application of the correction —
-      // onAssignUser (useLiveSession.js) now reports whether a live session
-      // existed to apply it to. After Stop it does not (sessionRef.current
-      // is null), and this chip would otherwise still be a clickable button
-      // (see identityProps below) that announces success for a click that
-      // changed nothing.
-      if (!onAssignUser(tag)) return;
-      barAnnouncementNonceRef.current += 1;
-      setBarAnnouncement({
-        text: `Marked ${label} as you. Earlier turns from this voice are now labeled You.`,
-        nonce: barAnnouncementNonceRef.current,
-      });
-    },
-    [onAssignUser],
-  );
-  // BUG-3: also cleared at the start of every new session — without this,
-  // the FIRST correction of session 2 could repeat session 1's last
-  // announcement text verbatim and, by the same identical-string bailout
-  // above, say nothing. Wrapped around `start` here (not inside
-  // useLiveSession's own `start`, which owns none of CopilotClient's UI-only
-  // state) because this Start button is the only caller of `start` in this
-  // component — simpler than threading a fourth setter into that hook the
-  // way setSetupExpanded/setShowHistory already are for state THAT hook
-  // owns.
+  // BUG-3: bumped on every new session and handed to SpeakerBar (which now
+  // owns the who's-talking announcement) as `sessionNonce` — without this, a
+  // correction in session 2 could repeat session 1's last announcement
+  // verbatim and, by the bailout SpeakerBar's own comment explains, say
+  // nothing. Wrapped around `start` here, the only caller of it in this file.
+  const [sessionNonce, setSessionNonce] = useState(0);
   const onStartSession = useCallback(() => {
-    setBarAnnouncement({ text: "", nonce: 0 });
+    setSessionNonce((n) => n + 1);
     start();
   }, [start]);
 
@@ -521,69 +505,85 @@ export default function CopilotClient() {
         }
       : {};
 
-  // AC-H6.24/AC-H6.25 (BUG-H5): derived from CURRENT state, not hard-coded,
-  // so it can never name a destination that isn't actually receiving data
-  // right now. Nothing about a selected posting's documents leaves the
-  // browser at all unless a posting is actually selected, so this is empty
-  // in that case — no claim, true or false, needs making. Once one is
-  // selected: on the embedded engine (isEmbedded, from useEngine — the same
-  // source of truth PracticeClient's own notice reads), the route's
-  // embedded path never calls Gemini at all (see
-  // app/api/copilot/answer/route.js), so this says so explicitly regardless
-  // of what useApplicationDocs finds below. On every other engine value,
-  // whether anything is actually sent depends on that same load — the one
-  // backing the "Submitted for this application" panel: while it is still
-  // loading (or has errored), whether a résumé/cover letter even exists for
-  // this application is genuinely unknown, so the notice hedges with "may"
-  // rather than asserting either way — staying silent instead, while
-  // documents might be about to be sent, would be the worse failure. Once
-  // the load settles (`docsStatus === "done"`) with neither document found,
-  // the route's own `if (resume || coverLetter)` guard
-  // (app/api/copilot/answer/route.js) means nothing is actually sent, so
-  // the notice falls silent rather than repeating BUG-H5's old (false)
-  // blanket claim. And once it settles with something found, this names
-  // only the document(s) that actually exist, never both when only one
-  // does.
-  const hasSubmittedResume = !!docsResume;
-  const hasSubmittedCoverLetter = !!docsCoverLetter;
-  const docsSettled = docsStatus === "done";
-  const postingGroundingNotice = !posting
-    ? ""
-    : isEmbedded
-      ? " The embedded engine drafts talking points on this server with no AI provider, so nothing about this application is sent to Google."
-      : !docsSettled
-        ? " Because you selected a posting, any résumé or cover letter you submitted for it may also be sent to Google Gemini to ground your talking points."
-        : hasSubmittedResume || hasSubmittedCoverLetter
-          ? ` Because you selected a posting, ${submittedDocsClause(hasSubmittedResume, hasSubmittedCoverLetter)}.`
-          : "";
+  // AC-H6.24/AC-H6.25 (BUG-H5): moved to lib/copilot/groundingNotice.js — see
+  // that module's own doc. Called with CURRENT state on every render, so it
+  // can never name a destination not actually receiving data right now.
+  const postingGroundingNotice = _postingGroundingNotice({
+    posting,
+    isEmbedded,
+    docsStatus,
+    resume: docsResume,
+    coverLetter: docsCoverLetter,
+    hasCompany, // Defect 1 fix: same fact VoiceCueSidebar reads — see groundingNotice.js.
+  });
 
-  // Step 3 (half-window dual-screen fix; R-142): measures `liveWrapperRef`'s
-  // real distance from the viewport top instead of predicting it — a
-  // prediction goes stale the moment anything above it changes, and no
-  // test here can catch that (no jsdom). `dvh` (falls back to `vh`) stops a
-  // mobile URL bar pushing the column below the fold; a `resize` listener
-  // plus a ResizeObserver on `document.body` catch height changes above.
-  const measureLiveHeight = live && !isMobile;
-  useEffect(() => {
-    const el = liveWrapperRef.current;
-    if (!measureLiveHeight || !el) return undefined;
-    const measure = () => {
-      const dvh = typeof CSS !== "undefined" && CSS.supports?.("height", "1dvh");
-      // Trap: getBoundingClientRect().top is viewport-relative, and the ResizeObserver above can fire at any scroll position (an Alert appearing, history expanding, ...); + scrollY converts it to the wrapper's document-relative, scroll-invariant offset instead, which is what this calc actually needs — so no separate scroll listener is warranted either.
-      setLiveHeight(`calc(100${dvh ? "dvh" : "vh"} - ${el.getBoundingClientRect().top + window.scrollY}px)`);
-    };
-    measure();
-    window.addEventListener("resize", measure);
-    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
-    ro?.observe(document.body);
-    return () => {
-      window.removeEventListener("resize", measure);
-      ro?.disconnect();
-    };
-  }, [measureLiveHeight]);
+  // Step 3/AC-X1: the bounded live column's ref and measured height now live
+  // in useLiveColumnHeight.js — see that hook's own doc for the R-142
+  // reasoning. `live && !isMobile` is CopilotClient's own call on WHEN the
+  // column needs bounding at all.
+  const { liveWrapperRef, liveHeight } = useLiveColumnHeight(live && !isMobile);
+
+  // I10: a click already changes the pin button's `aria-pressed` on its
+  // own, so this never calls announceCue — that stays useLiveSession's job,
+  // fired only for a speech-matched change. "company" opens the same brief
+  // a spoken cue opens (onCompanyCue above).
+  const onCueActivate = useCallback(
+    (action) => {
+      if (action === "pin") pinCurrentQuestion();
+      else if (action === "unpin") unpinQuestion();
+      else if (action === "company") companyBrief.openBrief();
+    },
+    [pinCurrentQuestion, unpinQuestion, companyBrief],
+  );
+
+  // I8: exactly ONE new consolidated live region — this screen already
+  // carries about eight, and LiveHearingStrip.js documents a measured
+  // incident where one chatty region starved the other five. Carries the
+  // pin state (cueAnnouncement, voice-only) and the brief status (only
+  // while the panel is actually open). Rendered unconditionally, mounted
+  // empty, at the top of the return below.
+  const briefArticleCount = Array.isArray(companyBrief.articles) ? companyBrief.articles.length : 0;
+  const briefLiveText = companyBrief.open
+    ? briefStatusMessage({
+        status: companyBrief.status,
+        count: briefArticleCount,
+        company: companyBrief.company,
+        error: companyBrief.error,
+      })
+    : "";
+  const consolidatedLiveText = [cueAnnouncement.text, briefLiveText].filter(Boolean).join(" ");
+
+  // I11: the brief panel takes over the rail's slot rather than opening beside it (no room for both — I1).
+  const railContent = companyBrief.open ? (
+    <CompanyBriefPanel
+      status={companyBrief.status}
+      articles={companyBrief.articles}
+      warnings={companyBrief.warnings}
+      error={companyBrief.error}
+      company={companyBrief.company}
+      onRefresh={companyBrief.refresh}
+      onBack={companyBrief.closeBrief}
+      isEmbedded={isEmbedded}
+    />
+  ) : (
+    <VoiceCueSidebar
+      collapsed={railCollapsed}
+      onToggleCollapsed={onToggleRailCollapsed}
+      pinned={held}
+      onActivate={onCueActivate}
+      isEmbedded={isEmbedded}
+      hasCompany={hasCompany}
+    />
+  );
 
   return (
     <Box sx={{ maxWidth: 1180, mx: "auto", p: { xs: 1.5, sm: 3 } }}>
+      {/* I8: consolidated pin/brief live region, mounted empty, never
+          conditionally rendered — only its text ever changes. */}
+      <Box component="span" role="status" aria-live="polite" data-testid="copilot-consolidated-live-region" sx={visuallyHidden}>
+        {consolidatedLiveText}
+      </Box>
+
       <TabHeader
         title="Interview copilot"
         description={
@@ -705,6 +705,7 @@ export default function CopilotClient() {
               micLabel={micLabel}
               source={source}
               onSourceChange={onSourceChange}
+              isEmbedded={isEmbedded} // Defect 2 fix: see SessionSetup.js's own recording notice.
               sourceAvailability={interviewerSourceAvailability}
               sourceUnavailableReason={interviewerSourceUnavailableReason}
               micDeviceId={micDeviceId}
@@ -826,64 +827,20 @@ export default function CopilotClient() {
               ) : null}
             </Stack>
 
-            {/* AC-M1.5.9: the speaker-correction control has to be reachable
-                WITHOUT expanding the transcript disclosure below — live mode
-                collapses `showHistory` by default, and TranscriptView (the
-                only other place this control lives) sits entirely inside
-                that Collapse. This bar is a sibling of it, in the
-                always-rendered part of the tree, so a correction is
-                reachable the moment a second voice is heard even while the
-                full transcript stays collapsed. Renders nothing until at
-                least one voice has actually been observed
-                (`speakerSnapshot.tags`), and nothing at all for tab/system,
-                which never populate it. Reuses SpeakerChip — the exact same
-                control TranscriptView's own rows use — so "mark as me" means
-                the same thing and looks the same whichever surface it's
-                pressed from. */}
-            {source === "inperson" && speakerSnapshot.tags.length > 0 ? (
-              <Stack
-                direction="row"
-                spacing={1}
-                sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 0.75 }}
-              >
-                <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-                  {identityUnsettled ? "Who's talking (still working out who is who):" : "Who's talking:"}
-                </Typography>
-                {speakerSnapshot.tags.map((tag) => {
-                  const label = speakerLabelFor(tag);
-                  const isYou = tag === speakerSnapshot.userTag;
-                  return (
-                    <SpeakerChip
-                      key={tag}
-                      label={label}
-                      resolved
-                      isYou={isYou}
-                      // BUG-1: the chip already resolved as the user is not
-                      // a control — there is no "mark yourself as yourself"
-                      // action. `onActivate: null` is what makes SpeakerChip
-                      // render the same non-interactive <Chip> the
-                      // tab/system path renders, instead of a self-
-                      // contradictory button. Only the OTHER voice's chip
-                      // corrects a wrong guess.
-                      onActivate={isYou ? null : () => onAssignFromBar(tag, label)}
-                    />
-                  );
-                })}
-                {/* BUG-2: mounted unconditionally alongside the bar itself —
-                    not only once a correction has actually happened — since
-                    a region that mounts already carrying its final text is
-                    not reliably announced; only a TEXT CHANGE on an
-                    already-mounted node is. Same discipline
-                    TranscriptView.js's own region and
-                    lib/copilot/answerStatus.js document.
-                    BUG-3: only `.text` is rendered — `.nonce` is state-only,
-                    never part of the announced sentence (see barAnnouncement's
-                    own derivation above). */}
-                <Box component="span" role="status" aria-live="polite" sx={visuallyHidden}>
-                  {barAnnouncement.text}
-                </Box>
-              </Stack>
-            ) : null}
+            {/* AC-M1.5.9/AC-X1: the speaker-correction bar — split out to
+                SpeakerBar.js (see its own module doc for the full
+                reasoning). It keeps its own `source === "inperson" &&
+                tags.length > 0` gate, so this stays a single unconditional
+                call. `sessionNonce` lets it reset its announcement at the
+                start of a new session — see onStartSession above. */}
+            <SpeakerBar
+              source={source}
+              speakerSnapshot={speakerSnapshot}
+              speakerLabelFor={speakerLabelFor}
+              identityUnsettled={identityUnsettled}
+              onAssignUser={onAssignUser}
+              sessionNonce={sessionNonce}
+            />
 
             {/* AC-O2: reachable WITHOUT expanding "Show transcript and
                 question history" below — that disclosure is collapsed by
@@ -929,25 +886,39 @@ export default function CopilotClient() {
                 internally rather than pushing the page into scrolling
                 again, since these panels are exactly what the user asked
                 to keep on screen. */}
-            <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-              <CopilotDashboard
-                questions={questions}
-                pace={pace}
-                fillers={fillers}
-                predictedQuestion={predictedQuestion}
-                predictionStatus={predictionStatus}
-                predictionError={predictionError}
-                onRetryPrediction={retryPrediction}
-                onRetryPredraft={retryPredraft}
-                predictedPoints={predictedPoints}
-                predictedCues={predictedCues}
-                predictedAnswerStatus={predictedAnswerStatus}
-                predictedAnswerError={predictedAnswerError}
-                showPredictions={showPredictions}
-                onToggleShowPredictions={onToggleShowPredictions}
-              />
+            {/* I1: at `md`+ the rail sits INSIDE this bounded column beside
+                the dashboard (own scroll container, below); below `md` it
+                renders outside the column entirely (just past its close),
+                like TranscriptDisclosure, reachable by scroll not clipped. */}
+            <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "row", gap: 2 }}>
+              <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+                <CopilotDashboard
+                  questions={questions}
+                  pinnedId={pinnedId}
+                  held={held}
+                  live={live} // Defect 3 fix: gates the held panel's "still running" caption.
+                  newerQuestionCount={pinnedNewerCount}
+                  onReleasePin={unpinQuestion}
+                  pace={pace}
+                  fillers={fillers}
+                  predictedQuestion={predictedQuestion}
+                  predictionStatus={predictionStatus}
+                  predictionError={predictionError}
+                  onRetryPrediction={retryPrediction}
+                  onRetryPredraft={retryPredraft}
+                  predictedPoints={predictedPoints}
+                  predictedCues={predictedCues}
+                  predictedAnswerStatus={predictedAnswerStatus}
+                  predictedAnswerError={predictedAnswerError}
+                  showPredictions={showPredictions}
+                  onToggleShowPredictions={onToggleShowPredictions}
+                />
+              </Box>
+              {!isRailBelowMd ? <Box sx={{ overflowY: "auto", minHeight: 0 }}>{railContent}</Box> : null}
             </Box>
           </Box>
+
+          {isRailBelowMd ? <Box sx={{ mt: 2 }}>{railContent}</Box> : null}
 
           {/* D1/AC-S3.11: split into its own file (TranscriptDisclosure.js)
               purely to keep this file under the 1000-line cap — see that
@@ -967,6 +938,9 @@ export default function CopilotClient() {
             identityProps={identityProps}
             questions={questions}
             onDraft={onDraft}
+            pinnedId={pinnedId}
+            held={held}
+            newerQuestionCount={pinnedNewerCount}
           />
         </>
       )}

@@ -7,15 +7,11 @@ import { normalizeManualQuestion } from "@/lib/copilot/manualQuestion";
 import { confirmQuestion } from "@/lib/copilot/detectClient";
 import { localDetection, remoteConfirmNeeded } from "@/lib/copilot/localDetection";
 import { speakerDisplayLabel } from "@/lib/copilot/speakerIdentity";
-// AC-Q6/AC-Q6.9/AC-P4/AC-N1: two wiring surfaces, each split into its own
-// file to keep this one under the line cap — see their own module docs.
-// useSessionLogRecorder owns the diagnostic log; useDraftAnswer owns turning
-// a question into a drafted answer (the answer cache, the in-flight-
-// generation guard, and fetchAnswer's draftAnswerStreaming/draftAnswer
-// compatibility shim, which moved there with it since nothing else in this
-// file ever called it).
+// AC-Q6/AC-Q6.9/AC-P4/AC-N1/AC-T1: wiring surfaces split out to keep this file under the line cap — see each module's own doc.
 import { useSessionLogRecorder } from "./useSessionLogRecorder";
 import { useDraftAnswer } from "./useDraftAnswer";
+import { useVoiceCues } from "./useVoiceCues";
+import { useQuestionPin } from "./useQuestionPin";
 
 const CONTEXT_TURNS = 12;
 
@@ -105,6 +101,7 @@ export function useLiveSession({
   autoDraft,
   setSetupExpanded,
   setShowHistory,
+  onCompanyCue, // AC-T1.18: CopilotClient's state; return value reports whether it acted.
 }) {
   const [warning, setWarning] = useState("");
   const [error, setError] = useState("");
@@ -153,6 +150,23 @@ export function useLiveSession({
     speakerSnapshotRef.current = speakerSnapshot;
   }, [speakerSnapshot]);
 
+  // AC-T1.16..T1.18: pin/hold state (useQuestionPin.js, split for the line
+  // cap); reuses the ticking `now` clock so an expiry can fire with no click.
+  const pin = useQuestionPin({ questions, questionsRef, now });
+  const pinnedIdRef = useRef(null); // mirrors pin.pinnedId, as questionsRef mirrors questions.
+  useEffect(() => { pinnedIdRef.current = pin.pinnedId; }, [pin.pinnedId]);
+  const onCompanyCueRef = useRef(onCompanyCue);
+  useEffect(() => { onCompanyCueRef.current = onCompanyCue; }, [onCompanyCue]);
+  const evaluateVoiceCue = useVoiceCues(source); // AC-T1.13: see useVoiceCues.js.
+  // AC-T1.18/I10: `{ text, nonce }` (SpeakerBar's barAnnouncement has the
+  // same Object.is trap); set only from handleVoiceCue, never a click.
+  const [cueAnnouncement, setCueAnnouncement] = useState({ text: "", nonce: 0 });
+  const cueAnnouncementNonceRef = useRef(0);
+  const announceCue = useCallback((text) => {
+    cueAnnouncementNonceRef.current += 1;
+    setCueAnnouncement({ text, nonce: cueAnnouncementNonceRef.current });
+  }, []);
+
   // AC-Q6/AC-Q6.9/D9: the session-log wiring surface — see
   // useSessionLogRecorder.js. `speakerSnapshotRef` is threaded through so
   // downloadLog can hand the CURRENT identity snapshot to the archive
@@ -162,6 +176,44 @@ export function useLiveSession({
     useSessionLogRecorder(source, speakerSnapshotRef);
 
   const live = status === "live" || status === "connecting";
+
+  // Defect 3 (regression pass): a hold must be released the instant the
+  // session leaves the live state, not only when the Stop button is
+  // pressed. `stop()` below already calls `pin.unpinQuestion()` directly,
+  // but it is not the only way `status` can reach "idle" (or "error"):
+  // lib/copilot/session.js's own CopilotSession ends itself two other ways
+  // that never call this hook's `stop` at all —
+  //   - the audio track's native "ended" event
+  //     (`stream.getAudioTracks()[0]?.addEventListener("ended", () =>
+  //     this.stop())`) calls CopilotSession's OWN stop(), which fires
+  //     `onStatus("idle")` straight from inside session.js;
+  //   - an essential source's socket erroring escalates
+  //     `aggregateStatus()` straight to `onStatus("error")`, again with no
+  //     call back into this hook at all.
+  // Both land here as nothing more than the `onStatus` callback passed into
+  // `new CopilotSession(...)` in `start()` below calling `setStatus(s)` —
+  // see that callback's own body. Before this fix, `pinnedId` survived a
+  // session that had already ended, `held` stayed true, and — because the
+  // ticking `now` clock right below is itself gated on `live` — a frozen
+  // `now` meant resolvePin's own 120s expiry (lib/copilot/questionPin.js)
+  // could never fire on this path either: the hold was permanent, with no
+  // way to self-correct.
+  //
+  // Render-phase state adjustment, not a useEffect — the same idiom
+  // CopilotClient.js's own `railCollapsed` uses for reacting to this exact
+  // `live` transition, for the same two reasons: this project's
+  // react-hooks/set-state-in-effect rule forbids the "compare in an effect,
+  // setState if it changed" version of this, and an effect would also apply
+  // the release one paint late — the held panel would keep claiming
+  // detection and drafting were still running for one extra frame after the
+  // session had already ended. Guarded on `live !== prevLiveForPin` (not
+  // unconditional) so this converges in the render pass it fires in, same
+  // as every other render-phase adjustment in this codebase.
+  const [prevLiveForPin, setPrevLiveForPin] = useState(live);
+  if (live !== prevLiveForPin) {
+    setPrevLiveForPin(live);
+    if (!live) pin.unpinQuestion();
+  }
 
   // D2: used to be gated on `!startedAt` alone, which stayed true (frozen
   // `now`) for the entire life of a session stuck "connecting" — the clock
@@ -188,10 +240,11 @@ export function useLiveSession({
     // rendering its chips as live, functional controls after Stop, for a
     // session that no longer exists to apply a correction to.
     setSpeakerSnapshot(DEFAULT_SPEAKER_SNAPSHOT);
+    pin.unpinQuestion(); // AC-T1.17: a hold must not survive the session.
     // Step 2: mirrors start's setSetupExpanded(false) — `!live` must
     // always mean "SessionSetup renders in full".
     setSetupExpanded(true);
-  }, [setSetupExpanded, setStatus]);
+  }, [setSetupExpanded, setStatus, pin]);
 
   // Unmounting (e.g. switching main tabs) must not leave the screen-share or
   // mic running — stop whatever session is active on the way out.
@@ -511,6 +564,35 @@ export function useLiveSession({
   // belt-and-braces, not load-bearing — kept explicit so this reads
   // correctly on its own rather than depending on that coupling.)
   const identityUnsettled = speakerSnapshot.confidence !== "high" && !speakerSnapshot.overridden;
+  // AC-T1.13/T1.16.1/T1.17/T1.18: the "act" half of useVoiceCues.js's "decide vs act" split.
+  const handleVoiceCue = useCallback(
+    (match, utterance) => {
+      // AC-T1.13.1: see useVoiceCues.js.
+      if (match.blocked === "identity") return logEvent("cue.ignored", { reason: "speaker identity has not settled yet" });
+      logEvent("cue.matched", { id: match.id, action: match.action, utterance });
+      if (match.ambiguous) {
+        logEvent("cue.ignored", { reason: "ambiguous" }); // AC-T1.2.1: two intents = narrative, not intent.
+        return;
+      }
+      if (match.action === "pin") {
+        const id = pin.pinCurrentQuestion(); // AC-T1.16.1: re-pins FORWARD when already held.
+        if (id === null) logEvent("cue.ignored", { reason: "no question detected yet to hold" });
+        else {
+          logEvent("question.pinned", { id });
+          announceCue("Question held on screen.");
+        }
+      } else if (match.action === "unpin" && pinnedIdRef.current !== null) {
+        pin.unpinQuestion();
+        logEvent("question.unpinned", {});
+        announceCue("Question released.");
+      } else if (match.action === "company") {
+        // AC-T1.18: opening the panel is CopilotClient's state — trust its report.
+        const handled = typeof onCompanyCueRef.current === "function" && onCompanyCueRef.current();
+        if (!handled) logEvent("cue.ignored", { action: "company", reason: "company brief unavailable" });
+      }
+    },
+    [logEvent, pin, announceCue],
+  );
 
   const start = useCallback(async () => {
     // AC-Q6.1/Q6.6: a fresh log the instant Start is pressed, before any
@@ -537,6 +619,8 @@ export function useLiveSession({
     setNow(sessionStartTs);
     setLiveSince(sessionStartTs);
     setSpeakerSnapshot(DEFAULT_SPEAKER_SNAPSHOT);
+    pin.unpinQuestion(); // AC-T1.17: a hold must not survive into the next session.
+    setCueAnnouncement({ text: "", nonce: 0 });
     recentRef.current = [];
     pendingRef.current = [];
     lastQNormRef.current = "";
@@ -651,6 +735,13 @@ export function useLiveSession({
           });
           setInterims((prev) => ({ ...prev, [speaker]: "" }));
 
+          // AC-T1.13: snapshot read synchronously, as handleUtterance does above.
+          const cueMatch = evaluateVoiceCue(
+            { isFinal, textAlreadyDelivered, speaker, transcript },
+            sessionRef.current?.speakerSnapshot() || DEFAULT_SPEAKER_SNAPSHOT,
+          );
+          if (cueMatch) handleVoiceCue(cueMatch, transcript);
+
           // R-127: textAlreadyDelivered re-delivers the text of the final
           // that already went into appendFinal/recordSpeechSample/pendingRef
           // for this same span (see lib/copilot/stt/index.js's onTranscript
@@ -710,6 +801,8 @@ export function useLiveSession({
     appendFinal,
     evaluateUtterance,
     handleUtterance,
+    evaluateVoiceCue,
+    handleVoiceCue,
     source,
     micDeviceId,
     recordSpeechSample,
@@ -722,6 +815,7 @@ export function useLiveSession({
     setQuestions,
     logEvent,
     startLog,
+    pin,
   ]);
 
   const onDraft = useCallback(
@@ -741,7 +835,8 @@ export function useLiveSession({
     recentRef.current = [];
     pendingRef.current = [];
     lastQNormRef.current = "";
-  }, [setQuestions]);
+    pin.unpinQuestion(); // AC-T1.17: Clear releases a hold too.
+  }, [setQuestions, pin]);
 
   // BUG-6: resolves each line through resolveTranscriptLabel (current
   // identity snapshot) rather than the frozen `l.speaker` — otherwise a
@@ -836,5 +931,7 @@ export function useLiveSession({
     // up to 4000 chars each, purely to compute one boolean CopilotClient
     // never even displayed).
     sessionLogHasEvents,
+    ...pin, // AC-T1.16..T1.18: the click path; handleVoiceCue above is the voice path.
+    cueAnnouncement,
   };
 }

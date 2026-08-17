@@ -49,12 +49,25 @@ export default function TranscriptDisclosure({
   identityProps,
   questions,
   onDraft,
+  // AC-T1.16..T1.18/AC-H1: the pin/hold surface, threaded straight through
+  // to QuestionFeed at BOTH call sites below — see that component's own doc
+  // for why its feed-level region needs these instead of the pinned entry's
+  // own (unchanging, while held) status.
+  pinnedId,
+  held,
+  newerQuestionCount,
 }) {
   if (!live) {
     return (
       <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ alignItems: "stretch", mt: 2 }}>
         <TranscriptView finals={finals} interims={interims} startedAt={startedAt} {...identityProps} />
-        <QuestionFeed questions={questions} onDraft={onDraft} />
+        <QuestionFeed
+          questions={questions}
+          onDraft={onDraft}
+          pinnedId={pinnedId}
+          held={held}
+          newerQuestionCount={newerQuestionCount}
+        />
       </Stack>
     );
   }
@@ -86,7 +99,13 @@ export default function TranscriptDisclosure({
           sx={{ alignItems: "stretch", mt: 2 }}
         >
           <TranscriptView finals={finals} interims={interims} startedAt={startedAt} {...identityProps} />
-          <QuestionFeed questions={questions} onDraft={onDraft} />
+          <QuestionFeed
+            questions={questions}
+            onDraft={onDraft}
+            pinnedId={pinnedId}
+            held={held}
+            newerQuestionCount={newerQuestionCount}
+          />
         </Stack>
       </Collapse>
     </>

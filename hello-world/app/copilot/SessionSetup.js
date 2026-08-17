@@ -12,6 +12,7 @@ import MicPicker from "./MicPicker";
 import PostingPicker from "./PostingPicker";
 import SubmittedDocs from "./SubmittedDocs";
 import PrepContext from "./PrepContext";
+import { companyResearchDestination } from "@/lib/copilot/groundingNotice";
 import { TOUCH_TARGET_SX, TOUCH_ICON_SX, BREAK_LONG_WORDS_SX } from "./mobileSx";
 
 // R-129's known follow-up (see ../../docs/REGRESSION.md): live mode's own
@@ -49,6 +50,12 @@ export default function SessionSetup({
   micLabel,
   source,
   onSourceChange,
+  // Defect 2 (regression pass): the one fact this file needs to make its
+  // own recording-consent notice honest — see that notice's render site
+  // below for the full reasoning. Passed from CopilotClient, the same
+  // `useEngine`-derived value `postingGroundingNotice`/VoiceCueSidebar
+  // already read.
+  isEmbedded,
   // Defect fix (adversarial review): this file has exactly one caller today
   // (CopilotClient), which always passes the full `{ tab, system }` shape —
   // but nothing enforced that, and reading `.tab`/`.system` straight off an
@@ -74,6 +81,26 @@ export default function SessionSetup({
   profile,
   onProfileChange,
 }) {
+  // Defect 2 (regression pass): reused verbatim from
+  // lib/copilot/groundingNotice.js rather than re-derived here — see that
+  // module's own `companyResearchDestination` doc (BL-1) for the full,
+  // code-verified reasoning behind each engine's wording. `hasCompany: true`
+  // is fixed here on purpose: this consent notice is shown BEFORE a posting
+  // is necessarily even selected (see showConsent's own render site below),
+  // so it cannot condition on any one posting's actual company field the
+  // way postingGroundingNotice's own hasCompany argument does — it states
+  // what happens if the candidate does end up asking about a company later
+  // in the session, the same "worth disclosing before the fact" reasoning
+  // AC-T2.14/E2 already gives for why this has to be a standing notice
+  // rather than one shown alongside the request.
+  //
+  // Verified against lib/scrape/webSearch.js directly (not assumed):
+  // searchPostingUrls tries Brave first (BRAVE_SEARCH_API_KEY), then Google
+  // Programmable Search (GOOGLE_SEARCH_API_KEY + GOOGLE_SEARCH_ENGINE_ID),
+  // then falls through to a keyless DuckDuckGo scrape — the exact
+  // "Brave, Google or DuckDuckGo" wording companyResearchDestination uses
+  // for the embedded engine.
+  const companyResearchNotice = companyResearchDestination({ isEmbedded, hasCompany: true });
   return (
     <>
       {/* The disclosure only exists once there is something to disclose —
@@ -354,10 +381,63 @@ export default function SessionSetup({
                   notice ABOVE the Collapse this Alert lives inside (BUG-4
                   moved it there so it survives a live session's own
                   auto-collapse), which is what actually satisfies BUG-H4 for
-                  this source. */}
+                  this source.
+
+                  AC-T2.14/E2 (Group T amendment, adversarial review): before
+                  the company-research voice cue, the STT provider was the
+                  ONLY outbound destination this session ever created, so
+                  naming it here was a complete disclosure. It no longer is —
+                  a spoken request to research the company sends data
+                  through POST /api/company-research. That fetch fires the
+                  moment the cue is recognized, with nothing to click and
+                  nothing to confirm, so the disclosure has to be standing
+                  and read before the fact rather than shown alongside the
+                  request.
+
+                  Defect 2 fix (regression pass): the sentence AC-T2.14/E2
+                  added here claimed, unconditionally, that the request
+                  "sends its name, this job's title and the posting text" —
+                  true on the non-embedded (Gemini) engine, but FALSE on the
+                  embedded one: app/api/company-research/route.js's embedded
+                  branch calls `researchCompanyLocal({ company, jobTitle })`
+                  with no `posting` at all, so the posting text is never
+                  sent — the exact fact `companyResearchDestination` already
+                  states correctly elsewhere on this same screen
+                  (VoiceCueSidebar's foot-of-rail note), which made the two
+                  disclosures contradict each other. It also named no
+                  recipient ("for that search") where the honest answer is
+                  engine-specific: Google Gemini on one engine, one of
+                  Brave/Google/DuckDuckGo (see lib/scrape/webSearch.js's own
+                  provider order) on the other. `companyResearchNotice`
+                  (computed above) is that same shared, engine-aware,
+                  code-verified sentence, reused rather than re-derived a
+                  third time — CompanyBriefPanel.js and VoiceCueSidebar.js
+                  already reuse it for the same reason.
+
+                  Known residual, left AS IS on purpose: this Alert is still
+                  inside the Collapse below and still dismissible (onClose),
+                  so it is not on screen for the entire life of a live
+                  session — the "Show setup"/"Hide setup" toggle and
+                  `start()`'s own setSetupExpanded(false) both remove it once
+                  a session goes live, and dismissing it removes it even
+                  earlier. Unlike the mic-recording sentence above (BUG-4),
+                  this one is deliberately NOT hoisted out of the Collapse:
+                  VoiceCueSidebar's own foot-of-rail note (collapsed and
+                  expanded) already carries the identical fact through the
+                  ENTIRE live window — the one window a spoken cue can ever
+                  fire in (BL-2) — so this Alert is not the sole carrier of
+                  the claim the way the mic-recording sentence was before
+                  BUG-4. This sentence is what a candidate reads BEFORE
+                  starting, not what has to survive the session.
+
+                  Added to both branches below (the cue is not
+                  audio-source-specific); the second branch's em dash was
+                  already replaced with a period by AC-T2.14/E2 — a screen
+                  reader does not speak an em dash as a pause at default
+                  punctuation settings. */}
               {source === "inperson"
-                ? `Recording notice: this in-person conversation is recorded and streamed${sttProviderName ? ` to ${sttProviderName}` : ""} for transcription. Everyone in the room is being recorded, not just you, so get their consent before you start; some regions require all-party consent.`
-                : `Recording notice: audio is streamed${sttProviderName ? ` to ${sttProviderName}` : ""} for transcription. Make sure everyone on the call consents before you start — some regions require all-party consent.`}
+                ? `Recording notice: this in-person conversation is recorded and streamed${sttProviderName ? ` to ${sttProviderName}` : ""} for transcription. Everyone in the room is being recorded, not just you, so get their consent before you start; some regions require all-party consent. The company-research voice cue is separate: ${companyResearchNotice}`
+                : `Recording notice: audio is streamed${sttProviderName ? ` to ${sttProviderName}` : ""} for transcription. Make sure everyone on the call consents before you start. Some regions require all-party consent. The company-research voice cue is separate: ${companyResearchNotice}`}
             </Alert>
           ) : null}
 
