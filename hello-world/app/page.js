@@ -52,6 +52,7 @@ import { useManualTailor } from "./hooks/useManualTailor";
 import { useManualPostings } from "./hooks/useManualPostings";
 import { useChat } from "./hooks/useChat";
 import { useApplicationDialogs } from "./hooks/useApplicationDialogs";
+import { useApplicationDigests } from "./hooks/useApplicationDigests";
 import {
   REFERENCE_CONFIG,
   EDUCATION_CONFIG,
@@ -236,6 +237,11 @@ export default function Home() {
     setApplicationStages,
     setApplicationsRefreshKey,
   });
+
+  // Company & role research column on the tracking table - see
+  // app/hooks/useApplicationDigests.js for the fetch/auto-populate/Research
+  // logic this only instantiates and hands down to <TrackingTab>.
+  const applicationDigests = useApplicationDigests(applicationData);
 
   // Refs for targeted re-fetches when individual controls change
   const hasFetchedRef = useRef(false);
@@ -3003,6 +3009,9 @@ export default function Home() {
             appDialog={appDialogs.appDialog}
             loadCommunicationsForApp={appDialogs.loadCommunicationsForApp}
             highlightedAppId={highlightedAppId}
+            digestsById={applicationDigests.digestsById}
+            researchingIds={applicationDigests.researchingIds}
+            researchOne={applicationDigests.researchOne}
             emailClassificationsByAppId={Object.fromEntries(
               Object.entries(
                 gmailMessages.reduce((acc, { application, classification }) => {

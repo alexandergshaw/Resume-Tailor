@@ -16,6 +16,7 @@ import TableHead from "@mui/material/TableHead";
 import TableSortLabel from "@mui/material/TableSortLabel";
 import Typography from "@mui/material/Typography";
 import { resolveDocumentBlob } from "../../lib/document/docx";
+import { digestSummaryLine } from "../../lib/tracking/applicationDigest";
 import DescriptionIcon from "@mui/icons-material/Description";
 import TabHeader from "./TabHeader";
 import EmptyState from "./EmptyState";
@@ -94,10 +95,92 @@ export default function TrackingTab({
   loadCommunicationsForApp,
   highlightedAppId,
   emailClassificationsByAppId = {},
+  // Company & role research column - see app/hooks/useApplicationDigests.js.
+  digestsById = {},
+  researchingIds,
+  researchOne,
 }) {
   // Below the `md` breakpoint the dense data table is unusable, so the rows are
   // rendered as stacked cards instead (set in Phase 3 of the responsive work).
   const isCompact = useIsTablet();
+
+  // The single decision tree for the digest cell, shared by the desktop
+  // table cell and the phone card block below - two render call sites for
+  // one column (see the AC's own survey: a column added only to the table is
+  // invisible on a phone). A real MUI <Button> in every branch, never a Box
+  // with an onClick: the row itself has an onClick that opens the edit
+  // dialog, guarded on `e.target.closest("a, button, ...")`, so anything
+  // that renders as something else gets swallowed by the row click.
+  function renderDigestCell(app, idx) {
+    const digest = digestsById[app.id];
+    const researching = !!researchingIds?.has?.(app.id);
+    const captionId = `digest-caption-${app.id}`;
+
+    if (researching) {
+      return (
+        <Box>
+          <Button
+            size="small"
+            aria-disabled="true"
+            aria-describedby={captionId}
+            onClick={() => {}}
+            sx={{ p: 0, minWidth: 0, fontSize: 11, opacity: 0.6, cursor: "default" }}
+          >
+            Researching…
+          </Button>
+          <Box id={captionId} role="status" sx={{ fontSize: 10.5, color: "var(--text-muted)" }}>
+            Researching {app.positions?.company || "this company"} and this role…
+          </Box>
+        </Box>
+      );
+    }
+
+    if (digest && digest.status === "failed") {
+      return (
+        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0.25 }}>
+          <Box sx={{ fontSize: 11, color: "var(--danger)" }}>Research failed</Box>
+          {/* researchOne is always passed by app/page.js (see useApplicationDigests) —
+              call it directly so a future wiring regression throws instead of
+              silently no-opping the button. */}
+          <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }} onClick={() => researchOne(app.id)}>
+            Retry
+          </Button>
+        </Box>
+      );
+    }
+
+    if (digest) {
+      const summary = digestSummaryLine(digest.markdown) || "View research";
+      return (
+        <Button
+          size="small"
+          onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "digest" })}
+          sx={{
+            p: 0,
+            minWidth: 0,
+            fontSize: 12,
+            textAlign: "left",
+            textTransform: "none",
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+          }}
+        >
+          {summary}
+        </Button>
+      );
+    }
+
+    return (
+      // researchOne is always passed by app/page.js (see useApplicationDigests) —
+      // call it directly so a future wiring regression throws instead of
+      // silently no-opping the button.
+      <Button size="small" variant="outlined" sx={{ fontSize: 11 }} onClick={() => researchOne(app.id)}>
+        Research
+      </Button>
+    );
+  }
   return (
     <section className={styles.tabPanel}>
       <TabHeader
@@ -198,6 +281,11 @@ export default function TrackingTab({
                     <Box sx={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
                       Applied: {app.applied_at ? new Date(app.applied_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—"}
                     </Box>
+
+                    {/* Company & role research - card layout's version of the
+                        desktop table's digest column; the table alone would
+                        make this invisible on a phone. */}
+                    <Box sx={{ fontSize: "0.8rem" }}>{renderDigestCell(app, idx)}</Box>
 
                     {stages.length > 0 && (
                       <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
@@ -384,6 +472,7 @@ export default function TrackingTab({
                     </TableSortLabel>
                   </TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Recruiter Communications</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>Company &amp; role</TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Job Description</TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Your Resume</TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Links</TableCell>
@@ -538,6 +627,9 @@ export default function TrackingTab({
                             Add
                           </Button>
                         </Box>
+                      </TableCell>
+                      <TableCell sx={{ maxWidth: 220 }}>
+                        {renderDigestCell(app, idx)}
                       </TableCell>
                       <TableCell sx={{ maxWidth: 220 }}>
                         {pos?.description ? (
@@ -719,6 +811,7 @@ export default function TrackingTab({
         communicationsDialog={communicationsDialog}
         loadCommunicationsForApp={loadCommunicationsForApp}
         openAddCommunicationDialog={openAddCommunicationDialog}
+        digestsById={digestsById}
       />
     </section>
   );

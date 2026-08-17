@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
@@ -11,6 +12,49 @@ import DialogTitle from "@mui/material/DialogTitle";
 import { useIsMobile } from "../hooks/useResponsive";
 import FieldError from "./FieldError";
 import FormattedContent from "./FormattedContent";
+import MarkdownPreview from "./experience/MarkdownPreview";
+import { formatRelative } from "../../lib/feed/liveFeedClient";
+
+// The digest tab's body: the real markdown parser (never FormattedContent.js
+// - that heuristic is shaped for a job ad's plain text, not genuine markdown
+// a model wrote), the sources the model actually grounded on, and when the
+// research last ran. A module-level component (not one declared inside
+// AppViewDialog) so it is not recreated - and its own state, if it ever
+// grows any, reset - on every AppViewDialog render.
+function DigestPanel({ digest, nowTs }) {
+  if (!digest?.markdown) {
+    return <Box sx={{ color: "text.secondary", fontStyle: "italic" }}>Not researched yet.</Box>;
+  }
+  const sources = Array.isArray(digest.sources) ? digest.sources : [];
+  return (
+    <Box>
+      <MarkdownPreview markdown={digest.markdown} />
+      {sources.length > 0 && (
+        <Box sx={{ mt: 2, pt: 1.5, borderTop: "1px solid var(--border)" }}>
+          <Box sx={{ fontWeight: 700, fontSize: 12, mb: 0.5 }}>Sources</Box>
+          {sources.map((s, i) => (
+            <Box key={s?.url || i} sx={{ fontSize: 12, mb: 0.25 }}>
+              <Box
+                component="a"
+                href={s?.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                sx={{ color: "var(--accent)" }}
+              >
+                {s?.title || s?.url}
+              </Box>
+            </Box>
+          ))}
+        </Box>
+      )}
+      {digest.updated_at && nowTs > 0 && (
+        <Box sx={{ mt: 1.5, fontSize: 11, color: "text.secondary" }}>
+          Researched {formatRelative(digest.updated_at, nowTs)}
+        </Box>
+      )}
+    </Box>
+  );
+}
 
 export default function AppViewDialog({
   appDialog,
@@ -19,15 +63,29 @@ export default function AppViewDialog({
   communicationsDialog,
   loadCommunicationsForApp,
   openAddCommunicationDialog,
+  digestsById = {},
 }) {
   const isMobile = useIsMobile();
+
+  // "Researched <relative time>" needs a wall-clock reference, and calling
+  // Date.now() directly during render is impure (the same trap
+  // LiveFeedTab.js's own `nowTs` comment documents) - resolved once after
+  // mount instead, in an effect, same as that file's fix.
+  const [nowTs, setNowTs] = useState(0);
+  useEffect(() => {
+    const id = setTimeout(() => setNowTs(Date.now()), 0);
+    return () => clearTimeout(id);
+  }, []);
+
   const dApp = appDialog.rowIndex != null ? applicationData[appDialog.rowIndex] : null;
   const dPos = dApp?.positions;
   const dResume = dApp?.generated_resumes;
+  const dDigest = dApp?.id ? digestsById[dApp.id] : null;
   const pages = [
     dApp?.id ? "communications" : null,
     dPos?.description ? "jd" : null,
     dResume?.content ? "resume" : null,
+    dDigest?.markdown ? "digest" : null,
   ].filter(Boolean);
   const pageIdx = pages.indexOf(appDialog.kind);
   const commsLoadedForThisApp =
@@ -37,11 +95,13 @@ export default function AppViewDialog({
       ? `${dPos?.company || ""} — Job Description`
       : appDialog.kind === "resume"
         ? `Your Resume — ${dPos?.title || "Role"}`
-        : `Recruiter Communications${
-            dPos?.company || dPos?.title
-              ? ` — ${dPos?.company || "Unknown Company"}${dPos?.title ? ` / ${dPos.title}` : ""}`
-              : ""
-          }`;
+        : appDialog.kind === "digest"
+          ? `${dPos?.company || "Company"} & role — Research`
+          : `Recruiter Communications${
+              dPos?.company || dPos?.title
+                ? ` — ${dPos?.company || "Unknown Company"}${dPos?.title ? ` / ${dPos.title}` : ""}`
+                : ""
+            }`;
   const navigate = (dir) => {
     if (pages.length === 0) return;
     const next = (pageIdx + dir + pages.length) % pages.length;
@@ -147,6 +207,8 @@ export default function AppViewDialog({
               ))}
             </Box>
           )
+        ) : appDialog.kind === "digest" ? (
+          <DigestPanel digest={dDigest} nowTs={nowTs} />
         ) : (
           <FormattedContent
             text={appDialog.kind === "jd" ? (dPos?.description ?? "") : (dResume?.content ?? "")}

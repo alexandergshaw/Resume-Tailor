@@ -1,0 +1,79 @@
+// Gates the digest column's WIRING into the tracking table.
+//
+// This repo has shipped a fully-tested component its caller never imported,
+// and the failure is invisible to piece-level tests because each one imports
+// the piece directly. Reading source text is normally a poor test and is the
+// right one here, because the property being asserted IS the shape of the
+// caller's source.
+//
+// Two things beyond mere presence matter and are asserted below:
+//   * the table has a SECOND, stacked-card layout below the md breakpoint, so
+//     a column added only to the <Table> is invisible on a phone;
+//   * the row already has an onClick that opens the edit dialog, guarded on
+//     `e.target.closest("a, button, ...")` - so the digest control has to be a
+//     real <button> or the row click swallows it.
+//
+// Written before the wiring exists.
+
+import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+const tab = read("./TrackingTab.js");
+const dialog = read("./AppViewDialog.js");
+
+describe("TrackingTab renders the digest column", () => {
+  it("adds a header cell naming the column", () => {
+    expect(tab).toMatch(/Company\s*&(amp;)?\s*role|Company and role/i);
+  });
+
+  it("offers a Research control", () => {
+    expect(tab).toContain("Research");
+  });
+
+  it("opens the digest through the existing row dialog rather than a second one", () => {
+    // AppViewDialog is already opened from a tracking cell as
+    // { open, rowIndex, kind: "jd" }. Reusing its kind mechanism keeps one
+    // dialog for row content instead of two competing ones.
+    expect(tab).toMatch(/kind:\s*"digest"/);
+    expect(dialog).toContain("digest");
+  });
+
+  it("renders the digest with the real markdown parser, not the job-description heuristic", () => {
+    // FormattedContent.js is a plain-text heuristic shaped for job ads and
+    // resumes; the digest is genuine markdown the model wrote.
+    expect(dialog).toMatch(/MarkdownPreview/);
+  });
+
+  it("still renders the phone layout, which is a separate block from the table", () => {
+    // The mobile card view is a different render path entirely. A column
+    // added only to the desktop <Table> simply does not exist on a phone.
+    const mobileMarker = /useIsTablet|isTablet/;
+    expect(tab).toMatch(mobileMarker);
+    const digestMentions = (tab.match(/digest/gi) || []).length;
+    expect(digestMentions).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps both files under the size limit", () => {
+    expect(tab.split("\n").length).toBeLessThan(1000);
+    expect(dialog.split("\n").length).toBeLessThan(1000);
+  });
+
+  it("hard-calls researchOne, so an unwired Research button fails loudly", () => {
+    // This repo has shipped this bug twice: a Retry button wired to
+    // undefined, and `onPagesChanged?.()` - the only one of three callbacks
+    // called with optional chaining, which is exactly why its failure was
+    // silent while the other two would have thrown. `researchOne` is never
+    // optional (page.js always passes it), so `?.()` here buys nothing and
+    // converts a wiring regression into a button that quietly does nothing.
+    expect(tab).toContain("researchOne");
+    expect(tab).not.toMatch(/researchOne\?\./);
+  });
+
+  it("does not fetch from the table component itself", () => {
+    // The tracking table is presentational and driven by props from page.js;
+    // page.js is already 3300 lines and must not grow a research pipeline.
+    expect(tab).not.toContain("/api/application-digest");
+  });
+});

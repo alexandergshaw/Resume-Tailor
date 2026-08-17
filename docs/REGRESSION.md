@@ -3014,3 +3014,35 @@ Load-bearing specifics:
 - **Two defects in the author's own test file, both found and reported by an implementer that correctly refused to edit them.** First: `wantsEmbedded` reads `process.env` DIRECTLY, not through the mocked `getServerEnv`, so with no explicit engine and no `Gemini_LLM_API_Key` stubbed, every request 503s as "embedded" before reaching anything worth testing — the same trap `app/api/experience/research/route.test.js` already documents. Second: a capping test used single-letter labels A-F and asserted a bare "F" was absent from the prompt, which is unsatisfiable because the prompt's own boilerplate reads "For each technology". Both fixed in the test, not worked around in the route.
 
 **Known gap:** an AI-sourced row is always `inUse: false`. The deterministic rows compute `inUse` by matching the user's `detectedVersions` against a cycle, but the AI path does not, so a page naming "TypeScript 4.9" will not have that cycle flagged the way "React 17" is. The row still renders with its dates and state; only the personal "you use this one" emphasis is missing.
+
+### R-223 | area: tracking-digest | parallel-safe: yes | automatable: partly
+
+**Summary:** The tracking table carries a "Company & role" column holding a researched digest of what the job posting does NOT tell you — auto-filled for a newly tracked row, filled on demand by a Research button for older ones, and opened as formatted markdown with its sources in the existing row dialog.
+
+**Steps:**
+1. From `hello-world`, run
+   `npx vitest run lib/tracking app/api/application-digest app/components/TrackingTab.digest.test.js app/components/TrackingTab.test.js`.
+2. Manual (`automatable: no`): track a new job. Within a moment the Company & role cell fills in on its own. Click it and confirm the modal renders headed sections and a source list, not raw markdown.
+3. Manual (`automatable: no`): find a row tracked more than a day ago with an empty cell. Confirm it did NOT auto-research, that a Research button is offered, and that pressing it fills the cell.
+4. Manual (`automatable: no`): switch to the embedded engine in Settings and press Research. Confirm a clear refusal and that no empty or half-written digest is stored.
+5. Manual (`automatable: no`): narrow the window below the `md` breakpoint. Confirm the digest is present in the stacked card layout too — it is a separate render path from the table.
+
+**Expected:** 1 passes. 2-5 as described.
+
+**Why this exists:** the user asked for a column listing the pertinent information about the company and role that cannot be gleaned from the posting, auto-populated on a new row, opening a formatted preview on click, with a Research button for existing rows.
+
+Load-bearing specifics:
+
+- **Nothing hooks row creation, deliberately.** Nine separate code paths create a tracked `applications` row — manual add, Job Search track, applied toggle, three tailor flows, feed apply, the auto-apply queue and `useManualTailor` — and seven are inside `app/page.js`, which is 3300 lines and far over this repo's cap. Instead the table asks for a digest for any row that lacks one, which covers every path without touching any of them and makes a tenth path work for free.
+- **`selectAutoDigestTargets` is a SPEND control, not a completeness filter**, and it is pure so that decision is testable without a network. Auto-research fires only for a row with no digest row at all whose `tracked_at` is within `AUTO_DIGEST_MAX_AGE_HOURS` (24), newest first, `AUTO_DIGEST_CONCURRENCY` at a time. Opening the table on sixty untouched rows must not bill sixty grounded searches; the Research button is what covers the backlog, which is exactly the split the user described.
+- **A `failed` digest is never auto-retried.** Without that, a permanently failing row burns a model call on every page load forever with nothing changing on screen. Retrying is the button's job.
+- **An existing digest short-circuits the route with no model call.** The table asks on every load; re-researching would bill a grounded search per page view. `force: true` — what the button sends — is the only way past it.
+- **A failure is PERSISTED as `status: "failed"` and returned as 200.** An empty cell reads as "nobody has looked yet"; the user has to be able to tell a failure from an untried row, and the auto path has to be able to tell them apart too.
+- **Digests live in a NEW `application_digests` table, not a column on `applications`.** That table predates this repo's migration set and is written by six call sites; a join-side table with `application_id` as primary key and `on delete cascade` cannot break any of them. RLS on, four owner-scoped policies; the `insert ... with check (auth.uid() = user_id)` is what makes an upsert safe without a redundant `user_id` filter.
+- **Existing digests are read straight from Supabase by the browser's RLS-scoped client**, not through a GET route. RLS already grants exactly the caller's rows, and a route would exist only to re-wrap that — while turning one query into one request per row. The API route exists for one reason: the grounded model call needs a server-side key the browser never sees.
+- **The digest cell must be a real `<button>`.** The table row already has an `onClick` opening the edit dialog, guarded on `e.target.closest("a, button, ...")` — anything else is swallowed by the row.
+- **The table has a second, stacked-card layout below `md`.** A column added only to the `<Table>` is invisible on a phone.
+- **Rendered with the real markdown parser** (`MarkdownPreview` + `lib/experience/markdown.js`), not `FormattedContent.js`, which is a plain-text heuristic shaped for job ads and resumes.
+- **The preview reuses `AppViewDialog`'s existing `kind` mechanism**, already opened from a tracking cell as `{ open, rowIndex, kind: "jd" }` — one dialog for row content rather than two competing ones.
+- **An ungrounded link never reaches storage.** `parseDigestAnswer` demotes any `[text](url)` whose host is not in the model's own grounding metadata to plain text, keeping the sentence; an empty grounding list demotes everything.
+- **A test-mock shape bug found by an implementer, not by the suite.** `listDigests` returns an OBJECT keyed by `application_id`; the route test mocked it as an array, so every assertion ran against a shape production never produces. The route survived only because it defensively handled both. The mock now matches the accessor.
