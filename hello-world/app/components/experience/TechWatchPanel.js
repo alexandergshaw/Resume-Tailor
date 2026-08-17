@@ -4,6 +4,7 @@ import { useEffect, useId, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { bucketByHour, summarize, formatHourLabel } from "@/lib/techwatch/hourBuckets.js";
@@ -102,7 +103,8 @@ function lifecycleNote(row, now) {
 }
 
 export default function TechWatchPanel({ now = new Date() }) {
-  const { data, loading, error, signedOut, lastLoadedAt, windowHours, setWindowHours, reload } = useTechWatch();
+  const { data, loading, error, signedOut, lastLoadedAt, lifecycleGaps, windowHours, setWindowHours, reload } =
+    useTechWatch();
 
   const headingId = useId();
   const [expanded, setExpanded] = useState(() => readStoredExpanded());
@@ -154,6 +156,26 @@ export default function TechWatchPanel({ now = new Date() }) {
   const allSourcesOk = sources.every((s) => s && s.ok !== false);
   const nothingReported = items.length === 0 && allSourcesOk;
   const anyWorkaround = items.some((item) => item && item.workaround);
+
+  // The grounded top-up (AC-4): a technology chunk A could not find a public
+  // feed for, filled in by a Google-Search-grounded model call the panel
+  // issued itself, well after the briefing above already rendered.
+  const safeLifecycleGaps = lifecycleGaps || { rows: [], loading: false, error: "" };
+  const aiLifecycleRows = Array.isArray(safeLifecycleGaps.rows) ? safeLifecycleGaps.rows : [];
+  const aiCoveredTechnologyIds = new Set(aiLifecycleRows.map((r) => r && r.technologyId));
+  const hasGapSources = sources.some((s) => s && s.note === "no lifecycle feed");
+  // A gap technology's honest "no lifecycle feed" line disappears the moment
+  // an AI row actually answers it - keeping both on screen at once would
+  // contradict itself in the same breath. A gap the model could not (or has
+  // not yet) answered keeps chunk A's line untouched.
+  const visibleNoteSources = noteSources.filter(
+    (s) => !(s.note === "no lifecycle feed" && aiCoveredTechnologyIds.has(s.technologyId)),
+  );
+  // The Support & decommission heading now also earns its place when there
+  // is nothing deterministic to show yet but an AI answer is in flight or
+  // has landed - AC-4's "never an empty space that later fills in silently".
+  const showSupportSection =
+    lifecycle.length > 0 || aiLifecycleRows.length > 0 || (hasGapSources && safeLifecycleGaps.loading);
 
   return (
     <Box
@@ -244,10 +266,10 @@ export default function TechWatchPanel({ now = new Date() }) {
             </Box>
           ) : null}
 
-          {noteSources.length > 0 ? (
+          {visibleNoteSources.length > 0 ? (
             <Box sx={{ mt: 1 }}>
               <Typography sx={{ fontWeight: 600, fontSize: 12.5 }}>Sources with no feed to publish</Typography>
-              {noteSources.map((s) => (
+              {visibleNoteSources.map((s) => (
                 <Typography key={s.id} sx={{ fontSize: 12.5, color: "var(--text-secondary)" }}>
                   {`${s.label}: ${s.note}`}
                 </Typography>
@@ -288,7 +310,7 @@ export default function TechWatchPanel({ now = new Date() }) {
             )}
           </Box>
 
-          {lifecycle.length > 0 ? (
+          {showSupportSection ? (
             <Box sx={{ mt: 1.5 }}>
               <Typography component="h4" sx={{ fontWeight: 700, fontSize: 13.5, m: 0 }}>Support &amp; decommission</Typography>
               <Stack spacing={0.75} sx={{ mt: 0.5 }}>
@@ -305,6 +327,44 @@ export default function TechWatchPanel({ now = new Date() }) {
                     </Box>
                   );
                 })}
+                {/* AI-sourced rows, after the deterministic ones (AC-4). Every
+                    other row in this table is quoted from a primary feed; an
+                    identical-looking date here would make the most trustworthy
+                    section on screen the least, so each carries a chip AND its
+                    citation - never colour alone. */}
+                {aiLifecycleRows.map((row, i) => {
+                  const note = lifecycleNote(row, now);
+                  return (
+                    <Box key={`ai-${row.technologyId}-${row.cycle}-${i}`}>
+                      <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", flexWrap: "wrap" }}>
+                        <Typography sx={{ fontWeight: 600, fontSize: 13 }}>
+                          {`${row.technology} ${row.cycle}`}
+                        </Typography>
+                        <Chip
+                          label="Found by AI search"
+                          size="small"
+                          variant="outlined"
+                          sx={{ height: 18, fontSize: 10.5, borderColor: "var(--border)" }}
+                        />
+                      </Stack>
+                      {note ? (
+                        <Typography sx={{ fontSize: 12.5, color: "var(--text-secondary)" }}>{note}</Typography>
+                      ) : null}
+                      {row.citation?.url ? (
+                        <Typography sx={{ fontSize: 12.5 }}>
+                          <a href={row.citation.url} target="_blank" rel="noopener noreferrer">
+                            {`${row.technology} lifecycle source — ${row.citation.label || row.citation.url}`}
+                          </a>
+                        </Typography>
+                      ) : null}
+                    </Box>
+                  );
+                })}
+                {hasGapSources && safeLifecycleGaps.loading ? (
+                  <Typography sx={{ fontSize: 12.5, color: "var(--text-secondary)", fontStyle: "italic" }}>
+                    Checking for an AI-sourced lifecycle answer for the gaps above…
+                  </Typography>
+                ) : null}
               </Stack>
             </Box>
           ) : null}

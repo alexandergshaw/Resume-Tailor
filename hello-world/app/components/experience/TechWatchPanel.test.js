@@ -52,8 +52,26 @@ function item(overrides = {}) {
   };
 }
 
+function aiRow(overrides = {}) {
+  return {
+    technologyId: "typescript",
+    technology: "TypeScript",
+    cycle: "5.9",
+    latest: "5.9.3",
+    releasedAt: null,
+    supportEndsAt: "2026-03-01",
+    eolAt: null,
+    state: "security-only",
+    inUse: false,
+    source: "ai",
+    citation: { label: "devblogs.microsoft.com", url: "https://devblogs.microsoft.com/typescript/x/" },
+    ...overrides,
+  };
+}
+
 function hookState(overrides = {}) {
   return {
+    lifecycleGaps: { rows: [], loading: false, error: "" },
     data: {
       generatedAt: "2026-08-17T15:29:00.000Z",
       windowHours: 24,
@@ -358,6 +376,94 @@ describe("support and decommission", () => {
     // never hears about a decommission they have time to act on.
     expect(text()).toContain("Next.js 15");
     expect(text()).toMatch(/2026|days/);
+  });
+});
+
+describe("grounded lifecycle for the gaps", () => {
+  const gapSource = {
+    id: "endoflife:typescript",
+    label: "TypeScript lifecycle",
+    technologyId: "typescript",
+    ok: true,
+    error: null,
+    itemCount: 0,
+    note: "no lifecycle feed",
+  };
+
+  it("marks an AI-sourced row as such, so it can never pass for a primary source", () => {
+    // Every other number in this panel is quoted from a public feed. A
+    // model-authored end-of-support date rendered in the same style would
+    // make the most trustworthy section on screen the least.
+    render(
+      hookState({
+        lifecycleGaps: { rows: [aiRow()], loading: false, error: "" },
+        data: { ...hookState().data, sources: [gapSource] },
+      }),
+    );
+    expect(text()).toContain("TypeScript 5.9");
+    expect(text()).toMatch(/AI search|found by ai|ai-sourced/i);
+  });
+
+  it("shows the citation as a real link", () => {
+    render(
+      hookState({
+        lifecycleGaps: { rows: [aiRow()], loading: false, error: "" },
+        data: { ...hookState().data, sources: [gapSource] },
+      }),
+    );
+    const link = container.querySelector('a[href^="https://devblogs.microsoft.com"]');
+    expect(link).toBeTruthy();
+    expect(link.getAttribute("rel")).toContain("noopener");
+    expect(link.textContent.trim().length).toBeGreaterThan(4);
+  });
+
+  it("replaces the gap line for a technology it managed to answer", () => {
+    render(
+      hookState({
+        lifecycleGaps: { rows: [aiRow()], loading: false, error: "" },
+        data: { ...hookState().data, sources: [gapSource] },
+      }),
+    );
+    // Still saying "TypeScript: no lifecycle feed" beside a filled-in
+    // TypeScript row contradicts itself on the same screen.
+    expect(text()).not.toMatch(/TypeScript lifecycle: no lifecycle feed/);
+  });
+
+  it("keeps the gap line for a technology it could not answer", () => {
+    const javaGap = { ...gapSource, id: "endoflife:java", label: "Java lifecycle", technologyId: "java" };
+    render(
+      hookState({
+        lifecycleGaps: { rows: [aiRow()], loading: false, error: "" },
+        data: { ...hookState().data, sources: [gapSource, javaGap] },
+      }),
+    );
+    expect(text()).toContain("Java lifecycle: no lifecycle feed");
+  });
+
+  it("says the search is running rather than leaving a space that fills in silently", () => {
+    render(
+      hookState({
+        lifecycleGaps: { rows: [], loading: true, error: "" },
+        data: { ...hookState().data, sources: [gapSource] },
+      }),
+    );
+    expect(text()).toMatch(/looking|searching|checking/i);
+  });
+
+  it("falls back to the honest gap line when the search fails", () => {
+    render(
+      hookState({
+        lifecycleGaps: { rows: [], loading: false, error: "model unavailable" },
+        data: { ...hookState().data, sources: [gapSource] },
+      }),
+    );
+    // A failed top-up must leave chunk A's behaviour exactly as it was.
+    expect(text()).toContain("TypeScript lifecycle: no lifecycle feed");
+  });
+
+  it("renders nothing extra when there are no gaps at all", () => {
+    render(hookState());
+    expect(text()).not.toMatch(/AI search|found by ai/i);
   });
 });
 

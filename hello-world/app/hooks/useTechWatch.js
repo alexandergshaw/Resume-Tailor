@@ -1,12 +1,21 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { readEngine } from "../settings/engine";
 
 // The tech-watch briefing's data hook: GET /api/techwatch, on mount, on a
 // window-size change, on an interval, and on window focus. Mirrors
 // useExperiencePages.js's fetch-on-mount shape (401 -> signedOut rather than
 // an error) but adds the polling/focus refresh AC-9 asks for, which nothing
 // else in app/hooks does yet.
+//
+// It also owns a SECOND, dependent load: for every technology chunk A found
+// no public lifecycle feed for (a `sources` row with `note === "no lifecycle
+// feed"`), it asks a grounded-search route to fill the gap. That request is
+// deliberately decoupled from the briefing's own loading/error state (see
+// `lifecycleGaps` below) - a search that takes tens of seconds must never
+// make the primary briefing wait on it, and a failure there must never look
+// like a failure of the briefing itself.
 
 const WINDOW_STORAGE_KEY = "techwatch:windowHours";
 const ALLOWED_WINDOW_HOURS = [24, 72, 168];
@@ -47,6 +56,22 @@ async function readJson(res) {
   }
 }
 
+// The technologies worth a grounded search: every `sources` row chunk A
+// marked "no lifecycle feed", resolved to a label. `watchlist.entries` is
+// the authoritative label (it is what the rest of the panel already
+// displays for that technology); a source row's own `label` is only a
+// fallback for the (untested but possible) case a technology dropped out of
+// the watchlist between the two reads.
+function lifecycleGapTechnologies(data) {
+  if (!data) return [];
+  const sources = Array.isArray(data.sources) ? data.sources : [];
+  const gapSources = sources.filter((s) => s && s.note === "no lifecycle feed");
+  if (gapSources.length === 0) return [];
+  const entries = Array.isArray(data?.watchlist?.entries) ? data.watchlist.entries : [];
+  const labelById = new Map(entries.map((e) => [e.id, e.label]));
+  return gapSources.map((s) => ({ id: s.technologyId, label: labelById.get(s.technologyId) || s.label }));
+}
+
 // `fetchImpl` defaults to the global fetch so real callers need not pass one;
 // every test in useTechWatch.test.js supplies its own mock instead.
 export function useTechWatch({ intervalMs = DEFAULT_INTERVAL_MS, fetchImpl } = {}) {
@@ -59,6 +84,7 @@ export function useTechWatch({ intervalMs = DEFAULT_INTERVAL_MS, fetchImpl } = {
   const [error, setError] = useState("");
   const [signedOut, setSignedOut] = useState(false);
   const [lastLoadedAt, setLastLoadedAt] = useState(null);
+  const [lifecycleGaps, setLifecycleGaps] = useState({ rows: [], loading: false, error: "" });
 
   // Recreated whenever `windowHours` changes so the query string it builds
   // always reflects the CURRENT choice, and so the mount/window-change effect
@@ -134,12 +160,68 @@ export function useTechWatch({ intervalMs = DEFAULT_INTERVAL_MS, fetchImpl } = {
     setWindowHoursState(next);
   }, []);
 
+  // Recomputed on every `data` change, but the effect below keys off
+  // `gapKey` (its sorted-id fingerprint) rather than this array's own
+  // identity or `data`'s - a poll that returns the SAME gaps must not fire a
+  // fresh grounded search, or every 15-minute refresh compounds model spend
+  // silently for an answer that has not changed.
+  const gapTechnologies = useMemo(() => lifecycleGapTechnologies(data), [data]);
+  const gapKey = useMemo(
+    () => gapTechnologies.map((t) => t.id).sort().join(","),
+    [gapTechnologies],
+  );
+
+  useEffect(() => {
+    if (!doFetch) return undefined;
+    if (!gapKey) {
+      // No gaps (or no briefing yet) - AC-4's "skip the request entirely".
+      // Guarded so this doesn't re-fire an identical reset on every render.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setLifecycleGaps((prev) =>
+        prev.rows.length === 0 && !prev.loading && !prev.error ? prev : { rows: [], loading: false, error: "" },
+      );
+      return undefined;
+    }
+
+    let cancelled = false;
+    setLifecycleGaps((prev) => ({ ...prev, loading: true, error: "" }));
+
+    (async () => {
+      try {
+        const res = await doFetch("/api/techwatch/lifecycle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ technologies: gapTechnologies, engine: readEngine() }),
+        });
+        const json = await readJson(res);
+        if (cancelled) return;
+        if (!res.ok) {
+          // Progressive enhancement, not a briefing failure - AC-5: "leaves
+          // the panel exactly as chunk A rendered it". Never touches `data`.
+          setLifecycleGaps({ rows: [], loading: false, error: json.error || "Could not load AI-sourced lifecycle answers." });
+          return;
+        }
+        setLifecycleGaps({ rows: Array.isArray(json.rows) ? json.rows : [], loading: false, error: "" });
+      } catch (err) {
+        if (cancelled) return;
+        setLifecycleGaps({ rows: [], loading: false, error: err?.message || "Could not load AI-sourced lifecycle answers." });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // `gapTechnologies` is intentionally omitted - see `gapKey`'s comment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gapKey, doFetch]);
+
   return {
     data,
     loading,
     error,
     signedOut,
     lastLoadedAt,
+    lifecycleGaps,
     windowHours,
     setWindowHours,
     reload: load,

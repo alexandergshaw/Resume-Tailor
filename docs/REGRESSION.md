@@ -2986,3 +2986,31 @@ Load-bearing specifics:
 **Verified against live data before shipping** (not just fixtures): 8/8 vendor status pages parsed 259 incidents and 63 maintenances with 0 malformed items; all 64 live OSV advisories for one package produced a root cause and remedy, 35 a real workaround; CISA's full 1666-entry catalogue mapped without duplicate ids; all 21 endoflife products produced 493 support rows with no 1970 dates. A realistic three-page stack yielded 20 items and correctly flagged React 17 as security-only, Node.js 20 as unsupported and Next.js 14 as unsupported.
 
 **Known gap:** TypeScript — the user's own worked example of a version "going under" — has no public lifecycle feed, so this chunk can only state that gap by name. Closing it is chunk B's job (Gemini-grounded announcements), along with workarounds for the sources that publish none.
+
+### R-222 | area: techwatch | parallel-safe: yes | automatable: partly
+
+**Summary:** For a technology no public feed covers — TypeScript is the worked case — the briefing fills its own stated gap with a Google-Search-grounded answer, marked as AI-sourced and carrying its citation, and never silently replaces an honest gap with an unproven claim.
+
+**Steps:**
+1. From `hello-world`, run
+   `npx vitest run lib/techwatch/lifecycleSearch.test.js app/api/techwatch/lifecycle/route.test.js app/components/experience/TechWatchPanel.test.js app/hooks/useTechWatch.test.js`.
+2. Manual (`automatable: no`): with the Gemini engine selected and a project page naming TypeScript, open Professional Experience. Confirm the "TypeScript lifecycle: no lifecycle feed" line is replaced by a row carrying a visible "Found by AI search" marker and a working citation link.
+3. Manual (`automatable: no`): switch to the embedded engine in Settings and reload. Confirm the AI row disappears and the honest "no lifecycle feed" line returns — no error, no empty space.
+
+**Expected:** 1 passes. 2 and 3 as described.
+
+**Why this exists:** R-221 shipped a deterministic briefing that states, by name, which technologies no public feed covers. The user chose to fill **only those gaps** with grounded AI, leaving everything else keyless and always-on. TypeScript was their own worked example of a version "going under", and endoflife.date carries 464 products and not that one.
+
+Load-bearing specifics:
+
+- **This is the only place in Tech Watch where a model authors a fact the user reads.** Every other number on screen is quoted from a primary feed. So the parser's job is mostly refusal, and the panel's job is making the provenance impossible to miss: an AI row carries a "Found by AI search" chip and its citation as a real link. A model-authored end-of-support date rendered in the same style as an endoflife.date one would make the most trustworthy section on screen the least.
+- **A row whose citation host is not in the model's own grounding metadata is dropped**, via `isGroundedHost` from `lib/llm/grounding.js` — which returns false for an EMPTY grounding list. No grounding is no evidence the model searched at all; treating it as permissive is exactly how a fabrication reaches the user. Proven falsifiable: neutering that gate turns three tests red, including the empty-grounding case.
+- **A row naming a technology nobody asked about is dropped.** The model must not widen its own brief — such a row would appear in the support table with no deterministic row to contradict it.
+- **Nothing is coerced.** A `state` outside the three allowed values, or a date that is not `YYYY-MM-DD`, drops the row rather than being repaired. `null` dates are legitimate and kept.
+- **A failure here can never make the briefing worse.** Model error, unusable reply, missing key, embedded engine — every path leaves the panel exactly as R-221 rendered it, including the honest gap line. The route therefore returns **200** with `{ rows: [], error }` on a model failure; a 5xx would surface in the panel as a failure of the whole feature when the deterministic briefing beside it is fine.
+- **The second request must not fire on every render.** The hook keys its effect on a sorted fingerprint of the gap ids, not on `data` — whose identity changes on every poll. Keying it wrong would launch a fresh grounded search every fifteen minutes and compound the model spend silently.
+- **Cached globally for a day, keyed by technology ids and never by user.** TypeScript's support status is identical for everyone; a per-user key would multiply the model spend by the user count.
+- **Capped at 4 technologies per request**, with the remainder reported in `skipped`. One grounded search per technology is the entire cost of this feature.
+- **Two defects in the author's own test file, both found and reported by an implementer that correctly refused to edit them.** First: `wantsEmbedded` reads `process.env` DIRECTLY, not through the mocked `getServerEnv`, so with no explicit engine and no `Gemini_LLM_API_Key` stubbed, every request 503s as "embedded" before reaching anything worth testing — the same trap `app/api/experience/research/route.test.js` already documents. Second: a capping test used single-letter labels A-F and asserted a bare "F" was absent from the prompt, which is unsatisfiable because the prompt's own boilerplate reads "For each technology". Both fixed in the test, not worked around in the route.
+
+**Known gap:** an AI-sourced row is always `inUse: false`. The deterministic rows compute `inUse` by matching the user's `detectedVersions` against a cycle, but the AI path does not, so a page naming "TypeScript 4.9" will not have that cycle flagged the way "React 17" is. The row still renders with its dates and state; only the personal "you use this one" emphasis is missing.
