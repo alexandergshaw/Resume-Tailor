@@ -1,0 +1,267 @@
+{
+  "vulns": [
+    {
+      "id": "GHSA-223j-4rm8-mrmf",
+      "summary": "Next.js may leak x-middleware-subrequest-id to external hosts",
+      "details": "## Summary\nIn the process of remediating [CVE-2025-29927](https://github.com/advisories/GHSA-f82v-jwr5-mffw), we looked at other possible exploits of Middleware. We independently verified this low severity vulnerability in parallel with two reports from independent researchers.\n\nLearn more [here](https://vercel.com/changelog/cve-2025-30218-5DREmEH765PoeAsrNNQj3O).\n\n## Credit\n\nThank you to Jinseo Kim [kjsman](https://hackerone.com/kjsman?type=user) and [RyotaK](https://hackerone.com/ryotak?type=user) (GMO Flatt Security Inc.) with [takumi-san.ai](https://takumi-san.ai) for the responsible disclosure. These researchers were awarded as part of our bug bounty program.",
+      "aliases": [
+        "CVE-2025-30218"
+      ],
+      "published": "2025-04-02T22:35:37Z",
+      "modified": "2025-10-13T15:35:50Z",
+      "severity": [
+        {
+          "type": "CVSS_V4",
+          "score": "CVSS:4.0/AV:N/AC:H/AT:P/PR:N/UI:N/VC:L/VI:N/VA:N/SC:N/SI:N/SA:N/E:U"
+        }
+      ],
+      "database_specific": {
+        "severity": "LOW",
+        "cwe_ids": [
+          "CWE-200"
+        ],
+        "github_reviewed_at": "2025-04-02T22:35:37Z",
+        "github_reviewed": true,
+        "nvd_published_at": "2025-04-02T22:15:19Z"
+      },
+      "references": [
+        {
+          "type": "WEB",
+          "url": "https://github.com/vercel/next.js/security/advisories/GHSA-223j-4rm8-mrmf"
+        },
+        {
+          "type": "ADVISORY",
+          "url": "https://nvd.nist.gov/vuln/detail/CVE-2025-30218"
+        },
+        {
+          "type": "PACKAGE",
+          "url": "https://github.com/vercel/next.js"
+        },
+        {
+          "type": "WEB",
+          "url": "https://vercel.com/changelog/cve-2025-30218-5DREmEH765PoeAsrNNQj3O"
+        }
+      ],
+      "affected": [
+        {
+          "package": {
+            "name": "next",
+            "ecosystem": "npm",
+            "purl": "pkg:npm/next"
+          },
+          "ranges": [
+            {
+              "type": "SEMVER",
+              "events": [
+                {
+                  "introduced": "12.3.5"
+                },
+                {
+                  "fixed": "12.3.6"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "package": {
+            "name": "next",
+            "ecosystem": "npm",
+            "purl": "pkg:npm/next"
+          },
+          "ranges": [
+            {
+              "type": "SEMVER",
+              "events": [
+                {
+                  "introduced": "13.5.9"
+                },
+                {
+                  "fixed": "13.5.10"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "GHSA-25mp-g6fv-mqxx",
+      "summary": "Unexpected server crash in Next.js.",
+      "details": "Next.js is a React framework. In versions of Next.js prior to 12.0.5 or 11.1.3, invalid or malformed URLs could lead to a server crash. In order to be affected by this issue, the deployment must use Next.js versions above 11.1.0 and below 12.0.5, Node.js above 15.0.0, and next start or a custom server. Deployments on Vercel are not affected, along with similar environments where invalid requests are filtered before reaching Next.js. Versions 12.0.5 and 11.1.3 contain patches for this issue. Note that prior version 0.9.9 package `next` hosted a different utility (0.4.1 being the latest version of that codebase), and this advisory does not apply to those versions. ",
+      "aliases": [
+        "CVE-2021-43803"
+      ],
+      "published": "2021-12-07T21:12:09Z",
+      "modified": "2026-07-08T06:29:22.632770062Z",
+      "severity": [
+        {
+          "type": "CVSS_V3",
+          "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+        }
+      ],
+      "database_specific": {
+        "cwe_ids": [
+          "CWE-20"
+        ],
+        "github_reviewed_at": "2021-12-06T19:17:55Z",
+        "github_reviewed": true,
+        "nvd_published_at": "2021-12-10T00:15:00Z",
+        "severity": "HIGH"
+      },
+      "references": [
+        {
+          "type": "WEB",
+          "url": "https://github.com/vercel/next.js/security/advisories/GHSA-25mp-g6fv-mqxx"
+        },
+        {
+          "type": "ADVISORY",
+          "url": "https://nvd.nist.gov/vuln/detail/CVE-2021-43803"
+        },
+        {
+          "type": "WEB",
+          "url": "https://github.com/vercel/next.js/pull/32080"
+        },
+        {
+          "type": "WEB",
+          "url": "https://github.com/vercel/next.js/commit/6d98b4fb4315dec1badecf0e9bdc212a4272b264"
+        },
+        {
+          "type": "PACKAGE",
+          "url": "https://github.com/vercel/next.js"
+        }
+      ],
+      "affected": [
+        {
+          "package": {
+            "name": "next",
+            "ecosystem": "npm",
+            "purl": "pkg:npm/next"
+          },
+          "ranges": [
+            {
+              "type": "SEMVER",
+              "events": [
+                {
+                  "introduced": "12.0.0"
+                },
+                {
+                  "fixed": "12.0.5"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "package": {
+            "name": "next",
+            "ecosystem": "npm",
+            "purl": "pkg:npm/next"
+          },
+          "ranges": [
+            {
+              "type": "SEMVER",
+              "events": [
+                {
+                  "introduced": "0.9.9"
+                },
+                {
+                  "fixed": "11.1.3"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "GHSA-267c-6grr-h53f",
+      "summary": "Next.js has a Middleware / Proxy bypass in App Router applications via segment-prefetch routes",
+      "details": "### Impact\n\nApp Router applications that rely on middleware or proxy-based checks for authorization can allow unauthorized access through transport-specific route variants used for segment prefetching. In affected configurations, specially crafted `.rsc` and segment-prefetch URLs can resolve to the same page without being matched by the intended middleware rule, which can allow protected content to be reached without the expected authorization check.\n\n### Fix\n\nWe now include App Router transport variants when generating middleware matchers, so middleware protections are applied consistently to those requests as well as to the normal page URL.\n\n### Workarounds\n\nIf you cannot upgrade immediately, enforce authorization in the underlying route or page logic instead of relying solely on middleware.",
+      "aliases": [
+        "CVE-2026-44575"
+      ],
+      "published": "2026-05-11T15:54:24Z",
+      "modified": "2026-05-14T20:47:46.572093Z",
+      "severity": [
+        {
+          "type": "CVSS_V3",
+          "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"
+        }
+      ],
+      "database_specific": {
+        "nvd_published_at": "2026-05-13T17:16:22Z",
+        "severity": "HIGH",
+        "cwe_ids": [
+          "CWE-288"
+        ],
+        "github_reviewed_at": "2026-05-11T15:54:24Z",
+        "github_reviewed": true
+      },
+      "references": [
+        {
+          "type": "WEB",
+          "url": "https://github.com/vercel/next.js/security/advisories/GHSA-267c-6grr-h53f"
+        },
+        {
+          "type": "ADVISORY",
+          "url": "https://nvd.nist.gov/vuln/detail/CVE-2026-44575"
+        },
+        {
+          "type": "PACKAGE",
+          "url": "https://github.com/vercel/next.js"
+        },
+        {
+          "type": "WEB",
+          "url": "https://github.com/vercel/next.js/releases/tag/v15.5.16"
+        },
+        {
+          "type": "WEB",
+          "url": "https://github.com/vercel/next.js/releases/tag/v16.2.5"
+        }
+      ],
+      "affected": [
+        {
+          "package": {
+            "name": "next",
+            "ecosystem": "npm",
+            "purl": "pkg:npm/next"
+          },
+          "ranges": [
+            {
+              "type": "SEMVER",
+              "events": [
+                {
+                  "introduced": "15.2.0"
+                },
+                {
+                  "fixed": "15.5.16"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "package": {
+            "name": "next",
+            "ecosystem": "npm",
+            "purl": "pkg:npm/next"
+          },
+          "ranges": [
+            {
+              "type": "SEMVER",
+              "events": [
+                {
+                  "introduced": "16.0.0"
+                },
+                {
+                  "fixed": "16.2.5"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

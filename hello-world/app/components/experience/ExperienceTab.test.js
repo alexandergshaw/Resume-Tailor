@@ -797,6 +797,25 @@ describe("ExperienceTab -- research report refetches the page list (chunk 9)", (
     let getCount = 0;
     global.fetch = vi.fn((url, options) => {
       const method = options?.method || "GET";
+      // The tab also renders TechWatchPanel, which loads its own briefing on
+      // mount. Answer it with an empty briefing and, crucially, do NOT let it
+      // reach `getCount`: this test is about how many times the PAGE LIST is
+      // re-fetched, which is what its name says and what the research-reload
+      // defect was about. Counting every GET in the subtree would make the
+      // assertion break whenever any unrelated component gains a request,
+      // and it silently handed the briefing endpoint a pages payload.
+      if (String(url).startsWith("/api/techwatch")) {
+        return Promise.resolve(
+          jsonResponse(200, {
+            generatedAt: "2026-08-12T00:00:00.000Z",
+            windowHours: 24,
+            items: [],
+            lifecycle: [],
+            watchlist: { entries: [], usedDefaults: true, truncated: false },
+            sources: [],
+          }),
+        );
+      }
       if (method === "GET") {
         getCount += 1;
         const pages = getCount === 1 ? [PAGE_ROOT, PAGE_CHILD] : [PAGE_ROOT, PAGE_CHILD, PAGE_REPORT];

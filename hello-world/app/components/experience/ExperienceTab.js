@@ -16,6 +16,7 @@ import MovePageDialog from "./MovePageDialog";
 import PageEditor from "./PageEditor";
 import AttachmentPanel from "./AttachmentPanel";
 import BulkActionsBar from "./BulkActionsBar";
+import TechWatchPanel from "./TechWatchPanel";
 import { useExperiencePages } from "../../hooks/useExperiencePages";
 import { toggleSelected, selectionSummary } from "../../../lib/experience/bulkSelection";
 import { buildPageContext } from "../../../lib/experience/pageContext";
@@ -531,6 +532,11 @@ export default function ExperienceTab({ askAiAbout, addChatAttachments }) {
         // this file.
         onPagesChanged={reload}
       />
+
+      {/* Sits outside the empty-project-pages branch below on purpose - the
+          briefing falls back to a default watchlist with no pages at all,
+          so a brand-new user with nothing else on this tab still sees it. */}
+      <TechWatchPanel />
 
       {pages.length === 0 ? (
         <Box sx={{ border: "1px dashed var(--border)", borderRadius: 1.5, py: 6, textAlign: "center" }}>

@@ -1,0 +1,145 @@
+{
+  "page": {
+    "name": "GitHub",
+    "url": "https://www.githubstatus.com"
+  },
+  "incidents": [
+    {
+      "id": "zkxwbgr0cnmx",
+      "name": "Incident with GitHub.com",
+      "status": "investigating",
+      "impact": "critical",
+      "created_at": "2026-08-17T13:40:03.629Z",
+      "updated_at": "2026-08-17T14:49:24.338Z",
+      "started_at": "2026-08-17T13:40:03.620Z",
+      "resolved_at": null,
+      "shortlink": "https://stspg.io/y1fl26l6wpzr",
+      "components": [
+        {
+          "name": "Webhooks"
+        },
+        {
+          "name": "API Requests"
+        },
+        {
+          "name": "Issues"
+        },
+        {
+          "name": "Pull Requests"
+        },
+        {
+          "name": "Actions"
+        },
+        {
+          "name": "Copilot"
+        }
+      ],
+      "incident_updates": [
+        {
+          "id": "d52d94cmp1m0",
+          "status": "investigating",
+          "body": "Issues is experiencing degraded availability. We are continuing to investigate.",
+          "created_at": "2026-08-17T14:49:24.334Z"
+        },
+        {
+          "id": "y0bc6n0kl399",
+          "status": "investigating",
+          "body": "Pull Requests is experiencing degraded availability. We are continuing to investigate.",
+          "created_at": "2026-08-17T14:45:53.507Z"
+        },
+        {
+          "id": "1hh9ps9dj207",
+          "status": "investigating",
+          "body": "Copilot is experiencing degraded availability. We are continuing to investigate.",
+          "created_at": "2026-08-17T14:31:25.490Z"
+        },
+        {
+          "id": "70p942m6qvsp",
+          "status": "investigating",
+          "body": "We are experiencing high error rates around 20% for web experiences and api traffic. Archive downloads and raw repository content downloads are experiencing an approximate 50% error rate. SAML and OIDC authentication, SCIM, and Team Sync are also impacted. Investigations are on-going and we will continue to provide updates as we discover more information.",
+          "created_at": "2026-08-17T14:24:53.572Z"
+        }
+      ]
+    },
+    {
+      "id": "pf25whpq58hh",
+      "name": "Disruption with GHEC Team Sync",
+      "status": "resolved",
+      "impact": "minor",
+      "created_at": "2026-08-13T16:21:33.104Z",
+      "updated_at": "2026-08-13T18:27:54.674Z",
+      "started_at": "2026-08-13T16:21:33.096Z",
+      "resolved_at": "2026-08-13T18:27:54.660Z",
+      "shortlink": "https://stspg.io/l6tmhqw07cmj",
+      "components": [],
+      "incident_updates": [
+        {
+          "id": "wm4b8gg2nk3q",
+          "status": "resolved",
+          "body": "This incident has been resolved. Thank you for your patience and understanding as we addressed this issue. A detailed root cause analysis will be shared as soon as it is available.",
+          "created_at": "2026-08-13T18:27:54.660Z"
+        },
+        {
+          "id": "1rbgqfk3tdk2",
+          "status": "investigating",
+          "body": "We have deployed a mitigation. At this time GHEC Team Sync has recovered for enterprises with personal accounts. Teams syncing to IdP groups have returned to their normal cadence.",
+          "created_at": "2026-08-13T18:27:38.561Z"
+        },
+        {
+          "id": "n08n9543y09f",
+          "status": "investigating",
+          "body": "GHEC Team Sync is currently degraded for enterprises with personal accounts, causing delays when syncing teams to IdP groups. We have identified the cause of the delays and are working on a mitigation. We will provide an update on our progress at 20:00 UTC.",
+          "created_at": "2026-08-13T16:21:51.860Z"
+        },
+        {
+          "id": "gsnrtly5n4dy",
+          "status": "investigating",
+          "body": "We are investigating reports of impacted performance for some GitHub services.",
+          "created_at": "2026-08-13T16:21:33.148Z"
+        }
+      ]
+    },
+    {
+      "id": "24t8gsgqx2qb",
+      "name": "Errors with the Fable 5 Model in Copilot",
+      "status": "resolved",
+      "impact": "minor",
+      "created_at": "2026-08-13T14:43:25.203Z",
+      "updated_at": "2026-08-13T15:47:22.399Z",
+      "started_at": "2026-08-13T14:43:25.196Z",
+      "resolved_at": "2026-08-13T15:47:22.384Z",
+      "shortlink": "https://stspg.io/8htrnxk0q09v",
+      "components": [
+        {
+          "name": "Copilot AI Model Providers"
+        }
+      ],
+      "incident_updates": [
+        {
+          "id": "7n5fhmltjghm",
+          "status": "resolved",
+          "body": "This incident has been resolved. Thank you for your patience and understanding as we addressed this issue. A detailed root cause analysis will be shared as soon as it is available.",
+          "created_at": "2026-08-13T15:47:22.384Z"
+        },
+        {
+          "id": "16czhjwm8x58",
+          "status": "investigating",
+          "body": "The issues with our upstream model provider have been resolved, and Fable 5 is once again available in Copilot products and IDE surfaces.<br /><br />We will continue monitoring to ensure stability, but mitigation is complete.",
+          "created_at": "2026-08-13T15:47:15.736Z"
+        },
+        {
+          "id": "mnpr6hw95wf1",
+          "status": "investigating",
+          "body": "We are seeing modest recovery, but are still experiencing degraded availability for the Fable 5 model in Copilot products and IDE surfaces. This is due to an issue with an upstream model provider. While we work with them to resolve the issue, we recommend choosing another model or selecting 'Auto' to continue using Copilot.",
+          "created_at": "2026-08-13T15:23:39.378Z"
+        },
+        {
+          "id": "n88by2bcx3wg",
+          "status": "investigating",
+          "body": "We are experiencing degraded availability for the Fable 5 model in Copilot products and IDE surfaces. This is due to an issue with an upstream model provider. While we work with them to resolve the issue, we recommend choosing another model or selecting 'Auto' to continue using Copilot.",
+          "created_at": "2026-08-13T14:50:10.040Z"
+        }
+      ]
+    }
+  ]
+}

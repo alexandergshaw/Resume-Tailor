@@ -1,0 +1,161 @@
+{
+  "react": [
+    {
+      "cycle": "19",
+      "releaseDate": "2024-12-05",
+      "eol": false,
+      "latest": "19.2.8",
+      "latestReleaseDate": "2026-07-21",
+      "lts": false,
+      "support": true
+    },
+    {
+      "cycle": "18",
+      "releaseDate": "2022-03-29",
+      "eol": false,
+      "latest": "18.3.1",
+      "latestReleaseDate": "2024-04-26",
+      "lts": false,
+      "support": "2024-12-05"
+    },
+    {
+      "cycle": "17",
+      "releaseDate": "2020-10-20",
+      "eol": false,
+      "latest": "17.0.2",
+      "latestReleaseDate": "2021-03-22",
+      "lts": false,
+      "support": "2022-03-29"
+    },
+    {
+      "cycle": "16",
+      "releaseDate": "2017-09-26",
+      "eol": false,
+      "latest": "16.14.0",
+      "latestReleaseDate": "2020-10-14",
+      "lts": false,
+      "support": "2020-10-20"
+    },
+    {
+      "cycle": "15",
+      "releaseDate": "2016-04-07",
+      "eol": false,
+      "latest": "15.7.0",
+      "latestReleaseDate": "2020-10-14",
+      "lts": false,
+      "support": "2020-10-14"
+    }
+  ],
+  "nodejs": [
+    {
+      "cycle": "26",
+      "releaseDate": "2026-05-05",
+      "lts": "2026-10-28",
+      "eol": "2029-04-30",
+      "latest": "26.7.0",
+      "latestReleaseDate": "2026-08-05",
+      "support": "2027-10-27",
+      "extendedSupport": false
+    },
+    {
+      "cycle": "25",
+      "releaseDate": "2025-10-15",
+      "eol": "2026-06-01",
+      "latest": "25.9.0",
+      "latestReleaseDate": "2026-04-01",
+      "lts": false,
+      "support": "2026-04-01",
+      "extendedSupport": false
+    },
+    {
+      "cycle": "24",
+      "releaseDate": "2025-05-06",
+      "lts": "2025-10-28",
+      "eol": "2028-04-30",
+      "latest": "24.19.0",
+      "latestReleaseDate": "2026-08-03",
+      "support": "2026-10-20",
+      "extendedSupport": false
+    },
+    {
+      "cycle": "23",
+      "releaseDate": "2024-10-16",
+      "eol": "2025-06-01",
+      "latest": "23.11.1",
+      "latestReleaseDate": "2025-05-14",
+      "lts": false,
+      "support": "2025-04-01",
+      "extendedSupport": false
+    },
+    {
+      "cycle": "22",
+      "releaseDate": "2024-04-24",
+      "lts": "2024-10-29",
+      "eol": "2027-04-30",
+      "latest": "22.23.2",
+      "latestReleaseDate": "2026-07-29",
+      "support": "2025-10-21",
+      "extendedSupport": true
+    },
+    {
+      "cycle": "21",
+      "releaseDate": "2023-10-17",
+      "eol": "2024-06-01",
+      "latest": "21.7.3",
+      "latestReleaseDate": "2024-04-10",
+      "lts": false,
+      "support": "2024-04-01",
+      "extendedSupport": false
+    }
+  ],
+  "nextjs": [
+    {
+      "cycle": "16",
+      "lts": true,
+      "releaseDate": "2025-10-22",
+      "eol": false,
+      "latest": "16.3.1",
+      "latestReleaseDate": "2026-08-13"
+    },
+    {
+      "cycle": "15",
+      "lts": true,
+      "releaseDate": "2024-10-21",
+      "eol": "2026-10-21",
+      "latest": "15.5.23",
+      "latestReleaseDate": "2026-08-06"
+    },
+    {
+      "cycle": "14",
+      "lts": true,
+      "releaseDate": "2023-10-26",
+      "eol": "2025-10-26",
+      "latest": "14.2.35",
+      "latestReleaseDate": "2025-12-11"
+    },
+    {
+      "cycle": "13",
+      "releaseDate": "2022-10-25",
+      "eol": "2024-12-21",
+      "latest": "13.5.11",
+      "latestReleaseDate": "2025-03-27",
+      "lts": false
+    },
+    {
+      "cycle": "12",
+      "releaseDate": "2021-10-26",
+      "eol": "2022-11-21",
+      "latest": "12.3.7",
+      "latestReleaseDate": "2025-03-28",
+      "lts": false
+    },
+    {
+      "cycle": "11",
+      "releaseDate": "2021-06-15",
+      "eol": "2022-01-27",
+      "latest": "11.1.4",
+      "latestReleaseDate": "2022-01-27",
+      "lts": false
+    }
+  ]
+}
