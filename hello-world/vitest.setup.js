@@ -9,6 +9,19 @@
 // This file is loaded for every test (both the default "node" environment
 // and per-file "jsdom" overrides) via test.setupFiles in vitest.config.js;
 // it's a no-op cost for the node-environment majority.
+// AC-R1: jsdom implements no `Element.prototype.scrollIntoView` at all
+// (jsdom/jsdom#1695) -- every real browser does, and
+// app/copilot/TranscriptView.js's page-scroll fallback
+// (`lastRowRef.current?.scrollIntoView({ block: "nearest" })`) genuinely
+// needs the method to exist, not to actually move anything under a test. A
+// no-op keeps that code path exercised under jsdom (RoleDrillClient's
+// recording tests are the first ones to feed real `finals` through this
+// component) instead of every caller having to feature-detect a method
+// every real browser already provides.
+if (typeof globalThis.Element !== "undefined" && typeof globalThis.Element.prototype.scrollIntoView !== "function") {
+  globalThis.Element.prototype.scrollIntoView = function scrollIntoView() {};
+}
+
 if (typeof globalThis.CSS === "undefined") {
   globalThis.CSS = {};
 }

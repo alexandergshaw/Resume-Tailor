@@ -3,6 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PracticeSession } from "@/lib/copilot/practiceSession";
 
+// A single stable no-op, shared by every optional callback prop below. Not
+// an inline `() => {}` written at each default — `start`/`stop` are
+// useCallbacks that list these props in their own dependency arrays, and a
+// fresh arrow function on every render would give `start`/`stop` a new
+// identity every render, which usePracticeAnswerActions.js's
+// attemptAutoStart effect is keyed on directly. One module-level constant
+// means a caller that omits a prop gets the exact same reference across
+// renders, exactly like a caller (e.g. PracticeClient.js) that always
+// passes its own stable useCallback does.
+const NOOP = () => {};
+
 // Practice mode's OWN capture-session pipeline: the camera/mic session
 // lifecycle (start/stop, the PracticeSession construction and its
 // onStatus/onError/onTranscript/onStream handlers), the on-screen transcript
@@ -28,17 +39,37 @@ export function usePracticeCaptureSession({
   status,
   setStatus,
   micDeviceId,
-  invalidateAndClearLoading,
-  abandonInProgressAnswer,
-  resetAnswerState,
-  invalidateInFlight,
-  clearForNewSession,
-  resetForSession,
-  resetDashboardForSession,
-  requestQuestion,
-  recordTranscriptEvent,
-  recordSpeechSample,
-  markMicMuted,
+  // AC-R1: forwarded verbatim to the PracticeSession constructor below —
+  // practiceSession.js's constructor and its start() already support
+  // withVideo:false (a mode with no camera surface, e.g. Speak-as); this
+  // hook previously hard-coded `true` unconditionally, which is what made
+  // it practice-mode-only despite every other input here being a plain
+  // callback prop. Defaulting to true reproduces that old hard-coded
+  // behaviour exactly for every existing caller that doesn't pass it.
+  withVideo = true,
+  // AC-R1: every prop below is a callback into practice mode's OWN
+  // question-feed/dashboard state (usePracticeQuestions, usePracticeAnswer,
+  // useCopilotDashboard) — meaningless to a caller with neither on screen.
+  // Each defaults to the SAME shared NOOP reference (declared above, once,
+  // at module scope) rather than an inline `() => {}` here, because
+  // `start`/`stop` below are useCallbacks that list these exact props in
+  // their dependency arrays: a fresh arrow function per render would give
+  // `start`/`stop` a new identity every render, which
+  // usePracticeAnswerActions.js's attemptAutoStart effect is keyed on.
+  invalidateAndClearLoading = NOOP,
+  abandonInProgressAnswer = NOOP,
+  resetAnswerState = NOOP,
+  invalidateInFlight = NOOP,
+  clearForNewSession = NOOP,
+  resetForSession = NOOP,
+  resetDashboardForSession = NOOP,
+  // Called as requestQuestion([]) inside start() below — NOOP([]) is a
+  // no-op call exactly like NOOP() is, so a caller with no question feed to
+  // ask can simply omit this prop.
+  requestQuestion = NOOP,
+  recordTranscriptEvent = NOOP,
+  recordSpeechSample = NOOP,
+  markMicMuted = NOOP,
   // Final wave (AC-M2): the room-question detector — forwarded straight
   // into the PracticeSession constructor below, alongside onTranscript/
   // onStatus/onError/onStream, rather than attached onto the session object
@@ -50,7 +81,7 @@ export function usePracticeCaptureSession({
   // `onUtterance` as one of its own dependencies (below) — a fresh `start`
   // is created whenever the caller passes a new one, so the closure the
   // constructor call sits inside is never stale.
-  onUtterance,
+  onUtterance = NOOP,
 }) {
   const [error, setError] = useState("");
   const [warning, setWarning] = useState("");
@@ -179,7 +210,7 @@ export function usePracticeCaptureSession({
     requestQuestion([]);
     try {
       const session = new PracticeSession({
-        withVideo: true,
+        withVideo,
         micDeviceId,
         onStatus: (s) => {
           setStatus(s);
@@ -269,6 +300,7 @@ export function usePracticeCaptureSession({
     recordTranscriptEvent,
     recordSpeechSample,
     micDeviceId,
+    withVideo,
     setStatus,
     onUtterance,
   ]);

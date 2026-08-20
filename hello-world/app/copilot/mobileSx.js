@@ -3,13 +3,13 @@
 // data module -- no "use client" needed, it exports only objects.
 //
 // Most of these constants are phone-only: TOUCH_TARGET_SX, TOUCH_SWITCH_SX,
-// TOUCH_PILL_SX, TOUCH_FIELD_SX, and TOUCH_ICON_SX all key their touch-target
-// enlargement to `xs`, and their `sm` (or higher) branch is the property's
-// actual CSS initial value -- never a plausible-looking `0` -- so rendering
-// at `sm` and up is unchanged. That has already broken once in this
-// codebase (`SpeakerChip`'s `minWidth: { xs: 44, sm: 0 }` removed a flex
-// item's shrink floor); treat any `sm`/`md` branch that isn't the real
-// initial value as a bug.
+// TOUCH_PILL_SX, TOUCH_FIELD_SX, TOUCH_ICON_SX, and TOUCH_NATIVE_SELECT_SX
+// all key their touch-target enlargement to `xs`, and their `sm` (or higher)
+// branch is the property's actual CSS initial value -- never a plausible-
+// looking `0` -- so rendering at `sm` and up is unchanged. That has already
+// broken once in this codebase (`SpeakerChip`'s `minWidth: { xs: 44, sm: 0 }`
+// removed a flex item's shrink floor); treat any `sm`/`md` branch that isn't
+// the real initial value as a bug.
 //
 // Three constants are NOT phone-scoped, deliberately:
 //   - WRAP_ROW_SX (`flexWrap: "wrap", rowGap: 1`) applies at every width --
@@ -107,6 +107,24 @@ export const TOUCH_PILL_SX = {
 // showing) without the input itself meeting the minimum.
 export const TOUCH_FIELD_SX = {
   "& .MuiInputBase-root": { minHeight: { xs: MOBILE_TAP_MIN, sm: "auto" } },
+};
+
+// Pairs with TOUCH_FIELD_SX on a `TextField select` rendered with
+// `slotProps.select.native` (RolePicker.js, MicPicker.js). TOUCH_FIELD_SX
+// raises the InputBase ROOT to the 44px tap minimum, which is what the user
+// sees, but R-235 measured in a browser that the native `<select>` INSIDE it
+// is still only 40px at that width: the root's own padding is not part of
+// the select's own hit area, so a tap in the top or bottom 2px of the
+// visible control lands on a div instead of the select. This stretches the
+// select itself to fill its root. `sm` carries each property's REAL initial
+// value (`content-box`, `auto`), not a plausible-looking `0` -- see this
+// module's own header note on why that matters -- so nothing above the phone
+// breakpoint changes.
+export const TOUCH_NATIVE_SELECT_SX = {
+  "& select": {
+    boxSizing: { xs: "border-box", sm: "content-box" },
+    minHeight: { xs: MOBILE_TAP_MIN, sm: "auto" },
+  },
 };
 
 // Raises a small IconButton (Autocomplete's popup/clear indicators, an

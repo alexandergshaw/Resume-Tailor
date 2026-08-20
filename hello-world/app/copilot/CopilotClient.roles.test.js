@@ -28,8 +28,20 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const CLIENT_PATH = path.join(process.cwd(), "app", "copilot", "CopilotClient.js");
 const SOURCE = readFileSync(CLIENT_PATH, "utf8");
 
+// AC-R1: the stub now RECORDS what it was handed. The drill records audio
+// and needs the microphone the user already chose for live mode plus the STT
+// provider's name for its own privacy notice; both are owned here, not by the
+// drill. Asserting only that the drill mounts would let it ship recording on
+// the system-default microphone while the picker names another, and showing a
+// notice that will not say where the audio actually goes - neither of which
+// is visible from inside RoleDrillClient's own suite, since that one supplies
+// the props itself.
+const roleDrillProps = vi.hoisted(() => ({ current: null }));
 vi.mock("./roles/RoleDrillClient", () => ({
-  default: () => createElement("div", { "data-testid": "role-drill-stub" }, "role drill"),
+  default: (props) => {
+    roleDrillProps.current = props;
+    return createElement("div", { "data-testid": "role-drill-stub" }, "role drill");
+  },
 }));
 vi.mock("./practice/PracticeClient", () => ({
   default: () => createElement("div", { "data-testid": "practice-stub" }, "practice"),
@@ -304,6 +316,45 @@ describe("CopilotClient - what the header claims (AC-Q10.4)", () => {
     expect(drill).toMatch(/Gemini/);
     expect(drill).toMatch(/situation/i);
     expect(drill).not.toMatch(/prep context|resume|cover letter/i);
+  });
+});
+
+describe("CopilotClient - the drill's recording needs (AC-R1.1, AC-R1.11)", () => {
+  it("hands the drill the microphone live mode already chose", async () => {
+    await render();
+    await clickMode(/^speak as$/i);
+    expect(stub("role-drill-stub"), "the drill is not mounted at all").toBeTruthy();
+    expect(roleDrillProps.current, "the drill was rendered with no props object").toBeTruthy();
+    // The value itself is whatever the picker resolved to (null with no
+    // stored selection); what must hold is that the prop is PASSED, so the
+    // drill records on the same device the rest of the app names.
+    expect(
+      Object.keys(roleDrillProps.current),
+      "the drill cannot record on the chosen microphone",
+    ).toContain("micDeviceId");
+    expect(Object.keys(roleDrillProps.current)).toContain("onMicDeviceChange");
+    expect(typeof roleDrillProps.current.onMicDeviceChange).toBe("function");
+  });
+
+  it("hands the drill the transcription provider it must name in its own notice", async () => {
+    await render();
+    await clickMode(/^speak as$/i);
+    expect(
+      Object.keys(roleDrillProps.current),
+      "the drill's privacy notice cannot name where the audio goes",
+    ).toContain("sttProviderName");
+  });
+
+  it("stops claiming, in the header, that nothing about the user is recorded", async () => {
+    engineValue = "gemini";
+    await render();
+    await clickMode(/^speak as$/i);
+    const drill = description();
+    // The mode now streams the user's voice off the machine. A header that
+    // described only the reveal would be understating what the tab does, in
+    // the one direction a privacy claim must never be wrong in.
+    expect(drill, "the header never mentions that recording happens").toMatch(/record/i);
+    expect(drill, "the header never mentions transcription").toMatch(/transcri/i);
   });
 });
 

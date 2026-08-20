@@ -133,6 +133,18 @@ export default function AnswerFeedback({
   onRetry,
   onNext,
   onTryAgain,
+  // AC-R1: the label is a prop, not something this component derives from
+  // its own `status`/`feedback` inputs, because it names the CALLER's own
+  // loop, not a fact this panel can see — "Next question" in practice mode
+  // advances to a fresh question, "New situation" in the Speak-as role
+  // drill fetches a new situation, and neither meaning is recoverable from
+  // anything this component already receives. If this component guessed
+  // which mode it was in (e.g. from some other prop's shape) to pick a
+  // label, that guess would become a second, driftable source of truth
+  // about which mode is running, alongside whatever the caller itself
+  // already knows for certain.
+  nextLabel = "Next question",
+  tryAgainLabel = "Try again",
 }) {
   const { bodyLanguage: bodyLanguageNotes, rest: deliveryNotes } = splitDelivery(feedback?.delivery);
   // BUG-3/K1: someone only actually reviewed the video when Gemini both ran
@@ -312,14 +324,14 @@ export default function AnswerFeedback({
           onClick={onNext}
           sx={{ ...TOUCH_TARGET_SX, width: { xs: "100%", sm: "auto" } }}
         >
-          Next question
+          {nextLabel}
         </Button>
         <Button
           variant="outlined"
           onClick={onTryAgain}
           sx={{ ...TOUCH_TARGET_SX, width: { xs: "100%", sm: "auto" } }}
         >
-          Try again
+          {tryAgainLabel}
         </Button>
       </Stack>
     </Box>

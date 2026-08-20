@@ -142,7 +142,7 @@ function engineNoticeFor({
 // (this user's own private Supabase storage) for the full recorded clip,
 // independent of both the engine and the frames opt-in — saving happens (or
 // doesn't) the same way on every engine.
-function videoNoticeFor(saveEnabled) {
+export function videoNoticeFor(saveEnabled) {
   return saveEnabled
     ? "Your answer video is uploaded to your own Supabase storage, private to your account, and listed in your practice history until you delete it."
     : "Your video clip stays in your browser and is dropped when the session ends.";
@@ -151,7 +151,7 @@ function videoNoticeFor(saveEnabled) {
 // F2: names the STT provider once known, never guesses one before then —
 // `sttProviderName` is `undefined`/`null` until CopilotClient's mount-time
 // probe resolves it.
-function sttNoticeFor(sttProviderName) {
+export function sttNoticeFor(sttProviderName) {
   return sttProviderName
     ? `Your audio is streamed to ${sttProviderName} for transcription.`
     : "Your audio is streamed for transcription.";

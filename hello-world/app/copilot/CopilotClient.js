@@ -153,6 +153,14 @@ export default function CopilotClient() {
   const { engine } = useEngine();
   const isEmbedded = engine === "embedded";
 
+  // AC-Q10.4/AC-R1.11: the "Speak as" one-liner. BUG (privacy audit):
+  // embedded branch used to claim recording itself "runs on this server" —
+  // false, lib/copilot/stt/ streams audio to Deepgram/ElevenLabs on EVERY
+  // engine; only feedback generation is local, so the guarantee is scoped.
+  const roleModeDescription = isEmbedded
+    ? "Answer a workplace situation out loud in a professional role’s register, then record yourself answering it and reveal a model answer for its cadence and vocabulary — the model answer is generated on this server with no AI provider, so nothing is sent to Google. Recording still sends your audio to a speech-to-text provider, and once you press Done, sends it here for feedback — see the notice above the recording controls for what is sent, and where."
+    : `Answer a workplace situation out loud in a professional role’s register, then record yourself answering it and reveal a model answer for its cadence and vocabulary. Recording sends audio${sttProviderName ? ` to ${sttProviderName}` : ""} for transcription and, once you press Done, sends it for feedback to Google Gemini — see the notice above the recording controls for exactly what that sends. Revealing a model answer also sends the role and the situation text to Google.`;
+
   const isRailBelowMd = useIsRailBelowMd();
 
   // T2: created before useLiveSession below — its `onCompanyCue` input needs
@@ -590,15 +598,7 @@ export default function CopilotClient() {
         title="Interview copilot"
         description={
           mode === "roles"
-            ? // AC-Q10.4: no access to the prep context, résumé or cover
-              // letter — never sent, on either engine — so this names only
-              // what leaves on the engine actually selected (`isEmbedded`).
-              // The drill POSTs to role-situation/role-response on EVERY
-              // engine; embedded just runs that work server-side with no AI
-              // provider, so it must credit "this server", not the browser
-              // — groundingNotice.js's register ("drafts ... on this server
-              // with no AI provider, so nothing is sent to Google").
-              `Answer a workplace situation out loud in a professional role’s register, then reveal a model answer for its cadence and vocabulary — ${isEmbedded ? "the embedded engine drafts it on this server with no AI provider, so nothing is sent to Google." : "on the Gemini engine, the role and the situation text go to Google."}`
+            ? roleModeDescription
             : mode === "practice"
               ? // "nothing else is recorded or shared" was false: on the Gemini
                 // engine, the answer transcript, posting details, and prep
@@ -616,20 +616,23 @@ export default function CopilotClient() {
       <ModeSwitch value={mode} onChange={onModeChange} disabled={live} />
 
       {/* AC-J1.5: the microphone selection is owned HERE, not per mode, and
-          handed to practice mode as props. It is one piece of hardware and
-          one localStorage key (MIC_STORAGE_KEY) shared by both modes: a
-          candidate who picks their headset for a live interview should not
-          have to pick it again to rehearse, and two independent selections
-          under two keys would let the picker in one mode contradict what
-          the other is actually recording on. Same reasoning that already
-          made `sttProviderName` a prop rather than a second fetch. */}
+          handed to both practice and roles mode as props — one piece of
+          hardware and one localStorage key (MIC_STORAGE_KEY), so a headset
+          picked for a live interview needn't be picked again to rehearse,
+          and two independent selections under two keys couldn't disagree
+          about what's actually recording. Same reasoning already made
+          `sttProviderName` a prop rather than a second fetch. */}
       {mode === "roles" ? (
-        // AC-Q10.3: instead of the live column and instead of PracticeClient
-        // — no session setup, no consent alert, no dashboard, no voice-cue
-        // rail, no transcript disclosure. RoleDrillClient takes no props: it
-        // owns its own role choice, situation fetch and reveal state (see
-        // that file's own doc).
-        <RoleDrillClient />
+        // AC-Q10.3/AC-R1: instead of the live column/PracticeClient — no
+        // session setup, no dashboard, no voice-cue rail. RoleDrillClient
+        // owns its own role/situation/reveal AND answer-recording state; the
+        // props below are the shared-hardware/STT-name facts PracticeClient
+        // gets below, for the same reason (AC-J1.5, F2).
+        <RoleDrillClient
+          sttProviderName={sttProviderName}
+          micDeviceId={micDeviceId}
+          onMicDeviceChange={onMicDeviceChange}
+        />
       ) : mode === "practice" ? (
         <PracticeClient
           sttProviderName={sttProviderName}

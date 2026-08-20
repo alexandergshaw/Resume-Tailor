@@ -2,22 +2,7 @@
 
 import TextField from "@mui/material/TextField";
 import { ROLE_REGISTERS, roleRegister } from "@/lib/copilot/roleRegisters";
-import { MOBILE_TAP_MIN, TOUCH_FIELD_SX } from "../mobileSx";
-
-// TOUCH_FIELD_SX raises the InputBase ROOT to the 44px tap minimum, which is
-// what the user sees. Measured in a browser at 320px, though, the native
-// `select` inside it is only 40px: the root's own padding is not part of the
-// select's hit area, so a tap in the top or bottom 2px of the visible control
-// lands on a div. This stretches the select itself to fill its root.
-// `sm` carries each property's REAL initial value (`content-box`, `auto`), not
-// a plausible-looking `0` - see mobileSx.js's own note on why that matters -
-// so nothing above the phone breakpoint changes.
-const TOUCH_NATIVE_SELECT_SX = {
-  "& select": {
-    boxSizing: { xs: "border-box", sm: "content-box" },
-    minHeight: { xs: MOBILE_TAP_MIN, sm: "auto" },
-  },
-};
+import { TOUCH_FIELD_SX, TOUCH_NATIVE_SELECT_SX } from "../mobileSx";
 
 // AC-Q9.1 - a single labelled select naming every role in the registry, the
 // current pick's own `blurb` as helper text. No nested menu, no wizard, no
