@@ -7,8 +7,6 @@ import Button from "@mui/material/Button";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import Stack from "@mui/material/Stack";
 import Switch from "@mui/material/Switch";
-import ToggleButton from "@mui/material/ToggleButton";
-import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Typography from "@mui/material/Typography";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import { useTheme } from "@mui/material/styles";
@@ -32,6 +30,8 @@ import CompanyBriefPanel from "./CompanyBriefPanel";
 import { TOUCH_TARGET_SX, TOUCH_SWITCH_SX } from "./mobileSx";
 import CopilotDashboard from "./dashboard/CopilotDashboard";
 import PracticeClient from "./practice/PracticeClient";
+import RoleDrillClient from "./roles/RoleDrillClient";
+import ModeSwitch from "./ModeSwitch";
 import { usePrepContext } from "./usePrepContext";
 import { useApplicationDocs } from "./useApplicationDocs";
 import { useCopilotDashboard } from "./useCopilotDashboard";
@@ -66,7 +66,7 @@ const STT_PROVIDER_NAMES = { deepgram: "Deepgram", elevenlabs: "ElevenLabs" };
 // (heuristic pre-filter avoids calling it on trivial fragments), and auto-draft
 // talking points as soon as a question is detected.
 export default function CopilotClient() {
-  const [mode, setMode] = useState("live"); // "live" | "practice"
+  const [mode, setMode] = useState("live"); // "live" | "practice" | "roles"
   // Owned here rather than inside useLiveSession, despite being that hook's
   // state in every other sense (every setStatus/setQuestions call lives
   // there) — see useLiveSession.js's module doc: useCopilotDashboard below
@@ -435,17 +435,19 @@ export default function CopilotClient() {
     start();
   }, [start]);
 
-  // MUI's exclusive ToggleButtonGroup reports `null` when the currently
-  // selected button is clicked again — ignore that so the mode can never end
-  // up unset. Leaving live mode must not strand a running session: `live`
-  // (derived from `status`) is false once the session has errored, but an
-  // errored CopilotSession can still be holding the screen-share and mic
-  // tracks, so key the teardown off `sessionRef.current` existing, not off
-  // `status`.
+  // ModeSwitch already swallows MUI's null-on-re-click report; the allowlist
+  // below is kept anyway — it defends something different: an unrecognized
+  // `val` reaching `setMode` (e.g. a future 4th button with no render
+  // branch) would silently fall through to the live column while the toggle
+  // shows the new mode selected, instead of the no-op this used to be.
+  // Leaving live mode — for "practice" OR "roles" (AC-Q10.2) — must not
+  // strand a running session: `live` (from `status`) is false once errored,
+  // but an errored CopilotSession can still hold the screen-share/mic
+  // tracks, so teardown is keyed off `sessionRef.current`, not `status`.
   const onModeChange = useCallback(
     (val) => {
-      if (val !== "live" && val !== "practice") return;
-      if (val === "practice" && sessionRef.current) stop();
+      if (val !== "live" && val !== "practice" && val !== "roles") return;
+      if ((val === "roles" || val === "practice") && sessionRef.current) stop();
       setMode(val);
     },
     [stop, sessionRef],
@@ -587,43 +589,31 @@ export default function CopilotClient() {
       <TabHeader
         title="Interview copilot"
         description={
-          mode === "practice"
-            ? // "nothing else is recorded or shared" was false: on the Gemini
-              // engine, the answer transcript, posting details, and prep
-              // context all go to Google for the critique. The detailed
-              // notice below (PracticeClient) states exactly what leaves on
-              // the current engine — this one-liner defers to it rather
-              // than making its own (previously false) blanket claim.
-              // F2: the STT destination is only named once it's actually
-              // known (see the mount-time fetch above) — never guessed.
-              `Practice speaking out loud with your camera and mic — see the notice below for what's sent ${sttProviderName ? `to ${sttProviderName} or Gemini` : "to Gemini"}.`
-            : "Live transcription, question detection, and suggested answers during interviews."
+          mode === "roles"
+            ? // AC-Q10.4: no access to the prep context, résumé or cover
+              // letter — never sent, on either engine — so this names only
+              // what leaves on the engine actually selected (`isEmbedded`).
+              // The drill POSTs to role-situation/role-response on EVERY
+              // engine; embedded just runs that work server-side with no AI
+              // provider, so it must credit "this server", not the browser
+              // — groundingNotice.js's register ("drafts ... on this server
+              // with no AI provider, so nothing is sent to Google").
+              `Answer a workplace situation out loud in a professional role’s register, then reveal a model answer for its cadence and vocabulary — ${isEmbedded ? "the embedded engine drafts it on this server with no AI provider, so nothing is sent to Google." : "on the Gemini engine, the role and the situation text go to Google."}`
+            : mode === "practice"
+              ? // "nothing else is recorded or shared" was false: on the Gemini
+                // engine, the answer transcript, posting details, and prep
+                // context all go to Google for the critique. The detailed
+                // notice below (PracticeClient) states exactly what leaves on
+                // the current engine — this one-liner defers to it rather
+                // than making its own (previously false) blanket claim.
+                // F2: the STT destination is only named once it's actually
+                // known (see the mount-time fetch above) — never guessed.
+                `Practice speaking out loud with your camera and mic — see the notice below for what's sent ${sttProviderName ? `to ${sttProviderName} or Gemini` : "to Gemini"}.`
+              : "Live transcription, question detection, and suggested answers during interviews."
         }
       />
 
-      <Stack
-        direction="row"
-        spacing={1.25}
-        sx={{ mb: 2, alignItems: "center", flexWrap: "wrap", rowGap: 1 }}
-      >
-        <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-          Mode:
-        </Typography>
-        <ToggleButtonGroup
-          exclusive
-          size="small"
-          value={mode}
-          disabled={live}
-          onChange={(_e, val) => onModeChange(val)}
-        >
-          <ToggleButton value="live" sx={{ textTransform: "none", px: 1.5, ...TOUCH_TARGET_SX }}>
-            Live interview
-          </ToggleButton>
-          <ToggleButton value="practice" sx={{ textTransform: "none", px: 1.5, ...TOUCH_TARGET_SX }}>
-            Practice
-          </ToggleButton>
-        </ToggleButtonGroup>
-      </Stack>
+      <ModeSwitch value={mode} onChange={onModeChange} disabled={live} />
 
       {/* AC-J1.5: the microphone selection is owned HERE, not per mode, and
           handed to practice mode as props. It is one piece of hardware and
@@ -633,7 +623,14 @@ export default function CopilotClient() {
           under two keys would let the picker in one mode contradict what
           the other is actually recording on. Same reasoning that already
           made `sttProviderName` a prop rather than a second fetch. */}
-      {mode === "practice" ? (
+      {mode === "roles" ? (
+        // AC-Q10.3: instead of the live column and instead of PracticeClient
+        // — no session setup, no consent alert, no dashboard, no voice-cue
+        // rail, no transcript disclosure. RoleDrillClient takes no props: it
+        // owns its own role choice, situation fetch and reveal state (see
+        // that file's own doc).
+        <RoleDrillClient />
+      ) : mode === "practice" ? (
         <PracticeClient
           sttProviderName={sttProviderName}
           micDeviceId={micDeviceId}
