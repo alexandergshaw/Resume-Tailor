@@ -28,10 +28,9 @@ const LABEL_MARGIN_SX = (theme) => ({ [theme.breakpoints.down("sm")]: { ml: 0, m
 // answering/Done cluster (../practice/PracticeControls.js,
 // ../practice/QuestionCard.js), reproduced here rather than imported because
 // those two components carry practice-only inputs (a posting picker, a
-// question feed, the pre-draft switch, session-log download) this mode has
-// none of. All state and every decision live in useRoleAnswer.js — this only
-// renders what it's given and calls back on the primary press, Stop, and
-// each switch/toggle.
+// question feed, session-log download) this mode has none of. All state and
+// every decision live in useRoleAnswer.js — this only renders what it's
+// given and calls back on the primary press, Stop, and each switch/toggle.
 //
 // AC-R1.12: uses the "secondary" text colour token throughout, never the
 // "muted" one — the contract test's own accessibility check scans every

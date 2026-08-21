@@ -6,9 +6,7 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
-import FormControlLabel from "@mui/material/FormControlLabel";
 import Stack from "@mui/material/Stack";
-import Switch from "@mui/material/Switch";
 import Typography from "@mui/material/Typography";
 
 import { answerLines } from "@/lib/copilot/answerPoints";
@@ -16,10 +14,9 @@ import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus"
 import { pinnedQuestionEntry } from "@/lib/copilot/currentQuestion";
 import AnswerAids from "../AnswerAids";
 import AnswerLines from "../AnswerLines";
-import { BREAK_LONG_WORDS_SX, TOUCH_SWITCH_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "../mobileSx";
+import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "../mobileSx";
 
-// AC-I5/AC-J2: the copilot's dashboard — current question, its answer, the
-// predicted next question, that question's pre-drafted answer, and a
+// AC-I5/AC-J2: the copilot's dashboard — current question, its answer, and a
 // delivery strip covering the user's current talking pace AND verbal-filler
 // rate. Purely presentational (AC-I5.31):
 // every value arrives as a prop, same contract as
@@ -76,16 +73,14 @@ const FILLER_LABEL_COLOR = {
 // directly from lib/ instead of reading its own re-export.
 export { latestQuestionEntry } from "@/lib/copilot/currentQuestion";
 
-// BUG-J6: shared by both answer panels below via lib/copilot/answerPoints.js
-// rather than a module-local copy — cachedSampleAnswerFor
-// (lib/copilot/sampleAnswerState.js) only filters a COPY of `entry.points`
-// to length-check it, then returns `entry.points` itself unfiltered — so a
-// cached pre-draft like ["", "a real point"] reaches the render layer with
-// a blank entry still in it. PredictedAnswerPanel already guarded against
-// this; CurrentAnswerPanel did not, which is the asymmetry BUG-J6 was filed
-// for. That module is also the ONLY place this filter is written out — see
-// its doc comment for why the same guard used to live here AND in
-// SampleAnswer.js, and had already drifted between the two.
+// BUG-J6: filtered via lib/copilot/answerPoints.js rather than a
+// module-local copy — cachedSampleAnswerFor (lib/copilot/sampleAnswerState.js)
+// only filters a COPY of `entry.points` to length-check it, then returns
+// `entry.points` itself unfiltered — so a cached answer like ["", "a real
+// point"] reaches the render layer with a blank entry still in it. That
+// module is the ONLY place this filter is written out — see its doc comment
+// for why the same guard used to live here AND in SampleAnswer.js, and had
+// already drifted between the two.
 
 // AC-J2.2: live mode's wording, verbatim — every string this component
 // rendered before practice mode shared it. It is the DEFAULT for the `copy`
@@ -101,21 +96,9 @@ export const LIVE_COPY = {
   currentAnswerTitle: "Answer to the current question",
   noCurrentAnswer: "There is no current question to answer yet.",
   noPoints: "No talking points have been drafted for this question yet.",
-  predictedQuestionTitle: "Predicted next question",
-  predictionIdle:
-    "Once there is a posting selected or a question detected, a guess at the next question will appear here.",
-  predictionDisclaimer: "The interviewer has not asked this — it is only a guess at what might come next.",
-  predictedAnswerTitle: "Answer to the predicted question",
-  predraftIdle: "Turn on Auto-draft to have an answer ready for this question before it is asked.",
-  predraftCaption: "Pre-drafted for the predicted question above — not the current one.",
-  predraftEmpty: "No talking points came back for the predicted question.",
   // Covers both readings in the strip below (speed and filler rate), not
   // speed alone any more — see DeliveryPanel.
   deliveryTitle: "Your delivery",
-  // Label for the header-row switch that hides/shows the two prediction
-  // panels (PredictedQuestionPanel/PredictedAnswerPanel) — see
-  // `showPredictions`/`onToggleShowPredictions` on the default export below.
-  togglePredictions: "Show predicted question and answer",
 };
 
 // AC-J2.2: practice mode's wording. Deliberately the SAME sentences
@@ -123,39 +106,26 @@ export const LIVE_COPY = {
 // room — the differences below are all places where live's wording would
 // be a false statement here, not places where practice was given a
 // different voice for its own sake.
-//
-// The prediction disclaimer carries the extra weight in this mode: practice
-// mode picks its own next question, so a candidate could reasonably read
-// "predicted next question" as "the question this app is about to ask me".
-// It says plainly that it is neither — the same failure R-106 guards in
-// live mode (answering a question nobody asked), in the form it takes here.
 export const PRACTICE_COPY = {
   ...LIVE_COPY,
   title: "Practice dashboard",
   noQuestion: "No question yet — press Start practice to get your first one.",
-  // R-109: `noCurrentAnswer` and `predraftCaption` are deliberately NOT
-  // overridden. Live's wording for both turns on the word "current", which
-  // is perfectly true in practice mode — there IS a current question — so
-  // paraphrasing it to "on screen" was divergence for its own sake, and it
-  // made this mode contradict itself: the panel titles below still say
-  // "Current question" and "Answer to the current question", so the body
-  // text would have called the same thing by a different name three lines
-  // under its own heading. The bar for an override here is that live's
-  // sentence would be FALSE with no interviewer in the room, not that a
-  // different phrasing reads slightly better.
+  // R-109: `noCurrentAnswer` is deliberately NOT overridden. Live's wording
+  // turns on the word "current", which is perfectly true in practice mode —
+  // there IS a current question — so paraphrasing it to "on screen" was
+  // divergence for its own sake, and it made this mode contradict itself:
+  // the panel titles below still say "Current question" and "Answer to the
+  // current question", so the body text would have called the same thing by
+  // a different name three lines under its own heading. The bar for an
+  // override here is that live's sentence would be FALSE with no
+  // interviewer in the room, not that a different phrasing reads slightly
+  // better.
   noPoints: "No sample answer has been drafted for this question yet.",
-  predictionIdle:
-    "Once a posting is selected or a question is on screen, a guess at what an interviewer might ask next will appear here.",
-  predictionDisclaimer:
-    "This is a guess at what a real interviewer might ask next — it is not necessarily the question practice mode will give you next.",
-  predraftIdle:
-    'Turn on "Pre-draft predicted answer" to have an answer ready for this question before it comes up.',
-  predraftEmpty: "No sample answer came back for the predicted question.",
 };
 
 // The two "real" panels' shared card look — a plain surface, same as
 // QuestionFeed's own question cards. Deliberately distinct from
-// PredictionPanel's look below: a user glancing at this mid-interview must
+// AccentPanel's look below: a user glancing at this mid-interview must
 // never mistake one for the other (AC-I3.20).
 function RealPanel({ title, children }) {
   return (
@@ -181,20 +151,18 @@ function RealPanel({ title, children }) {
   );
 }
 
-// The two prediction panels' shared card look — an accent-tinted surface
-// plus an explicit chip repeated on BOTH, so a question and its answer can
-// never be read as something the interviewer actually said or something
-// already drafted for real (AC-I3.20, AC-I4's panel is "equally clearly
-// tied to the predicted question").
+// The shared card look for content the app is NOT certain about — an
+// accent-tinted surface plus an explicit chip, so it can never be read as
+// something the interviewer actually said or something already confirmed
+// for real (AC-I3.20). Deliberately distinct from RealPanel above.
 //
-// BUG-1: `chipLabel` defaults to "Prediction" — both existing callers below
-// pass nothing and are unaffected — but CurrentQuestionPanel's provisional
-// branch reuses this SAME wrapper with a different label (see that
-// function). "Prediction" would be a false statement there: a provisional
-// entry is a real detected utterance, not a guess at a future one. Reusing
-// the wrapper (not copying it) is what keeps the accent-plus-chip look
-// itself in exactly one place.
-function PredictionPanel({ title, children, chipLabel = "Prediction" }) {
+// BUG-1: `chipLabel` is required — its only caller is
+// CurrentQuestionPanel's provisional branch below, passing
+// `chipLabel="Unconfirmed"`, which names the SPECIFIC uncertainty (a real
+// detected utterance of unclear speaker) rather than a generic label.
+// Reusing one wrapper (not copying it) is what keeps the accent-plus-chip
+// look itself in exactly one place.
+function AccentPanel({ title, children, chipLabel }) {
   return (
     <Box
       sx={{
@@ -210,11 +178,11 @@ function PredictionPanel({ title, children, chipLabel = "Prediction" }) {
           which zeroes its flex `min-width: auto` floor, so at ~140px of
           available width (well under the row's natural ~262px) the Chip
           shrank first and its label ellipsized down to nothing readable
-          ("PREDI…" or narrower). This badge is load-bearing (see the module
-          doc above and CurrentQuestionPanel's "Unconfirmed" reuse below) —
-          it is what stops a guess from being read as something the
-          interviewer actually asked — so it must never truncate. WRAP_ROW_SX
-          lets the badge drop to its own line intact instead. */}
+          ("PREDI…" or narrower). This badge is load-bearing (see
+          CurrentQuestionPanel's "Unconfirmed" reuse below) — it is what
+          stops uncertain content from being read as something confirmed —
+          so it must never truncate. WRAP_ROW_SX lets the badge drop to its
+          own line intact instead. */}
       <Stack direction="row" spacing={1} sx={{ mb: 1, alignItems: "center", ...WRAP_ROW_SX }}>
         {/* F10: same nesting level as RealPanel's title above — both sit
             directly under the dashboard's own h3 title. */}
@@ -250,7 +218,7 @@ function PredictionPanel({ title, children, chipLabel = "Prediction" }) {
 }
 
 // AC-T1.16/I6: the held treatment for the current-question panel. Reuses
-// PredictionPanel's wrapper/Chip mechanics (WRAP_ROW_SX avoids the "PREDI…"
+// AccentPanel's wrapper/Chip mechanics (WRAP_ROW_SX avoids the "PREDI…"
 // ellipsis bug) but with the WARNING accent — `--warning-soft` on
 // `--bg-surface` measures only 1.08:1, so the border, badge and release
 // control are ALL required, never colour alone (AC-X2). The release button
@@ -329,10 +297,11 @@ function HeldQuestionPanel({ title, newerCount, onRelease, live, children }) {
 // not one or the other: visual distinction alone is insufficient (a user
 // glancing mid-interview, or anyone who can't rely on color/border), text
 // alone is insufficient (a user skimming past the caption to the bold
-// question line). Reuses PredictionPanel rather than a new component so the
-// "uncertain content" look stays defined in one place; "Unconfirmed" (not
-// "Prediction") because this IS a real detected utterance, just of unclear
-// speaker — the opposite uncertainty from a prediction.
+// question line). Reuses AccentPanel rather than a new component so the
+// "uncertain content" look stays defined in one place; "Unconfirmed" names
+// this uncertainty specifically because this IS a real detected utterance,
+// just of unclear speaker — the opposite uncertainty a guess about the
+// future would be.
 //
 // Practice mode never sets `provisional` (see latestQuestionEntry's own
 // doc), so `current?.provisional` is always falsy there and this branch
@@ -360,7 +329,7 @@ function CurrentQuestionPanel({ current, copy, held, newerCount, onReleasePin, l
   }
   if (current?.provisional) {
     return (
-      <PredictionPanel title={copy.currentQuestionTitle} chipLabel="Unconfirmed">
+      <AccentPanel title={copy.currentQuestionTitle} chipLabel="Unconfirmed">
         <Typography sx={{ color: "var(--text-primary)", fontWeight: 600, ...BREAK_LONG_WORDS_SX }}>
           {current.question}
         </Typography>
@@ -368,7 +337,7 @@ function CurrentQuestionPanel({ current, copy, held, newerCount, onReleasePin, l
           Not confirmed as the interviewer — this may be your own words, picked up while speaker identity is
           still unsettled.
         </Typography>
-      </PredictionPanel>
+      </AccentPanel>
     );
   }
   return (
@@ -595,9 +564,9 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
               </Typography>
             </Stack>
           ) : current.status === "error" ? (
-            // F11: matches the sibling error paths (SampleAnswer.js,
-            // PredictedAnswerPanel below) — role="alert" plus a non-color
-            // icon, rather than a plain colored Typography (WCAG 1.4.1).
+            // F11: matches the sibling error path in SampleAnswer.js —
+            // role="alert" plus a non-color icon, rather than a plain
+            // colored Typography (WCAG 1.4.1).
             <Alert severity="error">{current.error || "Could not draft an answer."}</Alert>
           ) : current.status === "done" && lines.length ? (
             <>
@@ -619,136 +588,6 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
         </Box>
       )}
     </RealPanel>
-  );
-}
-
-function PredictedQuestionPanel({ status, question, error, onRetry, copy }) {
-  return (
-    <PredictionPanel title={copy.predictedQuestionTitle}>
-      {status === "loading" ? (
-        <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
-          <CircularProgress size={16} sx={{ flexShrink: 0 }} />
-          <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-            Guessing what might be asked next…
-          </Typography>
-        </Stack>
-      ) : status === "error" ? (
-        // Inside a ~140px-wide phone panel, Alert padding + the severity
-        // icon + a reserved action slot left almost nothing for the message
-        // itself, and Retry is the only recovery path for a failed
-        // prediction — see the doc above PredictedAnswerPanel's identical
-        // error branch. Wrapping the action below the message on phones
-        // gives both the message and the (touch-sized) Retry button room.
-        <Alert
-          severity="error"
-          sx={{
-            flexWrap: { xs: "wrap", sm: "nowrap" },
-            "& .MuiAlert-action": {
-              pl: { xs: 0, sm: 2 },
-              ml: { xs: 0, sm: "auto" },
-              mr: 0,
-              width: { xs: "100%", sm: "auto" },
-            },
-          }}
-          action={
-            <Button color="inherit" size="small" onClick={onRetry} sx={TOUCH_TARGET_SX}>
-              Retry
-            </Button>
-          }
-        >
-          {error || "Could not predict the next question."}
-        </Alert>
-      ) : status === "done" && question ? (
-        <>
-          <Typography sx={{ color: "var(--text-primary)", fontWeight: 600, ...BREAK_LONG_WORDS_SX }}>
-            {question}
-          </Typography>
-          <Typography variant="caption" sx={{ display: "block", mt: 0.75, color: "var(--text-secondary)" }}>
-            {copy.predictionDisclaimer}
-          </Typography>
-        </>
-      ) : (
-        <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-          {copy.predictionIdle}
-        </Typography>
-      )}
-    </PredictionPanel>
-  );
-}
-
-function PredictedAnswerPanel({ predictionStatus, predictedQuestion, status, points, cues, error, onRetry, copy }) {
-  // BUG-J6: now shared with CurrentAnswerPanel via answerLines rather than
-  // each panel writing this filter out separately — see that helper's doc.
-  // AC-K1.1/AC-L1: cue plus sentence here too, for the same reason
-  // CurrentAnswerPanel has them — two answer panels side by side, one
-  // showing cues alone and one showing full sentences, would read as two
-  // different kinds of thing.
-  const lines = answerLines(cues, points);
-  return (
-    <PredictionPanel title={copy.predictedAnswerTitle}>
-      {/* F9: see CurrentAnswerPanel's identical region for why this must be
-          unconditional — only its text may change, the node itself must
-          never mount and unmount with the content. */}
-      <Box component="span" role="status" aria-live="polite" sx={visuallyHidden}>
-        {answerStatusMessage({ status, bulletCount: lines.length })}
-      </Box>
-      {predictionStatus !== "done" || !predictedQuestion ? (
-        <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-          A predicted question will need to appear above first.
-        </Typography>
-      ) : status === "idle" ? (
-        <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-          {copy.predraftIdle}
-        </Typography>
-      ) : status === "loading" ? (
-        <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
-          <CircularProgress size={16} sx={{ flexShrink: 0 }} />
-          <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-            Drafting an answer to the predicted question…
-          </Typography>
-        </Stack>
-      ) : status === "error" ? (
-        // A failed pre-draft used to be a dead end: this panel showed only
-        // the error text, and the one thing a user could see to press —
-        // PREDICTION's own Retry above — usually lands on the SAME
-        // predicted question, which leaves this stuck failed (see
-        // retryPredraft's doc in useCopilotDashboard.js). Matching
-        // SampleAnswer.js's error state (an Alert with an inline Retry
-        // action) rather than the plain error text this panel used to
-        // render, so a failed pre-draft has the same reachable recovery a
-        // failed sample answer already does.
-        <Alert
-          severity="error"
-          sx={{
-            flexWrap: { xs: "wrap", sm: "nowrap" },
-            "& .MuiAlert-action": {
-              pl: { xs: 0, sm: 2 },
-              ml: { xs: 0, sm: "auto" },
-              mr: 0,
-              width: { xs: "100%", sm: "auto" },
-            },
-          }}
-          action={
-            <Button color="inherit" size="small" onClick={onRetry} sx={TOUCH_TARGET_SX}>
-              Retry
-            </Button>
-          }
-        >
-          {error || "Could not draft an answer to the predicted question."}
-        </Alert>
-      ) : lines.length ? (
-        <>
-          <AnswerLines lines={lines} />
-          <Typography variant="caption" sx={{ display: "block", mt: 0.75, color: "var(--text-secondary)" }}>
-            {copy.predraftCaption}
-          </Typography>
-        </>
-      ) : (
-        <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-          {copy.predraftEmpty}
-        </Typography>
-      )}
-    </PredictionPanel>
   );
 }
 
@@ -812,7 +651,7 @@ function DeliveryPanel({ pace, fillers, copy }) {
           rowGap: 0.5,
         }}
       >
-        {/* F10: same nesting level as the four panel titles above — a
+        {/* F10: same nesting level as the panel titles above — a
             sibling section under the dashboard's own h3 title. Heading
             LEVEL is unchanged by this rewrite (R-125) even though the
             title moved onto the readings' row. */}
@@ -868,15 +707,6 @@ export default function CopilotDashboard({
   // reads it defensively and renders the unmeasured phrase in that case,
   // same as it already does for a missing `pace`.
   fillers,
-  predictedQuestion,
-  predictionStatus,
-  predictionError,
-  onRetryPrediction,
-  predictedPoints,
-  predictedCues,
-  predictedAnswerStatus,
-  predictedAnswerError,
-  onRetryPredraft,
   // AC-J2.2: merged OVER live mode's strings rather than replacing them, so
   // a caller supplying a partial set still gets a complete one and a string
   // added here later can never leave a mode rendering `undefined`.
@@ -885,18 +715,9 @@ export default function CopilotDashboard({
   answerHidden = false,
   onRevealAnswer,
   revealLabel = "Show sample answer",
-  // Defaults to true so every existing call site (which passes neither of
-  // these) renders exactly as before. When `onToggleShowPredictions` is not
-  // a function, no toggle control is rendered at all — see the header row
-  // below — but `showPredictions` still governs what renders either way, so
-  // a caller could in principle pass `showPredictions={false}` with no
-  // callback to permanently hide the panels without offering a control.
-  showPredictions = true,
-  onToggleShowPredictions,
 }) {
   const current = pinnedQuestionEntry(questions, pinnedId);
   const text = { ...LIVE_COPY, ...(copy || {}) };
-  const canTogglePredictions = typeof onToggleShowPredictions === "function";
 
   return (
     <Box
@@ -909,48 +730,20 @@ export default function CopilotDashboard({
       }}
     >
       {/* F10: the dashboard's own section title, one level under the tab's
-          h2 (TabHeader.js) — see RealPanel/PredictionPanel/DeliveryPanel
-          above for the panel titles nested another level under this one.
-          The toggle switch shares this row rather than getting a row of its
-          own — same "beside the heading" placement as the Auto-draft switch
-          in CopilotClient.js's header row. WRAP_ROW_SX lets the switch drop
-          to its own line on a narrow screen instead of overflowing —
-          required to keep this tab's zero-horizontal-overflow measurement
-          at 320px intact. */}
-      <Stack
-        direction="row"
-        spacing={1}
-        sx={{ mb: 1.5, alignItems: "center", justifyContent: "space-between", ...WRAP_ROW_SX }}
-      >
+          h2 (TabHeader.js) — see RealPanel/AccentPanel/DeliveryPanel above
+          for the panel titles nested another level under this one. */}
+      <Box sx={{ mb: 1.5 }}>
         <Typography variant="subtitle2" component="h3" sx={{ color: "var(--text-secondary)", fontWeight: 700 }}>
           {text.title}
         </Typography>
-        {canTogglePredictions ? (
-          <FormControlLabel
-            sx={{ ml: 0, mr: 0 }}
-            control={
-              <Switch
-                size="small"
-                checked={showPredictions}
-                onChange={(e) => onToggleShowPredictions(e.target.checked)}
-                sx={TOUCH_SWITCH_SX}
-              />
-            }
-            label={
-              <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-                {text.togglePredictions}
-              </Typography>
-            }
-          />
-        ) : null}
-      </Stack>
+      </Box>
 
       <Box
         sx={{
           display: "grid",
           // Was `md` (900px). A half-width window on a common 1440-wide
           // dual-screen setup is ~720px — under `md` — which fell to a
-          // single column and stacked all four panels, the single biggest
+          // single column and stacked both panels, the single biggest
           // contributor to the scrolling the half-window/dual-screen user
           // is complaining about. `sm` (600px) still gives up two columns
           // well before that width. Do not "tidy" this back to `md`: the
@@ -960,15 +753,6 @@ export default function CopilotDashboard({
         }}
       >
         <CurrentQuestionPanel current={current} copy={text} held={held} newerCount={newerCount} onReleasePin={onReleasePin} live={live} />
-        {showPredictions ? (
-          <PredictedQuestionPanel
-            status={predictionStatus}
-            question={predictedQuestion}
-            error={predictionError}
-            onRetry={onRetryPrediction}
-            copy={text}
-          />
-        ) : null}
         <CurrentAnswerPanel
           current={current}
           copy={text}
@@ -976,18 +760,6 @@ export default function CopilotDashboard({
           onReveal={onRevealAnswer}
           revealLabel={revealLabel}
         />
-        {showPredictions ? (
-          <PredictedAnswerPanel
-            predictionStatus={predictionStatus}
-            predictedQuestion={predictedQuestion}
-            status={predictedAnswerStatus}
-            points={predictedPoints}
-            cues={predictedCues}
-            error={predictedAnswerError}
-            onRetry={onRetryPredraft}
-            copy={text}
-          />
-        ) : null}
       </Box>
 
       <Box sx={{ mt: 1.5 }}>

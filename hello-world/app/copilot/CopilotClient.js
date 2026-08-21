@@ -10,8 +10,6 @@ import Switch from "@mui/material/Switch";
 import Typography from "@mui/material/Typography";
 import useMediaQuery from "@mui/material/useMediaQuery";
 import { useTheme } from "@mui/material/styles";
-import { normalizeQuestion } from "@/lib/copilot/questions";
-import { groundingFor } from "@/lib/copilot/answerGrounding";
 import { fmtClock } from "@/lib/copilot/clock";
 import { postingGroundingNotice as _postingGroundingNotice } from "@/lib/copilot/groundingNotice";
 import { briefStatusMessage } from "@/lib/copilot/companyBrief";
@@ -38,7 +36,6 @@ import { useCopilotDashboard } from "./useCopilotDashboard";
 import { useLiveSession } from "./useLiveSession";
 import { useCaptureSetup } from "./useCaptureSetup";
 import { useCompanyBrief } from "./useCompanyBrief";
-import { usePredictionVisibility } from "./usePredictionVisibility";
 import { useLiveColumnHeight } from "./useLiveColumnHeight";
 
 // I1: 280px rail + a usable main column needs 824px minimum, so the
@@ -97,15 +94,6 @@ export default function CopilotClient() {
     sourceAvailability: interviewerSourceAvailability,
     sourceUnavailableReason: interviewerSourceUnavailableReason,
   } = useCaptureSetup();
-  // Whether the PREDICTED next question and its pre-drafted answer are
-  // shown at all — owned here for the same reason the microphone selection
-  // is (see useCaptureSetup.js's own comment just above): one preference,
-  // one storage key, shared by both modes rather than each mode keeping its
-  // own contradictory copy. Handed to useCopilotDashboard below (which both
-  // modes' dashboards are built from) as `predictionsEnabled`, to
-  // CopilotDashboard directly in live mode further down, and to
-  // PracticeClient as props alongside `micDeviceId`/`onMicDeviceChange`.
-  const { showPredictions, onToggleShowPredictions } = usePredictionVisibility();
   const [showConsent, setShowConsent] = useState(true);
   // F2: which speech-to-text provider is actually live — `null` until the
   // mount-time probe below resolves. See the useEffect near the other
@@ -126,10 +114,10 @@ export default function CopilotClient() {
   // AC-N1.5: normalized question -> { points, type, cues, buzzwords, anchor,
   // idealProject, profile, interviewType, applicationId } — the reading aids
   // (AC-K1) and the grounding the draft was actually built from (AC-N1.2)
-  // both landed here since this comment was last accurate; runDraft
-  // (useLiveSession.js) and onPrefetchedAnswer below are the two writers,
-  // and both now store every field a read (via answerGrounding.js's
-  // cachedAnswerFor) needs to decide whether an entry still applies.
+  // both landed here since this comment was last accurate; runDraft, inside
+  // useDraftAnswer.js (called from useLiveSession.js), is the sole writer,
+  // and stores every field a read (via answerGrounding.js's cachedAnswerFor)
+  // needs to decide whether an entry still applies.
   const answerCacheRef = useRef(new Map());
   // AC-N1.3: bumped whenever the posting or prep context changes (below) or
   // a fresh session starts (useLiveSession.js's `start`) — see runDraft's
@@ -285,86 +273,9 @@ export default function CopilotClient() {
     retry: retryDocs,
   };
 
-  // AC-I4.23: the load-bearing cache write — keyed EXACTLY the way runDraft
-  // below looks a cached answer up (normalizeQuestion(question)), so a
-  // correct prediction is served from the SAME cache instead of costing a
-  // second draftAnswer call when the interviewer actually asks the
-  // predicted question.
-  // AC-K1: the pre-draft's reading aids are cached with it, so a correct
-  // prediction serves the SAME panel the question would have drafted on
-  // demand — a cache hit that dropped the cues and subsections would make a
-  // successful prediction look like a degraded answer.
-  // AC-N1.2: `profile`/`interviewType`/`applicationId` are
-  // useCopilotDashboard's own `draftedFrom` — read from its refs BEFORE its
-  // own await, the same discipline runDraft below follows for its cache
-  // write — what this pre-draft was ACTUALLY built from, not whatever is
-  // currently selected by the time it resolves. Previously destructured and
-  // discarded here; now folded through groundingFor and stored with the
-  // entry so a later read (via answerGrounding.js's cachedAnswerFor) can
-  // reject it once the posting or prep context it was built from is no
-  // longer selected.
-  const onPrefetchedAnswer = useCallback(
-    (
-      question,
-      {
-        points,
-        type,
-        cues,
-        buzzwords,
-        resumeAnchor,
-        idealProject,
-        profile: draftedProfile,
-        interviewType: draftedInterviewType,
-        applicationId: draftedApplicationId,
-      },
-    ) => {
-      answerCacheRef.current.set(normalizeQuestion(question), {
-        points,
-        type,
-        cues: Array.isArray(cues) ? cues : [],
-        buzzwords: Array.isArray(buzzwords) ? buzzwords : [],
-        anchor: resumeAnchor || null,
-        idealProject: idealProject || null,
-        ...groundingFor({
-          profile: draftedProfile,
-          interviewType: draftedInterviewType,
-          applicationId: draftedApplicationId,
-        }),
-      });
-    },
-    [],
-  );
-
-  // AC-I2/AC-I3/AC-I4: live mode's dashboard — talking pace, the predicted
-  // next question, and a pre-drafted answer for it. `active: live` (AC-I4
-  // fix) is what keeps a posting selection or a detected question from
-  // spending a model call before the user has actually pressed Start; see
-  // useCopilotDashboard.js's own `active` doc for what it does with this.
-  const {
-    pace,
-    // AC-N1: verbal-filler reading beside `pace` — see useCopilotDashboard.js.
-    fillers,
-    predictedQuestion,
-    predictionStatus,
-    predictionError,
-    retryPrediction,
-    retryPredraft,
-    predictedPoints,
-    predictedCues,
-    predictedAnswerStatus,
-    predictedAnswerError,
-    recordSpeechSample,
-    resetForSession,
-  } = useCopilotDashboard({
-    questions,
-    posting,
-    applicationId: posting?.id || null,
-    autoDraft,
-    profile,
-    onPrefetchedAnswer,
-    active: live,
-    predictionsEnabled: showPredictions,
-  });
+  // AC-I2/AC-N1: live mode's dashboard — talking pace and verbal-filler
+  // reading, backing LiveHearingStrip's delivery strip below.
+  const { pace, fillers, recordSpeechSample, resetForSession } = useCopilotDashboard();
 
   // AC-T1.18/E4: declines (and reports it) when no posting is selected at
   // all, the same way pinCurrentQuestion declines with no question yet
@@ -638,8 +549,6 @@ export default function CopilotClient() {
           sttProviderName={sttProviderName}
           micDeviceId={micDeviceId}
           onMicDeviceChange={onMicDeviceChange}
-          showPredictions={showPredictions}
-          onToggleShowPredictions={onToggleShowPredictions}
         />
       ) : (
         <>
@@ -875,11 +784,10 @@ export default function CopilotClient() {
               />
             </Box>
 
-            {/* AC-I5: the five-panel dashboard — current question/answer,
-                predicted next question/answer, and talking pace. Presentational
-                only (every value is a prop from useCopilotDashboard above); does
-                NOT replace QuestionFeed below, which stays the full question
-                history (AC-I5.30). */}
+            {/* AC-I5: the dashboard — current question/answer and talking pace.
+                Presentational only (every value is a prop from
+                useCopilotDashboard above); does NOT replace QuestionFeed
+                below, which stays the full question history (AC-I5.30). */}
             {/* Step 3: flex:1/minHeight:0 lets this claim whatever height is
                 left after the auto-height items above it; overflow:auto is
                 the fallback if even that isn't enough — this scrolls
@@ -901,17 +809,6 @@ export default function CopilotClient() {
                   onReleasePin={unpinQuestion}
                   pace={pace}
                   fillers={fillers}
-                  predictedQuestion={predictedQuestion}
-                  predictionStatus={predictionStatus}
-                  predictionError={predictionError}
-                  onRetryPrediction={retryPrediction}
-                  onRetryPredraft={retryPredraft}
-                  predictedPoints={predictedPoints}
-                  predictedCues={predictedCues}
-                  predictedAnswerStatus={predictedAnswerStatus}
-                  predictedAnswerError={predictedAnswerError}
-                  showPredictions={showPredictions}
-                  onToggleShowPredictions={onToggleShowPredictions}
                 />
               </Box>
               {!isRailBelowMd ? <Box sx={{ overflowY: "auto", minHeight: 0 }}>{railContent}</Box> : null}

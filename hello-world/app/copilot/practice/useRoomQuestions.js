@@ -96,19 +96,20 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
   // shape live mode's runDraft sends (useLiveSession.js) — `mode` is left
   // undefined, which is what makes the route apply its default "points"
   // branch (app/api/copilot/answer/route.js) rather than practice mode's
-  // OWN "answer" mode (the sample-answer/dashboard pre-draft's shape). That
-  // response carries every field live mode's card renders — points, type,
-  // cues, buzzwords, resumeAnchor, idealProject — which is what lets this
-  // reuse QuestionFeed/AnswerLines/AnswerAids unmodified (PracticeClient.js).
+  // OWN "answer" mode (the same shape useSampleAnswer.js's own queue/reveal
+  // requests use). That response carries every field live mode's card
+  // renders — points, type, cues, buzzwords, resumeAnchor, idealProject —
+  // which is what lets this reuse QuestionFeed/AnswerLines/AnswerAids
+  // unmodified (PracticeClient.js).
   //
   // `context` is deliberately "" — this hook is never handed the practice
   // session's own transcript (unlike live mode's buildContext, which reads
   // a rolling window of recent turns), the same "no transcript to draw on"
-  // choice useCopilotDashboard.js's own runPredraft already makes for
-  // practice/live's speculative pre-draft. Threading the transcript in was
-  // out of scope for this wave; confirmQuestion/draftAnswer both already
-  // treat a missing context as "confirm/draft from the utterance alone",
-  // exactly as they do for that existing caller.
+  // choice useSampleAnswer.js's own queue/reveal requests already make for
+  // the question actually on screen. Threading the transcript in was out of
+  // scope for this wave; confirmQuestion/draftAnswer both already treat a
+  // missing context as "confirm/draft from the utterance alone", exactly as
+  // they do for that existing caller.
   //
   // `interviewType` is left out of the request entirely, for the same
   // reason live mode's own runDraft never sends one: this hook exists to
@@ -255,9 +256,10 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
   // QuestionFeed's own "Draft answer"/"Redraft" button (app/copilot/
   // QuestionFeed.js) calls this with an id — this hook has no cross-session
   // cache to check the way useLiveSession.js's runDraft does (AC-N1's
-  // answerCacheRef exists to serve a CORRECTLY PREDICTED question instantly;
-  // there is no equivalent prediction step here), so a redraft always
-  // re-runs the network call, which is exactly what "Redraft" means anyway.
+  // answerCacheRef exists to serve a REPEATED question instantly, written by
+  // useDraftAnswer.js's runDraft; there is no equivalent cache here), so a
+  // redraft always re-runs the network call, which is exactly what "Redraft"
+  // means anyway.
   const onDraft = useCallback(
     (id) => {
       const q = questionsRef.current.find((it) => it.id === id);

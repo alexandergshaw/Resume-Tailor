@@ -13,11 +13,11 @@ import { TOUCH_SWITCH_SX, TOUCH_TARGET_SX } from "../mobileSx";
 
 // Presentational block for practice mode's session controls: the "Your
 // microphone" row, the Start/Stop row (status pill, elapsed clock,
-// Camera/Mute toggles), and the three-switch row (camera frames, save
-// recordings, pre-draft) with its embedded-engine caption. All state
-// (status, timing, mic/camera state, the switches themselves) lives in
-// PracticeClient — this only renders what it's given and calls back on
-// start/stop and each switch change.
+// Camera/Mute toggles), and the two-switch row (camera frames, save
+// recordings) with its embedded-engine caption. All state (status, timing,
+// mic/camera state, the switches themselves) lives in PracticeClient — this
+// only renders what it's given and calls back on start/stop and each switch
+// change.
 export default function PracticeControls({
   micDeviceId,
   onMicDeviceChange,
@@ -38,9 +38,6 @@ export default function PracticeControls({
   onSendFramesChange,
   saveEnabled,
   onToggleSaveEnabled,
-  preDraftPredicted,
-  onPreDraftChange,
-  showPredictions,
   onDownloadLog,
   downloadLogEnabled,
 }) {
@@ -97,8 +94,8 @@ export default function PracticeControls({
             recorded yet — never behind a Tooltip on a disabled span, which
             this codebase's own a11y trap (MUI Tooltip stealing a control's
             accessible name) would apply to; the reason is instead plain DOM
-            text right beside it, the same idiom the pre-draft switch's own
-            caption below already uses for the identical problem. */}
+            text right beside it, the same idiom the embedded-engine caption
+            below already uses for the identical problem. */}
         <Button
           variant="outlined"
           size="small"
@@ -155,13 +152,10 @@ export default function PracticeControls({
         />
       </Stack>
 
-      {/* AC-J2.7: "Pre-draft predicted answer" shares this row with the two
-          switches it was named alongside — camera frames and save
-          recordings — rather than a third row of its own.
-          Defect 4: three long-labelled switches don't fit one row at
-          320px — max-content is ~788px against ~272px available, so labels
-          wrapped to two lines with a 24px switch floating beside them below
-          `sm`. Stacking them in a column below `sm` instead gives each
+      {/* Defect 4: two long-labelled switches don't comfortably fit one row
+          at 320px — max-content is well past the ~272px available, so
+          labels wrapped to two lines with a 24px switch floating beside them
+          below `sm`. Stacking them in a column below `sm` instead gives each
           label the full row width; `ml: 0, mr: 0` on each FormControlLabel
           removes MUI's default asymmetric label margins (meant for a single
           switch inline with other controls) so the stack reads as a clean
@@ -169,12 +163,12 @@ export default function PracticeControls({
           Bug fix (audit round): that override used to apply at every width,
           unscoped — FormControlLabel's own default is `marginLeft: -11px,
           marginRight: 16px` (see node_modules/@mui/material/FormControlLabel/
-          FormControlLabel.js), so it was shifting all three switches ~11px
-          right and dropping 16px of trailing margin even at `sm` and up,
-          where the row is back to a normal inline flow and needed none of
-          this. Scoped via the same bounded `theme.breakpoints.down("sm")`
-          idiom SessionSetup.js uses for its ToggleButtonGroup, rather than
-          an `{ xs, sm }` object — an `xs` key is `min-width: 0` and applies
+          FormControlLabel.js), so it was shifting both switches ~11px right
+          and dropping 16px of trailing margin even at `sm` and up, where the
+          row is back to a normal inline flow and needed none of this. Scoped
+          via the same bounded `theme.breakpoints.down("sm")` idiom
+          SessionSetup.js uses for its ToggleButtonGroup, rather than an
+          `{ xs, sm }` object — an `xs` key is `min-width: 0` and applies
           everywhere, so it can state "0 below sm" but never "MUI's default
           again at sm+"; a bounded down("sm") query has an upper bound, so at
           600px and up none of these declarations exist and the label's
@@ -212,50 +206,13 @@ export default function PracticeControls({
             </Typography>
           }
         />
-        <FormControlLabel
-          sx={(theme) => ({ [theme.breakpoints.down("sm")]: { ml: 0, mr: 0 } })}
-          control={
-            <Switch
-              size="small"
-              checked={preDraftPredicted}
-              disabled={!showPredictions}
-              onChange={onPreDraftChange}
-              sx={TOUCH_SWITCH_SX}
-            />
-          }
-          label={
-            <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-              Pre-draft predicted answer
-            </Typography>
-          }
-        />
-        {/* The pre-draft switch above drafts an answer for the PREDICTED
-            question — with that prediction hidden there is nothing for it to
-            draft, so it is disabled and the reason is stated as plain DOM
-            text right beside it, not a `title=` attribute or a Tooltip: on a
-            phone there is no hover to reveal either of those, and this row
-            already renders another such caption below for the embedded
-            engine. */}
-        {!showPredictions ? (
-          <Typography variant="caption" sx={{ color: "var(--text-muted)" }}>
-            Pre-drafting only applies while the predicted question and answer are shown.
-          </Typography>
-        ) : null}
         {/* BUG-J2: this used to say "...separate from saving recordings
-            below", which became wrong once the save switch moved into this
-            same row (it reads as a locator, not a claim about coverage). It
-            briefly said "and from pre-drafting predicted answers" too, but
-            that was a FALSE privacy claim in the dangerous direction: the
-            embedded engine's own sentence above ("Sample answers are
-            drafted on this server too") already covers pre-drafting
-            correctly — draftAnswer sends `engine: readEngine()`, and
-            app/api/copilot/answer/route.js's wantsEmbedded branch drafts
-            locally, so a pre-draft on this engine reaches no AI provider at
-            all. Saying "separate from" pre-drafting would have told the
-            user the embedded guarantee excludes it, which understates the
-            protection they actually have. Only saving recordings is
-            genuinely a separate destination (Supabase upload happens
-            identically on every engine), so only that stays named here. */}
+            below" as a locator into a longer row; now that the row holds
+            only these two switches, "below" would just be confusing, so the
+            caption names the save switch directly instead. Saving recordings
+            is genuinely a separate destination from the embedded guarantee
+            above it (Supabase upload happens identically on every engine,
+            regardless of which AI provider the critique itself runs on). */}
         {isEmbedded ? (
           <Typography variant="caption" sx={{ color: "var(--text-muted)" }}>
             The embedded engine never sends your answer, posting, or frames to an AI provider. This is

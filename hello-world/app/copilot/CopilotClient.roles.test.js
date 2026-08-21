@@ -82,15 +82,6 @@ vi.mock("./useCopilotDashboard", () => ({
   useCopilotDashboard: () => ({
     pace: {},
     fillers: {},
-    predictedQuestion: "",
-    predictionStatus: "idle",
-    predictionError: "",
-    retryPrediction: () => {},
-    retryPredraft: () => {},
-    predictedPoints: [],
-    predictedCues: [],
-    predictedAnswerStatus: "idle",
-    predictedAnswerError: "",
     recordSpeechSample: () => {},
     resetForSession: () => {},
   }),
@@ -105,9 +96,6 @@ vi.mock("./useCaptureSetup", () => ({
     sourceAvailability: { tab: true, system: true, inperson: true },
     sourceUnavailableReason: "",
   }),
-}));
-vi.mock("./usePredictionVisibility", () => ({
-  usePredictionVisibility: () => ({ showPredictions: true, onToggleShowPredictions: () => {} }),
 }));
 
 let companyBriefReturn;

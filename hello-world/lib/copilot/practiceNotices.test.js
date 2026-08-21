@@ -1,18 +1,13 @@
 import { describe, expect, test } from "vitest";
 import { buildPrivacyNotice } from "./practiceNotices";
-import { preDraftDisclosureApplies } from "./predictionPrefs";
 
 // AC-J3: this extraction must be BYTE-IDENTICAL to the inline derivation
-// that used to live in PracticeClient.js. `oracle` below is an independent
-// copy of that ORIGINAL inline code, frozen exactly as it was before
-// `preDraftEnabled` (BUG-J3) existed — it deliberately takes no
-// `preDraftEnabled` parameter and never will, because it represents "what
-// the old code produced", which by definition never disclosed a switch it
-// didn't have. Every case below that passes `preDraftEnabled: false` is a
-// genuine characterization test against this oracle: it fails if
-// buildPrivacyNotice's output for that (compatibility) path ever diverges
-// from what the ORIGINAL inline logic would have produced for the same
-// inputs.
+// that used to live in PracticeClient.js. `oracle` below is an independent,
+// frozen copy of that original inline code — the permanent statement of
+// what buildPrivacyNotice returns. Every case below is a genuine
+// characterization test against this oracle: it fails if buildPrivacyNotice's
+// output ever diverges from what the original inline logic would have
+// produced for the same inputs.
 function oracle({
   sttProviderName,
   isEmbedded,
@@ -89,41 +84,13 @@ function allCombinations() {
 }
 
 describe("buildPrivacyNotice", () => {
-  // BUG-J3: `preDraftEnabled` is an EIGHTH flag, swept the same way as the
-  // seven booleans above (256 base combos x 2 preDraftEnabled values = 512
-  // cases), but asserted differently depending on its value rather than
-  // folded into `oracle` — see that function's own doc for why it must
-  // never learn about this input.
   for (const sttProviderName of STT_PROVIDER_NAMES) {
     for (const combo of allCombinations()) {
       const oracleValue = oracle({ ...combo, sttProviderName });
       const flagsLabel = BOOL_FLAGS.map((f) => `${f}=${combo[f]}`).join(" ");
 
-      // The compatibility guarantee this whole sweep exists to protect:
-      // with the switch off, output must stay byte-identical to the frozen
-      // oracle for every one of the 256 base combinations. This must never
-      // weaken, regardless of what preDraftEnabled: true does below.
-      test(`stt=${String(sttProviderName)} ${flagsLabel} preDraft=false`, () => {
-        expect(buildPrivacyNotice({ ...combo, sttProviderName, preDraftEnabled: false })).toBe(oracleValue);
-      });
-
-      test(`stt=${String(sttProviderName)} ${flagsLabel} preDraft=true`, () => {
-        const actual = buildPrivacyNotice({ ...combo, sttProviderName, preDraftEnabled: true });
-        if (combo.isEmbedded) {
-          // BUG-J2: the embedded engine's own sentence already covers
-          // pre-drafting correctly ("Sample answers are drafted on this
-          // server too") — turning the switch on must add NOTHING here,
-          // so this must match the (pre-draft-unaware) oracle exactly, the
-          // same value the preDraft=false case above also matches.
-          expect(actual).toBe(oracleValue);
-        } else {
-          // BUG-J3: a non-embedded engine must actually disclose the
-          // pre-draft's automatic Gemini send — output must differ from
-          // the oracle (which has no knowledge of this transfer at all)
-          // and must contain the disclosure.
-          expect(actual).not.toBe(oracleValue);
-          expect(actual).toContain('"Pre-draft predicted answer" is on');
-        }
+      test(`stt=${String(sttProviderName)} ${flagsLabel}`, () => {
+        expect(buildPrivacyNotice({ ...combo, sttProviderName })).toBe(oracleValue);
       });
     }
   }
@@ -142,30 +109,6 @@ describe("buildPrivacyNotice", () => {
         hasSubmittedResume: false,
         hasSubmittedCoverLetter: false,
         saveEnabled: true,
-      }),
-    ).toBe(
-      "Your audio is streamed to Deepgram for transcription. " +
-        "The critique runs on this server with no AI provider — your answer, the posting, and your prep context are never sent to Google. Sample answers are drafted on this server too. " +
-        "Your answer video is uploaded to your own Supabase storage, private to your account, and listed in your practice history until you delete it.",
-    );
-  });
-
-  // BUG-J2 regression pin: turning pre-draft ON while embedded must not
-  // change a single character of the string above — the embedded engine's
-  // own sentence already covers it, and no second "separate from
-  // pre-drafting" clause is ever added anywhere in this string.
-  test("embedded engine, no posting, pre-draft on — unchanged from pre-draft off", () => {
-    expect(
-      buildPrivacyNotice({
-        sttProviderName: "Deepgram",
-        isEmbedded: true,
-        framesWillUpload: false,
-        hasPosting: false,
-        docsSettled: false,
-        hasSubmittedResume: false,
-        hasSubmittedCoverLetter: false,
-        saveEnabled: true,
-        preDraftEnabled: true,
       }),
     ).toBe(
       "Your audio is streamed to Deepgram for transcription. " +
@@ -255,169 +198,5 @@ describe("buildPrivacyNotice", () => {
         "Revealing a sample answer sends that question and your prep context to Gemini as well. " +
         "Your answer video is uploaded to your own Supabase storage, private to your account, and listed in your practice history until you delete it.",
     );
-  });
-
-  // BUG-J3 pinned cases: the new disclosure clause, through its own
-  // hedge/assert/omit progression as the documents state settles — mirrors
-  // the pinned cases above for submittedDocsToGeminiClause/sampleAnswerClause,
-  // but for the pre-draft's own automatic send.
-  test("pre-draft on, gemini engine, no posting", () => {
-    expect(
-      buildPrivacyNotice({
-        sttProviderName: "Deepgram",
-        isEmbedded: false,
-        framesWillUpload: false,
-        hasPosting: false,
-        docsSettled: false,
-        hasSubmittedResume: false,
-        hasSubmittedCoverLetter: false,
-        saveEnabled: true,
-        preDraftEnabled: true,
-      }),
-    ).toBe(
-      "Your audio is streamed to Deepgram for transcription. " +
-        "Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback. " +
-        "Revealing a sample answer sends that question and your prep context to Gemini as well. " +
-        'While "Pre-draft predicted answer" is on, a predicted question and your prep context are sent to Gemini automatically, before you reveal anything. ' +
-        "Your answer video is uploaded to your own Supabase storage, private to your account, and listed in your practice history until you delete it.",
-    );
-  });
-
-  test("pre-draft on, gemini engine, posting selected but documents still loading — hedges with may", () => {
-    expect(
-      buildPrivacyNotice({
-        sttProviderName: "Deepgram",
-        isEmbedded: false,
-        framesWillUpload: false,
-        hasPosting: true,
-        docsSettled: false,
-        hasSubmittedResume: false,
-        hasSubmittedCoverLetter: false,
-        saveEnabled: true,
-        preDraftEnabled: true,
-      }),
-    ).toBe(
-      "Your audio is streamed to Deepgram for transcription. " +
-        "Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback. " +
-        "The critique may also send any resume or cover letter you submitted for the selected posting to Gemini. " +
-        "Revealing a sample answer sends that question and your prep context to Gemini as well, and may also send any resume or cover letter you submitted for the selected posting. " +
-        'While "Pre-draft predicted answer" is on, a predicted question and your prep context are sent to Gemini automatically, before you reveal anything, and any resume or cover letter you submitted for the selected posting may be sent too. ' +
-        "Your answer video is uploaded to your own Supabase storage, private to your account, and listed in your practice history until you delete it.",
-    );
-  });
-
-  test("pre-draft on, gemini engine, posting settled with only a resume on file — names the resume", () => {
-    expect(
-      buildPrivacyNotice({
-        sttProviderName: "Deepgram",
-        isEmbedded: false,
-        framesWillUpload: false,
-        hasPosting: true,
-        docsSettled: true,
-        hasSubmittedResume: true,
-        hasSubmittedCoverLetter: false,
-        saveEnabled: true,
-        preDraftEnabled: true,
-      }),
-    ).toBe(
-      "Your audio is streamed to Deepgram for transcription. " +
-        "Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback. " +
-        "The critique also sends the resume you submitted for the selected posting to Gemini. " +
-        "Revealing a sample answer sends that question, your prep context, and the resume you submitted for the selected posting to Gemini as well. " +
-        'While "Pre-draft predicted answer" is on, a predicted question and your prep context are sent to Gemini automatically, before you reveal anything, along with the resume you submitted for the selected posting. ' +
-        "Your answer video is uploaded to your own Supabase storage, private to your account, and listed in your practice history until you delete it.",
-    );
-  });
-
-  test("pre-draft on, gemini engine, posting settled with neither document found — no document mention", () => {
-    expect(
-      buildPrivacyNotice({
-        sttProviderName: "Deepgram",
-        isEmbedded: false,
-        framesWillUpload: false,
-        hasPosting: true,
-        docsSettled: true,
-        hasSubmittedResume: false,
-        hasSubmittedCoverLetter: false,
-        saveEnabled: true,
-        preDraftEnabled: true,
-      }),
-    ).toBe(
-      "Your audio is streamed to Deepgram for transcription. " +
-        "Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback. " +
-        "Revealing a sample answer sends that question and your prep context to Gemini as well. " +
-        'While "Pre-draft predicted answer" is on, a predicted question and your prep context are sent to Gemini automatically, before you reveal anything. ' +
-        "Your answer video is uploaded to your own Supabase storage, private to your account, and listed in your practice history until you delete it.",
-    );
-  });
-});
-
-// Predictions can now be hidden (lib/copilot/predictionPrefs.js). Once they
-// are, the pre-draft switch can no longer fire the automatic send
-// preDraftClauseFor discloses — the caller is expected to route
-// `preDraftEnabled` through `preDraftDisclosureApplies(preDraftSwitchOn,
-// showPredictions)` (see PracticeClient.js) rather than passing the raw
-// switch value straight through, so this notice never keeps claiming a
-// transfer that hiding predictions has already prevented.
-describe("buildPrivacyNotice with preDraftEnabled gated by preDraftDisclosureApplies", () => {
-  const baseArgs = {
-    sttProviderName: "Deepgram",
-    isEmbedded: false,
-    framesWillUpload: false,
-    hasPosting: false,
-    docsSettled: false,
-    hasSubmittedResume: false,
-    hasSubmittedCoverLetter: false,
-    saveEnabled: true,
-  };
-
-  test("predictions hidden: the pre-draft switch being on is not enough — the sentence is absent entirely", () => {
-    const notice = buildPrivacyNotice({
-      ...baseArgs,
-      preDraftEnabled: preDraftDisclosureApplies(/* preDraftSwitchOn */ true, /* showPredictions */ false),
-    });
-    expect(notice).not.toContain('"Pre-draft predicted answer" is on');
-    expect(notice).not.toContain("automatically, before you reveal anything");
-  });
-
-  test("predictions visible: the pre-draft switch being on IS enough — the sentence is present", () => {
-    const notice = buildPrivacyNotice({
-      ...baseArgs,
-      preDraftEnabled: preDraftDisclosureApplies(/* preDraftSwitchOn */ true, /* showPredictions */ true),
-    });
-    expect(notice).toContain('"Pre-draft predicted answer" is on');
-    expect(notice).toContain("automatically, before you reveal anything");
-  });
-
-  // The load-bearing proof: hiding predictions must genuinely restore the
-  // narrower, pre-feature notice — not just reword the pre-draft clause into
-  // something that merely sounds less alarming. Byte-identical to the
-  // `preDraftEnabled: false` path (the same path the frozen-oracle sweep
-  // above pins against the pre-extraction original) is the only way to know
-  // no residue of the clause survives.
-  test("predictions hidden produces a notice byte-identical to preDraftEnabled: false, across every other flag combination", () => {
-    const STT_NAMES = [null, "Deepgram"];
-    const FLAG_COMBOS = [
-      { isEmbedded: false, framesWillUpload: false, hasPosting: false, docsSettled: false, hasSubmittedResume: false, hasSubmittedCoverLetter: false, saveEnabled: true },
-      { isEmbedded: false, framesWillUpload: true, hasPosting: true, docsSettled: false, hasSubmittedResume: false, hasSubmittedCoverLetter: false, saveEnabled: false },
-      { isEmbedded: false, framesWillUpload: false, hasPosting: true, docsSettled: true, hasSubmittedResume: true, hasSubmittedCoverLetter: false, saveEnabled: true },
-      { isEmbedded: false, framesWillUpload: false, hasPosting: true, docsSettled: true, hasSubmittedResume: true, hasSubmittedCoverLetter: true, saveEnabled: false },
-      { isEmbedded: true, framesWillUpload: false, hasPosting: true, docsSettled: true, hasSubmittedResume: false, hasSubmittedCoverLetter: false, saveEnabled: true },
-    ];
-    for (const sttProviderName of STT_NAMES) {
-      for (const flags of FLAG_COMBOS) {
-        const withGatedHelper = buildPrivacyNotice({
-          ...flags,
-          sttProviderName,
-          preDraftEnabled: preDraftDisclosureApplies(true, false),
-        });
-        const withExplicitFalse = buildPrivacyNotice({
-          ...flags,
-          sttProviderName,
-          preDraftEnabled: false,
-        });
-        expect(withGatedHelper).toBe(withExplicitFalse);
-      }
-    }
   });
 });

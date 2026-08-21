@@ -1,13 +1,13 @@
 // AC-N1: the ONE definition of "what was this drafted answer actually built
 // from" and "is that still what's selected" — shared by live mode
-// (useLiveSession.js's runDraft, CopilotClient.js's onPrefetchedAnswer) and
-// practice mode (sampleAnswerState.js's cachedSampleAnswerFor). Before this
-// module existed, practice mode had its own inline three-field comparison
-// and live mode had none at all — a cached draft built from a job posting or
-// prep context the user had since changed could be served as if it still
-// applied. Two independent copies of "same grounding" is exactly how
-// BUG-J6 happened; this module exists so live and practice can never drift
-// apart on the question again.
+// (useLiveSession.js's runDraft, via useDraftAnswer.js) and practice mode
+// (sampleAnswerState.js's cachedSampleAnswerFor). Before this module existed,
+// practice mode had its own inline three-field comparison and live mode had
+// none at all — a cached draft built from a job posting or prep context the
+// user had since changed could be served as if it still applied. Two
+// independent copies of "same grounding" is exactly how BUG-J6 happened;
+// this module exists so live and practice can never drift apart on the
+// question again.
 //
 // Pure, no React, no DOM — reachable from this repo's node-only vitest setup
 // (vitest.config.js has no jsdom) the same way sampleAnswerState.js is.
@@ -17,8 +17,8 @@
 // must compare equal, on EVERY field, or a write from one mode/call-site
 // spelling "nothing selected" one way can never be read back by another
 // spelling it a different way. Getting this wrong doesn't throw and doesn't
-// fail loudly — it just makes the cache miss forever, silently doubling what
-// every predicted question costs (see this file's own test header comment).
+// fail loudly — it just makes the cache miss forever, silently doubling the
+// cost of every repeated question (see this file's own test header comment).
 const NOT_APPLICABLE = "";
 
 function normalizeField(value) {

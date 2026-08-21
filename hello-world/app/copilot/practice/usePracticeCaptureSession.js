@@ -196,12 +196,13 @@ export function usePracticeCaptureSession({
     // whatever the previous session was doing, and resets the audio-time
     // clock to 0 — it's relative to THIS session's Deepgram socket.
     resetForSession();
-    // AC-J2.10: the dashboard hook's own reset — clears its pace samples and
-    // any prediction/pre-draft left over from a previous session the same
-    // way resetForSession above clears the answer flow's own state. Without
-    // this, a session restarted against the same posting with no questions
-    // asked yet could briefly keep showing the PREVIOUS session's stale
-    // prediction (see useCopilotDashboard.js's own resetForSession doc).
+    // AC-J2.10: the dashboard hook's own reset — clears the rolling
+    // pace/filler speech-sample window, the same way resetForSession above
+    // clears the answer flow's own state. Without this, a session restarted
+    // against the same posting would score its opening seconds against
+    // speech samples still sitting in the window from the PREVIOUS session,
+    // bleeding that session's pace/filler reading into this one's (see
+    // useCopilotDashboard.js's own resetForSession doc).
     resetDashboardForSession();
     setStatus("connecting");
     // Fire-and-forget: requestQuestion catches its own errors into

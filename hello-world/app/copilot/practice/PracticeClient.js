@@ -6,7 +6,6 @@ import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import { interviewTypeLabel } from "@/lib/copilot/interviewTypes";
 import { buildPrivacyNotice } from "@/lib/copilot/practiceNotices";
-import { preDraftDisclosureApplies } from "@/lib/copilot/predictionPrefs";
 import { submitPracticeQuestion } from "@/lib/copilot/manualQuestion";
 import { useEngine } from "@/app/settings/engine";
 import { useIsTablet } from "@/app/hooks/useResponsive";
@@ -47,8 +46,6 @@ export default function PracticeClient({
   sttProviderName,
   micDeviceId,
   onMicDeviceChange,
-  showPredictions,
-  onToggleShowPredictions,
 } = {}) {
   const [status, setStatus] = useState("idle"); // idle | connecting | live | error
 
@@ -67,7 +64,6 @@ export default function PracticeClient({
   const {
     currentQuestion,
     currentQuestionText,
-    asked,
     questionLoading,
     questionError,
     exhausted,
@@ -104,15 +100,6 @@ export default function PracticeClient({
   // usePracticeAnswer's persistAnswer).
   const { saveEnabled, setSaveEnabled } = useSaveRecordings();
   const onToggleSaveEnabled = useCallback((e) => setSaveEnabled(e.target.checked), [setSaveEnabled]);
-
-  // AC-J2.7: "Pre-draft predicted answer" — plain component state, not
-  // persisted, the same way live mode's Auto-draft switch (CopilotClient.js)
-  // is plain state rather than a stored preference. It exists so the user
-  // can turn off the extra model call a pre-draft costs per prediction
-  // (AC-I4.26's cost concern, restated here since practice mode has no
-  // other auto-drafting control to piggyback on); its value is what's
-  // passed to useCopilotDashboard as `autoDraft` below.
-  const [preDraftPredicted, setPreDraftPredicted] = useState(true);
 
   const {
     answering,
@@ -189,10 +176,9 @@ export default function PracticeClient({
   const resetForSession = useCallback(() => {
     resetAnswerFlowForSession();
     roomQuestions.resetForSession();
-    // `roomQuestions` is a fresh literal every render (same as
-    // sampleAnswer.prime's own dependency a little further down) — depending
-    // on its one stable member ([] deps inside useRoomQuestions) is what
-    // keeps this callback's identity from changing every render too.
+    // `roomQuestions` is a fresh literal every render — depending on its one
+    // stable member ([] deps inside useRoomQuestions) is what keeps this
+    // callback's identity from changing every render too.
   }, [resetAnswerFlowForSession, roomQuestions.resetForSession]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // G1: the toggleable sample answer for the question currently on screen.
@@ -251,31 +237,14 @@ export default function PracticeClient({
     postingRef.current = posting;
   }, [posting]);
 
-  // AC-J2.6: primes useSampleAnswer's own cache (AC-J2.8) with a dashboard
-  // pre-draft — the practice-mode counterpart of live mode's
-  // onPrefetchedAnswer (CopilotClient.js), which writes into its
-  // answerCacheRef the same way. `payload` is passed straight through: it
-  // already carries the profile/interviewType/applicationId the draft was
-  // ACTUALLY built from (see useCopilotDashboard.js's runPredraft), and
-  // re-deriving those from current render state instead would mislabel a
-  // draft whose inputs changed while it was in flight. Deliberately depends
-  // on `sampleAnswer.prime` (stable, [] deps inside useSampleAnswer) rather
-  // than the whole `sampleAnswer` object, which is a fresh literal every
-  // render — depending on it would defeat the whole point of this being a
-  // useCallback, hence the exhaustive-deps override below.
-  const onPrefetchedAnswer = useCallback(
-    (question, payload) => sampleAnswer.prime(question, payload),
-    [sampleAnswer.prime], // eslint-disable-line react-hooks/exhaustive-deps
-  );
-
   // AC-N2: queues a sample-answer draft the moment a question lands, so
   // it's already cached (READY, never SHOWN — see useSampleAnswer's queue)
   // by the time the user reveals it, instead of paying for it and waiting
   // only after asking to see it. Gated by shouldQueueSampleAnswer
   // (lib/copilot/practiceFlow.js) so this never re-fires for a question it
   // already queued, never races the reveal panel's own request while it's
-  // open, and never pays for a draft that's already cached (a prior queue,
-  // a prior reveal, or a dashboard pre-draft via onPrefetchedAnswer above).
+  // open, and never pays for a draft that's already cached (a prior queue
+  // or a prior reveal).
   //
   // Deliberately independent of `armedRef`/autoStartDecision above — see
   // practiceFlow.test.js's "the two decisions are independent" cases: a
@@ -292,10 +261,9 @@ export default function PracticeClient({
     });
     if (!should) return;
     sampleAnswer.queue(currentQuestionText, profile, interviewType, posting?.id || null);
-    // `sampleAnswer` is a fresh literal every render (same as
-    // onPrefetchedAnswer's own sampleAnswer.prime call above) — depending on
-    // the specific, stable members this body actually reads/calls is what
-    // keeps this effect from re-running on every unrelated render.
+    // `sampleAnswer` is a fresh literal every render — depending on the
+    // specific, stable members this body actually reads/calls is what keeps
+    // this effect from re-running on every unrelated render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     currentQuestionText,
@@ -308,26 +276,6 @@ export default function PracticeClient({
     interviewType,
     posting,
   ]);
-
-  // J2.5: the ASKED list plus the current question, oldest first, in the
-  // `{ question }` shape askedQuestionsFor (useCopilotDashboard.js) expects
-  // — this is what the prediction predicts FROM. Deliberately a DIFFERENT
-  // array from `dashboardQuestions` below, which drives what the
-  // dashboard's "Current question"/"Current answer" panels actually
-  // display (J2.4): feeding the predictor a list that includes the
-  // not-yet-asked current question is correct (an interviewer choosing the
-  // next question already knows what was just asked), but the display
-  // panels must show ONLY that current question, never the whole history.
-  // Memoized on `asked`/`currentQuestionText` alone: useCopilotDashboard
-  // keys its own effect on the derived signature STRING, not on this
-  // array's reference, so a fresh array every render causes no bug — but it
-  // did re-fire that hook's questionsRef sync effect on every render for
-  // nothing, since a new array is a new reference every time.
-  const dashboardAskedQuestions = useMemo(() => {
-    return currentQuestionText
-      ? [...asked.map((q) => ({ question: q })), { question: currentQuestionText }]
-      : asked.map((q) => ({ question: q }));
-  }, [asked, currentQuestionText]);
 
   // J2.4: the one-entry array CopilotDashboard's "Current question"/"Current
   // answer" panels read (see CopilotDashboard.js's latestQuestionEntry).
@@ -372,42 +320,19 @@ export default function PracticeClient({
   // uses (useCopilotDashboard.js, formerly useLiveDashboard.js) — the whole
   // point of a practice dashboard is rehearsing against the instrument the
   // candidate will be reading mid-interview, so this must not become a
-  // second, diverging implementation. `draftMode: "answer"` asks for the
-  // same response shape useSampleAnswer already requests, which is what
-  // makes priming its cache with a pre-draft sound (see that hook's `prime`
-  // and AC-J2.9 in useCopilotDashboard.js). `active: running` mirrors
-  // CopilotClient's own `active: live` — a posting selected or a question
-  // on screen before Start practice is pressed must not spend a model call.
+  // second, diverging implementation. The hook now only tracks the delivery
+  // strip (pace/fillers, driven by recordSpeechSample) and its own session
+  // reset, so it takes no arguments at all.
   const {
     pace,
     fillers,
-    predictedQuestion,
-    predictionStatus,
-    predictionError,
-    retryPrediction,
-    retryPredraft,
-    predictedPoints,
-    predictedCues,
-    predictedAnswerStatus,
-    predictedAnswerError,
     recordSpeechSample,
     // AC-J2.10: usePracticeAnswer above already returns its own
     // `resetForSession` (destructured near the top of this component) — the
     // dashboard hook's own reset is renamed at this destructuring site so
     // the two can never shadow one another, and start() below calls BOTH.
     resetForSession: resetDashboardForSession,
-  } = useCopilotDashboard({
-    questions: dashboardAskedQuestions,
-    posting,
-    applicationId: posting?.id || null,
-    profile,
-    interviewType,
-    draftMode: "answer",
-    autoDraft: preDraftPredicted,
-    active: running,
-    predictionsEnabled: showPredictions,
-    onPrefetchedAnswer,
-  });
+  } = useCopilotDashboard();
 
   // "Next question": advanceAsked (usePracticeQuestions) does the
   // question-side half — see its own doc for the dedupe rule. Order matters
@@ -494,10 +419,9 @@ export default function PracticeClient({
   // transcript, elapsed clock, camera/mic toggles) lives in
   // usePracticeCaptureSession.js — see that module's own header for why
   // `status`/`setStatus` stay here as controlled state rather than moving in
-  // with the rest: useCopilotDashboard's `active: running` above needs
-  // `running` (derived from `status`) before this hook can be called, since
-  // this hook's own `start` needs useCopilotDashboard's
-  // `resetDashboardForSession`/`recordSpeechSample` in return.
+  // with the rest: this hook's own `start` needs useCopilotDashboard's
+  // `resetDashboardForSession`/`recordSpeechSample`, both already
+  // destructured above, in return.
   const {
     error,
     warning,
@@ -613,12 +537,12 @@ export default function PracticeClient({
   const hasSubmittedResume = !!submittedDocs.resume;
   const hasSubmittedCoverLetter = !!submittedDocs.coverLetter;
   // AC-J3: the actual sentence-by-sentence derivation (critique/sample-
-  // answer document clauses, the pre-draft clause, the engine notice, the
-  // video notice, the STT notice) now lives in lib/copilot/practiceNotices.js,
-  // extracted purely to keep this component under this repo's line-count
-  // gate — with `preDraftEnabled: false`, its output is byte-identical to
-  // what used to be inlined here (see that module's own tests for the full
-  // combinatorial proof). F2: `sttProviderName` is passed down from
+  // answer document clauses, the engine notice, the video notice, the STT
+  // notice) now lives in lib/copilot/practiceNotices.js, extracted purely to
+  // keep this component under this repo's line-count gate — its output is
+  // byte-identical to what used to be inlined here (see that module's own
+  // tests for the full combinatorial proof). F2: `sttProviderName` is passed
+  // down from
   // CopilotClient, which learns it from the /api/copilot/token response
   // rather than this component fetching its own — one fetch per page is
   // enough for both modes' notices to agree. D1: `saveEnabled` is this
@@ -639,15 +563,6 @@ export default function PracticeClient({
     hasSubmittedResume,
     hasSubmittedCoverLetter,
     saveEnabled,
-    // BUG-J3: discloses the pre-draft switch's automatic Gemini send — but
-    // only when that send can actually happen. Routed through
-    // preDraftDisclosureApplies (lib/copilot/predictionPrefs.js) rather than
-    // hand-written as `preDraftPredicted && showPredictions`: that helper is
-    // the same one speculativeWorkEnabled is checked against in its own
-    // test, so the notice and the actual work-gate are provably in
-    // agreement instead of two independent copies of the same condition
-    // that could drift apart.
-    preDraftEnabled: preDraftDisclosureApplies(preDraftPredicted, showPredictions),
   })} ${roomQuestionPrivacyClause({ isEmbedded, hasPosting, docsSettled, hasSubmittedResume, hasSubmittedCoverLetter })}`;
   // G2/AC-G2-C-6: resolved once here, from the CURRENT interview type,
   // rather than inside AnswerFeedback — changing interview type always
@@ -701,9 +616,6 @@ export default function PracticeClient({
         onSendFramesChange={(e) => setSendFrames(e.target.checked)}
         saveEnabled={saveEnabled}
         onToggleSaveEnabled={onToggleSaveEnabled}
-        preDraftPredicted={preDraftPredicted}
-        onPreDraftChange={(e) => setPreDraftPredicted(e.target.checked)}
-        showPredictions={showPredictions}
         onDownloadLog={sessionLog.downloadLog}
         downloadLogEnabled={sessionLog.hasLog}
       />
@@ -763,17 +675,6 @@ export default function PracticeClient({
                 copy={PRACTICE_COPY}
                 pace={pace}
                 fillers={fillers}
-                showPredictions={showPredictions}
-                onToggleShowPredictions={onToggleShowPredictions}
-                predictedQuestion={predictedQuestion}
-                predictionStatus={predictionStatus}
-                predictionError={predictionError}
-                onRetryPrediction={retryPrediction}
-                onRetryPredraft={retryPredraft}
-                predictedPoints={predictedPoints}
-                predictedCues={predictedCues}
-                predictedAnswerStatus={predictedAnswerStatus}
-                predictedAnswerError={predictedAnswerError}
                 // AC-J2.3: gated behind the SAME useSampleAnswer instance
                 // QuestionCard's own sample-answer panel uses below, so
                 // revealing the answer in either place reveals it in both —

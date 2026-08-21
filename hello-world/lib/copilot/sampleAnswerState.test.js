@@ -195,10 +195,10 @@ describe("needsRedraft — done redrafts only when profile, interviewType, or ap
   });
 });
 
-// AC-J2.9: cachedSampleAnswerFor is the reveal-time cache lookup for a
-// pre-draft made by the dashboard's prediction hook, before the reveal ever
-// asks for one. Every "return null" branch here matters because a false hit
-// serves a stale or blank draft as if it were a real answer.
+// AC-J2.9: cachedSampleAnswerFor is the reveal-time cache lookup for a draft
+// queued by useSampleAnswer.queue before the reveal ever asks for one. Every
+// "return null" branch here matters because a false hit serves a stale or
+// blank draft as if it were a real answer.
 describe("cachedSampleAnswerFor", () => {
   const CURRENT_QUESTION = "Tell me about a time you led a project.";
   const CURRENT_PROFILE = "profile-A";
@@ -332,11 +332,10 @@ describe("cachedSampleAnswerFor", () => {
   // decide whether there's anything usable at all (see the "blank/non-string
   // values" test above) — it must keep returning the entry's RAW `points`
   // array on a hit, not the filtered copy. This is a pinned contract, not an
-  // oversight: the render layer (CopilotDashboard.js's CurrentAnswerPanel/
-  // PredictedAnswerPanel, both via cleanAnswerPoints) is where blank entries
-  // actually get stripped before display, so a future change here that
-  // starts "helpfully" cleaning the array would be a deliberate decision,
-  // not a silent accident this test lets slip through.
+  // oversight: the render layer (SampleAnswer.js's use of cleanAnswerPoints)
+  // is where blank entries actually get stripped before display, so a future
+  // change here that starts "helpfully" cleaning the array would be a
+  // deliberate decision, not a silent accident this test lets slip through.
   it("returns the entry's points array unchanged on a hit, not a filtered copy", () => {
     const entry = validEntry();
     const result = cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP);
@@ -372,9 +371,10 @@ describe("cachedSampleAnswerFor", () => {
 
   // AC-G1-6/AC-G2-C-5/AC-G2-C-9: needsRedraft's "done" branch and
   // cachedSampleAnswerFor's own comparison encode the SAME staleness rule in
-  // two different places (one for the on-screen draft, one for a pre-draft
-  // cache entry). A test that only exercised them separately would not catch
-  // the two drifting apart — e.g. one gaining a comparison the other lacks.
+  // two different places (one for the on-screen draft, one for an entry
+  // queued ahead of reveal). A test that only exercised them separately
+  // would not catch the two drifting apart — e.g. one gaining a comparison
+  // the other lacks.
   // This drives both functions off the SAME table of entries and asserts
   // they agree on every combination of matching/mismatching profile,
   // interviewType, and applicationId.

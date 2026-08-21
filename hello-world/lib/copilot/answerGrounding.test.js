@@ -17,7 +17,7 @@ import { cachedAnswerFor, groundingFor, sameGrounding } from "./answerGrounding"
 // The failure mode to keep in mind while reading these: getting the
 // not-applicable normalisation wrong does not throw and does not fail loudly.
 // It just makes every lookup miss forever, silently disabling the cache and
-// doubling what every predicted question costs. That is why the "cache still
+// doubling the cost of every repeated question. That is why the "cache still
 // actually hits" cases below are as important as the rejection cases.
 
 const LIVE = { profile: "six years in payments", applicationId: "app-1" };
@@ -113,8 +113,8 @@ describe("cachedAnswerFor", () => {
 
   it("serves an entry whose grounding still matches", () => {
     // The cache MUST still hit in the ordinary case. A grounding check that
-    // rejects everything breaks nothing visibly - it just silently doubles what
-    // every predicted question costs.
+    // rejects everything breaks nothing visibly - it just silently doubles the
+    // cost of every repeated question.
     expect(cachedAnswerFor(entry(), groundingFor({ ...LIVE }))).not.toBeNull();
   });
 

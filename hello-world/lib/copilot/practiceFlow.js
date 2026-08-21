@@ -98,16 +98,15 @@ export function autoStartDecision(args) {
 // Whether a draft of the sample answer should be fetched now for `question`,
 // so it is READY by the time the user reveals it — never SHOWN early. Only
 // `useSampleAnswer`'s reveal path is allowed to put a draft on screen; this
-// decision exists purely to pre-pay the network cost, the same bet the
-// dashboard's pre-draft already makes for a PREDICTED question, applied here
-// to whatever question actually landed.
+// decision exists purely to pre-pay the network cost for whatever question
+// actually landed, ahead of the user asking to see it.
 //
 //   loading — the question itself isn't settled yet; queuing a draft for
 //             text that's about to be replaced would draft the wrong thing.
 //   visible — the reveal panel already owns fetching for this question
 //             (useSampleAnswer's `reveal`); queuing here would race it.
-//   hasCached — already fetched (by a prior queue, a prior reveal, or a
-//               dashboard pre-draft) — never pay twice for the same draft.
+//   hasCached — already fetched (by a prior call to this same queue, or by a
+//               prior reveal) — never pay twice for the same draft.
 //   queuedFor — the question this hook last queued a draft for, compared via
 //               `normalizeQuestion` (the same normalization the cache itself
 //               is keyed by) so trivial case/whitespace differences don't

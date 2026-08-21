@@ -8,8 +8,8 @@
 // that every control on this screen still resolves to its OWN accessible
 // name — this codebase's own MUI Tooltip-on-disabled-span trap (see
 // mui-a11y-traps) steals a control's name, and this component already had
-// one near-miss of that shape (the pre-draft switch's own caption, written
-// as plain text for exactly this reason). What actually gets recorded is
+// one near-miss of that shape (the embedded-engine caption, written as
+// plain text for exactly this reason). What actually gets recorded is
 // usePracticeSessionLog.test.js's job, not this file's.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -43,9 +43,6 @@ function baseProps(overrides) {
     onSendFramesChange: vi.fn(),
     saveEnabled: true,
     onToggleSaveEnabled: vi.fn(),
-    preDraftPredicted: true,
-    onPreDraftChange: vi.fn(),
-    showPredictions: true,
     onDownloadLog: vi.fn(),
     downloadLogEnabled: false,
     ...overrides,

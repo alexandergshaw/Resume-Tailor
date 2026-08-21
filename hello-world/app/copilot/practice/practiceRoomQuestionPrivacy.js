@@ -28,8 +28,7 @@ function roomQuestionDocsWord(hasResume, hasCoverLetter) {
 // component renders incomplete about a transfer it now performs
 // automatically (this codebase has shipped that exact class of bug before —
 // BUG-H5). Unconditional, not gated on whether anyone has actually spoken
-// yet this session, for the same reason BUG-J3's pre-draft clause is
-// unconditional: detection runs the moment a session starts, not behind a
+// yet this session: detection runs the moment a session starts, not behind a
 // switch the candidate opts into, so it has to be disclosed before it can
 // happen, not after. Follows the exact same hedge (docs not yet settled) /
 // assert (docs found) / omit (no posting, or none found) discipline as

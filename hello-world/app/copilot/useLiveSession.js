@@ -54,26 +54,25 @@ function resolveTranscriptLabel(row, snapshot) {
 // same split useCopilotDashboard.js and useApplicationDocs.js already
 // established for their own pieces of this component.
 //
-// `answerCacheRef` is passed in rather than created here, and
-// `recordSpeechSample`/`resetForSession` are passed in from
-// useCopilotDashboard, because CopilotClient must call useCopilotDashboard
-// (which needs `onPrefetchedAnswer`, itself writing through answerCacheRef)
-// BEFORE this hook (which needs useCopilotDashboard's own
-// recordSpeechSample/resetForSession) — keeping the cache ref in the
-// component is what avoids a call-order cycle between the two hooks.
-// `status`/`setStatus` and `questions`/`setQuestions` are passed in for the
-// SAME reason, in the opposite direction: useCopilotDashboard's `active` and
-// `questions` arguments need this hook's `live` (derived from `status`) and
-// `questions` values, but useCopilotDashboard is called first, so neither
-// can come from this hook's return yet at that point in the render — and
-// this project's react-hooks/refs lint rule forbids reading a ref's
-// `.current` during render (only inside effects/callbacks), so a ref-mirror
-// bridge like answerCacheRef's can't stand in for reactive values the way it
-// stands in for a cache write. CopilotClient instead keeps the raw
-// `useState` calls for just these two pieces of state (like it already does
-// for `profile`/`posting`/`autoDraft`) and hands them down as controlled
-// state; every state TRANSITION for them (setStatus/setQuestions calls) still
-// lives entirely in this hook, exactly as the rest of the pipeline does.
+// `answerCacheRef` is passed in rather than created here because
+// CopilotClient's own onPostingChange/onProfileChange handlers (and its
+// profile-change effect) clear it directly, outside this hook entirely —
+// CopilotClient has to hold the one Map instance both those handlers and
+// useDraftAnswer.js's runDraft (called from this hook, and its sole writer)
+// read and write. `recordSpeechSample`/`resetForSession` are passed in from
+// useCopilotDashboard for a plainer reason: that hook, not this one, owns
+// the rolling pace/filler speech-sample window, so CopilotClient calls it
+// and hands its two callbacks down as ordinary props.
+// `status`/`setStatus` and `questions`/`setQuestions` are passed in rather
+// than kept as local state here for a different reason again: CopilotClient's
+// own render needs them directly — `live` (derived from `status`) gates
+// several branches, StatusPill reads `status`, and QuestionFeed and the
+// manual-question disabled check both read `questions` — so CopilotClient
+// keeps the raw `useState` calls for just these two pieces of state (like it
+// already does for `profile`/`posting`/`autoDraft`) and hands them down as
+// controlled state; every state TRANSITION for them (setStatus/setQuestions
+// calls) still lives entirely in this hook, exactly as the rest of the
+// pipeline does.
 //
 // AC-N1.3: `draftGenRef` is the same story as `answerCacheRef` — created in
 // CopilotClient so its two writers outside this hook (onPostingChange,

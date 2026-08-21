@@ -19,11 +19,12 @@ import { companyBriefRequest, normalizeBriefArticles } from "@/lib/copilot/compa
 // real network call (a Gemini google-search grounded generation, or the
 // embedded engine's own web fetches), so it must never fire on mount, never
 // on a posting change, never when a live session starts — only when the
-// candidate actually asks for it via openBrief()/refresh(). AC-I4 already
-// fixed this exact defect once for predictions; this hook exists so it
-// cannot recur here by construction: there is deliberately no useEffect in
-// this file. Nothing runs a fetch except the two callbacks openBrief and
-// refresh.
+// candidate actually asks for it via openBrief()/refresh(). This codebase
+// has already paid for the "an effect fires a network call the user never
+// asked for" defect once before (AC-I4, on a feature since removed); this
+// hook exists so it cannot recur here by construction: there is deliberately
+// no useEffect in this file. Nothing runs a fetch except the two callbacks
+// openBrief and refresh.
 
 // `forId` is the posting id `status`/`articles`/etc. actually belong to —
 // null until a fetch has ever been kicked off. Carrying it INSIDE state

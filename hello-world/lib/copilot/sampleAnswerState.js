@@ -131,15 +131,13 @@ export function needsRedraft(active, profile, interviewType, applicationId, forc
   );
 }
 
-// AC-J2.9: the state to adopt for a draft that arrives from OUTSIDE the
-// hook's own request — specifically, the dashboard's pre-draft for a
-// predicted question that the practice engine then actually asked
-// (useSampleAnswer.js's cache; see useCopilotDashboard.js's
-// onPrefetchedAnswer). This is the practice-mode counterpart of live mode's
-// `answerCacheRef` hit, and the same cost argument applies: pre-drafting
-// roughly doubles the model calls a predicted question costs, and serving
-// the cached draft on reveal is what pays that back. If it never hits,
-// nothing errors — the reveal just quietly pays full price again.
+// AC-J2.9: the state to adopt for a draft read back from useSampleAnswer's
+// own cache (see useSampleAnswer.queue) — a drafted answer is cached under
+// normalizeQuestion(question) so revealing, hiding, and re-revealing the
+// same question costs one request rather than a fresh one every time. This
+// is the practice-mode counterpart of live mode's `answerCacheRef` hit. If
+// it never hits, nothing errors — the reveal just quietly pays full price
+// again.
 //
 // Returns `null` — meaning "cache miss, draft it properly" — whenever the
 // entry cannot be trusted for the CURRENT inputs:
@@ -150,14 +148,14 @@ export function needsRedraft(active, profile, interviewType, applicationId, forc
 //   - the entry was built from a different prep profile, interview type, or
 //     application than the reveal is asking about. That is exactly
 //     needsRedraft's "done" comparison above, applied to a cache entry
-//     instead of the on-screen draft — the two must agree, or a pre-draft
-//     made before the user edited their prep context would be served as if
-//     it reflected the edit.
+//     instead of the on-screen draft — the two must agree, or an entry
+//     cached before the user edited their prep context would be served as
+//     if it reflected the edit.
 //
 // On a hit it returns a complete state slot with `visible: true`, because
 // the only caller is a reveal. Priming the cache itself never touches
-// visibility — a pre-drafted answer for a question the user has not asked
-// to see must not put itself on screen.
+// visibility — a draft queued by useSampleAnswer.queue for a question the
+// user has not asked to see must not put itself on screen.
 //
 // AC-N1.1: the emptiness check and the profile/interviewType/applicationId
 // comparison are delegated to answerGrounding.js's cachedAnswerFor, so this
@@ -175,11 +173,11 @@ export function cachedSampleAnswerFor(entry, question, profile, interviewType, a
     visible: true,
     status: "done",
     points: hit.points,
-    // AC-K1: an entry cached before these existed (a pre-draft primed earlier
-    // in the same open session) has none of them, which resolves to the empty
-    // shapes here — SampleAnswer.js then falls back to rendering the full
-    // points and simply omits the two subsections, rather than showing a
-    // header with nothing under it.
+    // AC-K1: an entry cached before these existed (queued by
+    // useSampleAnswer.queue earlier in the same open session) has none of
+    // them, which resolves to the empty shapes here — SampleAnswer.js then
+    // falls back to rendering the full points and simply omits the two
+    // subsections, rather than showing a header with nothing under it.
     cues: Array.isArray(hit.cues) ? hit.cues : [],
     buzzwords: Array.isArray(hit.buzzwords) ? hit.buzzwords : [],
     anchor: hit.anchor || null,
