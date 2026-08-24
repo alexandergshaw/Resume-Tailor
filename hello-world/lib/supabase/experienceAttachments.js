@@ -48,6 +48,41 @@ export async function listAttachments(supabase, userId, pageId) {
   }
 }
 
+// Every attachment this user owns, in ONE query, grouped by `page_id` — for
+// callers that need the inventory for a whole SET of pages at once rather
+// than for one page they are looking at. app/api/meeting/insights/route.js
+// is the first: it reads the user's entire knowledge base on every ~20-second
+// read of a live meeting, so listAttachments-per-page would mean one round
+// trip per page, every read, for the whole meeting.
+//
+// A Map, not a plain object, because the keys are page ids straight out of
+// the database and a Map has no prototype for one of them to collide with.
+// Same result-object contract as everything else in this module: it never
+// throws, and a failure comes back as an empty Map plus an `error` string,
+// so a caller that can carry on without an inventory (the meeting route can
+// — the pages themselves are the substance) is free to ignore it.
+export async function listAttachmentsByPage(supabase, userId) {
+  try {
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: true });
+    if (error) return { byPageId: new Map(), error: error.message || "Could not load attachments." };
+
+    const byPageId = new Map();
+    for (const row of data || []) {
+      const pageId = row?.page_id;
+      if (typeof pageId !== "string" || !pageId) continue;
+      if (!byPageId.has(pageId)) byPageId.set(pageId, []);
+      byPageId.get(pageId).push(row);
+    }
+    return { byPageId, error: null };
+  } catch (err) {
+    return { byPageId: new Map(), error: err?.message || "Could not load attachments." };
+  }
+}
+
 // Uploads the file to storage FIRST, at the key storagePathFor builds from
 // `id` (the client-generated row id — see the migration's own comment), and
 // only then inserts the row. If the insert fails, the just-uploaded object

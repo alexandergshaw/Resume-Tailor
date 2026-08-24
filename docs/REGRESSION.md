@@ -639,7 +639,7 @@ R-064 is this case's successor for notice truthfulness and enumerates the same g
 2. Compare its conventions against `hello-world/supabase/migrations/20260703000000_tailor_personas.sql`.
 3. Read the storage path built in `hello-world/lib/supabase/practiceAnswers.js`.
 
-**Expected:** `user_id` references `auth.users (id) on delete cascade`; `application_id` references `public.applications (id) on delete set null` and has its own index; every text and jsonb column has a not-null default so a critique-less or video-less save is still valid, while `duration_ms` and `video_bytes` are nullable because null honestly means unknown. There is an index on `(user_id, created_at desc)` matching the history query. RLS is enabled with owner-scoped policies for select, insert, update and delete, plus explicit grants. The migration is idempotent. Clips are written to `${userId}/practice/` in the pre-existing `resumes` bucket — no new bucket and no new storage policy are introduced.
+**Expected:** `user_id` references `auth.users (id) on delete cascade`; `application_id` references `public.applications (id) on delete set null` and has its own index; every text and jsonb column has a not-null default so a critique-less or video-less save is still valid, while `duration_ms` and `video_bytes` are nullable because null honestly means unknown. There is an index on `(user_id, created_at desc)` matching the history query. RLS is enabled with owner-scoped policies for select, insert, update and delete, plus explicit grants. The migration is idempotent. Clips are written to `{userId}/practice/` in the pre-existing `resumes` bucket — no new bucket and no new storage policy are introduced.
 
 ### R-061 | area: practice-history | parallel-safe: yes | automatable: yes
 
@@ -3634,3 +3634,35 @@ appeared seven times: in `clearPendingDelete`, and in the clears for notes error
 **Everything else is defensive because this runs live**: an unusable text, an unrecognised insight kind, a duplicate within one read, an id the client already has, more insights than the cap, and a model returning `undefined`, `null`, a bare string or an array of junk — none may throw into a running meeting.
 
 **Both vocabularies are asserted exactly, with `toEqual`.** A lower bound cannot detect an ADDED source kind, and adding one is the single direction this contract can quietly go wrong.
+
+### R-248 | area: meeting-copilot | parallel-safe: yes | automatable: partly
+
+**Summary:** The meeting copilot's server, client pipeline and views — transcription, the debounced insight loop, the knowledge-base context, and the no-LLM path.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/meeting/ app/meeting/ app/api/meeting/ --no-file-parallelism`.
+2. Confirm `npm run build` lists `ƒ /api/meeting/insights` and `ƒ /api/meeting/save`.
+3. With a real meeting running, confirm insights arrive after a pause in speech and not during a burst, and that the nudge control returns one immediately.
+4. On the embedded engine, confirm insights still arrive, that none of them is a composed "point" attributed to the model, and that the notice still says audio reaches the speech provider on every engine.
+
+**Expected:** All suites pass; the manual steps read as described.
+
+**Four defects were found by review AFTER every suite was green, and every one lived in a seam between two agents.** Each is now pinned.
+
+**The route analysed the OLDEST speech, permanently.** `slice(0, MAX_TRANSCRIPT_CHARS)` keeps characters 0–8000 — the START of the meeting. The client sends a window of recent turns, which passes 8000 characters after roughly a hundred turns, so from then on every read saw only the opening minutes while the prompt said "TRANSCRIPT SO FAR (most recent last)". An hour-long meeting would have frozen its topic and its insights on the opening small talk while still spending a model call every twenty seconds. It now keeps the END and opens the window on a turn boundary. Nothing caught it because no test ever sent an over-length transcript.
+
+**`topic` was an object on the wire and a string everywhere downstream.** The route returned `normalizeTopic`'s whole `{ text, changed, confidence }`; every consumer treated it as a string. The heading read "Not yet identified" for the entire meeting, and the stored object went back to the server as the literal `"[object Object]"` — pasted into the prompt as the previous topic AND concatenated into the page-ranking query, where "object" became a scoring term. **Two client test files pinned `topic` as a string, the route test pinned it as an object, and all three were green.** That is what a contradiction between two agents looks like from inside either one. The wire now carries `topic` (string), `topicChanged` and `topicConfidence`, and `changed` stays server-computed — a model asked "did the topic change?" says yes far too often.
+
+**After a dropped socket, pressing Start did nothing.** `start()` early-returns when a session ref exists, and nothing cleared that ref when a source errored — so the recovery path the hook's own header documents was inert, silently, until the user found and pressed Stop. There is no reconnect anywhere in the STT layer, so this WAS the recovery path. The ref is now cleared when the session goes terminal, and the accumulated transcript still survives it.
+
+**The embedded engine counted the speaker label as meeting content.** The transcript reaches the local path with `You: ` / `Others: ` prefixes, and the tokenizer matches four-plus-letter words, so `"others"` was the most frequent term in any call-mode meeting. The topic became literally "others, …", and a page whose only overlap with the conversation was that word scored above zero and was surfaced as worth pulling up. Labels are stripped once before term counting; the prompt still shows the model the labelled transcript.
+
+**The attachment inventory was never fetched at all.** `listPages` returns rows from `experience_pages`; attachments live in `experience_attachments`, and the route never queried them. So `page.attachments` was always undefined, no attachment was ever mentioned to the model, and the honesty notice could never fire — an apparatus fully unit-tested against a page shape the data layer never produces. A single `user_id`-scoped `listAttachmentsByPage` query now grafts them on, with a per-page cap and an "N attachments not listed" notice.
+
+**The honesty rule that made all of this worth doing.** `pageContext.js` disclaims "contents not read" for slides, sheets and archives and deliberately NOT for images, PDFs or text — because in the Ask AI flow those bytes really are attached to the same request. A meeting read sends no bytes, so reusing `formatAttachment` (which is required — a second copy is how those rules drift) inherits a silence that is false here. A blanket sentence states that no attachment contents were read. Without it the model is handed `- Q3 board deck.pdf (PDF) - notes: revenue slide` and will say out loud, in a real meeting, "your board deck shows revenue up 12%."
+
+**The two normalization paths are deliberately asymmetric, and unifying them is a bug.** The model path validates a page citation against the pages that fitted the prompt budget; the local path validates against the pages it actually read. An earlier version applied the budget to both, which downgraded the local path's verifiably-true citations to "the model made this up" — the exact opposite of the truth, and it stripped the one thing that makes the no-LLM path worth having. The comment names re-unification as the bug it prevents, because "for symmetry" is exactly how it would come back.
+
+**The embedded path may never claim authorship.** The invariant is `source.kind` is never `"model"` — not, as an earlier draft had it, that it never emits `kind: "point"`. Quoting a user's own bullet verbatim is surfacing, not composing, and labelling it a "Gap" on screen was simply wrong. It can point at what the user wrote and at what the room asked; it cannot compose.
+
+**A near-miss worth recording.** During its own mutation check an agent rewrote a source file with PowerShell `Out-File -Encoding utf8`, which re-encoded it and corrupted every non-ASCII character — including the `[-*•–—]` bullet-detection character class, which would have silently stopped recognising three of four bullet markers. It restored from a byte-exact backup and reported it. Verified independently afterwards: the regex is intact and the tree carries no replacement characters. **Never write a source file in this repo through a shell redirection.**
