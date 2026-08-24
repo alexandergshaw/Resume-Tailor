@@ -3,8 +3,10 @@
 // Presentational only, per this feature's split: no fetching, no polling,
 // no session. `insights`/`topic`/`loading`/`error` all arrive as props from
 // whatever hook owns the live read (app/meeting/use*.js, out of scope
-// here); `onRetry`/`onNudge` are callbacks this component only ever calls,
-// never implements.
+// here); `onRetry`/`onNudge`/`onFindReferences` are callbacks this component
+// only ever calls, never implements. `referencesByInsightId` is likewise
+// owned and fetched elsewhere — MeetingPanel.js, per its own header comment —
+// this file only ever reads its own insight's entry out of it.
 //
 // The one property this file exists to protect is attribution
 // (lib/meeting/insightContract.js's whole reason for having a `source`
@@ -44,6 +46,177 @@ const visuallyHidden = {
 
 const KIND_LABEL = { point: "Point", question: "Question", gap: "Gap" };
 
+// The two sentences the whole reference-links feature stands or falls on:
+// each says something a bare "no links shown" cannot. `dropped` is about
+// INTEGRITY — the model suggested
+// more than what is on screen, and staying silent about that would let a
+// filtered list masquerade as a complete one. `grounded === false` is about
+// PROVENANCE — no search happened at all, which reads completely differently
+// from "a search happened and came up empty" (groundedEmptyMessage below);
+// collapsing the two into one "nothing found" string would tell the user
+// their topic has no documentation when the truth is nobody looked.
+function droppedMessage(dropped) {
+  const n = typeof dropped === "number" && dropped > 0 ? dropped : 0;
+  const noun = n === 1 ? "suggestion" : "suggestions";
+  const verb = n === 1 ? "is" : "are";
+  return `${n} ${noun} could not be verified and ${verb} not shown.`;
+}
+const groundedEmptyMessage = "No verified references were found for this point.";
+const notGroundedMessage =
+  "This point could not be checked against search results, so no references are shown.";
+
+// A card's reference-fetch control needs its OWN accessible name, not a
+// shared "Find sources" repeated on every card — this repo has shipped that
+// exact bug on another tab (identical controls, indistinguishable to a
+// screen reader) and forbids repeating it here. The insight's own text is
+// what uniquely identifies which point the control acts on, so it goes
+// straight into the label rather than a truncated summary that could
+// collide between two similar insights.
+//
+// Sighted and non-sighted users get the SAME information through different
+// channels, none of which relies on focus moving:
+//   - `aria-label` keeps its "Find sources for: …" prefix in both states
+//     (so nothing here breaks a screen reader's "find the control for this
+//     insight" query), but is no longer IDENTICAL while loading — an
+//     aria-label overrides the visible "Finding sources…" text node
+//     entirely, so a label that never changed made that busy state
+//     invisible to assistive tech even though it was plainly visible on
+//     screen.
+//   - `aria-busy` says the same thing in the one attribute built for it.
+//   - the `CircularProgress` gets its own accessible name — an unnamed
+//     `role="progressbar"` announces nothing.
+//   - a visually-hidden `role="status"` region PROACTIVELY announces
+//     progress and a landed result, so a screen reader user does not have
+//     to be focused on this control at the moment either happens. A
+//     FAILURE is deliberately not repeated in here — ReferenceResults' own
+//     `role="alert"` Alert already carries it, and announcing it twice
+//     (once politely, once as the correct interruption) would be worse than
+//     once. Unconditionally mounted, same discipline as the topic-change
+//     region above: a later announcement must be a text CHANGE on an
+//     already-mounted node, never a region that appears already carrying
+//     its final text. Does not move focus.
+function referenceAnnouncement(insight, referenceState) {
+  if (!referenceState) return "";
+  if (referenceState.status === "loading") {
+    return `Finding sources for: ${insight.text}`;
+  }
+  if (referenceState.status === "done") {
+    const references = Array.isArray(referenceState.result?.references) ? referenceState.result.references : [];
+    if (references.length > 0) {
+      const noun = references.length === 1 ? "reference" : "references";
+      return `${references.length} ${noun} found for: ${insight.text}.`;
+    }
+    return referenceState.result?.grounded ? groundedEmptyMessage : notGroundedMessage;
+  }
+  return "";
+}
+
+function ReferenceControl({ insight, referenceState, onFindReferences }) {
+  const loading = referenceState?.status === "loading";
+  const label = loading
+    ? `Find sources for: ${insight.text} (finding sources…)`
+    : `Find sources for: ${insight.text}`;
+  return (
+    <Stack direction="row" spacing={1} sx={{ alignItems: "center", mt: 1 }}>
+      {/* Never disabled while rendered — a loading fetch must not remove
+          this control from the tab order, the same rule this file's own
+          Nudge button already follows (see its header comment below). */}
+      <Button
+        size="small"
+        variant="outlined"
+        onClick={() => onFindReferences(insight)}
+        aria-label={label}
+        aria-busy={loading}
+      >
+        {loading ? "Finding sources…" : "Find sources"}
+      </Button>
+      {loading ? <CircularProgress size={14} aria-label="Finding sources" /> : null}
+      <Box component="span" role="status" aria-live="polite" sx={visuallyHidden}>
+        {referenceAnnouncement(insight, referenceState)}
+      </Box>
+    </Stack>
+  );
+}
+
+// Renders the last successful lookup for one insight (`result`), plus an
+// error banner when the MOST RECENT attempt failed. `result` is sticky
+// across a failed retry — see MeetingPanel's own reference-state comment —
+// so a card that already has references keeps them on screen right through
+// a failed re-fetch, exactly like the list-level error above keeps existing
+// insights on screen.
+//
+// `insight` exists on this component for exactly one reason: the Retry
+// button below needs its OWN accessible name, the identical rule
+// ReferenceControl's own header comment already states for the "Find
+// sources" control. A bare `<Button>Retry</Button>` on two cards in an
+// error state produces two indistinguishable controls — plus the
+// pre-existing list-level "Retry" above, three where there was meant to be
+// one this repo has already shipped that exact bug and forbids repeating.
+function ReferenceResults({ insight, referenceState, onRetry }) {
+  if (!referenceState) return null;
+  const { status, error, result } = referenceState;
+  const references = Array.isArray(result?.references) ? result.references : [];
+  const hasResult = result != null;
+
+  return (
+    <Box sx={{ mt: 1 }}>
+      {status === "error" ? (
+        <Alert
+          severity="error"
+          sx={{ mb: 1 }}
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              onClick={onRetry}
+              aria-label={`Retry finding sources for: ${insight.text}`}
+            >
+              Retry
+            </Button>
+          }
+        >
+          {error}
+        </Alert>
+      ) : null}
+
+      {references.length > 0 ? (
+        <Stack spacing={0.5} sx={{ mt: 0.5 }}>
+          {references.map((ref, index) => (
+            <Typography key={`${ref.url}-${index}`} variant="body2" sx={{ wordBreak: "break-word" }}>
+              <a href={ref.url} target="_blank" rel="noopener noreferrer">
+                {ref.title}
+              </a>
+              {/* The host is shown so the user can see where a link goes
+                  BEFORE saying it out loud - the whole point of citing
+                  something in a live meeting. */}
+              {ref.host ? (
+                <Typography component="span" variant="caption" sx={{ ml: 0.5, color: "var(--text-secondary)" }}>
+                  ({ref.host})
+                </Typography>
+              ) : null}
+            </Typography>
+          ))}
+        </Stack>
+      ) : null}
+
+      {/* Only rendered once a result has actually landed - never on the
+          untouched "button not pressed yet" state, and never invented from
+          an error alone with no prior successful fetch to describe. */}
+      {hasResult && result.dropped > 0 ? (
+        <Typography variant="caption" sx={{ display: "block", mt: 0.5, color: "var(--text-secondary)" }}>
+          {droppedMessage(result.dropped)}
+        </Typography>
+      ) : null}
+
+      {hasResult && references.length === 0 ? (
+        <Typography variant="caption" sx={{ display: "block", mt: 0.5, color: "var(--text-secondary)" }}>
+          {result.grounded ? groundedEmptyMessage : notGroundedMessage}
+        </Typography>
+      ) : null}
+    </Box>
+  );
+}
+
 // The whole attribution rule, in one function: `page` and `transcript` each
 // name the real thing the point traces back to (falling back to a generic
 // phrase when the specific name is missing — normalizeInsights in
@@ -75,9 +248,10 @@ function attributionText(source) {
   return "";
 }
 
-function InsightCard({ insight }) {
+function InsightCard({ insight, referenceState, onFindReferences }) {
   const kindLabel = KIND_LABEL[insight.kind] || (INSIGHT_KINDS.includes(insight.kind) ? insight.kind : "Point");
   const attribution = attributionText(insight.source);
+  const canFindReferences = typeof onFindReferences === "function";
   return (
     <Card variant="outlined">
       <CardContent sx={{ "&:last-child": { pb: 2 } }}>
@@ -108,12 +282,32 @@ function InsightCard({ insight }) {
             {attribution}
           </Typography>
         ) : null}
+        {/* Optional-prop gate, same shape this file's own Nudge control uses
+            below: rendered only when the caller actually wired a handler up,
+            so a component under test (or a future caller with no reference
+            feature) degrades to today's card rather than a broken button. */}
+        {canFindReferences ? (
+          <ReferenceControl insight={insight} referenceState={referenceState} onFindReferences={onFindReferences} />
+        ) : null}
+        {canFindReferences ? (
+          <ReferenceResults insight={insight} referenceState={referenceState} onRetry={() => onFindReferences(insight)} />
+        ) : null}
       </CardContent>
     </Card>
   );
 }
 
-export default function MeetingInsightList({ insights, topic, topicChanged, loading, error, onRetry, onNudge }) {
+export default function MeetingInsightList({
+  insights,
+  topic,
+  topicChanged,
+  loading,
+  error,
+  onRetry,
+  onNudge,
+  referencesByInsightId,
+  onFindReferences,
+}) {
   const list = Array.isArray(insights) ? insights : [];
   const hasTopic = typeof topic === "string" && topic.trim().length > 0;
 
@@ -217,7 +411,16 @@ export default function MeetingInsightList({ insights, topic, topicChanged, load
       {list.length > 0 ? (
         <Stack spacing={1} sx={{ mb: 1.5 }}>
           {list.map((insight) => (
-            <InsightCard key={insight.id} insight={insight} />
+            <InsightCard
+              key={insight.id}
+              insight={insight}
+              // Keyed lookup, not the whole map: each card reads only ITS
+              // OWN entry, so two cards can never end up rendering each
+              // other's references even if the map briefly holds stale data
+              // for an id neither card currently owns.
+              referenceState={referencesByInsightId ? referencesByInsightId[insight.id] : undefined}
+              onFindReferences={onFindReferences}
+            />
           ))}
         </Stack>
       ) : null}

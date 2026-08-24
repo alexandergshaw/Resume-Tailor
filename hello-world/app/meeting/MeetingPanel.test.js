@@ -286,3 +286,215 @@ describe("stopping saves the meeting as a page", () => {
     expect(hooks.session.stop).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("reference lookups — the panel owns per-insight state, MeetingInsightList only reads it", () => {
+  const insightA = { id: "i1", text: "Mention the reconciliation win.", kind: "point", source: { kind: "model" } };
+  const insightB = { id: "i2", text: "Ask who owns the refund path.", kind: "question", source: { kind: "model" } };
+
+  beforeEach(() => {
+    hooks.session.status = "live";
+    hooks.session.turns = LIVE_TURNS;
+    hooks.insights.topic = "Payments migration";
+    hooks.insights.insights = [insightA, insightB];
+  });
+
+  it("hands MeetingInsightList a referencesByInsightId map and an onFindReferences function", async () => {
+    await render();
+    const props = hooks.listProps.at(-1);
+    expect(typeof props.onFindReferences).toBe("function");
+    expect(typeof props.referencesByInsightId).toBe("object");
+  });
+
+  it("passes the engine the panel already reads through to the reference lookup", async () => {
+    global.fetch = vi.fn(async (url) => {
+      if (url === "/api/meeting/references") return { ok: true, json: async () => ({ references: [], dropped: 0, grounded: true }) };
+      return { ok: false, json: async () => ({}) };
+    });
+    await render();
+    const props = hooks.listProps.at(-1);
+
+    await act(async () => {
+      props.onFindReferences(insightA);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const call = global.fetch.mock.calls.find(([url]) => url === "/api/meeting/references");
+    expect(call).toBeDefined();
+    const body = JSON.parse(call[1].body);
+    // The panel reads engine via readEngine(); jsdom/localStorage has no
+    // stored preference in this test, so whatever the default resolves to
+    // is what must be forwarded — asserting a STRING (not undefined/null)
+    // is what catches a mutation that drops `engine` from the POST body.
+    expect(typeof body.engine).toBe("string");
+    expect(body.insightText).toBe(insightA.text);
+    expect(body.topic).toBe("Payments migration");
+  });
+
+  // Mutation this catches: reusing one shared piece of state (or one shared
+  // key) for every insight's lookup, which would make a second insight's
+  // fetch overwrite or clear the first's result the moment it starts.
+  it("keys results by insight id, so two insights' references do not leak into each other", async () => {
+    let resolveA;
+    let resolveB;
+    global.fetch = vi.fn((url, opts) => {
+      const body = JSON.parse(opts.body);
+      if (body.insightText === insightA.text) {
+        return new Promise((resolve) => {
+          resolveA = () => resolve({ ok: true, json: async () => ({ references: [{ title: "A doc", url: "https://a.example.com/x", host: "a.example.com" }], dropped: 0, grounded: true }) });
+        });
+      }
+      return new Promise((resolve) => {
+        resolveB = () => resolve({ ok: true, json: async () => ({ references: [{ title: "B doc", url: "https://b.example.com/y", host: "b.example.com" }], dropped: 0, grounded: true }) });
+      });
+    });
+    await render();
+    const props = hooks.listProps.at(-1);
+
+    await act(async () => {
+      props.onFindReferences(insightA);
+      props.onFindReferences(insightB);
+    });
+
+    await act(async () => {
+      resolveA();
+      resolveB();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const latest = hooks.listProps.at(-1);
+    expect(latest.referencesByInsightId[insightA.id].result.references[0].title).toBe("A doc");
+    expect(latest.referencesByInsightId[insightB.id].result.references[0].title).toBe("B doc");
+  });
+
+  // Mutation this catches: firing a second fetch for an insight that already
+  // has one in flight (e.g. a double-click, or MeetingInsightList calling
+  // onFindReferences again while `status` is still "loading").
+  it("does not duplicate a request already in flight for the same insight", async () => {
+    let callCount = 0;
+    let resolveFirst;
+    global.fetch = vi.fn(() => {
+      callCount += 1;
+      return new Promise((resolve) => {
+        resolveFirst = () => resolve({ ok: true, json: async () => ({ references: [], dropped: 0, grounded: true }) });
+      });
+    });
+    await render();
+    const props = hooks.listProps.at(-1);
+
+    await act(async () => {
+      props.onFindReferences(insightA);
+      props.onFindReferences(insightA);
+    });
+    expect(callCount).toBe(1);
+
+    await act(async () => {
+      resolveFirst();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(callCount).toBe(1);
+  });
+
+  // The OLD version of this test only checked that two mock elements still
+  // existed and that one prop kept its object identity — true for nearly
+  // ANY implementation, including a blocking one, because nothing in it
+  // actually raced against the stuck fetch. Driving a real concurrent
+  // action (saving the meeting) all the way to completion is what makes the
+  // assertion real: an implementation that accidentally awaited the
+  // reference lookup — or gated a render on it — before letting Stop/save
+  // proceed would leave `onMeetingSaved` never called, not silently pass.
+  it("does not block saving the meeting while a reference lookup is still stuck in flight", async () => {
+    global.fetch = vi.fn((url) => {
+      if (url === "/api/meeting/references") return new Promise(() => {}); // never resolves
+      return Promise.resolve({ ok: true, json: async () => ({ page: { id: "new-1", title: "Saved" } }) });
+    });
+    const onMeetingSaved = vi.fn();
+    await render({ onMeetingSaved });
+    const props = hooks.listProps.at(-1);
+
+    await act(async () => {
+      props.onFindReferences(insightA);
+    });
+
+    await click(buttonNamed(/stop/i));
+
+    // The save completed right through a reference lookup that has still
+    // never resolved.
+    expect(onMeetingSaved).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("reference lookups — surviving a new meeting", () => {
+  // Fix 4: insightId() hashes NORMALIZED TEXT (see insightContract.js's own
+  // comment — "same normalized text in, same id out ... in a different
+  // process entirely"), so the identical discussion point raised again in a
+  // LATER meeting reuses the exact same id. Without a guard, a reference
+  // lookup that outlives the meeting it was fired from can land under that
+  // shared id in a meeting that has since started — overwriting whatever
+  // THAT meeting's own attempt already produced with a stale answer from a
+  // meeting that is already over.
+  //
+  // Deliberately does NOT force `hooks.session.status = "live"` the way the
+  // describe blocks above do: this test needs `running` to actually go
+  // false after Stop and true again after a second Start, which only
+  // happens here because it is driven by `meetingActive` — a forced "live"
+  // status would keep the panel's running view up regardless of Stop, and
+  // there would be no second meeting to abandon the first lookup into.
+  it("discards a reference result that resolves after a new meeting has replaced this one", async () => {
+    let resolveOldLookup;
+    global.fetch = vi.fn((url) => {
+      if (url === "/api/meeting/references") {
+        return new Promise((resolve) => {
+          resolveOldLookup = () =>
+            resolve({
+              ok: true,
+              json: async () => ({
+                references: [{ title: "Stale doc", url: "https://stale.example.com/x", host: "stale.example.com" }],
+                dropped: 0,
+                grounded: true,
+              }),
+            });
+        });
+      }
+      if (url === "/api/meeting/save") {
+        return Promise.resolve({ ok: true, json: async () => ({ page: { id: "saved-1", title: "Saved" } }) });
+      }
+      return Promise.resolve({ ok: false, json: async () => ({}) });
+    });
+
+    // Named for what matters here: the SAME wording is raised again in the
+    // second meeting below, so insightId() (a hash of normalized text) gives
+    // it the same id both times — that shared id is the entire premise of
+    // this test.
+    const recurringInsight = { id: "i1", text: "Ask who owns the refund path.", kind: "question", source: { kind: "model" } };
+    hooks.insights.insights = [recurringInsight];
+    await render();
+
+    await click(buttonNamed(/start a meeting/i));
+    const firstMeetingProps = hooks.listProps.at(-1);
+    await act(async () => {
+      firstMeetingProps.onFindReferences(recurringInsight);
+    });
+
+    // The first meeting ends and a second one begins before the lookup
+    // above ever resolves.
+    await click(buttonNamed(/stop/i));
+    await click(buttonNamed(/start a meeting/i));
+
+    // Only now does the OLD meeting's lookup land.
+    await act(async () => {
+      resolveOldLookup();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const latest = hooks.listProps.at(-1);
+    // The loading state this insight was left in when the first meeting
+    // ended is exactly what should still be there — never overwritten by
+    // the stale "done" write the discarded result would otherwise have
+    // produced.
+    expect(latest.referencesByInsightId[recurringInsight.id].status).toBe("loading");
+    expect(latest.referencesByInsightId[recurringInsight.id].result).toBeNull();
+    expect(JSON.stringify(latest.referencesByInsightId)).not.toContain("Stale doc");
+  });
+});

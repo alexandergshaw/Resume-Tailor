@@ -25,6 +25,7 @@ import { useMeetingInsights } from "./useMeetingInsights.js";
 import MeetingTranscript from "./MeetingTranscript.js";
 import MeetingInsightList from "./MeetingInsightList.js";
 import { buildMeetingPage } from "@/lib/meeting/meetingPage.js";
+import { fetchReferences } from "@/lib/meeting/referenceClient.js";
 import {
   recordingConsentNotice,
   engineCaveatNotice,
@@ -91,6 +92,42 @@ export default function MeetingPanel({ pageId, onMeetingSaved }) {
   // "have we probed", only off the resolved name itself.
   const probedProviderRef = useRef(false);
 
+  // Reference-link lookups, one entry per insight id: `{ status, error,
+  // result }`, where `result` is the LAST SUCCESSFUL `{ references, dropped,
+  // grounded }` (or null before any lookup has ever succeeded). `result` is
+  // deliberately never cleared by a failed attempt — see handleFindReferences
+  // below — so a card that already has references keeps them on screen right
+  // through a failed retry, the identical discipline doSave/handleRetry
+  // already apply to the meeting-save flow above. Keyed by id, so two cards
+  // can never share or overwrite each other's entry.
+  const [referenceState, setReferenceState] = useState({});
+  // Which insight ids currently have a lookup in flight. A ref, not state:
+  // nothing renders off this directly (the per-card "loading" render comes
+  // from referenceState's own `status`), it exists purely to make a second
+  // click on an insight already loading a no-op instead of a second
+  // concurrent fetch.
+  const pendingReferenceIdsRef = useRef(new Set());
+  // Mirrors `sessionId` for handleFindReferences' async callback to read
+  // AFTER its own await — the same "capture the value that started this
+  // call, recheck the LATEST value once it resolves" discipline
+  // useMeetingInsights.js's own genRef applies to its automatic reads (see
+  // that hook's file header for the two-part rationale it documents).
+  // Needed here for a reason specific to THIS feature: insightId() derives
+  // an insight's id from a hash of its own NORMALIZED TEXT, not a random or
+  // per-meeting value (see insightContract.js's own comment: "same
+  // normalized text in, same id out... in a different process entirely").
+  // A recurring discussion point ("Ask who owns the refund path") therefore
+  // hashes to the IDENTICAL id in every meeting it comes up in. Without this
+  // check, a reference lookup fired just before a meeting ends could still
+  // be in flight when a NEW meeting starts and raises the same point, land
+  // AFTER that new meeting's own (possibly cache-fast) lookup already
+  // wrote its result, and silently overwrite it with a stale answer from a
+  // meeting that is already over.
+  const sessionIdRef = useRef(sessionId);
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
   // A pure, synchronous localStorage read, done directly rather than
   // through the reactive useEngine() store — this panel only ever needs
   // "the engine as of the moment a fact about it is used," the same way
@@ -129,6 +166,58 @@ export default function MeetingPanel({ pageId, onMeetingSaved }) {
     pageId,
     engine,
   });
+
+  // Fetches (or re-fetches, on a per-card Retry) references for ONE insight.
+  // A click handler, not an effect — this is what a user does by pressing a
+  // button on a specific card, so there is no react-hooks/set-state-in-effect
+  // concern here the way there is for the mount-time source probe above.
+  //
+  // Deliberately fire-and-forget from the caller's point of view: neither
+  // the insight loop above nor the transcript below awaits or is gated on
+  // this promise in any way, so a slow or failed lookup for one card never
+  // holds up the next automatic insight read or a turn arriving on screen.
+  const handleFindReferences = useCallback(
+    (insight) => {
+      const id = insight?.id;
+      if (!id) return;
+      // Already loading for this exact insight — a second click (or a
+      // second card somehow sharing an id) must not fire a second
+      // concurrent request.
+      if (pendingReferenceIdsRef.current.has(id)) return;
+      pendingReferenceIdsRef.current.add(id);
+      // Captured now, from THIS render's own `sessionId` closure — not from
+      // the ref, which only exists to hold the LATEST value for comparison
+      // once the fetch below resolves. See sessionIdRef's own comment.
+      const sid = sessionId;
+
+      setReferenceState((prev) => ({
+        ...prev,
+        // `result` carries over from whatever this id already had (or null,
+        // the first time) - only `status`/`error` change here, so an
+        // in-progress lookup never blanks references already on screen.
+        [id]: { ...(prev[id] || { result: null }), status: "loading", error: "" },
+      }));
+
+      fetchReferences({ insightText: insight.text, topic: insights.topic, engine }).then((res) => {
+        pendingReferenceIdsRef.current.delete(id);
+        // Abandoned by a new meeting starting while this lookup was still in
+        // flight — see sessionIdRef's own comment above. Discarded by simply
+        // never writing it, the identical shape useMeetingInsights.js's own
+        // "superseded" early return uses for its automatic loop.
+        if (sessionIdRef.current !== sid) return;
+        setReferenceState((prev) => ({
+          ...prev,
+          [id]: res.ok
+            ? { status: "done", error: "", result: { references: res.references, dropped: res.dropped, grounded: res.grounded } }
+            // A failed attempt keeps whatever `result` this id already had -
+            // see this state's own header comment - and reports only the
+            // error and the status flip that shows the Retry control.
+            : { ...(prev[id] || { result: null }), status: "error", error: res.error },
+        }));
+      });
+    },
+    [insights.topic, engine, sessionId],
+  );
 
   // Posts (or re-posts, on Retry) the built page. Split out of handleStop so
   // Retry can call the identical function against the identical payload.
@@ -307,6 +396,8 @@ export default function MeetingPanel({ pageId, onMeetingSaved }) {
               // Retrying a failed insight read IS asking again — there is no
               // separate retry mechanism, `nudge` already is one.
               onRetry={insights.nudge}
+              referencesByInsightId={referenceState}
+              onFindReferences={handleFindReferences}
             />
           </Box>
         </Box>

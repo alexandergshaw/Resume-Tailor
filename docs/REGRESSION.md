@@ -1369,7 +1369,7 @@ The rendered wording is third person throughout — "Roles like this look for:" 
 
 **Amended (group L) — two of the three claims above no longer hold, and one is now stronger.**
 
-1. **Posting numbers are gone entirely.** "The numbers it shows ('5+ years', '2M requests') are the posting's own" was the bug, not the safeguard. A user's posting stated "Salary range:78,496.00 - $105,974.00" twice in two formats, and the block rendered `Metrics to have ready: $78,496, $105,974, $78,496.00, $105,974.00` — the SALARY BAND, four times over (the dedupe key was the exact string), consuming the whole `MAX_METRICS` budget so the real categories were never reached. The grounding argument was sound and the conclusion was still wrong: a posting's digits are its salary, its years-of-experience floor and its headcount, and no regex separates those from a project metric because postings do not state project metrics. `POSTING_NUMBER_RE` and `postingNumbers` are deleted; `metrics` is now category phrases only and is asserted to contain **no digit at all**. `MAX_METRICS` is 3. See R-135.
+1. **Posting numbers are gone entirely.** "The numbers it shows ('5+ years', '2M requests') are the posting's own" was the bug, not the safeguard. A user's posting stated "Salary range:78,496.00 -105,974.00" twice in two formats, and the block rendered `Metrics to have ready: $78,496, $105,974, $78,496.00, $105,974.00` — the SALARY BAND, four times over (the dedupe key was the exact string), consuming the whole `MAX_METRICS` budget so the real categories were never reached. The grounding argument was sound and the conclusion was still wrong: a posting's digits are its salary, its years-of-experience floor and its headcount, and no regex separates those from a project metric because postings do not state project metrics. `POSTING_NUMBER_RE` and `postingNumbers` are deleted; `metrics` is now category phrases only and is asserted to contain **no digit at all**. `MAX_METRICS` is 3. See R-135.
 2. **The accent box and the chip are gone.** The visual-separation ARGUMENT is unchanged and still load-bearing; what changed is where the disclosure lives. It moved into the row's own `dt`, which now reads "Ideal project — not from your resume". That is strictly stronger than the chip it replaces: it is permanent, it cannot be scrolled past as decoration, and a screen reader announces it as the TERM the value belongs to rather than as a stray label inside the value. The row keeps a single `2px` left rule in `var(--accent)`, and colour still never carries the meaning alone (WCAG 1.4.1) — the label text does. The accent-tinted box was one of four competing visual languages in a component the user described as "all over the place"; see R-136.
 3. **`shape` is joined by a new `summary` sentence.** `shape` alone restated the buzzword chips two rows above it, which is why the user's verdict on this block was "there's no substance to the project section". The advisory sentence is still third person and still asserted to carry no first-person pronoun.
 
@@ -3696,3 +3696,86 @@ appeared seven times: in `clearPendingDelete`, and in the clears for notes error
 **Two anti-inert tests exist because a refactor here has already shipped dead.** `MeetingPanel.test.js` mocks the two views and asserts the panel actually renders them — every one of their own tests passes whether or not anything imports them. `ExperienceTab.meeting.test.js` does the same one level up, and additionally drives `onMeetingSaved` and asserts a second page-list GET is issued, which is the seam above.
 
 **The panel is rendered OUTSIDE the zero-pages early return**, so a brand-new user with nothing in their knowledge base can still record a meeting — and their first page can be one.
+
+### R-250 | area: meeting-copilot | parallel-safe: yes | automatable: partly
+
+**Summary:** A meeting discussion point can be backed by reference links that are checked against pages a search actually visited — and anything that cannot be verified is refused, with the refusal stated on screen.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/llm/ lib/meeting/ app/meeting/ app/api/meeting/ --no-file-parallelism`.
+2. In a live meeting, press the find-sources control on a point. **Verified links must actually appear** — the failure this feature shipped with was returning an empty list forever, so an empty result is the thing to be suspicious of.
+3. Confirm the card says how many suggestions were refused, rather than silently showing a shorter list.
+4. Switch to the embedded engine and press it again: it must refuse with a clear message, not fall back to links from the model's memory.
+5. Two points must not share each other's links; a failed lookup must keep what is on screen and offer Retry; and the Retry on each card must be distinguishable by name.
+
+**Expected:** All suites pass and the manual steps read as described.
+
+**The premise: language models invent plausible URLs.** A fabricated link read aloud in a real meeting is far worse than no link, because the user stakes their credibility on it in front of colleagues. The default is refusal; a link earns its place only by corroboration.
+
+## The defect that made this feature ship dead, and why every test passed
+
+`normalizeReferences` compared the MODEL's url against the RAW grounding uris. Google's grounding metadata routinely holds `vertexaisearch.cloud.google.com/grounding-api-redirect/...` links, which are not comparable to a publisher url — so the comparison was false for every link, forever. Every card would have read "N suggestions could not be verified" with no links, and **that is indistinguishable from the model behaving badly**, so nobody would have suspected the code.
+
+**All 100 tests passed because every fixture used the SAME array for both the model's links and the grounding.** Two agents built correct halves against opposite beliefs about one field, and each half's tests described a world in which the other could not exist. `referenceContract.test.js` now carries a fixture policy forbidding a self-grounded case, and keeps a `describe("the publisher world")` block so both readings stay covered.
+
+**This could not be settled empirically here: there is no Gemini API key in this environment, so no grounded feature can be exercised locally.** The fix therefore works under BOTH readings.
+
+**The pipeline is RESOLVE, THEN CORROBORATE**, in this order:
+1. Every grounded uri is fetched and replaced by its `finalUrl` (a publisher uri resolves to itself; a redirect resolves to the real page). Unresolvable uris fall back to themselves rather than losing that evidence — `enrichArticles`' policy, taken exactly.
+2. The model's links are de-duplicated by normalized key.
+3. Each distinct link is corroborated against the RESOLVED set.
+4. **The url that was corroborated is the url that ships.** There is no later step that can rewrite it.
+
+That last point closes a second defect: the original code corroborated the model's url and then overwrote it with wherever a second fetch landed, unchecked — so a publisher 301 to a marketing homepage, a rebrand, or an open redirect on a grounded host became a link the user read aloud believing it was verified.
+
+## What corroboration compares, and what it deliberately does not fold
+
+`isGroundedHost` (six existing consumers, unchanged) asks "did the model touch this site". That is the wrong question here: a model that genuinely searched `react.dev` will happily cite `react.dev/learn/a-page-that-never-existed`.
+
+`pageIdentityKey` compares **protocol, host, port, path and query**.
+
+- **The query is part of the identity.** Folding it out let `en.wikipedia.org/w/index.php?title=Totally_Invented_Page` pass when grounding held `?title=Kubernetes`, and `youtube.com/watch?v=FAKE` pass for `?v=REAL`. For a query-addressed site the query IS the page. Only known tracking parameters (`utm_*`, `gclid`, `fbclid`, `ref`) are folded.
+- **The path is case-SENSITIVE**, and this was reverted after first being folded. A path is case-sensitive by specification — only the host is not — and most documentation sites 404 on the wrong case. Folding it would mean a model citing `/Learn/X` against a grounded `/learn/X` passes and the user opens a dead link **having been told it was verified**. A real link honestly refused is the smaller harm, and it is the direction every other decision here leans.
+- Host case, a leading `www.`, a trailing dot on the host and a doubled slash ARE folded — those genuinely resolve to the same resource.
+- Userinfo (`user:pw@host`) is refused outright; scheme and port are compared, so a TLS downgrade or a surprise port cannot pass while the UI's host chip still reads the bare domain.
+- Never `startsWith`: `/horizontal-pod-autoscale-walkthrough/` must not pass on the strength of `/horizontal-pod-autoscale/`.
+
+## Refusal, honesty and the messages
+
+Uncorroborated links are **dropped, not demoted** to plain text as `reconcileCitations` does — the user asked for something they could open and quote, so an unverifiable reference has no value as text either.
+
+`dropped` counts **distinct** refused links. It originally incremented before dedup, so one fabricated url cited three ways (trailing slash / `www.` / `?utm=`) reported "3 suggestions could not be verified" — the sentence that exists to be honest about integrity, inflating.
+
+Three distinct messages for three distinct facts: N refused, nothing citable found, and no search happened at all.
+
+## The cache, which took three corrections
+
+1. **The raw insight sentence**, copied from `techwatch/lifecycle`'s global-key reasoning. That does not transfer: that route keys on a technology id, while an insight is a sentence about ONE meeting. It would essentially never hit — defeating the only reason to cache — and it wrote private meeting content into a shared, non-user-scoped key under a comment claiming it was "the same fact for every user".
+2. **Sorted significant terms** fixed the hit rate and destroyed word order but not the words. A "4+ characters, not a stopword" filter makes a term long, not generic: an employer name, a codename or a colleague's surname all clear it.
+3. **A digest of the terms**, so equivalent questions share a bucket and nothing readable reaches shared storage. It is a 128-bit SHA-256 truncation, NOT `insightId` — that is a 32-bit FNV-1a whose birthday bound is ~77k in a shared week-long namespace, and a collision means one topic's links served for an unrelated one. `insightId` was deliberately not widened: it is a persisted identity clients round-trip as `knownInsightIds`, so widening it would invalidate every id in flight.
+
+**The tokenizer keeps what distinguishes a documentation page.** `/[a-z0-9]{4,}/` dropped every token under four characters, so "Java 17" and "Java 21" shared a bucket — as did Kubernetes 1.29/1.31, React 18/19, HTTP/2 and HTTP/3, and, worst, "does support" and "does **not** support", because "not" is three letters. Someone would have asked about a Java 21 migration and been served the Java 17 docs from a global week-long cache, presented as verified. Versions are kept whole, negations are significant, and the cap takes terms in **document order** — sorting before slicing meant two long insights differing only past the twelfth term collided.
+
+**A failed lookup is never cached.** The producer returns an error object that `cached()` treats as truthy, so one upstream blip poisoned that bucket for a week, globally, and Retry re-served the failure. It now throws, which `cached()` never writes.
+
+**An empty term set skips the cache entirely** rather than hashing `""`, which would collapse every such request onto one shared bucket.
+
+## The client and the card
+
+**A 200 carrying `error` is a failure.** The route deliberately answers 200-with-error (progressive enhancement; a 5xx would read as the whole meeting breaking), and the client only checked `!res.ok` — so with Gemini down the card rendered the confident claim "this point could not be checked against search results" with **no error and no Retry**, and with the failure cached for a week it stayed that way.
+
+**Each card's Retry names its own point.** `Retry finding sources for: <insight text>`. Two cards in an error state previously produced two identical "Retry" controls plus the list-level one — the exact bug that file's own comment forbids repeating.
+
+**The interaction is audible.** `aria-busy` on the control, a named spinner, an accessible name that changes while loading (an `aria-label` overrides the visible text node, so the visible change alone was invisible), and a polite live region for progress and results. A failure is announced only by its `role="alert"`, never twice.
+
+**The request has a deadline** (25s) and a timeout is an ordinary retryable failure. A grounded search plus several page fetches could otherwise sit on "Finding sources…" through the part of the meeting the user wanted it for.
+
+**A stale lookup cannot land in a later meeting.** Insight ids are a deterministic hash of normalized text, so the same point in two meetings has the same id — an in-flight lookup from a previous meeting would otherwise resolve straight into the new one's state. Guarded by the session id, the same idiom the insight loop uses.
+
+## Why links are not attached to every insight automatically
+
+Nothing in this repo can produce a verified url quickly: a grounded search takes tens of seconds by this repo's own repeated measurement, and the insight loop's floor is 20 seconds. Doing it inline would mean either shipping fabricated citations or collapsing the loop to roughly one read per 30 seconds and making the panel visibly lag the room. So it is a per-point action, the same "progressive enhancement over an already-rendered panel" shape `techwatch/lifecycle` uses.
+
+## Open question this raised about EXISTING features
+
+If grounding uris really are redirects, then `lib/techwatch/lifecycleSearch.js` and `lib/feed/llmSearch.js` — which match on host only, presuming publisher hosts — have been silently discarding every result. That would also explain why `company-research` built title-token-overlap matching instead of comparing urls. **Unverified**: it needs one live grounded call, which this environment cannot make. Worth checking against a deployment before trusting either feature's output.
