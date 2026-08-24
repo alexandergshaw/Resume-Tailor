@@ -17,6 +17,7 @@ import PageEditor from "./PageEditor";
 import AttachmentPanel from "./AttachmentPanel";
 import BulkActionsBar from "./BulkActionsBar";
 import TechWatchPanel from "./TechWatchPanel";
+import MeetingPanel from "../../meeting/MeetingPanel";
 import { useExperiencePages } from "../../hooks/useExperiencePages";
 import { toggleSelected, selectionSummary } from "../../../lib/experience/bulkSelection";
 import { buildPageContext } from "../../../lib/experience/pageContext";
@@ -269,6 +270,18 @@ export default function ExperienceTab({ askAiAbout, addChatAttachments }) {
         announce(`Moved ${succeeded} page${succeeded === 1 ? "" : "s"}`);
       }
     })();
+  }
+
+  // MeetingPanel's own onMeetingSaved: the page it just built exists only
+  // server-side until this reloads `pages` (the same seam BulkActionsBar's
+  // research reports already close via onPagesChanged above), then selects
+  // it so the meeting's result is what the user sees next, not just a row
+  // they'd have to go find. MeetingPanel hard-calls this - never `?.()` -
+  // so a save with no page, or a page with no id, must be swallowed here
+  // rather than thrown back into a hard call this file does not control.
+  async function handleMeetingSaved(page) {
+    await reload();
+    if (page && page.id) setSelectedId(page.id);
   }
 
   // Carries out a pending focus request once its target actually exists in
@@ -545,6 +558,15 @@ export default function ExperienceTab({ askAiAbout, addChatAttachments }) {
           briefing falls back to a default watchlist with no pages at all,
           so a brand-new user with nothing else on this tab still sees it. */}
       <TechWatchPanel />
+
+      {/* Same reason as TechWatchPanel above, and the more important of the
+          two: a meeting is how a brand-new user with zero pages gets their
+          FIRST one, so this cannot sit inside the empty-state branch below
+          without cutting off the one path that would ever fill it.
+          `selectedId` (not `selectedPage`) is the default context - it is
+          exactly what a fresh signup has, null, and MeetingPanel already
+          treats a falsy pageId as "no default", not an error. */}
+      <MeetingPanel pageId={selectedId} onMeetingSaved={handleMeetingSaved} />
 
       {pages.length === 0 ? (
         <Box sx={{ border: "1px dashed var(--border)", borderRadius: 1.5, py: 6, textAlign: "center" }}>
