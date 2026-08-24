@@ -20,10 +20,14 @@ import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import DeleteIcon from "@mui/icons-material/Delete";
+import DownloadIcon from "@mui/icons-material/Download";
 import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
 import SlideshowIcon from "@mui/icons-material/Slideshow";
 import TableChartIcon from "@mui/icons-material/TableChart";
 import { classifyAttachment } from "../../../lib/experience/attachments";
+import { createClient } from "../../../lib/supabase/client";
+import { downloadAttachmentBlob } from "../../../lib/supabase/experienceAttachments";
+import { triggerBlobDownload } from "../../../lib/document/docx";
 
 const KIND_LABEL = {
   image: "Image",
@@ -219,11 +223,30 @@ export default function AttachmentPanel({ pageId }) {
   // id, present only while that attachment's last delete attempt has
   // failed and not yet succeeded on retry. See removeAttachment.
   const [deleteErrors, setDeleteErrors] = useState({});
-  // Per-id announcement sequence numbers for notesErrors/deleteErrors — see
-  // nextSeqFor's own comment for why these live outside the state objects
-  // they announce.
+  // Same shape again, for a failed download — see downloadAttachment.
+  const [downloadErrors, setDownloadErrors] = useState({});
+  // Per-id announcement sequence numbers for notesErrors/deleteErrors/
+  // downloadErrors — see nextSeqFor's own comment for why these live
+  // outside the state objects they announce.
   const notesErrorSeqRef = useRef({});
   const deleteErrorSeqRef = useRef({});
+  const downloadErrorSeqRef = useRef({});
+  // Attachment id -> true while that id's download is in flight. This is
+  // the RE-ENTRY GUARD, and it has to be a ref, not the `downloading` state
+  // just below it: a click handler reads and writes it synchronously,
+  // before any `await`, so a second click landing in the SAME tick as the
+  // first (a real double-tap, not two separately-flushed clicks) sees the
+  // write the first click already made. A `useState` guard cannot do this
+  // — a setState scheduled by the first click is not visible to the second
+  // click's handler until React re-renders, which has not happened yet
+  // when both clicks are handled back to back. `pendingDeleteTimersRef`
+  // above guards scheduleDelete the identical way for the identical
+  // reason. `downloading` state is not part of the guard at all; nothing
+  // ever branches on it. It exists purely so the button below has
+  // something to render (aria-busy, the spinner) — a ref write does not by
+  // itself cause React to re-render anything.
+  const downloadingRef = useRef({});
+  const [downloading, setDownloading] = useState({});
   // Attachment id -> { attachment, nextId } for a deletion that has been
   // optimistically applied (removed from `attachments`) but whose DELETE
   // has not gone out yet — see scheduleDelete. `pendingDeletesRef` is the
@@ -277,12 +300,12 @@ export default function AttachmentPanel({ pageId }) {
     if (el) el.focus();
   }, [focusNotesId]);
 
-  // Both error maps are keyed only by attachment id, and ids are not scoped
-  // to a page anywhere the panel itself enforces — two different pages can
-  // have an attachment with the same id. Left uncleared, an error from one
-  // page's attachment would keep showing (against a DIFFERENT attachment
-  // that happens to share its id, wrongly naming the file the error was
-  // actually about) until it coincidentally got overwritten. Cleared
+  // All three error maps are keyed only by attachment id, and ids are not
+  // scoped to a page anywhere the panel itself enforces — two different
+  // pages can have an attachment with the same id. Left uncleared, an error
+  // from one page's attachment would keep showing (against a DIFFERENT
+  // attachment that happens to share its id, wrongly naming the file the
+  // error was actually about) until it coincidentally got overwritten. Cleared
   // outright on every page switch instead. Deferred one tick, like load's
   // own effect above, so this is never a setState call landing
   // synchronously within the effect body itself (react-hooks/set-state-in-effect
@@ -299,7 +322,7 @@ export default function AttachmentPanel({ pageId }) {
   // looking at as the only thing standing between the object and actually
   // being deleted. See flushPendingDeletes' own comment for why a failure
   // here is swallowed rather than surfaced. pendingDeletes itself (the
-  // render-facing copy) is cleared in the same deferred pass as the two
+  // render-facing copy) is cleared in the same deferred pass as the three
   // error maps, so a page switch never leaves a stale Undo row on screen
   // for an attachment that belongs to the page just left.
   useEffect(() => {
@@ -307,6 +330,7 @@ export default function AttachmentPanel({ pageId }) {
     const handle = setTimeout(() => {
       setNotesErrors({});
       setDeleteErrors({});
+      setDownloadErrors({});
       setPendingDeletes({});
     }, 0);
     return () => clearTimeout(handle);
@@ -501,6 +525,88 @@ export default function AttachmentPanel({ pageId }) {
     }
   }, []);
 
+  // The Download IconButton's own handler — pulls this attachment's bytes
+  // back out of the private bucket and saves them under the file's
+  // ORIGINAL name (never the storage key's sanitized basename). Mirrors
+  // saveNotes/removeAttachment's own shape (clear any previous error for
+  // this id before trying again; on failure, set one naming the file) with
+  // one addition on top: the downloadingRef guard above, because unlike a
+  // notes save or a delete, a slow download is exactly the kind of thing
+  // that invites an impatient second click on the same control.
+  //
+  // Announced exactly ONCE per download, on success, and only on success.
+  // There is deliberately no "Downloading…" announcement to go with it, and
+  // the reason is the RECONCILER, not a setState bailout: bumpAnnouncement
+  // returns a brand-new object every call (see above), so that bailout can
+  // never fire here. A live region needs a changed TEXT NODE, which is what
+  // announcedText's toggle produces — it flips on ODD sequence numbers, so
+  // bumping once for "Downloading…" and again for "Downloaded" restores the
+  // parity this region started from, and "Downloaded" then renders
+  // byte-identical to what it already showed (e.g. a previous download of
+  // this same file). React's reconciler leaves that text node untouched, and
+  // with no DOM mutation nothing reaches a screen reader — silent from the
+  // second download of any file onward, exactly the ordinary repeat case
+  // this region exists for. In-flight has its own non-announced signal
+  // already: aria-busy plus the spinner, set from `downloading` below.
+  //
+  // If the panel unmounts mid-download, nothing reports the failure and
+  // nothing re-fetches to reconcile. Considered, left as-is: unlike a
+  // flushed delete, a download has no server-side state a later load() could
+  // re-read, so surfacing it needs an error store outliving this panel.
+  const downloadAttachment = useCallback(async (attachment) => {
+    const id = attachment.id;
+    if (downloadingRef.current[id]) return;
+    downloadingRef.current[id] = true;
+    setDownloading((prev) => ({ ...prev, [id]: true }));
+    // Captured now, exactly as uploadFile does it — this is the slowest async
+    // operation here (100 MB of video is seconds of wall clock), and it
+    // resolves AFTER the page-switch effect's deferred clear has run, so only
+    // this guard covers it. The download ITSELF still happens either way: the
+    // user asked for that file and it should still arrive. Only UI writes are
+    // gated on still being on the page it was started from.
+    const startedForPageId = pageId;
+
+    setDownloadErrors((prev) => {
+      if (!(id in prev)) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+
+    // One place, one message, one shape: a thrown createClient() (public env
+    // vars missing) or triggerBlobDownload (a torn-down document) is the same
+    // event to the user as a storage error — no file. Without a catch, either
+    // throw only rejected an onClick's promise: no file, no alert, nothing said.
+    const reportFailure = () => {
+      if (pageIdRef.current !== startedForPageId) return;
+      const text = `Could not download "${attachment.name}". Try again.`;
+      setDownloadErrors((prev) => ({ ...prev, [id]: { text, seq: nextSeqFor(downloadErrorSeqRef, id) } }));
+    };
+
+    try {
+      const supabase = createClient();
+      const { blob, error } = await downloadAttachmentBlob(supabase, attachment.storage_path);
+      if (error || !blob) {
+        reportFailure();
+        return;
+      }
+      triggerBlobDownload(blob, attachment.name);
+      if (pageIdRef.current === startedForPageId) {
+        setStatusAnnouncement((prev) => bumpAnnouncement(prev.seq, `Downloaded "${attachment.name}"`));
+      }
+    } catch {
+      reportFailure();
+    } finally {
+      delete downloadingRef.current[id];
+      setDownloading((prev) => {
+        if (!(id in prev)) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    }
+  }, [pageId]);
+
   // Fires once scheduleDelete's undo window has actually run out (or once
   // a flush forces it early — see flushPendingDeletes, which bypasses this
   // function entirely and swallows its own failures instead of reaching
@@ -579,8 +685,16 @@ export default function AttachmentPanel({ pageId }) {
       // same way removeAttachment/saveNotes clear their own error at the
       // start of every fresh attempt, is what stops that old failure from
       // reappearing next to this row if THIS new attempt is later undone
-      // rather than left to finalize.
+      // rather than left to finalize. A failed DOWNLOAD's alert goes with it,
+      // same id, same reason: a row that comes back - via Undo, or via
+      // finalizeDelete's own failure-restore - carries only what is still true.
       setDeleteErrors((prev) => {
+        if (!(id in prev)) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setDownloadErrors((prev) => {
         if (!(id in prev)) return prev;
         const next = { ...prev };
         delete next[id];
@@ -789,7 +903,33 @@ export default function AttachmentPanel({ pageId }) {
                       {announcedText(deleteErrors[attachment.id])}
                     </Alert>
                   )}
+                  {downloadErrors[attachment.id] && (
+                    <Alert
+                      severity="error"
+                      sx={{ mt: 0.5 }}
+                      action={
+                        <Button color="inherit" size="small" onClick={() => downloadAttachment(attachment)}>
+                          Retry
+                        </Button>
+                      }
+                    >
+                      {announcedText(downloadErrors[attachment.id])}
+                    </Alert>
+                  )}
                 </Box>
+                <IconButton
+                  aria-label={`Download ${attachment.name}`}
+                  onClick={() => downloadAttachment(attachment)}
+                  size="small"
+                  // Never disabled and never pulled out of the tab order —
+                  // see downloadingRef's own comment: the button that
+                  // vanishes from tab order the moment it's used is a bug
+                  // this repo has already shipped once. aria-busy plus the
+                  // spinner below is the whole in-flight signal.
+                  aria-busy={downloading[attachment.id] ? "true" : undefined}
+                >
+                  {downloading[attachment.id] ? <CircularProgress size={16} /> : <DownloadIcon fontSize="small" />}
+                </IconButton>
                 <IconButton
                   aria-label={`Delete ${attachment.name}`}
                   onClick={() => scheduleDelete(attachment)}

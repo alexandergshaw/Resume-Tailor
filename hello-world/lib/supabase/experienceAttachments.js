@@ -8,6 +8,20 @@
 // getAuth) and scopes every query by `user_id` explicitly, in addition to
 // RLS. Nothing here throws — every function returns a result object, so a
 // failed call is data the route can branch on rather than an exception.
+//
+// The two STORAGE-OBJECT helpers at the bottom — downloadAttachmentBlob and
+// signedAttachmentUrl — are the deliberate exception, and always have been:
+// neither takes a `userId`, because neither touches the table, and there is
+// no `user_id` column on a storage object to filter by. What they take
+// instead is a `storage_path` the caller has already read off a row it
+// fetched user-scoped, so the ownership check happened before the path ever
+// existed as a value. The bucket then enforces it a second time on its own:
+// `resumes` is owner-scoped by the storage policy documented at
+// lib/supabase/practiceAnswers.js:4-6 (`auth.uid()::text =
+// (storage.foldername(name))[1]`), so a path belonging to another user is
+// refused by Postgres no matter what this module was handed. Anything NEW
+// that reads or writes the TABLE still takes a userId and still filters on
+// it — this carve-out covers those two functions, not a general relaxation.
 
 import { storagePathFor } from "@/lib/experience/attachments";
 
@@ -149,6 +163,25 @@ export async function deleteAttachment(supabase, userId, id) {
     return { deleted: true, error: null };
   } catch (err) {
     return { deleted: false, error: err?.message || "Could not delete this attachment." };
+  }
+}
+
+// Reads one attachment's bytes back out of storage, at the row's own
+// storage_path. Shaped after lib/supabase/materials.js's downloadMaterialBlob
+// — the existing precedent in this repo for reading a file back out of the
+// private `resumes` bucket — rather than inventing a second shape here. An
+// empty success (`{ data: null, error: null }`, which storage-js can return
+// for a missing object) is still reported as a failure: returning
+// `{ blob: null, error: null }` would read as success to every caller and
+// silently download nothing at all.
+export async function downloadAttachmentBlob(supabase, storagePath) {
+  try {
+    if (!storagePath) return { blob: null, error: "No file is stored for this attachment." };
+    const { data, error } = await supabase.storage.from(BUCKET).download(storagePath);
+    if (error || !data) return { blob: null, error: error?.message || "Could not download this file." };
+    return { blob: data, error: null };
+  } catch (err) {
+    return { blob: null, error: err?.message || "Could not download this file." };
   }
 }
 

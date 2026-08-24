@@ -23,10 +23,16 @@ import AttachmentPanel from "./AttachmentPanel.js";
 // Mirrors AttachmentPanel.test.js's own mock set.
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 vi.mock("@/lib/supabase/experiencePages", () => ({ listPages: vi.fn() }));
+// `downloadAttachmentBlob` is listed even though nothing in THIS file clicks a
+// download: a vi.mock factory replaces the module wholesale, so an export the
+// panel imports but the factory omits is simply absent, and the first test
+// here that ever reaches the download path would die on that rather than on
+// anything it was written to check.
 vi.mock("@/lib/supabase/experienceAttachments", () => ({
   listAttachments: vi.fn(),
   createAttachment: vi.fn(),
   signedAttachmentUrl: vi.fn(),
+  downloadAttachmentBlob: vi.fn(),
 }));
 
 // The REAL classifier, wrapped in a spy - not a stub. The panel imports it by
@@ -120,14 +126,23 @@ function postCalls() {
 }
 
 // The one icon a card renders for its own kind. MUI stamps every icon with a
-// data-testid; the delete control's is the only other one on a card, so
-// removing it by name leaves exactly one. Asserting that count rather than
-// taking [0] blind is deliberate: if the delete icon is ever renamed, this
-// fails loudly instead of silently comparing two delete icons and calling
-// them identical.
+// data-testid, and a card carries several: the kind icon, one per action
+// control (delete, download), and one per Alert that happens to be showing
+// (each severity renders its own). Previously this filtered the action icon
+// out BY NAME, which meant every new action control silently broke the helper
+// until someone remembered to extend the list.
+//
+// Excluding by CONTAINER instead - anything inside a button or an Alert is
+// chrome, not the card's kind - keeps that from recurring. The Alert half is
+// not exercised by any test here today (none of them puts a card into a
+// failure state), and is included so that the first one that does gets a real
+// answer rather than a confusing off-by-one. The exact count is still
+// asserted by the callers rather than taking [0] blind, so a card that
+// stopped rendering a kind icon at all still fails loudly.
 function kindIconOf(card) {
-  const ids = [...card.querySelectorAll("svg[data-testid]")].map((el) => el.getAttribute("data-testid"));
-  return ids.filter((id) => id !== "DeleteIcon");
+  return [...card.querySelectorAll("svg[data-testid]")]
+    .filter((el) => !el.closest("button") && !el.closest(".MuiAlert-root"))
+    .map((el) => el.getAttribute("data-testid"));
 }
 
 function cards() {
