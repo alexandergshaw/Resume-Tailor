@@ -3538,3 +3538,32 @@ Pass the value instead of a getter and every test silently queries the first ren
 **`.rar` and `.7z` are still refused, and that is asserted.** The request was zips. A pre-existing positive control named "does not widen the door for anything else" used `archive.zip` as its example of something unsupported; that example was MOVED to `.rar` rather than deleted, so the control still proves the door did not swing open while no longer contradicting a shipped feature. Deleting it outright would have been the easy way to a green suite and would have removed the only guard on that intent.
 
 **Size: an archive uses the same 25 MB cap as everything that is not video.** Zips of real project artifacts will hit that ceiling sooner than most kinds; raising it is a deliberate product decision and has not been made.
+### R-244 | area: experience-attachments | parallel-safe: yes | automatable: yes
+
+**Summary:** The attachments live region stops describing the page you just left, and the seven-times-repeated state reducer behind it is now one tested helper.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run app/components/experience/ --no-file-parallelism`.
+2. On a project page with attachments, download or delete one, then click to a different project page. The status line must be empty — it must not still read `Downloaded "<the other page's file>"`.
+3. Download something on the new page. It must still be announced, and downloading the same file twice in a row must still announce twice.
+
+**Expected:** All 17 suites pass and the manual steps read as described.
+
+**The live region was the last piece of per-page state nobody reset.** It is written by `scheduleDelete` ("Removed …"), `undoDelete` ("Restored …"), `uploadFile` ("Added …") and `downloadAttachment` ("Downloaded …"), and the `pageId` effect that already wipes `notesErrors`, `deleteErrors`, `downloadErrors`, `pendingDeletes` and `pendingFocus` simply never included it. The long comment above that effect is the file's own statement of why this class of state must be cleared; the region now joins it.
+
+**The sequence number is preserved rather than reset, and the reason is narrower than it looks.** `announcedText` appends an invisible character on ODD sequence numbers, which is what makes two consecutive identical messages produce a real DOM mutation. Resetting the counter to 0 could in principle let the first announcement on the new page render byte-identical to what the region last held on the old page — and if those two updates were ever coalesced into one render, the reconciler would leave the text node untouched and the announcement would be silent.
+
+**That coalescing is not reachable today**, and the code says so rather than implying a fix for a live bug: the clear runs in a deferred `setTimeout(0)` on the page change, and the next announcement needs a fresh user action, so the empty string always renders in between. Preserving the counter is defensive, costs nothing, and stays correct if either of those two facts ever changes. It is deliberately not covered by a test, because a test for it would have to fake a coalescing the public surface cannot produce.
+
+**Seven copies of the same six-line reducer became one helper, and that refactor had a real risk of its own.** The body
+
+```js
+if (!(id in prev)) return prev;
+const next = { ...prev }; delete next[id]; return next;
+```
+
+appeared seven times: in `clearPendingDelete`, and in the clears for notes errors, delete errors (twice), download errors (twice) and the in-flight download map. Collapsing them freed 23 lines, which is what made room for the fix — the file was at 898 against a 900-line ceiling enforced by `AttachmentCard.wiring.test.js`.
+
+**The dangerous half is the bail-out, and a mutation run proved it was unpinned.** Returning the SAME object reference when the key is absent is what lets React skip the update entirely; most of these calls are clearing an entry that is not there, since every fresh attempt at a notes save, a delete or a download clears an error that usually does not exist. Deleting that one line — so the helper always spreads — left the ENTIRE experience suite green, because nothing observable changes; only the number of renders does. `withoutKey` is therefore exported (the precedent is `UNDO_WINDOW_MS`, exported for the same reason) and `AttachmentPanel.withoutKey.test.js` asserts reference identity with `toBe`, not `toEqual` — `toEqual` would pass against a copy, which is the exact mutation the test exists to catch.
+
+**Recorded, not asserted:** `withoutKey` uses `key in map`, which walks the prototype chain, so `"constructor"` would take the copying branch. `lib/experience/attachments.js` guards that hazard with an `ownLookup` helper and needs to — its keys come from user-supplied filenames and mime types. These keys do not: all seven call sites pass an attachment id, and those are uuids. Asserting it would mean requiring a behaviour change for an unreachable input, so it is written down in the test file instead, for whoever widens what these maps are keyed by.

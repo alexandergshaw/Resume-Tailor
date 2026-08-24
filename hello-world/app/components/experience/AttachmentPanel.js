@@ -76,6 +76,21 @@ function nextSeqFor(seqRef, id) {
   return next;
 }
 
+// Removes `id` from a keyed map, returning the SAME object reference when
+// the id is already absent rather than a fresh copy - callers pass this
+// straight into a setState updater, and returning that identical reference
+// is what lets React bail out of the update entirely instead of triggering
+// a no-op re-render.
+//
+// Exported for its own unit test, not for any other caller - the property
+// being pinned is that same-reference return on an absent key.
+export function withoutKey(map, id) {
+  if (!(id in map)) return map;
+  const next = { ...map };
+  delete next[id];
+  return next;
+}
+
 // Reinserts `attachment` into `list` immediately before the entry whose id
 // is `nextId` - the id of whichever attachment immediately followed it in
 // the list at the moment it was removed (see scheduleDelete, which records
@@ -122,12 +137,7 @@ function clearPendingDelete(pendingDeletesRef, pendingDeleteTimersRef, setPendin
     delete next[id];
     pendingDeletesRef.current = next;
   }
-  setPendingDeletes((prev) => {
-    if (!(id in prev)) return prev;
-    const next = { ...prev };
-    delete next[id];
-    return next;
-  });
+  setPendingDeletes((prev) => withoutKey(prev, id));
 }
 
 // Fires every currently pending deletion's DELETE request right now,
@@ -329,6 +339,22 @@ export default function AttachmentPanel({ pageId }) {
   //
   // `pendingFocus` and the three ref maps are keyed by those same unscoped
   // ids, so a leftover request would be honoured against a new page's row.
+  //
+  // `statusAnnouncement` isn't keyed by id at all, but it's the same leak:
+  // nothing reset it on a page change, so the live region could keep
+  // reading e.g. `Downloaded "on-page-one.pdf"` while page two was on
+  // screen, naming a file that isn't even in the list anymore. Cleared here
+  // too, text only - `seq` is carried over rather than reset to 0. That's
+  // defensive, not a fix for a bug reachable today: the toggle character
+  // announcedText appends on odd seq numbers is what makes two consecutive
+  // identical announcements produce a real DOM mutation, so resetting seq
+  // could in theory make the new page's first announcement render
+  // byte-identical to whatever the old page last showed, and if that render
+  // and this clear ever coalesced into one, React would leave the text node
+  // untouched and the announcement would be silent. It can't actually
+  // coalesce today - this clear is deferred and the next announcement needs
+  // a fresh user action, so the empty string always renders in between -
+  // but keeping seq costs nothing, so it's kept.
   useEffect(() => {
     flushPendingDeletes(pendingDeletesRef, pendingDeleteTimersRef);
     const handle = setTimeout(() => {
@@ -337,6 +363,7 @@ export default function AttachmentPanel({ pageId }) {
       setDownloadErrors({});
       setPendingDeletes({});
       setPendingFocus(null);
+      setStatusAnnouncement((prev) => ({ text: "", seq: prev.seq }));
       for (const refs of [notesFieldRefs, downloadButtonRefs, deleteButtonRefs]) refs.current = {};
     }, 0);
     return () => clearTimeout(handle);
@@ -486,12 +513,7 @@ export default function AttachmentPanel({ pageId }) {
         body: JSON.stringify({ notes }),
       });
       if (!res.ok) throw new Error();
-      setNotesErrors((prev) => {
-        if (!(id in prev)) return prev;
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
+      setNotesErrors((prev) => withoutKey(prev, id));
     } catch {
       setNotesErrors((prev) => ({
         ...prev,
@@ -547,12 +569,7 @@ export default function AttachmentPanel({ pageId }) {
       // DIFFERENT page's list and announce the other page's file name.
       const startedForPageId = pageId;
 
-      setDeleteErrors((prev) => {
-        if (!(attachment.id in prev)) return prev;
-        const next = { ...prev };
-        delete next[attachment.id];
-        return next;
-      });
+      setDeleteErrors((prev) => withoutKey(prev, attachment.id));
       try {
         const res = await fetch(`/api/experience/attachments/${attachment.id}`, { method: "DELETE" });
         if (!res.ok) throw new Error();
@@ -619,12 +636,7 @@ export default function AttachmentPanel({ pageId }) {
     // gated on still being on the page it was started from.
     const startedForPageId = pageId;
 
-    setDownloadErrors((prev) => {
-      if (!(id in prev)) return prev;
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
+    setDownloadErrors((prev) => withoutKey(prev, id));
 
     // One place, one message, one shape: a thrown createClient() (public env
     // vars missing) or triggerBlobDownload (a torn-down document) is the same
@@ -651,12 +663,7 @@ export default function AttachmentPanel({ pageId }) {
       reportFailure();
     } finally {
       delete downloadingRef.current[id];
-      setDownloading((prev) => {
-        if (!(id in prev)) return prev;
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
+      setDownloading((prev) => withoutKey(prev, id));
     }
   }, [pageId]);
 
@@ -750,18 +757,8 @@ export default function AttachmentPanel({ pageId }) {
       // rather than left to finalize. A failed DOWNLOAD's alert goes with it,
       // same id, same reason: a row that comes back - via Undo, or via
       // finalizeDelete's own failure-restore - carries only what is still true.
-      setDeleteErrors((prev) => {
-        if (!(id in prev)) return prev;
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
-      setDownloadErrors((prev) => {
-        if (!(id in prev)) return prev;
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
+      setDeleteErrors((prev) => withoutKey(prev, id));
+      setDownloadErrors((prev) => withoutKey(prev, id));
       setPendingDelete(pendingDeletesRef, setPendingDeletes, id, { attachment, nextId });
       setStatusAnnouncement((prev) => bumpAnnouncement(prev.seq, `Removed "${attachment.name}"`));
 

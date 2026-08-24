@@ -459,14 +459,14 @@ describe("Retry on a failed delete", () => {
     expect(byLabel("Delete elsewhere.pdf")).not.toBeNull();
     expect(byLabel("Delete first.pdf")).toBeNull();
     expect(document.activeElement).not.toBe(byLabel("Delete elsewhere.pdf"));
-    // NOT asserted here: that the live region has stopped saying
-    // `Removed "first.pdf"`. It has not. `statusAnnouncement` is set by
-    // scheduleDelete at click time - legitimately, on page one - and nothing
-    // resets it on a page switch, so the previous page's last announcement is
-    // still sitting in the region while page two is on screen. That is a real
-    // (pre-existing, cosmetic) leak of the same family as the per-id maps,
-    // and it is deliberately out of this change's scope rather than quietly
-    // folded in. Recorded as its own follow-up.
+    // The live region is empty too. `scheduleDelete` announced
+    // `Removed "first.pdf"` back on page one - legitimately, at click time -
+    // and for a while nothing reset it on a page switch, so that sentence sat
+    // in the region while page two was on screen, naming a file that is not in
+    // the list. It is the same family of leak as the per-id maps and it has
+    // since joined their rule; AttachmentPanel.download.test.js owns the
+    // dedicated cases for it.
+    expect(container.querySelector('[role="status"]').textContent).toBe("");
   });
 
   it("falls back to the upload control when the deleted row was the only one", async () => {

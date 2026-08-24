@@ -633,6 +633,58 @@ describe("switching pages while downloads are involved", () => {
     expect(container.textContent).not.toContain("Could not download");
   });
 
+  it("clears the live region so it never describes the page you left", async () => {
+    // The status region is shared by every announcement this panel makes -
+    // "Added", "Removed", "Restored", "Downloaded" - and nothing reset it on
+    // a page change. So downloading a file on page one and then clicking to
+    // page two left the region still reading `Downloaded "on-page-one.pdf"`
+    // while page two was on screen, naming a file that is not in the list.
+    //
+    // Exactly the leak the per-id error maps already have a documented fix
+    // for: the long comment above this panel's pageId effect explains that
+    // ids are not scoped to a page, and wipes those maps for that reason.
+    // The live region simply never joined that rule.
+    let currentPage = "page-1";
+    installTwoPageFetch(() => currentPage);
+    installStorage();
+    await mount({ pageId: "page-1" });
+
+    await click(downloadButtonFor("on-page-one.pdf"));
+    expect(withoutZwsp(statusText())).toBe('Downloaded "on-page-one.pdf"');
+
+    currentPage = "page-2";
+    await mount({ pageId: "page-2" });
+
+    expect(statusText()).toBe("");
+  });
+
+  it("still announces normally once you are on the new page", async () => {
+    // Positive control for the clear above. A panel that reset the region and
+    // broke the announcement mechanism in doing so - by discarding the
+    // sequence counter the region's DOM-mutation trick depends on, or by
+    // clearing on every render rather than only on a page change - would pass
+    // the previous test and be worse than the bug it fixed.
+    let currentPage = "page-1";
+    installTwoPageFetch(() => currentPage);
+    installStorage();
+    await mount({ pageId: "page-1" });
+
+    await click(downloadButtonFor("on-page-one.pdf"));
+    currentPage = "page-2";
+    await mount({ pageId: "page-2" });
+    expect(statusText()).toBe("");
+
+    await click(downloadButtonFor("on-page-two.pdf"));
+    expect(withoutZwsp(statusText())).toBe('Downloaded "on-page-two.pdf"');
+
+    // …and a second, identical announcement on this page still mutates the
+    // DOM, which is the whole reason the counter exists.
+    const first = statusText();
+    await click(downloadButtonFor("on-page-two.pdf"));
+    expect(withoutZwsp(statusText())).toBe('Downloaded "on-page-two.pdf"');
+    expect(statusText()).not.toBe(first);
+  });
+
   it("does not announce a download that lands after the user has moved on", async () => {
     // A 100 MB video is seconds of wall clock - long enough to click away
     // from. The file itself must still arrive, because the user asked for
