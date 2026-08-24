@@ -12,32 +12,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
-import Card from "@mui/material/Card";
-import CardContent from "@mui/material/CardContent";
 import CircularProgress from "@mui/material/CircularProgress";
-import IconButton from "@mui/material/IconButton";
 import Stack from "@mui/material/Stack";
-import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
-import DeleteIcon from "@mui/icons-material/Delete";
-import DownloadIcon from "@mui/icons-material/Download";
-import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
-import SlideshowIcon from "@mui/icons-material/Slideshow";
-import TableChartIcon from "@mui/icons-material/TableChart";
 import { classifyAttachment } from "../../../lib/experience/attachments";
 import { createClient } from "../../../lib/supabase/client";
 import { downloadAttachmentBlob } from "../../../lib/supabase/experienceAttachments";
-import { triggerBlobDownload } from "../../../lib/document/docx";
-
-const KIND_LABEL = {
-  image: "Image",
-  pdf: "PDF",
-  video: "Video",
-  text: "Text",
-  slides: "Slides",
-  sheet: "Spreadsheet",
-  other: "File",
-};
+import { triggerBlobDownload } from "../../../lib/document/download";
+import AttachmentCard from "./AttachmentCard.js";
 
 // How long a deletion stays reversible before its DELETE actually goes
 // out - see scheduleDelete/finalizeDelete below. The product decision this
@@ -79,17 +61,15 @@ function announcedText(entry) {
   return entry.seq % 2 === 1 ? `${entry.text}${ANNOUNCE_TOGGLE}` : entry.text;
 }
 
-// notesErrors/deleteErrors are keyed maps, and both clear an id's entry
-// outright (delete the key) at the start of a retry, before knowing whether
-// the retry will fail again — unlike uploadError's single { text, seq }
-// object, whose `seq` survives being reset to text: "" because the state
-// object itself is never removed. Reading `prev[id]?.seq` the way
-// uploadError reads `prev.seq` would therefore see undefined on every
-// retry's failure (the entry was just deleted) and restart the count at 1
-// every time, defeating the whole mechanism — two separate failures would
-// both land on the same odd parity and render identically. The seq for a
-// given id has to live somewhere that survives the entry being deleted; a
-// ref, keyed the same way, is that somewhere.
+// notesErrors/deleteErrors are keyed maps whose entry for an id is deleted
+// outright — the key goes, it is not blanked — the moment it stops being
+// true: at the start of a retry for deleteErrors, on the save that finally
+// lands for notesErrors. uploadError's single { text, seq } object is never
+// removed, so it can read `prev.seq`; reading `prev[id]?.seq` here would see
+// undefined after any such deletion and restart the count at 1, defeating the
+// whole mechanism — two separate failures would land on the same odd parity
+// and render identically. The seq has to outlive the entry it belongs to, and
+// a ref keyed the same way is where it does.
 function nextSeqFor(seqRef, id) {
   const next = (seqRef.current[id] ?? 0) + 1;
   seqRef.current[id] = next;
@@ -175,14 +155,6 @@ function flushPendingDeletes(pendingDeletesRef, pendingDeleteTimersRef) {
     delete pendingDeletesRef.current[id];
     fetch(`/api/experience/attachments/${entry.attachment.id}`, { method: "DELETE" }).catch(() => {});
   }
-}
-
-function formatBytes(bytes) {
-  const n = Number(bytes);
-  if (!Number.isFinite(n) || n <= 0) return "";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // The one supported path (a secure context, which this feature already
@@ -279,26 +251,55 @@ export default function AttachmentPanel({ pageId }) {
     pageIdRef.current = pageId;
   }, [pageId]);
 
-  // The underlying <textarea> DOM node for each attachment's notes field,
-  // keyed by attachment id — mirrors JobDescriptionTab.js's own
-  // `fieldRefs.current[entry.id] = el` pattern. Populated via each field's
-  // own inputRef callback below; used only to move focus onto a specific
-  // one once it exists (see focusNotesId's effect).
+  // The underlying DOM node for each attachment's notes field / Download
+  // button / Delete button, keyed by attachment id — mirrors
+  // JobDescriptionTab.js's own `fieldRefs.current[entry.id] = el` pattern.
+  // Populated via each control's own ref callback below; used only to move
+  // focus onto a specific one once it exists (see pendingFocus's effect).
   const notesFieldRefs = useRef({});
-  // New cards append to the END of the list, so without this a keyboard
-  // user has to tab past every existing attachment to reach the one they
-  // just added. Set right alongside the successful upload's own
-  // setAttachments call (see uploadFile); the effect below moves focus once
-  // that new card — and its ref — actually exist in the DOM. No reset to
-  // null afterward: each upload's id is a fresh crypto.randomUUID(), so the
-  // next upload's id is never Object.is-equal to this one and the effect
-  // fires again regardless of whether this was ever cleared.
-  const [focusNotesId, setFocusNotesId] = useState(null);
+  const downloadButtonRefs = useRef({});
+  const deleteButtonRefs = useRef({});
+  // One pending focus request for every "focus a thing once it exists" case
+  // in this file, rather than a bespoke flag per case: `{ kind, id }` names
+  // a notes field / Download button / Delete button by attachment id,
+  // `{ kind: "upload" }` names the panel's own file input, null means
+  // nothing pending. A fresh upload uses "notes" (a new card appends to the
+  // END of the list — without this a keyboard user would tab past every
+  // existing attachment to reach the one they just added); each Retry below
+  // uses the name matching its alert, some with `ifLost` (see just below).
+  const [pendingFocus, setPendingFocus] = useState(null);
+  // Mirrors ExperienceTab.js's own focusRequest effect, with two rules that
+  // one has no need of. A request is CONSUMED ONCE, cleared whether or not it
+  // resolved: renders are cheap here (onNotesInput calls setAttachments per
+  // keystroke), so one left standing re-fires on unrelated later ones —
+  // mid-word, or seconds late once Undo remounts a row it named. And `ifLost`
+  // marks the only request decided AFTER an await (removeAttachment's), which
+  // can land on a user who has since clicked into another row: moving focus
+  // then drags the caret off mid-word and, since leaving a notes field saves
+  // it, PATCHes a half-typed note. So it is honoured only where focus is
+  // unattended: <body>, nowhere, or a node this render just detached.
+  //
+  // `attachments` is belt-and-braces, and a mutation run proved it: dropping
+  // it leaves every focus test green, because removeAttachment calls
+  // setAttachments and setPendingFocus in one synchronous block and React
+  // batches them into a single render, so the neighbour's ref already
+  // exists. It stays because that guarantee is React's batching, not
+  // anything this file controls — move either setState behind an await and
+  // only this dependency brings the effect back.
   useEffect(() => {
-    if (!focusNotesId) return;
-    const el = notesFieldRefs.current[focusNotesId];
-    if (el) el.focus();
-  }, [focusNotesId]);
+    if (!pendingFocus) return;
+    const { kind, id, ifLost } = pendingFocus;
+    setPendingFocus(null);
+    const active = document.activeElement;
+    if (ifLost && active && active !== document.body && active.isConnected) return;
+    // The file input sits outside attachments.map, so it is always mounted:
+    // both "upload" and the fallback for a control that has gone (row
+    // unmounted, ref nulled by a delete mid-await), <body> being the one
+    // place focus must not land. An unknown kind resolves to no map at all.
+    const refs =
+      kind === "notes" ? notesFieldRefs : kind === "download" ? downloadButtonRefs : kind === "delete" ? deleteButtonRefs : null;
+    if (kind === "upload" || refs) (refs?.current[id] ?? inputRef.current)?.focus();
+  }, [pendingFocus, attachments]);
 
   // All three error maps are keyed only by attachment id, and ids are not
   // scoped to a page anywhere the panel itself enforces — two different
@@ -325,6 +326,9 @@ export default function AttachmentPanel({ pageId }) {
   // render-facing copy) is cleared in the same deferred pass as the three
   // error maps, so a page switch never leaves a stale Undo row on screen
   // for an attachment that belongs to the page just left.
+  //
+  // `pendingFocus` and the three ref maps are keyed by those same unscoped
+  // ids, so a leftover request would be honoured against a new page's row.
   useEffect(() => {
     flushPendingDeletes(pendingDeletesRef, pendingDeleteTimersRef);
     const handle = setTimeout(() => {
@@ -332,6 +336,8 @@ export default function AttachmentPanel({ pageId }) {
       setDeleteErrors({});
       setDownloadErrors({});
       setPendingDeletes({});
+      setPendingFocus(null);
+      for (const refs of [notesFieldRefs, downloadButtonRefs, deleteButtonRefs]) refs.current = {};
     }, 0);
     return () => clearTimeout(handle);
   }, [pageId]);
@@ -420,7 +426,7 @@ export default function AttachmentPanel({ pageId }) {
         if (data.attachment && pageIdRef.current === startedForPageId) {
           setAttachments((prev) => [...prev, data.attachment]);
           setStatusAnnouncement((prev) => bumpAnnouncement(prev.seq, `Added "${data.attachment.name}"`));
-          setFocusNotesId(data.attachment.id);
+          setPendingFocus({ kind: "notes", id: data.attachment.id });
         }
       } catch (err) {
         setUploadError((prev) => bumpAnnouncement(prev.seq, err?.message || "Could not upload this file."));
@@ -466,13 +472,13 @@ export default function AttachmentPanel({ pageId }) {
   // is the ONLY description of that file the AI ever gets (the video bytes
   // themselves are never sent as context), so losing it silently is a real
   // loss, not a cosmetic one.
+  //
+  // The entry goes when the PATCH SUCCEEDS, never when one starts: this
+  // alert's own Retry lives inside what clearing unmounts, and the field's
+  // blur is a second, invisible caller of this same function. The browser
+  // focuses that button on MOUSEDOWN, blurring the field — so clearing first
+  // would delete the button before mouseup, and focus would fall to <body>.
   const saveNotes = useCallback(async (id, name, notes) => {
-    setNotesErrors((prev) => {
-      if (!(id in prev)) return prev;
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
     try {
       const res = await fetch(`/api/experience/attachments/${id}`, {
         method: "PATCH",
@@ -480,6 +486,12 @@ export default function AttachmentPanel({ pageId }) {
         body: JSON.stringify({ notes }),
       });
       if (!res.ok) throw new Error();
+      setNotesErrors((prev) => {
+        if (!(id in prev)) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
     } catch {
       setNotesErrors((prev) => ({
         ...prev,
@@ -491,45 +503,86 @@ export default function AttachmentPanel({ pageId }) {
     }
   }, []);
 
+  // The notes Alert's own Retry — never wired to the field's onBlur (see
+  // AttachmentCard.js's own comment on this split): an ordinary blur must
+  // not steal focus back onto the field it just left, but a Retry is a
+  // deliberate second click on a control that unmounts itself the moment the
+  // save it starts actually lands (saveNotes clears this id's error on
+  // success), so the target is set BEFORE that save starts — not decided
+  // after, unlike the delete Retry below, because this row is never removed.
+  const retryNotes = useCallback(
+    (id, name, notes) => {
+      setPendingFocus({ kind: "notes", id });
+      saveNotes(id, name, notes);
+    }, [saveNotes]);
+
   // The Retry action on a failed delete's own alert — see finalizeDelete
   // below, which is what puts an attachment into `deleteErrors` in the
   // first place now. Retrying is an explicit, deliberate second click
   // AFTER a real failure was already shown, not a fresh accidental one, so
   // it re-issues the DELETE immediately rather than reopening a whole new
-  // undo window. Mirrors saveNotes' own shape exactly (clear any previous
-  // error for this id before trying again; on failure, set one naming the
-  // file) rather than inventing a second error pattern for the same kind
-  // of failure.
-  const removeAttachment = useCallback(async (attachment) => {
-    setDeleteErrors((prev) => {
-      if (!(attachment.id in prev)) return prev;
-      const next = { ...prev };
-      delete next[attachment.id];
-      return next;
-    });
-    try {
-      const res = await fetch(`/api/experience/attachments/${attachment.id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error();
-      setAttachments((prev) => prev.filter((a) => a.id !== attachment.id));
-      setStatusAnnouncement((prev) => bumpAnnouncement(prev.seq, `Removed "${attachment.name}"`));
-    } catch {
-      // Leave the row in place — the delete did not take — and now say so,
-      // instead of leaving that absence of change as the only signal.
-      setDeleteErrors((prev) => ({
-        ...prev,
-        [attachment.id]: {
-          text: `Could not delete "${attachment.name}". Try again.`,
-          seq: nextSeqFor(deleteErrorSeqRef, attachment.id),
-        },
-      }));
-    }
-  }, []);
+  // undo window. Reuses saveNotes' failure shape (an error naming the file,
+  // with a Retry) rather than inventing a second pattern for the same kind of
+  // failure; unlike saveNotes it can still clear this id's entry up front,
+  // because a click here lands before that clear unmounts the alert.
+  //
+  // Unlike retryNotes/retryDownload above, this cannot pick its focus target
+  // at click time: a SUCCESSFUL delete removes this exact row, so the
+  // control the other two Retries simply reuse is gone before anyone could
+  // focus it. The decision waits for the DELETE to resolve, then branches:
+  // failure leaves the row (and its Delete button) standing right where the
+  // click happened, so focus stays there; success moves focus to a
+  // neighbour — next row, then previous, then upload if this was the only
+  // attachment left. `nextId`/`prevId` are read off `attachments` right
+  // here, before the DELETE goes out (scheduleDelete's own `nextId` anchor,
+  // same discipline) — a re-read after the await could name a neighbour
+  // that moved, or is gone, if another delete finished first.
+  const removeAttachment = useCallback(
+    async (attachment) => {
+      const idx = attachments.findIndex((a) => a.id === attachment.id);
+      const nextId = idx === -1 ? null : (attachments[idx + 1]?.id ?? null);
+      const prevId = idx > 0 ? attachments[idx - 1].id : null;
+      // Captured exactly as uploadFile and downloadAttachment capture it: an
+      // ungated write resolving after a page switch would drop a row out of a
+      // DIFFERENT page's list and announce the other page's file name.
+      const startedForPageId = pageId;
+
+      setDeleteErrors((prev) => {
+        if (!(attachment.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[attachment.id];
+        return next;
+      });
+      try {
+        const res = await fetch(`/api/experience/attachments/${attachment.id}`, { method: "DELETE" });
+        if (!res.ok) throw new Error();
+        if (pageIdRef.current !== startedForPageId) return;
+        setAttachments((prev) => prev.filter((a) => a.id !== attachment.id));
+        setStatusAnnouncement((prev) => bumpAnnouncement(prev.seq, `Removed "${attachment.name}"`));
+        const targetId = nextId ?? prevId;
+        setPendingFocus(targetId ? { kind: "delete", id: targetId, ifLost: true } : { kind: "upload", ifLost: true });
+      } catch {
+        // Leave the row in place — the delete did not take — and now say so,
+        // instead of leaving that absence of change as the only signal.
+        if (pageIdRef.current !== startedForPageId) return;
+        setDeleteErrors((prev) => ({
+          ...prev,
+          [attachment.id]: {
+            text: `Could not delete "${attachment.name}". Try again.`,
+            seq: nextSeqFor(deleteErrorSeqRef, attachment.id),
+          },
+        }));
+        setPendingFocus({ kind: "delete", id: attachment.id, ifLost: true });
+      }
+    },
+    [attachments, pageId],
+  );
 
   // The Download IconButton's own handler — pulls this attachment's bytes
   // back out of the private bucket and saves them under the file's
   // ORIGINAL name (never the storage key's sanitized basename). Mirrors
-  // saveNotes/removeAttachment's own shape (clear any previous error for
-  // this id before trying again; on failure, set one naming the file) with
+  // removeAttachment's own shape (clear any previous error for this id
+  // before trying again; on failure, set one naming the file) with
   // one addition on top: the downloadingRef guard above, because unlike a
   // notes save or a delete, a slow download is exactly the kind of thing
   // that invites an impatient second click on the same control.
@@ -607,6 +660,15 @@ export default function AttachmentPanel({ pageId }) {
     }
   }, [pageId]);
 
+  // The download Alert's own Retry — same split as retryNotes above: this
+  // row's Download button always survives either way, so the target is
+  // knowable — and set — at click time.
+  const retryDownload = useCallback(
+    (attachment) => {
+      setPendingFocus({ kind: "download", id: attachment.id });
+      downloadAttachment(attachment);
+    }, [downloadAttachment]);
+
   // Fires once scheduleDelete's undo window has actually run out (or once
   // a flush forces it early — see flushPendingDeletes, which bypasses this
   // function entirely and swallows its own failures instead of reaching
@@ -682,8 +744,8 @@ export default function AttachmentPanel({ pageId }) {
       // The delete IconButton stays clickable even on a row currently
       // showing a PRIOR failed delete's own alert (finalizeDelete restores
       // the row without hiding it) - clearing any stale entry here, the
-      // same way removeAttachment/saveNotes clear their own error at the
-      // start of every fresh attempt, is what stops that old failure from
+      // same way removeAttachment clears its own error at the start of
+      // every fresh attempt, is what stops that old failure from
       // reappearing next to this row if THIS new attempt is later undone
       // rather than left to finalize. A failed DOWNLOAD's alert goes with it,
       // same id, same reason: a row that comes back - via Undo, or via
@@ -805,141 +867,30 @@ export default function AttachmentPanel({ pageId }) {
 
       <Stack spacing={2}>
         {attachments.map((attachment) => (
-          <Card key={attachment.id} variant="outlined">
-            <CardContent>
-              <Stack direction="row" spacing={2} sx={{ alignItems: "flex-start" }}>
-                <Box sx={{ width: 96, flexShrink: 0 }}>
-                  {attachment.kind === "image" && attachment.url && (
-                    <Box
-                      component="img"
-                      src={attachment.url}
-                      alt={attachment.notes || attachment.name}
-                      sx={{ width: 1, borderRadius: 1, display: "block" }}
-                    />
-                  )}
-                  {attachment.kind === "video" && attachment.url && (
-                    <Box
-                      component="video"
-                      controls
-                      src={attachment.url}
-                      aria-label={attachment.notes || attachment.name}
-                      sx={{ width: 1, borderRadius: 1, display: "block" }}
-                    />
-                  )}
-                  {/* Slides/sheet get their own icon, distinct from each other and from
-                      the generic InsertDriveFileIcon every other non-preview kind still
-                      falls back to — the text label just below already says the kind, so
-                      neither icon needs (or gets) an aria-hidden-defeating titleAccess. */}
-                  {attachment.kind === "slides" && <SlideshowIcon fontSize="large" color="action" />}
-                  {attachment.kind === "sheet" && <TableChartIcon fontSize="large" color="action" />}
-                  {(attachment.kind !== "image" &&
-                    attachment.kind !== "video" &&
-                    attachment.kind !== "slides" &&
-                    attachment.kind !== "sheet") && (
-                    <InsertDriveFileIcon fontSize="large" color="action" />
-                  )}
-                </Box>
-                <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                  <Typography variant="body2" sx={{ fontWeight: 600, wordBreak: "break-word" }}>
-                    {attachment.name}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {KIND_LABEL[attachment.kind] || "File"}
-                    {formatBytes(attachment.bytes) ? ` • ${formatBytes(attachment.bytes)}` : ""}
-                  </Typography>
-                  <TextField
-                    fullWidth
-                    multiline
-                    minRows={1}
-                    size="small"
-                    margin="dense"
-                    label="Notes for the AI"
-                    // The visible floating label stays identical for every
-                    // card on purpose (it's the field's PURPOSE, and that is
-                    // the same everywhere) — the accessible name is what has
-                    // to be distinct, since it's what a screen reader's
-                    // form-field list shows in place of visible position.
-                    // slotProps.htmlInput is MUI's documented way to reach
-                    // the underlying <textarea> itself, matching
-                    // JobDescriptionTab.js's own reasoning: a plain
-                    // aria-label prop on TextField would land on the root
-                    // FormControl, not the field an AT is actually focused
-                    // on.
-                    slotProps={{ htmlInput: { "aria-label": `Notes for the AI for ${attachment.name}` } }}
-                    inputRef={(el) => {
-                      notesFieldRefs.current[attachment.id] = el;
-                    }}
-                    value={attachment.notes || ""}
-                    onChange={(event) => onNotesInput(attachment.id, event.target.value)}
-                    onBlur={(event) => saveNotes(attachment.id, attachment.name, event.target.value)}
-                  />
-                  {notesErrors[attachment.id] && (
-                    <Alert
-                      severity="error"
-                      sx={{ mt: 0.5 }}
-                      action={
-                        <Button
-                          color="inherit"
-                          size="small"
-                          onClick={() => saveNotes(attachment.id, attachment.name, attachment.notes || "")}
-                        >
-                          Retry
-                        </Button>
-                      }
-                    >
-                      {announcedText(notesErrors[attachment.id])}
-                    </Alert>
-                  )}
-                  {deleteErrors[attachment.id] && (
-                    <Alert
-                      severity="error"
-                      sx={{ mt: 0.5 }}
-                      action={
-                        <Button color="inherit" size="small" onClick={() => removeAttachment(attachment)}>
-                          Retry
-                        </Button>
-                      }
-                    >
-                      {announcedText(deleteErrors[attachment.id])}
-                    </Alert>
-                  )}
-                  {downloadErrors[attachment.id] && (
-                    <Alert
-                      severity="error"
-                      sx={{ mt: 0.5 }}
-                      action={
-                        <Button color="inherit" size="small" onClick={() => downloadAttachment(attachment)}>
-                          Retry
-                        </Button>
-                      }
-                    >
-                      {announcedText(downloadErrors[attachment.id])}
-                    </Alert>
-                  )}
-                </Box>
-                <IconButton
-                  aria-label={`Download ${attachment.name}`}
-                  onClick={() => downloadAttachment(attachment)}
-                  size="small"
-                  // Never disabled and never pulled out of the tab order —
-                  // see downloadingRef's own comment: the button that
-                  // vanishes from tab order the moment it's used is a bug
-                  // this repo has already shipped once. aria-busy plus the
-                  // spinner below is the whole in-flight signal.
-                  aria-busy={downloading[attachment.id] ? "true" : undefined}
-                >
-                  {downloading[attachment.id] ? <CircularProgress size={16} /> : <DownloadIcon fontSize="small" />}
-                </IconButton>
-                <IconButton
-                  aria-label={`Delete ${attachment.name}`}
-                  onClick={() => scheduleDelete(attachment)}
-                  size="small"
-                >
-                  <DeleteIcon fontSize="small" />
-                </IconButton>
-              </Stack>
-            </CardContent>
-          </Card>
+          <AttachmentCard
+            key={attachment.id}
+            attachment={attachment}
+            downloading={Boolean(downloading[attachment.id])}
+            notesErrorText={notesErrors[attachment.id] ? announcedText(notesErrors[attachment.id]) : ""}
+            deleteErrorText={deleteErrors[attachment.id] ? announcedText(deleteErrors[attachment.id]) : ""}
+            downloadErrorText={downloadErrors[attachment.id] ? announcedText(downloadErrors[attachment.id]) : ""}
+            onNotesInput={onNotesInput}
+            onSaveNotes={saveNotes}
+            onRetryNotes={retryNotes}
+            onDownload={downloadAttachment}
+            onRetryDownload={retryDownload}
+            onDelete={scheduleDelete}
+            onRetryDelete={removeAttachment}
+            notesFieldRef={(el) => {
+              notesFieldRefs.current[attachment.id] = el;
+            }}
+            downloadButtonRef={(el) => {
+              downloadButtonRefs.current[attachment.id] = el;
+            }}
+            deleteButtonRef={(el) => {
+              deleteButtonRefs.current[attachment.id] = el;
+            }}
+          />
         ))}
       </Stack>
     </Box>

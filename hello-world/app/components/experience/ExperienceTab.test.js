@@ -77,6 +77,25 @@ vi.mock("../../../lib/supabase/client", () => ({
   }),
 }));
 
+// The REAL store function, wrapped in a spy - not a stub. Reading an
+// attachment's bytes out of the private bucket is `downloadAttachmentBlob`'s
+// job (lib/supabase/experienceAttachments.js), and this component used to
+// hand-roll its own copy of it, complete with a second `"resumes"` literal
+// and a second piece of error handling.
+//
+// Wrapping rather than stubbing matters: the real implementation still runs
+// against the mocked client above, so the existing "the bytes reach the chat"
+// assertions keep testing the whole path end to end. The spy exists only to
+// answer the one question those assertions cannot - was the SHARED module
+// asked, or has a private copy quietly grown back? A duplicate that happened
+// to behave identically would produce identical files and identical calls to
+// `downloadMock`, so nothing else in this file could tell the two apart.
+vi.mock("../../../lib/supabase/experienceAttachments", async (importOriginal) => {
+  const real = await importOriginal();
+  return { ...real, downloadAttachmentBlob: vi.fn(real.downloadAttachmentBlob) };
+});
+
+import { downloadAttachmentBlob } from "../../../lib/supabase/experienceAttachments";
 import ExperienceTab from "./ExperienceTab.js";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -89,6 +108,14 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
   downloadMock.mockReset();
+  // A `vi.fn()` created inside a `vi.mock` factory is NOT cleared by
+  // `vi.restoreAllMocks()` - that only restores `vi.spyOn` registrations, and
+  // this config sets neither `clearMocks` nor `restoreMocks`. Left alone, its
+  // call history accumulates across every test in the file and the
+  // per-path assertions below start reading calls made by earlier tests.
+  // `mockClear`, not `mockReset`: this spy wraps the REAL implementation and
+  // `mockReset` would throw that away, leaving it returning undefined.
+  downloadAttachmentBlob.mockClear();
 });
 
 afterEach(async () => {
@@ -997,6 +1024,43 @@ describe("ExperienceTab -- Ask AI", () => {
     expect(downloadedPaths.sort()).toEqual(
       ["u1/experience/p2/a1-topology.png", "u1/experience/p2/a2-spec.pdf", "u1/experience/p2/a3-notes.txt"].sort(),
     );
+  });
+
+  it("reads those bytes through the shared store function, not a private copy", async () => {
+    // Gates the deduplication itself. The behaviour assertions above pass
+    // just as happily against a hand-rolled `supabase.storage.from("resumes")
+    // .download(...)` inline here - they did, for as long as one existed -
+    // so without this the shared helper could be added, be correct, and never
+    // actually be wired up. That is the single most common way a change like
+    // this finishes with a green suite and nothing altered.
+    global.fetch = mockFetchWithAttachments();
+    downloadMock.mockImplementation(async (path) => {
+      const found = ATTACHMENTS.find((a) => a.storage_path === path);
+      return { data: new Blob(["bytes"], { type: found?.mime || "application/octet-stream" }), error: null };
+    });
+
+    const addChatAttachments = vi.fn();
+    await render({ askAiAbout: vi.fn(), addChatAttachments });
+    await flush();
+    await selectChildPage();
+    await click(container.querySelector('[data-testid="mock-page-editor-ask-ai"]'));
+    await flush();
+
+    const askedFor = downloadAttachmentBlob.mock.calls.map(([, path]) => path).sort();
+    expect(askedFor).toEqual(
+      ["u1/experience/p2/a1-topology.png", "u1/experience/p2/a2-spec.pdf", "u1/experience/p2/a3-notes.txt"].sort(),
+    );
+    // The video is still excluded before any read is attempted - the shared
+    // helper must not have become a way to sneak its bytes in.
+    expect(askedFor).not.toContain("u1/experience/p2/a4-demo.mp4");
+    // And the files still actually arrive, so this is a rewiring rather than
+    // a replacement of a working path with a spy.
+    expect(addChatAttachments).toHaveBeenCalledTimes(1);
+    expect(addChatAttachments.mock.calls[0][0].map((f) => f.name).sort()).toEqual([
+      "notes.txt",
+      "spec.pdf",
+      "topology.png",
+    ]);
   });
 
   it("still pins the page (title, body, breadcrumb) when the attachments fetch fails, and does not call addChatAttachments", async () => {

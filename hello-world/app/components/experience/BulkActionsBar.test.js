@@ -45,19 +45,24 @@ vi.mock("../../../lib/experience/deckTemplateStore.js", () => ({
   uploadDeckTemplate: vi.fn(),
 }));
 
-// Only triggerBlobDownload is mocked - a real DOM side effect (an <a> click
+// triggerBlobDownload is mocked - a real DOM side effect (an <a> click
 // through a blob: URL) that jsdom cannot usefully perform and that these
-// tests have no reason to exercise. sanitizeFileNamePart stays real via
-// importOriginal, since BulkActionsBar.js uses it for the download's file
-// name and a fake would only prove the fake.
-vi.mock("../../../lib/document/docx.js", async (importOriginal) => {
+// tests have no reason to exercise. Its own behaviour, including that it
+// releases the object URL even when the click throws, is covered by
+// lib/document/download.test.js, which installs the URL APIs jsdom lacks.
+//
+// `sanitizeFileNamePart` is NOT affected by this mock and stays real: it
+// lives in lib/document/docx.js, which BulkActionsBar.js imports separately.
+// A fake of it would only prove the fake, since it is what builds the
+// download's file name.
+vi.mock("../../../lib/document/download.js", async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, triggerBlobDownload: vi.fn() };
 });
 
 import { readEngine } from "../../settings/engine";
 import { fetchDeckTemplate, uploadDeckTemplate } from "../../../lib/experience/deckTemplateStore.js";
-import { triggerBlobDownload } from "../../../lib/document/docx.js";
+import { triggerBlobDownload } from "../../../lib/document/download.js";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 

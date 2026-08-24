@@ -19,7 +19,8 @@ import { readEngine } from "../../settings/engine";
 import { outlineFromPages } from "../../../lib/experience/deckOutline.js";
 import { buildDeck } from "../../../lib/experience/pptxWriter.js";
 import { fetchDeckTemplate, uploadDeckTemplate } from "../../../lib/experience/deckTemplateStore.js";
-import { triggerBlobDownload, sanitizeFileNamePart } from "../../../lib/document/docx.js";
+import { triggerBlobDownload } from "../../../lib/document/download.js";
+import { sanitizeFileNamePart } from "../../../lib/document/docx.js";
 import { fragmentsFromPages } from "../../../lib/experience/tailorSources.js";
 import ImportToLibraryDialog from "./ImportToLibraryDialog.js";
 

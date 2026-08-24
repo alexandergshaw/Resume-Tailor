@@ -21,6 +21,7 @@ import { useExperiencePages } from "../../hooks/useExperiencePages";
 import { toggleSelected, selectionSummary } from "../../../lib/experience/bulkSelection";
 import { buildPageContext } from "../../../lib/experience/pageContext";
 import { createClient } from "../../../lib/supabase/client";
+import { downloadAttachmentBlob } from "../../../lib/supabase/experienceAttachments";
 
 // Attachment kinds whose bytes are actually downloaded and handed to the
 // chat as a real file. Mirrors app/api/chat/route.js exactly: text/.docx get
@@ -30,8 +31,6 @@ import { createClient } from "../../../lib/supabase/client";
 // video in the pinned TEXT (name, notes, transcript) - this set is only
 // about which kinds get their BYTES downloaded.
 const DOWNLOADABLE_ATTACHMENT_KINDS = new Set(["text", "image", "pdf"]);
-
-const ATTACHMENTS_BUCKET = "resumes";
 
 // Mirrors PageEditor.js's ANNOUNCE_TOGGLE exactly, and for the same reason:
 // built explicitly rather than typed as a literal character in source, so
@@ -432,14 +431,23 @@ export default function ExperienceTab({ askAiAbout, addChatAttachments }) {
     const files = (
       await Promise.all(
         downloadable.map(async (a) => {
+          // downloadAttachmentBlob (lib/supabase/experienceAttachments.js) is
+          // the shared store function that owns reading an attachment's
+          // bytes out of the `resumes` bucket - it already try/catches
+          // internally and never throws, so a failed read here still just
+          // yields `null` for this one attachment rather than any risk of
+          // taking the whole Ask AI action down with it. It stays INSIDE the
+          // try all the same: it is the one call in this callback that could
+          // ever reject, and a rejection escaping into Promise.all takes the
+          // entire Ask AI action with it, not just this one file.
           try {
-            const { data, error } = await supabase.storage.from(ATTACHMENTS_BUCKET).download(a.storage_path);
-            if (error || !data) return null;
+            const { blob, error } = await downloadAttachmentBlob(supabase, a.storage_path);
+            if (error || !blob) return null;
             // Mirrors app/page.js's askAiAboutMaterial exactly: wrap the
             // downloaded Blob in a File so addChatAttachments' own
             // extension/mime sniffing (isDocxResume/isTextResume/image/pdf)
             // works unchanged.
-            return new File([data], a.name, { type: data.type || a.mime || undefined });
+            return new File([blob], a.name, { type: blob.type || a.mime || undefined });
           } catch {
             return null;
           }

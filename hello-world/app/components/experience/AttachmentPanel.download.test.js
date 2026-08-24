@@ -30,10 +30,10 @@ vi.mock("../../../lib/supabase/client", () => ({ createClient: vi.fn() }));
 // private fourth copy of the object-URL-on-a-temporary-anchor idiom inside
 // the panel would produce an identical user-visible result and leave this
 // spy untouched.
-vi.mock("../../../lib/document/docx", () => ({ triggerBlobDownload: vi.fn() }));
+vi.mock("../../../lib/document/download", () => ({ triggerBlobDownload: vi.fn() }));
 
 import { createClient } from "../../../lib/supabase/client";
-import { triggerBlobDownload } from "../../../lib/document/docx";
+import { triggerBlobDownload } from "../../../lib/document/download";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 

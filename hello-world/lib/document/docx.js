@@ -5,6 +5,14 @@
 import JSZip from "jszip";
 import { createClient } from "../supabase/client";
 import { alignLinesToSlots } from "./alignLines";
+import { triggerBlobDownload } from "./download.js";
+
+// Re-exported (not re-implemented) so the three modules that still import it
+// from docx.js - app/page.js, lib/document/combineDocuments.js and
+// app/components/CommunicationsDialog.js - keep working unchanged. See
+// lib/document/download.js for the helper itself and why it moved out of
+// this file.
+export { triggerBlobDownload };
 
 export const WORDPROCESSINGML_NS =
   "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -26,18 +34,6 @@ export function base64ToDocxBlob(base64) {
 // the engine's finished docx instead of the user's uploaded résumé.
 export function docxFileFromBase64(base64) {
   return new File([base64ToDocxBlob(base64)], "engine-template.docx", { type: DOCX_MIME });
-}
-
-// Trigger a browser download for a Blob under the given file name.
-export function triggerBlobDownload(blob, fileName) {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
 }
 
 export function sanitizeFileNamePart(value) {

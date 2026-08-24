@@ -3405,3 +3405,73 @@ Load-bearing specifics:
 **`AttachmentPanel.js` finished at 947 lines against a 950 tripwire.** The next thing added to it must extract the per-card render body into its own component first. An extraction there needs a wiring test that mounts the PANEL against a mocked card and asserts it rendered once per attachment — a refactor in this repo has already shipped with the new component fully tested and never imported.
 
 **Recorded and deliberately not done:** `triggerBlobDownload` lives in `lib/document/docx.js`, which imports JSZip at module scope, so the Experience tab now ships a zip library it never calls; that helper also revokes its object URL outside a `finally`, so a throwing `click()` leaks it; `ExperienceTab.js` still hand-rolls the same storage read that `downloadAttachmentBlob` now owns; and all three Retry buttons in this panel unmount themselves on click, dropping focus to `<body>`. Each is a separate chunk.
+### R-239 | area: document-download | parallel-safe: yes | automatable: yes
+
+**Summary:** `triggerBlobDownload` lives in its own module, and no longer leaks an object URL when the click it makes throws.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run --no-file-parallelism lib/document/download.test.js app/components/experience/BulkActionsBar.test.js app/components/experience/AttachmentPanel.download.test.js`.
+2. Confirm `lib/document/download.js` exists and holds the function, and that `lib/document/docx.js` re-exports it.
+3. Download a tailored résumé from the main tab, a deck from the Experience tab's bulk actions, and an attachment from a project page. All three must still save.
+
+**Expected:** All three suites pass and every download still works.
+
+**The defect was six callers deep and had no test at all.** `URL.revokeObjectURL(url)` and `link.remove()` sat after `link.click()` with nothing guarding them, so a throwing click leaked the object URL and left a stray anchor in the DOM. An object URL keeps its whole Blob alive for as long as the mapping exists, and in a single-page app that never unloads that is the rest of the tab's life — a user retrying a failing 100 MB video download a few times pins hundreds of megabytes. `lib/copilot/sessionLogArchive.js` had already fixed the same idiom in its own copy, with a comment saying why, and the canonical helper was never brought along.
+
+**It had no coverage because every test that touches a caller MOCKS it.** jsdom implements neither `URL.createObjectURL` nor a real download, so `BulkActionsBar.test.js` and `AttachmentPanel.download.test.js` both stub it — correctly, for their own purposes. That left the function itself as the one part of the download path nothing exercised. `lib/document/download.test.js` installs `URL.createObjectURL`/`revokeObjectURL` itself and patches `HTMLAnchorElement.prototype.click` to capture the anchor, since the helper removes it before returning.
+
+**The re-export must be the SAME function object, and a test asserts it.** Six callers still import from `docx.js`. A wrapper, or a leftover copy of the old body, would leave every one of them on the unfixed version while the new tests stayed green — the exact shape of a fix that ships inert.
+
+**The bundle argument that motivated this was wrong, and is recorded so nobody re-derives it.** The stated reason was that the Experience tab pulls JSZip through `docx.js` for a function that has nothing to do with DOCX. It does not follow: `lib/experience/pptxWriter.js` imports JSZip directly and `BulkActionsBar.js` imports pptxWriter, so that tab has shipped JSZip since the deck feature. `BulkActionsBar.js` also needs `sanitizeFileNamePart`, which stays in `docx.js`, and `app/page.js` imports `docx.js` into the root bundle regardless. The move was kept for cohesion and to give the fix a testable home — not for bytes.
+
+### R-240 | area: experience-attachments | parallel-safe: yes | automatable: yes
+
+**Summary:** Ask AI reads an attachment's bytes through the shared store function instead of its own copy of it.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run --no-file-parallelism app/components/experience/ExperienceTab.test.js`.
+2. Open a project page with a text, image, PDF and video attachment and use Ask AI. The first three must reach the chat as real files; the video must not.
+
+**Expected:** All 22 tests pass and the manual step reads as described.
+
+**`ExperienceTab.js` hand-rolled the read that `downloadAttachmentBlob` owns**, with a second `"resumes"` literal and a second piece of error handling. Both copies were correct, which is exactly why it survived — two correct copies drift apart on the next change to either.
+
+**The test wraps the REAL store function in a spy rather than stubbing it.** The behaviour assertions ("the bytes reach the chat", "the video's bytes are never downloaded") pass just as happily against an inline copy — they did, for as long as one existed — so on their own they could never have caught the helper being added, being correct, and never being wired up. The spy answers the one question they cannot: was the shared module asked? Because the wrapper still runs the real implementation against the mocked Supabase client, the end-to-end path is still tested at the same time.
+
+**Video exclusion is unchanged and still happens BEFORE any read is attempted.** The filter on `DOWNLOADABLE_ATTACHMENT_KINDS` and `storage_path` is byte-for-byte what it was. A shared helper must not become a way for video bytes to reach the model.
+### R-241 | area: experience-attachments | parallel-safe: yes | automatable: partly
+
+**Summary:** One attachment's card is its own component, and none of the panel's three Retry buttons throws keyboard focus to the top of the document any more.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run --no-file-parallelism app/components/experience/AttachmentCard.wiring.test.js app/components/experience/AttachmentPanel.retryFocus.test.js app/components/experience/AttachmentPanel.test.js app/components/experience/AttachmentPanel.download.test.js app/components/experience/AttachmentPanel.officeKinds.test.js`.
+2. On a project page with several attachments, confirm nothing about a card looks or reads differently from before: same file name, kind and size line, same notes field, same Download and Delete controls, same inline preview for image and video.
+3. Make a notes save fail (devtools offline), then Tab to the Retry and press Enter. Focus must land in that attachment's notes field. Press Enter on Retry again while still offline — the alert and its Retry must survive being focused, and must not vanish as you tab onto them.
+4. Make a download fail, Retry with the keyboard, and confirm focus returns to that row's own Download button — the row that failed, not the first row.
+5. Make a delete fail, wait out the five-second undo window, then Retry. If it fails again, focus stays on that row's Delete button. If it succeeds, focus moves to the NEXT row's Delete button — or the previous row's if you deleted the last one, or the upload control if it was the only attachment.
+6. Start a delete Retry on a slow connection, then click into a different attachment's notes field and type. When the delete resolves, the caret must stay where you put it.
+7. Start a delete Retry, then switch to a different project page before it resolves. Nothing on the new page may be removed, and focus must not jump.
+
+**Expected:** All five suites pass and the manual steps read as described.
+
+**The extraction had to come first, and its test is about the CALLER.** `AttachmentPanel.js` was 947 lines against a 1000-line ceiling and the focus fix could not fit. `AttachmentCard.js` took the per-card render body out (947 → 802). `AttachmentCard.wiring.test.js` therefore asserts the shape of the PANEL — that it renders one card per attachment, each with its own row's data, and that the card's markup is genuinely gone rather than duplicated — because a refactor in this repo has already shipped with three new components sitting beside their caller, fully tested and never imported. Piece-level tests structurally cannot catch that: they import the piece directly.
+
+**Its line-count assertion is a CEILING, not a shrink-proof, and that distinction was learned the hard way.** It was first written as "under 880" against the freshly-extracted 802-line file. The focus fix then legitimately added ~80 lines, and the gate started failing for a correct change — at which point the temptation is to shave comments to hit a number, which is precisely how a useful assertion gets deleted by someone who reasonably concludes it is noise. The real proof that the markup moved is the assertion that no card is built inline. The number exists only to stop the file drifting back toward 1000 unnoticed.
+
+**All three Retry buttons unmounted themselves on click.** Each handler cleared its own per-id error entry as its first synchronous act, which removed the Alert — and the Retry inside it, which is the element the user is standing on. Focus fell to `<body>`. Inherited by all three from the notes and delete alerts; gated now because the panel has since grown an explicit rule that a control must never leave the tab order at the moment it is used.
+
+**The notes Retry is the one with a second, invisible trigger, and the fix is in `saveNotes`, not in the focus code.** Once a Retry puts the caret into the notes field, the next Retry is pressed from inside that field — and a browser moves focus to the button on MOUSEDOWN, firing `focusout`, which runs the very same `saveNotes` that clears the error. The alert and the button being pressed unmount before mouseup, the click never lands, and focus falls to `<body>`: the exact defect this work removes, reappearing on every retry after the first. Tabbing to the Retry does the same. So a notes error is now cleared only when its PATCH actually SUCCEEDS. `removeAttachment` and `downloadAttachment` still clear up front, and that stays correct for them — a React `onClick` fires after mouseup, so their click has already landed by the time the alert goes.
+
+**The delete Retry is the only one whose focus target is decided after an `await`, and that makes it the only one that can steal focus.** A success removes the very row the click happened on, so the target cannot be chosen at click time. The consequence is that it can land seconds later, by which point the user may be typing somewhere else — and since leaving a notes field saves it, an unconditional `focus()` would also fire a PATCH of a half-typed note. Those requests therefore carry `ifLost`, and the effect honours them only when focus is genuinely unattended (`document.activeElement` is null, `<body>`, or disconnected).
+
+**Gating EVERY focus move that way is wrong, and was caught by a test rather than by argument.** Once the notes alert survives a retry, the Retry button is still connected and focused when the effect runs, so a blanket "only if focus was lost" check drops the request and focus never reaches the notes field. The remediation agent tried the literal instruction, watched `puts focus on that attachment's notes field` go red, and carried the gate on the request instead. Requests set synchronously inside their own click stay unconditional — moving focus is what the user just asked for.
+
+**A focus request is consumed exactly once.** Left pending when its target does not exist, it re-fires on every later render — and `onNotesInput` calls `setAttachments` on every keystroke, so the last target would be re-grabbed once per character and typing into a notes field would become impossible. It is now always cleared, with a terminal fallback to the upload input so an unresolvable request cannot leave focus on `<body>`.
+
+**`pendingFocus`, the three ref maps and `removeAttachment`'s post-await writes all joined rules the panel already had.** The `pageId` effect wipes them, and `removeAttachment` now captures the pageId it started under, exactly as `uploadFile` and `downloadAttachment` do. Without those, a Retry resolving after a page switch removed a row from the new page's list, announced the old page's file name into its live region, and planted a focus request that could land on an unrelated attachment sharing the same id.
+
+**Known and deliberately NOT fixed here:** switching pages leaves the previous page's last status announcement sitting in the live region — `statusAnnouncement` is set legitimately by `scheduleDelete` at click time and nothing resets it on a page change. Same family as the per-id maps, pre-existing, and out of this change's scope; the page-switch test says so in a comment rather than asserting it. Recorded as its own follow-up.
+
+**Four of the review's findings were real and one was not, and the difference was established by running it.** The claim that swapping `onDelete={scheduleDelete}` with `onRetryDelete={removeAttachment}` survives the suite is false: it fails 8 tests in `AttachmentPanel.test.js`, which drives the undo window through the real Delete button. Run an adversarial finding before adopting it, in either direction.
+
+**`AttachmentPanel.js` finished at 898 against a 900-line ceiling.** Two lines of headroom is not headroom. The next change to this file extracts something first — the cheapest candidate is the six-line "delete this key if present" state reducer, which appears five times and would free roughly 18 lines.
