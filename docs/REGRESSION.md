@@ -589,7 +589,7 @@ from a fail without judgement calls.
 1. Read `RESULT_PHRASE_RE` / `RESULT_METRIC_RE`, `SITUATION_RE`, `TECH_TRADEOFF_RE`, `structureStrengthText`, the posting-overlap term matching, and the relevance boilerplate filter in `hello-world/lib/copilot/critiqueLocal.js`.
 2. Run `npx vitest run --no-file-parallelism lib/copilot/critiqueLocal.test.js` from `hello-world/`.
 
-**Expected:** A quantified result is detected anywhere in a sentence — "Support tickets fell by 40% after the change." and "It generated $250,000 in new revenue." both set the result beat. "A complete STAR story" is claimed only when all four beats are present, never alongside a `missing` entry naming an absent beat. "I looked at the logs" does not credit a Situation beat, and a bare "however" or "although" does not credit a trade-off. Posting-vocabulary overlap matches on word boundaries with a minimum canonical length, so short taxonomy entries cannot match inside unrelated words and manufacture a strength. Interview-question boilerplate is stripped before relevance overlap, so a directly responsive answer is not told it drifted. The rubric is fully deterministic — identical inputs give an identical score AND identical wording — and the score stays an integer within 0-100 for an empty answer, a one-word answer, a 2000-word answer and an all-filler answer. An empty answer returns a low score, an honest verdict, empty strengths, and asserts nothing about prose that does not exist.
+**Expected:** A quantified result is detected anywhere in a sentence — "Support tickets fell by 40% after the change." and "It generated250,000 in new revenue." both set the result beat. "A complete STAR story" is claimed only when all four beats are present, never alongside a `missing` entry naming an absent beat. "I looked at the logs" does not credit a Situation beat, and a bare "however" or "although" does not credit a trade-off. Posting-vocabulary overlap matches on word boundaries with a minimum canonical length, so short taxonomy entries cannot match inside unrelated words and manufacture a strength. Interview-question boilerplate is stripped before relevance overlap, so a directly responsive answer is not told it drifted. The rubric is fully deterministic — identical inputs give an identical score AND identical wording — and the score stays an integer within 0-100 for an empty answer, a one-word answer, a 2000-word answer and an all-filler answer. An empty answer returns a low score, an honest verdict, empty strengths, and asserts nothing about prose that does not exist.
 
 ### R-057 | area: practice-privacy | parallel-safe: yes | automatable: no
 
@@ -632,7 +632,7 @@ R-064 is this case's successor for notice truthfulness and enumerates the same g
 
 ### R-060 | area: practice-history | parallel-safe: yes | automatable: yes
 
-**Summary:** The practice-answer history table is owner-scoped and shaped so a partial save is still a valid row. The video itself lives in the existing `resumes` bucket, which already owner-scopes `${user_id}/...`, so no new bucket or storage policy exists to get wrong.
+**Summary:** The practice-answer history table is owner-scoped and shaped so a partial save is still a valid row. The video itself lives in the existing `resumes` bucket, which already owner-scopes `{user_id}/...`, so no new bucket or storage policy exists to get wrong.
 
 **Steps:**
 1. Read `hello-world/supabase/migrations/20260805000000_practice_answers.sql`.
@@ -3567,3 +3567,70 @@ appeared seven times: in `clearPendingDelete`, and in the clears for notes error
 **The dangerous half is the bail-out, and a mutation run proved it was unpinned.** Returning the SAME object reference when the key is absent is what lets React skip the update entirely; most of these calls are clearing an entry that is not there, since every fresh attempt at a notes save, a delete or a download clears an error that usually does not exist. Deleting that one line — so the helper always spreads — left the ENTIRE experience suite green, because nothing observable changes; only the number of renders does. `withoutKey` is therefore exported (the precedent is `UNDO_WINDOW_MS`, exported for the same reason) and `AttachmentPanel.withoutKey.test.js` asserts reference identity with `toBe`, not `toEqual` — `toEqual` would pass against a copy, which is the exact mutation the test exists to catch.
 
 **Recorded, not asserted:** `withoutKey` uses `key in map`, which walks the prototype chain, so `"constructor"` would take the copying branch. `lib/experience/attachments.js` guards that hazard with an `ownLookup` helper and needs to — its keys come from user-supplied filenames and mime types. These keys do not: all seven call sites pass an attachment id, and those are uuids. Asserting it would mean requiring a behaviour change for an unreachable input, so it is written down in the test file instead, for whoever widens what these maps are keyed by.
+
+### R-245 | area: experience-context | parallel-safe: yes | automatable: yes
+
+**Summary:** The attachment inventory helpers are public, so a second feature can reuse the honesty rules instead of re-implementing them — and a public caller can no longer manufacture a line for a file that does not exist.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/experience/ app/components/experience/ app/api/experience/ --no-file-parallelism`.
+2. Press Ask AI on a project page holding several kinds of attachment. The pinned context must read exactly as it did before: a PDF and an image with no disclaimer, a deck, spreadsheet or zip marked "contents not read", and a video saying whether it was transcribed.
+
+**Expected:** All suites pass and the pinned context is unchanged.
+
+**Why they became public.** The live meeting copilot builds context spanning MANY pages, so it cannot use `buildPageContext`, which budgets and returns one blob for ONE page. It still has to produce inventory lines under identical rules. This module is the single enforcement point for "a line reads ONLY name/kind/notes/transcript — never bytes, `storage_path` or `url`", and a second implementation would be a second place for that to drift. The drift would not look like a bug; it would look like a model confidently quoting a file nobody read.
+
+**The guard, and the precedent that demanded it.** `formatAttachment` now returns `""` for anything that is not a usable attachment — not an object, or no name after trimming. Its own defaults previously turned `null` into `- Untitled file (file)`: an inventory line for a file that does not exist. Inside this module that was unreachable, because `formatAttachments` filtered its list first.
+
+`lib/copilot/groundingNotice.js` records what that reasoning cost last time. `submittedDocsClause` was module-private with exactly one caller that always checked `hasResume || hasCoverLetter`, so the `(false, false)` case was unreachable and a missing branch was harmless — until it became a public `lib/` export, at which point it silently returned a clause claiming a document had been sent when neither existed. **A public export cannot promise that its one careful caller stays its only caller.**
+
+**`formatAttachments` did not already drop empty strings.** Its filter checks object shape (`entry && typeof entry === "object"`), which passes `{}` and `{ name: "   " }` — objects, but not usable attachments. With the guard returning `""` for those, a `.filter(Boolean)` was added before the join so a blank line can never land inside an inventory.
+
+**Nothing a valid attachment produces changed**, and the existing tests are what prove it: they pin the exact line text for every kind, the video wording, the slides/sheet/archive disclaimer, the field caps and the truncation notices.
+
+### R-246 | area: copilot-session | parallel-safe: yes | automatable: yes
+
+**Summary:** `CopilotSession` can run without attributing speakers at all, for a meeting on one shared microphone — and the interview path is byte-for-byte unchanged.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/copilot/ --no-file-parallelism`.
+2. Start an interview session in-person and confirm it behaves exactly as before: turns labelled You/Them, the "still working out who is who" behaviour intact, and the provider-cannot-diarize warning still appearing when it applies.
+
+**Expected:** All 91 copilot suites pass, and in-person interview behaviour is unchanged.
+
+**Why a meeting must not use `speakerIdentity.js`.** That module decides who "you" is with `youScore = wordShare - 2 * questionRate`, justified in its own header by "the candidate talks the most and asks the fewest questions; the interviewer does the opposite". In a work meeting the user is very often the quietest person present and very often the one asking, so the formula is not slightly off — it is systematically backwards. The same header records that a naive version elected the wrong speaker twice on real audio and then went **silently deaf**, because question detection routes off the identity gate rather than off the display label.
+
+**"Just don't call it" was not available**, which is why this is a code change rather than a client-side choice: the constructor built the identity unconditionally for `source === "inperson"`, and two methods called it on every frame and every assembled utterance. A null instance throws.
+
+**The new option is `attributeSpeakers`, defaulting to `true`.** That default is the entire safety argument: `session.test.js`, `session.inperson.test.js` and `session.silent.test.js` all construct without it, so they exercise the old path and are the real regression gate. Six seams changed — the constructor's identity, `_resolveSpeakerLabel`, `_emitUtterance`, `_handleInPersonFrame`'s assembly key, the `diarize` request, and the warning.
+
+**With attribution off, a turn is `"room"` — not `"them"`.** One shared microphone is one unattributed voice, and `"them"` would be a claim about who spoke. `evaluate` is unconditionally `true`, because there is no conservative gate to consult and a meeting has no "the other person asked this" notion; every turn is potential material.
+
+**Diarization is not requested rather than requested-and-discarded.** Asking a provider to separate speakers still costs the request and, on Deepgram, selects a different model.
+
+**The warning is suppressed, not deleted, and a test pins the difference.** Its wording names live pace and filler-word readings "for you" — meaningless in a meeting, and describing a degradation that has not happened. The default path must still emit it, so the test asserts both directions.
+
+**`tab` and `system` are inert under the option**, and a test says so rather than assuming it. Those paths open two independent sockets and never built an identity, so their separation is structural; the risk being guarded is a future change collapsing them to one voice.
+
+### R-247 | area: meeting-copilot | parallel-safe: yes | automatable: yes
+
+**Summary:** The meeting copilot's shared contract — what an insight is, how it stays identified across reads, and what may be claimed about where it came from.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/meeting/insightContract.test.js --no-file-parallelism`.
+
+**Expected:** All 27 tests pass.
+
+**It lands before anything else because three consumers normalize through it**: the Gemini-backed insights route, the deterministic no-LLM path, and the client. They cannot drift on these rules, because all three call these functions.
+
+**The load-bearing rule is the attribution downgrade.** An insight claiming `source.kind === "page"` for a `pageId` that was NOT in the context actually assembled for that call is rewritten to `{ kind: "model", pageId: null, pageTitle: null }`, keeping its text. A model handed four pages will cite a fifth it remembers, or invent a plausible id. Letting that through puts "your page X says…" on screen for a page that contributed nothing — and the user can then no longer tell their own notes from the model's invention, which is the entire reason a source is shown. A non-page source may never carry a page id either; that is the same claim through the back door.
+
+**The insight is kept when its attribution is stripped.** A mis-attributed point may still be worth saying; what is not allowed is the false provenance.
+
+**Ids are a deterministic FNV-1a hash of normalized text**, not a uuid, a timestamp or a counter. They have to be stable across separate reads for two reasons: the client accumulates insights over a meeting without showing the same point twice, and `knownInsightIds` goes back to the server so a read can skip what is already on screen. Normalization folds case, surrounding whitespace and one trailing run of punctuation, because a model asked twice rephrases trivially and those are the same point to a human. `Math.random`/`Date.now` are also unavailable in some execution contexts here.
+
+**`changed` on a topic is computed in this module, never asked of the model.** A model asked "did the topic change?" says yes far too often, and the UI uses this to decide whether to interrupt the user mid-meeting with a new topic.
+
+**Everything else is defensive because this runs live**: an unusable text, an unrecognised insight kind, a duplicate within one read, an id the client already has, more insights than the cap, and a model returning `undefined`, `null`, a bare string or an array of junk — none may throw into a running meeting.
+
+**Both vocabularies are asserted exactly, with `toEqual`.** A lower bound cannot detect an ADDED source kind, and adding one is the single direction this contract can quietly go wrong.

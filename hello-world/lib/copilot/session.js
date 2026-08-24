@@ -77,6 +77,13 @@ const THEM_CAPTURE_LABEL_BY_SOURCE = {
   system: "System audio capture",
 };
 
+// The utteranceAssembly key every "inperson" frame buffers under when
+// `attributeSpeakers` is false (see _handleInPersonFrame). Any single stable
+// value works — assembly only cares that the same turn's frames share one
+// key — but a named constant says "the room" instead of leaning on
+// `frame.speakerTag` silently reading as `undefined` when the key is absent.
+const ROOM_TAG = "room";
+
 // AC-I1.8: a getUserMedia rejection whose `.name` is "OverconstrainedError"
 // means the `deviceId: { exact }` constraint captureMicAudio applied
 // (session.js's own micDeviceId, or a stored id resolved by
@@ -116,6 +123,15 @@ export class CopilotSession {
     withMic = true,
     source = "tab",
     micDeviceId,
+    // Defaults true so every existing caller/test — none of which pass this
+    // — constructs exactly the "inperson" session they always have: identity
+    // built, diarization requested, labels resolved to "you"/"them". Only a
+    // caller that explicitly opts out (the meeting copilot; see
+    // session.meeting.test.js) gets the no-attribution behaviour threaded
+    // through the seams below. "tab"/"system" never look at this flag at
+    // all — they never built a speaker identity in the first place (see the
+    // file header comment), so there is nothing here for it to turn off.
+    attributeSpeakers = true,
     onTranscript,
     onUtterance,
     onSpeakerIdentity,
@@ -169,6 +185,11 @@ export class CopilotSession {
     // callback for that key can fire.
     this._essential = {};
     this._stopped = false;
+    // Stashed on the instance (not just closed over here) because
+    // _startInPerson reads it too, to decide whether to ask the STT
+    // provider for diarization at all and whether the "can't tell speakers
+    // apart" warning still means anything.
+    this.attributeSpeakers = attributeSpeakers;
 
     // AC-M1.4.9: ownership of both the speaker-identity and utterance-
     // assembly instances lives here, on the session, and only for
@@ -178,7 +199,18 @@ export class CopilotSession {
     // cost nothing functionally (they'd simply never be fed), but scoping
     // them to the source that actually uses them keeps it obvious from the
     // constructor alone which sources this bookkeeping applies to.
-    this._speakerIdentity = source === "inperson" ? createSpeakerIdentity() : null;
+    //
+    // `attributeSpeakers` is a second, independent gate on the identity half
+    // only. `_utteranceAssembly` is built exactly as before, off `source`
+    // alone: a meeting still has turns that need assembling from interim
+    // frames into whole utterances, it just never runs them through
+    // speakerIdentity.js afterward (see _resolveSpeakerLabel/_emitUtterance
+    // below) — the youScore formula that file uses to decide who "you" is
+    // assumes the candidate talks most and asks fewest questions, which is
+    // routinely backwards for a meeting's actual quietest/most-inquisitive
+    // participant (see this file's own header and speakerIdentity.js's).
+    this._speakerIdentity =
+      source === "inperson" && attributeSpeakers ? createSpeakerIdentity() : null;
     this._utteranceAssembly = source === "inperson" ? createUtteranceAssembly() : null;
   }
 
@@ -304,6 +336,12 @@ export class CopilotSession {
   // as-yet-unidentified voice's first question must never be dropped by a
   // downstream consumer that only branches on speaker === "them".
   _resolveSpeakerLabel(tag) {
+    // No identity instance means attribution was never wanted (see the
+    // constructor) — there is no argmax to consult and, more importantly,
+    // no separated voices to describe. "them"/"you" both claim a specific
+    // one of two people; "room" claims neither, because on a shared meeting
+    // microphone there isn't a two-party split to be right or wrong about.
+    if (!this._speakerIdentity) return "room";
     return this._speakerIdentity.labelFor(tag) === "you" ? "you" : "them";
   }
 
@@ -311,6 +349,22 @@ export class CopilotSession {
   // per transcript frame — this is the only call site that invokes it, fed
   // exclusively by utteranceAssembly's push()/drain()/drainAll() below.
   _emitUtterance(tag, text) {
+    // With attribution off there is no identity to feed observe() into, and
+    // therefore nothing that could have just resolved/changed argmax — so
+    // observe()/onSpeakerIdentity are skipped outright rather than called
+    // against a stub. Firing onSpeakerIdentity here at all would tell the UI
+    // an identity was computed, which is exactly the false impression this
+    // option exists to prevent (see session.meeting.test.js's "never reports
+    // a speaker identity"). `evaluate` is unconditionally true: the gate
+    // this flag normally comes from (shouldEvaluateAsQuestion) exists to
+    // stay conservative about ATTRIBUTING a question to the wrong party —
+    // a distinction a meeting with one undivided voice doesn't have. There
+    // is no "the other person asked this" to be conservative about, so
+    // every turn is potential material.
+    if (!this._speakerIdentity) {
+      this.onUtterance({ speakerTag: null, speaker: "room", text, evaluate: true });
+      return;
+    }
     this._speakerIdentity.observe({ speakerTag: tag, text });
     // AC-M1.5.6: identity may have just resolved, changed argmax, or
     // reached "high" confidence as a direct result of this observation —
@@ -335,7 +389,15 @@ export class CopilotSession {
   // AC-M1.4.8/9: the onTranscript handler used ONLY for the "inperson"
   // source's single mic stream (wired in _startInPerson below).
   _handleInPersonFrame(frame) {
-    const tag = frame.speakerTag;
+    // With attribution off, diarize is never requested (see _startInPerson),
+    // so frame.speakerTag isn't merely undefined — stt/index.js's contract
+    // is that the key is ABSENT entirely when the provider didn't split the
+    // frame. utteranceAssembly still needs SOME key to buffer under, the
+    // same way it does for a real speaker tag, so ROOM_TAG stands in for
+    // "the one voice in this room" — a single constant every frame shares,
+    // so pushes from turn to turn keep landing in the same buffer and drain
+    // exactly like a normal per-speaker buffer would.
+    const tag = this._speakerIdentity ? frame.speakerTag : ROOM_TAG;
     this.onTranscript({ ...frame, speaker: this._resolveSpeakerLabel(tag) });
 
     // Only a LOCKED run feeds the utterance buffer. Deepgram's interim runs
@@ -403,14 +465,28 @@ export class CopilotSession {
       key: "mic",
       speaker: "mic",
       stream: micStream,
-      diarize: true,
+      // Asking a provider to separate speakers and then discarding the
+      // answer would still cost the request and, on Deepgram, a different
+      // model — so this is never requested at all when nothing downstream
+      // (see the constructor's `_speakerIdentity` gate) will ever consult
+      // it.
+      diarize: this.attributeSpeakers,
       onFrame: (frame) => this._handleInPersonFrame(frame),
       // D1: the mic is this session's ONLY source — simultaneously the only
       // and therefore essential one (see the file header comment) — so its
       // default of `essential: true` is left implicit here.
     });
 
-    if (!dg.diarizationActive) {
+    // `this.attributeSpeakers &&` here (not just below `!dg.diarizationActive`)
+    // is what keeps this a warning about a DEGRADATION rather than a
+    // description of the option working as configured — with attribution
+    // off, diarize was never requested above, so dg.diarizationActive is
+    // always false here too, and without this guard every meeting session
+    // would trip this same warning on every single run. The wording below
+    // names live pace and filler-word readings "for you" and describes
+    // turns that "can't be attributed" — both meaningless when nobody asked
+    // for attribution in the first place.
+    if (this.attributeSpeakers && !dg.diarizationActive) {
       // AC-M1.4.11: requesting diarization from a provider that can't do it
       // (ElevenLabs Scribe v2 Realtime, or a Deepgram request whose token
       // fetch failed before diarizationActive could be earned — see

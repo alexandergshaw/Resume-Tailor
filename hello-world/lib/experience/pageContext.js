@@ -74,7 +74,7 @@ function formatChildPages(childPages) {
   return { text: lines.join("\n"), dropped };
 }
 
-function attachmentKindLabel(kind) {
+export function attachmentKindLabel(kind) {
   if (kind === "image") return "image";
   if (kind === "pdf") return "PDF";
   if (kind === "video") return "video";
@@ -90,11 +90,28 @@ function attachmentKindLabel(kind) {
 // attachment row might carry, so this is the enforcement point for "never
 // includes attachment bytes or storage paths" regardless of what shape the
 // caller's row happens to be.
-function formatAttachment(attachment) {
-  const name = str(attachment?.name).trim() || "Untitled file";
-  const kind = str(attachment?.kind).trim();
-  const notes = clip(str(attachment?.notes).trim(), MAX_FIELD_CHARS);
-  const transcript = clip(str(attachment?.transcript).trim(), MAX_FIELD_CHARS);
+//
+// Guard fix (see lib/copilot/groundingNotice.js's comment above
+// submittedDocsClause for the precedent this follows): this helper used to
+// be module-private with exactly one caller, formatAttachments, which
+// always pre-filtered its list to real objects before calling - so a bad
+// row here was unreachable and the `name` default (`|| "Untitled file"`)
+// never actually fired. Making this a public export removes that
+// guarantee: a public export has no way to promise that its one careful
+// caller stays its only caller. Left unguarded, `formatAttachment(null)`
+// would fall through the same default and silently mint
+// `- Untitled file (file)` - an inventory line for a file that does not
+// exist. So the precondition formatAttachments used to enforce is now
+// checked here instead: anything that is not a non-null object, or whose
+// `name` is missing/blank after trimming, is not a usable attachment and
+// produces no line at all.
+export function formatAttachment(attachment) {
+  if (!attachment || typeof attachment !== "object") return "";
+  const name = str(attachment.name).trim();
+  if (!name) return "";
+  const kind = str(attachment.kind).trim();
+  const notes = clip(str(attachment.notes).trim(), MAX_FIELD_CHARS);
+  const transcript = clip(str(attachment.transcript).trim(), MAX_FIELD_CHARS);
 
   if (kind === "video") {
     // Video bytes are never sent to the model (see app/api/chat/route.js -
@@ -142,7 +159,13 @@ function formatAttachments(attachments) {
   if (list.length === 0) return { text: "", dropped: 0 };
   const shown = list.slice(0, MAX_LISTED_ATTACHMENTS);
   const dropped = list.length - shown.length;
-  return { text: shown.map(formatAttachment).join("\n"), dropped };
+  // .filter(Boolean): formatAttachment's own guard (see its comment) now
+  // returns "" for an object that isn't a usable attachment - e.g. one with
+  // a missing/blank name, which the object-shape filter above does not
+  // catch. Without dropping those here, one bad row would still pass this
+  // module's own honesty rules but leave a blank line sitting inside an
+  // otherwise-real inventory.
+  return { text: shown.map(formatAttachment).filter(Boolean).join("\n"), dropped };
 }
 
 function pluralize(count, noun) {

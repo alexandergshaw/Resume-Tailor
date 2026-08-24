@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { buildPageContext, MAX_CONTEXT_CHARS } from "./pageContext.js";
+import {
+  buildPageContext,
+  MAX_CONTEXT_CHARS,
+  formatAttachment,
+  attachmentKindLabel,
+} from "./pageContext.js";
 
 // What "Ask AI" pins when you press it on a project page.
 //
@@ -297,5 +302,86 @@ describe("a zip attachment is inventory only", () => {
     const { content } = buildPageContext({ page: page(), breadcrumb: [], childPages: [], attachments: [zip] });
     const line = content.split("\n").find((l) => l.includes("project-export.zip"));
     expect(line).toContain("archive");
+  });
+});
+
+// Two helpers became public exports so the meeting copilot can build its own
+// multi-page context without re-implementing the attachment-honesty rules.
+//
+// Re-implementing them is the thing to avoid: this module is the single
+// enforcement point for "an inventory line reads ONLY name/kind/notes/
+// transcript - never bytes, storage_path or url". A second copy in another
+// feature is a second place for that to drift, and the drift would not look
+// like a bug, it would look like a model quoting a file nobody read.
+//
+// A public export cannot enforce that its one careful caller stays its only
+// caller. lib/copilot/groundingNotice.js records what that cost last time: a
+// helper whose private caller always checked a precondition was exported
+// unchanged, and the unchecked case then returned a sentence claiming a
+// document had been sent when none existed. Hence the guard asserted below.
+describe("formatAttachment as a public export", () => {
+  it("builds the same inventory line the pinned context uses", () => {
+    expect(formatAttachment({ name: "spec.pdf", kind: "pdf", notes: "The API contract" })).toBe(
+      "- spec.pdf (PDF) - notes: The API contract",
+    );
+  });
+
+  it("keeps the contents-not-read disclaimer for the kinds nothing reads", () => {
+    expect(formatAttachment({ name: "kickoff.pptx", kind: "slides" })).toContain("contents not read");
+    expect(formatAttachment({ name: "q3.xlsx", kind: "sheet" })).toContain("contents not read");
+    expect(formatAttachment({ name: "export.zip", kind: "archive" })).toContain("contents not read");
+  });
+
+  it("still does NOT disclaim the kinds whose bytes really are sent", () => {
+    // The per-line rule is the whole reason this helper is worth sharing
+    // rather than approximating.
+    expect(formatAttachment({ name: "spec.pdf", kind: "pdf" })).not.toContain("contents not read");
+    expect(formatAttachment({ name: "shot.png", kind: "image" })).not.toContain("contents not read");
+  });
+
+  it("returns nothing at all for input that is not an attachment", () => {
+    // THE GUARD. Left alone, the helper's own defaults turn `null` into
+    // `- Untitled file (file)` - an inventory line for a file that does not
+    // exist, manufactured by a caller that passed junk. Inside this module
+    // that was unreachable because formatAttachments filtered first; a public
+    // export has no such promise.
+    expect(formatAttachment(null)).toBe("");
+    expect(formatAttachment(undefined)).toBe("");
+    expect(formatAttachment({})).toBe("");
+    expect(formatAttachment({ name: "   " })).toBe("");
+    expect(formatAttachment("spec.pdf")).toBe("");
+  });
+
+  it("never lets a storage path or url reach the line", () => {
+    // Asserted on a row carrying every field the real database row has, so
+    // this fails if the helper ever starts spreading its input.
+    const line = formatAttachment({
+      name: "spec.pdf",
+      kind: "pdf",
+      notes: "The API contract",
+      storage_path: "u1/experience/p1/a1-spec.pdf",
+      url: "https://example.com/signed/abc",
+      bytes: 12345,
+    });
+    expect(line).not.toContain("u1/experience");
+    expect(line).not.toContain("https://");
+    expect(line).not.toContain("12345");
+  });
+});
+
+describe("attachmentKindLabel as a public export", () => {
+  it("names each kind in the words the inventory uses", () => {
+    expect(attachmentKindLabel("pdf")).toBe("PDF");
+    expect(attachmentKindLabel("image")).toBe("image");
+    expect(attachmentKindLabel("video")).toBe("video");
+    expect(attachmentKindLabel("text")).toBe("text file");
+    expect(attachmentKindLabel("slides")).toBe("slide deck");
+    expect(attachmentKindLabel("sheet")).toBe("spreadsheet");
+    expect(attachmentKindLabel("archive")).toBe("archive");
+  });
+
+  it("falls back to a plain word for a kind it does not know", () => {
+    expect(attachmentKindLabel("hologram")).toBe("file");
+    expect(attachmentKindLabel(undefined)).toBe("file");
   });
 });
