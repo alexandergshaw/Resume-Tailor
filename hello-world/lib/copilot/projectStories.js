@@ -175,11 +175,22 @@ function bulletsFromBody(body) {
     .filter((line) => line.length >= MIN_BULLET_LENGTH);
 }
 
-function significantTerms(text) {
+// Generic text-overlap helpers, exported from this feature module because
+// this is where they were first established rather than because they belong
+// to project stories specifically — lib/meeting/insightsLocal.js and
+// lib/meeting/meetingContext.js both import them from here instead of
+// keeping their own copies. That is only safe because THIS file has no
+// imports of its own: importing from it can never pull a project-stories (or
+// any other) dependency into the meeting domain.
+//
+// lib/copilot/resumeAnchor.js keeps a deliberately different, private
+// significantTerms and is NOT a fourth caller of this one — see the comment
+// on its own copy for why.
+export function significantTerms(text) {
   return new Set(String(text || "").toLowerCase().match(/[a-z0-9]{4,}/g) || []);
 }
 
-function overlapScore(questionTerms, text) {
+export function overlapScore(questionTerms, text) {
   let score = 0;
   for (const term of significantTerms(text)) {
     if (questionTerms.has(term)) score += 1;

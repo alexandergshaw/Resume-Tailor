@@ -1369,7 +1369,7 @@ The rendered wording is third person throughout — "Roles like this look for:" 
 
 **Amended (group L) — two of the three claims above no longer hold, and one is now stronger.**
 
-1. **Posting numbers are gone entirely.** "The numbers it shows ('5+ years', '2M requests') are the posting's own" was the bug, not the safeguard. A user's posting stated "Salary range:78,496.00 -105,974.00" twice in two formats, and the block rendered `Metrics to have ready: $78,496, $105,974, $78,496.00, $105,974.00` — the SALARY BAND, four times over (the dedupe key was the exact string), consuming the whole `MAX_METRICS` budget so the real categories were never reached. The grounding argument was sound and the conclusion was still wrong: a posting's digits are its salary, its years-of-experience floor and its headcount, and no regex separates those from a project metric because postings do not state project metrics. `POSTING_NUMBER_RE` and `postingNumbers` are deleted; `metrics` is now category phrases only and is asserted to contain **no digit at all**. `MAX_METRICS` is 3. See R-135.
+1. **Posting numbers are gone entirely.** "The numbers it shows ('5+ years', '2M requests') are the posting's own" was the bug, not the safeguard. A user's posting stated "Salary range:78,496.00 -105,974.00" twice in two formats, and the block rendered `Metrics to have ready:78,496, $105,974, $78,496.00, $105,974.00` — the SALARY BAND, four times over (the dedupe key was the exact string), consuming the whole `MAX_METRICS` budget so the real categories were never reached. The grounding argument was sound and the conclusion was still wrong: a posting's digits are its salary, its years-of-experience floor and its headcount, and no regex separates those from a project metric because postings do not state project metrics. `POSTING_NUMBER_RE` and `postingNumbers` are deleted; `metrics` is now category phrases only and is asserted to contain **no digit at all**. `MAX_METRICS` is 3. See R-135.
 2. **The accent box and the chip are gone.** The visual-separation ARGUMENT is unchanged and still load-bearing; what changed is where the disclosure lives. It moved into the row's own `dt`, which now reads "Ideal project — not from your resume". That is strictly stronger than the chip it replaces: it is permanent, it cannot be scrolled past as decoration, and a screen reader announces it as the TERM the value belongs to rather than as a stray label inside the value. The row keeps a single `2px` left rule in `var(--accent)`, and colour still never carries the meaning alone (WCAG 1.4.1) — the label text does. The accent-tinted box was one of four competing visual languages in a component the user described as "all over the place"; see R-136.
 3. **`shape` is joined by a new `summary` sentence.** `shape` alone restated the buzzword chips two rows above it, which is why the user's verdict on this block was "there's no substance to the project section". The advisory sentence is still third person and still asserted to carry no first-person pronoun.
 
@@ -3779,3 +3779,32 @@ Nothing in this repo can produce a verified url quickly: a grounded search takes
 ## Open question this raised about EXISTING features
 
 If grounding uris really are redirects, then `lib/techwatch/lifecycleSearch.js` and `lib/feed/llmSearch.js` — which match on host only, presuming publisher hosts — have been silently discarding every result. That would also explain why `company-research` built title-token-overlap matching instead of comparing urls. **Unverified**: it needs one live grounded call, which this environment cannot make. Worth checking against a deployment before trusting either feature's output.
+
+### R-251 | area: shared-text | parallel-safe: yes | automatable: yes
+
+**Summary:** One `significantTerms` tokenizer instead of four — with the one copy that was never a duplicate deliberately left alone, and both halves of that pinned.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/copilot/ lib/meeting/ app/api/meeting/ --no-file-parallelism`.
+2. Confirm `lib/copilot/projectStories.js` exports `significantTerms` and `overlapScore`, and that `lib/meeting/insightsLocal.js` and `lib/meeting/meetingContext.js` import them rather than defining their own.
+3. Confirm `lib/copilot/resumeAnchor.js` STILL defines its own, with a comment saying why.
+
+**Expected:** All suites pass and the three points above hold.
+
+**Three copies were byte-identical; the fourth was not, and that is the whole story.** `projectStories.js`, `insightsLocal.js` and `meetingContext.js` each had the same lowercase-and-match-`/[a-z0-9]{4,}/g` tokenizer, with `overlapScore` beside it. Both were consolidated into `projectStories.js` — both, because leaving one duplicated keeps exactly the drift risk the exercise removes, and `overlapScore`'s body is a call to `significantTerms`.
+
+**`resumeAnchor.js`'s copy is a deliberate variant and merging it would silently reintroduce a fixed bug.** It differs three ways: a **three**-character floor instead of four, a **stopword** filter, and a **bare-number** filter. Its own comment records the regression that last one exists for — an unrelated Barista role scored a match on a systems-design question purely because both mentioned "200". Folded into the shared four-character unfiltered version, all three protections vanish and nothing about the shared function's own tests would notice.
+
+**The task described all four as "near-identical".** They are not, and the difference is invisible unless the bodies are read side by side. That is the general hazard in any de-duplication: the copies that look alike get merged, and the one that was carefully different gets merged too.
+
+**So the guard pins BOTH halves.** `significantTerms.shared.test.js` asserts the merge really happened — no private `function significantTerms` remains in the two consumers, AND they import from the canonical home, because "no local copy" is equally true of a module that stopped using the tokenizer at all. It then asserts the holdout still EXISTS, still has its three-character floor and stopword filter, and carries its comment. `resumeAnchor.test.js`'s pre-existing "C3 regression" case pins what the variant DOES; this file pins that it is still there to do it.
+
+**The shared implementation is checked against a frozen literal oracle**, inlined rather than imported — the pre-consolidation body, run over eight inputs. A test that merely called the shared function could never notice it drifting, because it would drift with it.
+
+**Mutation-proven.** Three mutations, all killed by their own named tests: the shared tokenizer drifting to a three-character floor; a consumer quietly regrowing its private copy (killed by both halves of the anti-duplication pair); and someone "finishing the job" by merging `resumeAnchor` (killed by the holdout assertion).
+
+**A test example that proved nothing, caught by the implementer.** The contrast case originally used `"200"` — three characters, which the shared tokenizer drops on its LENGTH floor and the variant drops on its bare-number FILTER. Same outcome, different reasons, no difference demonstrated. It now uses a four-digit run, which clears the shared floor and isolates the filter as the thing that actually differs. The implementer refused to edit the test and reported it, which is what surfaced it.
+
+**Home choice.** `projectStories.js` is a feature module, and generic text helpers living there is a little odd — but it is where they were established, `insightsLocal.js` already imported from `lib/copilot/`, and crucially that file has **no imports of its own**, so importing from it pulls in nothing else. Dependency direction after the change is strictly one-way: `insightsLocal.js → meetingContext.js → projectStories.js`, with no cycle.
+
+**Deliberately not consolidated:** `app/api/meeting/references/route.js`'s `cacheTerms` (a superset — stopwords, sorting and a cap, for a deterministic cache key), and `MIN_BULLET_LENGTH`/`BULLET_LINE_RE`, whose duplication `insightsLocal.js` already justifies in its own comment.

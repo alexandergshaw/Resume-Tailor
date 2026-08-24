@@ -27,6 +27,7 @@
 // honesty boundary" describe block below for the pinned test.
 
 import { localDetection } from "@/lib/copilot/localDetection.js";
+import { significantTerms, overlapScore } from "@/lib/copilot/projectStories.js";
 import { normalizeTopic, normalizeInsights } from "./insightContract.js";
 import { isEligibleMeetingPage, stripSpeakerLabels } from "./meetingContext.js";
 
@@ -89,18 +90,6 @@ function topTerms(text, n) {
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, n)
     .map(([term]) => term);
-}
-
-function significantTerms(text) {
-  return new Set(String(text || "").toLowerCase().match(/[a-z0-9]{4,}/g) || []);
-}
-
-function overlapScore(queryTerms, text) {
-  let score = 0;
-  for (const term of significantTerms(text)) {
-    if (queryTerms.has(term)) score += 1;
-  }
-  return score;
 }
 
 function bulletsFromBody(body) {

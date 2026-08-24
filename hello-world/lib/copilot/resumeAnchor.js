@@ -51,6 +51,16 @@ const MAX_ROLES = 8;
 // terms are meaningful" is answered one way across the app rather than two.
 const STOPWORDS = new Set(defaultLibraryData.stopwords);
 
+// Deliberately NOT the shared `significantTerms` exported from
+// lib/copilot/projectStories.js — this is a different tokenizer, not a stale
+// duplicate of that one, and must stay private. It differs in three
+// deliberate ways: (1) a three-character floor here vs. four there, (2) a
+// STOPWORDS filter the shared version has no equivalent of, and (3) a
+// bare-number filter the shared version does not apply. Folding this into
+// the shared version would silently undo all three and reintroduce the C3
+// regression pinned in resumeAnchor.test.js: an unrelated Barista role
+// scored a match on a systems-design question purely because both mentioned
+// "200".
 function significantTerms(text) {
   const found = String(text || "").toLowerCase().match(/[a-z0-9]{3,}/g) || [];
   // A bare number (e.g. "200") is not a meaningful overlap signal — it lets
