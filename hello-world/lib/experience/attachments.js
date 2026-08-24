@@ -75,6 +75,7 @@ const EXTENSION_KIND = {
   xltx: "sheet",
   ods: "sheet",
   numbers: "sheet",
+  zip: "archive",
 };
 
 // table[key] on a plain object literal walks the prototype chain, so a name
@@ -128,6 +129,11 @@ const FIXED_MIME_KIND = {
   "application/vnd.ms-excel": "sheet",
   "application/vnd.oasis.opendocument.spreadsheet": "sheet",
   "application/vnd.apple.numbers": "sheet",
+  // Generic zip mimes (AC3). Both are ambiguous, not fixed, the same way
+  // application/vnd.ms-excel is - see AMBIGUOUS_MIMES below for why they
+  // live in that set instead of resolving to "archive" outright here.
+  "application/zip": "archive",
+  "application/x-zip-compressed": "archive",
 };
 
 function kindFromMime(mime) {
@@ -139,26 +145,41 @@ function kindFromMime(mime) {
   return ownLookup(FIXED_MIME_KIND, m) || "";
 }
 
-// application/vnd.ms-excel is the one mime this file treats as ambiguous:
-// Windows reports it for a plain .csv whenever Excel is the registered
-// handler (see attachments.test.js, "keeps a .csv reported as an Excel type
-// a text file"), and a csv IS readable text - the whole point of the "text"
-// kind, per classifyAttachment's own note that an unrecognized binary must
-// never be handed to a model as if it were readable. This is
-// deliberately the ONLY exception: every other mime keeps today's
-// precedence of mime-beats-extension (see that same test file's "still lets
-// an unambiguous mime type override the extension"), so do not generalize
-// this into a wholesale precedence flip.
-const AMBIGUOUS_SHEET_MIME = "application/vnd.ms-excel";
+// Mimes this file treats as ambiguous rather than authoritative, because a
+// mainstream OS hands out each one for files that are NOT the kind it
+// nominally names:
+//  - application/vnd.ms-excel: Windows reports it for a plain .csv whenever
+//    Excel is the registered handler (see attachments.test.js, "keeps a
+//    .csv reported as an Excel type a text file"), and a csv IS readable
+//    text - the whole point of the "text" kind, per classifyAttachment's
+//    own note that an unrecognized binary must never be handed to a model
+//    as if it were readable.
+//  - application/zip and application/x-zip-compressed: every OOXML Office
+//    file (.docx/.pptx/.xlsx and friends) genuinely IS a zip container, and
+//    Windows/several file managers report it with a generic zip mime -
+//    mapping those straight to "archive" would silently reclassify a real
+//    Word/PowerPoint/Excel document as an opaque archive and start lying
+//    about its contents not being read.
+// This list is deliberately short: every other mime keeps today's
+// precedence of mime-beats-extension (see attachments.test.js's "still lets
+// an unambiguous mime type override the extension"), so do not add to this
+// set casually - only when a real OS is known to overload that exact mime
+// for files whose extension already has its own trustworthy mapping.
+const AMBIGUOUS_MIMES = new Set([
+  "application/vnd.ms-excel",
+  "application/zip",
+  "application/x-zip-compressed",
+]);
 
 function kindOf(name, mime) {
   const ext = extensionOf(name);
 
-  // When the mime is the ambiguous Excel type AND the extension has its own
-  // known mapping, trust the extension instead (rows.csv -> "text", not
-  // "sheet"). When there's no known extension (e.g. export.bin), the mime
+  // When the mime is one of the ambiguous types above AND the extension has
+  // its own known mapping, trust the extension instead (rows.csv -> "text",
+  // not "sheet"; report.docx -> "text", not "archive"). When there's no
+  // known extension (e.g. export.bin, or an actual bundle.zip), the mime
   // still decides, because that's the only signal available.
-  if (normalizeMime(mime) === AMBIGUOUS_SHEET_MIME && ownLookup(EXTENSION_KIND, ext)) {
+  if (AMBIGUOUS_MIMES.has(normalizeMime(mime)) && ownLookup(EXTENSION_KIND, ext)) {
     return ownLookup(EXTENSION_KIND, ext);
   }
 

@@ -249,3 +249,53 @@ describe("buildPageContext", () => {
     }
   });
 });
+
+// A zip is an opaque blob to every path in this repo - nothing unzips one, and
+// its bytes are never handed to the model. So it belongs with slides and
+// spreadsheets on the "contents not read" side of the per-line rule, NOT with
+// image/pdf/text, whose bytes really are sent in the same request.
+//
+// Getting this wrong is not cosmetic: it would tell the model a zip's contents
+// were provided when nothing read them, which is precisely the claim this file
+// exists to keep honest.
+describe("a zip attachment is inventory only", () => {
+  const zip = { name: "project-export.zip", kind: "archive", notes: "", transcript: "" };
+
+  it("says its contents were not read", () => {
+    const { content } = buildPageContext({ page: page(), breadcrumb: [], childPages: [], attachments: [zip] });
+    expect(content).toContain("project-export.zip");
+    expect(content).toContain("contents not read");
+  });
+
+  it("keeps the notes when there are some, still disclaimed", () => {
+    const { content } = buildPageContext({
+      page: page(),
+      breadcrumb: [],
+      childPages: [],
+      attachments: [{ ...zip, notes: "Full source drop for the migration" }],
+    });
+    expect(content).toContain("contents not read");
+    expect(content).toContain("Full source drop for the migration");
+  });
+
+  it("does NOT disclaim a pdf alongside it", () => {
+    // Positive control: a blanket disclaimer applied to everything would pass
+    // both tests above and would lie about the pdf, whose bytes ExperienceTab
+    // downloads and attaches to the very same request.
+    const { content } = buildPageContext({
+      page: page(),
+      breadcrumb: [],
+      childPages: [],
+      attachments: [zip, { name: "spec.pdf", kind: "pdf", notes: "", transcript: "" }],
+    });
+    const pdfLine = content.split("\n").find((l) => l.includes("spec.pdf"));
+    expect(pdfLine).toBeDefined();
+    expect(pdfLine).not.toContain("contents not read");
+  });
+
+  it("names the kind in words rather than leaving it a generic file", () => {
+    const { content } = buildPageContext({ page: page(), breadcrumb: [], childPages: [], attachments: [zip] });
+    const line = content.split("\n").find((l) => l.includes("project-export.zip"));
+    expect(line).toContain("archive");
+  });
+});

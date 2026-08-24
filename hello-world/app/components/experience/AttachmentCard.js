@@ -24,6 +24,7 @@ import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import DeleteIcon from "@mui/icons-material/Delete";
 import DownloadIcon from "@mui/icons-material/Download";
+import FolderZipIcon from "@mui/icons-material/FolderZip";
 import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
 import SlideshowIcon from "@mui/icons-material/Slideshow";
 import TableChartIcon from "@mui/icons-material/TableChart";
@@ -35,6 +36,7 @@ const KIND_LABEL = {
   text: "Text",
   slides: "Slides",
   sheet: "Spreadsheet",
+  archive: "Archive",
   other: "File",
 };
 
@@ -85,16 +87,19 @@ export default function AttachmentCard({
                 sx={{ width: 1, borderRadius: 1, display: "block" }}
               />
             )}
-            {/* Slides/sheet get their own icon, distinct from each other and from
-                the generic InsertDriveFileIcon every other non-preview kind still
-                falls back to — the text label just below already says the kind, so
-                neither icon needs (or gets) an aria-hidden-defeating titleAccess. */}
+            {/* Slides/sheet/archive get their own icon, distinct from each other and
+                from the generic InsertDriveFileIcon every other non-preview kind
+                still falls back to — the text label just below already says the
+                kind, so none of these icons needs (or gets) an aria-hidden-defeating
+                titleAccess. */}
             {attachment.kind === "slides" && <SlideshowIcon fontSize="large" color="action" />}
             {attachment.kind === "sheet" && <TableChartIcon fontSize="large" color="action" />}
+            {attachment.kind === "archive" && <FolderZipIcon fontSize="large" color="action" />}
             {(attachment.kind !== "image" &&
               attachment.kind !== "video" &&
               attachment.kind !== "slides" &&
-              attachment.kind !== "sheet") && (
+              attachment.kind !== "sheet" &&
+              attachment.kind !== "archive") && (
               <InsertDriveFileIcon fontSize="large" color="action" />
             )}
           </Box>

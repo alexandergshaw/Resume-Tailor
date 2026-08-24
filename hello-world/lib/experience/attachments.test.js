@@ -305,7 +305,14 @@ describe("classifyAttachment: PowerPoint and Excel", () => {
       kind: "other",
       ok: false,
     });
-    expect(classifyAttachment(file("archive.zip", "application/zip", MB))).toMatchObject({
+    // This control used to include `archive.zip` as a second example, from
+    // when zips genuinely were unsupported. They are supported now (see the
+    // "zip archives" block at the end of this file), so that case was moved
+    // rather than deleted: `.rar` and `.7z` carry the same intent here, and
+    // they are the formats deliberately still refused - so this control keeps
+    // proving the door did not swing open while no longer contradicting a
+    // shipped feature.
+    expect(classifyAttachment(file("stuff.rar", "application/vnd.rar", MB))).toMatchObject({
       kind: "other",
       ok: false,
     });
@@ -572,5 +579,75 @@ describe("storagePathFor", () => {
     const distinct = ["Notes.MD", "notes.md", "中文.png", "日本語.png", "resume.pdf", "RESUME.pdf"];
     const keys = distinct.map((n) => storagePathFor("u1", "p1", ID, n));
     expect(new Set(keys).size).toBe(distinct.length);
+  });
+});
+
+// Zip archives (AC-Z1..Z3).
+//
+// The interesting half of this is NOT that .zip is accepted - it is that
+// every OOXML Office file IS a zip. Windows and several file managers report
+// a .docx/.pptx/.xlsx as a generic zip mime, and this module's standing rule
+// is mime-beats-extension. Adding "application/zip -> archive" without an
+// exception would therefore silently reclassify real documents as opaque
+// archives: they would stop being read for the AI, and would start carrying
+// a "contents not read" line that is simply false.
+//
+// The module already has exactly one precedent for this shape -
+// AMBIGUOUS_SHEET_MIME, which exists because Windows reports a plain .csv as
+// application/vnd.ms-excel whenever Excel owns the file type. This is the
+// second instance of the same problem and must reuse that shape.
+describe("zip archives", () => {
+  it("accepts a .zip and calls it an archive", () => {
+    const result = classifyAttachment(file("project-export.zip", "application/zip", 2 * MB));
+    expect(result.kind).toBe("archive");
+    expect(result.ok).toBe(true);
+    expect(result.reason).toBe("");
+  });
+
+  it("accepts a .zip the browser reports with the Windows zip mime", () => {
+    expect(classifyAttachment(file("bundle.zip", "application/x-zip-compressed", MB)).kind).toBe("archive");
+  });
+
+  it("accepts a .zip the browser reports with no mime type at all", () => {
+    // Safari and several file managers hand over an empty `type`, so the
+    // extension is all there is to go on.
+    expect(classifyAttachment(file("bundle.zip", "", MB)).kind).toBe("archive");
+  });
+
+  it("still calls a .docx a text file when the browser reports it as a zip", () => {
+    // THE REGRESSION THIS BLOCK EXISTS FOR. A .docx really is a zip, so a
+    // naive mime mapping reclassifies every Word document a Windows machine
+    // uploads.
+    expect(classifyAttachment(file("report.docx", "application/zip", MB)).kind).toBe("text");
+    expect(classifyAttachment(file("report.docx", "application/x-zip-compressed", MB)).kind).toBe("text");
+  });
+
+  it("still calls a .pptx slides and an .xlsx a sheet when reported as a zip", () => {
+    expect(classifyAttachment(file("kickoff.pptx", "application/x-zip-compressed", MB)).kind).toBe("slides");
+    expect(classifyAttachment(file("q3.xlsx", "application/zip", MB)).kind).toBe("sheet");
+  });
+
+  it("still lets an unambiguous mime win over the extension", () => {
+    // Positive control for the exception above: the generic-zip carve-out
+    // must not have flipped this module's precedence wholesale. A file named
+    // .zip whose mime says it is really a PDF is a PDF.
+    expect(classifyAttachment(file("mislabelled.zip", "application/pdf", MB)).kind).toBe("pdf");
+  });
+
+  it("holds a zip to the same 25 MB limit as everything that is not video", () => {
+    const result = classifyAttachment(file("huge.zip", "application/zip", 26 * MB));
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("25 MB");
+    // The kind is still decided independently of size, so the card can show
+    // the right icon beside the refusal.
+    expect(result.kind).toBe("archive");
+  });
+
+  it("refuses an archive format that was not asked for", () => {
+    // Scope control, asserted rather than assumed: the request was zips. A
+    // .rar or .7z must still be refused as unsupported rather than quietly
+    // waved through, so nobody has to guess what this feature covers.
+    expect(classifyAttachment(file("stuff.rar", "application/vnd.rar", MB)).ok).toBe(false);
+    expect(classifyAttachment(file("stuff.7z", "application/x-7z-compressed", MB)).ok).toBe(false);
   });
 });

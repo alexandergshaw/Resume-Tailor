@@ -3512,3 +3512,29 @@ Pass the value instead of a getter and every test silently queries the first ren
 - **The announcement sequence bump is untested.** Freezing `seq` in `announce` kills nothing, including the test named "re-announces the count even when it repeats non-consecutively (3 -> 2 -> 3)" — because a non-consecutive repeat changes the TEXT between announcements anyway, so a DOM mutation happens regardless. The `seq` mechanism only matters for two CONSECUTIVE IDENTICAL messages ("Selection cleared" twice), and nothing exercises that.
 
 **The harness lives under `app/` and imports `vitest`.** It is unreferenced by application code, so Next never traces it and the build is clean — but an accidental import from a component would break the build, which is why step 3 exists.
+### R-243 | area: experience-attachments | parallel-safe: yes | automatable: yes
+
+**Summary:** A .zip can be attached to a project page, and adding it did not reclassify every Office document as an archive.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run --no-file-parallelism lib/experience/attachments.test.js lib/experience/pageContext.test.js app/components/experience/AttachmentPanel.test.js app/components/experience/AttachmentPanel.officeKinds.test.js`.
+2. On a project page, upload a `.zip`. It is accepted, the card reads **Archive** with its own icon, and the upload box's own sentence says zip archives are allowed before you pick a file.
+3. Upload a `.docx`, a `.pptx` and an `.xlsx` **from Windows**. All three must still read Text / Slides / Spreadsheet — NOT Archive.
+4. Download the zip back and confirm it opens.
+5. Press Ask AI on a page holding a zip. The pinned context must list the zip and say its contents were not read, and the zip's bytes must not be sent.
+
+**Expected:** All four suites pass and the manual steps read as described.
+
+**The whole difficulty is that every OOXML Office file IS a zip.** `.docx`, `.pptx` and `.xlsx` are zip containers, and Windows and several file managers report them with a generic `application/zip` or `application/x-zip-compressed` mime. This module's standing rule is mime-beats-extension, so mapping the zip mimes straight to a new `archive` kind silently reclassifies every Word, PowerPoint and Excel document uploaded from a Windows machine: they stop being read for the AI, and they start carrying a "contents not read" line that is false.
+
+**The fix reuses the one precedent already in the file rather than inventing a second mechanism.** `AMBIGUOUS_SHEET_MIME` existed because Windows reports a plain `.csv` as `application/vnd.ms-excel` whenever Excel owns the file type. That single constant became `AMBIGUOUS_MIMES`, a deliberately short set: a mime in it is treated as a hint rather than as authoritative, and the EXTENSION wins whenever the extension has its own known mapping. `kindOf`'s structure is otherwise unchanged, so an UNambiguous mime still beats the extension — a file named `.zip` whose mime says `application/pdf` is still a pdf, and a test asserts it.
+
+**Both halves are mutation-proven, not merely green.** Removing the two zip mimes from `AMBIGUOUS_MIMES` is the most likely careless edit here ("why is a zip mime in a list called ambiguous?"), and it is killed by "still calls a .docx a text file when the browser reports it as a zip" and "still calls a .pptx slides and an .xlsx a sheet when reported as a zip". Removing `zip: "archive"` from the extension table is killed by "accepts a .zip the browser reports with no mime type at all".
+
+**An archive is inventory-only, and `pageContext.js` says so per line.** Nothing in this repo unzips anything and a zip's bytes are never handed to the model, so `archive` joins `slides` and `sheet` on the "contents not read" branch. It must NOT join `image`/`pdf`/`text`, whose bytes really are downloaded and attached to the same Ask AI request — disclaiming those would tell the model the opposite of what just happened. A test asserts a pdf sitting beside a zip is still not disclaimed, so a blanket disclaimer cannot pass.
+
+**`archive` is deliberately absent from `DOWNLOADABLE_ATTACHMENT_KINDS`** in `ExperienceTab.js`, so a zip's bytes never reach the chat route. That set is `["text","image","pdf"]` and adding an opaque binary to it would hand the model bytes it cannot read.
+
+**`.rar` and `.7z` are still refused, and that is asserted.** The request was zips. A pre-existing positive control named "does not widen the door for anything else" used `archive.zip` as its example of something unsupported; that example was MOVED to `.rar` rather than deleted, so the control still proves the door did not swing open while no longer contradicting a shipped feature. Deleting it outright would have been the easy way to a green suite and would have removed the only guard on that intent.
+
+**Size: an archive uses the same 25 MB cap as everything that is not video.** Zips of real project artifacts will hit that ceiling sooner than most kinds; raising it is a deliberate product decision and has not been made.

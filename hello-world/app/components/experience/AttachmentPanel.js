@@ -816,7 +816,7 @@ export default function AttachmentPanel({ pageId }) {
         }}
       >
         <Typography component="label" htmlFor="attachment-file-input" variant="body2" sx={{ display: "block", mb: 1 }}>
-          Add a file, image, video, PowerPoint deck, or Excel spreadsheet
+          Add a file, image, video, PowerPoint deck, Excel spreadsheet, or zip archive
         </Typography>
         <input ref={inputRef} id="attachment-file-input" type="file" onChange={onInputChange} disabled={uploading} />
         <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
