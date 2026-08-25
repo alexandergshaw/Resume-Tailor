@@ -31,13 +31,29 @@ function oracle({
       : hasSubmittedResume || hasSubmittedCoverLetter
         ? ` The critique also sends the ${submittedDocsLabel} you submitted for the selected posting to Gemini.`
         : "";
-  const sampleAnswerClause = !hasPosting
+  // The knowledge-base sentence the answer route's payload made necessary:
+  // every non-embedded draft also carries the user's project pages and the
+  // file names and saved notes of their attachments. Unconditional, so it is
+  // appended to every branch here exactly as production appends it.
+  //
+  // The wording below was DELIBERATELY updated in the same change as the
+  // source, not accidentally drifted. It used to open "It also sends…", which
+  // reads correctly after this file's four branches (each begins "Revealing a
+  // sample answer sends…") and nowhere else: the same constant is appended by
+  // lib/copilot/groundingNotice.js and practiceRoomQuestionPrivacy.js after
+  // sentences about company research and about typing a question, where the
+  // pronoun attributed the transfer to the wrong action — on the company-
+  // research branch, falsely. One shared sentence cannot depend on what
+  // precedes it, so it names its own subject.
+  const knowledgeBaseClause =
+    " Drafting an answer also sends your project pages, and the file names and any saved notes of the attachments on them — never the attached files themselves.";
+  const sampleAnswerClause = (!hasPosting
     ? "Revealing a sample answer sends that question and your prep context to Gemini as well."
     : !docsSettled
       ? "Revealing a sample answer sends that question and your prep context to Gemini as well, and may also send any resume or cover letter you submitted for the selected posting."
       : hasSubmittedResume || hasSubmittedCoverLetter
         ? `Revealing a sample answer sends that question, your prep context, and the ${submittedDocsLabel} you submitted for the selected posting to Gemini as well.`
-        : "Revealing a sample answer sends that question and your prep context to Gemini as well.";
+        : "Revealing a sample answer sends that question and your prep context to Gemini as well.") + knowledgeBaseClause;
   const engineNotice = isEmbedded
     ? "The critique runs on this server with no AI provider — your answer, the posting, and your prep context are never sent to Google. Sample answers are drafted on this server too."
     : framesWillUpload
@@ -133,7 +149,7 @@ describe("buildPrivacyNotice", () => {
       "Your audio is streamed for transcription. " +
         "Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback, along with up to three still frames from each answer. " +
         "The critique also sends the resume and cover letter you submitted for the selected posting to Gemini. " +
-        "Revealing a sample answer sends that question, your prep context, and the resume and cover letter you submitted for the selected posting to Gemini as well. " +
+        "Revealing a sample answer sends that question, your prep context, and the resume and cover letter you submitted for the selected posting to Gemini as well. Drafting an answer also sends your project pages, and the file names and any saved notes of the attachments on them — never the attached files themselves. " +
         "Your video clip stays in your browser and is dropped when the session ends.",
     );
   });
@@ -154,7 +170,7 @@ describe("buildPrivacyNotice", () => {
       "Your audio is streamed to Deepgram for transcription. " +
         "Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback. " +
         "The critique may also send any resume or cover letter you submitted for the selected posting to Gemini. " +
-        "Revealing a sample answer sends that question and your prep context to Gemini as well, and may also send any resume or cover letter you submitted for the selected posting. " +
+        "Revealing a sample answer sends that question and your prep context to Gemini as well, and may also send any resume or cover letter you submitted for the selected posting. Drafting an answer also sends your project pages, and the file names and any saved notes of the attachments on them — never the attached files themselves. " +
         "Your answer video is uploaded to your own Supabase storage, private to your account, and listed in your practice history until you delete it.",
     );
   });
@@ -175,7 +191,7 @@ describe("buildPrivacyNotice", () => {
       "Your audio is streamed to Deepgram for transcription. " +
         "Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback. " +
         "The critique also sends the resume you submitted for the selected posting to Gemini. " +
-        "Revealing a sample answer sends that question, your prep context, and the resume you submitted for the selected posting to Gemini as well. " +
+        "Revealing a sample answer sends that question, your prep context, and the resume you submitted for the selected posting to Gemini as well. Drafting an answer also sends your project pages, and the file names and any saved notes of the attachments on them — never the attached files themselves. " +
         "Your answer video is uploaded to your own Supabase storage, private to your account, and listed in your practice history until you delete it.",
     );
   });
@@ -195,7 +211,7 @@ describe("buildPrivacyNotice", () => {
     ).toBe(
       "Your audio is streamed to Deepgram for transcription. " +
         "Your answer transcript, the posting details, and your prep context are sent to Google Gemini for feedback. " +
-        "Revealing a sample answer sends that question and your prep context to Gemini as well. " +
+        "Revealing a sample answer sends that question and your prep context to Gemini as well. Drafting an answer also sends your project pages, and the file names and any saved notes of the attachments on them — never the attached files themselves. " +
         "Your answer video is uploaded to your own Supabase storage, private to your account, and listed in your practice history until you delete it.",
     );
   });

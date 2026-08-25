@@ -309,6 +309,11 @@ export function useLiveSession({
           buzzwords: [],
           anchor: null,
           idealProject: null,
+          // ARCH §3.5/§4e: seeded empty alongside the other reading aids —
+          // an entry is a complete shape from the moment it exists, whether
+          // loading or idle. useDraftAnswer.js's runDraft is the sole
+          // writer of a real value, on the terminal `done` frame only.
+          pageSources: [],
           type: type || null,
           error: "",
           // AC-M1.3.5: which voice this was detected from (in-person only),

@@ -461,9 +461,13 @@ export default function SessionSetup({
               posting stays selected, even after the consent alert above has
               been dismissed. This is the ONE place that fact is stated; see
               postingGroundingNotice's derivation above for exactly when it
-              applies and what it says. Empty (renders nothing) when no
-              posting is selected, matching PracticeClient's privacyNotice
-              treatment and visual weight. */}
+              applies and what it says. It is NO LONGER empty when no posting
+              is selected — on the Gemini path it is never empty at all, since
+              the project pages and attachment file names go on every drafted
+              answer whether or not a posting was picked. The falsy check
+              below is kept for the branch that can still be empty (the
+              embedded engine with nothing selected), matching PracticeClient's
+              privacyNotice treatment and visual weight. */}
           {postingGroundingNotice ? (
             <Typography variant="body2" sx={{ color: "var(--text-secondary)", mb: 2 }}>
               {postingGroundingNotice}

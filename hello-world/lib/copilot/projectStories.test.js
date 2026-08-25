@@ -1,8 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { buildProjectStoriesBlock, MAX_STORIES_CHARS } from "./projectStories.js";
+import { isEligiblePage, selectBestStory, starPointsFromStory, significantTerms, overlapScore } from "./projectStories.js";
 
 // The user's own project pages, offered to the copilot as material for
-// "tell me about a time..." answers.
+// "tell me about a time..." answers. buildProjectStoriesBlock used to be
+// tested here; that function moved to lib/experience/knowledgeBase.js's
+// buildKnowledgeBaseBlock (ARCH §5/§7.9) and is covered by
+// knowledgeBase.test.js instead. What stays behind — page eligibility and
+// the embedded engine's own story picker — is what this file exists to
+// cover now.
 //
 // Two rules here are about honesty rather than correctness, and both come from
 // things this codebase has already got wrong:
@@ -25,74 +30,87 @@ const page = (over = {}) => ({
   ...over,
 });
 
-describe("buildProjectStoriesBlock", () => {
-  it("offers each page as a labelled story with its own body", () => {
-    const { block } = buildProjectStoriesBlock([page()]);
-    expect(block).toContain("Payments migration");
-    expect(block).toContain("Cut settlement from three days to one");
+describe("isEligiblePage", () => {
+  it("accepts an ordinary page", () => {
+    expect(isEligiblePage(page())).toBe(true);
   });
 
-  it("never offers a generated page as the user's own experience", () => {
-    const { block } = buildProjectStoriesBlock([
-      page({ id: "r1", title: "Research: Payments", generated_kind: "research" }),
-    ]);
-    expect(block).toBe("");
-  });
-
-  it("treats any generated_kind as generated, and skips archived pages", () => {
-    expect(buildProjectStoriesBlock([page({ generated_kind: "summary" })]).block).toBe("");
-    expect(buildProjectStoriesBlock([page({ archived_at: "2026-08-01T00:00:00.000Z" })]).block).toBe("");
-  });
-
-  it("still offers ordinary pages", () => {
-    // Positive control: excluding everything satisfies all three rules above.
-    const { block } = buildProjectStoriesBlock([page(), page({ id: "p2", title: "Billing rewrite" })]);
-    expect(block).toContain("Payments migration");
-    expect(block).toContain("Billing rewrite");
-  });
-
-  it("returns an empty block for no eligible pages, so the prompt is unchanged", () => {
-    // The route must be able to send a byte-identical prompt to today when the
-    // user has no project pages. An empty string, not a header with nothing
-    // beneath it.
-    expect(buildProjectStoriesBlock([]).block).toBe("");
-    expect(buildProjectStoriesBlock([page({ title: "", body: "" })]).block).toBe("");
-  });
-
-  it("stays within budget, drops whole pages, and says that it did", () => {
-    // This route fires mid-question. It has no token counting and budgets only
-    // with bare slices, so an unbounded block is a latency and truncation risk
-    // at the worst possible moment. Half a project told as a complete story is
-    // worse than one that was left out and said so.
-    const many = Array.from({ length: 40 }, (_, i) =>
-      page({ id: `p${i}`, title: `Project ${i}`, body: "x".repeat(2000) }),
-    );
-    const { block, truncated, includedCount } = buildProjectStoriesBlock(many);
-    expect(block.length).toBeLessThanOrEqual(MAX_STORIES_CHARS);
-    expect(truncated).toBe(true);
-    expect(block.toLowerCase()).toMatch(/truncat|not included|omitted/);
-    expect(includedCount).toBeLessThan(many.length);
-  });
-
-  it("reports nothing truncated when everything fits", () => {
-    const { truncated, block } = buildProjectStoriesBlock([page()]);
-    expect(truncated).toBe(false);
-    expect(block.toLowerCase()).not.toMatch(/truncat/);
-  });
-
-  it("marks the block so an aid can name project pages as the source", () => {
-    // The answer route attributes each aid to where its claim came from. Page
-    // material must be attributable as page material - not silently folded in
-    // beside the resume, which is the label the user would otherwise be shown.
-    const { sourceLabel } = buildProjectStoriesBlock([page()]);
-    expect(sourceLabel).toBeTruthy();
-    expect(String(sourceLabel).toLowerCase()).not.toBe("resume");
-    expect(String(sourceLabel).toLowerCase()).not.toBe("prep");
+  it("rejects any generated_kind, and archived pages", () => {
+    expect(isEligiblePage(page({ generated_kind: "research" }))).toBe(false);
+    expect(isEligiblePage(page({ generated_kind: "summary" }))).toBe(false);
+    expect(isEligiblePage(page({ archived_at: "2026-08-01T00:00:00.000Z" }))).toBe(false);
   });
 
   it("never throws on junk input", () => {
-    for (const input of [null, undefined, [null], [{}], [{ title: null, body: null }]]) {
-      expect(() => buildProjectStoriesBlock(input)).not.toThrow();
+    for (const input of [null, undefined, "x", 1, []]) {
+      expect(() => isEligiblePage(input)).not.toThrow();
     }
+    expect(isEligiblePage(null)).toBe(false);
+  });
+});
+
+describe("significantTerms / overlapScore", () => {
+  it("tokenises words of 4+ alphanumeric characters, lowercased", () => {
+    expect(significantTerms("Led the Settlement Rewrite")).toEqual(new Set(["settlement", "rewrite"]));
+  });
+
+  it("scores overlap between two term sets/text", () => {
+    const q = significantTerms("settlement rewrite");
+    expect(overlapScore(q, "Led the settlement rewrite end to end")).toBe(2);
+    expect(overlapScore(q, "unrelated text entirely")).toBe(0);
+  });
+});
+
+describe("selectBestStory", () => {
+  it("returns null when there is no eligible page", () => {
+    expect(selectBestStory([])).toBeNull();
+    expect(selectBestStory([page({ generated_kind: "research" })])).toBeNull();
+  });
+
+  it("picks the page that overlaps the question, honestly reporting matched:true", () => {
+    const decoy = page({ id: "d1", title: "Beekeeping notes", body: "Rotated the hive frames." });
+    const target = page({ id: "t1", title: "Ledger sharding", body: "Sharded the ledger by tenant." });
+    const story = selectBestStory([decoy, target], { question: "Tell me about sharding a ledger." });
+    expect(story.pageId).toBe("t1");
+    expect(story.matched).toBe(true);
+  });
+
+  it("falls back to the first eligible page, honestly reporting matched:false, when nothing overlaps", () => {
+    const story = selectBestStory([page({ id: "t1" })], { question: "completely unrelated topic" });
+    expect(story.pageId).toBe("t1");
+    expect(story.matched).toBe(false);
+  });
+
+  it("ranks a page's own bullets by overlap with the question, not document order", () => {
+    const withBullets = page({
+      body: "- Kicked off in Q1 with a kickoff meeting\n- Cut settlement time from three days to one",
+    });
+    const story = selectBestStory([withBullets], { question: "How did you cut settlement time?" });
+    expect(story.bullets[0]).toBe("Cut settlement time from three days to one");
+  });
+
+  it("reports pageId as null when the winning page has no usable id", () => {
+    const story = selectBestStory([page({ id: "" })]);
+    expect(story.pageId).toBeNull();
+  });
+});
+
+describe("starPointsFromStory", () => {
+  it("builds Situation/Action/Result from the story's own title and bullets, verbatim", () => {
+    const story = { title: "Payments migration", bullets: ["Cut settlement time from three days to one", "Mentored two junior engineers"] };
+    const points = starPointsFromStory(story);
+    expect(points).toEqual([
+      "Situation: Payments migration.",
+      "Action: Cut settlement time from three days to one.",
+      "Result: Mentored two junior engineers.",
+    ]);
+  });
+
+  it("returns null for a title with no bullets — a title alone is not a story", () => {
+    expect(starPointsFromStory({ title: "No bullets here", bullets: [] })).toBeNull();
+  });
+
+  it("returns null for null input", () => {
+    expect(starPointsFromStory(null)).toBeNull();
   });
 });

@@ -9,6 +9,32 @@
 // this module exists so live and practice can never drift apart on the
 // question again.
 //
+// KNOWN LIMITATION, recorded rather than "fixed" (ARCH §4f, knowledge-base
+// grounding work): this deliberately does NOT grow a fourth field for the
+// interview copilot's knowledge-base pages. `groundingFor` runs on the
+// CLIENT, at cache-READ time (useDraftAnswer.js's own call site,
+// sampleAnswerState.js), and the client has no view of the knowledge base at
+// all — it was never sent one, by design, the same way it is never sent the
+// résumé or cover letter text. A route-returned "knowledge base fingerprint"
+// stashed on the cache entry would be compared, on a hit, against a freshly
+// recomputed value the client also has no way to produce independently — in
+// practice that comparison degenerates to the entry matching itself, which
+// looks like a guard and is not one. That is worse than having no such field
+// at all, because it would read as "this was checked" when nothing was.
+// Leaving grounding behaviourally unchanged here is deliberate. If this is
+// ever fixed for real, the fix is a cheap server-side endpoint that reports
+// the knowledge base's own max `updated_at`, not a fourth client-side field.
+//
+// The bug that IS in scope for that work is different, and lives in the
+// cache entries themselves, not here: a cached entry that does not
+// round-trip `pageSources` renders on a cache hit as an answer that has lost
+// its citations, the same failure useDraftAnswer.js already names for
+// `cues`. `pageSources` must be written to and read from both caches
+// alongside `cues`/`buzzwords`/`anchor`/`idealProject`, defaulting to `[]`
+// for any entry cached before that field existed — this file has no cache of
+// its own, so that work belongs to sampleAnswerState.js and
+// useDraftAnswer.js, not here.
+//
 // Pure, no React, no DOM — reachable from this repo's node-only vitest setup
 // (vitest.config.js has no jsdom) the same way sampleAnswerState.js is.
 //

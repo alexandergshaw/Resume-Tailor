@@ -14,7 +14,13 @@ import { splitFrames } from "./answerStream.js";
 // `idealProject` ({ shape, summary, metrics, project } or null — the
 // ideal-project benchmark, lib/copilot/idealProject.js; AC-M1 added
 // `project`, the worked-example write-up built by
-// lib/copilot/idealProjectNarrative.js). This client returns the parsed body verbatim,
+// lib/copilot/idealProjectNarrative.js).
+//
+// AC-6.2: both modes also return `pageSources` — one entry per point, in the
+// same order, each `{ id, title }` for the candidate's own project page that
+// point drew on, or null. It is [] when nothing could be cited at all, which
+// is not the same as an array of nulls (lib/copilot/pageCitations.js explains
+// why the distinction is load-bearing downstream). This client returns the parsed body verbatim,
 // so those need no plumbing here; the consumers that carry them into state
 // are useSampleAnswer.js (practice), CopilotClient.js (live) and
 // useCopilotDashboard.js (both dashboards).

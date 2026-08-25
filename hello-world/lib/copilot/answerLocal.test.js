@@ -347,6 +347,88 @@ describe("draftAnswerLocal grounding in submitted documents (AC-H4.15/AC-H4.19)"
   });
 });
 
+// ARCH §3.6: draftAnswerLocal's own `story` parameter — live mode's points
+// prefer a matched project page's own bullet over the résumé/profile expRef
+// for the one concrete "e.g." clause each shape has, byte-identical to today
+// whenever `story` is null or unmatched.
+describe("draftAnswerLocal knowledge-base grounding (ARCH §3.6)", () => {
+  const RESUME = [
+    "Senior Software Engineer, Initech — Remote",
+    "Jan 2021 – Present",
+    "Led a team of six engineers, cutting deployment time by 40%.",
+    "Skills: Python, Django, PostgreSQL, Docker",
+  ].join("\n");
+
+  const STORY = {
+    pageId: "page-1",
+    title: "Payments migration",
+    bullets: ["Cut settlement time from three days to one"],
+    matched: true,
+  };
+
+  it("behavioral: prefers the matched story's bullet over expRef for the Action clause, and cites only that point", () => {
+    const { points, pageSources } = draftAnswerLocal({
+      question: "Tell me about a time you led a migration.",
+      resume: RESUME,
+      interviewType: "behavioral",
+      story: STORY,
+    });
+    const action = points.find((p) => p.startsWith("Action:"));
+    expect(action).toContain("Cut settlement time from three days to one");
+    expect(action).not.toContain("led a team of six engineers");
+    expect(pageSources[points.indexOf(action)]).toEqual({ id: "page-1", title: "Payments migration" });
+    expect(pageSources.filter(Boolean)).toHaveLength(1);
+  });
+
+  it("technical: prefers the matched story's bullet over expRef for the grounding clause", () => {
+    const { points, pageSources } = draftAnswerLocal({
+      question: "How would you design a scalable migration?",
+      resume: RESUME,
+      interviewType: "technical",
+      story: STORY,
+    });
+    const grounding = points.find((p) => p.startsWith("Ground it"));
+    expect(grounding).toContain("Cut settlement time from three days to one");
+    expect(pageSources[points.indexOf(grounding)]).toEqual({ id: "page-1", title: "Payments migration" });
+  });
+
+  it("general: prefers the matched story's bullet over expRef for the anchor clause", () => {
+    const { points, pageSources } = draftAnswerLocal({
+      question: "Why do you want to work here?",
+      resume: RESUME,
+      interviewType: "general",
+      story: STORY,
+    });
+    expect(points[0]).toContain("Cut settlement time from three days to one");
+    expect(pageSources[0]).toEqual({ id: "page-1", title: "Payments migration" });
+  });
+
+  it("an UNMATCHED story is never spoken — byte-identical to no story at all (AC-5.2)", () => {
+    const withUnmatchedStory = draftAnswerLocal({
+      question: "Tell me about a time you led a migration.",
+      resume: RESUME,
+      interviewType: "behavioral",
+      story: { ...STORY, matched: false },
+    });
+    const withNoStory = draftAnswerLocal({
+      question: "Tell me about a time you led a migration.",
+      resume: RESUME,
+      interviewType: "behavioral",
+    });
+    expect(withUnmatchedStory.points).toEqual(withNoStory.points);
+    expect(withUnmatchedStory.pageSources.filter(Boolean)).toEqual([]);
+  });
+
+  it("with no story at all, pageSources is an all-null array the same length as points", () => {
+    const { points, pageSources } = draftAnswerLocal({
+      question: "Why do you want to work here?",
+      profile: RESUME,
+    });
+    expect(pageSources).toHaveLength(points.length);
+    expect(pageSources.every((p) => p === null)).toBe(true);
+  });
+});
+
 describe("combineMaterial", () => {
   it("joins non-empty sources with a blank line and drops empty ones", () => {
     expect(combineMaterial("profile text", "", "cover letter text")).toBe("profile text\n\ncover letter text");

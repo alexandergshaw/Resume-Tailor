@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { submittedDocsClause, postingGroundingNotice, companyResearchDestination } from "./groundingNotice.js";
+import { KNOWLEDGE_BASE_CLAUSE } from "./practiceNotices.js";
 
 // AC-X1. `submittedDocsClause` and the `postingGroundingNotice` ternary chain
 // MOVE here out of app/copilot/CopilotClient.js, which is at 975 lines and
@@ -38,6 +39,26 @@ const UNSETTLED =
 // uses Gemini — so it is no longer "".
 const COMPANY_RESEARCH_ONLY =
   " Because you selected a posting, asking to research the company also sends its name, this job's title and the posting text to Google Gemini.";
+// Live mode's knowledge-base disclosure. Every oracle below that describes a
+// GEMINI-path notice is the old pinned string PLUS this one — the additive
+// shape the fix required, so a rewrite that dropped an existing disclosure to
+// make room still fails here. The constant is IMPORTED from
+// practiceNotices.js rather than re-typed, exactly as the source is: practice
+// mode, a room question and a live drafted answer are one payload, and
+// lib/copilot/practiceNotices.test.js already pins its bytes.
+const KB = KNOWLEDGE_BASE_CLAUSE;
+// The sentence that discloses the live draft's own transfer — the question,
+// the recent transcript and the prep context — when the posting clause is
+// empty and nothing else would say so. Only reachable on the Gemini path.
+//
+// It used to be described here as the ANTECEDENT of the knowledge-base
+// clause's opening "It also sends…". That was the wrong job for it: the same
+// clause is appended by practiceNotices.js and practiceRoomQuestionPrivacy.js
+// after sentences with entirely different subjects, so the clause names its
+// own subject now and this sentence is kept only for the disclosure it makes
+// on its own account.
+const LIVE_DRAFT =
+  " Drafting an answer sends the question, the recent transcript and your prep context to Google Gemini.";
 
 describe("submittedDocsClause — names only the documents that exist (AC-H6.25)", () => {
   it("names both when both exist", () => {
@@ -67,11 +88,29 @@ describe("submittedDocsClause — names only the documents that exist (AC-H6.25)
 describe("postingGroundingNotice — derived from current state (AC-H6.24)", () => {
   const posting = { id: "app-1", title: "Staff Engineer", company: "Acme Corp" };
 
-  it("says nothing at all when no posting is selected", () => {
-    expect(postingGroundingNotice({ posting: null, isEmbedded: false, docsStatus: "done", resume: "R", coverLetter: "C" })).toBe("");
+  it("says nothing about the APPLICATION when no posting is selected", () => {
+    // Updated deliberately, in the same change as the source. This used to
+    // assert "" and that was the defect: nothing about an APPLICATION leaves
+    // the browser with no posting selected, but the user's project pages and
+    // their attachment file names go on every drafted answer either way, and
+    // "no posting selected" is the ordinary live-mode state — so the notice
+    // that said nothing was disclosing nothing about the transfer it performs
+    // most often. What is pinned now is that the application-specific claims
+    // are still absent and only the knowledge-base disclosure is present.
+    const notice = postingGroundingNotice({
+      posting: null,
+      isEmbedded: false,
+      docsStatus: "done",
+      resume: "R",
+      coverLetter: "C",
+    });
+    expect(notice).toBe(`${LIVE_DRAFT}${KB}`);
+    expect(notice).not.toContain("Because you selected a posting");
+    expect(notice).not.toContain("résumé");
     // Even on the embedded engine, and even mid-load: with nothing selected,
-    // nothing about any application can leave the browser, so there is no
-    // claim — true or false — to make.
+    // nothing about any application can leave the browser, and no model call
+    // is made at all on this engine, so there is no claim — true or false —
+    // to make.
     expect(postingGroundingNotice({ posting: null, isEmbedded: true, docsStatus: "loading" })).toBe("");
   });
 
@@ -82,21 +121,41 @@ describe("postingGroundingNotice — derived from current state (AC-H6.24)", () 
   });
 
   it("hedges with 'may' while the document load has not settled", () => {
-    expect(postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "loading" })).toBe(UNSETTLED);
-    expect(postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "error" })).toBe(UNSETTLED);
-    expect(postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "idle" })).toBe(UNSETTLED);
+    expect(postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "loading" })).toBe(`${UNSETTLED}${KB}`);
+    expect(postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "error" })).toBe(`${UNSETTLED}${KB}`);
+    expect(postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "idle" })).toBe(`${UNSETTLED}${KB}`);
   });
 
   it("names exactly what was found once the load has settled", () => {
     expect(postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "done", resume: "R", coverLetter: "C" })).toBe(
-      ` Because you selected a posting, ${RESUME_AND_COVER}.`,
+      ` Because you selected a posting, ${RESUME_AND_COVER}.${KB}`,
     );
     expect(postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "done", resume: "R" })).toBe(
-      ` Because you selected a posting, ${RESUME_ONLY}.`,
+      ` Because you selected a posting, ${RESUME_ONLY}.${KB}`,
     );
     expect(postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "done", coverLetter: "C" })).toBe(
-      ` Because you selected a posting, ${COVER_ONLY}.`,
+      ` Because you selected a posting, ${COVER_ONLY}.${KB}`,
     );
+  });
+
+  // The half of the pair that shipped without its other half. Practice mode's
+  // notice already named the project pages and the attachment file names;
+  // this one, on the same route and the same payload, named neither — and
+  // fell silent entirely in the state live mode is usually in.
+  it("discloses the knowledge base on EVERY Gemini branch, including no posting at all", () => {
+    for (const args of [
+      { posting: null, isEmbedded: false, docsStatus: "done" },
+      { posting, isEmbedded: false, docsStatus: "loading" },
+      { posting, isEmbedded: false, docsStatus: "done", resume: "R", coverLetter: "C" },
+      { posting, isEmbedded: false, docsStatus: "done", hasCompany: true },
+      { posting, isEmbedded: false, docsStatus: "done", hasCompany: false },
+    ]) {
+      expect(postingGroundingNotice(args)).toContain(KB);
+    }
+    // And never on the embedded path, which makes no model call to draft an
+    // answer at all.
+    expect(postingGroundingNotice({ posting, isEmbedded: true, docsStatus: "done" })).not.toContain("project pages");
+    expect(postingGroundingNotice({ posting: null, isEmbedded: true, docsStatus: "done" })).not.toContain("project pages");
   });
 
   it("names the company-research destination once the load settles with neither document found (AC-T2.14/E3)", () => {
@@ -108,9 +167,9 @@ describe("postingGroundingNotice — derived from current state (AC-H6.24)", () 
     // reach this branch at all — see the defect-1 guard test below.
     expect(
       postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "done", resume: "", coverLetter: "", hasCompany: true }),
-    ).toBe(COMPANY_RESEARCH_ONLY);
+    ).toBe(`${COMPANY_RESEARCH_ONLY}${KB}`);
     expect(postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "done", hasCompany: true })).toBe(
-      COMPANY_RESEARCH_ONLY,
+      `${COMPANY_RESEARCH_ONLY}${KB}`,
     );
   });
 
@@ -128,24 +187,52 @@ describe("postingGroundingNotice — derived from current state (AC-H6.24)", () 
   // for a companyless posting and useCompanyBrief's fetch never fires at
   // all. That is exactly the "names a destination that receives nothing"
   // failure BUG-H5/R-098 exist to prevent.
-  it("says nothing once the load settles with neither document found AND no company on file (defect 1)", () => {
-    expect(
-      postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "done", resume: "", coverLetter: "", hasCompany: false }),
-    ).toBe("");
+  it("makes no company-research claim once the load settles with neither document found AND no company on file (defect 1)", () => {
+    // Still the defect-1 guard, restated for a notice that is no longer ever
+    // empty on this path: what must not appear is the claim that a
+    // company-research request goes to Gemini when `companyBriefRequest`
+    // would return null and no request can ever fire. The knowledge-base
+    // disclosure is unrelated to that fact and is unconditional, so it
+    // remains — with LIVE_DRAFT_DESTINATION in front of it, since with no
+    // posting clause left nothing else would disclose that the question, the
+    // transcript and the prep context go to Gemini on every draft.
+    const noCompany = postingGroundingNotice({
+      posting,
+      isEmbedded: false,
+      docsStatus: "done",
+      resume: "",
+      coverLetter: "",
+      hasCompany: false,
+    });
+    expect(noCompany).toBe(`${LIVE_DRAFT}${KB}`);
+    expect(noCompany).not.toContain("research the company");
     // Same when `hasCompany` is omitted entirely — the guard must default to
-    // the SAFE (silent) reading, not the false-claim one, exactly like
+    // the SAFE reading, not the false-claim one, exactly like
     // `companyResearchDestination`'s own `hasCompany = undefined` case.
-    expect(postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "done" })).toBe("");
+    expect(postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "done" })).toBe(`${LIVE_DRAFT}${KB}`);
   });
 
-  it("contains no em dash — a screen reader does not speak one as a pause", () => {
+  it("contains no em dash in any sentence this module writes — a screen reader does not speak one as a pause", () => {
+    // Scoped to this module's OWN prose. KNOWLEDGE_BASE_CLAUSE contains an em
+    // dash and is byte-locked by lib/copilot/practiceNotices.test.js, which
+    // pins it inside four full-notice oracles — it is one shared sentence
+    // describing one shared payload, so it cannot be reworded from this side,
+    // and copying it here to avoid the dash would recreate exactly the
+    // two-copies-of-one-disclosure drift this import exists to end. The rule
+    // still binds everything this file composes.
     const all = [
       postingGroundingNotice({ posting, isEmbedded: true, docsStatus: "done" }),
       postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "loading" }),
       postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "done", resume: "R", coverLetter: "C" }),
       postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "done" }),
-    ].join(" ");
+    ]
+      .join(" ")
+      .split(KB)
+      .join("");
     expect(all).not.toMatch(/[—–]/);
+    // Positive control: the split above really did remove something, so this
+    // case cannot go vacuous if the clause stops being appended.
+    expect(postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "loading" })).toContain(KB);
   });
 });
 

@@ -131,6 +131,14 @@ export function useDraftAnswer({
                     buzzwords: cached.buzzwords || [],
                     anchor: cached.anchor || null,
                     idealProject: cached.idealProject || null,
+                    // ARCH §4f/§6.8: the cache round-trip `cues`/
+                    // `buzzwords`/`anchor`/`idealProject` already get,
+                    // extended to `pageSources` — a cache hit that dropped
+                    // it would render as an answer that had its citations
+                    // when freshly drafted and lost them the second time
+                    // the same question was asked, with nothing on screen
+                    // explaining why.
+                    pageSources: Array.isArray(cached.pageSources) ? cached.pageSources : [],
                     type: it.type || cached.type,
                     cached: true,
                   }
@@ -142,7 +150,20 @@ export function useDraftAnswer({
       }
       setQuestions((prev) =>
         prev.map((it) =>
-          it.id === id ? { ...it, status: "loading", error: "", cached: false } : it,
+          // `pageSources` is cleared here, not merely left to be overwritten
+          // when the new draft lands. THE BUG THIS PREVENTS: a redraft leaves
+          // the PREVIOUS answer's citations sitting on the entry while the
+          // streaming path fills `points` in incrementally, so for a frame or
+          // more the old citations pair positionally against the new partial
+          // points — every line attributed to whichever page happened to be
+          // cited at that index last time. A stale cue is a bad prompt; a
+          // stale citation tells the candidate a claim came from a project
+          // that did not produce it, and they say so out loud. `cues` carries
+          // the same pre-existing hazard and is deliberately left alone: it
+          // is not free (its own fallback logic reads the previous array) and
+          // a mis-attributed page is the worse of the two by this feature's
+          // own reasoning.
+          it.id === id ? { ...it, status: "loading", error: "", cached: false, pageSources: [] } : it,
         ),
       );
       // AC-N1.3: what a superseded draft leaves the card as — back at
@@ -157,7 +178,7 @@ export function useDraftAnswer({
         );
       };
       try {
-        const { points, type, cues, buzzwords, resumeAnchor, idealProject } = await fetchAnswer(
+        const { points, type, cues, buzzwords, resumeAnchor, idealProject, pageSources } = await fetchAnswer(
           {
             question,
             context: buildContext(),
@@ -204,6 +225,12 @@ export function useDraftAnswer({
           buzzwords: Array.isArray(buzzwords) ? buzzwords : [],
           anchor: resumeAnchor || null,
           idealProject: idealProject || null,
+          // ARCH §4e: rides the terminal `done` frame only — fetchAnswer's
+          // streaming path (draftAnswerStreaming) resolves with exactly that
+          // frame's payload, so `pageSources` here is never a mid-stream
+          // partial value; the `onPoints` callback above keeps carrying
+          // ONLY `points`, unchanged, during the stream itself.
+          pageSources: Array.isArray(pageSources) ? pageSources : [],
         };
         // AC-N1.2: the grounding this draft was ACTUALLY built from — the
         // same `grounding` captured before the await above, not a fresh read

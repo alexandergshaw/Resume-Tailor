@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { classifyAttachment, storagePathFor, MAX_SEGMENT } from "./attachments.js";
+import { classifyAttachment, storagePathFor, MAX_SEGMENT, withDerivedKind } from "./attachments.js";
 
 // Attachment rules for project pages.
 //
@@ -327,6 +327,33 @@ describe("classifyAttachment: PowerPoint and Excel", () => {
 // refused by the server at upload time - which the API route then reported as
 // a bare "Could not save this attachment."
 const STORAGE_KEY_SAFE = /^(\w|\/|!|-|\.|\*|'|\(|\)| |&|\$|@|=|;|:|\+|,|\?)*$/;
+
+// withDerivedKind was moved verbatim from app/api/meeting/insights/route.js
+// (ARCH §3.2) so the answer route (D4/D8) can graft the same `kind` label
+// onto a row without keeping a second private copy that could drift from
+// this one's mime table.
+describe("withDerivedKind", () => {
+  it("derives kind from the row's stored mime and name, leaving every other field untouched", () => {
+    const row = { id: "a1", name: "deck.pptx", mime: "application/vnd.ms-powerpoint", notes: "kickoff slides" };
+    expect(withDerivedKind(row)).toEqual({ ...row, kind: "slides" });
+  });
+
+  it("falls back to the extension when the mime is missing", () => {
+    expect(withDerivedKind({ name: "report.pdf" }).kind).toBe("pdf");
+  });
+
+  it("is null-safe: {...null} is {}, so a null/undefined row yields just { kind }", () => {
+    // Per this function's own comment: do not add a guard that changes this
+    // — {...null} already evaluates to {} in JS.
+    expect(withDerivedKind(null)).toEqual({ kind: "other" });
+    expect(withDerivedKind(undefined)).toEqual({ kind: "other" });
+  });
+
+  it("never throws on a malformed row", () => {
+    expect(() => withDerivedKind({})).not.toThrow();
+    expect(() => withDerivedKind({ name: 42, mime: {} })).not.toThrow();
+  });
+});
 
 describe("storagePathFor", () => {
   const ID = "att-0001";

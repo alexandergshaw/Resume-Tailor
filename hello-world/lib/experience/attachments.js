@@ -203,6 +203,28 @@ function mbLabel(bytes) {
 // `kind: "other"` (an unrecognized type) is always rejected regardless of
 // size: defaulting an unknown extension to "text" would hand a model
 // arbitrary binary as if it were readable context.
+// `kind` is NOT a column of experience_attachments (see that table's
+// migration) — it is derived from the row's stored mime and name, exactly
+// as app/api/experience/attachments's GET does, so the label the model is
+// shown can never disagree with the one the user sees in the attachment
+// panel. `size: 1` because only `kind` is wanted here, and classifyAttachment
+// decides `kind` before it looks at size at all (its own contract).
+//
+// Moved verbatim from app/api/meeting/insights/route.js (ARCH §3.2 / §4d):
+// it used to be that route's own private function, but the interview
+// copilot's answer route needs the exact same derivation to graft
+// attachments onto pages (D4/D8, ARCH's AC-4), and two private copies is how
+// the meeting and copilot derivations would drift the moment either one's
+// mime table changed. Home chosen because `kind` derivation is
+// classifyAttachment's business and now lives right beside it.
+//
+// `{ ...null }` evaluates to `{}` in JS, so this is already null-safe as
+// written — do not add a guard here that would change that behaviour.
+export function withDerivedKind(row) {
+  const { kind } = classifyAttachment({ name: row?.name, type: row?.mime, size: 1 });
+  return { ...row, kind };
+}
+
 export function classifyAttachment(input) {
   const src = input && typeof input === "object" ? input : {};
   const name = typeof src.name === "string" && src.name ? src.name : "file";

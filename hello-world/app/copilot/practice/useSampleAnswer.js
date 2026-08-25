@@ -85,6 +85,10 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
       buzzwords: [],
       anchor: null,
       idealProject: null,
+      // ARCH §3.5/§4e: seeded empty alongside the other reading aids while
+      // loading — a real value only ever lands from the resolved response
+      // below, never mid-request.
+      pageSources: [],
       grounding: null,
       error: "",
       profile: p,
@@ -93,13 +97,14 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
     });
     // AC-H9/AC-K1: the route's `mode: "answer"` response is
     // { points, cues, answer, type, grounding, buzzwords, resumeAnchor,
-    // idealProject }. `cues` is what SampleAnswer.js renders, with `points`
-    // alongside its point (answerLines); `buzzwords`/`resumeAnchor`/
-    // `idealProject` are the subsections under it. The derived prose
-    // `answer` field exists for a later speech-synthesis feature and is
-    // deliberately not read here.
+    // idealProject, pageSources }. `cues` is what SampleAnswer.js renders,
+    // with `points` alongside its point (answerLines); `buzzwords`/
+    // `resumeAnchor`/`idealProject`/`pageSources` are the subsections under
+    // it (ARCH §3.5 added `pageSources` — which knowledge-base page, if any,
+    // each point came from). The derived prose `answer` field exists for a
+    // later speech-synthesis feature and is deliberately not read here.
     draftAnswer({ question: q, context: "", profile: p, interviewType: it, applicationId: appId, mode: "answer" })
-      .then(({ points, cues, buzzwords, resumeAnchor, idealProject, grounding }) => {
+      .then(({ points, cues, buzzwords, resumeAnchor, idealProject, pageSources, grounding }) => {
         if (genRef.current !== gen) return;
         const cleanPoints = Array.isArray(points) ? points : [];
         // AC-K1: same defensive normalization `points` already gets — a
@@ -110,6 +115,12 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
         const cleanBuzzwords = Array.isArray(buzzwords) ? buzzwords : [];
         const cleanAnchor = resumeAnchor || null;
         const cleanIdealProject = idealProject || null;
+        // ARCH §4f: same defensive normalization as its siblings above —
+        // and the value this hook's caller (useSampleAnswer's own `request`
+        // resolution) both renders NOW and, two statements down, writes into
+        // the cache — see that cache write's own comment for why both must
+        // agree.
+        const cleanPageSources = Array.isArray(pageSources) ? pageSources : [];
         const cleanGrounding = grounding || null;
         setState((prev) => ({
           ...prev,
@@ -120,6 +131,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           buzzwords: cleanBuzzwords,
           anchor: cleanAnchor,
           idealProject: cleanIdealProject,
+          pageSources: cleanPageSources,
           grounding: cleanGrounding,
           error: "",
           profile: p,
@@ -129,13 +141,18 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
         // AC-J2.8: a real (user-requested) draft is cached the exact same
         // way `queue`'s own silent pre-fetch is (see below) — same key, same
         // entry shape — so a draft survives moving to a different question
-        // and back without a second request.
+        // and back without a second request. ARCH §4f/§6.8: `pageSources`
+        // rides this write too — a cache entry that dropped it would render
+        // this question's citations on the first ask and lose them on a
+        // reveal -> hide -> reveal of the SAME cached entry, with nothing on
+        // screen explaining why.
         cacheRef.current.set(normalizeQuestion(q), {
           points: cleanPoints,
           cues: cleanCues,
           buzzwords: cleanBuzzwords,
           anchor: cleanAnchor,
           idealProject: cleanIdealProject,
+          pageSources: cleanPageSources,
           grounding: cleanGrounding,
           profile: p,
           interviewType: it,
@@ -153,6 +170,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           buzzwords: [],
           anchor: null,
           idealProject: null,
+          pageSources: [],
           grounding: null,
           error: err?.message || "Could not draft a sample answer.",
           profile: p,
@@ -222,7 +240,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
     queuedForRef.current = normalizeQuestion(q);
     const gen = (queueGenRef.current += 1);
     draftAnswer({ question: q, context: "", profile: p, interviewType: it, applicationId: appId, mode: "answer" })
-      .then(({ points, cues, buzzwords, resumeAnchor, idealProject, grounding }) => {
+      .then(({ points, cues, buzzwords, resumeAnchor, idealProject, pageSources, grounding }) => {
         // A newer queue (or a real `request`) has since started for a
         // different question — this response belongs to a question the
         // user has already moved past, so it writes nothing.
@@ -233,6 +251,11 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           buzzwords: Array.isArray(buzzwords) ? buzzwords : [],
           anchor: resumeAnchor || null,
           idealProject: idealProject || null,
+          // ARCH §4f/§6.8: this queue's own cache write must carry
+          // `pageSources` the same way `request`'s does above — a draft
+          // pre-fetched silently while unrevealed must not read back with
+          // its citations missing the moment it IS revealed.
+          pageSources: Array.isArray(pageSources) ? pageSources : [],
           grounding: grounding || null,
           profile: p,
           interviewType: it,
@@ -285,6 +308,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
     buzzwords: active.buzzwords,
     anchor: active.anchor,
     idealProject: active.idealProject,
+    pageSources: active.pageSources,
     grounding: active.grounding,
     error: active.error,
     toggle,

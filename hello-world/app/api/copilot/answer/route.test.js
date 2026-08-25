@@ -151,13 +151,18 @@ describe("POST /api/copilot/answer (points mode is unmoved by the answer-mode ch
     );
     expect(res.status).toBe(200);
     const data = await res.json();
-    // AC-K1: points mode gained the reading aids, and nothing else —
-    // `answer` and `grounding` are still answer mode's alone, which is what
-    // this case has always been about.
+    // AC-K1/AC-6.2: points mode gained the reading aids — the list has grown
+    // again since this assertion was first written (cues, buzzwords,
+    // resumeAnchor, idealProject, and now pageSources, each added the same
+    // way). The rule this exact-key-set form protects was never "the list
+    // stays this length" — it is that `answer` and `grounding` stay answer
+    // mode's alone, which is what the two `not.toHaveProperty` checks right
+    // below assert directly.
     expect(Object.keys(data).sort()).toEqual([
       "buzzwords",
       "cues",
       "idealProject",
+      "pageSources",
       "points",
       "resumeAnchor",
       "type",
@@ -185,6 +190,10 @@ describe("POST /api/copilot/answer (points mode is unmoved by the answer-mode ch
       buzzwords: [],
       resumeAnchor: null,
       idealProject: null,
+      // No pages on file (mockUser() alone), so no `pageIds` request was
+      // even made of the model — [] rather than an array of nulls, same
+      // "nothing to cite" degrade as route.knowledgeBase.test.js pins.
+      pageSources: [],
     });
   });
 });
@@ -223,7 +232,7 @@ describe("POST /api/copilot/answer (answer mode)", () => {
     expect(data.points).toEqual(expected.points);
     expect(data.answer).toBe(expected.answer);
     expect(data.type).toBe(expected.type);
-    expect(data.grounding).toEqual({ resume: false, coverLetter: false });
+    expect(data.grounding).toEqual({ resume: false, coverLetter: false, pages: false });
     expect(getGeminiClient).not.toHaveBeenCalled();
     expect(getServerEnv).not.toHaveBeenCalled();
   });
@@ -242,7 +251,7 @@ describe("POST /api/copilot/answer (answer mode)", () => {
     );
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.grounding).toEqual({ resume: false, coverLetter: false });
+    expect(data.grounding).toEqual({ resume: false, coverLetter: false, pages: false });
   });
 
   it("embedded engine: grounding is {resume:true,coverLetter:true} and the submitted documents actually shape the answer", async () => {
@@ -267,7 +276,7 @@ describe("POST /api/copilot/answer (answer mode)", () => {
     });
     expect(data.points).toEqual(expected.points);
     expect(data.answer).toBe(expected.answer);
-    expect(data.grounding).toEqual({ resume: true, coverLetter: true });
+    expect(data.grounding).toEqual({ resume: true, coverLetter: true, pages: false });
     // Not just "grounding is true" — the résumé's own material is what
     // shaped the spoken answer.
     expect(data.answer).toContain("Quantum Robotics");
@@ -299,7 +308,14 @@ describe("POST /api/copilot/answer (answer mode)", () => {
       // second field the model was asked to generate (AC-H9.33).
       answer: "I led the checkout redesign. We cut cart abandonment by 18%.",
       type: "behavioral",
-      grounding: { resume: true, coverLetter: true },
+      // `pages` is the knowledge-base half of the same report — false here
+      // because this fixture has no project pages. It is derived from what
+      // reached the PROMPT (kb.includedPages), not from the citations the
+      // model returned, so practice mode's caption can name the knowledge
+      // base as a source instead of claiming "prep context only" beneath
+      // bullets that cite a page. Still exact equality: the rule these
+      // assertions protect is that `answer`/`grounding` stay answer-mode-only.
+      grounding: { resume: true, coverLetter: true, pages: false },
       // AC-K1.1: this model response carried no `cues`, so they fall back to
       // the deterministic shortening of the points — STAR label kept, the
       // sentence behind it cut to a prompt.
@@ -324,6 +340,12 @@ describe("POST /api/copilot/answer (answer mode)", () => {
       // No applicationId on this request -> no posting description -> no
       // benchmark to mine (same "nothing selected" degrade as buzzwords).
       idealProject: null,
+      // AC-6.3: no eligible project pages on this request (no `pages` was
+      // passed to mockUserWithApplicationDocs), so there was no page to cite
+      // — [], not an array of nulls, mirroring
+      // route.knowledgeBase.test.js's "reports no page sources at all when
+      // no page reached the draft".
+      pageSources: [],
     });
 
     const client = getGeminiClient();
@@ -338,7 +360,7 @@ describe("POST /api/copilot/answer (answer mode)", () => {
     const res = await POST(jsonRequest({ question: "Tell me about yourself.", mode: "answer", engine: "gemini" }));
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.grounding).toEqual({ resume: false, coverLetter: false });
+    expect(data.grounding).toEqual({ resume: false, coverLetter: false, pages: false });
 
     const client = getGeminiClient();
     const promptText = client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
@@ -368,7 +390,7 @@ describe("POST /api/copilot/answer (answer mode)", () => {
     );
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.grounding).toEqual({ resume: false, coverLetter: false });
+    expect(data.grounding).toEqual({ resume: false, coverLetter: false, pages: false });
     expect(data.points).toEqual(["Situation: Thin material.", "Result: Still an honest answer."]);
     expect(data.answer).toBe("Thin material. Still an honest answer.");
   });
@@ -413,11 +435,15 @@ describe("POST /api/copilot/answer (points mode grounding, AC-H4)", () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     // No grounding key on points-mode's response (AC-H9.34) — still true
-    // after AC-K1 added the reading aids to both modes.
+    // after AC-K1 added the reading aids to both modes and AC-6.2 added
+    // `pageSources` alongside them. As with the other exact-key-set
+    // assertion above, the property this protects is "no `grounding` key",
+    // not a frozen list length — this one has grown before and grew again.
     expect(Object.keys(data).sort()).toEqual([
       "buzzwords",
       "cues",
       "idealProject",
+      "pageSources",
       "points",
       "resumeAnchor",
       "type",
@@ -694,9 +720,9 @@ describe("POST /api/copilot/answer (project pages)", () => {
   // fake client has no `.from` at all, so listPages degrades to `pages: []`
   // exactly like a real "user has none" response), buildPointsPrompt and
   // buildAnswerPrompt must add NOTHING — every place either function's
-  // output can change is gated on a truthy `projectStories`, and
-  // lib/copilot/projectStories.js's own tests already pin
-  // buildProjectStoriesBlock([]).block === "".
+  // output can change is gated on a truthy pages block, and
+  // lib/experience/knowledgeBase.test.js already pins
+  // buildKnowledgeBaseBlock's `block` as "" when no page is eligible.
   it("the points-mode prompt carries no trace of project pages when there are none", async () => {
     mockUser();
     mockGemini({ points: ["Point one."], type: "general" });
@@ -753,7 +779,7 @@ describe("POST /api/copilot/answer (project pages)", () => {
     expect(promptText).toContain("YOUR OWN PROJECT PAGES");
     expect(promptText).toContain("Payments migration");
     expect(promptText).toContain(
-      "CANDIDATE PREP NOTES, SUBMITTED RESUME, SUBMITTED COVER LETTER, or YOUR OWN PROJECT PAGES",
+      "YOUR OWN PROJECT PAGES, CANDIDATE PREP NOTES, SUBMITTED RESUME, or SUBMITTED COVER LETTER",
     );
   });
 
@@ -775,10 +801,19 @@ describe("POST /api/copilot/answer (project pages)", () => {
     expect(promptText).toContain("Payments migration");
   });
 
+  // The question NAMES this page's own subject, deliberately. It used to read
+  // "Tell me about a time you led a project.", whose entire overlap with
+  // PROJECT_PAGE was the words "time" and "project" — words every behavioural
+  // question contains, which the page happens to carry because it says
+  // "settlement time". selectBestStory's honesty gate now (correctly) refuses
+  // that as a match, so the fixture was testing the aid through a coincidence
+  // rather than through a real one. The INPUT changed; the assertions did not.
+  const PAGE_SUBJECT_QUESTION = "Tell me about a time you led the settlement migration.";
+
   it("resumeAnchor.source is a third value — never 'resume', never 'prep' — when the aid is built from a project page with no resume/profile on file", async () => {
     mockUserWithApplicationDocs({ pages: [PROJECT_PAGE] });
     mockGemini({ points: ["Point one."], type: "general" });
-    const res = await POST(jsonRequest({ question: "Tell me about a time you led a project.", engine: "gemini" }));
+    const res = await POST(jsonRequest({ question: PAGE_SUBJECT_QUESTION, engine: "gemini" }));
     const data = await res.json();
     expect(data.resumeAnchor).not.toBeNull();
     expect(data.resumeAnchor.source).not.toBe("resume");
@@ -819,9 +854,7 @@ describe("POST /api/copilot/answer (project pages)", () => {
 
   it("embedded engine, answer mode: a behavioral question with an eligible project page and no resume/profile speaks the page's own title and bullets as a STAR story", async () => {
     mockUserWithApplicationDocs({ pages: [PROJECT_PAGE] });
-    const res = await POST(
-      jsonRequest({ question: "Tell me about a time you led a project.", mode: "answer", engine: "embedded" }),
-    );
+    const res = await POST(jsonRequest({ question: PAGE_SUBJECT_QUESTION, mode: "answer", engine: "embedded" }));
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.points[0]).toBe("Situation: Payments migration.");
@@ -829,6 +862,54 @@ describe("POST /api/copilot/answer (project pages)", () => {
     expect(data.points).toContain("Result: Mentored two junior engineers on the rollout.");
     expect(data.answer).toContain("Payments migration");
     expect(data.answer).toContain("Cut settlement time from three days to one");
+  });
+
+  // `grounding.pages` is what practice mode's SampleAnswer caption is written
+  // from, so it has to be true of the branch that actually answered.
+  //
+  // Every other grounding assertion in this file has zero eligible pages and
+  // therefore pins `pages: false` — eight of them — so nothing covered the
+  // true branch at all, and nothing could have caught the defect below.
+  //
+  // THE DEFECT: `pages` was `kb.includedPages.length > 0` for BOTH engines,
+  // and the embedded branch never reads `kb`. It answers from `story`, and
+  // only when `story.matched` is true. So an embedded draft that used nothing
+  // from any page still claimed the pages as a source, purely because an
+  // eligible page existed.
+  it("grounding.pages is derived from the branch that actually answered, on both engines", async () => {
+    // Gemini: derived from what went into the prompt.
+    mockUserWithApplicationDocs({ pages: [PROJECT_PAGE] });
+    mockGemini({ points: ["Situation: I led it."], type: "behavioral" });
+    const gemini = await POST(
+      jsonRequest({ question: PAGE_SUBJECT_QUESTION, mode: "answer", engine: "gemini" }),
+    );
+    expect((await gemini.json()).grounding).toEqual({ resume: false, coverLetter: false, pages: true });
+
+    // Embedded, matched: the story cleared the honesty gate and its own words
+    // are in the answer, so the claim is true.
+    mockUserWithApplicationDocs({ pages: [PROJECT_PAGE] });
+    const matched = await POST(
+      jsonRequest({ question: PAGE_SUBJECT_QUESTION, mode: "answer", engine: "embedded" }),
+    );
+    const matchedData = await matched.json();
+    expect(matchedData.points).toContain("Action: Cut settlement time from three days to one.");
+    expect(matchedData.grounding).toEqual({ resume: false, coverLetter: false, pages: true });
+
+    // Embedded, UNMATCHED: the same eligible page is on file, the question is
+    // about something else entirely, nothing from the page reaches the
+    // answer — so the caption must not claim it did. Under the old
+    // derivation this returned `pages: true`.
+    mockUserWithApplicationDocs({ pages: [PROJECT_PAGE] });
+    const unmatched = await POST(
+      jsonRequest({
+        question: "Tell me about a time you disagreed with your manager.",
+        mode: "answer",
+        engine: "embedded",
+      }),
+    );
+    const unmatchedData = await unmatched.json();
+    expect(unmatchedData.points.join(" ")).not.toContain("Payments migration");
+    expect(unmatchedData.grounding).toEqual({ resume: false, coverLetter: false, pages: false });
   });
 
   it("embedded engine, answer mode: a non-behavioral question ignores project pages and drafts exactly as before", async () => {

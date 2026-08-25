@@ -72,7 +72,17 @@ describe("the copies it replaces are actually gone", () => {
   // the source. `grounding.test.js` uses reference identity for the same job,
   // which is only available because those modules export the function — these
   // two do not, and should not start exporting one just to be testable.
-  const consumers = ["lib/meeting/insightsLocal.js", "lib/meeting/meetingContext.js"];
+  // `lib/meeting/meetingContext.js` used to be on this list and is no longer,
+  // for a reason worth writing down: it stopped calling the tokenizer at all.
+  // Its `rankMeetingPages` is now `rankPagesByRelevance` from
+  // lib/experience/knowledgeBase.js, so knowledgeBase.js is the module that
+  // really imports the shared tokenizer and meetingContext.js is one hop
+  // behind it. Keeping meetingContext.js here forced it to retain an import it
+  // never calls purely to satisfy this file — which is precisely the failure
+  // the second assertion below was written to catch, arriving from the
+  // opposite direction: an import that proves nothing because nothing uses it.
+  // meetingContext.js keeps its own case further down instead.
+  const consumers = ["lib/meeting/insightsLocal.js", "lib/experience/knowledgeBase.js"];
 
   it("leaves no private significantTerms behind in the modules that now import it", () => {
     for (const rel of consumers) {
@@ -86,6 +96,16 @@ describe("the copies it replaces are actually gone", () => {
     for (const rel of consumers) {
       expect(read(rel), rel).toMatch(/import\s*\{[^}]*significantTerms[^}]*\}\s*from\s*["'][^"']*projectStories/);
     }
+  });
+
+  it("has meetingContext delegate its ranking rather than keep a private tokenizer", () => {
+    // The same guarantee for the module that no longer tokenizes directly:
+    // no private copy, and its ranking really does come from the one shared
+    // implementation rather than a second one that could drift from it.
+    const src = read("lib/meeting/meetingContext.js");
+    expect(src).not.toMatch(/function\s+significantTerms\s*\(/);
+    expect(src).toMatch(/import\s*\{[^}]*rankPagesByRelevance[^}]*\}\s*from\s*["'][^"']*knowledgeBase/);
+    expect(src).toMatch(/rankMeetingPages\s*=\s*rankPagesByRelevance/);
   });
 });
 

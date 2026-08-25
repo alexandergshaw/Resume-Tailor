@@ -40,20 +40,47 @@ import { TOUCH_TARGET_SX, WRAP_ROW_SX } from "../mobileSx";
 // neither was found, says so plainly rather than implying documents were
 // used. Combined with the engine fact (AC-G1-8) in one sentence rather than
 // two, since both describe the same draft.
+//
+// THE BUG THE `pages` BRANCH PREVENTS: this table was written when
+// `grounding` was exactly `{ resume, coverLetter }`, and was not widened when
+// the knowledge base became a source. So the bullets directly above could
+// each read "From your Payments migration page." while this caption, in
+// smaller type, said the draft came "from your prep context only" — one panel
+// making two contradictory claims about one draft. With a résumé on file it
+// was not a contradiction but was still wrong by omission: it enumerated the
+// sources and silently dropped the one the bullets were naming. Same class of
+// defect as lib/experience/knowledgeBase.js's attachment-honesty notice — a
+// provenance claim that used to be true and quietly stopped being true when a
+// source was added beside it.
+//
+// `grounding.pages` is what the ROUTE put in the prompt (kb.includedPages),
+// never which pages the model chose to cite. `!!` matters: the field is absent
+// on a cache entry written before it shipped, and reading `undefined` as
+// truthy would claim a knowledge-base source for a draft that never had one.
 function sourceCaption(isEmbedded, grounding) {
   const engineText = isEmbedded
     ? "Drafted on this server with no AI provider"
     : "Drafted by Google Gemini";
   const resume = !!grounding?.resume;
   const coverLetter = !!grounding?.coverLetter;
-  if (resume && coverLetter) {
-    return `${engineText} from the resume and cover letter you submitted for this posting.`;
+  const pages = !!grounding?.pages;
+  const pagesText = "your own project pages";
+  const docsText =
+    resume && coverLetter
+      ? "the resume and cover letter you submitted for this posting"
+      : resume
+        ? "the resume you submitted for this posting"
+        : coverLetter
+          ? "the cover letter you submitted for this posting"
+          : "";
+  if (docsText && pages) {
+    return `${engineText} from ${docsText}, and ${pagesText}.`;
   }
-  if (resume) {
-    return `${engineText} from the resume you submitted for this posting.`;
+  if (docsText) {
+    return `${engineText} from ${docsText}.`;
   }
-  if (coverLetter) {
-    return `${engineText} from the cover letter you submitted for this posting.`;
+  if (pages) {
+    return `${engineText} from your prep context and ${pagesText} — no submitted resume or cover letter was found for this posting.`;
   }
   return `${engineText} from your prep context only — no submitted resume or cover letter was found for this posting.`;
 }
@@ -77,6 +104,11 @@ export default function SampleAnswer({
   // and the metrics they'd want to hear — straight through to AnswerAids the
   // same way, which renders it as a benchmark rather than a claim.
   idealProject,
+  // ARCH §3.5/§4e: which knowledge-base page (if any) each point in
+  // `points` came from — Array<{id, title} | null>, positionally paired.
+  // Passed straight to answerLines below, exactly like `cues`; AnswerLines
+  // renders it inside each line's own `<li>`.
+  pageSources,
   grounding,
   error,
   isEmbedded,
@@ -84,7 +116,7 @@ export default function SampleAnswer({
   onRetry,
   onRegenerate,
 }) {
-  const lines = answerLines(cues, points);
+  const lines = answerLines(cues, points, pageSources);
   // AC-G1-11: only offered once a draft is actually on screen — not while
   // it's loading, not while hidden, and not in the error state (which has
   // its own "Retry" action instead).

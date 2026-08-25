@@ -12,9 +12,16 @@ export const runtime = "nodejs";
 const MAX_TITLE_CHARS = 300;
 // Generous: a meeting body is a running transcript-derived write-up, not a
 // short note — this only exists as a hard backstop against a pathological
-// request, not a realistic ceiling. Matches the order of magnitude
-// lib/copilot/projectStories.js's own MAX_STORIES_CHARS budgets a single
-// page at.
+// request, not a realistic ceiling.
+//
+// Sized against what actually reads a saved meeting page afterwards, since
+// the MAX_STORIES_CHARS this used to cite no longer exists. Every consumer
+// budgets the page down itself rather than trusting its length: the interview
+// copilot's lib/experience/knowledgeBase.js packs pages into 12000 characters
+// and excerpts anything longer, and lib/meeting/meetingContext.js packs them
+// into its own budget. So a body an order of magnitude past any of those
+// budgets is not a correctness problem for any reader — it is only a
+// storage-and-transfer one, which is the single thing this cap is for.
 const MAX_BODY_CHARS = 100000;
 
 export async function POST(request) {

@@ -39,6 +39,7 @@ import {
 import { classifyQuestionType } from "./questionType.js";
 import { normalizeInterviewType, interviewType as interviewTypeDescriptor } from "./interviewTypes.js";
 import { pick } from "@/lib/text/phrasing";
+import { starPointsFromStory } from "./projectStories.js";
 
 // A short interview format (a recruiter phone screen) gets the crispest cut
 // of the narrative rather than the full one — see draftSampleAnswerLocal.
@@ -106,7 +107,27 @@ function sentence(text) {
 // mined material and the same mining-hazard defenses as before (BUG-1
 // through BUG-5) — only the packaging changed, from unlabeled sentences
 // joined into one paragraph to individually labeled, complete bullets.
-function behavioralAnswer({ headline, expRef, seed }) {
+//
+// Every shape function below now returns { points, pageIndices } rather than
+// a bare array: `pageIndices` names which entries of `points` are text that
+// came from `story` (ARCH §3.6's per-point pageSources), so the caller can
+// attribute exactly those lines and null everything else — a connective
+// sentence carrying a page citation would be a lie about provenance.
+function behavioralAnswer({ headline, expRef, seed, story }) {
+  // AC-5.2: a story is only ever spoken when it actually matched the
+  // question — an unmatched first-eligible page must never be presented as
+  // though it were chosen for this question. This is the ONE place that
+  // check happens for the full-narrative override; every other use of
+  // `story` below is already reached only when this same condition holds
+  // (see draftSampleAnswerLocal, which never passes an unmatched story in).
+  if (story) {
+    const storyPoints = starPointsFromStory(story);
+    // Every beat here — Situation from the page's own title, Action/Result
+    // from its own bullets — is literally the page's text, so all of them
+    // are page-derived (ARCH §3.6).
+    if (storyPoints) return { points: storyPoints, pageIndices: storyPoints.map((_, i) => i) };
+  }
+
   // The line only counts as an anchor once it's actually speakable in first
   // person (BUG-3) — a candidate line that isn't verb-initial gets dropped
   // rather than guessed at, so it shouldn't count as "having an example"
@@ -115,18 +136,21 @@ function behavioralAnswer({ headline, expRef, seed }) {
   const hasAnchor = Boolean(headline.company) || Boolean(firstPersonExpRef);
 
   if (!hasAnchor) {
-    return [
-      `Situation: ${sentence(
-        pick(seed, [
-          "I don't have a specific story pulled from my materials for this one",
-          "nothing specific from my background is on file to point to here",
-        ]),
-      )}`,
-      `Action: ${sentence(
-        "in general, when I run into a situation like that, I take ownership of the problem and keep the people it affects informed",
-      )}`,
-      `Result: ${sentence("I don't consider it finished until there's a result I can point to")}`,
-    ];
+    return {
+      points: [
+        `Situation: ${sentence(
+          pick(seed, [
+            "I don't have a specific story pulled from my materials for this one",
+            "nothing specific from my background is on file to point to here",
+          ]),
+        )}`,
+        `Action: ${sentence(
+          "in general, when I run into a situation like that, I take ownership of the problem and keep the people it affects informed",
+        )}`,
+        `Result: ${sentence("I don't consider it finished until there's a result I can point to")}`,
+      ],
+      pageIndices: [],
+    };
   }
 
   const points = [];
@@ -162,10 +186,10 @@ function behavioralAnswer({ headline, expRef, seed }) {
     points.push(`Result: ${sentence(firstPersonExpRef)}`);
   }
 
-  return points;
+  return { points, pageIndices: [] };
 }
 
-function technicalAnswer({ skills, expRef, seed }) {
+function technicalAnswer({ skills, expRef, seed, story }) {
   const parts = [
     sentence(
       pick(seed, [
@@ -176,8 +200,21 @@ function technicalAnswer({ skills, expRef, seed }) {
     ),
   ];
 
-  if (expRef) {
-    parts.push(sentence(`that's close to work I've actually done — ${expRef}`));
+  // AC-5.1: a technical question draws its approach from the best-matching
+  // page's own bullets, phrased only in words that literally occur on the
+  // page — preferred over the résumé/profile expRef, which is the same
+  // preference order the behavioral shape's full override already applies.
+  // `story` is null here whenever it didn't actually match (draftSample
+  // AnswerLocal never passes an unmatched one in), so this is silently a
+  // no-op — falls through to `expRef` exactly as before — for every caller
+  // that predates project pages as a source (AC-3.6's byte-identity guard).
+  const pageClause = story?.bullets?.[0] || "";
+  const groundingClause = pageClause || expRef;
+  const pageIndices = [];
+
+  if (groundingClause) {
+    parts.push(sentence(`that's close to work I've actually done — ${groundingClause}`));
+    if (pageClause) pageIndices.push(parts.length - 1);
   } else if (skills.length) {
     parts.push(sentence(`I'd ground it in my hands-on experience with ${skills.slice(0, 3).join(", ")}`));
   }
@@ -190,19 +227,27 @@ function technicalAnswer({ skills, expRef, seed }) {
 
   parts.push(sentence("finally, I'd say how I'd test it and handle the edge cases before calling it done"));
 
-  return parts;
+  return { points: parts, pageIndices };
 }
 
-function generalAnswer({ headline, skills, expRef, pastWorkExpRef, motivationRef, seed }) {
-  const hasAnchor = Boolean(expRef) || Boolean(headline.company) || skills.length > 0;
+function generalAnswer({ headline, skills, expRef, pastWorkExpRef, motivationRef, seed, story }) {
+  // AC-5.1: the general shape's experience beat prefers a matched page
+  // bullet over pastWorkExpRef, same preference order as the technical
+  // shape above. Falls through to nothing (pageClause === "") whenever
+  // `story` is null/unmatched, which is the existing byte-identical path.
+  const pageClause = story?.bullets?.[0] || "";
+  const hasAnchor = Boolean(expRef) || Boolean(headline.company) || skills.length > 0 || Boolean(pageClause);
 
   if (!hasAnchor) {
-    return [
-      sentence(
-        "I don't have specific résumé details on file for this one, but broadly, I look for roles where I can apply what I know and keep growing",
-      ),
-      sentence("and I'd want to talk through the specifics with you rather than speak in generalities"),
-    ];
+    return {
+      points: [
+        sentence(
+          "I don't have specific résumé details on file for this one, but broadly, I look for roles where I can apply what I know and keep growing",
+        ),
+        sentence("and I'd want to talk through the specifics with you rather than speak in generalities"),
+      ],
+      pageIndices: [],
+    };
   }
 
   // The experience beat must actually be past work (BUG-5): relevantExperienceLine
@@ -213,9 +258,19 @@ function generalAnswer({ headline, skills, expRef, pastWorkExpRef, motivationRef
   // shape speaks its own example, as a sentence that stands on its own
   // rather than "for example, <quote>".
   const firstPersonExpRef = firstPersonExperienceClause(pastWorkExpRef);
+  // A page bullet has no such verb-initial guarantee, so it gets its own
+  // first-person wrap rather than being forced through
+  // firstPersonExperienceClause (which would silently drop it whenever it
+  // isn't achievement-verb-initial, discarding real material that DID match
+  // the question).
+  const firstPersonPageClause = pageClause ? firstPersonExperienceClause(pageClause) || `I can point to this: ${pageClause}` : "";
 
   const parts = [];
-  if (firstPersonExpRef) {
+  const pageIndices = [];
+  if (firstPersonPageClause) {
+    parts.push(sentence(firstPersonPageClause));
+    pageIndices.push(parts.length - 1);
+  } else if (firstPersonExpRef) {
     parts.push(sentence(firstPersonExpRef));
   } else if (headline.company) {
     parts.push(
@@ -248,30 +303,56 @@ function generalAnswer({ headline, skills, expRef, pastWorkExpRef, motivationRef
     );
   }
 
-  return parts;
+  return { points: parts, pageIndices };
 }
 
 // AC-H9.35: draft the sample answer as bullet points, grounded only in the
 // candidate's real material. Returns { points: string[], answer: string,
-// type }. `points` are complete, speakable sentences (STAR-labeled for the
-// behavioral shape); `answer` is DERIVED from `points` via
-// deriveAnswerFromPoints — never generated separately, so it can never drift
-// from what the points actually say (AC-H9.33). `type` is the scaffold
+// type, pageSources }. `points` are complete, speakable sentences
+// (STAR-labeled for the behavioral shape); `answer` is DERIVED from `points`
+// via deriveAnswerFromPoints — never generated separately, so it can never
+// drift from what the points actually say (AC-H9.33). `type` is the scaffold
 // actually used to shape the answer — the question's own classification,
 // unless it classified as "general" and the interview type pushes it toward
 // a technical or STAR shape (resolveScaffoldType, shared with
 // draftAnswerLocal so both engines make the same call).
+//
+// `story` (ARCH §3.6) is lib/copilot/projectStories.js's selectBestStory
+// return value, selected ONCE by the caller (app/api/copilot/answer/route.js)
+// and handed down here rather than re-selected inside — the structural fix
+// for D7's asymmetry, where the embedded engine's own behavioral override
+// and the route's separate resumeAnchor fallback used to run two different
+// selectBestStory calls and could pick two different pages for one question.
+// Used only when `story.matched === true` (AC-5.2): an unmatched
+// first-eligible page is never spoken as though it were chosen for this
+// question, so `story === null` and `story.matched === false` are the SAME
+// case below — both fall through to material mined from
+// profile/resume/coverLetter exactly as this function behaved before project
+// pages existed as a source. That byte-identity is what every pre-existing
+// test in sampleAnswerLocal.test.js still pins.
+//
+// `pageSources[i]` is `{ id: story.pageId, title: story.title }` for exactly
+// the points whose text came from the page (the whole STAR override, or the
+// one grounding clause the technical/general shapes prefer over
+// expRef/pastWorkExpRef) and `null` for every generic connective beat — a
+// connective sentence carrying a page citation would be a lie about
+// provenance. This citation is never whitelist-validated the way the Gemini
+// path's is (lib/copilot/pageCitations.js) — it doesn't need to be: it
+// quotes a bullet verbatim out of a page this function read itself, so it is
+// true by construction (ARCH §4e).
 export function draftSampleAnswerLocal({
   question,
   profile = "",
   resume = "",
   coverLetter = "",
   interviewType,
+  story = null,
 } = {}) {
   const q = String(question || "").trim();
   const normalizedInterviewType = normalizeInterviewType(interviewType);
   const type = resolveScaffoldType(classifyQuestionType(q), normalizedInterviewType);
   const descriptor = interviewTypeDescriptor(normalizedInterviewType);
+  const effectiveStory = story && story.matched ? story : null;
 
   const material = combineMaterial(profile, resume, coverLetter);
   // Mine a wider pool than the default before filtering to a literal match
@@ -283,39 +364,58 @@ export function draftSampleAnswerLocal({
   const expRef = usableExperienceLine(relevantExperienceLine(material, q));
   const seed = q || material;
 
-  let rawPoints;
+  let rawResult;
   if (type === "behavioral") {
     // The behavioral/STAR shape needs its example to actually be past work
     // (BUG-4), which the shared relevantExperienceLine doesn't guarantee.
     const behavioralExpRef = pastWorkExperienceLine(material, q);
-    rawPoints = behavioralAnswer({ headline, expRef: behavioralExpRef, seed });
-  } else if (type === "technical") rawPoints = technicalAnswer({ skills, expRef, seed });
-  else {
+    rawResult = behavioralAnswer({ headline, expRef: behavioralExpRef, seed, story: effectiveStory });
+  } else if (type === "technical") {
+    rawResult = technicalAnswer({ skills, expRef, seed, story: effectiveStory });
+  } else {
     // The general shape's experience beat needs the same past-work guarantee
     // (BUG-5), plus a genuine motivation line, if the material has one, to
     // frame the closing beat with instead of the generic pick().
     const generalExpRef = pastWorkExperienceLine(material, q);
     const generalMotivationRef = motivationLine(material, q);
-    rawPoints = generalAnswer({
+    rawResult = generalAnswer({
       headline,
       skills,
       expRef,
       pastWorkExpRef: generalExpRef,
       motivationRef: generalMotivationRef,
       seed,
+      story: effectiveStory,
     });
   }
+
+  const pageIndexSet = new Set(rawResult.pageIndices);
+  const usableEntries = rawResult.points
+    .map((p, i) => ({ point: p, fromPage: pageIndexSet.has(i) }))
+    .filter((entry) => typeof entry.point === "string" && entry.point.trim());
 
   // A short-format interview (a recruiter phone screen) gets the crispest
   // cut of the narrative instead of the fuller one — the descriptor's
   // lengthTarget shaping the answer the same way it shapes the Gemini
-  // prompt (AC-G2-D-6/AC-H9.32).
-  const usable = rawPoints.filter((p) => typeof p === "string" && p.trim());
-  const points = descriptor.lengthTarget.maxWords <= CRISP_MAX_WORDS ? usable.slice(0, CRISP_SENTENCE_COUNT) : usable;
+  // prompt (AC-G2-D-6/AC-H9.32). `pageIndices` was computed against
+  // `rawResult.points`, so `fromPage` is carried alongside each entry through
+  // both the blank-entry filter and this crisp cut, rather than recomputed
+  // against a post-filter index — the same ordering hazard answerPoints.js's
+  // answerLines already guards against for its own positional pairing.
+  const finalEntries =
+    descriptor.lengthTarget.maxWords <= CRISP_MAX_WORDS ? usableEntries.slice(0, CRISP_SENTENCE_COUNT) : usableEntries;
+
+  const points = finalEntries.map((entry) => entry.point);
+  const pageSources = finalEntries.map((entry) =>
+    entry.fromPage && effectiveStory && effectiveStory.pageId
+      ? { id: effectiveStory.pageId, title: effectiveStory.title }
+      : null,
+  );
 
   return {
     points,
     answer: deriveAnswerFromPoints(points),
     type,
+    pageSources,
   };
 }

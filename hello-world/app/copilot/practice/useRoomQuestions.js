@@ -120,7 +120,7 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
       prev.map((q) => (q.id === id ? { ...q, status: "loading", error: "" } : q)),
     );
     try {
-      const { points, type, cues, buzzwords, resumeAnchor, idealProject } = await draftAnswer({
+      const { points, type, cues, buzzwords, resumeAnchor, idealProject, pageSources } = await draftAnswer({
         question,
         context: "",
         profile: profileRef.current,
@@ -141,6 +141,10 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
                 buzzwords: Array.isArray(buzzwords) ? buzzwords : [],
                 anchor: resumeAnchor || null,
                 idealProject: idealProject || null,
+                // ARCH §3.5/§4e: same defensive normalization as its
+                // siblings above — which knowledge-base page (if any) each
+                // point came from, rendered by AnswerLines via QuestionFeed.
+                pageSources: Array.isArray(pageSources) ? pageSources : [],
                 // Prefer the type confirmQuestion already classified this
                 // question as (set when the entry was first added, below)
                 // over draftAnswer's own guess — same precedence
@@ -185,6 +189,9 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
           buzzwords: [],
           anchor: null,
           idealProject: null,
+          // ARCH §3.5/§4e: seeded empty alongside the other reading aids —
+          // runDraft above is the sole writer of a real value.
+          pageSources: [],
           type: type || null,
           error: "",
           cached: false,

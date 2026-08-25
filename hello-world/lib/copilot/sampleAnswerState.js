@@ -55,8 +55,29 @@ export function emptySampleAnswer() {
     // through this slot exactly like `buzzwords`/`anchor` (same caching and
     // staleness rules; just as wrong to show against a different question).
     idealProject: null,
-    // { resume: boolean, coverLetter: boolean } once a draft lands — which
-    // submitted documents it was actually grounded in. Null until then.
+    // ARCH §3.5/§4f: which knowledge-base page (if any) each point in
+    // `points` came from — Array<{id, title} | null>, positionally paired,
+    // straight from the response's `pageSources` field. `[]` rather than
+    // `undefined` for the same reason every sibling field above starts at
+    // its empty shape: `[]` reaching answerLines as a third argument pairs
+    // against a length it cannot have (an all-nulls result), which is a
+    // quiet "no citations" rather than a length-mismatch a reviewer could
+    // mistake for a real bug.
+    pageSources: [],
+    // { resume: boolean, coverLetter: boolean, pages: boolean } once a draft
+    // lands — what the draft was actually grounded in. Null until then.
+    //
+    // `pages` is NOT a third submitted document: it reports whether the
+    // user's own "Professional Experience" project pages contributed to this
+    // draft, which is a different category of source from a résumé or cover
+    // letter submitted for an application. The route derives it per engine —
+    // from the pages it actually put in the prompt on the Gemini path, and
+    // from whether any drafted point actually carries page text (its own
+    // `pageSources`) on the embedded one (app/api/copilot/answer/route.js) —
+    // because those are two different mechanisms for "a page reached this
+    // answer". NOT from the embedded engine's selection gate (`matched`),
+    // which says a page was CHOSEN, not that a word of it was spoken: a
+    // prose-only page clears that gate and contributes no bullets at all.
     grounding: null,
     error: "",
     // The prep-context profile string, the interview type, and the
@@ -182,6 +203,16 @@ export function cachedSampleAnswerFor(entry, question, profile, interviewType, a
     buzzwords: Array.isArray(hit.buzzwords) ? hit.buzzwords : [],
     anchor: hit.anchor || null,
     idealProject: hit.idealProject || null,
+    // ARCH §4f/§6.8: the cache round-trip `cues`/`buzzwords`/`anchor`/
+    // `idealProject` already have, extended to `pageSources`. Without this,
+    // a question answered twice shows its knowledge-base citations on the
+    // first ask and silently loses them on the second (the reveal -> hide ->
+    // reveal path, or a Next-question-back-again) — the same failure this
+    // module's header names for `cues`, and the same defensive
+    // Array.isArray check every sibling field here already applies to guard
+    // against an entry cached before the field existed, or a malformed
+    // value on the entry.
+    pageSources: Array.isArray(hit.pageSources) ? hit.pageSources : [],
     grounding: hit.grounding || null,
     error: "",
     profile,

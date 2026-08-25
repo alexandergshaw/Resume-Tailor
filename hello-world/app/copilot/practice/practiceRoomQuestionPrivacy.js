@@ -2,18 +2,28 @@
 // feature purely to keep that file under this repo's line-count gate (AC-Q7.7)
 // — this pair of functions is otherwise unrelated to session logging and is
 // reused verbatim, byte-for-byte, from where it used to live inline. See each
-// function's own comment below (also unchanged) for why the room-question
-// privacy clause is composed here rather than inside
-// lib/copilot/practiceNotices.js, which predates this feature and is not
-// among this feature's allowed files either.
+// function's own comment below for why the room-question privacy clause was
+// composed here rather than inside lib/copilot/practiceNotices.js — a
+// constraint on which files that past feature was allowed to touch, not a
+// standing rule. This file imports from that module now.
 
 // Final wave (AC-M2): names the room-question detector's own document
 // mention — same "only the document(s) actually found" discipline
 // submittedDocsLabelFor (lib/copilot/practiceNotices.js) already applies to
 // every other clause in this notice. Kept as its own tiny copy here rather
-// than exported from that module: practiceNotices.js is not one of this
-// feature's allowed files (see the module doc on roomQuestionPrivacyClause
-// below for why the whole clause lives here instead of there).
+// than exported from that module for a historical reason only: at the time,
+// practiceNotices.js was outside the allowed file set for the feature that
+// wrote this. That was never an argument that the two must stay separate,
+// and this file now imports from that module directly (below), so read the
+// header above as a record of how the split happened rather than as a rule.
+// The knowledge-base sentence is IMPORTED, not copied: a room question drafts
+// through the identical draftAnswer call as a revealed sample answer, so the
+// two notices are describing one payload — three, in fact, since live mode's
+// lib/copilot/groundingNotice.js now imports the same constant too. See that
+// constant's own comment in lib/copilot/practiceNotices.js for why it is
+// unconditional on the Gemini path and absent on the embedded one.
+import { KNOWLEDGE_BASE_CLAUSE } from "@/lib/copilot/practiceNotices";
+
 function roomQuestionDocsWord(hasResume, hasCoverLetter) {
   if (hasResume && hasCoverLetter) return "resume and cover letter";
   if (hasResume) return "resume";
@@ -22,9 +32,9 @@ function roomQuestionDocsWord(hasResume, hasCoverLetter) {
 
 // Final wave (AC-M2): drafting an answer for a room question is a NEW
 // outbound request — buildPrivacyNotice (lib/copilot/practiceNotices.js)
-// predates this feature and has no clause for it, and that module is not
-// among this feature's allowed files, so the sentence is composed here and
-// appended to its output instead of silently leaving the notice this
+// predates this feature and has no clause for it, and that module was not
+// among that feature's allowed files at the time, so the sentence is composed
+// here and appended to its output instead of silently leaving the notice this
 // component renders incomplete about a transfer it now performs
 // automatically (this codebase has shipped that exact class of bug before —
 // BUG-H5). Unconditional, not gated on whether anyone has actually spoken
@@ -61,13 +71,20 @@ export function roomQuestionPrivacyClause({
     "If someone else in the room asks a question, what they say is sent to Gemini to detect and draft a response, along with your prep context";
   const typedClause =
     " A question you type yourself skips the detect step and is sent to Gemini to draft a response the same way.";
-  if (!hasPosting) return `${base}.${typedClause}`;
+  // Every Gemini branch ends with the same knowledge-base sentence — the
+  // payload does not depend on which documents were found. That sentence names
+  // its own subject ("Drafting an answer also sends…"), which is what makes it
+  // safe here: it lands after `typedClause`, whose subject is a question the
+  // candidate typed, and it used to open "It also sends…" — reading, wrongly,
+  // as though typing a question were the thing that sends the project pages.
+  // They go on every drafted answer, typed or spoken.
+  if (!hasPosting) return `${base}.${typedClause}${KNOWLEDGE_BASE_CLAUSE}`;
   if (!docsSettled) {
-    return `${base}, and may also send any resume or cover letter you submitted for the selected posting.${typedClause}`;
+    return `${base}, and may also send any resume or cover letter you submitted for the selected posting.${typedClause}${KNOWLEDGE_BASE_CLAUSE}`;
   }
   if (hasSubmittedResume || hasSubmittedCoverLetter) {
     const label = roomQuestionDocsWord(hasSubmittedResume, hasSubmittedCoverLetter);
-    return `${base}, and the ${label} you submitted for the selected posting.${typedClause}`;
+    return `${base}, and the ${label} you submitted for the selected posting.${typedClause}${KNOWLEDGE_BASE_CLAUSE}`;
   }
-  return `${base}.${typedClause}`;
+  return `${base}.${typedClause}${KNOWLEDGE_BASE_CLAUSE}`;
 }

@@ -301,6 +301,10 @@ describe("cachedSampleAnswerFor", () => {
       buzzwords: [],
       anchor: null,
       idealProject: null,
+      // ARCH §4f: an entry cached before `pageSources` existed resolves the
+      // same way every other reading aid above does — the empty shape, not
+      // `undefined`.
+      pageSources: [],
       grounding: { resume: true, coverLetter: false },
       error: "",
       profile: CURRENT_PROFILE,

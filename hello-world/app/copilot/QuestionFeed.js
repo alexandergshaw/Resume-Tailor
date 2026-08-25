@@ -80,7 +80,7 @@ export default function QuestionFeed({
   // is empty/malformed (its own guard), so this is never less defensive than
   // the direct-index read it replaces.
   const latest = pinnedQuestionEntry(questions, pinnedId);
-  const latestLines = answerLines(latest?.cues, latest?.points);
+  const latestLines = answerLines(latest?.cues, latest?.points, latest?.pageSources);
   const latestStatusText = answerStatusMessage({ status: latest?.status, bulletCount: latestLines.length });
   // BUG-2: see useCurrentQuestionAnnouncement's doc (CopilotDashboard.js) —
   // `latest` can now swap to a different, already-`done` entry without a
@@ -157,7 +157,7 @@ function QuestionCard({ q, onDraft }) {
   // question, the sentence is what they can actually speak from. Same
   // answerLines call practice mode's SampleAnswer.js and the shared
   // dashboard's answer panels make — one decision, one place.
-  const lines = answerLines(q.cues, q.points);
+  const lines = answerLines(q.cues, q.points, q.pageSources);
   return (
     <Box
       sx={{

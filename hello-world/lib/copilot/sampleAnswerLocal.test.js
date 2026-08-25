@@ -284,6 +284,90 @@ describe("draftSampleAnswerLocal technical/system-design shape", () => {
   });
 });
 
+// ARCH §3.6: the knowledge-base `story` selected once by the route and
+// handed down. `matched` gates whether it is used at all (AC-5.2); when it
+// is, every page-derived point carries a pageSource and every connective
+// beat stays null (AC-6).
+describe("draftSampleAnswerLocal knowledge-base grounding (ARCH §3.6)", () => {
+  const STORY = {
+    pageId: "page-1",
+    title: "Payments migration",
+    bullets: ["Cut settlement time from three days to one", "Mentored two junior engineers on the rollout"],
+    matched: true,
+  };
+
+  it("behavioral: a matched story fully replaces the drafted STAR narrative, citing every point", () => {
+    const { points, answer, pageSources } = draftSampleAnswerLocal({
+      question: BEHAVIORAL_QUESTION,
+      resume: RESUME,
+      interviewType: "behavioral",
+      story: STORY,
+    });
+    expect(points).toEqual([
+      "Situation: Payments migration.",
+      "Action: Cut settlement time from three days to one.",
+      "Result: Mentored two junior engineers on the rollout.",
+    ]);
+    expect(answer).toContain("Payments migration");
+    expect(pageSources).toEqual([
+      { id: "page-1", title: "Payments migration" },
+      { id: "page-1", title: "Payments migration" },
+      { id: "page-1", title: "Payments migration" },
+    ]);
+  });
+
+  it("behavioral: an UNMATCHED story is never spoken, and output is byte-identical to no story at all (AC-5.2)", () => {
+    const withUnmatchedStory = draftSampleAnswerLocal({
+      question: BEHAVIORAL_QUESTION,
+      resume: RESUME,
+      interviewType: "behavioral",
+      story: { ...STORY, matched: false },
+    });
+    const withNoStory = draftSampleAnswerLocal({
+      question: BEHAVIORAL_QUESTION,
+      resume: RESUME,
+      interviewType: "behavioral",
+    });
+    expect(withUnmatchedStory.points).toEqual(withNoStory.points);
+    expect(withUnmatchedStory.answer).toBe(withNoStory.answer);
+    expect(withUnmatchedStory.pageSources.filter(Boolean)).toEqual([]);
+  });
+
+  it("technical: prefers the matched story's own bullet over the résumé's expRef, and cites only that point", () => {
+    const { answer, pageSources } = draftSampleAnswerLocal({
+      question: "How would you design a scalable migration?",
+      resume: RESUME,
+      interviewType: "technical",
+      story: STORY,
+    });
+    expect(answer).toContain("Cut settlement time from three days to one");
+    // The Django/résumé-derived clause is displaced, not spoken alongside it.
+    expect(answer).not.toContain("led a team of six engineers");
+    expect(pageSources.filter(Boolean)).toEqual([{ id: "page-1", title: "Payments migration" }]);
+  });
+
+  it("general: prefers the matched story's own bullet over pastWorkExpRef, citing only that point", () => {
+    const { answer, pageSources } = draftSampleAnswerLocal({
+      question: GENERAL_QUESTION,
+      resume: RESUME,
+      interviewType: "general",
+      story: STORY,
+    });
+    expect(answer).toContain("Cut settlement time from three days to one");
+    expect(pageSources.filter(Boolean).length).toBe(1);
+  });
+
+  it("with no story at all, pageSources is an all-null array the same length as points", () => {
+    const { points, pageSources } = draftSampleAnswerLocal({
+      question: GENERAL_QUESTION,
+      resume: RESUME,
+      interviewType: "general",
+    });
+    expect(pageSources).toHaveLength(points.length);
+    expect(pageSources.every((p) => p === null)).toBe(true);
+  });
+});
+
 describe("draftSampleAnswerLocal length shaping", () => {
   it("trims to the crisp two-point cut for a short-format interview (phone screen)", () => {
     const { points, answer } = draftSampleAnswerLocal({

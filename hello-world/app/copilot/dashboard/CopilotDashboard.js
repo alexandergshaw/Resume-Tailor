@@ -466,7 +466,7 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
   // AC-K1.1/AC-L1: a cue PLUS the sentence behind it, per line — the same
   // answerLines call practice mode's SampleAnswer.js and live mode's
   // QuestionFeed.js card make, so all three read alike.
-  const lines = answerLines(current?.cues, current?.points);
+  const lines = answerLines(current?.cues, current?.points, current?.pageSources);
   // BUG-2: computed here (not inline in the region below) so it can be fed
   // to useCurrentQuestionAnnouncement above as well as used for its own
   // sake — see that hook's doc for why the announcement can't simply be

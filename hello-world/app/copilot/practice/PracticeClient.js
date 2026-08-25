@@ -302,6 +302,7 @@ export default function PracticeClient({
         buzzwords: sampleAnswer.buzzwords,
         anchor: sampleAnswer.anchor,
         idealProject: sampleAnswer.idealProject,
+        pageSources: sampleAnswer.pageSources,
         error: sampleAnswer.error,
       },
     ];
@@ -313,6 +314,7 @@ export default function PracticeClient({
     sampleAnswer.buzzwords,
     sampleAnswer.anchor,
     sampleAnswer.idealProject,
+    sampleAnswer.pageSources,
     sampleAnswer.error,
   ]);
 
@@ -710,6 +712,7 @@ export default function PracticeClient({
                 sampleBuzzwords={sampleAnswer.buzzwords}
                 sampleAnchor={sampleAnswer.anchor}
                 sampleIdealProject={sampleAnswer.idealProject}
+                samplePageSources={sampleAnswer.pageSources}
                 sampleGrounding={sampleAnswer.grounding}
                 sampleError={sampleAnswer.error}
                 isEmbedded={isEmbedded}

@@ -294,25 +294,47 @@ export function deriveAnswerFromPoints(points) {
     .join(" ");
 }
 
-function behavioralPoints({ headline, metric, hint, expRef, seed }) {
+// Every shape function below now returns { points, pageIndices } rather than
+// a bare array: `pageIndices` names which entries of `points` carry a clause
+// drawn from `story` (ARCH §3.6 / §3.5's per-point pageSources), a no-op
+// (empty array, `story` never consulted) whenever `story` is null — the
+// unmatched-page and no-story cases collapse to the same byte-identical path
+// (AC-5.2's "never speaks a page that doesn't match as though it were
+// chosen"). Live mode's response DOES surface `pageSources` now (AC-6.2 —
+// app/api/copilot/answer/route.js returns it from the points-mode branch, and
+// this function is what that branch's embedded engine gets it from). This
+// comment used to say live mode never surfaced it; the route was updated and
+// the comment was not.
+function behavioralPoints({ headline, metric, hint, expRef, seed, story }) {
   const situation = headline.company
     ? `a specific project at ${headline.company}${headline.title ? ` as ${headline.title}` : ""}`
     : "one specific, relevant project";
   const opener = pick(seed, ["Set the scene briefly", "Frame the context in a sentence", "Open with where and when"]);
+  // AC-5.1: a matched project page's own bullet is preferred over the
+  // résumé/profile expRef for the concrete "e.g." clause — the same
+  // preference order sampleAnswerLocal.js's shapes use.
+  const pageClause = story?.bullets?.[0] || "";
+  const groundingClause = pageClause || expRef;
   // Prefer a real accomplishment as the Action example; fall back to the skills hint.
-  const actionTail = expRef ? ` — e.g. ${expRef}` : hint ? ` (${hint})` : "";
-  return [
+  const actionTail = groundingClause ? ` — e.g. ${groundingClause}` : hint ? ` (${hint})` : "";
+  const points = [
     `Situation: ${opener} — ${situation}.`,
     "Task: State the goal you personally owned and why it mattered.",
     `Action: Walk through the concrete steps you took${actionTail}.`,
     `Result: Close with a measurable outcome${metric ? ` — e.g. ${metric}` : " (a metric or clear impact)"}.`,
   ];
+  return { points, pageIndices: pageClause ? [2] : [] };
 }
 
-function technicalPoints({ question, skills, hint, expRef, seed }) {
+function technicalPoints({ question, skills, hint, expRef, seed, story }) {
   const matched = matchedSkills(question, skills);
-  const grounding = expRef
-    ? `Ground it in real work you've done — e.g. ${expRef}.`
+  // AC-5.1: "a technical question draws its approach from the best-matching
+  // page's own bullets" — preferred over expRef, same preference order as
+  // behavioralPoints above.
+  const pageClause = story?.bullets?.[0] || "";
+  const groundingText = pageClause || expRef;
+  const grounding = groundingText
+    ? `Ground it in real work you've done — e.g. ${groundingText}.`
     : matched.length
       ? `Ground it in your hands-on experience with ${matched.slice(0, 3).join(", ")}.`
       : hint
@@ -323,18 +345,23 @@ function technicalPoints({ question, skills, hint, expRef, seed }) {
     "Restate the problem and pin down the constraints first.",
     "Ask a clarifying question, then state your assumptions.",
   ]);
-  return [
+  const points = [
     open,
     "Think out loud — outline your approach before diving into details.",
     grounding,
     "Call out the trade-offs (time vs. space, simplicity vs. scale) and justify your choice.",
     "Say how you'd test it and handle edge cases / failure modes.",
   ];
+  return { points, pageIndices: pageClause ? [2] : [] };
 }
 
-function generalPoints({ headline, skills, expRef, seed }) {
-  const anchor = expRef
-    ? `Anchor your answer in a concrete example — e.g. ${expRef}.`
+function generalPoints({ headline, skills, expRef, seed, story }) {
+  // AC-5.1: the general shape's experience beat prefers a matched page
+  // bullet over expRef too.
+  const pageClause = story?.bullets?.[0] || "";
+  const groundingText = pageClause || expRef;
+  const anchor = groundingText
+    ? `Anchor your answer in a concrete example — e.g. ${groundingText}.`
     : headline.company
       ? `Anchor your answer in a concrete example from ${headline.company}.`
       : "Anchor your answer in one concrete example, not generalities.";
@@ -343,7 +370,7 @@ function generalPoints({ headline, skills, expRef, seed }) {
     "Close by connecting it to what this role is asking for.",
     "End on why this team, specifically, is the right fit for you.",
   ]);
-  return [
+  const points = [
     anchor,
     skills.length
       ? `Highlight the strengths most relevant to this role: ${skills.slice(0, 3).join(", ")}.`
@@ -351,6 +378,7 @@ function generalPoints({ headline, skills, expRef, seed }) {
     "Keep it to ~60-90 seconds — lead with the point, then the evidence.",
     close,
   ];
+  return { points, pageIndices: pageClause ? [0] : [] };
 }
 
 // Build glanceable talking points for a live interview question, grounded in the
@@ -358,7 +386,7 @@ function generalPoints({ headline, skills, expRef, seed }) {
 // (AC-H4.15), the résumé and cover letter actually submitted for it.
 // `interviewType` (any string, normalized here) only ever matters when the
 // question's own classification is "general" — see resolveScaffoldType above.
-// Returns { points: string[], type }.
+// Returns { points: string[], type, pageSources }.
 //
 // With no resume/coverLetter (the caller has no applicationId, or no documents
 // were found for it), this computes skills/headline/metric/expRef from
@@ -372,9 +400,17 @@ function generalPoints({ headline, skills, expRef, seed }) {
 // line disqualified from being a motivation statement posing as a concrete
 // example, and a metric spoken only when it comes from that SAME experience
 // line — never a bare figure paired with a story mined from elsewhere.
-export function draftAnswerLocal({ question, profile = "", resume = "", coverLetter = "", interviewType } = {}) {
+//
+// `story` (ARCH §3.6) is lib/copilot/projectStories.js's selectBestStory
+// return, selected once by the route and handed down — see
+// sampleAnswerLocal.js's draftSampleAnswerLocal for the full reasoning (D7,
+// AC-5.2/5.3), which this mirrors. Used only when `story.matched === true`;
+// `story === null` and an unmatched story are the same byte-identical case
+// below, protecting every existing caller of this function.
+export function draftAnswerLocal({ question, profile = "", resume = "", coverLetter = "", interviewType, story = null } = {}) {
   const q = String(question || "").trim();
   const type = resolveScaffoldType(classifyQuestionType(q), interviewType);
+  const effectiveStory = story && story.matched ? story : null;
 
   const hasDocs = Boolean(String(resume || "").trim()) || Boolean(String(coverLetter || "").trim());
 
@@ -398,13 +434,27 @@ export function draftAnswerLocal({ question, profile = "", resume = "", coverLet
   const hint = skillHint(q, skills);
   const seed = q || profile;
 
-  let points;
-  if (type === "behavioral") points = behavioralPoints({ headline, metric, hint, expRef, seed });
-  else if (type === "technical") points = technicalPoints({ question: q, skills, hint, expRef, seed });
-  else points = generalPoints({ headline, skills, expRef, seed });
+  let rawResult;
+  if (type === "behavioral") rawResult = behavioralPoints({ headline, metric, hint, expRef, seed, story: effectiveStory });
+  else if (type === "technical") rawResult = technicalPoints({ question: q, skills, hint, expRef, seed, story: effectiveStory });
+  else rawResult = generalPoints({ headline, skills, expRef, seed, story: effectiveStory });
 
-  return {
-    points: points.filter((p) => typeof p === "string" && p.trim()).slice(0, MAX_POINTS),
-    type,
-  };
+  const pageIndexSet = new Set(rawResult.pageIndices);
+  // Same ordering rule as sampleAnswerLocal.js's draftSampleAnswerLocal:
+  // `fromPage` is carried alongside each point through the blank-entry
+  // filter and the MAX_POINTS cut, never recomputed against a post-filter
+  // index.
+  const usableEntries = rawResult.points
+    .map((p, i) => ({ point: p, fromPage: pageIndexSet.has(i) }))
+    .filter((entry) => typeof entry.point === "string" && entry.point.trim())
+    .slice(0, MAX_POINTS);
+
+  const points = usableEntries.map((entry) => entry.point);
+  const pageSources = usableEntries.map((entry) =>
+    entry.fromPage && effectiveStory && effectiveStory.pageId
+      ? { id: effectiveStory.pageId, title: effectiveStory.title }
+      : null,
+  );
+
+  return { points, type, pageSources };
 }

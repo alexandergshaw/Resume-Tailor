@@ -237,7 +237,8 @@ describe("the budget", () => {
   const big = (id, n) => page({ id, title: `Page ${id}`, body: "word ".repeat(n) });
 
   it("stops at the first page that does not fit, rather than skipping it", () => {
-    // Deliberately UNLIKE buildProjectStoriesBlock, which skips-and-continues.
+    // The same rule lib/experience/knowledgeBase.js's buildKnowledgeBaseBlock
+    // follows for the interview copilot, for the same reason — the two agree.
     // The list here is relevance-ranked, so continuing past a page that did
     // not fit silently promotes a less relevant short page over a more
     // relevant long one — and the model has no way to know that happened.

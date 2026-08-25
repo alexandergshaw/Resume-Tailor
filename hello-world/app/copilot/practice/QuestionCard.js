@@ -42,7 +42,9 @@ export default function QuestionCard({
   // bullet-point array (each a complete, speakable sentence). AC-K1:
   // `sampleCues` is the few-word version actually rendered, and
   // `sampleBuzzwords`/`sampleAnchor`/`sampleIdealProject` are the
-  // subsections under it.
+  // subsections under it. `samplePageSources` is the positional,
+  // per-point knowledge-base-page citation array threaded straight to
+  // SampleAnswer's `pageSources` prop.
   sampleVisible,
   sampleStatus,
   sampleAnswerPoints,
@@ -50,6 +52,7 @@ export default function QuestionCard({
   sampleBuzzwords,
   sampleAnchor,
   sampleIdealProject,
+  samplePageSources,
   sampleGrounding,
   sampleError,
   isEmbedded,
@@ -202,6 +205,7 @@ export default function QuestionCard({
           buzzwords={sampleBuzzwords}
           anchor={sampleAnchor}
           idealProject={sampleIdealProject}
+          pageSources={samplePageSources}
           grounding={sampleGrounding}
           error={sampleError}
           isEmbedded={isEmbedded}

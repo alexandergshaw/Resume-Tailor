@@ -5,7 +5,7 @@ import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { parseModelJson } from "@/lib/llm/extractEmployment";
 import { listPages } from "@/lib/supabase/experiencePages";
 import { listAttachmentsByPage } from "@/lib/supabase/experienceAttachments";
-import { classifyAttachment } from "@/lib/experience/attachments";
+import { withDerivedKind } from "@/lib/experience/attachments";
 import { buildMeetingContext } from "@/lib/meeting/meetingContext";
 import { localInsights } from "@/lib/meeting/insightsLocal";
 import { normalizeTopic, normalizeInsights } from "@/lib/meeting/insightContract";
@@ -85,17 +85,6 @@ function recentTranscript(raw) {
   if (firstBreak === -1) return tail;
   const trimmed = tail.slice(firstBreak + 1);
   return trimmed || tail;
-}
-
-// `kind` is NOT a column of experience_attachments (see that table's
-// migration) — it is derived from the row's stored mime and name, exactly
-// as app/api/experience/attachments's GET does, so the label the model is
-// shown can never disagree with the one the user sees in the attachment
-// panel. `size: 1` because only `kind` is wanted here, and classifyAttachment
-// decides `kind` before it looks at size at all (its own contract).
-function withDerivedKind(row) {
-  const { kind } = classifyAttachment({ name: row?.name, type: row?.mime, size: 1 });
-  return { ...row, kind };
 }
 
 export async function POST(request) {

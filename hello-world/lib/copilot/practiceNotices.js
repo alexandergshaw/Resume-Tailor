@@ -45,6 +45,47 @@ function submittedDocsToGeminiClauseFor({ hasPosting, docsSettled, hasSubmittedR
   return "";
 }
 
+// BUG-H5 again, and this time the notice was falsified by a feature that
+// added a whole new CATEGORY of data. Drafting an answer — a revealed sample
+// answer, a room question, or a typed one — now also sends, on every
+// non-embedded request and regardless of whether a posting is selected: up to
+// 12000 characters of the user's own project-page prose, AND an inventory of
+// the attachments on those pages (file name, kind, and any saved notes). File
+// names are frequently sensitive in a way page bodies are not —
+// "2024-severance-agreement.pdf", "offer-letter-competitor.pdf" — so "pages"
+// alone would not tell a reader what is actually leaving the browser.
+//
+// UNCONDITIONAL on the Gemini path, never gated on whether this user has any
+// pages: that count does not exist on the client until after the first send,
+// which is too late to disclose anything — the same reasoning
+// app/copilot/practice/practiceRoomQuestionPrivacy.js's own header gives for
+// its clause. Absent entirely on the embedded path, which makes no model call
+// at all; disclosing a transfer that does not happen is its own kind of false.
+//
+// Exported so practiceRoomQuestionPrivacy.js and lib/copilot/groundingNotice.js
+// append the SAME sentence instead of keeping a second copy — one payload, one
+// description of it, nothing left to drift.
+//
+// NAMES ITS OWN SUBJECT, and that is load-bearing rather than a style
+// preference. This sentence used to open "It also sends…", which needs the
+// sentence in front of it to be about drafting an answer. Practice mode's four
+// branches are, because each begins "Revealing a sample answer sends…". No
+// other caller's is, and on one branch the dangling pronoun made the notice
+// FALSE rather than merely clumsy:
+//
+//   "…asking to research the company also sends its name, this job's title
+//    and the posting text to Google Gemini. It also sends your project
+//    pages…"
+//
+// which tells the candidate their project pages leave the browser when they
+// request company research. They actually go on every drafted answer, research
+// or no research. The room-question branches read the same way ("A question
+// you type yourself … It also sends…"). A shared sentence appended in four
+// places cannot depend on what precedes it in any of them, so it says what it
+// is about itself and is true wherever it lands.
+export const KNOWLEDGE_BASE_CLAUSE =
+  " Drafting an answer also sends your project pages, and the file names and any saved notes of the attachments on them — never the attached files themselves.";
+
 // G1: names the sample-answer draft's own destination — the same "is this
 // request grounded by an AI provider" fact the critique clause above
 // states, so this never drifts from it (AC-G1-9). Unlike that clause, this
@@ -53,7 +94,16 @@ function submittedDocsToGeminiClauseFor({ hasPosting, docsSettled, hasSubmittedR
 // useSampleAnswer) — so only the document mention within it is
 // conditional, following the same hedge/assert/omit split as
 // submittedDocsToGeminiClauseFor above.
+//
+// KNOWLEDGE_BASE_CLAUSE is appended to every branch — see that constant for
+// why it is unconditional here and absent on the embedded path (which never
+// reaches this function's output at all, since engineNoticeFor's embedded
+// branch does not carry it).
 function sampleAnswerClauseFor({ hasPosting, docsSettled, hasSubmittedResume, hasSubmittedCoverLetter }) {
+  return `${sampleAnswerDocsClauseFor({ hasPosting, docsSettled, hasSubmittedResume, hasSubmittedCoverLetter })}${KNOWLEDGE_BASE_CLAUSE}`;
+}
+
+function sampleAnswerDocsClauseFor({ hasPosting, docsSettled, hasSubmittedResume, hasSubmittedCoverLetter }) {
   if (!hasPosting) {
     return "Revealing a sample answer sends that question and your prep context to Gemini as well.";
   }

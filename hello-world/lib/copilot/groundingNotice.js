@@ -9,6 +9,47 @@
 // where their submitted documents actually go, so the move here had to be
 // byte-for-byte, not a paraphrase.
 
+// BUG-H5 again, and this time only half of a pair shipped. Practice mode's
+// notice (lib/copilot/practiceNotices.js) was corrected when drafting an
+// answer started sending the user's project pages and their attachment file
+// names; `postingGroundingNotice` below — the one LIVE mode renders — was
+// not. Same route, same payload, and live mode's notice was the WORSE of the
+// two, because it returned "" outright whenever no posting was selected,
+// which is the ordinary live-mode state: in the common case it disclosed
+// nothing at all about a transfer performed on every drafted answer.
+//
+// The sentence is IMPORTED rather than restated. Practice mode, a room
+// question and a live drafted answer all go through the identical
+// /api/copilot/answer call, so all three notices are describing ONE payload,
+// and one description of it in one place is the only arrangement in which
+// they cannot drift. app/copilot/practice/practiceRoomQuestionPrivacy.js
+// already imports the same constant for the same reason.
+import { KNOWLEDGE_BASE_CLAUSE } from "./practiceNotices.js";
+
+// The live draft's own destination, stated for its own sake. This is NOT the
+// antecedent of anything: KNOWLEDGE_BASE_CLAUSE used to open "It also sends…"
+// and this sentence was introduced to give that "It" something to refer to,
+// which was the wrong fix — the clause is appended to four other branches
+// whose preceding sentence is about something else entirely, and on one of
+// them the dangling pronoun made the notice false (see that constant's own
+// comment). The clause names its own subject now, so nothing depends on what
+// sits in front of it.
+//
+// What this sentence is still needed FOR: when the posting clause below is
+// empty, it is the only thing that discloses the transfer performed on every
+// single drafted answer. Unconditionally true on this path — the non-embedded
+// engine always drafts through Gemini (app/api/copilot/answer/route.js), and
+// lib/copilot/answerClient.js's draftAnswer sends exactly these three fields
+// (question, transcript context, prep profile) on every request, posting or no
+// posting. Dropping it would leave live mode's ordinary state — no posting
+// selected — silent about that, which is the BUG-H5 shape this whole notice
+// exists to prevent.
+//
+// It is NOT a second description of the knowledge base. That payload is
+// described once, by the imported clause, and nowhere else in this file.
+const LIVE_DRAFT_DESTINATION =
+  " Drafting an answer sends the question, the recent transcript and your prep context to Google Gemini.";
+
 // BUG-H5/AC-H6.25: names only the document(s) actually found for the
 // selected application — never both when only one exists — the same
 // discipline SubmittedDocs.js's statusSuffix and
@@ -155,19 +196,45 @@ export function companyResearchDestination({ isEmbedded, hasCompany } = {}) {
     : "Saying this, or pressing the button, sends the company name, job title and posting text to Google Gemini as soon as it happens.";
 }
 
-export function postingGroundingNotice({ posting, isEmbedded, docsStatus, resume, coverLetter, hasCompany }) {
+// Everything this notice says about the SELECTED POSTING — unchanged, byte
+// for byte, from the ternary chain that used to be the whole function, minus
+// its embedded branch (lifted into the caller below, since the embedded path
+// is the one place the knowledge-base clause must NOT be appended). "" here
+// means only "there is nothing more to say about the posting", never "there
+// is nothing to disclose".
+function postingDocsNotice({ posting, docsStatus, resume, coverLetter, hasCompany }) {
   const hasSubmittedResume = !!resume;
   const hasSubmittedCoverLetter = !!coverLetter;
   const docsSettled = docsStatus === "done";
   return !posting
     ? ""
-    : isEmbedded
+    : !docsSettled
+      ? " Because you selected a posting, any résumé or cover letter you submitted for it may also be sent to Google Gemini to ground your talking points."
+      : hasSubmittedResume || hasSubmittedCoverLetter
+        ? ` Because you selected a posting, ${submittedDocsClause(hasSubmittedResume, hasSubmittedCoverLetter)}.`
+        : hasCompany
+          ? " Because you selected a posting, asking to research the company also sends its name, this job's title and the posting text to Google Gemini."
+          : "";
+}
+
+export function postingGroundingNotice({ posting, isEmbedded, docsStatus, resume, coverLetter, hasCompany }) {
+  // The embedded engine makes no model call to draft an answer at all, so
+  // the knowledge base does not leave the browser on this path and must not
+  // be disclosed as if it did — disclosing a transfer that does not happen is
+  // its own kind of false, the same rule practiceNotices.js applies to its
+  // own embedded branch. With nothing selected there is still nothing to say
+  // here, which is why this branch alone can still be "".
+  if (isEmbedded) {
+    return posting
       ? " The embedded engine drafts talking points on this server with no AI provider, so nothing is sent to Google to draft them."
-      : !docsSettled
-        ? " Because you selected a posting, any résumé or cover letter you submitted for it may also be sent to Google Gemini to ground your talking points."
-        : hasSubmittedResume || hasSubmittedCoverLetter
-          ? ` Because you selected a posting, ${submittedDocsClause(hasSubmittedResume, hasSubmittedCoverLetter)}.`
-          : hasCompany
-            ? " Because you selected a posting, asking to research the company also sends its name, this job's title and the posting text to Google Gemini."
-            : "";
+      : "";
+  }
+  // Never "" on the Gemini path, with or without a posting: the pages and
+  // attachment file names go on every drafted answer, so there is always
+  // something to disclose. An empty posting clause is REPLACED, not simply
+  // omitted, so the question/transcript/prep-context transfer is still
+  // disclosed in the state live mode is usually in — see
+  // LIVE_DRAFT_DESTINATION.
+  const docsNotice = postingDocsNotice({ posting, docsStatus, resume, coverLetter, hasCompany });
+  return `${docsNotice || LIVE_DRAFT_DESTINATION}${KNOWLEDGE_BASE_CLAUSE}`;
 }

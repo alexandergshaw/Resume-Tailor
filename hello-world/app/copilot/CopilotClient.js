@@ -112,12 +112,13 @@ export default function CopilotClient() {
   const isMobile = useIsMobile();
 
   // AC-N1.5: normalized question -> { points, type, cues, buzzwords, anchor,
-  // idealProject, profile, interviewType, applicationId } — the reading aids
-  // (AC-K1) and the grounding the draft was actually built from (AC-N1.2)
-  // both landed here since this comment was last accurate; runDraft, inside
-  // useDraftAnswer.js (called from useLiveSession.js), is the sole writer,
-  // and stores every field a read (via answerGrounding.js's cachedAnswerFor)
-  // needs to decide whether an entry still applies.
+  // idealProject, pageSources, profile, interviewType, applicationId } — the
+  // reading aids (AC-K1, extended by ARCH §3.5/§4f's `pageSources`) and the
+  // grounding the draft was actually built from (AC-N1.2) both landed here
+  // since this comment was last accurate; runDraft, inside useDraftAnswer.js
+  // (called from useLiveSession.js), is the sole writer, and stores every
+  // field a read (via answerGrounding.js's cachedAnswerFor) needs to decide
+  // whether an entry still applies.
   const answerCacheRef = useRef(new Map());
   // AC-N1.3: bumped whenever the posting or prep context changes (below) or
   // a fresh session starts (useLiveSession.js's `start`) — see runDraft's

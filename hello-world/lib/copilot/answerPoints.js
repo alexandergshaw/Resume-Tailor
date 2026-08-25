@@ -99,7 +99,28 @@ export function cleanAnswerPoints(points) {
 // is not strictly shorter (by word count) than the point it heads. A model
 // that hands back the sentence as its own "cue" must not produce "X — X" on
 // screen; that is worse than showing X once.
-export function answerLines(cues, points) {
+//
+// `pageSources` is the THIRD positional array (ARCH §3.5 + §7.5): which
+// knowledge-base page, if any, each rendered line came from
+// (lib/copilot/pageCitations.js's resolvePageSources return value). It pairs
+// with the CLEANED points exactly the way `cues` already does — positionally,
+// all-or-nothing, resolved inside the same `.map` against the same `i`,
+// BEFORE the trailing `.filter` drops label-only points — because a page
+// citation against the wrong beat is worse than a cue against the wrong one:
+// it attributes a claim to a project that did not produce it, and the
+// candidate says so out loud. The comment on that ordering above (cues) now
+// covers both positional arrays; this is not a second copy of it.
+//
+// Each entry is shape-validated, not passed through: it becomes a
+// `pageSource` only when it is a non-null object carrying a non-empty string
+// `id` AND a non-empty string `title` — both halves of the shape a citation
+// is rendered from (ARCH §7.5) — `pageSources[i] ?? null` is not enough, because a stray
+// number or a malformed object is exactly the kind of raw-corruption input
+// the cue filter two paragraphs up already guards against on its own array.
+// Every existing two-argument call site keeps working unchanged: an absent
+// `pageSources` never satisfies the length gate, so every line's
+// `pageSource` is simply `null`.
+export function answerLines(cues, points, pageSources = []) {
   const cleanPoints = cleanAnswerPoints(points);
   if (!cleanPoints.length) return [];
 
@@ -113,6 +134,9 @@ export function answerLines(cues, points) {
     .filter((c) => typeof c === "string")
     .map((c) => c.trim());
   const paired = rawCues.length === cleanPoints.length;
+
+  const rawPageSources = Array.isArray(pageSources) ? pageSources : [];
+  const pageSourcesPaired = rawPageSources.length === cleanPoints.length;
 
   // A point that is nothing but its own STAR label ("Situation:" with no
   // sentence after it) survives cleanAnswerPoints above — it isn't blank —
@@ -137,9 +161,31 @@ export function answerLines(cues, points) {
       const label = pointLabelMatch ? pointLabelMatch[1] : "";
       const point = pointLabelMatch ? rawPoint.slice(pointLabelMatch[0].length).trim() : rawPoint;
 
-      return { label, cue: paired ? resolveLineCue(rawCues[i], point) : "", point };
+      return {
+        label,
+        cue: paired ? resolveLineCue(rawCues[i], point) : "",
+        point,
+        pageSource: pageSourcesPaired ? resolvePageSource(rawPageSources[i]) : null,
+      };
     })
     .filter((line) => line.point);
+}
+
+// A single pageSources[i] entry, vetted before it is trusted as a
+// `pageSource` — see answerLines' own doc comment (ARC §7.5) for why this is
+// a shape check, not a pass-through.
+function resolvePageSource(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  if (typeof entry.id !== "string" || entry.id.trim() === "") return null;
+  // The `title` half of the same shape check. Every producer satisfies it
+  // today (both the route's resolvePageSources and selectBestStory fall back
+  // to a readable name rather than ""), so this closes a latent hole rather
+  // than fixing a live bug — but the hole is the one UNTITLED_PROJECT_TITLE
+  // exists for: AnswerLines renders "From your {title} page.", and a missing
+  // or blank title puts a sentence with its subject missing in front of
+  // someone about to read it out loud mid-interview.
+  if (typeof entry.title !== "string" || entry.title.trim() === "") return null;
+  return entry;
 }
 
 // A single cue vetted against the point it is about to sit in front of. See
