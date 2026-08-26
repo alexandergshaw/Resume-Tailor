@@ -2,6 +2,9 @@
   "name": "hello-world",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "predev": "node scripts/copy-mediapipe.mjs",
     "dev": "next dev",
@@ -30,7 +33,8 @@
     "next": "16.2.6",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "tesseract.js": "^7.0.0"
+    "tesseract.js": "^7.0.0",
+    "unpdf": "1.8.1"
   },
   "devDependencies": {
     "eslint": "^9",

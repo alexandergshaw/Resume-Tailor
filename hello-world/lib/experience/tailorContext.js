@@ -44,8 +44,13 @@ export const MAX_TAILOR_CONTEXT_CHARS = 20000;
 // never what has to be cut.
 const NOTICE_RESERVE_CHARS = 300;
 
-// Joins two whole-page entries inside the block.
-const SEPARATOR = "\n\n---\n\n";
+// Joins two whole-page entries inside the block. Exported so a test that
+// needs the literal (e.g. lib/experience/untrustedText.test.js's forgery
+// list) imports the constant instead of hardcoding "---" a second time —
+// a hardcoded copy would keep passing even if this separator's shape ever
+// changed, silently going stale exactly like the anti-pattern flagged for
+// meetingContext.js.
+export const SEPARATOR = "\n\n---\n\n";
 
 function str(value) {
   return typeof value === "string" ? value : "";

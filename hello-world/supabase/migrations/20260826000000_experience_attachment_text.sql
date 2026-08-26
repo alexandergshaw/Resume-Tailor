@@ -1,0 +1,122 @@
+-- Professional Experience: attachment extraction results — the plain text
+-- pulled out of an attachment's bytes at ingest time, plus the bookkeeping
+-- the app needs to report that honestly without re-reading the file from
+-- storage on every request. See lib/experience/attachmentText.js for the
+-- extractor itself, and lib/experience/untrustedText.js for what neutralizes
+-- this column's contents before any of it reaches a model prompt.
+--
+-- THIS MUST BE A NEW MIGRATION, NOT AN EDIT TO
+-- 20260812010000_experience_attachments.sql. That file's own header comment
+-- used to claim "this migration has not yet been applied to production, so
+-- editing the table definition in place — rather than a follow-up ALTER
+-- migration — is correct." That claim is FALSE as of this change:
+-- 20260812010000 is already in main's history (commit 208bdb4), and
+-- .github/workflows/supabase-migrations.yml runs `supabase db push` on every
+-- merge that touches this directory — so the table already exists in
+-- production, that file's `create table if not exists` is now a no-op, and
+-- editing that table's definition in place would change nothing in the real
+-- database while looking correct in every local test. That file's header has
+-- been corrected in the same change as this migration to say so.
+-- 20260812020000_experience_generated.sql already established the right
+-- pattern for a column added after the table shipped — a new, timestamped
+-- `alter table ... add column if not exists` — and this migration follows it
+-- exactly.
+--
+-- Column-by-column:
+--   extracted_text  — the extracted plain text itself, capped at ingest time
+--                      by lib/experience/attachmentText.js's
+--                      MAX_EXTRACTED_CHARS. Stored UNTOUCHED — NOT
+--                      pre-neutralized. neutralizeUntrustedText
+--                      (lib/experience/untrustedText.js) runs at PROMPT-BUILD
+--                      time, in every consumer that reads this column, not at
+--                      write time — a column name that already sounds "safe"
+--                      is exactly the kind of thing a future third consumer
+--                      would trust without calling the neutralizer itself.
+--   extract_status  — one of pending | ok | empty | unsupported | too_large |
+--                      failed (see lib/experience/attachmentText.js's own
+--                      header for what each one means and which of them this
+--                      module actually returns). There is no `running`
+--                      status and no claim/lock protocol around this column:
+--                      the governing AC's REVISION 1 explicitly reversed an
+--                      earlier draft that had one, stated explicitly so
+--                      nobody re-invents a `queued` status and a claim table
+--                      for a backfill that does not need either. A row sits
+--                      at `pending` until extraction runs and writes its
+--                      real outcome directly — there is no in-between state
+--                      to record. Deliberately NOT a CHECK constraint and NOT
+--                      a Postgres enum: the feature's own scope note records
+--                      that image (OCR), slides/sheet (OOXML) and video
+--                      outcomes are coming in a later wave, and a CHECK or
+--                      enum would turn each of those additions into a
+--                      migration of ITS OWN on a column that otherwise needs
+--                      no schema change at all. The vocabulary is owned in
+--                      JS and documented here, in prose, on purpose.
+--   extracted_chars — the PRE-CAP length of what extraction found, in
+--                      characters — a count, not a boolean.
+--                      `extracted_chars > length(extracted_text)` is what
+--                      "this was truncated" MEANS: one integer answers both
+--                      "was anything found at all" and "how much was left
+--                      out", so no separate `truncated` column is needed, and
+--                      a capped extraction is still `ok` — capping is
+--                      orthogonal to outcome.
+--   extracted_at    — when extraction last ran for this row; null until it
+--                      has. Lets a future backfill surface "extracted 3 days
+--                      ago" without a second table to track it in.
+--   extract_reason  — a short human-readable explanation for a `failed` (or
+--                      `too_large`) row — why mammoth or unpdf could not read
+--                      these particular bytes. Free text, not an error code:
+--                      nothing in this codebase parses it back out (mirrors
+--                      lib/experience/attachmentText.js's own `reason`
+--                      field) — it exists for a person debugging one row.
+--
+-- EVERY DEFAULT BELOW IS NON-VOLATILE — a plain literal ('' or 0), or no
+-- default at all for the nullable timestamptz — which is what lets Postgres
+-- add these columns as pure catalog metadata instead of rewriting every
+-- existing row to materialize a value. The same property
+-- 20260812020000_experience_generated.sql's own two columns rely on. A
+-- volatile default (`now()`, or anything reading session/transaction state)
+-- forces a full table rewrite under an ACCESS EXCLUSIVE lock, because
+-- Postgres cannot know in advance what value every existing row should get;
+-- a constant needs no such rewrite, because Postgres can serve that same
+-- constant for every pre-existing row lazily, without ever touching its
+-- physical bytes.
+--
+-- Every attachment row written before this migration lands reads as
+-- `extract_status = 'pending'` by this column's own default — which is
+-- exactly what those rows ARE: written before this feature existed, never
+-- extracted, and (until a backfill runs) described to the model exactly as
+-- they are today — name and notes only, nothing claimed to have been read.
+-- Readers must still default to `pending` in their OWN code rather than
+-- leaning on this column default alone: the column default only protects
+-- rows written AFTER this migration, not a caller reading a stale cached row
+-- shape from before it landed.
+--
+-- RLS AND GRANTS ARE UNCHANGED, verified by reading
+-- 20260812010000_experience_attachments.sql just above this file: row-level
+-- security is enabled on experience_attachments as a whole, and every one of
+-- its four policies (select/insert/update/delete) predicates on
+-- `auth.uid() = user_id` — a table-wide condition that already covers every
+-- column on the table, these five included. Adding a column never widens or
+-- narrows a policy that was never column-scoped to begin with, so nothing
+-- here needs a matching RLS or grant change.
+--
+-- DEPLOY ORDERING MATTERS. This migration must merge and go green BEFORE the
+-- app change that starts selecting these columns. A narrowed `select` naming
+-- a column that does not exist yet is a PostgREST 400, which
+-- listAttachmentsByPage turns into an empty Map plus an error, which the
+-- interview copilot's answer route grafts as ZERO attachments on every page,
+-- mid-interview — a regression in a feature that already shipped, caused by
+-- landing the two halves of this change in the wrong order.
+--
+-- Applied by .github/workflows/supabase-migrations.yml, which runs
+-- `supabase db push` on merges to main that touch this directory, and can
+-- also be started by hand from the Actions tab (workflow_dispatch). Every
+-- statement below is idempotent, so re-running it over an already-applied
+-- migration is safe.
+
+alter table public.experience_attachments
+  add column if not exists extracted_text  text    not null default '',
+  add column if not exists extract_status  text    not null default 'pending',
+  add column if not exists extracted_chars integer not null default 0,
+  add column if not exists extracted_at    timestamptz,
+  add column if not exists extract_reason  text    not null default '';

@@ -33,10 +33,21 @@
 -- ... (id)`, for the same reason given in
 -- 20260812000000_experience_pages.sql's header comment: foreign-key checks
 -- bypass row-level security, so an id-only FK would let a client attach a
--- row to ANY user's page id through PostgREST, not just their own. This
--- migration has not yet been applied to production, so editing the table
--- definition in place - rather than a follow-up ALTER migration - is
--- correct.
+-- row to ANY user's page id through PostgREST, not just their own.
+--
+-- STALE CLAIM CORRECTED: this comment used to say the migration had not yet
+-- been applied to production, and that editing this table definition in
+-- place was therefore correct. That is false. This migration is already in
+-- main's history (commit 208bdb4), and
+-- .github/workflows/supabase-migrations.yml runs `supabase db push` on every
+-- merge that touches this directory - so the table already exists in
+-- production, `create table if not exists` below is now a no-op, and editing
+-- this table's definition in place would change nothing in the real
+-- database while looking correct in every local test. Any future column on
+-- this table belongs in a new, timestamped
+-- `alter table ... add column if not exists` migration instead - see
+-- 20260826000000_experience_attachment_text.sql for the first one, and
+-- 20260812020000_experience_generated.sql for the pattern it follows.
 --
 -- Applied by .github/workflows/supabase-migrations.yml, which runs
 -- `supabase db push` on merges to main that touch this directory, and can
