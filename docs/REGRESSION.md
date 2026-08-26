@@ -3982,3 +3982,157 @@ Action: We spent time each spring checking the hives with the club members.
 **Doing that surfaced two cases that could never have failed.** `lib/copilot/deepgram.test.js` moved under `lib/copilot/stt/` when speech-to-text became pluggable, and `app/components/TrackingTab.test.js` was split into `TrackingTab.digest.test.js`. Both were still named here, so those two cases had been silently vacuous since those commits. Paths corrected. **A case naming a file that does not exist is not a passing case.**
 
 **And the workflow never runs `automatable: no` cases at all** — four occurrences now, once against an explicit instruction. Its "all passing" covers the automatable subset only. The manual cases in the changed area have to be fanned out to adversarial reviewers by hand, **grouped by defect rather than by file**: in this group that pass found the honesty-gate hole, both privacy-notice failures, the contrast failure and the self-contradicting caption — every one of them invisible to the 5409 automated tests that were green throughout.
+
+### R-261 | area: stt-elevenlabs | parallel-safe: yes | automatable: yes
+
+**Summary:** One ElevenLabs commit produces one utterance, not two — the defect that silently doubled every question and every model call in a real interview.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run --no-file-parallelism lib/copilot/stt/elevenlabs.commitPair.test.js lib/copilot/stt/elevenlabs.test.js`.
+2. Read `_emitTranscript` in `hello-world/lib/copilot/stt/elevenlabs.js`.
+
+**Expected:** All pass. **This amends R-127, whose stated rule is now wrong** — R-127 says a re-delivery "requires all three fields" and that "a frame with no usable `words` array is never treated as a match either". That rule cannot see the case that actually occurs.
+
+A live session recorded on 2026-08-25 (`interview-log-live-2026-08-25-1644.json`) shows every one of its five utterances delivered **twice**, 66–114ms apart, both frames carrying `speechFinal: true` — so both came from the `committed_transcript` / `committed_transcript_with_timestamps` branches. ElevenLabs emits BOTH members of that pair for one commit when `include_timestamps` is on. The first carries no `start`/`duration` at all; the second carries both. R-127's rule requires numeric spans on *both* sides, so the untimed member defeated it on 100% of finals. The module's own comment called this "a rare residual double-count".
+
+What it cost, measured in that log: **six `question.added` events for three spoken questions, and six drafted answers** — two concurrent model calls per question, contending with each other (ids 5 and 6 are the same question; one took 4.0s, its twin 9.2s). Every downstream dedupe is defeated by construction: `acceptQuestion` in `useLiveSession.js` deliberately falls THROUGH its back-to-back guard when the prior card is still `loading` (AC-P4.4), and the twin always arrives ~70ms later, always while loading. For the first question the two copies did not even share text — the heuristic missed "Talk to me about…", so both went to the remote confirm, which rewrote one to "Tell me what appealed…" and the other to "Talk to me about what appealed…": two normalized keys, two cards, two drafts, from one sentence.
+
+**The corrected rule is text-first.** Text equality decides whether two finals are candidates at all; the span decides only among those. Both spans numeric → re-delivery iff equal (R-127's case, unchanged). Exactly one side numeric → re-delivery (the commit pair). Neither numeric → unproven, delivered (unchanged). ElevenLabs' published AsyncAPI spec carries **no id, sequence number or utterance marker** on any transcript message, so text is not a shortcut here — it is the only correlation the protocol offers.
+
+**And the remembered final always holds the best span known for its commit.** Two halves, in opposite directions, and a peer review with a 31-mutant harness found the second one by building the implementation the first draft of this rule admitted:
+- A suppressed frame must not overwrite the remembered final. Otherwise `timed(1) → untimed → timed(12)` compares the third frame against the untimed twin, matches, and a real utterance vanishes.
+- **Except that it upgrades the remembered span when the suppressed twin has one the remembered frame lacks.** Otherwise `untimed → timed(1) → timed(30)` — the order this provider actually delivers — leaves the memory untimed, so the third frame also matches "exactly one side has a span" and a real utterance vanishes here instead. "Keep the richer original" is only correct when the timed member leads.
+
+Accepted residual, stated rather than rediscovered: two identical utterances that each arrive with **no** timed member cannot be told apart and the second is suppressed. Unreachable while `INCLUDE_TIMESTAMPS` is on, since every commit then has a timed member whose span differs.
+
+**Also here:** `message_type: "warning"` is in ElevenLabs' documented server-to-client list and was unhandled, so a real warning arrived as "this module … has not been verified against the live service" — telling the user their wire format had drifted when it had not. It now has its own case and is deliberately NOT in `ERROR_MESSAGE_TYPES`.
+
+### R-262 | area: copilot-questions | parallel-safe: yes | automatable: yes
+
+**Summary:** The question that reaches the model is the question that was asked — `cleanQuestion` no longer deletes the verb.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run --no-file-parallelism lib/copilot/questions.fidelity.test.js lib/copilot/questions.test.js lib/copilot/localDetection.test.js lib/copilot/localDetection.openers.test.js`.
+2. Read `HESITATION_RE`, `DISCOURSE_MARKER_RE` and `PREAMBLE_RE` in `hello-world/lib/copilot/questions.js`.
+
+**Expected:** All pass. `cleanQuestion`'s header promised it was "purely cosmetic — never changes the substance of the ask". In the 2026-08-25 session it turned **"What do you know about Purple Wave?" into "What do about Purple Wave?"** — `FILLER_RE` stripped "you know" unconditionally as hesitation filler, deleting the main verb. The model was then asked to answer a sentence with no verb, which is a large part of why the four bullets it returned contained no fact about the company.
+
+**The rule is structural, not a longer exception list.** Hesitations (`um`, `uh`, `erm`, `hmm`, `kind of like`, `sort of like`) are never content and stay unconditional. The multi-word discourse markers `you know` and `i mean` are filler ONLY at a clause boundary — opening the utterance, or touching a comma on at least one side — and content everywhere else. The strip consumes one adjacent comma, or "when, you know, a deadline" cleans to "when,, a deadline".
+
+**All three boundary shapes need their own case.** A fixture set where every marker happens to carry a trailing comma is satisfied by a comma-after-only rule, which leaves "I mean how would you approach it?" untouched. And **every marker needs its own positive control**: a test titled "the same rule applies to 'I mean'" originally had two assertions that both passed against the unmodified source ("what did you *mean*" was never what `FILLER_RE` matched; "So, I mean," is stripped identically by the old rule), and a mutation harness shipped an implementation that left `i mean` unconditional straight past it.
+
+**The preamble strip is anchored at `^`, and that anchor is load-bearing.** An interviewer's "That's a great question." was being stored as part of the question — which also gave it a different normalized key from the identical question asked 16 seconds earlier, so the answer cache missed and the copilot paid for a model call it had already made. Unanchored, the same rule deletes the ask out of the middle of "What makes a great question in a design review?" and "Tell me about a time you asked a really good question." Three separate mutants collapsed the rule to "keep only the last sentence", passed every other case, and destroyed the context in "We use Kafka. How would you scale the consumer group?" — so the corpus must contain a multi-sentence question whose first sentence is content.
+
+**Also here:** `STARTERS` gained "talk to me", the missing member of a family it already had ("talk about", "talk me through", "talk us through"). Its absence cost a 1.4-second network round trip on the first question of that session — every other question was detected in 0ms — and cost the question's wording, since the remote confirm rewrote it.
+
+### R-263 | area: copilot-live | parallel-safe: yes | automatable: yes
+
+**Summary:** A spoken hold cue works when the speech-to-text provider cannot tell voices apart — the state in which it was previously unreachable, silently.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run --no-file-parallelism lib/copilot/cuePolicy.test.js app/copilot/useLiveSession.attribution.test.js app/copilot/useLiveSession.cues.test.js app/copilot/VoiceCueSidebar.test.js lib/copilot/session.inperson.test.js lib/copilot/session.meeting.test.js`.
+2. Read `qualifiesForCue` and `resolveCueAction` in `hello-world/lib/copilot/cuePolicy.js`.
+
+**Expected:** All pass. **This amends R-151, which recorded two accepted consequences of a non-diarizing session — turns cannot be attributed, and pace/filler readings are not measured — and missed a third: no voice cue could fire at all.**
+
+ElevenLabs Scribe v2 Realtime has no realtime diarization, so `_resolveSpeakerLabel` resolves every frame to `"them"`, including the candidate's own speech. `useVoiceCues` refused any frame where `speaker !== "you"`. In the 2026-08-25 session the log therefore contains **zero `cue.matched` and zero `cue.ignored` events** — the interviewer said "That's a great question." twice and the candidate spoke throughout. The feature was not misfiring; it was unreachable, and the user had no way to find that out from their own log.
+
+**The attribution axis has FIVE values, not two.** `attributeSpeakers` defaults true on every source and only in-person can ever earn `diarizationActive`, so the naive two-value derivation marks tab/system `"unavailable"` — and then relaxes the speaker gate on exactly the two sources where "you" comes from a physically separate microphone socket. `active` / `unavailable` / `off` (the meeting copilot, which asks for one undivided voice) / `not-applicable` (tab and system) / `pending` (before the socket reports).
+
+**Relaxing only the speaker gate leaves the feature exactly as dead.** Without diarization there are no speaker tags, so `confidence` can never leave `"unknown"` and there is no tag for a manual override to name — the in-person identity gate is unsatisfiable by construction in precisely the sessions this change exists to rescue. Both gates are skipped for `unavailable`, and only for `unavailable`.
+
+**Only `pin` may act in that state, and the asymmetry is the reason.** `voiceCues.js` documents it: a false HOLD holds the question the candidate is already reading and expires by itself in 120s; a false RELEASE takes away a deliberate hold mid-answer; a false COMPANY spends an outbound request carrying the posting's details. The refusal happens BEFORE `onCompanyCue()` is called — refusing after it still spends the request.
+
+**Every cue decision is logged, with a distinct reason per refusal path.** Two states sharing a reason string go silent in both a live region and a diagnostic log. The sidebar states the same policy by reading `cueAvailabilityNotice`/`cueRowNote` from the policy module rather than restating it, so widening the policy cannot leave the panel claiming release still works.
+
+### R-264 | area: copilot-answer | parallel-safe: yes | automatable: yes
+
+**Summary:** An answer states a fact about the employer only if that fact was checked against a page the search actually read.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run --no-file-parallelism lib/copilot/companyFacts.test.js lib/copilot/companyFactsSource.test.js lib/copilot/companyDirected.test.js lib/copilot/factCitations.test.js lib/copilot/answerPrompts.companyFacts.test.js lib/copilot/answerPrompts.test.js app/api/copilot/answer/route.companyFacts.test.js`.
+2. Read `buildCompanyFacts` in `hello-world/lib/copilot/companyFactsSource.js`.
+
+**Expected:** All pass. Asked "What do you know about Purple Wave?" — an online heavy-equipment and farm-machinery auction company — the copilot produced *"Purple Wave is dedicated to delivering innovative solutions and enabling product teams through cutting-edge platform technology"* and *"**My research indicates** a strong focus on continuous improvement."* Not one sentence was a fact about the employer; all of it was job-description vocabulary reflected back, and the second asserted research that never happened, for the candidate to read out loud in an interview.
+
+The cause was structural: `buildPointsPrompt` had **no company source of any kind**. The grounded, link-checked company brief that already existed reached a separate panel opened by a voice cue that (see R-263) could not fire.
+
+**Corroboration reuses the machinery this repo already has for exactly this problem, and the ORDER is not negotiable:** `extractGroundingSources` → **`resolveGroundedSources` first** → `isGroundedUrl`. `lib/meeting/referenceContract.js`'s header documents why: grounding `web.uri` is sometimes a publisher URL and sometimes a `vertexaisearch.cloud.google.com/grounding-api-redirect/…` link, so comparing a model's URL against a raw redirect is false for every link forever — the feature returns zero facts and is indistinguishable from a model that searched nothing.
+
+**A claim that is not corroborated is DROPPED, not softened.** There is no useful weaker version of a fact the candidate cannot stand behind. `referenceContract.js` is the precedent and states the same reasoning for meeting links.
+
+**The prompt has three states and they are genuinely three.** No employer known → nothing added, and `FROZEN_POINTS_PROMPT_NO_PAGES` passes byte-for-byte. Employer known with surviving facts → the block, the authority sentence, and `factIds` in the JSON shape. **Employer known with no surviving facts → no heading, no empty block, no `factIds`, and an explicit instruction to assert nothing about the employer.** Collapsing the last two into the first is the easy way to keep the byte-identity guarantee and it silently removes the only instruction that stops the model inventing. An empty heading is worse than silence — this repo has already shipped a heading-only block that invited fabrication.
+
+**The instruction names the phrasings.** The prompt already said "never invent" about experience and the model still wrote "My research indicates", so that phrase is banned by name.
+
+**`factIds` is validated against the whitelist of facts actually shown**, following `pageCitations.js` exactly, including its four non-obvious rules: the whitelist supplies the displayed values, the positional pairing is all-or-nothing on length, `[]` is not an array of nulls, and it never throws. **`factIds` is declared AFTER `points` in the shape line** — the streaming parser anchors on `/"points"\s*:\s*\[/`, so an earlier field delays the first streamed bullet for no benefit.
+
+**"Is this question about the employer" is a structural rule, not a score.** This repo spent four rounds on a hand-tuned word score for a similar gate and each fix moved the hole rather than closing it. Two conditions only: the employer is NAMED (data from the posting row, so it differs per user and cannot be tuned), or a determiner from the closed set `{the, this, your}` precedes the head noun `{company, organisation, organization}` **and the head noun ends the phrase** — without that boundary guard, which `voiceCues.js` already solved for its own cue, "What is the company culture like?" reads as a question about the employer and so does "the company you worked for".
+
+**`buildCompanyFacts` never rejects.** Every failure — no company, no key, a network error, unparseable output, no grounding metadata, every fact dropped — returns `[]`. It rides beside an answer the candidate is waiting on and must never be able to fail the request it rides beside.
+
+### R-265 | area: copilot-answer | parallel-safe: yes | automatable: yes
+
+**Summary:** The live answer path stops paying for work it already did — thinking it does not need, and Supabase queries whose answers cannot have changed.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run --no-file-parallelism app/api/copilot/answer/ lib/copilot/answerSessionCache.test.js lib/copilot/answerAids.test.js`.
+2. Read the streaming call's `config` in `hello-world/app/api/copilot/answer/route.js` and `createTtlCache` in `hello-world/lib/copilot/answerSessionCache.js`.
+
+**Expected:** All pass. Measured from the 2026-08-25 session: 4–10 seconds from a detected question to a drafted answer. Three contributors sat in front of the first token, and R-261 removed the largest (two model calls per spoken question). The other two are here.
+
+**`gemini-2.5-flash` defaults to dynamic thinking**, and the route passed no `thinkingConfig`, so every live answer burned thinking time before emitting anything — and because the response is streamed JSON, that is time the candidate spends looking at an empty card. `config.thinkingConfig.thinkingBudget: 0`, verified against Google's own documentation for the Generate Content API this route calls: range 0–24576 for this model, 0 documented as turning thinking off and reducing latency. **The newer Interactions API's `thinking_level` is a different API with no "off" for this model — do not substitute it.** Scoped to the streaming points call, the one the candidate waits on mid-interview; practice mode is deliberately untouched.
+
+**`auth.getUser()` plus four Supabase queries ran on every question**, for data that cannot change during an interview. They now run once per `${userId}::${applicationId}`, TTL 10 minutes against an injected clock.
+
+**`kb`, `story` and `grounding` are deliberately NOT cached.** `buildKnowledgeBaseBlock` ranks pages against the question, so a cached block answers question two with question one's page selection — an answer built from the wrong project, with every test green. This is the single most likely way to get the cache wrong, which is why it is asserted on ORDER (the page the question is about is the first heading in that question's block), not on presence: both pages fit the budget, so a presence assertion passes against a question-blind block.
+
+**Stale and miss are the same event.** A stale entry is deleted and reloaded, never served once and never served-then-refreshed in the background — serving a résumé the user has since edited is exactly what the correctness clause forbids. A rejected load is not cached, or one bad round trip becomes ten minutes of answers built from nothing. The cache stores the **promise**, so two questions detected within a second of each other collapse into one round trip.
+
+**`auth.getUser()` is NOT cached, and that is not an oversight** — its result is what produces the cache key. Keying on the access token instead would be a correctness regression.
+
+**Also here:** `normalizeModelPoints`, `generateIdealProjectExample` and `answerAids` moved out of the route into `lib/copilot/answerAids.js` — the same extraction `answerPrompts.js` already made from the same file, taking it from 804 lines to 663. The proof that it is behaviour-preserving is that the pre-existing route tests pass unchanged on both sides of it.
+
+### R-266 | area: interview-copilot | parallel-safe: yes | automatable: yes
+
+**Summary:** Every downloaded live session log named the consequence and withheld the cause: "- Provider: unknown" rendered directly above "Your configured speech-to-text provider can't tell speakers apart on a single microphone" — a warning that only makes sense once you know which provider it is talking about.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run lib/copilot/stt/index.providerName.test.js lib/copilot/sessionLog.provider.test.js app/copilot/useLiveSession.provider.test.js`.
+2. Read `createSttStream` in `hello-world/lib/copilot/stt/index.js`, `setProvider` in `hello-world/lib/copilot/sessionLog.js`, and the `onSttProvider` wiring through `hello-world/lib/copilot/session.js`, `hello-world/app/copilot/useSessionLogRecorder.js` and `hello-world/app/copilot/useLiveSession.js`.
+
+**Expected:** All tests pass. `createSttStream` already computed which provider it selected and threw the answer away; it now records it as `providerName` on the returned stream, on the same lines that already set `diarizationActive` and for the same reason: it has to be the provider **actually selected**, not the one the server preferred, so a failed token fetch that falls through to the Deepgram default reports `"deepgram"`, not whatever `STT_PROVIDER` says — a log naming the configured provider would be wrong precisely when someone downloads it to find out what went wrong.
+
+**Two corrections to how this defect was first reported, both settled by reading the code before writing the fix.** The gap is not `useSessionLogRecorder.js`'s `provider: null` fallback (that is only the catch-block stand-in inside `sessionLogSnapshot`) — it is `startLog()` never passing `provider` to `createSessionLog({ mode, source, startedAt })` at all. And practice mode was never broken: it already passes `provider: "practice"` and renders correctly, so the fix touches only the live path.
+
+**The live path's timing is the reason a setter exists rather than a constructor argument.** `startLog()` runs at the very top of `start()`, deliberately, so a session that fails moments later still has a `session.start` entry explaining what it was — but the provider isn't known until a network round trip after that, inside `createSttStream`. `sessionLog.js` now exposes `setProvider(name)` so the log can be told once, later, without disturbing the events already recorded or moving `startLog()` and trading the whole failed-session diagnostic path for one field. It refuses a blank or non-string value rather than storing it, so the markdown never regresses to rendering "- Provider: " with nothing after it.
+
+`session.js` surfaces the new fact the same way `speakerAttribution()`/`onAttribution` already surface diarization: an `onSttProvider` callback plus an `sttProvider()` getter, fired from `_addSource` — the ONE method every source (tab, system, inperson, meeting) opens its stream through — rather than from `_startInPerson` alongside `onAttribution`, which source-restriction would have wrongly withheld the provider name from every non-inperson session. `useSessionLogRecorder.js` gained `logProvider(name)`, and `useLiveSession.js` routes `onSttProvider` into it, so the field now reaches the download the same network round trip after `start()` that it always took to become knowable.
+
+**Sabotage confirmed each seam is load-bearing.** Dropping the `providerName` assignment in `stt/index.js` failed all 7 cases in `index.providerName.test.js` (the rest of that suite stayed green). Letting `setProvider` accept a blank string failed exactly the one `sessionLog.provider.test.js` case written for it. Removing `onSttProvider` from `useLiveSession.js`'s `CopilotSession` construction failed 3 of the 4 cases in `useLiveSession.provider.test.js` — the 4th, asserting the honest "unknown" fallback when no provider is ever reported, is unaffected by that particular mutation and correctly stayed green.
+
+
+### R-267 | area: llm-grounding | parallel-safe: yes | automatable: yes
+
+**Summary:** Every grounded Gemini call in the app now actually asks for its tool on the wire. Until this case, none of them did.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run --no-file-parallelism lib/llm/tailorResume.wire.test.js lib/feed/llmSearch.wire.test.js app/api/application-digest/route.wire.test.js app/api/company-research/route.wire.test.js app/api/experience/research/route.wire.test.js app/api/meeting/references/route.wire.test.js app/api/posting-from-image/route.wire.test.js app/api/techwatch/lifecycle/route.wire.test.js`.
+2. From `hello-world`, run `npx vitest run --no-file-parallelism app/api lib/llm lib/feed lib/meeting lib/techwatch`.
+3. Read any `generateContent` call that passes `googleSearch` or `urlContext` in `hello-world/app/api/` or `hello-world/lib/`.
+
+**Expected:** All pass, and every one of those calls passes its tools as `config: { tools: [...] }` — never at the top level.
+
+**`GenerateContentParameters` has exactly THREE properties — `model`, `contents`, `config` — and `tools` belongs to `GenerateContentConfig`.** The `@google/genai` parameter transformer reads only those three keys and DISCARDS everything else before building the request body, with no error and no warning. Proven on the wire twice independently, by stubbing `globalThis.fetch` around the real SDK and reading `init.body`: `{model, contents, tools, config:{systemInstruction}}` produces a body with no `tools` at all, while `{model, contents, config:{systemInstruction, tools}}` produces `"tools":[{"googleSearch":{}}]`.
+
+**Eleven call sites across eight files used the dropped position, so every grounded feature in this app had been running ungrounded** — `app/api/company-research/route.js` (x2), `app/api/experience/research/route.js`, `app/api/application-digest/route.js`, `app/api/meeting/references/route.js`, `app/api/posting-from-image/route.js`, `app/api/techwatch/lifecycle/route.js`, `lib/feed/llmSearch.js`, and `lib/llm/tailorResume.js` (x3). (`lib/copilot/companyFactsSource.js` was fixed earlier, under R-264.)
+
+**The failure is total and invisible, which is why it survived so long:** no `tools` on the wire → no search → no `groundingMetadata` → `extractGroundingSources` returns `[]` → every corroboration step drops every claim → the feature returns nothing while still paying for a full model call. It is indistinguishable from a model that searched and found nothing. Tech Watch lifecycle and the meeting reference panel returned literally zero rows and cached that emptiness against a global key; the AI job-search ingest yielded zero postings per query on every scheduled run; the company-research route emitted its "could not confirm these via live search" warning on every response forever.
+
+**The tests that were supposed to pin the request shape asserted it against an INJECTED FAKE client, and that is the deeper lesson.** A fake sees whatever object the caller hands it and cannot observe the layer that drops the key, so five assertions across five files were permanently green against requests that never carried `tools` — including one sitting directly under a comment explaining why the tool was indispensable. Dependency injection is the right pattern for the pipeline and the wrong instrument for the transport. **Whenever a test's claim is "we asked the service for X", it has to drive the real SDK and read the bytes.** Those five now assert `config.tools` AND `expect(call.tools).toBeUndefined()` beside it, so the old shape cannot come back green; the eight `*.wire.test.js` files above are the real proof, built on the shared `lib/llm/geminiWireProbe.js` capture helper, and each carries a standing negative control pinning the top-level form as dropped — if a future SDK starts honouring it, those go red and every comment written about this is stale.
+
+**`lib/llm/tailorResume.js` was the highest-risk of the eleven and its conditional must not be collapsed.** Two of its sites carry a comment that `urlContext` is not compatible with `response_mime_type`, so JSON is forced only when no URL is being fetched. With `tools` silently dropped, the URL branch was sending NEITHER a tool NOR a JSON mime type — a third mode nobody designed, surviving only because `parseStructuredResult` is defensive about prose. The gate pins both directions: URL branch gets `tools` and no JSON mime, no-URL branch keeps JSON mime and no tools.
+
+**Also watch the discriminators.** Tests that tell one model call from another by `args?.tools` silently change which branch they exercise when `tools` moves, and keep passing while testing the wrong thing. `app/api/copilot/answer/route.companyFacts.test.js` and `route.latency.test.js` both use `args?.config?.tools` for exactly this reason; a sweep of the repo found no others.
+
+**Sabotage confirmed all eleven seams are load-bearing.** Moving `tools` back to the top level at each site in turn — one exact-string replacement, occurrence count asserted at exactly 1, byte-snapshot restore — turned that site's own wire test red and only that site's, in all eleven cases.

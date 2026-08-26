@@ -58,7 +58,12 @@ export default function SpeakerBar({
   // announcement at all (see lib/copilot/answerStatus.js's header doc for
   // this exact discipline elsewhere in this app). A fresh object literal is
   // never `Object.is`-equal to the previous one no matter what `text` says,
-  // which is what actually guarantees a text change; only `.text` is
+  // which guarantees a re-RENDER and — corrected, C5 — NOT a text change: a
+  // screen reader announces changed text, so two corrections landing on the
+  // identical sentence are still one announcement, and this bar has that
+  // latent gap for the reason its own paragraph above describes. The fix
+  // shape is app/copilot/useCueActions.js's `cueSentence`, which makes the
+  // RENDERED sentence say which thing changed; only `.text` is
   // rendered into the region below, so the sentence read aloud is
   // unaffected — `nonce` never appears in it, it exists purely to make each
   // state value a distinct object.

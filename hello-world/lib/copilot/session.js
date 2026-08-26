@@ -49,6 +49,7 @@ import { captureTabAudio, captureSystemAudio, captureMicAudio, PcmPipeline } fro
 import { createSttStream } from "./stt";
 import { createSpeakerIdentity } from "./speakerIdentity";
 import { createUtteranceAssembly } from "./utteranceAssembly";
+import { SPEAKER_ATTRIBUTION } from "./cuePolicy";
 
 // Maps the `source` option to the capture function used for "them". Anything
 // not in this map (including an omitted or garbage value, and "inperson" —
@@ -135,6 +136,8 @@ export class CopilotSession {
     onTranscript,
     onUtterance,
     onSpeakerIdentity,
+    onAttribution,
+    onSttProvider,
     onStatus,
     onError,
   } = {}) {
@@ -164,6 +167,54 @@ export class CopilotSession {
     // "system" have no speaker identity instance and never call this,
     // exactly like onUtterance above.
     this.onSpeakerIdentity = onSpeakerIdentity || (() => {});
+    // AC-V2.1/C1: resolved for tab/system and for the meeting case (attribute
+    // Speakers === false) right here at construction — both are known facts
+    // the instant the caller's options are read, with no socket to wait on.
+    // A diarization-REQUESTING in-person session is the only case that isn't
+    // knowable yet: it stays PENDING until _startInPerson learns whether the
+    // provider actually delivered, at the exact point it already checks
+    // `dg.diarizationActive` for the existing warning below. See
+    // cuePolicy.js's own header for why this can't be a two-value flag
+    // computed anywhere else — tab/system default `attributeSpeakers` to
+    // true exactly like "inperson" does, so a flag computed off that alone
+    // would call them "unavailable" too.
+    this._speakerAttribution =
+      source !== "inperson"
+        ? SPEAKER_ATTRIBUTION.NOT_APPLICABLE
+        : !attributeSpeakers
+          ? SPEAKER_ATTRIBUTION.OFF
+          : SPEAKER_ATTRIBUTION.PENDING;
+    // AC-V2.1: fired ONLY on the in-person attribution path, once, the
+    // instant it's learned (see _startInPerson below) — never for tab/system
+    // and never for the meeting case, so session.test.js/session.meeting.test.js
+    // see a byte-identical callback sequence to before this option existed.
+    // A second surface, speakerAttribution() below, exists alongside this
+    // callback for the same reason speakerSnapshot()/onSpeakerIdentity
+    // already come in a pair: the method is for a synchronous read inside
+    // onTranscript, the callback is for React state, because this project's
+    // react-hooks/refs rule forbids reading a ref's `.current` during render
+    // and the sidebar (V2.6) needs the value at render time.
+    this.onAttribution = onAttribution || (() => {});
+    // AC-W1.3: fired for EVERY source that ever opens an STT stream — tab,
+    // system, and inperson, meeting included — unlike onAttribution just
+    // above, which is deliberately in-person-only. Diarization is a fact
+    // about ONE particular source's attribution; which provider a session
+    // ran on is a fact about the session's whole transcript, true of every
+    // socket _addSource opens, so this fires from _addSource itself (see
+    // below) rather than from _startInPerson alongside onAttribution. Fired
+    // once per source, the instant createSttStream resolves and the stream's
+    // `providerName` (stt/index.js) is already known — no socket round trip
+    // to wait on beyond the one createSttStream already made internally.
+    this.onSttProvider = onSttProvider || (() => {});
+    // AC-W1.3: the synchronous counterpart to onSttProvider above, mirroring
+    // speakerSnapshot()/speakerAttribution()'s existing pair — the callback
+    // is for React state (this project's react-hooks/refs rule forbids
+    // reading a ref's `.current` during render), this getter is for a
+    // synchronous read. `null` until the first source's stream resolves;
+    // never reset afterward, matching speakerAttribution()'s own contract of
+    // describing this session's CURRENT known facts, not a rolling "most
+    // recent source" flag.
+    this._sttProvider = null;
     this.onStatus = onStatus || (() => {});
     this.onError = onError || (() => {});
     this._sources = []; // { key, stream, pipeline, dg }
@@ -285,6 +336,18 @@ export class CopilotSession {
       },
       onTranscript: onFrame || ((t) => this.onTranscript(t)),
     });
+
+    // AC-W1.3: fired here, for every key this method is ever called with —
+    // not only in-person's "mic" — the instant `dg.providerName`
+    // (stt/index.js) is known, which is already true by the time
+    // createSttStream's returned promise resolves above. Deliberately
+    // BEFORE the connect()/pipeline.start() try block below: which provider
+    // was selected is settled fact regardless of whether the socket goes on
+    // to connect successfully, and a caller's session log (this callback's
+    // only consumer today) wants the answer even for a session that fails
+    // moments later — the same reasoning startLog() itself follows.
+    this._sttProvider = dg.providerName;
+    this.onSttProvider(dg.providerName);
 
     // D2: from here down, `dg`'s socket can be OPEN (once connect() below
     // resolves) and the PcmPipeline's AudioContext can be live (once
@@ -477,6 +540,21 @@ export class CopilotSession {
       // default of `essential: true` is left implicit here.
     });
 
+    // AC-V2.1/C1: learned at the exact point the existing warning check below
+    // already runs, and set BEFORE that warning fires — same order the
+    // record's evidence shows the real session in (the "can't tell speakers
+    // apart" sentence and the structured fact it names arrive together).
+    // Gated on `this.attributeSpeakers` for the same reason the warning below
+    // is: with attribution off, diarize was never requested, so this branch
+    // must never run for a meeting session — OFF was already assigned in the
+    // constructor and must not be overwritten here.
+    if (this.attributeSpeakers) {
+      this._speakerAttribution = dg.diarizationActive
+        ? SPEAKER_ATTRIBUTION.ACTIVE
+        : SPEAKER_ATTRIBUTION.UNAVAILABLE;
+      this.onAttribution(this._speakerAttribution);
+    }
+
     // `this.attributeSpeakers &&` here (not just below `!dg.diarizationActive`)
     // is what keeps this a warning about a DEGRADATION rather than a
     // description of the option working as configured — with attribution
@@ -485,7 +563,9 @@ export class CopilotSession {
     // would trip this same warning on every single run. The wording below
     // names live pace and filler-word readings "for you" and describes
     // turns that "can't be attributed" — both meaningless when nobody asked
-    // for attribution in the first place.
+    // for attribution in the first place. AC-V2.1: this wording is UNCHANGED
+    // by this feature — it's what the user reads; the structured
+    // speakerAttribution() value above is new, this sentence is not.
     if (this.attributeSpeakers && !dg.diarizationActive) {
       // AC-M1.4.11: requesting diarization from a provider that can't do it
       // (ElevenLabs Scribe v2 Realtime, or a Deepgram request whose token
@@ -515,6 +595,24 @@ export class CopilotSession {
   speakerSnapshot() {
     if (!this._speakerIdentity) return { userTag: null, confidence: "unknown", overridden: false, tags: [] };
     return this._speakerIdentity.snapshot();
+  }
+
+  // AC-V2.1: the synchronous counterpart to onAttribution above — see that
+  // callback's own comment for why both surfaces exist. Mirrors
+  // speakerSnapshot()'s shape exactly: a plain getter over state this class
+  // already maintains, safe to call at any point in this session's life
+  // (before start(), a diarization-requesting in-person session simply reads
+  // as PENDING).
+  speakerAttribution() {
+    return this._speakerAttribution;
+  }
+
+  // AC-W1.3: the synchronous counterpart to onSttProvider above — see that
+  // callback's own comment for why both surfaces exist and why this fires
+  // for every source, not just in-person. `null` before any source's stream
+  // has resolved.
+  sttProvider() {
+    return this._sttProvider;
   }
 
   assignUser(tag) {

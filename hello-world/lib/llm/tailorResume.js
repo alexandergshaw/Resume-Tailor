@@ -247,7 +247,15 @@ export async function generateTailoredResumeDraft({
   const response = await client.models.generateContent({
     model: geminiModel,
     contents: prompt,
-    ...(jobPostingUrl ? { tools: [{ urlContext: {} }] } : {}),
+    // `tools` LIVES INSIDE `config`. DO NOT FLATTEN IT BACK OUT.
+    // `GenerateContentParameters` has exactly THREE properties — `model`,
+    // `contents`, `config` — and `tools` belongs to `GenerateContentConfig`.
+    // The SDK's parameter transformer reads only those three keys and DISCARDS
+    // everything else before building the request body, with no warning, so a
+    // top-level `tools` never reaches Google. The résumé was therefore tailored
+    // from the pasted posting text alone even when the user supplied a URL, and
+    // nothing anywhere said so. Pinned on the wire by tailorResume.wire.test.js.
+    ...(jobPostingUrl ? { config: { tools: [{ urlContext: {} }] } } : {}),
   });
 
   const output = response.text?.trim() || "";
@@ -404,8 +412,19 @@ export async function generateTailoredCoverLetterDraft({
     contents: prompt,
     // urlContext tool isn't compatible with response_mime_type, so only force
     // JSON when we are not also fetching a URL.
+    //
+    // `tools` LIVES INSIDE `config`. DO NOT FLATTEN IT BACK OUT.
+    // `GenerateContentParameters` has exactly THREE properties — `model`,
+    // `contents`, `config` — and `tools` belongs to `GenerateContentConfig`.
+    // The SDK's parameter transformer reads only those three keys and DISCARDS
+    // everything else, so the top-level form this branch used never reached
+    // Google. That left the URL branch sending NEITHER a tool NOR a JSON mime
+    // type — a third mode nobody designed, surviving only because
+    // parseStructuredResult is defensive about prose. Both directions are
+    // pinned on the wire by tailorResume.wire.test.js: URL -> tools and no
+    // JSON mime, no URL -> JSON mime and no tools.
     ...(jobPostingUrl
-      ? { tools: [{ urlContext: {} }] }
+      ? { config: { tools: [{ urlContext: {} }] } }
       : { config: { responseMimeType: "application/json" } }),
   });
 
@@ -542,8 +561,13 @@ export async function generateTailoredHiringEmailDraft({
   const response = await client.models.generateContent({
     model: geminiModel,
     contents: prompt,
+    // Same two-branch rule as the cover-letter call above, and for the same
+    // reason: `tools` LIVES INSIDE `config` (GenerateContentParameters has only
+    // `model`, `contents`, `config`, and the SDK discards anything else), while
+    // response_mime_type cannot be combined with urlContext. DO NOT FLATTEN
+    // EITHER BRANCH. Pinned on the wire by tailorResume.wire.test.js.
     ...(jobPostingUrl
-      ? { tools: [{ urlContext: {} }] }
+      ? { config: { tools: [{ urlContext: {} }] } }
       : { config: { responseMimeType: "application/json" } }),
   });
 

@@ -76,7 +76,13 @@ describe("fetchLlmSearchPostings — the search call itself", () => {
     await fetchLlmSearchPostings({ ...baseArgs, client, fetchUrl: okFetch() });
 
     const call = client.models.generateContent.mock.calls[0][0];
-    expect(call.tools).toEqual([{ googleSearch: {} }]);
+    // `config.tools`, NOT `call.tools`. This is an INJECTED FAKE client: it
+    // sees whatever object the module hands it and cannot observe the SDK
+    // layer that DISCARDS a top-level `tools`, so the comment above described
+    // a tool the request never carried. The second assertion stops that shape
+    // returning; llmSearch.wire.test.js proves it on the actual bytes.
+    expect(call.config?.tools).toEqual([{ googleSearch: {} }]);
+    expect(call.tools).toBeUndefined();
     expect(call.model).toBe("gemini-2.5-flash");
     expect(String(call.contents)).toContain("remote react jobs");
   });

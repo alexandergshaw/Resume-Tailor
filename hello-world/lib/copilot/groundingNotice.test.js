@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { submittedDocsClause, postingGroundingNotice, companyResearchDestination } from "./groundingNotice.js";
-import { KNOWLEDGE_BASE_CLAUSE } from "./practiceNotices.js";
+import {
+  submittedDocsClause,
+  postingGroundingNotice,
+  companyResearchDestination,
+  answerCompanyFactsNotice,
+} from "./groundingNotice.js";
+import { COMPANY_FACTS_CLAUSE, KNOWLEDGE_BASE_CLAUSE } from "./practiceNotices.js";
 
 // AC-X1. `submittedDocsClause` and the `postingGroundingNotice` ternary chain
 // MOVE here out of app/copilot/CopilotClient.js, which is at 975 lines and
@@ -47,6 +52,12 @@ const COMPANY_RESEARCH_ONLY =
 // mode, a room question and a live drafted answer are one payload, and
 // lib/copilot/practiceNotices.test.js already pins its bytes.
 const KB = KNOWLEDGE_BASE_CLAUSE;
+// P1: the company-facts transfer — the company name and job title to Google
+// Gemini with search enabled, plus this server's own fetch of the pages that
+// search returns, on every drafted answer. IMPORTED for the same reason KB is:
+// one payload, one description of it, shared with practice mode, and its bytes
+// are pinned by lib/copilot/knowledgeBaseDisclosure.test.js.
+const FACTS = COMPANY_FACTS_CLAUSE;
 // The sentence that discloses the live draft's own transfer — the question,
 // the recent transcript and the prep context — when the posting clause is
 // empty and nothing else would say so. Only reachable on the Gemini path.
@@ -165,12 +176,72 @@ describe("postingGroundingNotice — derived from current state (AC-H6.24)", () 
     // cue reaches this same non-embedded branch and always uses Gemini, so
     // this is no longer silent about that. `hasCompany: true` is required to
     // reach this branch at all — see the defect-1 guard test below.
+    //
+    // P1: this oracle is DELIBERATELY updated in the same change as the
+    // source, and the shape of the update is the fix. The cue sentence used
+    // to be the terminal branch of the documents ternary, which is why it was
+    // once the WHOLE notice here; it is now appended alongside, after the
+    // unconditional company-facts sentence, and the documents branch is
+    // simply empty in this state — so LIVE_DRAFT_DESTINATION supplies the
+    // question/transcript/prep-context disclosure that branch no longer
+    // carries. The cue clause's own bytes are unchanged, which is what this
+    // case was always for; what changed is that it no longer stands alone,
+    // because it is no longer the only company transfer live mode makes.
+    const expected = `${LIVE_DRAFT} ${FACTS}${COMPANY_RESEARCH_ONLY}${KB}`;
     expect(
       postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "done", resume: "", coverLetter: "", hasCompany: true }),
-    ).toBe(`${COMPANY_RESEARCH_ONLY}${KB}`);
-    expect(postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "done", hasCompany: true })).toBe(
-      `${COMPANY_RESEARCH_ONLY}${KB}`,
-    );
+    ).toBe(expected);
+    expect(postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "done", hasCompany: true })).toBe(expected);
+    // The cue sentence still says exactly what it said, byte for byte, and is
+    // still reached only with a company on file.
+    expect(
+      postingGroundingNotice({ posting, isEmbedded: false, docsStatus: "done", hasCompany: true }),
+    ).toContain(COMPANY_RESEARCH_ONLY);
+  });
+
+  // P1.5, pinned here as well as in knowledgeBaseDisclosure.test.js's sweep,
+  // because this file is where the ternary itself lives: the company clauses
+  // are appended ALONGSIDE the documents notice, so the documents dimension
+  // cannot decide whether either is stated. Attaching a résumé to the
+  // application does not stop the facts search from firing, and must not stop
+  // the disclosure from rendering.
+  it("states both company clauses whatever the documents load found", () => {
+    for (const args of [
+      { posting, isEmbedded: false, docsStatus: "loading", hasCompany: true },
+      { posting, isEmbedded: false, docsStatus: "done", resume: "R", coverLetter: "C", hasCompany: true },
+      { posting, isEmbedded: false, docsStatus: "done", resume: "R", hasCompany: true },
+      { posting, isEmbedded: false, docsStatus: "done", hasCompany: true },
+    ]) {
+      const notice = postingGroundingNotice(args);
+      expect(notice).toContain(FACTS);
+      expect(notice).toContain(COMPANY_RESEARCH_ONLY);
+      // And in that order: the transfer that always happens, then the one
+      // that happens only when asked for (P1.2).
+      expect(notice.indexOf(FACTS)).toBeLessThan(notice.indexOf(COMPANY_RESEARCH_ONLY));
+    }
+    // Neither, with no company on file — no request of either kind can fire.
+    const noCompany = postingGroundingNotice({
+      posting,
+      isEmbedded: false,
+      docsStatus: "done",
+      resume: "R",
+      hasCompany: false,
+    });
+    expect(noCompany).not.toContain(FACTS);
+    expect(noCompany).not.toContain(COMPANY_RESEARCH_ONLY);
+  });
+
+  it("makes neither company claim on the embedded engine, which runs no search", () => {
+    // `answerCompanyFactsNotice`'s own embedded guard, asserted through the
+    // notice that composes it: the route checks `wantsEmbedded` before
+    // `buildCompanyFacts` is ever constructed.
+    const notice = postingGroundingNotice({ posting, isEmbedded: true, docsStatus: "done", hasCompany: true });
+    expect(notice).toBe(EMBEDDED);
+    expect(answerCompanyFactsNotice({ isEmbedded: true, hasCompany: true })).toBe("");
+    expect(answerCompanyFactsNotice({ isEmbedded: false, hasCompany: false })).toBe("");
+    expect(answerCompanyFactsNotice({})).toBe("");
+    expect(answerCompanyFactsNotice()).toBe("");
+    expect(answerCompanyFactsNotice({ isEmbedded: false, hasCompany: true })).toBe(FACTS);
   });
 
   // Regression pass, defect 1: this branch shipped with NO `hasCompany`

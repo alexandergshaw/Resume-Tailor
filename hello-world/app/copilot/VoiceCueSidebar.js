@@ -6,7 +6,8 @@ import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import Typography from "@mui/material/Typography";
 import { VOICE_CUES } from "@/lib/copilot/voiceCues";
-import { companyResearchDestination } from "@/lib/copilot/groundingNotice";
+import { answerCompanyFactsNotice, companyResearchDestination } from "@/lib/copilot/groundingNotice";
+import { SPEAKER_ATTRIBUTION, cueAvailabilityNotice, cueRowNote } from "@/lib/copilot/cuePolicy";
 import { TOUCH_TARGET_SX, WRAP_ROW_SX, BREAK_LONG_WORDS_SX } from "./mobileSx";
 
 // T3 (AC-T3.1..T3.7, superseded by AC-group-T-amendment.md section I). Lists
@@ -114,8 +115,15 @@ function isPinCue(cue) {
 // companyResearchDestination (lib/copilot/groundingNotice.js), which is
 // where the honest, engine-by-engine reasoning and its literal-oracle tests
 // live. This component states no fact about the network on its own.
-function CueRow({ cue, pinned, onActivate, companyNotice }) {
+function CueRow({ cue, pinned, onActivate, companyNotice, availabilityRowNote }) {
   const titleId = useId();
+  // AC-V2.6.1 (accessibility audit): the id the row's degraded-state note
+  // renders under, so the note can be the BUTTON's accessible description
+  // rather than a paragraph that merely sits near it. See the
+  // aria-describedby on the <Button> below for the whole reasoning; minted
+  // unconditionally because hooks cannot be called conditionally, and only
+  // referenced when there is actually a note to point at.
+  const noteId = useId();
   const pressed = isPinCue(cue) ? pinned : undefined;
   const phrases = cue.phrases.slice(0, MAX_PHRASES);
   return (
@@ -130,6 +138,23 @@ function CueRow({ cue, pinned, onActivate, companyNotice }) {
             size="small"
             variant={pressed ? "contained" : "outlined"}
             aria-pressed={pressed}
+            // AC-V2.6.1 (accessibility audit, WCAG 1.3.1): the row note used
+            // to be a positional sibling <p> and nothing more — the row's own
+            // aria-labelledby points only at this button, so a user tabbing
+            // the rail heard "Release the question, button" with no
+            // indication that saying it does nothing this session. The state
+            // was on the page and not on the control.
+            //
+            // DESCRIPTION, never name. I4/WCAG 2.5.3 Label in Name is the
+            // reason there is no aria-label anywhere in this file: Voice
+            // Control and Dragon act on the accessible NAME, and this feature
+            // exists to be driven hands-free. aria-describedby is announced
+            // separately from the name and leaves it byte-identical, so both
+            // invariants hold — VoiceCueSidebar.test.js asserts each button's
+            // name still equals its own trimmed visible text, in this state
+            // too. `undefined` (not "", not null) when there is no note, so
+            // the attribute is absent rather than present-and-dangling.
+            aria-describedby={availabilityRowNote ? noteId : undefined}
             onClick={() => onActivate(cue.action)}
             sx={{
               textTransform: "none",
@@ -199,6 +224,22 @@ function CueRow({ cue, pinned, onActivate, companyNotice }) {
           {companyNotice}
         </Typography>
       ) : null}
+      {/* AC-V2.6: read straight off cuePolicy.js's cueRowNote — never
+          hand-written here — so this row can never claim a button-only
+          state resolveCueAction has stopped enforcing, or stay silent about
+          one it still enforces. "" (the common case) renders nothing. */}
+      {availabilityRowNote ? (
+        // AC-V2.6.1: carries `noteId` so it is the button's own accessible
+        // description (see the aria-describedby above), while staying exactly
+        // the visible sentence it already was — nothing here is hidden, and
+        // nothing about the state is carried by colour.
+        <Typography
+          id={noteId}
+          sx={{ fontSize: "0.72rem", color: "var(--text-secondary)", mt: 0.5, fontStyle: "italic", ...BREAK_LONG_WORDS_SX }}
+        >
+          {availabilityRowNote}
+        </Typography>
+      ) : null}
     </Box>
   );
 }
@@ -247,9 +288,55 @@ export default function VoiceCueSidebar({
   onActivate,
   isEmbedded = false,
   hasCompany = false,
+  // AC-V2.1/V2.6: defaults to the tab/system idle value, same default
+  // useLiveSession.js's own `speakerAttribution` state starts at — a caller
+  // that hasn't wired this prop through yet (an older mock, a test written
+  // before V2) renders exactly today's copy, with no degraded-state notice.
+  speakerAttribution = SPEAKER_ATTRIBUTION.NOT_APPLICABLE,
+  // AC-V2.8: the session's live speaker snapshot, handed to the policy beside
+  // the attribution flag and used for nothing else in this file. `null` — a
+  // caller that hasn't wired it through, and every mock written before V2.8 —
+  // is NO EVIDENCE, so the policy gives the conservative answer and this rail
+  // renders exactly what it rendered before. See cuePolicy.js's
+  // `effectiveAttribution`: the flag under-claims by design, and the tags are
+  // what tell a session that genuinely cannot separate voices apart from one
+  // whose token route merely blipped. Passing it is what stops this rail
+  // saying "button only this session" about cues the policy now permits.
+  speakerSnapshot = null,
 }) {
   const headingId = useId();
   const companyNotice = companyResearchDestination({ isEmbedded, hasCompany });
+  // P1.7. A DIFFERENT transfer from the cue's, and the reason it is disclosed
+  // on this rail rather than only where the cue's is: the company-facts search
+  // fires on every drafted answer, mid-session, with nothing said and nothing
+  // clicked. `postingGroundingNotice` — the notice that carries the same
+  // sentence in live mode — renders inside SessionSetup's `<Collapse>`, which
+  // `start()` itself collapses, so for the entire live window it is out of the
+  // DOM while the transfer keeps firing. This rail is on screen for that whole
+  // window, which is exactly the argument BL-2 already made for putting
+  // `companyNotice` in both branches, so this sits beside it in both.
+  //
+  // Derived, not written here: like every other network claim in this file it
+  // comes from lib/copilot/groundingNotice.js, so practice mode, live mode's
+  // notice and this rail cannot drift into three descriptions of one payload.
+  const companyFactsNotice = answerCompanyFactsNotice({ isEmbedded, hasCompany });
+  // AC-V2.6: both read straight off lib/copilot/cuePolicy.js, never
+  // hand-written here — see that module's own header for why: this
+  // component's whole reason for taking `speakerAttribution` as a prop is so
+  // its sentence can never drift from what resolveCueAction actually
+  // enforces in useLiveSession.js/useCueActions.js.
+  //
+  // AC-V2.6.2: `collapsed` is handed to the policy rather than used to pick
+  // between two sentences written here. The notice's closing clause is an
+  // INSTRUCTION ("…from their buttons below"), and it is false in the
+  // collapsed rail, whose only button is the expand toggle above it — the
+  // same trap MIC_NOTE_SHORT below already documents having fallen into. The
+  // component still states no fact of its own; it just tells the policy which
+  // rail the user is looking at.
+  const availabilityNotice = cueAvailabilityNotice(speakerAttribution, {
+    collapsed,
+    snapshot: speakerSnapshot,
+  });
 
   return (
     // AC-T3.1's own landmark: role="region" with aria-labelledby pointing at
@@ -284,12 +371,39 @@ export default function VoiceCueSidebar({
               {companyNotice}
             </Typography>
           ) : null}
+          {/* P1.7: the automatic transfer, disclosed in the collapsed rail —
+              the state a live session is actually in, and the state the
+              transfer actually fires in. --text-secondary is the 6.67:1 token
+              R-228 settled for small text; the sentence carries its whole
+              meaning as text, with nothing said by colour. */}
+          {companyFactsNotice ? (
+            <Typography sx={{ fontSize: "0.7rem", color: "var(--text-secondary)", mt: 0.5, ...BREAK_LONG_WORDS_SX }}>
+              {companyFactsNotice}
+            </Typography>
+          ) : null}
+          {/* AC-V2.6: must render here too, not only expanded — collapsed is
+              the state a LIVE session is actually in, the only state a
+              spoken cue can fire in at all (same reasoning as companyNotice
+              and MIC_NOTE_SHORT just above, BL-2). */}
+          {availabilityNotice ? (
+            <Typography sx={{ fontSize: "0.7rem", color: "var(--text-secondary)", mt: 0.5, fontStyle: "italic", ...BREAK_LONG_WORDS_SX }}>
+              {availabilityNotice}
+            </Typography>
+          ) : null}
           <Typography sx={{ fontSize: "0.7rem", color: "var(--text-secondary)", mt: 0.5, ...BREAK_LONG_WORDS_SX }}>
             {MIC_NOTE_SHORT}
           </Typography>
         </>
       ) : (
         <>
+          {/* AC-V2.6: the expanded rail's own copy of the same sentence —
+              read off the same module as the collapsed one above and each
+              row's own note below, so all three can never disagree. */}
+          {availabilityNotice ? (
+            <Typography sx={{ fontSize: "0.78rem", color: "var(--text-secondary)", mt: 0.5, fontStyle: "italic", ...BREAK_LONG_WORDS_SX }}>
+              {availabilityNotice}
+            </Typography>
+          ) : null}
           {/* SF-1 (adversarial review): role="list" restated here too, not
               just on the inner phrase lists — this outer row list is a
               list-style:none <ul> exactly as much as the phrase lists are,
@@ -297,13 +411,32 @@ export default function VoiceCueSidebar({
               (I7) applies to it identically. */}
           <Box component="ul" role="list" sx={{ m: 0, mt: 0.5, p: 0, listStyle: "none" }}>
             {VOICE_CUES.map((cue) => (
-              <CueRow key={cue.id} cue={cue} pinned={pinned} onActivate={onActivate} companyNotice={companyNotice} />
+              <CueRow
+                key={cue.id}
+                cue={cue}
+                pinned={pinned}
+                onActivate={onActivate}
+                companyNotice={companyNotice}
+                availabilityRowNote={cueRowNote(cue.action, speakerAttribution, {
+                  snapshot: speakerSnapshot,
+                })}
+              />
             ))}
           </Box>
           {/* Foot-of-rail note, once — not repeated per cue (AC-T3.7). */}
           <Typography sx={{ fontSize: "0.7rem", color: "var(--text-secondary)", mt: 1, ...BREAK_LONG_WORDS_SX }}>
             {MIC_NOTE_FULL}
           </Typography>
+          {/* P1.7: and the same sentence at the foot of the EXPANDED rail, so
+              expanding the cues mid-session never removes a disclosure that
+              was on screen a moment earlier. Once, at the foot — it is a fact
+              about drafting an answer, not about any one cue, so it is not a
+              row note. */}
+          {companyFactsNotice ? (
+            <Typography sx={{ fontSize: "0.7rem", color: "var(--text-secondary)", mt: 1, ...BREAK_LONG_WORDS_SX }}>
+              {companyFactsNotice}
+            </Typography>
+          ) : null}
         </>
       )}
     </Box>

@@ -10,6 +10,16 @@ import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { createClient } from "@/lib/supabase/server";
 import { draftSampleAnswerLocal } from "@/lib/copilot/sampleAnswerLocal";
 import { normalizeInterviewType } from "@/lib/copilot/interviewTypes";
+// AC-V5.2: the route now caches its Supabase fan-out per (userId,
+// applicationId) for the life of a server instance (lib/copilot/
+// answerSessionCache.js). Cleared before every test below because this file
+// reuses the SAME synthetic user id ("user-1") and application id ("app-1")
+// across many independent `it()` blocks, each with its own, DIFFERENT
+// mocked Supabase content — a real product behaviour (this cache is correct
+// to serve a second question of one interview from the first question's
+// fetch) that would otherwise leak between unrelated test cases and serve
+// one test's mocked résumé/pages to the next.
+import { answerContextCache } from "@/lib/copilot/answerSessionCache";
 
 function jsonRequest(body) {
   return { json: async () => body };
@@ -105,6 +115,7 @@ const COVER_LETTER_DOC =
 
 beforeEach(() => {
   vi.clearAllMocks();
+  answerContextCache.clear();
 });
 
 describe("POST /api/copilot/answer (embedded engine)", () => {
@@ -475,220 +486,10 @@ describe("POST /api/copilot/answer (points mode grounding, AC-H4)", () => {
   });
 });
 
-// AC-K1: the three reading aids that sit beside a drafted answer. The load-
-// bearing case in here is the LAST one: the posting description became an
-// input to this route for the first time, and it must reach the buzzword
-// list and nothing else.
-describe("POST /api/copilot/answer (reading aids, AC-K1)", () => {
-  const POSTING_DESC = [
-    "Senior Platform Engineer",
-    "Requirements:",
-    "- Deep experience with Kubernetes and Terraform",
-    "- 5+ years of Python",
-  ].join("\n");
-
-  // The same fake row shape mockUserWithApplicationDocs already resolves for
-  // the `applications` table, plus the joined position fetchPostingDescription
-  // reads. One row serves both lookups, exactly as the real query does.
-  const APPLICATION_WITH_POSTING = {
-    id: "app-1",
-    resume_used_id: "resume-1",
-    cover_letter_id: "cl-1",
-    positions: { description: POSTING_DESC },
-  };
-
-  it("uses the model's own cues when it returns one per point", async () => {
-    mockUser();
-    mockGemini({
-      points: ["Situation: I led the checkout redesign.", "Result: We cut cart abandonment by 18%."],
-      cues: ["Situation: Checkout redesign", "Result: Cart abandonment down 18%"],
-      type: "behavioral",
-    });
-    const res = await POST(
-      jsonRequest({ question: "Tell me about a project you led.", mode: "answer", engine: "gemini" }),
-    );
-    const data = await res.json();
-    expect(data.cues).toEqual(["Situation: Checkout redesign", "Result: Cart abandonment down 18%"]);
-    // The full sentences are untouched — the cues are an ADDITION, not a
-    // replacement, which is what keeps the derived `answer` speakable.
-    expect(data.points).toEqual([
-      "Situation: I led the checkout redesign.",
-      "Result: We cut cart abandonment by 18%.",
-    ]);
-  });
-
-  it("falls back to derived cues when the model returns a mismatched number of them", async () => {
-    mockUser();
-    mockGemini({
-      points: ["Situation: I led the checkout redesign.", "Result: We cut cart abandonment by 18%."],
-      cues: ["Only one cue"],
-      type: "behavioral",
-    });
-    const res = await POST(
-      jsonRequest({ question: "Tell me about a project you led.", mode: "answer", engine: "gemini" }),
-    );
-    const data = await res.json();
-    expect(data.cues).toEqual(["Situation: Led the checkout redesign", "Result: Cut cart abandonment by 18%"]);
-  });
-
-  it("names the role and project out of the SUBMITTED résumé, not the prep profile", async () => {
-    mockUserWithApplicationDocs({
-      application: APPLICATION_WITH_POSTING,
-      resumeContent: RESUME_DOC,
-      coverLetterContent: COVER_LETTER_DOC,
-    });
-    const res = await POST(
-      jsonRequest({
-        question: "Tell me about the checkout work you led.",
-        profile: PROFILE,
-        mode: "answer",
-        engine: "embedded",
-        applicationId: "app-1",
-      }),
-    );
-    const data = await res.json();
-    // PROFILE names Acme Corp; RESUME_DOC names Quantum Robotics. The résumé
-    // wins because it is what the candidate actually submitted here.
-    expect(data.resumeAnchor.company).toBe("Quantum Robotics");
-    expect(data.resumeAnchor.project).toContain("checkout redesign");
-  });
-
-  // AC-K1.2 correction: postingBuzzwords used to return the SAME terms for
-  // every question against a given posting — the only per-question signal
-  // was an almost-never-firing substring test, so three unrelated questions
-  // came back with one byte-identical six-term list. It now requires the
-  // term to actually be relevant to the question/draft (taxonomy-canonical
-  // intersection, or full word overlap), so the question below has to
-  // genuinely be about the posting's own vocabulary — a real candidate could
-  // easily be asked this against a posting requiring Kubernetes/Terraform —
-  // rather than a generic question the old, unfiltered list would have
-  // padded out regardless of topic.
-  it("mines buzzwords from the selected posting WITHOUT the description reaching either prompt", async () => {
-    mockUserWithApplicationDocs({
-      application: APPLICATION_WITH_POSTING,
-      resumeContent: RESUME_DOC,
-    });
-    mockGemini({ points: ["Point one.", "Point two."], type: "general" });
-    const res = await POST(
-      jsonRequest({
-        question: "How would you use Kubernetes and Terraform to manage this team's infrastructure?",
-        mode: "answer",
-        engine: "gemini",
-        applicationId: "app-1",
-      }),
-    );
-    const data = await res.json();
-    expect(data.buzzwords).toContain("Kubernetes");
-    expect(data.buzzwords).toContain("Terraform");
-
-    // idealProject present in answer mode too, mined from the SAME posting
-    // description. `shape` is still grounded — every term literally occurs
-    // in the posting. `metrics` is NOT: mining the posting's own numbers into
-    // metrics is exactly the bug this module now permanently forbids (see
-    // idealProject.js's header comment on the reported "Metrics to have
-    // ready: $78,496, $105,974..." failure — the posting's SALARY BAND,
-    // rendered back as if it were a project metric). What used to be
-    // `metrics).toContain("5+ years")` pinned the old, now-impossible
-    // behaviour; the contract worth pinning now is that NO metric ever
-    // carries a digit, and none of the posting's own stated figures
-    // (including its "5+ years" experience floor) ever resurface as one.
-    expect(data.idealProject).not.toBeNull();
-    for (const metric of data.idealProject.metrics) {
-      expect(metric).not.toMatch(/\d/);
-    }
-    expect(data.idealProject.metrics.join(" | ")).not.toContain("5+ years");
-    for (const term of data.idealProject.shape.split(", ")) {
-      expect(POSTING_DESC.toLowerCase()).toContain(term.toLowerCase());
-    }
-    // `summary` is the new advisory sentence alongside shape/metrics — always
-    // third person, never first, so a candidate under interview pressure
-    // reading it next to a real quote from their own résumé cannot mistake
-    // it for something to claim (R-087, idealProject.js header comment).
-    expect(data.idealProject.summary).toMatch(/^They want a project built around/);
-    for (const term of data.idealProject.shape.split(", ")) {
-      expect(data.idealProject.summary).toContain(term);
-    }
-
-    // AC-H7.27 is unchanged: the description grounds NOTHING. It is fetched
-    // through its own call and handed only to the buzzword/idealProject
-    // miners, so no wording from it can leak into the answer the model
-    // writes.
-    const client = getGeminiClient();
-    const promptText = client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
-    expect(promptText).not.toContain("Senior Platform Engineer");
-    expect(promptText).not.toContain("Deep experience with Kubernetes");
-  });
-
-  // AC-K1.2 headline case: the user-reported bug itself. A posting WITH a
-  // description, but a question that shares none of the posting's
-  // vocabulary, must come back with buzzwords: [] — not the old fixed list
-  // padded out regardless of relevance. The other aids are independent of
-  // buzzwords being empty: idealProject only RANKS on question relevance (it
-  // never filters shapeTerms out for being off-topic — see idealProject.js),
-  // and resumeAnchor reads the candidate's own résumé, not the posting, so
-  // neither degrades just because this question has nothing to do with
-  // Kubernetes/Terraform/Python.
-  it("returns buzzwords: [] for a posting with a description when the question shares none of its vocabulary", async () => {
-    mockUserWithApplicationDocs({
-      application: APPLICATION_WITH_POSTING,
-      resumeContent: RESUME_DOC,
-    });
-    mockGemini({ points: ["Point one.", "Point two."], type: "general" });
-    const res = await POST(
-      jsonRequest({
-        question: "How do you handle conflict with a difficult coworker?",
-        mode: "answer",
-        engine: "gemini",
-        applicationId: "app-1",
-      }),
-    );
-    const data = await res.json();
-    expect(data.buzzwords).toEqual([]);
-    expect(data.idealProject).not.toBeNull();
-    expect(data.resumeAnchor).not.toBeNull();
-    expect(data.points.length).toBeGreaterThan(0);
-  });
-
-  // Same relevance-gated buzzwords as the answer-mode case above — the
-  // question has to actually be about the posting's own vocabulary
-  // (Python/Kubernetes, both stated in POSTING_DESC) for `buzzwords` to come
-  // back non-empty, rather than any generic "tell me about yourself" opener.
-  it("keeps the posting description out of the points-mode prompt too", async () => {
-    mockUserWithApplicationDocs({
-      application: APPLICATION_WITH_POSTING,
-      resumeContent: RESUME_DOC,
-    });
-    mockGemini({ points: ["Point one."], type: "general" });
-    const res = await POST(
-      jsonRequest({
-        question: "Tell me about your Python and Kubernetes background.",
-        engine: "gemini",
-        applicationId: "app-1",
-      }),
-    );
-    const data = await res.json();
-    expect(data.buzzwords.length).toBeGreaterThan(0);
-    // idealProject present in points mode too — the same aid, the same
-    // posting-description-only input, on the mode that has no `answer` field
-    // at all.
-    expect(data.idealProject).not.toBeNull();
-
-    const client = getGeminiClient();
-    const promptText = client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
-    expect(promptText).not.toContain("Deep experience with Kubernetes");
-  });
-
-  it("degrades every aid to absent — never to an empty section — when there is nothing to build one from", async () => {
-    mockUser();
-    mockGemini({ points: ["A generic point."], type: "general" });
-    const res = await POST(jsonRequest({ question: "Tell me about yourself.", engine: "gemini" }));
-    const data = await res.json();
-    expect(data.buzzwords).toEqual([]);
-    expect(data.resumeAnchor).toBeNull();
-    expect(data.idealProject).toBeNull();
-    expect(data.cues).toEqual(["A generic point"]);
-  });
-});
+// AC-K1's "reading aids" cases (cues/buzzwords/resumeAnchor/idealProject)
+// moved to route.companyFacts.test.js — this file was over the 1000-line
+// cap and that band needed nothing beyond the fixtures already shared with
+// the AC-V4 cases also living there. See that file's own header.
 
 // The caller's own "Professional Experience" project pages
 // (lib/copilot/projectStories.js) as material for "tell me about a time..."
@@ -971,3 +772,10 @@ describe("POST /api/copilot/answer (profileMetric team-size fix)", () => {
     expect(resultPoint).not.toMatch(/6 engineers/i);
   });
 });
+
+// AC-V4's "verified company facts" cases (companyFacts, factIds,
+// factSources, companyDirected, fetchUrlContent, positions.company) moved
+// to route.companyFacts.test.js — this file was over the 1000-line cap and
+// AC-V4 was the newest, most self-contained band, with its own dedicated
+// fetchUrlContent mock. See that file's own header for what else moved
+// alongside it and why.

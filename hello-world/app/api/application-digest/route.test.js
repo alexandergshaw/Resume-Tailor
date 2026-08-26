@@ -161,7 +161,14 @@ describe("POST /api/application-digest", () => {
     expect(res.status).toBe(200);
     expect(generate).toHaveBeenCalledTimes(1);
     const call = generate.mock.calls[0][0];
-    expect(call.tools).toEqual([{ googleSearch: {} }]);
+    // `config.tools`, NOT `call.tools`. This assertion is made against an
+    // INJECTED FAKE client, which sees whatever object the route hands it and
+    // cannot observe the SDK layer that DISCARDS a top-level `tools` — so it
+    // was green for months against a request that never carried the key. The
+    // second line is what stops the old shape ever coming back green here;
+    // route.wire.test.js proves it on the actual bytes.
+    expect(call.config?.tools).toEqual([{ googleSearch: {} }]);
+    expect(call.tools).toBeUndefined();
     expect(String(call.contents)).toContain("Acme Robotics");
     expect(upsertDigest).toHaveBeenCalledTimes(1);
     const stored = upsertDigest.mock.calls[0][3];

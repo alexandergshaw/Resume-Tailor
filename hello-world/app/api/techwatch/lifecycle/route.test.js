@@ -150,7 +150,14 @@ describe("POST /api/techwatch/lifecycle", () => {
     await POST(request({ technologies: TECHNOLOGIES }));
     expect(generate).toHaveBeenCalledTimes(1);
     const call = generate.mock.calls[0][0];
-    expect(call.tools).toEqual([{ googleSearch: {} }]);
+    // `config.tools`, NOT `call.tools`. This is an INJECTED FAKE client: it
+    // sees whatever object the route hands it and cannot observe the SDK layer
+    // that DISCARDS a top-level `tools`, so this line was green against a
+    // request that never carried the key — the panel really was answering from
+    // model memory. The second assertion stops that shape returning;
+    // route.wire.test.js proves it on the actual bytes.
+    expect(call.config?.tools).toEqual([{ googleSearch: {} }]);
+    expect(call.tools).toBeUndefined();
     expect(String(call.contents)).toContain("TypeScript");
   });
 

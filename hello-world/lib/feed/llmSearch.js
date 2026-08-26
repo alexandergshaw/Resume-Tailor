@@ -91,7 +91,17 @@ export async function fetchLlmSearchPostings({
     response = await client.models.generateContent({
       model,
       contents: buildPrompt(query),
-      tools: [{ googleSearch: {} }],
+      // `tools` LIVES INSIDE `config`. DO NOT FLATTEN IT BACK OUT.
+      // `GenerateContentParameters` has exactly THREE properties — `model`,
+      // `contents`, `config` — and `tools` belongs to `GenerateContentConfig`.
+      // The SDK's parameter transformer reads only those three keys and
+      // DISCARDS everything else before building the request body, with no
+      // warning, so a top-level `tools` never reaches Google. That breaks this
+      // module's governing rule directly: no search -> no groundingMetadata ->
+      // isGroundedHost is false for every candidate -> zero postings per
+      // query, on every scheduled run, paying for a grounded call each time.
+      // Pinned on the wire by llmSearch.wire.test.js.
+      config: { tools: [{ googleSearch: {} }] },
     });
   } catch (err) {
     // A model failure must never throw — one bad query can't be allowed to

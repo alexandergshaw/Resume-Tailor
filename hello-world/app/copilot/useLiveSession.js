@@ -12,6 +12,8 @@ import { useSessionLogRecorder } from "./useSessionLogRecorder";
 import { useDraftAnswer } from "./useDraftAnswer";
 import { useVoiceCues } from "./useVoiceCues";
 import { useQuestionPin } from "./useQuestionPin";
+import { SPEAKER_ATTRIBUTION } from "@/lib/copilot/cuePolicy";
+import { useCueActions } from "./useCueActions";
 
 const CONTEXT_TURNS = 12;
 
@@ -84,6 +86,17 @@ function resolveTranscriptLabel(row, snapshot) {
 // runDraft's own comment). `start` below bumps it too, so a draft still
 // resolving from a session the user has already left behind can't land in
 // the new one either.
+
+// AC-V5.6: the "back to idle" reset the three session-lifecycle sites share
+// (start, stop, clear), returning the PREVIOUS object when it is already the
+// idle pair. React bails out only on `Object.is`, so the literal
+// `{them:"",you:""}` these sites used is never equal to anything and a reset
+// that reset nothing still re-rendered the whole tree — and at all three the
+// pair is usually already empty, cleared by the session's last final.
+function clearedInterims(prev) {
+  return prev.them === "" && prev.you === "" ? prev : { them: "", you: "" };
+}
+
 export function useLiveSession({
   answerCacheRef,
   draftGenRef,
@@ -105,6 +118,8 @@ export function useLiveSession({
   const [warning, setWarning] = useState("");
   const [error, setError] = useState("");
   const [finals, setFinals] = useState([]); // { id, speaker, text, at, speakerTag }
+  // AC-V5.6: reset through `clearedInterims` (module scope, above), never a
+  // fresh `{them:"",you:""}` literal — see that function's comment.
   const [interims, setInterims] = useState({ them: "", you: "" });
   const [startedAt, setStartedAt] = useState(null);
   // D2: the moment THIS session started connecting — set in `start()`,
@@ -122,6 +137,16 @@ export function useLiveSession({
   // callback in the first place (session.js's constructor never builds a
   // `_speakerIdentity` instance for those sources).
   const [speakerSnapshot, setSpeakerSnapshot] = useState(DEFAULT_SPEAKER_SNAPSHOT);
+  // AC-V2.1/V2.6: the five-value attribution axis (lib/copilot/cuePolicy.js),
+  // mirrored by a ref below for the same reason speakerSnapshotRef exists —
+  // this state is what VoiceCueSidebar reads to render (V2.6, a render-time
+  // read), the ref is what the STABLE onTranscript closure below reads
+  // synchronously (this project's react-hooks/refs rule forbids reading a
+  // ref's `.current` during render, so the two can never be collapsed into
+  // one). Starts at NOT_APPLICABLE — the same default a tab/system session
+  // keeps for its entire life — and is set to the source-correct starting
+  // value at the top of `start()` below, before a session even exists.
+  const [speakerAttribution, setSpeakerAttribution] = useState(SPEAKER_ATTRIBUTION.NOT_APPLICABLE);
 
   const sessionRef = useRef(null);
   const idRef = useRef(0);
@@ -138,6 +163,9 @@ export function useLiveSession({
   // LATEST identity snapshot, not whichever one was current when the
   // callback identity was created.
   const speakerSnapshotRef = useRef(DEFAULT_SPEAKER_SNAPSHOT);
+  // AC-V2.1: mirrors `speakerAttribution` above for evaluateVoiceCue's
+  // closure, the same pairing speakerSnapshotRef keeps with speakerSnapshot.
+  const speakerAttributionRef = useRef(SPEAKER_ATTRIBUTION.NOT_APPLICABLE);
 
   useEffect(() => {
     questionsRef.current = questions;
@@ -148,6 +176,9 @@ export function useLiveSession({
   useEffect(() => {
     speakerSnapshotRef.current = speakerSnapshot;
   }, [speakerSnapshot]);
+  useEffect(() => {
+    speakerAttributionRef.current = speakerAttribution;
+  }, [speakerAttribution]);
 
   // AC-T1.16..T1.18: pin/hold state (useQuestionPin.js, split for the line
   // cap); reuses the ticking `now` clock so an expiry can fire with no click.
@@ -157,22 +188,25 @@ export function useLiveSession({
   const onCompanyCueRef = useRef(onCompanyCue);
   useEffect(() => { onCompanyCueRef.current = onCompanyCue; }, [onCompanyCue]);
   const evaluateVoiceCue = useVoiceCues(source); // AC-T1.13: see useVoiceCues.js.
-  // AC-T1.18/I10: `{ text, nonce }` (SpeakerBar's barAnnouncement has the
-  // same Object.is trap); set only from handleVoiceCue, never a click.
-  const [cueAnnouncement, setCueAnnouncement] = useState({ text: "", nonce: 0 });
-  const cueAnnouncementNonceRef = useRef(0);
-  const announceCue = useCallback((text) => {
-    cueAnnouncementNonceRef.current += 1;
-    setCueAnnouncement({ text, nonce: cueAnnouncementNonceRef.current });
-  }, []);
 
   // AC-Q6/AC-Q6.9/D9: the session-log wiring surface — see
   // useSessionLogRecorder.js. `speakerSnapshotRef` is threaded through so
   // downloadLog can hand the CURRENT identity snapshot to the archive
   // builder — see that hook's own doc for why the renderer needs it as an
   // argument rather than recovering it from the log's own events.
-  const { startLog, logEvent, sessionLogSnapshot, downloadLog, hasEvents: sessionLogHasEvents } =
+  const { startLog, logEvent, logProvider, sessionLogSnapshot, downloadLog, hasEvents: sessionLogHasEvents } =
     useSessionLogRecorder(source, speakerSnapshotRef);
+
+  // AC-T1.13/T1.16.1/T1.17/T1.18/AC-V2: the "act" half of useVoiceCues.js's
+  // "decide vs act" split — see useCueActions.js's own doc for why this is a
+  // separate hook rather than inline code here (the 1000-line cap).
+  const { handleVoiceCue, cueAnnouncement, resetCueAnnouncement } = useCueActions({
+    pin,
+    pinnedIdRef,
+    onCompanyCueRef,
+    logEvent,
+    speakerAttributionRef,
+  });
 
   const live = status === "live" || status === "connecting";
 
@@ -231,7 +265,7 @@ export function useLiveSession({
       await sessionRef.current.stop();
       sessionRef.current = null;
     }
-    setInterims({ them: "", you: "" });
+    setInterims(clearedInterims);
     setStatus("idle");
     // BUG-2: back to the untouched default the instant a session ends — a
     // stale snapshot left in place (tags still populated, a resolved
@@ -568,35 +602,9 @@ export function useLiveSession({
   // belt-and-braces, not load-bearing — kept explicit so this reads
   // correctly on its own rather than depending on that coupling.)
   const identityUnsettled = speakerSnapshot.confidence !== "high" && !speakerSnapshot.overridden;
-  // AC-T1.13/T1.16.1/T1.17/T1.18: the "act" half of useVoiceCues.js's "decide vs act" split.
-  const handleVoiceCue = useCallback(
-    (match, utterance) => {
-      // AC-T1.13.1: see useVoiceCues.js.
-      if (match.blocked === "identity") return logEvent("cue.ignored", { reason: "speaker identity has not settled yet" });
-      logEvent("cue.matched", { id: match.id, action: match.action, utterance });
-      if (match.ambiguous) {
-        logEvent("cue.ignored", { reason: "ambiguous" }); // AC-T1.2.1: two intents = narrative, not intent.
-        return;
-      }
-      if (match.action === "pin") {
-        const id = pin.pinCurrentQuestion(); // AC-T1.16.1: re-pins FORWARD when already held.
-        if (id === null) logEvent("cue.ignored", { reason: "no question detected yet to hold" });
-        else {
-          logEvent("question.pinned", { id });
-          announceCue("Question held on screen.");
-        }
-      } else if (match.action === "unpin" && pinnedIdRef.current !== null) {
-        pin.unpinQuestion();
-        logEvent("question.unpinned", {});
-        announceCue("Question released.");
-      } else if (match.action === "company") {
-        // AC-T1.18: opening the panel is CopilotClient's state — trust its report.
-        const handled = typeof onCompanyCueRef.current === "function" && onCompanyCueRef.current();
-        if (!handled) logEvent("cue.ignored", { action: "company", reason: "company brief unavailable" });
-      }
-    },
-    [logEvent, pin, announceCue],
-  );
+  // AC-T1.13/T1.16.1/T1.17/T1.18/AC-V2: `handleVoiceCue` (the "act" half of
+  // useVoiceCues.js's "decide vs act" split) now lives in useCueActions.js —
+  // see that hook's own doc — and is already in scope from the call above.
 
   const start = useCallback(async () => {
     // AC-Q6.1/Q6.6: a fresh log the instant Start is pressed, before any
@@ -607,7 +615,7 @@ export function useLiveSession({
     setError("");
     setWarning("");
     setFinals([]);
-    setInterims({ them: "", you: "" });
+    setInterims(clearedInterims);
     setQuestions([]);
     setStartedAt(null);
     // AC-S3/D2: a fresh session's own clock — without this, `now` could
@@ -623,8 +631,19 @@ export function useLiveSession({
     setNow(sessionStartTs);
     setLiveSince(sessionStartTs);
     setSpeakerSnapshot(DEFAULT_SPEAKER_SNAPSHOT);
+    // AC-V2.1: this session's starting attribution value, known before the
+    // session object even exists — "inperson" starts PENDING (nothing is
+    // known about diarization until the socket reports back, see
+    // session.js's own onAttribution comment); every other source has no
+    // socket-dependent fact to wait on at all and goes straight to
+    // NOT_APPLICABLE, which is also this state's idle default. Setting this
+    // here (not only relying on CopilotSession's constructor default) is
+    // what gives tab/system and the meeting path a correct value with NO
+    // callback ever firing for them — see session.js's onAttribution, which
+    // only ever fires on the in-person path.
+    setSpeakerAttribution(source === "inperson" ? SPEAKER_ATTRIBUTION.PENDING : SPEAKER_ATTRIBUTION.NOT_APPLICABLE);
     pin.unpinQuestion(); // AC-T1.17: a hold must not survive into the next session.
-    setCueAnnouncement({ text: "", nonce: 0 });
+    resetCueAnnouncement();
     recentRef.current = [];
     pendingRef.current = [];
     lastQNormRef.current = "";
@@ -670,6 +689,22 @@ export function useLiveSession({
           // was actually shown rides along verbatim.
           logEvent("session.warning", { message: err?.message || "" });
         },
+        // AC-V2.1: fired only on the in-person attribution path (session.js's
+        // own onAttribution comment) — once, the instant diarization's fate
+        // is known. Never fires for tab/system or the meeting path, which
+        // both already got their correct value from the setSpeakerAttribution
+        // call above, before this session was even constructed.
+        onAttribution: (a) => setSpeakerAttribution(a),
+        // AC-W1.3: fired for every source that opens an STT stream — unlike
+        // onAttribution above, not only in-person — the instant
+        // createSttStream (stt/index.js) resolves and its `providerName` is
+        // known. Routed straight to the session log via logProvider
+        // (useSessionLogRecorder.js) rather than into React state: nothing
+        // in the UI renders this today, only the downloaded log does, and
+        // that log already reads live off sessionLogSnapshot() on demand
+        // (see logProvider's own comment for why it targets the CURRENT
+        // log rather than needing a re-render to reach it).
+        onSttProvider: (name) => logProvider(name),
         // AC-M1.4.9/10: fired only for the "inperson" source, once per
         // utterance CopilotSession itself assembles — see handleUtterance
         // above for why this, not `speaker === "them"`, is what drives
@@ -721,13 +756,17 @@ export function useLiveSession({
           speakerTag,
         }) => {
           if (!isFinal) {
-            setInterims((prev) => ({ ...prev, [speaker]: transcript }));
+            // AC-V5.6: `prev` UNCHANGED when this speaker's interim already
+            // reads exactly this. React bails out only on `Object.is`, so the
+            // unconditional spread this replaces re-rendered the whole tree
+            // several times a second for an unchanged interim — and providers
+            // re-send one on every mid-sentence pause.
+            setInterims((prev) => (prev[speaker] === transcript ? prev : { ...prev, [speaker]: transcript }));
             return;
           }
-          // AC-Q6.2/Q6.11: every finalized frame, including a provider's raw
-          // re-delivery of the same span (R-127 below) — a diagnostic log's
-          // job is to show what the pipeline actually received, not only
-          // the de-duplicated text on screen.
+          // AC-Q6.2/Q6.11: every finalized frame, including a provider's
+          // re-delivery of text already sent (R-127 below) — a diagnostic log
+          // shows what the pipeline received, not what survived de-duplication.
           logEvent("transcript", {
             text: transcript,
             speaker,
@@ -737,38 +776,50 @@ export function useLiveSession({
             start: spanStart,
             duration,
           });
-          setInterims((prev) => ({ ...prev, [speaker]: "" }));
+          // AC-V5.6, the same bailout and the higher-value half of it: the
+          // interim is almost always already cleared by the provider's own
+          // last empty one, so this re-rendered on EVERY final for nothing.
+          setInterims((prev) => (prev[speaker] === "" ? prev : { ...prev, [speaker]: "" }));
 
-          // AC-T1.13: snapshot read synchronously, as handleUtterance does above.
+          // AC-T1.13/AC-V2.1: snapshot read synchronously, as handleUtterance
+          // does above. `speakerAttributionRef.current` rides alongside it —
+          // this closure is stable (created once in start(), see this
+          // callback's own deps) so it must read the ref, not the
+          // `speakerAttribution` state variable, to see the CURRENT value
+          // rather than whatever was current when start() was called.
           const cueMatch = evaluateVoiceCue(
             { isFinal, textAlreadyDelivered, speaker, transcript },
             sessionRef.current?.speakerSnapshot() || DEFAULT_SPEAKER_SNAPSHOT,
+            speakerAttributionRef.current,
           );
           if (cueMatch) handleVoiceCue(cueMatch, transcript);
 
-          // R-127: textAlreadyDelivered re-delivers the text of the final
-          // that already went into appendFinal/recordSpeechSample/pendingRef
-          // for this same span (see lib/copilot/stt/index.js's onTranscript
-          // contract) — skip the TEXT accumulation below, but `speechFinal`
-          // is still honoured unconditionally further down: it is this
-          // frame's own end-of-turn signal regardless of whether its text
-          // was new.
+          // AC-I2.10/11 + AC-V1.8: pace samples come from the user's own FINAL
+          // frames only, never from a wall-clock stand-in for missing audio
+          // timing, and — the fix — *** GATED ON THE SPAN, NOT ON
+          // `textAlreadyDelivered`. *** This sat inside the
+          // `!textAlreadyDelivered` block below, which reads as obviously
+          // right and is exactly backwards: on ElevenLabs a commit arrives as
+          // an untimed frame followed by its timed twin, and the twin — the
+          // ONLY frame that ever carries start/duration — is the flagged one,
+          // so skipping flagged frames threw away 100% of that provider's
+          // audio timing and pace/filler readings silently measured nothing.
+          // The flag means the TEXT is a re-delivery and nothing more
+          // (lib/copilot/stt/index.js's onTranscript contract); timing comes
+          // from whichever frame carries it, so the pair contributes text once
+          // (below) and a span once (here), in either arrival order, and the
+          // numeric check keeps that at once rather than twice. "inperson" is
+          // unchanged — session.js resolves it to "you"/"them" (AC-M1.6.3.4).
+          if (speaker === "you" && typeof spanStart === "number" && typeof duration === "number") {
+            recordSpeechSample({ text: transcript, start: spanStart, duration });
+          }
+
+          // R-127: this frame's text already went into appendFinal/pendingRef
+          // — skip the TEXT accumulation below. `speechFinal` is still
+          // honoured further down: it is this frame's own end-of-turn signal
+          // whether or not its text was new.
           if (!textAlreadyDelivered) {
             appendFinal(speaker, transcript, speakerTag);
-
-            // AC-I2.10/11: feed the pace sampler from the user's own FINAL
-            // frames only — never the interviewer's, and never with a
-            // wall-clock substitute for missing audio timing.
-            // appendSpeechSample (via recordSpeechSample) already drops
-            // frames whose start/duration aren't usable numbers, so this
-            // passes them through as-is rather than pre-filtering here.
-            // Unchanged for "inperson": session.js already resolves that
-            // source's `speaker` to the same two-value "you"/"them"
-            // vocabulary, so this stays gated on the user's own speech only
-            // there too (AC-M1.6.3.4) — never on some other participant's.
-            if (speaker === "you") {
-              recordSpeechSample({ text: transcript, start: spanStart, duration });
-            }
 
             // AC-M1.4.9: the tab/system pendingRef assembly below is
             // COMPLETELY untouched for those two sources, but must not also
@@ -819,7 +870,9 @@ export function useLiveSession({
     setQuestions,
     logEvent,
     startLog,
+    logProvider,
     pin,
+    resetCueAnnouncement,
   ]);
 
   const onDraft = useCallback(
@@ -834,7 +887,7 @@ export function useLiveSession({
 
   const clearAll = useCallback(() => {
     setFinals([]);
-    setInterims({ them: "", you: "" });
+    setInterims(clearedInterims);
     setQuestions([]);
     recentRef.current = [];
     pendingRef.current = [];
@@ -915,6 +968,11 @@ export function useLiveSession({
     speakerLabelFor,
     identityUnsettled,
     onAssignUser,
+    // AC-V2.1/V2.6: the structured attribution axis (lib/copilot/cuePolicy.js)
+    // CopilotClient hands to VoiceCueSidebar so it can state — never restate,
+    // read straight off the same module handleVoiceCue enforces against —
+    // which cues are unavailable this session and why.
+    speakerAttribution,
     // AC (onModeChange): sessionRef itself, so CopilotClient's onModeChange
     // can keep keying its teardown off "does a session object exist" rather
     // than off `status`/`live` — see onModeChange's own comment for why an

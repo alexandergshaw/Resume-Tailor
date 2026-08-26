@@ -311,6 +311,10 @@ export default function CopilotClient() {
     speakerLabelFor,
     identityUnsettled,
     onAssignUser,
+    // AC-V2.1/V2.6: the structured attribution axis — handed straight to
+    // VoiceCueSidebar so its degraded-state disclosure reads off the same
+    // module useLiveSession.js enforces the policy through.
+    speakerAttribution,
     sessionRef,
     downloadLog,
     // D7: a real, reactive boolean — backs the "Download session log"
@@ -495,6 +499,13 @@ export default function CopilotClient() {
       onActivate={onCueActivate}
       isEmbedded={isEmbedded}
       hasCompany={hasCompany}
+      speakerAttribution={speakerAttribution}
+      // AC-V2.8: the rail's disclosure is a permission statement, and the
+      // attribution flag alone under-claims (see cuePolicy.js's
+      // `effectiveAttribution`). The same snapshot TranscriptView and the
+      // correction bar already render is the evidence that keeps this rail
+      // from calling cues button-only in a session that can separate voices.
+      speakerSnapshot={speakerSnapshot}
     />
   );
 

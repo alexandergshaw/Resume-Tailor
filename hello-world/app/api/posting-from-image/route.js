@@ -313,7 +313,17 @@ export async function POST(request) {
       const searchResponse = await client.models.generateContent({
         model,
         contents: urlSearchPrompt(fields),
-        tools: [{ googleSearch: {} }],
+        // `tools` LIVES INSIDE `config`. DO NOT FLATTEN IT BACK OUT.
+        // `GenerateContentParameters` has exactly THREE properties — `model`,
+        // `contents`, `config` — and `tools` belongs to
+        // `GenerateContentConfig`. The SDK's parameter transformer reads only
+        // those three keys and DISCARDS everything else before building the
+        // request body, with no warning, so a top-level `tools` never reaches
+        // Google. Here the failure hid behind the fallback below: with no
+        // search the model guesses a live posting URL from training data, and
+        // the route quietly settles for the OCR text — working, worse,
+        // forever. Pinned on the wire by route.wire.test.js.
+        config: { tools: [{ googleSearch: {} }] },
       });
       found.push(...candidateUrls(searchResponse));
     } catch (err) {

@@ -245,20 +245,37 @@ export function usePracticeCaptureSession({
             return;
           }
           setInterim("");
+          // AC-J2.9 + AC-V1.8: feed the dashboard's pace sampler from FINAL
+          // frames only, and never substitute a wall-clock value for a
+          // missing audio one.
+          //
+          // *** GATED ON THE SPAN, NOT ON `textAlreadyDelivered`. ***
+          // This sat below the flag check, which reads as obviously right
+          // and is exactly backwards: on ElevenLabs a commit arrives as an
+          // untimed frame followed by its timed twin, and the twin — the
+          // ONLY frame that ever carries start/duration — is the flagged
+          // one. Skipping flagged frames here therefore threw away 100% of
+          // the audio timing on that provider, so appendSpeechSample had
+          // nothing usable left to sample and the dashboard's
+          // words-per-minute and filler readings silently measured nothing.
+          // The flag means the TEXT is a re-delivery and nothing more (see
+          // lib/copilot/stt/index.js's onTranscript contract); TIMING is
+          // read from whichever frame carries it, so the pair contributes
+          // its text once (below) and its span once (here), in either
+          // arrival order. The numeric check is what makes that "once"
+          // rather than twice — appendSpeechSample would drop the untimed
+          // member anyway, but asserting it here means this call site is
+          // correct on its own terms instead of correct only because a
+          // collaborator cleans up after it. Same shape and same reasoning
+          // as useLiveSession.js's own onTranscript handler.
+          if (typeof audioStart === "number" && typeof audioDuration === "number") {
+            recordSpeechSample({ text: transcript, start: audioStart, duration: audioDuration });
+          }
           // R-127: textAlreadyDelivered re-delivers the text of the final
-          // that already fed the two accumulators below for this same span
-          // (see lib/copilot/stt/index.js's onTranscript contract) — skip
-          // both, or the pace sampler and the on-screen transcript both
-          // double-count this utterance.
+          // that already fed the on-screen transcript below (see
+          // lib/copilot/stt/index.js's onTranscript contract) — skip it, or
+          // the transcript renders this utterance twice.
           if (textAlreadyDelivered) return;
-          // AC-J2.9: feed the dashboard's pace sampler from FINAL frames
-          // only — appendSpeechSample (via recordSpeechSample) already
-          // drops frames whose start/duration aren't usable numbers, so
-          // this passes them through as-is rather than pre-filtering here,
-          // and never substitutes a wall-clock value for a missing one
-          // (same discipline CopilotClient's own onTranscript handler
-          // follows for live mode).
-          recordSpeechSample({ text: transcript, start: audioStart, duration: audioDuration });
           // AC-Q7.9: `mySessionId` is THIS closure's own captured value —
           // fixed at the moment THIS session's start() minted it, never
           // read fresh off the ref — so a frame this exact session delivers

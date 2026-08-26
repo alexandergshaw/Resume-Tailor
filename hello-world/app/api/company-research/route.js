@@ -206,7 +206,16 @@ async function researchUrl({ url, company, jobTitle }) {
       const response = await client.models.generateContent({
         model,
         contents: urlSummaryPrompt({ url, company, jobTitle }),
-        tools: [{ urlContext: {} }],
+        // `tools` LIVES INSIDE `config`. DO NOT FLATTEN IT BACK OUT.
+        // `GenerateContentParameters` has exactly THREE properties — `model`,
+        // `contents`, `config` — and `tools` belongs to
+        // `GenerateContentConfig`. The SDK's parameter transformer reads only
+        // those three keys and DISCARDS everything else before building the
+        // request body, with no warning, so a top-level `tools` never reaches
+        // Google. Here that meant asking a model with no fetcher to read a
+        // page it could not see: the whole point of this fallback. Pinned on
+        // the wire by route.wire.test.js.
+        config: { tools: [{ urlContext: {} }] },
       });
       const a = parseArticles(response?.text || "")[0];
       if (a) {
@@ -316,7 +325,17 @@ export async function POST(request) {
     const response = await client.models.generateContent({
       model,
       contents: buildPrompt({ company, jobTitle, posting }),
-      tools: [{ googleSearch: {} }],
+      // `tools` LIVES INSIDE `config`. DO NOT FLATTEN IT BACK OUT.
+      // `GenerateContentParameters` has exactly THREE properties — `model`,
+      // `contents`, `config` — and `tools` belongs to `GenerateContentConfig`.
+      // The SDK's parameter transformer reads only those three keys and
+      // DISCARDS everything else before building the request body, with no
+      // warning, so a top-level `tools` never reaches Google. The failure is
+      // total and silent: no search -> no groundingMetadata ->
+      // extractGroundingSources returns [] -> every response carries the
+      // "could not confirm these via live search" warning forever, while
+      // still paying for a full grounded call. Pinned by route.wire.test.js.
+      config: { tools: [{ googleSearch: {} }] },
     });
 
     const articles = parseArticles(response?.text || "");

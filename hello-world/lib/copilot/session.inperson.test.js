@@ -274,6 +274,65 @@ describe("CopilotSession in-person failure semantics", () => {
   });
 });
 
+// AC-V2.1. `speakerAttribution()`/`onAttribution` are the structured
+// counterpart to the prose warning above — see lib/copilot/cuePolicy.js's
+// header for why this can't be a two-value flag and lib/copilot/session.js's
+// own comments at the call site for exactly when it's learned. The warning's
+// wording itself must NOT change: it's what the user reads, and V2.1 is
+// explicit that only a new, separate structured surface is being added.
+describe("CopilotSession structured speaker attribution (AC-V2.1)", () => {
+  const EXPECTED_WARNING =
+    "Your configured speech-to-text provider can't tell speakers apart on a single microphone, so this session will transcribe everyone as one voice. Live pace and filler-word measurements for you will not be available this session.";
+
+  it("reports 'active' once diarization is actually earned", async () => {
+    sttConfig.diarizationActive = true;
+    const { session } = await startInPerson();
+    expect(session.speakerAttribution()).toBe("active");
+  });
+
+  it("reports 'unavailable', and fires onAttribution exactly once with that value, when the provider cannot diarize", async () => {
+    sttConfig.diarizationActive = false;
+    const onAttribution = vi.fn();
+    const { session } = await startInPerson({ onAttribution });
+    expect(session.speakerAttribution()).toBe("unavailable");
+    expect(onAttribution).toHaveBeenCalledTimes(1);
+    expect(onAttribution).toHaveBeenCalledWith("unavailable");
+  });
+
+  it("still emits the existing warning sentence, byte-identical, alongside the new structured value", async () => {
+    sttConfig.diarizationActive = false;
+    stubMediaDevices();
+    const onError = vi.fn();
+    const session = new CopilotSession({ source: "inperson", onError });
+    await session.start();
+
+    // Asserted as the FULL string, not a substring — a fix that quietly
+    // changed a word here would still pass every other test in this file,
+    // which only pattern-matches on /speaker|apart|diariz/i.
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError.mock.calls[0][0].message).toBe(EXPECTED_WARNING);
+    expect(session.speakerAttribution()).toBe("unavailable");
+  });
+
+  it("never fires onAttribution for a meeting session, and reports 'off'", async () => {
+    const onAttribution = vi.fn();
+    const { session } = await startInPerson({ attributeSpeakers: false, onAttribution });
+    expect(onAttribution).not.toHaveBeenCalled();
+    expect(session.speakerAttribution()).toBe("off");
+  });
+
+  it("never fires onAttribution for tab or system, and reports 'not-applicable'", async () => {
+    for (const source of ["tab", "system"]) {
+      stubMediaDevices();
+      const onAttribution = vi.fn();
+      const session = new CopilotSession({ source, onAttribution });
+      await session.start();
+      expect(onAttribution).not.toHaveBeenCalled();
+      expect(session.speakerAttribution()).toBe("not-applicable");
+    }
+  });
+});
+
 describe("CopilotSession in-person speaker resolution", () => {
   it("resolves the candidate to you and the interviewer to them once the interview is under way", async () => {
     // The load-bearing test of this whole feature. A constant "them" - which an

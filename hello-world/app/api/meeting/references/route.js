@@ -249,7 +249,17 @@ export async function POST(request) {
       response = await client.models.generateContent({
         model,
         contents: prompt,
-        tools: [{ googleSearch: {} }],
+        // `tools` LIVES INSIDE `config`. DO NOT FLATTEN IT BACK OUT.
+        // `GenerateContentParameters` has exactly THREE properties — `model`,
+        // `contents`, `config` — and `tools` belongs to
+        // `GenerateContentConfig`. The SDK's parameter transformer reads only
+        // those three keys and DISCARDS everything else before building the
+        // request body, with no warning, so a top-level `tools` never reaches
+        // Google. The failure is total and silent: no search -> no
+        // groundingMetadata -> normalizeReferences drops EVERY link, so the
+        // panel shows nothing and that emptiness is then cached against a
+        // global key. Pinned on the wire by route.wire.test.js.
+        config: { tools: [{ googleSearch: {} }] },
       });
     } catch (err) {
       console.error("Meeting reference lookup failed:", err);

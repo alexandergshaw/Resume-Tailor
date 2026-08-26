@@ -57,6 +57,24 @@ export function useSessionLogRecorder(source, speakerSnapshotRef) {
     }
   }, []);
 
+  // AC-W1.2/W1.3: the live path's only way to tell the CURRENT session's log
+  // which provider it ran on, once `onSttProvider` (session.js) reports it —
+  // a network round trip after startLog() already built this log with no
+  // provider at all (see startLog()'s own comment for why that ordering is
+  // deliberate, not a gap to close by moving it later). Mirrors logEvent's
+  // own discipline immediately below: optional-chained onto whatever
+  // sessionLogRef currently holds, and sessionLog.js's own setProvider
+  // already never throws, so the try/catch here is belt-and-braces against
+  // a missing ref (no session ever started) — never letting this interrupt
+  // the interview the log exists to explain.
+  const logProvider = useCallback((name) => {
+    try {
+      sessionLogRef.current?.setProvider(name);
+    } catch {
+      // Never let recording break the pipeline.
+    }
+  }, []);
+
   // AC-Q6.1: safe to call before any session has ever run — falls back to a
   // fresh, empty log built the same way startLog() builds a real one,
   // rather than restating createSessionLog's own empty-log shape here.
@@ -95,5 +113,5 @@ export function useSessionLogRecorder(source, speakerSnapshotRef) {
     }
   }, [sessionLogSnapshot, speakerSnapshotRef]);
 
-  return { startLog, logEvent, sessionLogSnapshot, downloadLog, hasEvents };
+  return { startLog, logEvent, logProvider, sessionLogSnapshot, downloadLog, hasEvents };
 }

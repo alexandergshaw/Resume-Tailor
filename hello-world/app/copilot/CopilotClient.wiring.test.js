@@ -274,3 +274,34 @@ describe("CopilotClient wiring — QuestionFeed's aria-busy flips with the hold 
     expect(busy.textContent).toMatch(/detected questions/i);
   });
 });
+
+// AC-V2.8. VoiceCueSidebar is left REAL in this file, which makes it the one
+// place that can catch the specific composition defect here: the rail reading
+// the policy correctly while CopilotClient never hands it the evidence the
+// policy needs. A source-text assertion cannot tell `speakerSnapshot={...}`
+// present-but-undefined from wired, and the failure is silent — the rail keeps
+// rendering a sentence that is merely out of date.
+describe("CopilotClient wiring — the rail's disclosure gets the session's evidence (AC-V2.8)", () => {
+  it("keeps saying it while the session really cannot separate voices", async () => {
+    liveSessionReturn = baseLiveSessionReturn({
+      speakerAttribution: "unavailable",
+      speakerSnapshot: { userTag: null, confidence: "unknown", overridden: false, tags: [] },
+    });
+    await render();
+    expect(container.textContent).toMatch(/can't tell voices apart/i);
+  });
+
+  it("stops saying it once the session's own tags prove otherwise", async () => {
+    // The token-blip session: the flag under-claims (R-151's deliberate
+    // `tokenFetchSucceeded` term), the tags are the truth, and the rail must
+    // not tell the candidate their release and company cues are button-only
+    // when the policy has just started permitting them.
+    liveSessionReturn = baseLiveSessionReturn({
+      speakerAttribution: "unavailable",
+      speakerSnapshot: { userTag: 1, confidence: "high", overridden: false, tags: [1, 2] },
+    });
+    await render();
+    expect(container.textContent).not.toMatch(/can't tell voices apart/i);
+    expect(container.textContent).not.toMatch(/button only this session/i);
+  });
+});

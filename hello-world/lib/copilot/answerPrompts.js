@@ -99,8 +99,74 @@ export function interviewFormatLines(descriptor) {
 // a concrete story"), emitted the pages AFTER the submitted documents, and
 // never got the prefer-a-specific-detail instruction at all. A previous
 // comment here argued AC-3 was answer-mode-only; AC-3 says no such thing.
-export function buildPointsPrompt(question, context, profile, descriptor, resume, coverLetter, pagesBlock) {
+// AC-V4.3 (Group V architecture doc §2.6): `companyFacts` is an EIGHTH,
+// trailing parameter — `undefined | { companyKnown: true, block: string }` —
+// carrying what lib/copilot/companyFactsSource.js's buildCompanyFacts found
+// about the employer, already rendered into prompt lines by
+// lib/copilot/companyFacts.js's companyFactsBlock. Given a default value
+// (`= undefined`) rather than a bare trailing parameter for a reason that
+// has nothing to do with behaviour: `Function.prototype.length` stops
+// counting at the first parameter with a default, so this keeps
+// `buildPointsPrompt.length === 7` — the arity answerPrompts.test.js's own
+// "never carries the posting description" case pins with a frozen `toBe(7)`
+// — while still accepting the ninth^H eighth argument every call site now
+// passes. A bare `companyFacts` parameter with no default would make that
+// frozen arity assertion fail on a change this module was never asked to
+// make.
+//
+// THE BYTE-IDENTITY PROBLEM AND ITS FIX (contradiction C4, ARCH §4): V4.3 as
+// stated requires BOTH "an empty facts block still gets an instruction" AND
+// "with no facts block, output is byte-for-byte what it was before facts
+// existed as a source" — which contradict each other if "empty block" is
+// the gate, because the frozen minimal-input tests pass an empty block by
+// having no résumé/pages/company at all. The fix is gating every addition
+// below on `companyKnown` being true, NOT on the block being non-empty:
+// "no employer known" and "employer known, no facts survived" are two
+// different facts about the request, and only the first one is what the
+// frozen tests exercise. That is what makes the guarantee hold MECHANICALLY
+// — the frozen no-pages call never sets `companyKnown`, so it can never take
+// either branch below — rather than by anyone remembering to keep it true.
+export function buildPointsPrompt(
+  question,
+  context,
+  profile,
+  descriptor,
+  resume,
+  coverLetter,
+  pagesBlock,
+  companyFacts = undefined,
+) {
+  const companyKnown = !!companyFacts?.companyKnown;
+  const factsBlock = companyKnown && typeof companyFacts.block === "string" ? companyFacts.block : "";
   const parts = [`The interviewer asked: "${question}"`, "", ...interviewFormatLines(descriptor)];
+  // AC-V4.3/V4.7: the three states, and only three (ARCH §2.6). `companyFacts
+  // === undefined` (no applicationId, or no company on the selected posting)
+  // takes NEITHER branch below — the guarantee the byte-identity tests pin.
+  if (companyKnown && factsBlock) {
+    // AC-V4.4: the anti-fabrication instruction that does the actual work —
+    // naming the exact phrasing the live session produced ("my research
+    // indicates") is the difference between a rule and a hope. A general
+    // "don't invent" instruction already existed for experience, and the
+    // model still wrote that sentence about a company it never researched.
+    parts.push(
+      "",
+      "--- VERIFIED COMPANY FACTS (about the employer, checked against pages that were actually read) ---",
+      factsBlock,
+      "",
+      'A statement about the employer may come ONLY from VERIFIED COMPANY FACTS above. Do not claim research you were not given — never write "my research indicates", "I understand <the company> is", or any equivalent, about anything not in that block.',
+    );
+  } else if (companyKnown) {
+    // AC-V4.7: the employer is known but nothing survived corroboration
+    // (or the lookup hadn't finished — ARCH §2.8's deadline). No heading, no
+    // empty block — an empty section invites the model to fill it in, which
+    // is the exact failure this whole feature exists to prevent. Just the
+    // honest instruction: say what the candidate would want to know, never
+    // assert it.
+    parts.push(
+      "",
+      "No verified facts about the employer were available for this answer. Do not assert anything about the employer — what they do, their market, their size, or any recent development. Where the question is about the employer, say what the candidate would want to find out and connect it to their own experience.",
+    );
+  }
   if (profile) {
     parts.push(
       "",
@@ -136,21 +202,29 @@ export function buildPointsPrompt(question, context, profile, descriptor, resume
   // (ARCH §3.7): pointsFromPartialJson anchors on /"points"\s*:\s*\[/, so an
   // earlier field would delay the first streamed points frame for no
   // benefit.
-  if (pagesBlock) {
-    parts.push(
-      "",
-      'Return ONLY JSON of this exact shape: { "points": string[], "type": "behavioral" | "technical" | "general", "pageIds": (string | null)[] }',
-    );
-  } else {
-    parts.push(
-      "",
-      'Return ONLY JSON of this exact shape: { "points": string[], "type": "behavioral" | "technical" | "general" }',
-    );
-  }
+  //
+  // AC-V4.4: `factIds` follows the identical rule, gated on there being a
+  // NON-EMPTY facts block rather than merely `companyKnown` — asking for a
+  // citation the empty-block state (V4.7) could never validate is worse
+  // than not asking, since resolveFactSources would just resolve every one
+  // of them to null. Built as a list of fields rather than another pair of
+  // fixed literal strings, since the shape line now has four possible
+  // combinations (pages x facts) instead of two, and duplicating each by
+  // hand is exactly how one of the four would eventually drift.
+  const askForFactIds = companyKnown && !!factsBlock;
+  const shapeFields = ['"points": string[]', '"type": "behavioral" | "technical" | "general"'];
+  if (pagesBlock) shapeFields.push('"pageIds": (string | null)[]');
+  if (askForFactIds) shapeFields.push('"factIds": (string | null)[]');
+  parts.push("", `Return ONLY JSON of this exact shape: { ${shapeFields.join(", ")} }`);
   parts.push("points: 3-5 concise talking points as described above.");
   if (pagesBlock) {
     parts.push(
       'pageIds: exactly one per point, same order — the exact "page id" from a YOUR OWN PROJECT PAGES heading that point drew a concrete detail from, or null when it did not draw on a page. Never invent an id and never cite a page you were not shown.',
+    );
+  }
+  if (askForFactIds) {
+    parts.push(
+      'factIds: exactly one per point, same order — the exact "fact id" from a VERIFIED COMPANY FACTS line that point drew a claim about the employer from, or null when the point makes no claim about the employer. Never invent an id and never cite a fact you were not shown.',
     );
   }
   return parts.join("\n");

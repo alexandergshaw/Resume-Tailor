@@ -5,7 +5,7 @@ import { AnswerRecorder } from "@/lib/copilot/answerRecorder";
 import { VideoFrameSampler } from "@/lib/copilot/videoStats";
 import { BodyLanguageSampler } from "@/lib/copilot/bodyLandmarks";
 import { computeAnswerMetrics } from "@/lib/copilot/answerMetrics";
-import { acceptedAnswerFinal } from "@/lib/copilot/answerWindow";
+import { applyAnswerFinal } from "@/lib/copilot/answerWindow";
 import { answerMetricsInputs } from "@/lib/copilot/answerSpeakers";
 import { critiqueAnswer } from "@/lib/copilot/critiqueClient";
 import { framesWereSent } from "@/lib/copilot/answerProvenance";
@@ -76,9 +76,13 @@ export function usePracticeAnswer() {
   // hook's callers apart, leaving `replayUrl`/`setReplayUrl` referencing a
   // free variable — practice mode threw ReferenceError on first render, and
   // nothing caught it: eslint-config-next leaves `no-undef` off, an
-  // undeclared reference is legal syntax so the build succeeds, and no test
-  // in this repo can render a hook (vitest `environment: "node"`, no jsdom).
-  // See the `no-undef` rule now enabled in eslint.config.mjs.
+  // undeclared reference is legal syntax so the build succeeds, and this hook
+  // had no test file of its own at the time — not, as this comment used to
+  // say, because no test in this repo can render a hook. That was false:
+  // `jsdom` is a devDependency, vitest.config.js documents the per-file
+  // `// @vitest-environment jsdom` docblock as the supported opt-in, and
+  // usePracticeAnswer.commitPair.test.js now mounts this very hook. See the
+  // `no-undef` rule now enabled in eslint.config.mjs.
   const [replayUrl, setReplayUrl] = useState("");
   // Whether AnswerRecorder actually supports recording in this browser, as
   // of the last completed answer — distinguishes "this browser can't
@@ -337,14 +341,31 @@ export function usePracticeAnswer() {
 
   // Called for EVERY transcript event on the session's STT socket — final
   // or interim — so the audio clock stays fresh regardless of whether an
-  // answer is being recorded. The accept/reject decision for whether a
-  // FINAL belongs in the answer (collecting? inside the window? a R-127
-  // ElevenLabs re-delivery already accounted for?) is
-  // acceptedAnswerFinal — extracted to lib/copilot/answerWindow.js so it's
+  // answer is being recorded. What that event does to the answer being
+  // collected (append it? amend an entry already appended? drop one?) is
+  // applyAnswerFinal — extracted to lib/copilot/answerWindow.js so it's
   // unit-testable outside this hook; this function keeps only the audio
   // clock and the ref itself, which have no meaning outside React.
   //
-  // `speakerTag` (AC-M2) rides straight through to acceptedAnswerFinal and
+  // AC-V1.9: that decision is a fold over the entries so far, not a verdict
+  // on one frame, because ElevenLabs splits a committed utterance into an
+  // untimed text frame and a flagged timed twin — so the span that decides
+  // whether the text belonged in the window at all arrives one frame LATE.
+  // The sequencing therefore lives where every frame ordering can be driven
+  // directly, which a pure fold makes cheap and a mounted hook does not —
+  // a cost argument, not the impossibility one this comment used to make
+  // (see the `replayUrl` note above for why "no test here can render a hook"
+  // was false, and what believing it cost). applyAnswerFinal's own doc
+  // comment carries the full reasoning, and
+  // usePracticeAnswer.commitPair.test.js drives the whole Start -> commit
+  // pairs -> Done -> drain sequence through this hook to prove the two halves
+  // are actually wired together.
+  // This hook only supplies the current entries and the window
+  // bounds and stores whatever comes back — assigned unconditionally,
+  // because applyAnswerFinal returns the SAME array instance when nothing
+  // changed.
+  //
+  // `speakerTag` (AC-M2) rides straight through to applyAnswerFinal and
   // then into answerFinalsRef — this function does not examine it. Whose
   // words a final belongs to is decided once, over the WHOLE answer, by
   // partitionAnswerFinals in doneAnswer below; deciding it per-event here
@@ -360,20 +381,13 @@ export function usePracticeAnswer() {
         if (end > audioClockRef.current) audioClockRef.current = end;
       }
 
-      const entry = acceptedAnswerFinal({
-        isFinal,
-        transcript,
-        start,
-        duration,
-        speakerTag,
-        textAlreadyDelivered,
+      answerFinalsRef.current = applyAnswerFinal({
+        entries: answerFinalsRef.current,
+        frame: { isFinal, transcript, start, duration, speakerTag, textAlreadyDelivered },
         collecting: collectingRef.current,
         answerStart: answerStartAudioRef.current,
         answerEnd: answerDoneAudioRef.current,
       });
-      if (!entry) return;
-
-      answerFinalsRef.current = [...answerFinalsRef.current, entry];
     },
     [],
   );

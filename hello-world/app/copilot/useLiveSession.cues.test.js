@@ -19,6 +19,7 @@ vi.mock("@/lib/copilot/detectClient", () => ({ confirmQuestion: vi.fn() }));
 vi.mock("@/lib/copilot/answerClient", () => ({ draftAnswer: vi.fn() }));
 
 import { useLiveSession } from "./useLiveSession.js";
+import { CUE_IGNORED_REASONS } from "@/lib/copilot/cuePolicy";
 import { CopilotSession } from "@/lib/copilot/session";
 import { confirmQuestion } from "@/lib/copilot/detectClient";
 import { draftAnswer } from "@/lib/copilot/answerClient";
@@ -539,6 +540,55 @@ describe("useLiveSession — a pin with nothing to hold (AC-T1.14/T1.18)", () =>
   });
 });
 
+describe("useLiveSession — a release with nothing held (AC-V2.4)", () => {
+  it("does not fall silent when a matched release has no hold to release", async () => {
+    // The mirror of "a pin with nothing to hold" above, and the one refusal
+    // that used to log nothing at all: `act === "unpin" && pinnedIdRef.current
+    // !== null` simply fell through when nothing was held, leaving a lone
+    // `cue.matched` in the log. AC-V2.4 is the criterion that says a session
+    // must never again be unable to answer "why did nothing happen when I
+    // said the phrase", and this was the last case where it could not.
+    const { state } = mountProbe();
+    await startSession(state);
+    await askAndAnswer(state, "Tell me about a time you handled conflict.");
+    // Deliberately no pin — a question exists, nothing is holding it.
+    expect(state.pinnedId).toBeNull();
+
+    await act(async () => {
+      speakAsCandidate("Does that answer your question?");
+    });
+
+    // The cue really did match — this is a refusal, not a non-match, and the
+    // log has to show both halves or it reads as a phrase that went unheard.
+    expect(logTypes(state)).toContain("cue.matched");
+    const ignored = logEntries(state, "cue.ignored");
+    expect(ignored).toHaveLength(1);
+    expect(ignored[0].reason).toBe(CUE_IGNORED_REASONS.NOTHING_HELD);
+    // And nothing was released, since there was nothing to release.
+    expect(logTypes(state)).not.toContain("question.unpinned");
+  });
+
+  it("still logs the release itself, not a refusal, when something IS held", async () => {
+    // The positive control: a reason that fires unconditionally would report
+    // every successful release as a refusal.
+    const { state } = mountProbe();
+    await startSession(state);
+    await askAndAnswer(state, "Tell me about a time you handled conflict.");
+    await act(async () => {
+      speakAsCandidate("Good question.");
+    });
+    expect(state.pinnedId).not.toBeNull();
+
+    await act(async () => {
+      speakAsCandidate("Does that answer your question?");
+    });
+
+    expect(logTypes(state)).toContain("question.unpinned");
+    const reasons = logEntries(state, "cue.ignored").map((e) => e.reason);
+    expect(reasons).not.toContain(CUE_IGNORED_REASONS.NOTHING_HELD);
+  });
+});
+
 describe("useLiveSession — the company cue (AC-T1.18/T2)", () => {
   it("calls the company handler exactly once", async () => {
     const onCompanyCue = vi.fn(() => true);
@@ -617,5 +667,172 @@ describe("useLiveSession — every cue is in the session log (AC-T1.18)", () => 
     // explain the session it exists to explain.
     expect(types.indexOf("question.pinned")).toBeLessThan(types.indexOf("question.unpinned"));
     expect(types.indexOf("question.pinned")).toBeGreaterThan(-1);
+  });
+});
+
+// AC-T1.18.1 / C5 (accessibility audit). R-229's "announce on the voice path
+// only" clause, and the reason it was not being met: `useCueActions` mints
+// `{ text, nonce }` and CopilotClient renders only `.text`. The fresh object
+// literal guarantees React re-RENDERS — which is the trap SpeakerBar.js
+// documents — but a screen reader announces a TEXT CHANGE in a live region,
+// not a render, so an identical sentence lands as silence. Every hold used to
+// produce the same six words, so the voice path announced once per session
+// and then went quiet for the rest of the interview, at the exact moments the
+// panel content changed underneath a user who cannot see it.
+//
+// *** ASSERTED WITH A MutationObserver, NOT BY READING THE FINAL TEXT ***
+// The final text is IDENTICAL in the working and the broken version — the
+// whole defect lives in what never got committed to the DOM in between. A
+// test that renders three holds and then reads `region.textContent` passes
+// against the bug. `takeRecords()` is drained synchronously after each step
+// instead of relying on the observer callback, so each assertion is about
+// that step's own commit rather than about whatever the microtask queue had
+// caught up with by the end. This project has the identical failure on record
+// for a save-status region.
+function LiveRegionProbe({ onState, source = "tab" }) {
+  const [status, setStatus] = useState("idle");
+  const [questions, setQuestions] = useState([]);
+  const answerCacheRef = useRef(new Map());
+  const draftGenRef = useRef(0);
+  const live = useLiveSession({
+    answerCacheRef,
+    draftGenRef,
+    recordSpeechSample: () => {},
+    resetForSession: () => {},
+    status,
+    setStatus,
+    questions,
+    setQuestions,
+    source,
+    micDeviceId: null,
+    profile: "Senior engineer at Acme.",
+    posting: null,
+    autoDraft: true,
+    setSetupExpanded: () => {},
+    setShowHistory: () => {},
+    onCompanyCue: () => false,
+  });
+  onState({ questions, start: live.start, pinnedId: live.pinnedId });
+  // Exactly what CopilotClient.js puts in its consolidated polite region:
+  // `cueAnnouncement.text`, and nothing else. The nonce never reaches the DOM
+  // — which is the whole point of the defect.
+  return createElement("span", { "data-testid": "cue-live-region" }, live.cueAnnouncement.text);
+}
+
+function mountLiveRegionProbe(props = {}) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  const state = {};
+  mounted.push({ root, container });
+  act(() => {
+    root.render(createElement(LiveRegionProbe, { ...props, onState: (s) => Object.assign(state, s) }));
+  });
+  const region = container.querySelector('[data-testid="cue-live-region"]');
+  // The observer's own callback COLLECTS rather than discards, and `drain`
+  // merges whatever it has already banked with whatever is still queued.
+  // Draining `takeRecords()` alone is a race: the callback fires as a
+  // microtask, and `await act(...)` awaits microtasks, so by the time a test
+  // asks, the queue may already have been emptied INTO the callback — a
+  // mutation that really happened then reads as zero, and the test passes or
+  // fails on scheduling rather than on behaviour.
+  const banked = [];
+  const observer = new MutationObserver((records) => banked.push(...records));
+  observer.observe(region, { childList: true, characterData: true, subtree: true });
+  const drain = () => {
+    banked.push(...observer.takeRecords());
+    const count = banked.length;
+    banked.length = 0;
+    return count;
+  };
+  // Anything the mount itself produced is not an announcement.
+  drain();
+  return { state, region, drain };
+}
+
+describe("useLiveSession — the polite region announces EVERY spoken hold (AC-T1.18.1)", () => {
+  it("commits a distinct announcement for each hold, not just the first", async () => {
+    const { state, region, drain } = mountLiveRegionProbe();
+    await startSession(state);
+
+    const announced = [];
+    const turns = [
+      ["Tell me about a time you handled conflict.", "That's a great question."],
+      ["What do you know about Purple Wave?", "Let me take a step back."],
+      ["How would you handle a disagreement with your manager?", "Let me give you an example."],
+    ];
+
+    for (const [question, phrase] of turns) {
+      await askAndAnswer(state, question);
+      // A question merely arriving is not an announcement on this region —
+      // R-229 gives the arrival count to QuestionFeed's own region.
+      expect(drain()).toBe(0);
+
+      await act(async () => {
+        speakAsCandidate(phrase);
+      });
+      announced.push({ committed: drain() > 0, text: region.textContent });
+    }
+
+    // Three holds, three commits. Before this fix the second and third
+    // rendered the identical sentence, so nothing reached the DOM and a
+    // screen-reader user heard nothing while the panel changed under them.
+    expect(announced.map((a) => a.committed)).toEqual([true, true, true]);
+    expect(new Set(announced.map((a) => a.text)).size).toBe(3);
+    for (const a of announced) expect(a.text.trim()).not.toBe("");
+  });
+
+  it("names the question it is talking about, so the user knows WHICH one is held", async () => {
+    // "Useful, not merely different": the thing that makes each announcement
+    // distinct is the same thing that makes it worth hearing. A bare counter
+    // would satisfy the test above and tell the user nothing.
+    const { state, region } = mountLiveRegionProbe();
+    await startSession(state);
+    await askAndAnswer(state, "Tell me about a time you handled conflict.");
+    await act(async () => {
+      speakAsCandidate("That's a great question.");
+    });
+
+    expect(region.textContent).toContain("Tell me about a time you handled conflict.");
+    expect(state.pinnedId).toBe(state.questions[0].id);
+  });
+
+  it("says something different when a hold MOVES than when one is created", async () => {
+    // AC-T1.16.1's re-pin-forward is a different event from a first hold, and
+    // it is the one that most needs saying: the panel's content changed.
+    const { state, region } = mountLiveRegionProbe();
+    await startSession(state);
+    await askAndAnswer(state, "Tell me about a time you handled conflict.");
+    await act(async () => {
+      speakAsCandidate("That's a great question.");
+    });
+    const created = region.textContent;
+
+    await askAndAnswer(state, "What do you know about Purple Wave?");
+    await act(async () => {
+      speakAsCandidate("Let me take a step back.");
+    });
+    const moved = region.textContent;
+
+    expect(moved).not.toBe(created);
+    expect(moved).toContain("What do you know about Purple Wave?");
+  });
+
+  it("still commits the release, and does not repeat the hold's own sentence", async () => {
+    const { state, region, drain } = mountLiveRegionProbe();
+    await startSession(state);
+    await askAndAnswer(state, "Tell me about a time you handled conflict.");
+    await act(async () => {
+      speakAsCandidate("That's a great question.");
+    });
+    const held = region.textContent;
+    drain();
+
+    await act(async () => {
+      speakAsCandidate("Does that answer your question?");
+    });
+    expect(drain()).toBeGreaterThan(0);
+    expect(region.textContent).not.toBe(held);
+    expect(state.pinnedId).toBeNull();
   });
 });

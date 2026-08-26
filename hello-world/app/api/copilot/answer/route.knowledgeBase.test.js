@@ -30,6 +30,12 @@ import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { createClient } from "@/lib/supabase/server";
 import { splitFrames } from "@/lib/copilot/answerStream";
+// AC-V5.2: see route.test.js's own comment on this same import — this file
+// reuses the same synthetic user/application ids across independent `it()`
+// blocks with different mocked page/document content, and the route's new
+// per-session cache (lib/copilot/answerSessionCache.js) must be cleared
+// between them or a later test would read an earlier test's cached fetch.
+import { answerContextCache } from "@/lib/copilot/answerSessionCache";
 
 const read = (rel) => readFileSync(path.join(process.cwd(), rel), "utf8");
 
@@ -107,6 +113,7 @@ const GEMINI_PAYLOAD = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  answerContextCache.clear();
 });
 
 describe("which pages reach the prompt (AC-1)", () => {

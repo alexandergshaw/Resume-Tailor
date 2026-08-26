@@ -22,7 +22,7 @@
 // lib/copilot/groundingNotice.js now imports the same constant too. See that
 // constant's own comment in lib/copilot/practiceNotices.js for why it is
 // unconditional on the Gemini path and absent on the embedded one.
-import { KNOWLEDGE_BASE_CLAUSE } from "@/lib/copilot/practiceNotices";
+import { COMPANY_FACTS_CLAUSE, KNOWLEDGE_BASE_CLAUSE } from "@/lib/copilot/practiceNotices";
 
 function roomQuestionDocsWord(hasResume, hasCoverLetter) {
   if (hasResume && hasCoverLetter) return "resume and cover letter";
@@ -57,12 +57,23 @@ function roomQuestionDocsWord(hasResume, hasCoverLetter) {
 // already decided about those applies unchanged, since it's the same
 // draftAnswer call either way, and repeating that decision here would be
 // exactly the restatement this discipline exists to avoid.
+// P1.6: `hasCompany` is this clause's newest input, and it is the same fact
+// live mode already threads into `postingGroundingNotice` — whether the
+// SELECTED posting has a company on file. Practice mode reaches the identical
+// company-facts search: `useRoomQuestions.js` calls `draftAnswer` with an
+// `applicationId` and no `mode`, and the route runs `buildCompanyFacts`
+// whenever `mode !== "answer" && !wantsEmbedded(engine) && companyKnown`. So a
+// detected room question and a typed one both send the company name and job
+// title to Google Gemini with web search on, and both make this server fetch
+// the pages that search returns. Neither `buildPrivacyNotice` nor this
+// function said a word about that.
 export function roomQuestionPrivacyClause({
   isEmbedded,
   hasPosting,
   docsSettled,
   hasSubmittedResume,
   hasSubmittedCoverLetter,
+  hasCompany,
 }) {
   if (isEmbedded) {
     return "If someone else in the room asks a question, it is detected and answered on this server too, with no AI provider involved. A question you type yourself skips detection and is drafted here the same way.";
@@ -78,13 +89,23 @@ export function roomQuestionPrivacyClause({
   // candidate typed, and it used to open "It also sends…" — reading, wrongly,
   // as though typing a question were the thing that sends the project pages.
   // They go on every drafted answer, typed or spoken.
-  if (!hasPosting) return `${base}.${typedClause}${KNOWLEDGE_BASE_CLAUSE}`;
+  //
+  // COMPANY_FACTS_CLAUSE joins it in the SAME shared tail, for the same
+  // reason and with one extra one. Both sentences describe transfers that do
+  // not depend on which documents were found, so composing them once and
+  // appending that one tail to all four branches is what makes it impossible
+  // for a document branch to decide whether either is stated — the R-259
+  // positional failure expressed as branch placement (P1.5). It is the
+  // IMPORTED constant, byte-for-byte the sentence live mode appends, because
+  // a hand-copied second sentence is exactly how half a pair gets fixed.
+  const tail = `${typedClause}${hasCompany ? ` ${COMPANY_FACTS_CLAUSE}` : ""}${KNOWLEDGE_BASE_CLAUSE}`;
+  if (!hasPosting) return `${base}.${tail}`;
   if (!docsSettled) {
-    return `${base}, and may also send any resume or cover letter you submitted for the selected posting.${typedClause}${KNOWLEDGE_BASE_CLAUSE}`;
+    return `${base}, and may also send any resume or cover letter you submitted for the selected posting.${tail}`;
   }
   if (hasSubmittedResume || hasSubmittedCoverLetter) {
     const label = roomQuestionDocsWord(hasSubmittedResume, hasSubmittedCoverLetter);
-    return `${base}, and the ${label} you submitted for the selected posting.${typedClause}${KNOWLEDGE_BASE_CLAUSE}`;
+    return `${base}, and the ${label} you submitted for the selected posting.${tail}`;
   }
-  return `${base}.${typedClause}${KNOWLEDGE_BASE_CLAUSE}`;
+  return `${base}.${tail}`;
 }

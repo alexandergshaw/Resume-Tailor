@@ -75,24 +75,45 @@
 //       which words belong to an answer — getting the units or the
 //       reference point wrong here silently corrupts every delivery number
 //       practice mode reports, without ever throwing.
-//     - `textAlreadyDelivered` (R-127): true when this frame's `transcript`
-//       is an EXACT re-delivery — same text, same `start`, same `duration`
-//       — of a `transcript` this same instance already delivered on an
-//       earlier isFinal:true frame. ElevenLabs' commit_strategy=vad sends a
-//       committed_transcript(_with_timestamps) for an utterance it already
-//       sent as a final_transcript(_with_timestamps) moments earlier, purely
-//       to carry `speechFinal: true` — the frame still has to be delivered
-//       (consumers need that `speechFinal`), but a consumer that ACCUMULATES
-//       transcript text (a running word count, a session transcript, an
-//       assembled question) must not append this frame's text a second
-//       time, or it silently doubles word count, filler count, and
-//       words-per-minute. Absent/falsy — NEVER explicitly `false` — on
-//       every other frame, so a consumer that has never heard of this field
-//       (Deepgram's frames, and any test written before it existed) sees a
-//       byte-identical object to before it existed. Deepgram never sets
-//       this: its `speech_final` rides on the SAME message as `is_final`
-//       (see deepgram.js), so it has no separate "commit" message to
-//       re-deliver a span from in the first place.
+//     - `textAlreadyDelivered` (R-127, corrected by AC-V1.8): true when this
+//       frame's `transcript` was ALREADY delivered as the `transcript` of an
+//       earlier isFinal:true frame from this same instance.
+//
+//       *** THE FLAG IS ABOUT THE TEXT, AND ABOUT NOTHING ELSE. ***
+//       It does NOT mean the frame is a duplicate. It does NOT mean the
+//       frame carries the same `start`/`duration` as the earlier one — it
+//       usually carries a span the earlier one did not have at all. A
+//       consumer that needs TIMING must read it from whichever frame
+//       actually carries it, flagged or not; a consumer that ACCUMULATES
+//       TEXT (a running word count, a session transcript, an assembled
+//       question) must skip a flagged frame's text, or it silently doubles
+//       word count, filler count, and words-per-minute. Under that split
+//       the pair contributes its text exactly once and its span exactly
+//       once. Keying a TIMING decision on this flag is the defect AC-V1.8
+//       exists to close, and it is silent: `appendSpeechSample` drops a
+//       sample with no usable span and `isFinalInAnswerWindow` treats a
+//       non-numeric `start` as "no evidence it is out of range", so the
+//       symptom is live pace/filler readings quietly reading zero and the
+//       practice answer window quietly accepting everything — never an
+//       error, and never a log line.
+//
+//       WHERE IT COMES FROM. ElevenLabs' commit_strategy=vad, with
+//       include_timestamps on, delivers ONE committed utterance as TWO
+//       frames — not as a rare residual but as 100% of finals on that
+//       provider: an untimed `committed_transcript` and a
+//       `committed_transcript_with_timestamps` carrying `start`/`duration`.
+//       In the order the live service actually sends them the UNTIMED one
+//       arrives first, so the SURVIVING (unflagged) frame is the one with no
+//       timing and the SUPPRESSED (flagged) frame is the only one that ever
+//       carried a span. Both frames still have to be delivered — consumers
+//       need `speechFinal` from the commit, and the timing from the timed
+//       twin. Absent/falsy — NEVER explicitly `false` — on every other
+//       frame, so a consumer that has never heard of this field (Deepgram's
+//       frames, and any test written before it existed) sees a byte-
+//       identical object to before it existed. Deepgram never sets this: its
+//       `speech_final` rides on the SAME message as `is_final` (see
+//       deepgram.js), so it has no separate "commit" message to re-deliver
+//       text from in the first place.
 //     - `speakerTag` (AC-M1.1.1): the provider-assigned diarized speaker id —
 //       a non-negative integer, starting at 0, identifying which voice this
 //       frame's words came from. Only meaningful when diarization is both
@@ -206,5 +227,16 @@ export async function createSttStream({
   const stream = new ProviderClass({ speaker, onTranscript, onStatus, onError, token, diarize });
   stream.diarizationActive =
     tokenFetchSucceeded && !!diarize && ProviderClass.supportsDiarization === true;
+  // AC-W1.1: the provider ACTUALLY SELECTED, not `selected` itself — `selected`
+  // is undefined on a failed fetch and can be any garbage string the server
+  // (or an explicit caller override) named, neither of which is the provider
+  // this stream is really talking to. `PROVIDERS[selected]` is exactly the
+  // lookup that decided `ProviderClass` two lines up, so re-deriving the name
+  // from whether that lookup hit keeps this in lockstep with the class it
+  // names by construction, rather than by having to remember to update two
+  // places in sync. See this file's own "Provider selection" section above
+  // for why the fallback case (a bad name, or no successful fetch at all)
+  // must report "deepgram" — the session really is on Deepgram either way.
+  stream.providerName = PROVIDERS[selected] ? selected : "deepgram";
   return stream;
 }

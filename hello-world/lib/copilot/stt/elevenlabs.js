@@ -161,19 +161,31 @@ export class ElevenLabsStream {
     // socket sending the same unknown type repeatedly must not flood the
     // caller with duplicate errors.
     this._reportedUnknownType = false;
-    // R-127 fix: the last isFinal:true frame's { text, start, duration }
-    // this instance delivered. ElevenLabs' commit_strategy=vad means a
-    // committed_transcript(_with_timestamps) is sent for an utterance
-    // ElevenLabs has ALREADY sent as a final_transcript(_with_timestamps)
-    // moments earlier — same text, same span — purely to carry
-    // speechFinal:true (see the committed_transcript case in
-    // _handleMessage below). Every consumer of onTranscript that appends
-    // TEXT on isFinal was therefore counting that one utterance's words
-    // twice: a 5-entry answer transcript rendered as A, A, B, B, C, and
-    // reported word count / filler count / words-per-minute were all
-    // roughly double the true value. This retains just enough to recognise
-    // an exact re-delivery of the same span, one utterance at a time — see
-    // _emitTranscript.
+    // R-127 fix, corrected by AC-V1: the last isFinal:true frame's
+    // { text, start, duration } this instance delivered.
+    //
+    // With commit_strategy=vad and include_timestamps on, ElevenLabs sends
+    // ONE committed utterance as TWO frames — an untimed
+    // `committed_transcript` and a `committed_transcript_with_timestamps` —
+    // and that is 100% of finals on this provider, not a rare residual. The
+    // two share their TEXT and do NOT share a span: the untimed member (which
+    // arrives first, in the order the live service actually sends them) has
+    // no `start`/`duration` at all. Text equality is therefore the only
+    // correlation available — the protocol carries no id, sequence number or
+    // utterance marker on any transcript message — and the span comparison
+    // below is what tells a real repeated sentence apart from a commit pair,
+    // not what identifies the pair.
+    //
+    // (This comment used to say the pair was a `committed_*` re-delivering a
+    // `final_transcript*`, "same text, same span". Neither half was true, and
+    // it contradicted _emitTranscript's own comment in this same file.)
+    //
+    // What it cost before the fix: every consumer of onTranscript that
+    // appends TEXT on isFinal counted one utterance's words twice — a
+    // 5-entry answer transcript rendered as A, A, B, B, C, and reported word
+    // count / filler count / words-per-minute were all roughly double the
+    // true value. This retains just enough to recognise the second member of
+    // a pair, one utterance at a time — see _emitTranscript.
     this._lastFinal = null;
   }
 
@@ -260,6 +272,34 @@ export class ElevenLabsStream {
         // already emitted via committed_transcript(_with_timestamps) rather
         // than carrying new transcript text of its own.
         return;
+      case "warning":
+        // AC-V1.6: `warning` is a documented, non-fatal ElevenLabs message
+        // type this module previously did not handle at all, so it fell
+        // through to the `default` branch's loud "unrecognized message_type"
+        // report — a wording that tells the user their wire format drifted
+        // when it did not. It is deliberately NOT added to
+        // ERROR_MESSAGE_TYPES: that set's own comment above documents that
+        // every member of it "carries a human-readable `error` string" and
+        // IS an error, whereas a warning is not — so it gets its own case
+        // and its own, distinctly non-alarming wording.
+        //
+        // AC-V1.6.1: reads `message`/`warning` as well as `error`, and that
+        // is the whole point of the chain. `error` is the field the ERROR
+        // types carry — see ERROR_MESSAGE_TYPES' own comment above, which is
+        // also the reason `warning` is not a member of that set — so reading
+        // only `error` here meant a warning like
+        // `{message_type:"warning", message:"audio too quiet"}` was reported
+        // as "ElevenLabs warning: no further detail given.", discarding the
+        // one thing worth reporting and stating positively that there was
+        // nothing to say. The literal fallback stays last so a warning that
+        // genuinely carries no text still reads as a sentence rather than as
+        // "undefined".
+        this.onError(
+          new Error(
+            `ElevenLabs warning: ${msg?.error || msg?.message || msg?.warning || "no further detail given."}`,
+          ),
+        );
+        return;
       case "partial_transcript":
         this._emitTranscript(msg, { isFinal: false, speechFinal: false });
         return;
@@ -310,31 +350,62 @@ export class ElevenLabsStream {
     if (!transcript) return;
     const { start, duration } = deriveSpan(msg?.words);
 
-    // R-127 fix: does this final exactly re-deliver the span this instance
-    // JUST delivered? Only a NUMERIC start/duration can prove that — a
-    // message with no words array (or none of its entries numeric;
-    // deriveSpan above) yields `undefined` for both, and
-    // `undefined === undefined` proves nothing about whether this is a
-    // re-delivery of the last utterance or a second, genuinely untimed one.
-    // Treated the same way isFinalInAnswerWindow (lib/copilot/answerWindow.js)
-    // treats an unknown `start` elsewhere in this codebase: unproven, so it
-    // does NOT dedupe — the safer failure here is a rare residual
-    // double-count for an untimed frame, never silently swallowing real
-    // speech. A genuinely repeated phrase has a different `start`, so real
-    // repeated speech can never be swallowed by this check.
+    // AC-V1 fix (was: R-127): ElevenLabs' commit_strategy=vad delivers BOTH
+    // members of a committed_transcript / committed_transcript_with_timestamps
+    // pair for ONE committed utterance whenever include_timestamps is on (see
+    // INCLUDE_TIMESTAMPS above) — not "a rare residual double count" as the
+    // old comment here claimed, but 100% of finals on this provider, per the
+    // real session this fix was built against (elevenlabs.commitPair.test.js).
+    // Text equality is still the load-bearing check — a rule that keyed on
+    // "one side lacks a span" alone would eat every second utterance in a
+    // session — but once the text matches, R-127's old all-four-numeric
+    // conjunction is too narrow: the untimed member of a pair has NEITHER
+    // start nor duration, so it always defeated it.
+    //
+    // Text matches → decide by how many of the two spans are numeric:
+    //   both numeric, EQUAL     → re-delivery (today's original rule, AC-V1.2)
+    //   both numeric, DIFFERENT → two real utterances, unproven otherwise
+    //                             (AC-V1.3 — a genuinely repeated sentence)
+    //   exactly one numeric     → re-delivery: the untimed/timed pair of one
+    //                             commit (AC-V1.1)
+    //   neither numeric         → unproven, so NOT deduped — same standing
+    //                             judgement isFinalInAnswerWindow
+    //                             (lib/copilot/answerWindow.js) applies to an
+    //                             unknown `start` elsewhere in this codebase
+    //                             (AC-V1.4.1/V1.5)
     const last = this._lastFinal;
-    const textAlreadyDelivered =
-      isFinal &&
-      !!last &&
-      last.text === transcript &&
-      typeof last.start === "number" &&
-      typeof start === "number" &&
-      last.start === start &&
-      typeof last.duration === "number" &&
-      typeof duration === "number" &&
-      last.duration === duration;
+    const lastNumeric = !!last && typeof last.start === "number" && typeof last.duration === "number";
+    const curNumeric = typeof start === "number" && typeof duration === "number";
+    const textMatches = isFinal && !!last && last.text === transcript;
 
-    if (isFinal) this._lastFinal = { text: transcript, start, duration };
+    let textAlreadyDelivered = false;
+    if (textMatches) {
+      if (lastNumeric && curNumeric) {
+        textAlreadyDelivered = last.start === start && last.duration === duration;
+      } else if (lastNumeric !== curNumeric) {
+        textAlreadyDelivered = true;
+      }
+      // else: neither side numeric — textAlreadyDelivered stays false.
+    }
+
+    // AC-V1.4: a frame identified as a re-delivery must NOT overwrite the
+    // remembered final — otherwise, in the order the real service actually
+    // sends them (untimed member first), _lastFinal would still be untimed
+    // after the pair, and the NEXT genuine utterance with the same text would
+    // ALSO match "exactly one side has a span" above and be silently
+    // swallowed. But the suppressed twin is not thrown away entirely: when it
+    // carries a span the remembered final lacks, the remembered final is
+    // UPGRADED to that span, so a later comparison can still tell a real
+    // repeat apart by span (AC-V1.4, the mirror order — untimed leads, timed
+    // arrives second). Net property: _lastFinal always holds the best
+    // (numeric, if any is known) span for the commit it represents.
+    if (isFinal) {
+      if (!textAlreadyDelivered) {
+        this._lastFinal = { text: transcript, start, duration };
+      } else if (curNumeric && !lastNumeric) {
+        this._lastFinal = { text: last.text, start, duration };
+      }
+    }
 
     const frame = { speaker: this.speaker, transcript, isFinal, speechFinal, start, duration };
     // Contract (see ./index.js's onTranscript doc): absent/falsy means

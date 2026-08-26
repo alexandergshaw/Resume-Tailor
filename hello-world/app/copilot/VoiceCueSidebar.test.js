@@ -22,6 +22,8 @@ import { createElement, act } from "react";
 import { createRoot } from "react-dom/client";
 import { VOICE_CUES } from "@/lib/copilot/voiceCues";
 import { companyResearchDestination } from "@/lib/copilot/groundingNotice";
+import { COMPANY_FACTS_CLAUSE } from "@/lib/copilot/practiceNotices";
+import { SPEAKER_ATTRIBUTION, cueAvailabilityNotice, cueRowNote } from "@/lib/copilot/cuePolicy";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -531,5 +533,362 @@ describe("VoiceCueSidebar -- vertical budget and row structure (SF-6)", () => {
     expect(rowSxMatch[1]).not.toMatch(/borderRadius/);
     expect(rowSxMatch[1]).not.toMatch(/minHeight/);
     expect(rowSxMatch[1]).toContain("borderBottom");
+  });
+});
+
+// AC-V2.6. The degraded-state disclosure: when the STT provider can't tell
+// voices apart, hold still works from a spoken cue but release/company are
+// button-only this session — and the user must be told that, in terms a
+// screen reader can read, without needing the panel open. Every assertion
+// here reads its expectation off lib/copilot/cuePolicy.js's own exports
+// rather than hardcoding a sentence, for the same anti-drift reason that
+// module exists at all (see its own header and VoiceCueSidebar.js's).
+describe("VoiceCueSidebar -- degraded attribution disclosure (AC-V2.1/V2.6)", () => {
+  it("says nothing extra by default (no prop passed), matching every non-degraded state", async () => {
+    const Sidebar = await loadSidebar();
+    await render(Sidebar, baseProps());
+    expect(container.textContent).not.toMatch(/can't tell voices apart/i);
+  });
+
+  it("discloses the degraded state while expanded, when the provider can't tell voices apart", async () => {
+    const Sidebar = await loadSidebar();
+    await render(Sidebar, baseProps({ collapsed: false, speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE }));
+    expect(container.textContent).toContain(cueAvailabilityNotice(SPEAKER_ATTRIBUTION.UNAVAILABLE));
+  });
+
+  // The whole point of V2.6's "must not depend on the panel being open":
+  // collapsed is the state a LIVE session is actually in, and a live session
+  // is the only state any of this can matter in at all (mirrors BL-2's own
+  // reasoning for the mic/delay note and the company destination notice).
+  it("discloses the degraded state while COLLAPSED too, not only expanded (V2.6)", async () => {
+    const Sidebar = await loadSidebar();
+    await render(Sidebar, baseProps({ collapsed: true, speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE }));
+    // AC-V2.6.2: the COLLAPSED variant of the same policy sentence. This
+    // assertion used to read the one-argument (expanded) wording, which
+    // passed while the rail told a live session to use buttons it was not
+    // rendering — see the C4 block below.
+    expect(container.textContent).toContain(
+      cueAvailabilityNotice(SPEAKER_ATTRIBUTION.UNAVAILABLE, { collapsed: true }),
+    );
+  });
+
+  it("says nothing extra for a diarizing (active) session, expanded or collapsed", async () => {
+    const Sidebar = await loadSidebar();
+    for (const collapsed of [false, true]) {
+      await render(Sidebar, baseProps({ collapsed, speakerAttribution: SPEAKER_ATTRIBUTION.ACTIVE }));
+      expect(container.textContent).not.toMatch(/can't tell voices apart/i);
+    }
+  });
+
+  it("marks the release and company rows, but not the hold row, when unavailable", async () => {
+    const Sidebar = await loadSidebar();
+    await render(Sidebar, baseProps({ collapsed: false, speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE }));
+    const pinNote = cueRowNote("pin", SPEAKER_ATTRIBUTION.UNAVAILABLE);
+    const unpinNote = cueRowNote("unpin", SPEAKER_ATTRIBUTION.UNAVAILABLE);
+    const companyNote = cueRowNote("company", SPEAKER_ATTRIBUTION.UNAVAILABLE);
+    expect(pinNote).toBe("");
+    expect(unpinNote.trim()).not.toBe("");
+    expect(companyNote.trim()).not.toBe("");
+    expect(container.textContent).toContain(unpinNote);
+    expect(container.textContent).toContain(companyNote);
+  });
+
+  it("marks no row at all once attribution is active again", async () => {
+    const Sidebar = await loadSidebar();
+    await render(Sidebar, baseProps({ collapsed: false, speakerAttribution: SPEAKER_ATTRIBUTION.ACTIVE }));
+    expect(container.textContent).not.toContain(cueRowNote("unpin", SPEAKER_ATTRIBUTION.UNAVAILABLE));
+    expect(container.textContent).not.toContain(cueRowNote("company", SPEAKER_ATTRIBUTION.UNAVAILABLE));
+  });
+
+  // The degraded notice is prose, not a status token — the same requirement
+  // cuePolicy.test.js pins on cueAvailabilityNotice directly.
+  it("renders the degraded notice as a real sentence, not a bare status word", async () => {
+    const Sidebar = await loadSidebar();
+    await render(Sidebar, baseProps({ collapsed: false, speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE }));
+    expect(container.textContent).toMatch(/[.!]/);
+  });
+
+  // Never colour alone (AC-X2): the disclosure must be real text content a
+  // screen reader reads, not a swatch or an icon-only marker.
+  it("carries the degraded state as text, not merely as a style change", async () => {
+    const Sidebar = await loadSidebar();
+    await render(Sidebar, baseProps({ collapsed: false, speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE }));
+    const notice = [...container.querySelectorAll("p")].find((el) =>
+      el.textContent.includes(cueAvailabilityNotice(SPEAKER_ATTRIBUTION.UNAVAILABLE)),
+    );
+    expect(notice).toBeDefined();
+    expect(getComputedStyle(notice).display).not.toBe("none");
+  });
+
+  it("does not disturb the buttons' accessible names while degraded", async () => {
+    const Sidebar = await loadSidebar();
+    await render(Sidebar, baseProps({ collapsed: false, speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE, pinned: true }));
+    for (const el of buttons()) {
+      expect(accessibleName(el)).toBe(el.textContent.trim());
+    }
+  });
+});
+
+// P1.7. The company-FACTS transfer (distinct from the company CUE above) fires
+// on every drafted answer, mid-session, with nothing clicked. The surface that
+// would otherwise carry that disclosure — `postingGroundingNotice`, rendered
+// by SessionSetup — sits inside a `<Collapse in={expanded}>` that `start()`
+// itself collapses, so for the entire live window it is out of the DOM while
+// the transfer keeps firing. This rail is the surface that survives, which is
+// the same reason BL-2 put `companyResearchDestination` in both of its
+// branches, and the disclosure is asserted here in BOTH for that reason.
+describe("VoiceCueSidebar -- the company-facts transfer, disclosed for the whole live window (P1.7)", () => {
+  it("states it in the collapsed rail — the state a live session is actually in", async () => {
+    const Sidebar = await loadSidebar();
+    await render(Sidebar, baseProps({ collapsed: true, isEmbedded: false, hasCompany: true }));
+    expect(container.textContent).toContain(COMPANY_FACTS_CLAUSE);
+  });
+
+  it("states it in the expanded rail too", async () => {
+    const Sidebar = await loadSidebar();
+    await render(Sidebar, baseProps({ collapsed: false, isEmbedded: false, hasCompany: true }));
+    expect(container.textContent).toContain(COMPANY_FACTS_CLAUSE);
+  });
+
+  it("says none of it with no company on file — no search can fire", async () => {
+    const Sidebar = await loadSidebar();
+    for (const collapsed of [true, false]) {
+      await render(Sidebar, baseProps({ collapsed, isEmbedded: false, hasCompany: false }));
+      expect(container.textContent).not.toContain(COMPANY_FACTS_CLAUSE);
+    }
+  });
+
+  it("says none of it on the embedded engine, which runs no facts search at all", async () => {
+    const Sidebar = await loadSidebar();
+    for (const collapsed of [true, false]) {
+      await render(Sidebar, baseProps({ collapsed, isEmbedded: true, hasCompany: true }));
+      expect(container.textContent).not.toContain(COMPANY_FACTS_CLAUSE);
+    }
+  });
+
+  // Accessibility, the same two rules AC-X2/BL-2 already pin on the notices
+  // beside it: the sentence is real text a screen reader reads, in a visible
+  // element, and nothing about it is carried by colour.
+  it("carries it as visible text, not as a style or an aria-hidden aside", async () => {
+    const Sidebar = await loadSidebar();
+    for (const collapsed of [true, false]) {
+      await render(Sidebar, baseProps({ collapsed, isEmbedded: false, hasCompany: true }));
+      const el = [...container.querySelectorAll("p")].find((node) =>
+        node.textContent.includes(COMPANY_FACTS_CLAUSE),
+      );
+      expect(el).toBeDefined();
+      expect(getComputedStyle(el).display).not.toBe("none");
+      expect(el.closest("[aria-hidden='true']")).toBeNull();
+    }
+  });
+
+  // It is the SHARED constant, not a fourth hand-written copy of the fact —
+  // the component states nothing about the network on its own account (BL-1).
+  it("reads the sentence from the shared module rather than restating it", async () => {
+    expect(SOURCE).not.toMatch(/sends the company name and this job's title to Google Gemini with web search/);
+    expect(SOURCE).toMatch(/answerCompanyFactsNotice/);
+  });
+});
+
+// AC-V2.6.1 / C3 (accessibility audit). WCAG 1.3.1 Info and Relationships.
+// The row's degraded-state note was real text on screen and, structurally,
+// nothing at all: the row's `aria-labelledby` points only at the button, and
+// the note was a positional sibling <p> with no programmatic relationship to
+// the control it describes. A user tabbing the rail landed on "Release the
+// question, button" with nothing announced to say that saying it does nothing
+// this session — the note was reachable only by reading the rail
+// sequentially, which is exactly the "visually adjacent, programmatically
+// unrelated" pattern 1.3.1 exists to fail.
+//
+// aria-describedby, never aria-label: the description is announced AFTER the
+// name and is separate from it, so amendment I4's "no aria-label anywhere in
+// this file" invariant and WCAG 2.5.3 Label in Name both survive untouched.
+// Those two assertions are restated at the foot of this block rather than
+// merely relied on, because they are the exact thing the obvious wrong fix
+// (folding the note into the button's name) would break.
+describe("VoiceCueSidebar -- the degraded state reaches the control, not just the page (AC-V2.6.1)", () => {
+  function describedText(el) {
+    const ids = (el.getAttribute("aria-describedby") || "").split(/\s+/).filter(Boolean);
+    return ids
+      .map((id) => container.querySelector(`#${CSS.escape(id)}`))
+      .filter(Boolean)
+      .map((n) => n.textContent.trim())
+      .join(" ");
+  }
+
+  it("describes the release and company buttons with the policy's own row note", async () => {
+    const Sidebar = await loadSidebar();
+    await render(Sidebar, baseProps({ collapsed: false, speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE }));
+    for (const action of ["unpin", "company"]) {
+      const button = buttonForAction(action);
+      expect(button).toBeDefined();
+      const note = cueRowNote(action, SPEAKER_ATTRIBUTION.UNAVAILABLE);
+      expect(note.trim()).not.toBe("");
+      // Not merely "has the attribute": it resolves to a real element in this
+      // tree whose text is the shared module's own sentence. A dangling id
+      // reference announces nothing at all and is invisible to a check that
+      // only reads the attribute.
+      expect(button.getAttribute("aria-describedby")).toBeTruthy();
+      expect(describedText(button)).toBe(note.trim());
+    }
+  });
+
+  it("leaves the hold button undescribed, because holding still works by voice", async () => {
+    const Sidebar = await loadSidebar();
+    await render(Sidebar, baseProps({ collapsed: false, speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE }));
+    expect(cueRowNote("pin", SPEAKER_ATTRIBUTION.UNAVAILABLE)).toBe("");
+    expect(buttonForAction("pin").getAttribute("aria-describedby")).toBeNull();
+  });
+
+  it("describes nothing at all once attribution is active", async () => {
+    const Sidebar = await loadSidebar();
+    await render(Sidebar, baseProps({ collapsed: false, speakerAttribution: SPEAKER_ATTRIBUTION.ACTIVE }));
+    for (const el of buttons()) {
+      expect(el.getAttribute("aria-describedby")).toBeNull();
+    }
+  });
+
+  it("changes no accessible name, and introduces no aria-label (I4 / WCAG 2.5.3)", async () => {
+    const Sidebar = await loadSidebar();
+    for (const pinned of [false, true]) {
+      await render(
+        Sidebar,
+        baseProps({ collapsed: false, pinned, speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE }),
+      );
+      expect([...container.querySelectorAll("[aria-label]")]).toHaveLength(0);
+      for (const el of [...buttons(), ...links()]) {
+        expect(accessibleName(el)).toBe(el.textContent.trim());
+      }
+    }
+  });
+});
+
+// AC-V2.6.2 / C4 (accessibility audit). WCAG 3.3.2: the rail must not tell a
+// user to press buttons that are not on screen. The collapsed rail renders
+// exactly one button — the expand toggle, above this notice — so the
+// expanded wording's "…from their buttons below" is false there, and
+// collapsed is the state a live session is actually in. The wording split
+// lives in lib/copilot/cuePolicy.js (cuePolicy.test.js pins the two strings
+// themselves); what is asserted here is that this component asks for the
+// right one, which no test of the pure module can see.
+describe("VoiceCueSidebar -- the degraded notice matches the rail it is in (AC-V2.6.2)", () => {
+  const EXPANDED = cueAvailabilityNotice(SPEAKER_ATTRIBUTION.UNAVAILABLE, { collapsed: false });
+  const COLLAPSED = cueAvailabilityNotice(SPEAKER_ATTRIBUTION.UNAVAILABLE, { collapsed: true });
+
+  it("uses the collapsed wording, and not the expanded one, while collapsed", async () => {
+    const Sidebar = await loadSidebar();
+    await render(Sidebar, baseProps({ collapsed: true, speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE }));
+    expect(container.textContent).toContain(COLLAPSED);
+    expect(container.textContent).not.toContain(EXPANDED);
+  });
+
+  it("uses the expanded wording while expanded", async () => {
+    const Sidebar = await loadSidebar();
+    await render(Sidebar, baseProps({ collapsed: false, speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE }));
+    expect(container.textContent).toContain(EXPANDED);
+  });
+
+  it("never promises buttons below in a rail that renders none", async () => {
+    // Read off the DOM rather than off the string: the claim is about what is
+    // actually on screen beneath the notice, and the collapsed rail's only
+    // button is the toggle, which sits above it.
+    const Sidebar = await loadSidebar();
+    await render(Sidebar, baseProps({ collapsed: true, speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE }));
+    const notice = [...container.querySelectorAll("p")].find((el) => el.textContent.includes(COLLAPSED));
+    expect(notice).toBeDefined();
+    const after = [...container.querySelectorAll("button")].filter(
+      (b) => notice.compareDocumentPosition(b) & window.Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+    expect(after).toHaveLength(0);
+    expect(notice.textContent).not.toMatch(/buttons below/i);
+  });
+});
+
+// AC-V2.8. The rail states the policy; it must state the policy that is
+// actually in force, not the one the raw attribution flag implies.
+//
+// The session under test is the token-blip one: `speakerAttribution` reads
+// "unavailable" because `diarizationActive` carries a deliberate
+// `tokenFetchSucceeded` term (R-151), while the stream was still built with
+// `diarize: true` and Deepgram fetched its own token — so speaker tags arrive,
+// the correction bar works, and cuePolicy.js now permits the candidate's
+// release and company cues. A rail that keeps saying "button only this
+// session" in that session is telling the user something false about what
+// their own product will do, which is the same class of defect as a privacy
+// notice describing a transfer that does not happen.
+describe("VoiceCueSidebar -- the disclosure follows the evidence, not the flag (AC-V2.8)", () => {
+  const TAGS = { userTag: 1, confidence: "high", overridden: false, tags: [0, 1] };
+  const NO_TAGS = { userTag: null, confidence: "unknown", overridden: false, tags: [] };
+
+  for (const collapsed of [false, true]) {
+    it(`drops the degraded notice once tags prove voices are separable (collapsed=${collapsed})`, async () => {
+      const Sidebar = await loadSidebar();
+      await render(
+        Sidebar,
+        baseProps({
+          collapsed,
+          speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE,
+          speakerSnapshot: TAGS,
+        }),
+      );
+      expect(container.textContent).not.toMatch(/can't tell voices apart/i);
+    });
+  }
+
+  it("stops calling release and company button-only in that session", async () => {
+    const Sidebar = await loadSidebar();
+    await render(
+      Sidebar,
+      baseProps({
+        collapsed: false,
+        speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE,
+        speakerSnapshot: TAGS,
+      }),
+    );
+    expect(container.textContent).not.toMatch(/button only this session/i);
+  });
+
+  it("still says all of it when there is genuinely no evidence", async () => {
+    // The negative control: without it every assertion above is satisfied by
+    // deleting the disclosure, which is the harm AC-V2.6 exists to prevent.
+    const Sidebar = await loadSidebar();
+    await render(
+      Sidebar,
+      baseProps({
+        collapsed: false,
+        speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE,
+        speakerSnapshot: NO_TAGS,
+      }),
+    );
+    expect(container.textContent).toContain(cueAvailabilityNotice(SPEAKER_ATTRIBUTION.UNAVAILABLE));
+    expect(container.textContent).toContain(cueRowNote("unpin", SPEAKER_ATTRIBUTION.UNAVAILABLE));
+  });
+
+  it("treats an unwired snapshot prop as no evidence, never as evidence", async () => {
+    // Backward compatibility that fails SAFE. Every older caller and mock in
+    // this repo passes no snapshot at all; none of them may be promoted into
+    // silence by omission.
+    const Sidebar = await loadSidebar();
+    await render(
+      Sidebar,
+      baseProps({ collapsed: false, speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE }),
+    );
+    expect(container.textContent).toContain(cueAvailabilityNotice(SPEAKER_ATTRIBUTION.UNAVAILABLE));
+  });
+
+  it("never promotes a state that was not claiming unavailability", async () => {
+    // Tags on a meeting session (attribution deliberately OFF) or on
+    // tab/system must not change a single word of this rail.
+    for (const speakerAttribution of [
+      SPEAKER_ATTRIBUTION.ACTIVE,
+      SPEAKER_ATTRIBUTION.OFF,
+      SPEAKER_ATTRIBUTION.NOT_APPLICABLE,
+      SPEAKER_ATTRIBUTION.PENDING,
+    ]) {
+      const Sidebar = await loadSidebar();
+      await render(Sidebar, baseProps({ collapsed: false, speakerAttribution, speakerSnapshot: TAGS }));
+      expect(container.textContent).not.toMatch(/can't tell voices apart/i);
+      expect(container.textContent).not.toMatch(/button only this session/i);
+    }
   });
 });

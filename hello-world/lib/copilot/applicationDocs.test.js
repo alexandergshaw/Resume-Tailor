@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-import { fetchApplicationDocs, fetchPostingDescription } from "./applicationDocs";
+import { fetchApplicationDocs, fetchPostingDescription, fetchPostingEmployer } from "./applicationDocs";
 
 // Minimal chainable double for `supabase.from(table).select(...).eq(...).maybeSingle()`.
 // Routes each `.from(table)` call to its own query builder and its own
@@ -239,6 +239,89 @@ describe("fetchPostingDescription", () => {
     for (const appResult of cases) {
       const fake = makeFakeSupabase({ appResult });
       expect(await fetchPostingDescription(fake, { applicationId: "app-1", userId: "user-1" })).toBe("");
+    }
+  });
+});
+
+// AC-V4/C8. A separate function from fetchPostingDescription for the same
+// reason that one is separate from fetchApplicationDocs: the description
+// must never reach a prompt builder as part of a bag of other fields
+// (AC-H7.27), so the employer's name/title come back from their own query
+// instead of widening that one's return shape.
+describe("fetchPostingEmployer", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns the joined position's company and title", async () => {
+    const fake = makeFakeSupabase({
+      appResult: {
+        data: { id: "app-1", positions: { company: "Purple Wave", title: "Platform Engineer" } },
+        error: null,
+      },
+    });
+
+    expect(await fetchPostingEmployer(fake, { applicationId: "app-1", userId: "user-1" })).toEqual({
+      company: "Purple Wave",
+      title: "Platform Engineer",
+    });
+  });
+
+  it("accepts the embedded relation as an array as well as an object", async () => {
+    const fake = makeFakeSupabase({
+      appResult: {
+        data: { id: "app-1", positions: [{ company: "Array Co", title: "Engineer" }] },
+        error: null,
+      },
+    });
+
+    expect(await fetchPostingEmployer(fake, { applicationId: "app-1", userId: "user-1" })).toEqual({
+      company: "Array Co",
+      title: "Engineer",
+    });
+  });
+
+  it("scopes the lookup to both the application id and the user id", async () => {
+    const fake = makeFakeSupabase({ appResult: { data: { id: "app-1", positions: null }, error: null } });
+
+    await fetchPostingEmployer(fake, { applicationId: "app-1", userId: "user-1" });
+
+    expect(fake.calls.applications.eq).toContainEqual(["id", "app-1"]);
+    expect(fake.calls.applications.eq).toContainEqual(["user_id", "user-1"]);
+  });
+
+  it("short-circuits to empty, without querying anything, when applicationId or userId is missing", async () => {
+    const noApp = makeFakeSupabase();
+    expect(await fetchPostingEmployer(noApp, { applicationId: undefined, userId: "user-1" })).toEqual({
+      company: "",
+      title: "",
+    });
+    expect(noApp.from).not.toHaveBeenCalled();
+
+    const noUser = makeFakeSupabase();
+    expect(await fetchPostingEmployer(noUser, { applicationId: "app-1", userId: undefined })).toEqual({
+      company: "",
+      title: "",
+    });
+    expect(noUser.from).not.toHaveBeenCalled();
+  });
+
+  it("degrades to empty, without throwing, for every other failure mode", async () => {
+    const cases = [
+      { data: null, error: null },
+      { data: null, error: { message: "connection reset" } },
+      { data: { id: "app-1" }, error: null },
+      { data: { id: "app-1", positions: null }, error: null },
+      { data: { id: "app-1", positions: [] }, error: null },
+      { data: { id: "app-1", positions: { company: null, title: null } }, error: null },
+      { data: { id: "app-1", positions: { company: 42, title: 42 } }, error: null },
+    ];
+    for (const appResult of cases) {
+      const fake = makeFakeSupabase({ appResult });
+      expect(await fetchPostingEmployer(fake, { applicationId: "app-1", userId: "user-1" })).toEqual({
+        company: "",
+        title: "",
+      });
     }
   });
 });

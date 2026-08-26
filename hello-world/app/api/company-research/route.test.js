@@ -194,8 +194,14 @@ describe("POST /api/company-research (custom URL mode)", () => {
     const data = await res.json();
     expect(data.articles[0].suggestion).toContain("UMSI");
     expect(data.articles[0].url).toBe("https://www.si.umich.edu/news/ai");
-    // used the urlContext tool fallback
-    expect(generateContent.mock.calls[0][0].tools).toEqual([{ urlContext: {} }]);
+    // used the urlContext tool fallback — asserted at `config.tools`, NOT at
+    // the top level. This is an INJECTED FAKE client: it sees whatever object
+    // the route hands it and cannot observe the SDK layer that DISCARDS a
+    // top-level `tools`, so this line was green against a request that never
+    // carried the key. The second assertion stops that shape returning;
+    // route.wire.test.js proves it on the actual bytes.
+    expect(generateContent.mock.calls[0][0].config?.tools).toEqual([{ urlContext: {} }]);
+    expect(generateContent.mock.calls[0][0].tools).toBeUndefined();
   });
 
   it("502s when the scrape is blocked and there is no Gemini key", async () => {

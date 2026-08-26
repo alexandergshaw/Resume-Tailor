@@ -77,3 +77,43 @@ export async function fetchPostingDescription(supabase, { applicationId, userId 
   const position = Array.isArray(data.positions) ? data.positions[0] : data.positions;
   return typeof position?.description === "string" ? position.description : "";
 }
+
+// AC-V4/C8 (Group V architecture doc): the employer's name and job title for
+// the selected application — what V4's company-facts search is built from.
+// A separate function for the same reason fetchPostingDescription is
+// separate from fetchApplicationDocs: `positions(description)` above is kept
+// away from any bag of fields a prompt builder might be handed wholesale
+// (AC-H7.27), and widening ITS return to add company/title would erode
+// exactly that boundary. This reads the same `positions` row through its own
+// query instead.
+//
+// Never throws, exactly like its two siblings above: every failure mode — no
+// applicationId, no userId, no matching row, an application with no joined
+// position, a null/non-string field, or any query error — degrades to
+// `{ company: "", title: "" }`, which callers treat as "no employer known"
+// rather than an error.
+export async function fetchPostingEmployer(supabase, { applicationId, userId } = {}) {
+  const empty = { company: "", title: "" };
+  if (!applicationId || !userId) return empty;
+
+  // Same non-optional user_id scoping as fetchPostingDescription, and for
+  // the same reason: an application-scoped lookup must never read another
+  // user's posting even if RLS is ever misconfigured.
+  const { data, error } = await supabase
+    .from("applications")
+    .select("id, positions ( company, title )")
+    .eq("id", applicationId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error || !data) return empty;
+
+  // Same either-shape acceptance as fetchPostingDescription: PostgREST
+  // returns an embedded one-to-one relation as an object and a one-to-many
+  // as an array, and this caller does not depend on which the schema's
+  // foreign key happens to produce.
+  const position = Array.isArray(data.positions) ? data.positions[0] : data.positions;
+  return {
+    company: typeof position?.company === "string" ? position.company : "",
+    title: typeof position?.title === "string" ? position.title : "",
+  };
+}

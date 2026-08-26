@@ -535,6 +535,14 @@ export default function PracticeClient({
   // clauses; while its load is still unsettled (`loading`/`idle`) or has
   // failed (`error`), whether a document exists is genuinely unknown.
   const hasPosting = !!posting;
+  // P1.6: the same fact live mode already reads for its own notice
+  // (CopilotClient.js) and for VoiceCueSidebar — whether the selected posting
+  // has a company on file. It is the exact predicate for whether the answer
+  // route's company-facts search fires: `companyKnown` there is read off the
+  // SAME `positions.company` column. Practice mode's room-question and typed-
+  // question paths take that branch (no `mode`), so the clause has to be
+  // gated on this rather than on whether a posting was merely selected.
+  const hasCompany = !!String(posting?.company || "").trim();
   const docsSettled = submittedDocs.status === "done";
   const hasSubmittedResume = !!submittedDocs.resume;
   const hasSubmittedCoverLetter = !!submittedDocs.coverLetter;
@@ -565,7 +573,7 @@ export default function PracticeClient({
     hasSubmittedResume,
     hasSubmittedCoverLetter,
     saveEnabled,
-  })} ${roomQuestionPrivacyClause({ isEmbedded, hasPosting, docsSettled, hasSubmittedResume, hasSubmittedCoverLetter })}`;
+  })} ${roomQuestionPrivacyClause({ isEmbedded, hasPosting, docsSettled, hasSubmittedResume, hasSubmittedCoverLetter, hasCompany })}`;
   // G2/AC-G2-C-6: resolved once here, from the CURRENT interview type,
   // rather than inside AnswerFeedback — changing interview type always
   // clears any answer on screen (onInterviewTypeChange above), so this is

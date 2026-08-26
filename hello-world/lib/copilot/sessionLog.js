@@ -113,6 +113,13 @@ export function createSessionLog({ mode, source, provider, startedAt, now = Date
   const startedAtMs = Number.isFinite(startedAt) ? startedAt : 0;
   const events = [];
   let dropped = 0;
+  // AC-W1.2: `provider` starts as whatever the caller passed at construction
+  // (practice mode already passes "practice" here and must keep working
+  // byte-for-byte) and can be overwritten exactly once, later, by
+  // setProvider() below — this has to be a mutable local rather than the
+  // original destructured `const` because the live path does not know its
+  // provider until a network round trip after this log is already built.
+  let currentProvider = provider;
 
   function pushEntry(entry) {
     events.push(entry);
@@ -157,20 +164,57 @@ export function createSessionLog({ mode, source, provider, startedAt, now = Date
     }
   }
 
+  // AC-W1.2: the live path's only way to tell this log its provider after
+  // the fact — startLog() (app/copilot/useSessionLogRecorder.js) has to
+  // build the log at the very top of start(), before the provider is known,
+  // so that a session which fails moments later still has a session.start
+  // entry to explain what it was. Refuses anything that is not a non-blank
+  // string rather than storing it: `renderSessionLogMarkdown` below already
+  // falls back to "unknown" for a non-string, but accepting `""` here would
+  // render "- Provider: " — a blank that reads like a rendering bug, not an
+  // absent fact. Never throws, matching every other method on this object;
+  // a hostile or merely wrong value is silently ignored, not fatal to the
+  // interview this log exists to explain.
+  function setProvider(name) {
+    try {
+      if (typeof name === "string" && name.trim()) {
+        currentProvider = name;
+      }
+    } catch {
+      // Never let recording break the pipeline.
+    }
+  }
+
   function snapshot() {
     // AC-Q1.2: independent of further recording. Every stored event was
     // already sanitized to be JSON-safe at record time, so a stringify/parse
     // round trip is a cheap, reliable deep clone — later `event()` calls
     // mutate the live `events` array, never this returned copy.
-    const raw = { schema: SESSION_LOG_SCHEMA, mode, source, provider, startedAt: startedAtMs, events, dropped };
+    const raw = {
+      schema: SESSION_LOG_SCHEMA,
+      mode,
+      source,
+      provider: currentProvider,
+      startedAt: startedAtMs,
+      events,
+      dropped,
+    };
     try {
       return JSON.parse(JSON.stringify(raw));
     } catch {
-      return { schema: SESSION_LOG_SCHEMA, mode, source, provider, startedAt: startedAtMs, events: [], dropped };
+      return {
+        schema: SESSION_LOG_SCHEMA,
+        mode,
+        source,
+        provider: currentProvider,
+        startedAt: startedAtMs,
+        events: [],
+        dropped,
+      };
     }
   }
 
-  return { event, snapshot };
+  return { event, setProvider, snapshot };
 }
 
 // Render any value for display without ever producing "[object Object]" or

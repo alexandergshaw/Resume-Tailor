@@ -24,7 +24,7 @@
 // and one description of it in one place is the only arrangement in which
 // they cannot drift. app/copilot/practice/practiceRoomQuestionPrivacy.js
 // already imports the same constant for the same reason.
-import { KNOWLEDGE_BASE_CLAUSE } from "./practiceNotices.js";
+import { COMPANY_FACTS_CLAUSE, KNOWLEDGE_BASE_CLAUSE } from "./practiceNotices.js";
 
 // The live draft's own destination, stated for its own sake. This is NOT the
 // antecedent of anything: KNOWLEDGE_BASE_CLAUSE used to open "It also sends…"
@@ -196,13 +196,19 @@ export function companyResearchDestination({ isEmbedded, hasCompany } = {}) {
     : "Saying this, or pressing the button, sends the company name, job title and posting text to Google Gemini as soon as it happens.";
 }
 
-// Everything this notice says about the SELECTED POSTING — unchanged, byte
-// for byte, from the ternary chain that used to be the whole function, minus
-// its embedded branch (lifted into the caller below, since the embedded path
-// is the one place the knowledge-base clause must NOT be appended). "" here
-// means only "there is nothing more to say about the posting", never "there
-// is nothing to disclose".
-function postingDocsNotice({ posting, docsStatus, resume, coverLetter, hasCompany }) {
+// Everything this notice says about the SELECTED POSTING'S DOCUMENTS — the
+// ternary chain that used to be the whole function, minus its embedded branch
+// (lifted into the caller below, since the embedded path is the one place the
+// knowledge-base clause must NOT be appended) and minus its terminal
+// company-research branch (lifted into the caller for the reason
+// `companyClauses` below states). "" here means only "there is nothing more to
+// say about the posting's documents", never "there is nothing to disclose".
+//
+// This function is now about DOCUMENTS and nothing else, which is what makes
+// the P1.5 failure structurally unreachable: nothing whose trigger is the
+// company can be reached, or missed, through a branch keyed on which documents
+// the load happened to find.
+function postingDocsNotice({ posting, docsStatus, resume, coverLetter }) {
   const hasSubmittedResume = !!resume;
   const hasSubmittedCoverLetter = !!coverLetter;
   const docsSettled = docsStatus === "done";
@@ -212,9 +218,47 @@ function postingDocsNotice({ posting, docsStatus, resume, coverLetter, hasCompan
       ? " Because you selected a posting, any résumé or cover letter you submitted for it may also be sent to Google Gemini to ground your talking points."
       : hasSubmittedResume || hasSubmittedCoverLetter
         ? ` Because you selected a posting, ${submittedDocsClause(hasSubmittedResume, hasSubmittedCoverLetter)}.`
-        : hasCompany
-          ? " Because you selected a posting, asking to research the company also sends its name, this job's title and the posting text to Google Gemini."
-          : "";
+        : "";
+}
+
+// The company-research VOICE CUE's own transfer, unchanged in wording from the
+// terminal branch of the ternary above, where it used to live.
+//
+// It moved because of WHERE it was, not what it said. As the terminal `else`
+// of a chain keyed on submitted documents, whether the user was told about a
+// company transfer was decided by whether their application had a résumé
+// attached: same posting, same company, same cue, and the sentence silently
+// disappeared the moment a document was found. Same posting-scoped fact, one
+// gate — `hasCompany` — and the documents have nothing to say about it.
+const COMPANY_CUE_CLAUSE =
+  " Because you selected a posting, asking to research the company also sends its name, this job's title and the posting text to Google Gemini.";
+
+// The two company-gated sentences, in the order a reader needs them, or "".
+//
+// ORDER IS LOAD-BEARING (P1.2). Before this, `COMPANY_CUE_CLAUSE` was the only
+// place in live mode's notice that named a company transfer at all, so
+// "asking to research the company ALSO sends its name…" read as *asking is the
+// only way company data leaves*. It is not: the facts search fires on every
+// drafted answer with nothing clicked. The unconditional transfer is stated
+// first, and the cue then reads as the ADDITIONAL transfer it is.
+//
+// GATED ONLY ON `hasCompany`, which is the exact predicate rather than an
+// approximation of one: the client value (CopilotClient.js computes it as
+// `!!String(posting?.company || "").trim()`) and the server's `companyKnown`
+// (`app/api/copilot/answer/route.js`, via `fetchPostingEmployer`) read the
+// SAME `positions.company` column, so this is silent exactly when no request
+// can be issued (R-098's rule) and speaks exactly when one is (R-098's rule
+// failing in the opposite direction, which is what P1 is). `hasCompany` is
+// itself derived from the SELECTED posting, so it is already false whenever
+// nothing is selected and no second gate on `posting` is needed — nor wanted:
+// a second dimension is how the first one got lost.
+export function answerCompanyFactsNotice({ isEmbedded, hasCompany } = {}) {
+  // The embedded engine runs no facts search — `wantsEmbedded` is checked at
+  // the route before `buildCompanyFacts` is ever constructed — so disclosing
+  // one here would be its own kind of false, the same rule this file's
+  // embedded branch already applies to the knowledge base.
+  if (isEmbedded || !hasCompany) return "";
+  return COMPANY_FACTS_CLAUSE;
 }
 
 export function postingGroundingNotice({ posting, isEmbedded, docsStatus, resume, coverLetter, hasCompany }) {
@@ -235,6 +279,12 @@ export function postingGroundingNotice({ posting, isEmbedded, docsStatus, resume
   // omitted, so the question/transcript/prep-context transfer is still
   // disclosed in the state live mode is usually in — see
   // LIVE_DRAFT_DESTINATION.
-  const docsNotice = postingDocsNotice({ posting, docsStatus, resume, coverLetter, hasCompany });
-  return `${docsNotice || LIVE_DRAFT_DESTINATION}${KNOWLEDGE_BASE_CLAUSE}`;
+  const docsNotice = postingDocsNotice({ posting, docsStatus, resume, coverLetter });
+  // APPENDED ALONGSIDE the documents notice, never woven into it (P1.5). The
+  // documents clause and the company clauses answer two independent questions
+  // and are composed rather than nested, so neither can decide whether the
+  // other is stated.
+  const factsClause = answerCompanyFactsNotice({ isEmbedded, hasCompany });
+  const companyNotice = factsClause ? ` ${factsClause}${COMPANY_CUE_CLAUSE}` : "";
+  return `${docsNotice || LIVE_DRAFT_DESTINATION}${companyNotice}${KNOWLEDGE_BASE_CLAUSE}`;
 }

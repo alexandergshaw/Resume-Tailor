@@ -86,6 +86,59 @@ function submittedDocsToGeminiClauseFor({ hasPosting, docsSettled, hasSubmittedR
 export const KNOWLEDGE_BASE_CLAUSE =
   " Drafting an answer also sends your project pages, and the file names and any saved notes of the attachments on them — never the attached files themselves.";
 
+// BUG-H5 a THIRD time, and this one adds an outbound request the notices had
+// no sentence for at all. `app/api/copilot/answer/route.js` runs
+// `buildCompanyFacts` whenever `mode !== "answer" && !wantsEmbedded(engine) &&
+// companyKnown`. That is: it sends the employer's company name and this job's
+// title to Google Gemini with `googleSearch` enabled, and then THIS SERVER
+// fetches the third-party pages that search returns (`resolveGroundedSources`
+// -> `fetchUrlContent`) so a fact can be checked against a page rather than
+// invented. It fires automatically, on the first drafted answer of a session,
+// with nothing clicked.
+//
+// WHO REACHES IT, verified at the call sites rather than assumed:
+//   - live mode: `draftAnswer`/`draftAnswerStreaming` (lib/copilot/
+//     answerClient.js) send no `mode`, so EVERY live drafted answer takes the
+//     branch once the selected posting has a company on file.
+//   - practice mode: `useRoomQuestions.js` sends an `applicationId` and no
+//     `mode` for a detected room question AND for one the candidate types, so
+//     both take the identical branch.
+//   - practice mode's revealed SAMPLE ANSWER does NOT: `useSampleAnswer.js`
+//     passes `mode: "answer"`, the one value the branch excludes. So this
+//     clause is deliberately absent from `buildPrivacyNotice`'s sample-answer
+//     sentences — appending it there would name a destination that receives
+//     nothing, which is the R-098 failure in the other direction.
+//   - the embedded engine reaches none of it (`wantsEmbedded`), so the clause
+//     must not render there either, for the same reason
+//     KNOWLEDGE_BASE_CLAUSE does not.
+//
+// ONE CONSTANT, TWO SURFACES, for the reason the constant above already
+// exists: a hand-copied second sentence is exactly how half a pair gets fixed
+// (R-259's second defect — practice mode got the knowledge-base sentence and
+// live mode did not, on the same route and the same payload). Live mode
+// appends it through lib/copilot/groundingNotice.js's
+// `answerCompanyFactsNotice`, which is also what VoiceCueSidebar.js renders;
+// practice mode appends it in
+// app/copilot/practice/practiceRoomQuestionPrivacy.js.
+//
+// NAMES ITS OWN SUBJECT, and gated on ONE thing — whether the posting has a
+// company — never on which documents were found. R-259's third defect was a
+// sentence that was true only in the position it landed in; the same failure
+// expressed as branch placement is a sentence whose PRESENCE is decided by a
+// dimension it has nothing to do with. Attaching a résumé to an application
+// does not stop this search from firing, so it must not stop the disclosure
+// from rendering.
+//
+// No em dash: this sentence is rendered on screen (SessionSetup's grounding
+// notice and VoiceCueSidebar's rail), and a screen reader does not speak an em
+// dash as a pause at default punctuation settings (AC-T2.14/E2).
+//
+// No leading space, unlike KNOWLEDGE_BASE_CLAUSE: this one is also rendered
+// STANDALONE by VoiceCueSidebar rather than only ever concatenated, so the
+// separating space belongs to the append sites.
+export const COMPANY_FACTS_CLAUSE =
+  "Drafting an answer to a question that was detected or typed also sends the company name and this job's title to Google Gemini with web search enabled, and this server then fetches the pages that search finds to check those facts. This happens automatically on every one of those answers, not only when you ask to research the company.";
+
 // G1: names the sample-answer draft's own destination — the same "is this
 // request grounded by an AI provider" fact the critique clause above
 // states, so this never drifts from it (AC-G1-9). Unlike that clause, this

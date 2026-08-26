@@ -205,7 +205,13 @@ describe("happy path", () => {
     expect(sentPrompt).toContain("current topology");
     expect(sentPrompt).not.toContain("AAAA");
     expect(sentPrompt).not.toContain("u1/x");
-    expect(generateContent.mock.calls[0][0].tools).toEqual([{ googleSearch: {} }]);
+    // `config.tools`, NOT the top level. This is an INJECTED FAKE client: it
+    // sees whatever object the route hands it and cannot observe the SDK layer
+    // that DISCARDS a top-level `tools`, so this line was green against a
+    // request that never carried the key. The second assertion stops that
+    // shape returning; route.wire.test.js proves it on the actual bytes.
+    expect(generateContent.mock.calls[0][0].config?.tools).toEqual([{ googleSearch: {} }]);
+    expect(generateContent.mock.calls[0][0].tools).toBeUndefined();
 
     // The report is created as a CHILD of the researched page, titled per
     // C9.4's exact format.
