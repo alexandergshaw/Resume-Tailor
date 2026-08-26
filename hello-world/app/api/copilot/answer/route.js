@@ -6,7 +6,6 @@ import { createClient as createSupabaseServerClient } from "@/lib/supabase/serve
 import { wantsEmbedded } from "@/lib/llm/featureEngine";
 import { draftAnswerLocal, deriveAnswerFromPoints } from "@/lib/copilot/answerLocal";
 import { draftSampleAnswerLocal } from "@/lib/copilot/sampleAnswerLocal";
-import { fetchApplicationDocs, fetchPostingDescription, fetchPostingEmployer } from "@/lib/copilot/applicationDocs";
 // The two system instructions and the three prompt builders, moved to
 // lib/copilot/answerPrompts.js purely to keep this file under the project's
 // 1000-line cap — see that module's own header. They are pure string
@@ -23,24 +22,8 @@ import {
 // split out of this same file earlier — see that module's own header, and
 // this one's.
 import { normalizeModelPoints, generateIdealProjectExample, answerAids } from "@/lib/copilot/answerAids";
-// AC-V5.2/C7/C8 (Group V architecture doc): the session cache for the
-// per-question Supabase fan-out, and its TTL/key contract, live in their own
-// pure module for the same testability reason lib/copilot/questionPin.js's
-// resolvePin takes `now` as an argument — see that module's own header for
-// what it deliberately does and does not cache.
-// AC-V4.9: `companyFactsCache` is IMPORTED, not instantiated here. It was
-// module-private to this file, which contradicted answerSessionCache.js's own
-// header — that file documents `clear()` as the escape hatch and names the
-// route test files that call it — and left route.companyFacts.test.js unable
-// to empty it between cases, so it worked around the gap by minting a unique
-// applicationId per test. Both instances now live beside each other in the
-// module whose comment already described them.
-import { answerContextCache, companyFactsCache, settleWithin } from "@/lib/copilot/answerSessionCache";
 import { normalizeInterviewType, interviewType } from "@/lib/copilot/interviewTypes";
 import { deriveCues, resolveCues } from "@/lib/copilot/answerCues";
-import { listPages } from "@/lib/supabase/experiencePages";
-import { listAttachmentsByPage } from "@/lib/supabase/experienceAttachments";
-import { withDerivedKind } from "@/lib/experience/attachments";
 import {
   buildKnowledgeBaseBlock,
   stripLinePrefixes,
@@ -48,26 +31,29 @@ import {
 } from "@/lib/experience/knowledgeBase";
 import { resolvePageSources } from "@/lib/copilot/pageCitations";
 import { selectBestStory, isEligiblePage } from "@/lib/copilot/projectStories";
-// AC-V4 (Group V record, Evidence D / architecture doc §2). Four pure/
-// server-only modules, none of which existed before this feature:
-//   companyFactsBlock       lib/copilot/companyFacts.js — renders the
-//                           survivors of a search into the prompt lines
-//                           buildPointsPrompt injects under its own heading.
-//   buildCompanyFacts       lib/copilot/companyFactsSource.js — runs the
-//                           one Gemini search call and drops every claim
-//                           that isn't corroborated against a page Google
-//                           actually visited. Never rejects (see its own
-//                           header).
-//   isCompanyDirected       lib/copilot/companyDirected.js — whether THIS
-//                           question is about the employer, so only that
-//                           question class waits on the search.
-//   resolveFactSources      lib/copilot/factCitations.js — the same
-//                           model-cited-id-against-a-whitelist pattern
-//                           resolvePageSources already applies to pages.
-import { companyFactsBlock } from "@/lib/copilot/companyFacts";
-import { buildCompanyFacts } from "@/lib/copilot/companyFactsSource";
-import { isCompanyDirected } from "@/lib/copilot/companyDirected";
 import { resolveFactSources } from "@/lib/copilot/factCitations";
+// AC-V5.2/C7/C8 (Group V architecture doc): the per-session Supabase fan-out
+// — résumé/cover letter/posting/employer/pages — its cache key, and its
+// `answerContextCache` wiring live in their own module for the same reason
+// answerPrompts.js/answerAids.js were split out of this file earlier — see
+// that module's own header for what it deliberately does and does not cache.
+import { answerContextKey, loadAnswerContext } from "@/lib/copilot/answerContext";
+// AC-V4 (Group V record, Evidence D / architecture doc §2): the
+// verified-company-facts search — its two gates, its eager start, and its
+// bounded wait — lives in its own module for the identical reason. See that
+// module's own header for the ordering constraints it exists to protect.
+import { startCompanyFacts, resolveCompanyFacts } from "@/lib/copilot/answerCompanyFacts";
+// The recruiter-vocabulary gate and its per-engine honesty flag
+// (recruiter-vocab design, revision 3, §4c/§4d), the latter moved to its own
+// module (lib/copilot/roleTermsFlag.js) for the same reason — see that
+// module's own header for why it exports two functions rather than one.
+// `question` is untrusted, third-party input — machine-transcribed
+// interviewer speech in live mode — so it is capped with the SAME constant
+// `roleTerms` itself caps against, rather than a private one here, so "how
+// long a question this route accepts" and "how long a question the gate will
+// look at" can never drift apart.
+import { roleTerms, MAX_QUESTION_CHARS } from "@/lib/copilot/questionVocabulary";
+import { geminiRoleTermsFlag, embeddedRoleTermsFlag } from "@/lib/copilot/roleTermsFlag";
 
 // Two modes on one route (AC-G2-D-1). "points" (default, and the only mode
 // live mode ever sends — CopilotClient/QuestionFeed call draftAnswer with no
@@ -112,33 +98,19 @@ import { resolveFactSources } from "@/lib/copilot/factCitations";
 
 const MAX_CONTEXT_CHARS = 4000;
 const MAX_PROFILE_CHARS = 8000;
-const MAX_RESUME_CHARS = 12000;
 // AC-2.1: parity with the résumé, not a fraction of it. At the old 6000-char
 // budget (minus its own notice reserve) two 2800-char pages exhausted the
 // whole knowledge base while the résumé got 12000 and the posting got
 // 20000 — the candidate's own project pages are the PRIMARY evidence for a
 // behavioral/leadership answer (AC-3.1), so they get at least what the
-// résumé gets.
+// résumé gets. (The résumé/cover-letter/posting caps themselves now live in
+// lib/copilot/answerContext.js, beside the fetches they cap — this one stays
+// here because it bounds `kb`, below, not anything answerContext.js loads.)
 const MAX_PAGES_CHARS = 12000;
-const MAX_COVER_LETTER_CHARS = 6000;
 const MAX_ANSWER_CHARS = 6000;
 const MAX_ANSWER_POINTS = 6;
 const MAX_APPLICATION_ID_CHARS = 100;
-// The posting description is mined for buzzwords only, never interpolated
-// into a prompt, so this cap exists purely to bound the keyword extractor's
-// work on a pathologically long description.
-const MAX_POSTING_CHARS = 20000;
 const VALID_TYPES = ["behavioral", "technical", "general"];
-
-// AC-V4.6: how long a company-DIRECTED question (lib/copilot/companyDirected.js)
-// waits for the facts search before answering honestly without it. The
-// record measures today's drafting at 4-10s, of which V1 (elsewhere in this
-// group) removes roughly half and V5.1's thinkingConfig removes the thinking
-// prelude; a bounded 2.5s wait for the one question class where a factless
-// answer is actively embarrassing is the trade the user's own words ("answers
-// that hold verified facts about the company") ask for. Every OTHER question
-// never waits at all — see the peek() call below.
-const FACTS_DEADLINE_MS = 2500;
 
 // AC-P2.3-P2.5: the streaming half of this route — Gemini only (the embedded
 // branch never reaches this; see POST's own stream-flag check) and an
@@ -158,7 +130,8 @@ const FACTS_DEADLINE_MS = 2500;
 // worked-example call ahead of it. That is the whole of the guarantee. It
 // says nothing about when the first `points` frame arrives, and the caller
 // is what decides that — `streamAnswer` deliberately does its
-// company-facts wait (up to FACTS_DEADLINE_MS) inside the producer.
+// company-facts wait (up to lib/copilot/answerCompanyFacts.js's deadline)
+// inside the producer.
 //
 // The sentence this replaces claimed the first points frame "is never sat
 // behind anything but the model call itself". That stopped being true the
@@ -217,10 +190,15 @@ async function streamAnswer({
   grounding,
   story,
   kb,
+  // §4d: this route's own gate, computed once in POST from the (already
+  // capped) question and handed down — streamAnswer is Gemini-only, so the
+  // role-terms flag below always gets `geminiRoleTermsFlag` with `kb.block`
+  // as its `pagesBlock`.
+  questionRoleTerms,
   // AC-V4/AC-V5.4: `awaitCompanyFacts` is a THUNK (or null), not a settled
   // result. POST starts the search and hands the WAIT over unresolved,
-  // because awaiting it there put FACTS_DEADLINE_MS — 2.5s — in front of the
-  // response itself, first streamed bullet included. Settled below, inside
+  // because awaiting it there put the facts deadline — 2.5s — in front of
+  // the response itself, first streamed bullet included. Settled below, inside
   // the producer, so the connection is already open by the time anything
   // waits on it. Null for answer mode and whenever no employer is known:
   // POST only ever builds facts for points mode (V4.3's own scoping —
@@ -240,14 +218,9 @@ async function streamAnswer({
     // INSIDE the producer deliberately: everything above this line is
     // synchronous, so `ndjsonResponse` returns its Response before any of
     // this runs and the client has an open connection while the deadline
-    // (at most) elapses. `facts` is the raw Fact[] survivors that
-    // `companyFacts.block` is rendered from — kept separately because
-    // resolveFactSources below whitelists against the FACTS, not against
-    // the text block built out of them.
-    const facts = awaitCompanyFacts ? await awaitCompanyFacts() : [];
-    const companyFacts = awaitCompanyFacts
-      ? { companyKnown: true, block: companyFactsBlock(facts) }
-      : undefined;
+    // (at most) elapses. See lib/copilot/answerCompanyFacts.js's own header
+    // for why the wait belongs here and not in a shared prologue.
+    const { facts, companyFacts } = await resolveCompanyFacts(awaitCompanyFacts);
     const promptText = isAnswerMode
       ? buildAnswerPrompt({ question, context, profile, resume, coverLetter, descriptor, pagesBlock: kb.block })
       : buildPointsPrompt(question, context, profile, descriptor, resume, coverLetter, kb.block, companyFacts);
@@ -317,6 +290,17 @@ async function streamAnswer({
     // known. Omitted entirely (not even as `[]`) otherwise, so a caller that
     // never asked about a company sees exactly the response shape it always
     // has.
+    // §4d: Gemini path, so this is always `geminiRoleTermsFlag` with
+    // `kb.block` — the pages actually put in this prompt (streamAnswer never
+    // runs for the embedded engine; see POST's own stream-flag check).
+    const roleTermsFlag = geminiRoleTermsFlag({
+      terms: questionRoleTerms,
+      points,
+      profile,
+      resume,
+      coverLetter,
+      pagesBlock: kb.block,
+    });
     const done = isAnswerMode
       ? {
           points,
@@ -326,6 +310,7 @@ async function streamAnswer({
           grounding,
           pageSources,
           ...aids,
+          ...roleTermsFlag,
         }
       : {
           points,
@@ -336,6 +321,7 @@ async function streamAnswer({
             ? { factSources: resolveFactSources(factIds, { includedFacts: facts, pointCount: points.length }) }
             : {}),
           ...aids,
+          ...roleTermsFlag,
         };
     write({ t: "done", ...done });
   });
@@ -355,10 +341,49 @@ export async function POST(request) {
     }
 
     const body = await request.json();
-    const question = (body?.question ?? "").toString().trim();
+    // AC-4.1 (recruiter-vocab design, revision 3, §8.7): capped here, at the
+    // one place every branch below reads `question` from — this used to be
+    // the only unbudgeted string on this path (no `.slice()`, unlike
+    // context/profile/resume/coverLetter/posting just below), sitting at
+    // character 0 of both prompt builders ahead of a 12,000-character
+    // knowledge base and a 12,000-character résumé. In live mode it is
+    // machine-transcribed interviewer speech, so an uncapped question is
+    // reachable by a transcription runaway, not just a hostile caller.
+    //
+    // ITEM 9 OF THE ADVERSARIAL REVIEW, DOCUMENTED RATHER THAN CHANGED: this
+    // cap applies before EVERY consumer of `question` below, not only the two
+    // prompt builders it was introduced for. A question longer than
+    // MAX_QUESTION_CHARS silently loses its tail — mid-word, wherever the cap
+    // lands — for every one of these, not just the prompt:
+    //   rankingQuery       (below) — the KB relevance query; a term past the
+    //                        cap cannot promote or demote a page.
+    //   selectBestStory    (below) — the embedded story picker; a term past
+    //                        the cap cannot win or lose the honesty gate.
+    //   isCompanyDirected  (lib/copilot/answerCompanyFacts.js, inside the
+    //                        thunk `startCompanyFacts` below returns) —
+    //                        whether this question waits on the facts search
+    //                        at all.
+    //   answerAids         (idealProject/resumeAnchor/buzzwords all take the
+    //                        capped `question`) and `draftAnswerLocal`/
+    //                        `draftSampleAnswerLocal` (the embedded drafters).
+    // 2000 characters is a defensible number for a spoken interview question
+    // (§8.7); the point recorded here is that the number's REACH is the whole
+    // route, not a private budget for one prompt line, and a future reader
+    // narrowing or relocating this cap should know every one of these moves
+    // with it.
+    const question = (body?.question ?? "").toString().trim().slice(0, MAX_QUESTION_CHARS);
     if (!question) {
       return Response.json({ error: "No question provided." }, { status: 400 });
     }
+    // The gate (recruiter-vocab design §4c/§4d): the interviewer's own
+    // taxonomy terms this question named, literally, and nothing else. Pure
+    // and cheap enough to compute unconditionally on every request — never
+    // gated on engine or mode, because `roleTermsUnbacked` below is computed
+    // on every branch (embedded included; see that flag's own comment) even
+    // though the PROMPT change it also gates (buildPointsPrompt/
+    // buildAnswerPrompt, which re-derive this same value from `question`)
+    // only ever takes effect on the Gemini path.
+    const questionRoleTerms = roleTerms(question);
     const context = (body?.context ?? "").toString().slice(0, MAX_CONTEXT_CHARS);
     const profile = (body?.profile ?? "").toString().slice(0, MAX_PROFILE_CHARS);
     const interviewTypeValue = normalizeInterviewType(body?.interviewType);
@@ -384,141 +409,47 @@ export async function POST(request) {
     // AC-V5.2 (Group V record, Evidence E): this fan-out — the documents, the
     // posting description, the employer name/title, and the caller's own
     // "Professional Experience" project pages plus their attachment
-    // inventory — does not change during an interview, so it now runs
-    // through answerContextCache instead of on every question. The cache key
-    // is computed HERE, after `supabase.auth.getUser()` above has already
-    // resolved — never before, and never on the caller's access token
-    // instead of the id it resolved to (see answerSessionCache.js's own
-    // header on why auth.getUser() itself is never the thing being cached).
-    // A cache miss (first question of a session, or a TTL expiry) runs
-    // exactly the Promise.all this route always ran; a hit skips every one
-    // of these five Supabase round trips. `applicationId` may be empty (no
-    // posting selected) and is still a real, cacheable key: listPages and
-    // listAttachmentsByPage are scoped to the user alone and every other
-    // fetch here short-circuits to empty with no round trip on an empty id.
-    const contextCacheKey = `${user.id}::${applicationId}`;
-    const loadAnswerContext = async () => {
-      const [docs, postingDescription, employer, pagesResult, attachmentsResult] = await Promise.all([
-        fetchApplicationDocs(supabase, { applicationId, userId: user.id }),
-        fetchPostingDescription(supabase, { applicationId, userId: user.id }),
-        // AC-V4/C8: fetched and cached now so wave 2's company-facts search
-        // (which needs the employer's name) has it with no extra round trip.
-        // Not otherwise used by this route yet.
-        fetchPostingEmployer(supabase, { applicationId, userId: user.id }),
-        listPages(supabase, user.id),
-        listAttachmentsByPage(supabase, user.id),
-      ]);
-      const rawPages = Array.isArray(pagesResult?.pages) ? pagesResult.pages : [];
-      // Graft the attachment inventory onto its page — exactly
-      // app/api/meeting/insights/route.js:127-131's own pattern, using the
-      // same shared withDerivedKind (AC-4.4: no second private copy of the
-      // kind derivation). Done HERE, inside the cached loader, because it is
-      // a pure function of the two raw query results above and every
-      // consumer wants the merged shape — computing it fresh on every cache
-      // HIT would just be repeated work with nothing gained.
-      const attachmentsByPageId = attachmentsResult.byPageId;
-      const pages = rawPages.map((page) => {
-        const rows = attachmentsByPageId.get(page?.id) || [];
-        if (rows.length === 0) return page;
-        return { ...page, attachments: rows.map(withDerivedKind) };
-      });
-      return { resume: docs.resume, coverLetter: docs.coverLetter, posting: postingDescription, employer, pages };
-    };
-    const answerContext = await answerContextCache.get(contextCacheKey, loadAnswerContext, { now: Date.now() });
-    const resume = answerContext.resume.slice(0, MAX_RESUME_CHARS);
-    const coverLetter = answerContext.coverLetter.slice(0, MAX_COVER_LETTER_CHARS);
-    const posting = answerContext.posting.slice(0, MAX_POSTING_CHARS);
-    const pages = answerContext.pages;
+    // inventory — does not change during an interview, so it runs through
+    // lib/copilot/answerContext.js's cache instead of on every question. The
+    // cache key is computed HERE, after `supabase.auth.getUser()` above has
+    // already resolved — never before, and never on the caller's access
+    // token instead of the id it resolved to (see answerSessionCache.js's
+    // own header on why auth.getUser() itself is never the thing being
+    // cached). A cache miss (first question of a session, or a TTL expiry)
+    // runs the module's Promise.all; a hit skips every one of its five
+    // Supabase round trips.
+    const contextCacheKey = answerContextKey(user.id, applicationId);
+    const { resume, coverLetter, posting, employer, pages } = await loadAnswerContext(supabase, {
+      userId: user.id,
+      applicationId,
+      cacheKey: contextCacheKey,
+    });
 
     // AC-V4 (Group V record, Evidence D). "What do you know about Purple
     // Wave?" used to get answered with "My research indicates a strong
     // focus on continuous improvement" — an invented claim about a company
-    // the model never researched. This is the fix, and it is scoped
-    // tightly: `mode !== "answer"` because buildAnswerPrompt (practice mode)
-    // is untouched by design (V4.3), so building facts for it would have
-    // nowhere to go; `!wantsEmbedded(...)` because a company-facts SEARCH is
-    // itself a Gemini call with no deterministic equivalent, and this
-    // repo's established rule (every AI feature in this route already
-    // follows it) is that engine choice governs whether a feature calls a
-    // model at all — an embedded session gets exactly the "no prompt" it
-    // always had, never a background LLM call it did not ask for.
-    const employer = answerContext.employer;
-    const companyKnown = !!employer?.company;
-    // undefined | { companyKnown: true, block: string } — the exact shape
-    // buildPointsPrompt's byte-identity guarantee (ARCH §2.6) depends on:
-    // `undefined` for "no employer known" takes neither of its branches.
-    let companyFacts;
-    // The raw Fact[] survivors `companyFacts.block` was rendered from —
-    // needed separately because resolveFactSources below whitelists against
-    // the FACTS, not the text block built from them.
-    let facts = [];
-    // AC-V4.6/AC-V5.4: `null` when this request builds no facts at all;
-    // otherwise a thunk that resolves the surviving facts for THIS question,
-    // honouring the deadline. *** THE SEARCH STARTS HERE; ONLY THE WAIT IS
-    // DEFERRED. *** The wait used to be `await`ed right here, ahead of the
-    // `stream === true` branch below, which made FACTS_DEADLINE_MS a hard
-    // 2.5s ceiling on the whole POST — including the first streamed bullet,
-    // on the one question class (company-directed) this group was asked to
-    // speed up, against a guaranteed-empty cache on question one. An order
-    // of magnitude more latency than AC-V5.1's thinkingBudget removes, on
-    // the same request. Handing the streaming branch a thunk lets it open
-    // the connection first and wait inside its own producer; see
-    // route.latency.test.js's AC-V4.6/V5.4 band, which asserts the ordering
-    // against a search that has not settled rather than against a clock.
-    let awaitCompanyFacts = null;
-    if (mode !== "answer" && !wantsEmbedded(body?.engine) && companyKnown) {
-      let factsPromise = null;
-      try {
-        const { geminiModel: factsModel } = getServerEnv();
-        const factsClient = getGeminiClient();
-        // AC-V4.5: built ONCE per (user, application) and cached for the
-        // session — reuses `contextCacheKey` (a DIFFERENT Map from
-        // `answerContextCache`, so there is no collision risk in sharing the
-        // string), computed the same way: after auth.getUser() resolved,
-        // never on the caller's access token. Started EAGERLY, not inside
-        // the thunk: "start it, don't block on it" only works if the search
-        // is already running by the time a later question peeks at the
-        // cache, so deferring the start along with the wait would quietly
-        // turn every question of a session into a cache miss.
-        factsPromise = companyFactsCache.get(
-          contextCacheKey,
-          () =>
-            buildCompanyFacts(
-              { company: employer.company, jobTitle: employer.title },
-              { client: factsClient, model: factsModel },
-            ),
-          { now: Date.now() },
-        );
-      } catch {
-        // AC-V4.7: getServerEnv()/getGeminiClient() can throw synchronously
-        // (no Gemini key configured) before there is even a promise to
-        // await. buildCompanyFacts itself already never rejects (see its
-        // own header); this catch covers the setup around it, so a missing
-        // key degrades to "no facts" rather than a 500 on an otherwise
-        // answerable question.
-        factsPromise = null;
-      }
-      awaitCompanyFacts = async () => {
-        // No promise at all — the setup above threw. `settleWithin(null, …)`
-        // would resolve to `null` rather than to its fallback, so this is
-        // checked here instead of leaning on the deadline for it.
-        if (!factsPromise) return [];
-        // AC-V4.6: "start it, don't block on it, except for a
-        // company-directed question." isCompanyDirected
-        // (lib/copilot/companyDirected.js) has exactly two structural
-        // conditions and no score — see that module's own header for why a
-        // hand-tuned relevance score is the wrong instrument here. Only a
-        // question ABOUT the employer waits, bounded by FACTS_DEADLINE_MS;
-        // every other question answers immediately with whatever the cache
-        // already has — `[]` on the very first question of a session
-        // (nothing has settled yet), the real facts on every question after
-        // it, once the first question's search has had time to finish.
-        if (!isCompanyDirected(question, { company: employer.company })) {
-          return companyFactsCache.peek(contextCacheKey) || [];
-        }
-        return await settleWithin(factsPromise, FACTS_DEADLINE_MS, { fallback: [] });
-      };
-    }
+    // the model never researched. lib/copilot/answerCompanyFacts.js is the
+    // fix; `startCompanyFacts` evaluates its own mode/engine/employer gates
+    // before touching a Gemini client — see that module's own header. `null`
+    // when this request builds no facts at all; otherwise a thunk that
+    // resolves the surviving facts for THIS question, honouring the
+    // deadline. *** THE SEARCH STARTS HERE; ONLY THE WAIT IS DEFERRED. ***
+    // The wait used to be `await`ed right here, ahead of the `stream ===
+    // true` branch below, which made the facts deadline a hard 2.5s ceiling
+    // on the whole POST — including the first streamed bullet, on the one
+    // question class (company-directed) this group was asked to speed up,
+    // against a guaranteed-empty cache on question one. Handing the
+    // streaming branch a thunk lets it open the connection first and wait
+    // inside its own producer; see route.latency.test.js's AC-V4.6/V5.4
+    // band, which asserts the ordering against a search that has not
+    // settled rather than against a clock.
+    const awaitCompanyFacts = startCompanyFacts({
+      mode,
+      engine: body?.engine,
+      employer,
+      question,
+      cacheKey: contextCacheKey,
+    });
 
     // AC-1.1/AC-1.5/ARCH §1.1/§6.6: the RANKING query is built from the
     // question plus the transcript context WITH ITS SPEAKER LABELS
@@ -633,6 +564,7 @@ export async function POST(request) {
         grounding,
         story,
         kb,
+        questionRoleTerms,
         // AC-V5.4: the THUNK, not an already-awaited result — streamAnswer
         // opens the NDJSON body first and settles this inside its own
         // producer, so the facts deadline can no longer sit in front of the
@@ -645,10 +577,7 @@ export async function POST(request) {
     // to open early, so this is where their facts wait belongs — the same
     // deadline, in the only place it can go on a path with no first frame to
     // be late for.
-    if (awaitCompanyFacts) {
-      facts = await awaitCompanyFacts();
-      companyFacts = { companyKnown: true, block: companyFactsBlock(facts) };
-    }
+    const { facts, companyFacts } = await resolveCompanyFacts(awaitCompanyFacts);
 
     if (mode === "answer") {
       // Embedded engine: assemble the spoken answer on-device — no LLM.
@@ -693,6 +622,18 @@ export async function POST(request) {
           // engine choice governs whether a feature calls a model, and
           // idealProjectFor's deterministic path is this one's.
           ...(await answerAids({ postingDescription: posting, resume, profile, question, points, story })),
+          // §4d/§9: embedded, so this is `embeddedRoleTermsFlag` with
+          // `story` — the pages this draft actually quoted from — never
+          // `kb.block` (see roleTermsFlag.js's own header for why that would
+          // be a false accusation on this path).
+          ...embeddedRoleTermsFlag({
+            terms: questionRoleTerms,
+            points,
+            profile,
+            resume,
+            coverLetter,
+            story,
+          }),
         });
       }
 
@@ -761,6 +702,16 @@ export async function POST(request) {
           generatedProjectPromise,
           story,
         })),
+        // §4d: Gemini path, so this is `geminiRoleTermsFlag` with `kb.block`
+        // — the pages actually put into this prompt.
+        ...geminiRoleTermsFlag({
+          terms: questionRoleTerms,
+          points,
+          profile,
+          resume,
+          coverLetter,
+          pagesBlock: kb.block,
+        }),
       });
     }
 
@@ -800,6 +751,16 @@ export async function POST(request) {
         // Embedded engine: no model call at all — see the answer-mode
         // branch above for the same rule stated once already.
         ...(await answerAids({ postingDescription: posting, resume, profile, question, points, story })),
+        // §4d/§9: embedded — `story`, not `kb.block`. See the answer-mode
+        // embedded branch above for why.
+        ...embeddedRoleTermsFlag({
+          terms: questionRoleTerms,
+          points,
+          profile,
+          resume,
+          coverLetter,
+          story,
+        }),
       });
     }
 
@@ -865,6 +826,8 @@ export async function POST(request) {
         ? { factSources: resolveFactSources(factIds, { includedFacts: facts, pointCount: points.length }) }
         : {}),
       ...(await answerAids({ postingDescription: posting, resume, profile, question, points, generatedProjectPromise, story })),
+      // §4d: Gemini path, so `geminiRoleTermsFlag` with `kb.block`.
+      ...geminiRoleTermsFlag({ terms: questionRoleTerms, points, profile, resume, coverLetter, pagesBlock: kb.block }),
     });
   } catch (err) {
     return Response.json(

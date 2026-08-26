@@ -88,7 +88,20 @@ function collectAllCanonicals(grouped) {
 // they are drawn on when trimming to the cap. `subject` (academic subjects)
 // is deliberately absent: naming a school subject back at an interviewer is
 // not what this list is for.
-const BUZZWORD_CATEGORIES = ["technology", "tool_platform", "methodology", "domain", "soft_skill", "certification"];
+//
+// EXPORTED (recruiter-vocab design revision 3, item 7 of the adversarial
+// review) because lib/copilot/questionVocabulary.js used to carry a private,
+// byte-identical SECOND copy of this exact array — verified: adding or
+// reordering a category in one left the other silently stale, with nothing
+// asserting the two agreed, which would have let "words to work in" (this
+// module) and the recruiter-vocabulary gate (that module) disagree about what
+// counts without a single test noticing. That module derives its own,
+// DELIBERATELY NARROWER `ROLE_TERM_CATEGORIES` from this export — see its own
+// comment for why `domain` and `soft_skill` are excluded there — so this is
+// now the one place the full list is written down, and a category added here
+// is a category that module's gate is aware of by construction, even where it
+// goes on to exclude it.
+export const BUZZWORD_CATEGORIES = ["technology", "tool_platform", "methodology", "domain", "soft_skill", "certification"];
 
 function collect(grouped, categories) {
   const items = [];

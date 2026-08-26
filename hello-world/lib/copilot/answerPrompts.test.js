@@ -134,6 +134,69 @@ describe("the system instructions", () => {
   });
 });
 
+// AC-2.5 (recruiter-vocab design, revision 3). A FROZEN FULL-STRING ORACLE
+// for both system instructions, in the style of FROZEN_POINTS_PROMPT_NO_PAGES
+// / FROZEN_ANSWER_PROMPT_NO_PAGES above — added deliberately alongside the
+// fabrication-guard rewrite of POINTS_SYSTEM/ANSWER_SYSTEM rather than after
+// it, because nothing pinned their CONTENT before this change: the describe
+// block above checks only `typeof`, three `toContain`s, and a shared STAR
+// substring, and route.latency.test.js checks only that each is a non-empty
+// string. A system instruction is handed straight to `config.systemInstruction`
+// on EVERY request, on both modes, with no gate and no grant branch to limit
+// its blast radius — unlike the gated user-prompt additions above, which the
+// frozen no-pages prompts already cover. Without a byte-identical oracle here,
+// a future edit to either constant (including a well-intentioned tightening
+// of the anti-fabrication language) has no test that would even notice it
+// changed, let alone what changed. This is a SECOND, independent copy of the
+// two rejected-sentence sweeps in answerPrompts.fabricationGuard.test.js —
+// deliberately: that file proves the bad sentences are ABSENT; this one pins
+// exactly what is PRESENT instead, so the two together say what the text is,
+// not just what it isn't.
+// UPDATED (adversarial review item 1). The clause below gained one sentence:
+// "When nothing in the background is close enough to frame this way, the
+// honest move is to say so plainly — in that same one clause, never as the
+// opening line — and then use the remaining points on the closest
+// transferable skill or general capability the candidate does have, tied
+// explicitly to what the question asked." WHY: the instruction it sits inside
+// only ever covered the case where SOMETHING in the background is close to
+// the named system/tool/process/standard ("frame what the candidate HAS done
+// that is closest"). A question with truly nothing close left the model no
+// sanctioned move at all — every other option was banned (no generic points,
+// no opening with the gap) with nothing put in their place — which is exactly
+// the gap that pushes a model back toward the disclaimer-opener hedge this
+// whole feature exists to remove. The new sentence is that missing escape: it
+// permits naming the gap, but only mid-clause, never first, and only paired
+// with turning immediately to the nearest transferable capability — which is
+// NOT a reinstatement of the deleted "give strong generic points instead" (no
+// such phrase appears, and the points must still tie explicitly to the
+// question, not restate the background at random).
+const FROZEN_POINTS_SYSTEM = [
+  "You are an interview coach helping a candidate answer questions during a LIVE interview.",
+  "Given the question the interviewer just asked, produce concise talking points the candidate can glance at and speak from — NOT a script to read aloud.",
+  "Return 3-5 short bullet points; each is one phrase or short sentence, specific and substantive.",
+  "When a CANDIDATE BACKGROUND section or a YOUR OWN PROJECT PAGES section is provided, ground the points in it — reference their real companies, projects, metrics, and skills rather than inventing generic ones. For a \"tell me about a time...\" question, prefer a concrete story from YOUR OWN PROJECT PAGES when one is provided — it is the candidate's own account of a real project, more specific than a resume bullet. Never fabricate experience the background does not support. When the question names a system, tool, process, or standard the background does not cover, use the interviewer's own name for it to frame what the candidate HAS done that is closest, and say in one clause what they would need to pick up. When nothing in the background is close enough to frame this way, the honest move is to say so plainly — in that same one clause, never as the opening line — and then use the remaining points on the closest transferable skill or general capability the candidate does have, tied explicitly to what the question asked. Do not answer such a question with generic points, and do not open with what the candidate has not done — never begin with \"I haven't directly\", \"While I haven't\", \"I have not personally\", \"Although I lack\", or any equivalent. Never state or imply that the candidate performed work the background does not support.",
+  "For behavioral questions (\"tell me about a time...\"), prefix each point with its STAR label — \"Situation:\", \"Task:\", \"Action:\", \"Result:\".",
+  "Keep every point skimmable — a person on camera must absorb it in a glance.",
+].join(" ");
+
+const FROZEN_ANSWER_SYSTEM = [
+  "You are an interview coach drafting the sample answer a candidate could actually say out loud in a real interview, as a sequence of complete sentences — never glanceable fragments.",
+  "Every claim about the candidate's own experience — an employer, a project, a metric, a credential, a tool they operated — must come only from the material provided below, and never from the question. The question's wording may be used to NAME the subject and to frame what the candidate has actually done; it is never evidence that they have done it.",
+  "Return 3-6 points; each point is one complete, natural spoken sentence, first person, and together they are the whole answer — no headings, no stage directions, nothing that isn't meant to be spoken aloud.",
+  "For behavioral questions (\"tell me about a time...\"), prefix each point with its STAR label — \"Situation:\", \"Task:\", \"Action:\", \"Result:\".",
+  "Also return `cues`: exactly one per point, in the same order — each a 2-6 word prompt naming what that point is about, carrying the same STAR label where the point has one. A cue is a reminder, not a sentence: no verbs the point does not have, no punctuation at the end.",
+].join(" ");
+
+describe("the system instructions, byte-identical (design AC-2.5)", () => {
+  it("POINTS_SYSTEM matches the frozen oracle exactly", () => {
+    expect(POINTS_SYSTEM).toBe(FROZEN_POINTS_SYSTEM);
+  });
+
+  it("ANSWER_SYSTEM matches the frozen oracle exactly", () => {
+    expect(ANSWER_SYSTEM).toBe(FROZEN_ANSWER_SYSTEM);
+  });
+});
+
 describe("interviewFormatLines", () => {
   it("names the format, its guidance and its emphasis, in three lines", () => {
     const lines = interviewFormatLines(BEHAVIORAL);

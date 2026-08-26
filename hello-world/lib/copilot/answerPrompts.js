@@ -22,23 +22,78 @@
 //
 // AC-H4.17/AC-H4.18/AC-3.4's BYTE-IDENTITY GUARANTEE lives here now: with no
 // résumé, no cover letter and no pages block, each builder must produce
-// exactly what it produced before those sources existed. Every place either
-// function's output can change is gated on the corresponding argument being
-// truthy, and nothing in this module may add an unconditional line. What
-// ENFORCES that is answerPrompts.test.js's FROZEN_POINTS_PROMPT_NO_PAGES /
+// exactly what it produced before those sources existed. What ENFORCES that
+// is answerPrompts.test.js's FROZEN_POINTS_PROMPT_NO_PAGES /
 // FROZEN_ANSWER_PROMPT_NO_PAGES — a full-string `toBe` per builder for the
 // minimal input. Until those existed the only guards were `not.toContain`
 // sweeps over five known strings, which an unconditional new line sails
 // straight through; the guarantee was stated in three comments and checked
 // nowhere.
+//
+// CORRECTED (adversarial review, item 8): this paragraph used to claim
+// "nothing in this module may add an unconditional line" and that either
+// builder's output changes ONLY with its own arguments. Both are false since
+// the recruiter-vocabulary gate landed. Both builders now also branch on
+// `roleTerms(question)` (lib/copilot/questionVocabulary.js), which is a
+// function of `question` AND `skills_taxonomy.json` — a data file, not a
+// parameter either builder takes. Editing that taxonomy (adding, removing or
+// re-aliasing a canonical) can change what either builder emits for the exact
+// same call, with every argument byte-identical. The byte-identity guarantee
+// above still holds — the frozen fixtures' question ("Tell me about
+// yourself.") yields no taxonomy canonical today, so neither builder's gated
+// branch fires — but it is a claim about that ONE fixture question and the
+// taxonomy as it stands, not a structural property of "every place output can
+// change is gated on an argument being truthy" the way it was before this
+// feature existed.
 
 import { submittedDocsPromptParts } from "@/lib/copilot/applicationDocsPrompt";
+import { roleTerms } from "@/lib/copilot/questionVocabulary";
 
+// AC-2.1/design §4a. The clause this replaces used to end with "if it is
+// thin, give strong generic points instead" — a near-verbatim description of
+// what actually shipped for the Workday question this feature exists to fix:
+// given a question that names a system the background does not cover, the
+// model answered with four generic bullets and hedged with "I haven't
+// directly designed Workday reports, but…", using the interviewer's own word
+// ("Workday") nowhere at all.
+//
+// THE FIX NAMES THE EXACT OPENINGS, THE SAME WAY AC-V4.4 ALREADY DID FOR A
+// DIFFERENT FABRICATION (see the VERIFIED COMPANY FACTS instruction below,
+// "my research indicates"): a general "don't hedge" instruction is not what
+// failed here, a general "don't invent" instruction already existed
+// ("Never fabricate experience the background does not support") and the
+// model hedged anyway, so naming the four openings it is actually reachable
+// through is "the difference between a rule and a hope". Two earlier drafts
+// of this instruction were rejected before this one: one said naming a term
+// is never a claim to have used it (false — see ANSWER_SYSTEM below and
+// answerPrompts.fabricationGuard.test.js's guard 1), and one banned a
+// POSITION ("never open with what they have not done") with no accompanying
+// condition on TRUTH, which the cheapest compliance defeats by dropping the
+// hedge and asserting the experience instead (guard 2). Every rule below that
+// forbids a phrasing is paired with a rule about what must actually be true.
+//
+// ITEM 1 OF THE ADVERSARIAL REVIEW: banning the hedge is not the same as
+// giving the model somewhere honest to go, and this clause used to do only
+// the first half. The instruction it replaced ("if it is thin, give strong
+// generic points instead") was, for all its faults, the ONLY sanctioned path
+// for a question the background genuinely does not cover — removing it with
+// nothing in its place left a model with an empty background no honest move
+// but implicature (the exact hedge this feature exists to stop). The fix
+// below is NOT that sentence reinstated — "generic points" is what produced
+// the four-bullets-about-unrelated-work failure — and it is not a disclaimer
+// opener either. It draws the same line this file already draws elsewhere:
+// naming a gap INSIDE a substantive point, mid-answer, is honest and wanted
+// ("say in one clause what they would need to pick up", just below, already
+// did this for the "something is close" case); OPENING with the gap is what
+// was removed and must stay removed. The new sentence is the missing half —
+// an explicit, sanctioned escape for the case that clause does not cover: no
+// close experience exists at all — phrased the same way, mid-clause, never as
+// the first thing said.
 export const POINTS_SYSTEM = [
   "You are an interview coach helping a candidate answer questions during a LIVE interview.",
   "Given the question the interviewer just asked, produce concise talking points the candidate can glance at and speak from — NOT a script to read aloud.",
   "Return 3-5 short bullet points; each is one phrase or short sentence, specific and substantive.",
-  "When a CANDIDATE BACKGROUND section or a YOUR OWN PROJECT PAGES section is provided, ground the points in it — reference their real companies, projects, metrics, and skills rather than inventing generic ones. For a \"tell me about a time...\" question, prefer a concrete story from YOUR OWN PROJECT PAGES when one is provided — it is the candidate's own account of a real project, more specific than a resume bullet. Never fabricate experience the background does not support; if it is thin, give strong generic points instead.",
+  "When a CANDIDATE BACKGROUND section or a YOUR OWN PROJECT PAGES section is provided, ground the points in it — reference their real companies, projects, metrics, and skills rather than inventing generic ones. For a \"tell me about a time...\" question, prefer a concrete story from YOUR OWN PROJECT PAGES when one is provided — it is the candidate's own account of a real project, more specific than a resume bullet. Never fabricate experience the background does not support. When the question names a system, tool, process, or standard the background does not cover, use the interviewer's own name for it to frame what the candidate HAS done that is closest, and say in one clause what they would need to pick up. When nothing in the background is close enough to frame this way, the honest move is to say so plainly — in that same one clause, never as the opening line — and then use the remaining points on the closest transferable skill or general capability the candidate does have, tied explicitly to what the question asked. Do not answer such a question with generic points, and do not open with what the candidate has not done — never begin with \"I haven't directly\", \"While I haven't\", \"I have not personally\", \"Although I lack\", or any equivalent. Never state or imply that the candidate performed work the background does not support.",
   "For behavioral questions (\"tell me about a time...\"), prefix each point with its STAR label — \"Situation:\", \"Task:\", \"Action:\", \"Result:\".",
   "Keep every point skimmable — a person on camera must absorb it in a glance.",
 ].join(" ");
@@ -48,9 +103,26 @@ export const POINTS_SYSTEM = [
 // (or the prep context, when nothing was submitted). `answer` is never asked
 // of the model here: it is always derived server-side from `points`
 // (deriveAnswerFromPoints, AC-H9.33).
+// AC-2.2/design §4a. The sentence this replaces ("The answer must be built
+// only from the material provided below…") is a CLOSED AUTHORITY LIST that
+// excludes the question — but the question is already the first line of this
+// very prompt (buildAnswerPrompt below), so that list is what told the model
+// its words were off-limits, permission for the disclaimer this feature
+// exists to remove. The replacement splits into the two registers this whole
+// feature is about: an EVIDENCE register (a claim about what the candidate
+// did comes only from the material, and now explicitly never from the
+// question — stricter than the sentence it replaces, not looser) and a
+// VOCABULARY register (the question's own words may still name the subject
+// and frame the answer). Note precisely what the second register does NOT
+// say: it does not say naming something is safe, or that using a term isn't
+// a claim — it says the question is not EVIDENCE. That is the distinction
+// answerPrompts.fabricationGuard.test.js's guard 1 exists to keep from
+// eroding back into the rejected "using a term is never a claim to have used
+// it" (false the moment a first-person STAR sentence names it — see the STAR
+// label rule two lines below, and POINTS_SYSTEM's identical requirement).
 export const ANSWER_SYSTEM = [
   "You are an interview coach drafting the sample answer a candidate could actually say out loud in a real interview, as a sequence of complete sentences — never glanceable fragments.",
-  "The answer must be built only from the material provided below — the candidate's prep notes, their own project pages, and, when available, the résumé and cover letter they actually submitted for this application — never invented.",
+  "Every claim about the candidate's own experience — an employer, a project, a metric, a credential, a tool they operated — must come only from the material provided below, and never from the question. The question's wording may be used to NAME the subject and to frame what the candidate has actually done; it is never evidence that they have done it.",
   "Return 3-6 points; each point is one complete, natural spoken sentence, first person, and together they are the whole answer — no headings, no stage directions, nothing that isn't meant to be spoken aloud.",
   "For behavioral questions (\"tell me about a time...\"), prefix each point with its STAR label — \"Situation:\", \"Task:\", \"Action:\", \"Result:\".",
   // AC-K1.1: the cue is what the candidate actually reads mid-question; the
@@ -195,6 +267,22 @@ export function buildPointsPrompt(
       "Prefer a specific detail from a project page — the project's name, the technology used, a concrete number, or the outcome — over a generic resume restatement, and name the project when a point draws on one.",
     );
   }
+  // AC-2.3/design §4b: gated on the SAME fact `roleTermsUnbacked` is
+  // computed from downstream (route.js), never on a rendered string — the
+  // pattern `companyKnown` above already follows. `roleTerms` is pure and
+  // re-derives from `question` here rather than taking it as a parameter,
+  // which is what keeps this function's arity at 7 (AC-6.4) while still
+  // reaching the gate: answerPrompts.fabricationGuard.test.js calls this
+  // builder with exactly the 7 original arguments and asserts the grant
+  // fires from the question text alone. Ungated (roleTerms(question) === []),
+  // this line never runs — which is what keeps the frozen no-pages fixture
+  // ("Tell me about yourself.", no taxonomy match) byte-identical.
+  if (roleTerms(question).length > 0) {
+    parts.push(
+      "",
+      "Lead with the role-relevant capability in the interviewer's own terms; substantiate it with the candidate's specific evidence in the points that follow.",
+    );
+  }
   // AC-6.2: points mode now asks for `pageIds` too, gated on `pagesBlock`
   // exactly as buildAnswerPrompt already gates its own `pageIds` request —
   // without this the model never returns one and resolvePageSources would
@@ -311,9 +399,33 @@ export function buildAnswerPrompt({ question, context, profile, resume, coverLet
       "Prefer a specific detail from a project page — the project's name, the technology used, a concrete number, or the outcome — over a generic resume restatement, and name the project when the answer draws on one.",
     );
   }
+  // AC-2.3/design §4b: the same gate buildPointsPrompt applies, on the same
+  // fact `roleTermsUnbacked` is computed from downstream (route.js) —
+  // `roleTerms` is re-derived from `question` here rather than accepted as a
+  // parameter, for the identical reason buildPointsPrompt does: it keeps
+  // this call byte-identical for a question with no taxonomy term (the
+  // frozen no-pages fixture, "Tell me about yourself.") without adding an
+  // argument to a function tests call by name.
+  const grantsRoleFraming = roleTerms(question).length > 0;
+  if (grantsRoleFraming) {
+    parts.push(
+      "Lead with the role-relevant capability in the interviewer's own terms; substantiate it with the candidate's specific evidence in the points that follow.",
+    );
+  }
   parts.push(
     `Every claim must come from the ${authoritySources} above — select, order, and phrase freely, but never invent an employer, project, metric, or credential that isn't there. If the material is thin, give a shorter, honest answer rather than inventing detail.`,
   );
+  if (grantsRoleFraming) {
+    // design §4a's second register, split out of the sentence just above and
+    // added ONLY in the granted state — this is buildAnswerPrompt's half of
+    // AC-2.3 ("additionally splits its authority sentence"). The frozen
+    // no-pages fixture never takes this branch (its question yields no
+    // taxonomy term), which is what keeps it byte-identical to what this
+    // function produced before this feature existed.
+    parts.push(
+      "The interviewer's own wording may be used to name the subject and frame what the candidate has actually done, but every claim about their own experience must still come only from the material above, and never from the question.",
+    );
+  }
   if (pagesBlock) {
     // AC-6.1/A3: the model names which page (by the id in that page's own
     // "## <title> (page id: <id>)" heading) each point actually drew a
