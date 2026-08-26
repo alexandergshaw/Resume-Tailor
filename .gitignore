@@ -1,0 +1,7 @@
+# Repo-root ignores.
+#
+# The app lives in hello-world/ and has its own .gitignore, but that file's
+# entries are ANCHORED to it: `/node_modules` there means hello-world/node_modules
+# and nothing else. A node_modules/ at this level was therefore untracked but not
+# ignored, so a single `git add -A` would have committed the whole tree.
+node_modules/
