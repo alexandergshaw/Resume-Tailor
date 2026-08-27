@@ -23,11 +23,26 @@
 //
 // EXTRACTION IS AN INGEST-TIME OPERATION. This module is called once, when
 // an attachment is uploaded (or during an explicit backfill pass over
-// existing rows) — never from a live request path. The interview copilot's
-// answer route reads the `extracted_text` COLUMN this module's caller writes
-// (lib/experience/knowledgeBase.js's contract), and never imports this file
-// or downloads an attachment's bytes itself; see that route's own latency
-// test for the budget this module must stay out of.
+// existing rows) — never from a live request path.
+//
+// NOTHING READS `extracted_text` YET, and this comment used to claim
+// otherwise: it said the interview copilot's answer route reads the column
+// this module's caller writes. It does not. As of this writing there is no
+// reader of that column anywhere outside this file's own comment and the
+// migration that adds it — grep it before believing any statement to the
+// contrary. Neither is there a WRITER yet: the ingest and backfill callers
+// described above are a later wave, so today this module is reachable only
+// from its own tests.
+//
+// The sentence is kept, corrected, rather than deleted, because the
+// constraint it was describing is real and is the reason this module exists
+// in this shape: whatever eventually reads the column must do so from a
+// stored value, and must never import this file or download an attachment's
+// bytes on a request path. See app/api/copilot/answer/route.latency.test.js
+// for the budget that reader has to stay out of. That is a REQUIREMENT on
+// work not yet done, not a description of work already done — and writing it
+// as the latter is how a future reader concludes the wiring exists and stops
+// looking.
 //
 // STATUS VOCABULARY THIS MODULE RETURNS: "ok" | "empty" | "unsupported" |
 // "too_large" | "failed". Two more states exist in the STORED column
