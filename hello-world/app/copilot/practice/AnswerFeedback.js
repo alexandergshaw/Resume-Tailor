@@ -122,13 +122,20 @@ export default function AnswerFeedback({
   // below say WHY rather than a bare generic sentence, without the response
   // contract needing to carry it.
   bodyLanguageReason = null,
-  // G2/AC-G2-C-6: the resolved interview-type label ("System design",
+  // G2/AC-G2-C-6/AC-A12: the resolved interview-type label ("System design",
   // "Recruiter phone screen", ...) this critique was actually judged
   // against. The eight-key critique response contract carries no
-  // interview-type field (AC-G2-B-3 locks it), so PracticeClient resolves
-  // it from the CURRENT interview type via interviewTypeLabel() and passes
-  // the string straight through — this component never re-derives a label
-  // from a raw value itself.
+  // interview-type field (AC-G2-B-3 locks it), so PracticeClient resolves it
+  // via interviewTypeLabel() and passes the string straight through — this
+  // component never re-derives a label from a raw value itself.
+  //
+  // The value it resolves is `judgedInterviewType`, CAPTURED with the metrics
+  // when the critique was made (`lib/copilot/practiceAnswerReview.js` pairs
+  // the two so they can only be set and cleared together), NOT the current
+  // interview type. Since AC-A12 a foreign-origin change no longer clears
+  // this panel, so the live type can have moved on while this critique is
+  // still on screen — labelling it with the current type would then state
+  // that it was judged under a rubric it never saw.
   interviewTypeLabel = "",
   onRetry,
   onNext,

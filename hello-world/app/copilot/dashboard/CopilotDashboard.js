@@ -455,7 +455,23 @@ export function useCurrentQuestionAnnouncement(current, statusText) {
 // so revealing in either place reveals in both — two independent visibility
 // flags for one draft would let the card and this panel disagree about
 // whether the answer is showing.
-function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel }) {
+//
+// Contract 8 (CopilotClient -> CopilotDashboard): `staleTypeChangeAt`
+// defaults to `0` so every caller that does not pass it — practice mode,
+// and every existing test — renders byte-identical to before this prop
+// existed: `current.at` is always a real `Date.now()` timestamp (or
+// `undefined`, which also fails the comparison), so the line below never
+// shows unless a caller deliberately supplies a nonzero value. A number,
+// not a boolean, because it self-clears against `current.at` at the render
+// site the moment a NEW question becomes current (`current.at` moves
+// forward, the comparison flips) — no effect, no setState, no extra state
+// held here. Set to `Date.now()` by CopilotClient when a change to the
+// interview type arrives from somewhere other than this window's own
+// picker (a "foreign" change): that path leaves the visible card exactly
+// as-is rather than auto-redrafting it (contract 8's own doc; AC-A15 is
+// local-origin only), so the card can silently go on describing the wrong
+// format unless something says otherwise.
+function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel, staleTypeChangeAt = 0 }) {
   // BUG-J6: filtered here (not `current.points` directly) — see
   // lib/copilot/answerPoints.js's doc for why an unfiltered array can reach
   // this component with blank entries in it. The `done` branch below tests
@@ -556,6 +572,17 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
         // when the reveal click kicks off a fresh draft that is still
         // `loading`, not only on a cache hit that is already `done`.
         <Box ref={revealedRef} tabIndex={-1}>
+          {/* Contract 8: renders nothing at all — not an empty wrapper —
+              when `current.at` is not older than `staleTypeChangeAt`, which
+              is every render for every caller that leaves the prop at its
+              default. `var(--text-secondary)` (6.67:1), never
+              `var(--text-muted)` (3.90:1) — a 0.75rem caption fails contrast
+              at the muted color (AnswerLines.js:70-78). */}
+          {current.at < staleTypeChangeAt ? (
+            <Typography variant="caption" sx={{ display: "block", color: "var(--text-secondary)", mb: 0.75 }}>
+              Drafted before the interview type changed.
+            </Typography>
+          ) : null}
           {current.status === "loading" ? (
             <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
               <CircularProgress size={16} sx={{ flexShrink: 0 }} />
@@ -715,6 +742,11 @@ export default function CopilotDashboard({
   answerHidden = false,
   onRevealAnswer,
   revealLabel = "Show sample answer",
+  // Contract 8: see CurrentAnswerPanel's own doc above. Defaulted to `0` —
+  // no caller today passes a negative `current.at`, so this never trips
+  // unless CopilotClient deliberately sets it, which is what keeps every
+  // existing caller (practice mode included) byte-identical.
+  staleTypeChangeAt = 0,
 }) {
   const current = pinnedQuestionEntry(questions, pinnedId);
   const text = { ...LIVE_COPY, ...(copy || {}) };
@@ -759,6 +791,7 @@ export default function CopilotDashboard({
           answerHidden={answerHidden}
           onReveal={onRevealAnswer}
           revealLabel={revealLabel}
+          staleTypeChangeAt={staleTypeChangeAt}
         />
       </Box>
 

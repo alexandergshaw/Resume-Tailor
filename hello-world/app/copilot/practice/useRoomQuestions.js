@@ -6,6 +6,7 @@ import { detectQuestion, normalizeQuestion } from "@/lib/copilot/questions";
 import { confirmQuestion } from "@/lib/copilot/detectClient";
 import { draftAnswer } from "@/lib/copilot/answerClient";
 import { normalizeManualQuestion } from "@/lib/copilot/manualQuestion";
+import { getInterviewType } from "../useInterviewType";
 
 // Final wave (AC-M2): practice mode's counterpart of live mode's own
 // detected-question pipeline (app/copilot/useLiveSession.js's
@@ -75,6 +76,16 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
   // confirmQuestion normalization landing on the same wording twice) must
   // not draft the same answer a second time.
   const lastQNormRef = useRef("");
+  // AC-A21/AC-A21c: monotonic per-entry draft ownership counter, the same
+  // shape useDraftAnswer.js's own draftTokenRef uses for the identical
+  // reason. Real tokens start at 1 (the ref starts at 0 and is
+  // pre-incremented), so 0 is a safe "no live draft owns this entry"
+  // sentinel — invalidateDrafts (below) stamps it onto every entry it
+  // resets, which is what stops a draft that was already in flight under
+  // the OLD interview type from landing (on either the success path or the
+  // rejection path — an unguarded catch is half the hazard) after the
+  // format has changed out from under it.
+  const roomDraftTokenRef = useRef(0);
 
   useEffect(() => {
     applicationIdRef.current = applicationId ?? null;
@@ -111,13 +122,33 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
   // missing context as "confirm/draft from the utterance alone", exactly as
   // they do for that existing caller.
   //
-  // `interviewType` is left out of the request entirely, for the same
-  // reason live mode's own runDraft never sends one: this hook exists to
-  // run the SAME pipeline live mode runs, byte for byte, not a practice-
-  // flavored variant of it.
+  // `interviewType` IS sent, read synchronously off getInterviewType()
+  // (../useInterviewType.js) at the top of this callback, below — never off
+  // a ref mirrored during render. The store notifies its subscribers
+  // synchronously inside the click that changed it, but useSyncExternalStore
+  // only SCHEDULES a render for that and useEffect is passive and commits
+  // after paint, so a ref kept in sync via a render-time effect would still
+  // read the OLD value inside that synchronous listener (this project's
+  // react-hooks/refs rule is error-level and transitive for exactly this
+  // reason: handing a ref's `.current` out of render through a closure, or a
+  // useCallback like this one, is the same hazard as reading it inline).
+  // getInterviewType() has no such lag because it reads the store directly,
+  // not a value React has queued a re-render to reflect.
+  //
+  // AC-A21c: the value captured at that same moment is stamped as `token`
+  // (roomDraftTokenRef, above) onto the "loading" write below, and BOTH
+  // post-await writes — the success path and the catch — only apply if the
+  // entry's stamped token still matches. Without this a draft that crosses
+  // an interview-type change (invalidateDrafts, below) would still land,
+  // stale, once its network call finally resolves or rejects; today that
+  // hazard is masked only by resetForSession emptying the list first, which
+  // makes the stale `prev.map` a no-op — invalidateDrafts does NOT empty the
+  // list (see its own comment), so nothing else prevents this once this hook
+  // starts sending an interview type.
   const runDraft = useCallback(async (id, question) => {
+    const token = (roomDraftTokenRef.current += 1);
     setQuestions((prev) =>
-      prev.map((q) => (q.id === id ? { ...q, status: "loading", error: "" } : q)),
+      prev.map((q) => (q.id === id ? { ...q, status: "loading", error: "", draftToken: token } : q)),
     );
     try {
       const { points, type, cues, buzzwords, resumeAnchor, idealProject, pageSources } = await draftAnswer({
@@ -125,10 +156,11 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
         context: "",
         profile: profileRef.current,
         applicationId: applicationIdRef.current,
+        interviewType: getInterviewType(),
       });
       setQuestions((prev) =>
         prev.map((q) =>
-          q.id === id
+          q.id === id && q.draftToken === token
             ? {
                 ...q,
                 status: "done",
@@ -157,7 +189,9 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
     } catch (err) {
       setQuestions((prev) =>
         prev.map((q) =>
-          q.id === id ? { ...q, status: "error", error: err?.message || "Failed to draft." } : q,
+          q.id === id && q.draftToken === token
+            ? { ...q, status: "error", error: err?.message || "Failed to draft." }
+            : q,
         ),
       );
     }
@@ -195,6 +229,11 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
           type: type || null,
           error: "",
           cached: false,
+          // AC-A21c: seeded null, never a number — runDraft (above) is the
+          // sole writer of a real token, stamped on the very next
+          // setQuestions call this same addQuestion triggers below, so no
+          // live token can ever equal a freshly seeded entry's.
+          draftToken: null,
         },
       ]);
       runDraft(id, question);
@@ -327,5 +366,56 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
     lastQNormRef.current = "";
   }, []);
 
-  return { questions, onUtterance, onDraft, addManualQuestion, resetForSession };
+  // AC-A21b: PracticeClient's interview-type-change subscriber calls this,
+  // NOT resetForSession — a room question is something someone else in the
+  // room actually asked, and a format change does not make it un-asked, so
+  // it stays on screen with its id, its text, its `at`, and the type
+  // confirmQuestion classified it as, all untouched. What the change DOES
+  // invalidate is the DRAFT built under the old rubric: every entry is put
+  // back into exactly the shape a fresh, undrafted entry is seeded with
+  // (addQuestion, above) — `status: "idle"` (a status this hook otherwise
+  // never produces, so a card can render "not yet drafted for this format"
+  // distinctly from either "loading" or a genuine fetch "error"), and every
+  // answer field reset to its seeded empty value.
+  //
+  // Each entry's `draftToken` is stamped back to `null` here too — the same
+  // sentinel a freshly seeded entry carries, and one no live `token` inside
+  // runDraft can ever equal (real tokens start at 1). That is what stops a
+  // draft already in flight under the OLD interview type from writing its
+  // answer onto this entry once it resolves (or rejects) after this call:
+  // runDraft's own post-await guard checks the CURRENT stamped token, not
+  // the one it captured, so a mismatch here makes that write a no-op on
+  // both the success path and the catch.
+  //
+  // `lastQNormRef` is deliberately left alone — see this function's own
+  // callers' tests: clearing it would let a question still sitting in the
+  // feed (now mid-redraft) be re-added the instant someone in the room
+  // repeats it, which is exactly the duplicate resetForSession's OWN clear
+  // of that guard exists to prevent between sessions, not within one.
+  const invalidateDrafts = useCallback(() => {
+    setQuestions((prev) =>
+      prev.map((q) => ({
+        ...q,
+        status: "idle",
+        error: "",
+        cached: false,
+        points: null,
+        cues: [],
+        buzzwords: [],
+        anchor: null,
+        idealProject: null,
+        pageSources: [],
+        draftToken: null,
+      })),
+    );
+  }, []);
+
+  return {
+    questions,
+    onUtterance,
+    onDraft,
+    addManualQuestion,
+    resetForSession,
+    invalidateDrafts,
+  };
 }

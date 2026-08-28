@@ -37,6 +37,14 @@ import { useLiveSession } from "./useLiveSession";
 import { useCaptureSetup } from "./useCaptureSetup";
 import { useCompanyBrief } from "./useCompanyBrief";
 import { useLiveColumnHeight } from "./useLiveColumnHeight";
+import { useInterviewType, useInterviewTypeChange, getInterviewTypeStorageBlocked } from "./useInterviewType";
+import { interviewTypeLabel } from "@/lib/copilot/interviewTypes";
+import {
+  invalidateLiveAnswers,
+  interviewTypeChangeAnnouncement,
+  joinInterviewTypeAnnouncements,
+  claimStorageAnnouncement,
+} from "@/lib/copilot/choiceChangeInvalidation";
 
 // I1: 280px rail + a usable main column needs 824px minimum, so the
 // breakpoint is `md` (900), not `sm`. `noSsr: true` matches useIsMobile/useIsTablet.
@@ -74,6 +82,9 @@ export default function CopilotClient() {
   const [questions, setQuestions] = useState([]);
   const [autoDraft, setAutoDraft] = useState(true);
   const [profile, setProfileRaw] = usePrepContext();
+  // A6: the shared interview type (contract 2) — one store, read by both
+  // the live and practice surfaces.
+  const { interviewType, setInterviewType } = useInterviewType();
   // AC-H1: the tracked posting selected for this live session, if any — the
   // same picker practice mode has, feeding both the "Submitted for this
   // application" panel and the grounding documents draftAnswer sends along
@@ -157,6 +168,16 @@ export default function CopilotClient() {
   // on a posting change, only from openBrief()/refresh().
   const companyBrief = useCompanyBrief(posting);
   const hasCompany = !!String(posting?.company || "").trim();
+  // I8: moved up (step-9c-iii) so the change handlers below can put it in their own deps, TDZ-free.
+  const briefArticleCount = Array.isArray(companyBrief.articles) ? companyBrief.articles.length : 0;
+  const briefLiveText = companyBrief.open
+    ? briefStatusMessage({
+        status: companyBrief.status,
+        count: briefArticleCount,
+        company: companyBrief.company,
+        error: companyBrief.error,
+      })
+    : "";
 
   // Prep context (seed-from-storage/fallback/persist) lives in
   // usePrepContext — this wraps its setter to also drop the answer cache:
@@ -288,6 +309,9 @@ export default function CopilotClient() {
     return true;
   }, [posting, companyBrief]);
 
+  const [staleTypeChangeAt, setStaleTypeChangeAt] = useState(0); // Contract 8, hoisted for a stable onCurrentEntryRedrafted below.
+  const onCurrentEntryRedrafted = useCallback(() => setStaleTypeChangeAt(0), []);
+
   const {
     warning,
     setWarning,
@@ -301,6 +325,7 @@ export default function CopilotClient() {
     stop,
     start,
     onDraft,
+    redraftCurrentAnswer,
     addManualQuestion,
     clearAll,
     copyTranscript,
@@ -346,7 +371,63 @@ export default function CopilotClient() {
     setSetupExpanded,
     setShowHistory,
     onCompanyCue,
+    onCurrentEntryRedrafted, // MATERIAL-3: clears the caption below on redraft.
   });
+
+  // Contract 7/8: this surface's own announcement and practice's own.
+  const [typeAnnouncement, setTypeAnnouncement] = useState("");
+  const [practiceTypeAnnouncement, setPracticeTypeAnnouncement] = useState("");
+  const announcedStorageBlockRef = useRef(false); // AC-A15b: once per tab; touched in the handler only.
+  // Step-9c-iii: each slot's ambient "cue|brief" signature when SET, compared
+  // at render time near the join — see joinInterviewTypeAnnouncements's doc.
+  const [typeAmbientAtSet, setTypeAmbientAtSet] = useState("");
+  const [practiceAmbientAtSet, setPracticeAmbientAtSet] = useState("");
+
+  // C.2: the ONE live-surface subscriber (closes over redraftCurrentAnswer).
+  // AC-A15b: canRedraft reads render-scope `mode`, listed below.
+  const onInterviewTypeChanged = useCallback(
+    (next, prev, meta) => {
+      const blocked = getInterviewTypeStorageBlocked();
+      // BLOCKER-1: claim ONLY when this text is actually spoken (same
+      // predicate the join uses) — else it silences the other surface.
+      const announceBlocked = blocked && mode === "live" && !announcedStorageBlockRef.current;
+      if (announceBlocked) announcedStorageBlockRef.current = true;
+      invalidateLiveAnswers({
+        clearAnswerCache: () => answerCacheRef.current.clear(),
+        bumpDraftGeneration: () => {
+          draftGenRef.current += 1;
+        },
+        redraftCurrentAnswer,
+        canRedraft: meta.origin === "local" && mode === "live",
+      });
+      // Contract 8: a foreign change may leave an on-screen card drafted
+      // under the old type — CurrentAnswerPanel dims it once its own `at`
+      // predates this timestamp.
+      if (meta.origin === "foreign") setStaleTypeChangeAt(Date.now());
+      setTypeAnnouncement(
+        interviewTypeChangeAnnouncement({
+          surface: "live",
+          origin: meta.origin,
+          label: interviewTypeLabel(next),
+          hadRecording: false,
+          hadReview: false,
+          storageBlocked: announceBlocked,
+        }),
+      );
+      setTypeAmbientAtSet(`${cueAnnouncement.text}|${briefLiveText}`);
+    },
+    [mode, redraftCurrentAnswer, cueAnnouncement.text, briefLiveText],
+  );
+  useInterviewTypeChange(onInterviewTypeChanged);
+
+  // MATERIAL-1: filters PracticeClient's text through the SAME latch above.
+  const onPracticeTypeAnnouncement = useCallback(
+    (text) => {
+      setPracticeTypeAnnouncement(claimStorageAnnouncement(text, announcedStorageBlockRef));
+      setPracticeAmbientAtSet(`${cueAnnouncement.text}|${briefLiveText}`);
+    },
+    [cueAnnouncement.text, briefLiveText],
+  );
 
   // BUG-3: bumped on every new session and handed to SpeakerBar (which now
   // owns the who's-talking announcement) as `sessionNonce` — without this, a
@@ -372,6 +453,9 @@ export default function CopilotClient() {
     (val) => {
       if (val !== "live" && val !== "practice" && val !== "roles") return;
       if ((val === "roles" || val === "practice") && sessionRef.current) stop();
+      // MATERIAL-2: closes the one gap the ambient check alone can't — a round trip back to the SAME mode.
+      setTypeAnnouncement("");
+      setPracticeTypeAnnouncement("");
       setMode(val);
     },
     [stop, sessionRef],
@@ -462,22 +546,19 @@ export default function CopilotClient() {
     [pinCurrentQuestion, unpinQuestion, companyBrief],
   );
 
-  // I8: exactly ONE new consolidated live region — this screen already
-  // carries about eight, and LiveHearingStrip.js documents a measured
-  // incident where one chatty region starved the other five. Carries the
-  // pin state (cueAnnouncement, voice-only) and the brief status (only
-  // while the panel is actually open). Rendered unconditionally, mounted
-  // empty, at the top of the return below.
-  const briefArticleCount = Array.isArray(companyBrief.articles) ? companyBrief.articles.length : 0;
-  const briefLiveText = companyBrief.open
-    ? briefStatusMessage({
-        status: companyBrief.status,
-        count: briefArticleCount,
-        company: companyBrief.company,
-        error: companyBrief.error,
-      })
-    : "";
-  const consolidatedLiveText = [cueAnnouncement.text, briefLiveText].filter(Boolean).join(" ");
+  // MATERIAL-1/step-9c-iii: see joinInterviewTypeAnnouncements's own doc.
+  const [liveTypeText, practiceTypeText] = joinInterviewTypeAnnouncements({
+    mode,
+    live: typeAnnouncement,
+    practice: practiceTypeAnnouncement,
+    liveAmbientAtSet: typeAmbientAtSet,
+    practiceAmbientAtSet,
+    cueText: cueAnnouncement.text,
+    briefText: briefLiveText,
+  });
+  const consolidatedLiveText = [cueAnnouncement.text, briefLiveText, liveTypeText, practiceTypeText]
+    .filter(Boolean)
+    .join(" ");
 
   // I11: the brief panel takes over the rail's slot rather than opening beside it (no room for both — I1).
   const railContent = companyBrief.open ? (
@@ -561,6 +642,10 @@ export default function CopilotClient() {
           sttProviderName={sttProviderName}
           micDeviceId={micDeviceId}
           onMicDeviceChange={onMicDeviceChange}
+          // Contract 7: practice knows the facts (a recording in flight, a
+          // review on screen) that decide ITS OWN announcement text; this is
+          // where that text arrives to be joined into consolidatedLiveText.
+          onInterviewTypeAnnouncement={onPracticeTypeAnnouncement}
         />
       ) : (
         <>
@@ -634,6 +719,9 @@ export default function CopilotClient() {
               showConsent={showConsent}
               onDismissConsent={() => setShowConsent(false)}
               sttProviderName={sttProviderName}
+              interviewType={interviewType}
+              onInterviewTypeChange={setInterviewType}
+              interviewTypeLabel={interviewTypeLabel(interviewType)}
               posting={posting}
               onPostingChange={onPostingChange}
               postingPickerLabel={POSTING_PICKER_LABEL}
@@ -821,6 +909,7 @@ export default function CopilotClient() {
                   onReleasePin={unpinQuestion}
                   pace={pace}
                   fillers={fillers}
+                  staleTypeChangeAt={staleTypeChangeAt}
                 />
               </Box>
               {!isRailBelowMd ? <Box sx={{ overflowY: "auto", minHeight: 0 }}>{railContent}</Box> : null}

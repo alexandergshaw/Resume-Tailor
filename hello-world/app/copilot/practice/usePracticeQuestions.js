@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchNextQuestion } from "@/lib/copilot/questionClient";
 import { normalizeQuestion } from "@/lib/copilot/questions";
+import { getInterviewType } from "../useInterviewType";
 
 // BUG-J4/AC-J3: "which question are we on" — practice mode's whole question
 // state machine, extracted out of PracticeClient.js purely to keep that
@@ -21,9 +22,10 @@ import { normalizeQuestion } from "@/lib/copilot/questions";
 //     flow's to own.
 //   - `abandonInProgressAnswer`/`resetAnswerState` (usePracticeAnswer) never
 //     get called from inside this hook, even though PracticeClient's
-//     onNextQuestion/onRetryQuestion/onPostingChange/onInterviewTypeChange/
-//     stop/start all call both a hook function here AND one of those in the
-//     same handler. Keeping "what question are we on" and "what's happening
+//     onNextQuestion/onRetryQuestion/onPostingChange/stop/start (and, since
+//     AC-A12/A13, its interview-type store subscriber) all call both a
+//     hook function here AND one of those in the same handler. Keeping
+//     "what question are we on" and "what's happening
 //     with the in-progress answer" as two separate concerns that the
 //     COMPONENT composes, rather than one reaching into the other, is the
 //     same separation AC-G1-10 already pins for useSampleAnswer versus
@@ -39,23 +41,26 @@ import { normalizeQuestion } from "@/lib/copilot/questions";
 // behaviour at DIFFERENT points relative to their own state changes
 // (`setPosting`, the async session teardown in `start()`) — see each
 // function's own doc for which caller needs it and why.
-export function usePracticeQuestions({ posting, interviewType }) {
+export function usePracticeQuestions({ posting }) {
   const [currentQuestion, setCurrentQuestion] = useState(null); // { question, type }
   const [asked, setAsked] = useState([]);
   const [questionLoading, setQuestionLoading] = useState(false);
   const [questionError, setQuestionError] = useState("");
   const [exhausted, setExhausted] = useState(false);
 
-  // `posting`/`asked`/`currentQuestion`/`interviewType` mirrored into refs
-  // for the same reason PracticeClient's own postingRef exists: the async
-  // bodies below (requestQuestion's fetch, advanceAsked's dedupe check) are
-  // stable useCallbacks (empty dependency arrays) that must see the LATEST
-  // value across an `await` or across renders, not whatever was in scope
-  // when the callback identity was created.
+  // `posting`/`asked`/`currentQuestion` mirrored into refs for the same
+  // reason PracticeClient's own postingRef exists: the async bodies below
+  // (requestQuestion's fetch, advanceAsked's dedupe check) are stable
+  // useCallbacks (empty dependency arrays) that must see the LATEST value
+  // across an `await` or across renders, not whatever was in scope when the
+  // callback identity was created. AC-A20b: the interview type is NOT among
+  // them — it is no longer taken as a parameter at all. A render-mirrored
+  // ref cannot be current inside a synchronous store-change listener (this
+  // chunk moves practice invalidation into exactly that shape), so
+  // requestQuestion below reads getInterviewType() fresh instead.
   const postingRef = useRef(posting);
   const askedRef = useRef([]);
   const currentQuestionRef = useRef(null);
-  const interviewTypeRef = useRef(interviewType);
   // Monotonic generation token: bumped whenever an in-flight question
   // request should be discarded (posting change, Stop, or a fresh Start).
   // requestQuestion captures the generation before its await and refuses to
@@ -77,9 +82,6 @@ export function usePracticeQuestions({ posting, interviewType }) {
   useEffect(() => {
     currentQuestionRef.current = currentQuestion;
   }, [currentQuestion]);
-  useEffect(() => {
-    interviewTypeRef.current = interviewType;
-  }, [interviewType]);
 
   // Requests the next practice question for the currently selected posting,
   // deduping against the given asked list. Its own failures are caught here
@@ -97,7 +99,9 @@ export function usePracticeQuestions({ posting, interviewType }) {
       const result = await fetchNextQuestion({
         posting: p ? { title: p.title, company: p.company, description: p.description } : null,
         asked: askedList,
-        interviewType: interviewTypeRef.current,
+        // AC-A20b: read fresh, not from a ref mirroring a render prop — see
+        // this hook's module doc and the retired interviewTypeRef above.
+        interviewType: getInterviewType(),
       });
       if (reqGenRef.current !== gen) return;
       setCurrentQuestion({ question: result.question, type: result.type });
@@ -217,6 +221,18 @@ export function usePracticeQuestions({ posting, interviewType }) {
     currentQuestionRef.current = { question, type };
   }, []);
 
+  // AC-A12/contract 9: the DEFERRED half of a foreign-origin interview-type
+  // change — the candidate keeps the question they are mid-answer on
+  // (`currentQuestion`/`asked`/`questionLoading`/`reqGenRef` are all left
+  // untouched), but `exhausted` and any stale `questionError` must not
+  // block the NEXT request, which already fetches under the new type
+  // because requestQuestion above reads getInterviewType() fresh. Contrast
+  // resetQuestions, which is the LOCAL-origin, non-deferred, full reset.
+  const markQuestionsStaleForNewFormat = useCallback(() => {
+    setExhausted(false);
+    setQuestionError("");
+  }, []);
+
   return {
     currentQuestion,
     // Convenience derived from `currentQuestion` alone — returned here
@@ -241,5 +257,6 @@ export function usePracticeQuestions({ posting, interviewType }) {
     clearForNewSession,
     invalidateAndClearLoading,
     setManualQuestion,
+    markQuestionsStaleForNewFormat,
   };
 }

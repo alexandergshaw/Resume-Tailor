@@ -32,6 +32,7 @@ import { CopilotSession } from "@/lib/copilot/session";
 import { draftAnswerStreaming } from "@/lib/copilot/answerClient";
 import { downloadSessionLogArchive } from "@/lib/copilot/sessionLogArchive";
 import { confirmQuestion } from "@/lib/copilot/detectClient";
+import { setInterviewType, __resetInterviewTypeForTests } from "./useInterviewType";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -114,6 +115,7 @@ function eventsOfType(snapshot, type) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  __resetInterviewTypeForTests();
   sessionOptions = null;
   CopilotSession.mockImplementation(function (options) {
     sessionOptions = options;
@@ -132,6 +134,7 @@ beforeEach(() => {
 
 afterEach(() => {
   document.body.innerHTML = "";
+  __resetInterviewTypeForTests();
 });
 
 describe("the session records itself (AC-Q6.1)", () => {
@@ -145,6 +148,21 @@ describe("the session records itself (AC-Q6.1)", () => {
     expect(snap.mode).toBe("live");
     expect(snap.source).toBe("inperson");
     expect(eventsOfType(snap, "session.start")).toHaveLength(1);
+  });
+
+  it("names the interview type this session was drafted under (AC-A23)", async () => {
+    // No suite asserts session.start's payload with toEqual (only
+    // toHaveLength/type checks above and in useLiveSession.provider.test.js),
+    // so this added field is safe to add without touching another
+    // assertion.
+    setInterviewType("technical");
+    const { state } = mountProbe();
+    await act(async () => {
+      await state.start();
+    });
+    const [started] = eventsOfType(state.sessionLogSnapshot(), "session.start");
+    expect(started).toBeTruthy();
+    expect(started.interviewType).toBe("technical");
   });
 
   it("throws nothing when asked for a log before any session ran", () => {

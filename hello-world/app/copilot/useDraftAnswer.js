@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { normalizeQuestion } from "@/lib/copilot/questions";
 import { cachedAnswerFor, groundingFor } from "@/lib/copilot/answerGrounding";
+import { getInterviewType } from "./useInterviewType";
 // Namespace import, not named — see fetchAnswer's own comment for why.
 import * as answerClientModule from "@/lib/copilot/answerClient";
 
@@ -60,6 +61,16 @@ export function useDraftAnswer({
   const profileRef = useRef("");
   // AC-H1: mirrors `posting`, the same reason profileRef exists just above.
   const postingRef = useRef(null);
+  // AC-A16/AC-A16b: monotonic per-entry draft ownership counter. NOT mirrored
+  // from render state and NOT reset alongside answerCacheRef.current.clear()
+  // — resetting could let a new token collide with a stale stamp still
+  // sitting on a surviving entry. The interview type itself is read straight
+  // from getInterviewType() at the top of runDraft, never mirrored into a
+  // ref: the store notifies synchronously inside a change, but
+  // useSyncExternalStore only SCHEDULES a render and useEffect is passive and
+  // commits after paint, so a ref mirrored during render would still read
+  // the OLD type inside a synchronous change listener.
+  const draftTokenRef = useRef(0);
 
   useEffect(() => {
     profileRef.current = profile;
@@ -71,18 +82,20 @@ export function useDraftAnswer({
   const runDraft = useCallback(
     async (id, question, { force = false } = {}) => {
       const norm = normalizeQuestion(question);
-      // AC-N1.2: what this draft is (or would be) built from, read from the
-      // refs ONCE, here — before the `await` further down. Re-reading
-      // profileRef/postingRef AFTER that await would report whatever the
-      // user has since selected, not what THIS draft actually used; capturing
-      // once and reusing the same value for the lookup below, the network
-      // call, and the eventual cache write is what AC-N1's correction to the
-      // original bug report is about. groundingFor folds live mode's
-      // always-absent interview type into the same "not applicable" value
-      // practice mode's own entries use (answerGrounding.js), so a write from
-      // one mode's cache can be read back correctly by the other's.
+      // AC-N1.2/AC-A19: what this draft is (or would be) built from, read
+      // ONCE, here — before the `await` further down. Re-reading
+      // profileRef/postingRef/getInterviewType() AFTER that await would
+      // report whatever the user has since selected, not what THIS draft
+      // actually used; capturing once and reusing the same value for the
+      // lookup below, the network call, and the eventual cache write is what
+      // AC-N1's correction to the original bug report is about. The
+      // interview type goes through groundingFor exactly like the other two
+      // fields — the shared machinery, not a hand-folded key — so a write
+      // from one mode's cache can be read back correctly by the other's, and
+      // this cache key stays correct the day a fourth field is added.
       const grounding = groundingFor({
         profile: profileRef.current,
+        interviewType: getInterviewType(),
         applicationId: postingRef.current?.id || null,
       });
       // AC-N1.3: this draft's generation, also captured before the await.
@@ -91,6 +104,15 @@ export function useDraftAnswer({
       // either write, so a draft still resolving when the user moves on
       // can't land anywhere.
       const gen = draftGenRef.current;
+      // AC-A16b: this draft's per-entry ownership token, stamped BEFORE the
+      // cache-hit branch below — not after it. A cache hit resolves the card
+      // without going through the loading write, so if the token were
+      // stamped only there, a cache hit would leave a STALE token in place
+      // and an older in-flight draft still matching it would overwrite the
+      // answer just served. Monotonic, never reset, never seeded on an entry
+      // anywhere else (C3/§D.22) — an entry that was never drafted carries no
+      // token, and no live token can ever equal `undefined`.
+      const token = (draftTokenRef.current += 1);
       // Reuse a prior answer for the same (normalized) question — interviewers
       // often circle back or rephrase — unless the user explicitly redrafts.
       // AC-N1.2: cachedAnswerFor rejects an entry whose OWN grounding
@@ -141,6 +163,10 @@ export function useDraftAnswer({
                     pageSources: Array.isArray(cached.pageSources) ? cached.pageSources : [],
                     type: it.type || cached.type,
                     cached: true,
+                    // AC-A16b: a cache hit ADVANCES the token — it must not
+                    // leave a stale one in place for an older in-flight draft
+                    // to still match and overwrite this answer with.
+                    draftToken: token,
                   }
                 : it,
             ),
@@ -163,7 +189,9 @@ export function useDraftAnswer({
           // is not free (its own fallback logic reads the previous array) and
           // a mis-attributed page is the worse of the two by this feature's
           // own reasoning.
-          it.id === id ? { ...it, status: "loading", error: "", cached: false, pageSources: [] } : it,
+          it.id === id
+            ? { ...it, status: "loading", error: "", cached: false, pageSources: [], draftToken: token }
+            : it,
         ),
       );
       // AC-N1.3: what a superseded draft leaves the card as — back at
@@ -172,9 +200,18 @@ export function useDraftAnswer({
       // left. The existing "Draft answer" button is then the user's way back
       // in; nothing here auto-retries, since by the time this fires the
       // question may no longer even be the one on screen.
+      // AC-A16/AC-A16b: gated `it.id === id && it.draftToken === token`, same
+      // as every other post-await write below. A token mismatch means a
+      // newer draft already owns this entry — leave `it` unchanged (a
+      // superseded draft flipping a correct "done" back to "idle" was the
+      // exact bug this token exists to prevent), never write `idle` there.
       const revertToIdle = () => {
         setQuestions((prev) =>
-          prev.map((it) => (it.id === id ? { ...it, status: "idle", error: "", cached: false } : it)),
+          prev.map((it) =>
+            it.id === id && it.draftToken === token
+              ? { ...it, status: "idle", error: "", cached: false }
+              : it,
+          ),
         );
       };
       try {
@@ -183,6 +220,9 @@ export function useDraftAnswer({
             question,
             context: buildContext(),
             profile: grounding.profile,
+            // AC-A18/AC-A20: the type this draft was actually started under,
+            // captured before the await above — never re-read here.
+            interviewType: grounding.interviewType,
             // AC-H1.4/AC-H4: the selected posting's own id IS the application
             // id (see normalizePostingRows in lib/copilot/postings.js) — the
             // route uses it to fetch and ground in the submitted résumé/cover
@@ -196,13 +236,15 @@ export function useDraftAnswer({
             // AC-P4.2: bullets land on the card as they stream in — each
             // points frame overwrites `points` with its own (superset) array
             // so the visible list only ever grows, never flickers backward.
-            // Guarded by the same generation check the two post-await writes
-            // below use, so a frame from a superseded draft can't repaint a
-            // card the user has since moved on from.
+            // Guarded by the same two checks every post-await write uses, so
+            // a frame from a superseded draft can't repaint a card the user
+            // has since moved on from (or that a newer draft already owns).
             onPoints: (partial) => {
               if (draftGenRef.current !== gen) return;
               setQuestions((prev) =>
-                prev.map((it) => (it.id === id ? { ...it, points: partial } : it)),
+                prev.map((it) =>
+                  it.id === id && it.draftToken === token ? { ...it, points: partial } : it,
+                ),
               );
             },
           },
@@ -240,7 +282,9 @@ export function useDraftAnswer({
         logEvent("answer.done", { id, points });
         setQuestions((prev) =>
           prev.map((it) =>
-            it.id === id ? { ...it, status: "done", points, ...aids, type: it.type || type } : it,
+            it.id === id && it.draftToken === token
+              ? { ...it, status: "done", points, ...aids, type: it.type || type }
+              : it,
           ),
         );
       } catch (err) {
@@ -253,7 +297,9 @@ export function useDraftAnswer({
         // and never also as answer.done for the same id.
         logEvent("answer.error", { id, message });
         setQuestions((prev) =>
-          prev.map((it) => (it.id === id ? { ...it, status: "error", error: message } : it)),
+          prev.map((it) =>
+            it.id === id && it.draftToken === token ? { ...it, status: "error", error: message } : it,
+          ),
         );
       }
     },

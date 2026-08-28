@@ -38,8 +38,9 @@
 // Pure, no React, no DOM — reachable from this repo's node-only vitest setup
 // (vitest.config.js has no jsdom) the same way sampleAnswerState.js is.
 //
-// AC-N1.2.3: live mode has no interview-type picker and often no posting
-// selected — `undefined`, `null`, and `""` all mean "not applicable" and
+// AC-N1.2.3: a caller may have no posting selected, and now every caller
+// sends an interview type (live mode reads it from the shared store too) —
+// but `undefined`, `null`, and `""` still all mean "not applicable" and
 // must compare equal, on EVERY field, or a write from one mode/call-site
 // spelling "nothing selected" one way can never be read back by another
 // spelling it a different way. Getting this wrong doesn't throw and doesn't
@@ -53,9 +54,9 @@ function normalizeField(value) {
 
 // The grounding a draft was (or would be) built from, as a plain comparable
 // shape. Takes the same three fields both call sites already have lying
-// around — `profile` (the prep-context string), `interviewType` (practice
-// only; absent in live mode), `applicationId` (the selected posting's id, or
-// nothing) — and folds each one's "not applicable" spellings together.
+// around — `profile` (the prep-context string), `interviewType` (the shared
+// selection both modes now read), `applicationId` (the selected posting's id,
+// or nothing) — and folds each one's "not applicable" spellings together.
 export function groundingFor({ profile, interviewType, applicationId } = {}) {
   return {
     profile: normalizeField(profile),

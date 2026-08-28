@@ -3,13 +3,21 @@
 // data module -- no "use client" needed, it exports only objects.
 //
 // Most of these constants are phone-only: TOUCH_TARGET_SX, TOUCH_SWITCH_SX,
-// TOUCH_PILL_SX, TOUCH_FIELD_SX, TOUCH_ICON_SX, and TOUCH_NATIVE_SELECT_SX
-// all key their touch-target enlargement to `xs`, and their `sm` (or higher)
-// branch is the property's actual CSS initial value -- never a plausible-
-// looking `0` -- so rendering at `sm` and up is unchanged. That has already
-// broken once in this codebase (`SpeakerChip`'s `minWidth: { xs: 44, sm: 0 }`
-// removed a flex item's shrink floor); treat any `sm`/`md` branch that isn't
-// the real initial value as a bug.
+// TOUCH_PILL_SX, TOUCH_FIELD_SX, TOUCH_ICON_SX, TOUCH_NATIVE_SELECT_SX and
+// TOUCH_MUI_SELECT_SX all key their touch-target enlargement to `xs`, and
+// their `sm` (or higher) branch is the value that leaves rendering at `sm`
+// and up unchanged -- never a plausible-looking `0` -- so rendering at `sm`
+// and up is unchanged. That has already broken once in this codebase
+// (`SpeakerChip`'s `minWidth: { xs: 44, sm: 0 }` removed a flex item's
+// shrink floor); treat any `sm`/`md` branch that isn't that value as a bug.
+//
+// For a property nothing else sets, "the value that leaves rendering
+// unchanged" IS the CSS initial value, which is what every constant here but
+// one uses. TOUCH_MUI_SELECT_SX is the exception, and deliberately: it
+// overrides properties MUI itself sets on `.MuiSelect-select`, so its `sm`
+// branch carries MUI's OWN values rather than CSS's bare initials. Same rule,
+// applied to an element that is not starting from the initial value -- see
+// that constant's own comment for the source citations.
 //
 // Three constants are NOT phone-scoped, deliberately:
 //   - WRAP_ROW_SX (`flexWrap: "wrap", rowGap: 1`) applies at every width --
@@ -124,6 +132,88 @@ export const TOUCH_NATIVE_SELECT_SX = {
   "& select": {
     boxSizing: { xs: "border-box", sm: "content-box" },
     minHeight: { xs: MOBILE_TAP_MIN, sm: "auto" },
+  },
+};
+
+// Completes the 44px touch target on a non-native MUI `Select`, which
+// TOUCH_FIELD_SX alone does not reach. TOUCH_FIELD_SX raises
+// `.MuiInputBase-root` (the outer clickable surface) to MOBILE_TAP_MIN, but
+// `InputBase.js:87-88` makes that root `inline-flex` + `align-items: center`
+// while `SelectInput.js:87` gives the display div inside it `height: auto`,
+// so a ~40px child ends up centred in the 44px root and the top/bottom bands
+// land on the root div instead of the select's own display element -- the
+// same dead-band defect TOUCH_NATIVE_SELECT_SX fixes for the native `<select>`
+// flavour, here for the non-native one. The two constants target DIFFERENT
+// elements and are used TOGETHER, spread alongside TOUCH_FIELD_SX rather than
+// instead of it (see RolePicker.js:35 for the native precedent that pairs
+// TOUCH_FIELD_SX with TOUCH_NATIVE_SELECT_SX the same way).
+//
+// The doubled class in the selector is REQUIRED, and it was measured, not
+// argued. MUI's own rule is `&.${selectClasses.select}` inside a styled
+// component (SelectInput.js:85-95), which serialises to
+// `.css-hash.MuiSelect-select { min-height: 1.4375em }` -- specificity
+// (0,2,0), with MUI's own comment on it reading "Win specificity over the
+// input base." A plain `& .MuiSelect-select` from `sx` serialises to
+// `.css-rootHash .MuiSelect-select` -- ALSO (0,2,0). A tie is decided by
+// insertion order, and emotion serialises the FormControl root's class
+// (carrying the `sx`) before the inner SelectSelect's, so MUI's rule lands
+// last and WINS. Measured, not deduced: `InterviewTypePicker.test.js`'s
+// "computed cascade" block renders the picker under jsdom and reads
+// `getComputedStyle`, and against the single-class selector it read back
+// `min-height: 1.4375em` -- i.e. the 44px floor was entirely INERT while
+// looking correct in the source. Doubling the class makes it (0,3,0), which
+// wins outright and no longer depends on insertion order at all.
+//
+// `!important` was rejected, and the honest reason is narrower than the one
+// this comment used to give. It claimed a caller's own `sx` override would
+// still win against the doubled class; the mobile regression pass MEASURED
+// that and it is false -- a caller writing the natural `& .MuiSelect-select`
+// (0,2,0) LOSES to this, reading back 44px rather than their own value. The
+// cost is real and belongs here rather than being discovered: **a caller that
+// needs to override this must match or beat (0,3,0)**, e.g. by doubling the
+// class the same way. What `!important` would additionally cost is that even
+// THAT would not work, and neither would an inline style -- so the rejection
+// stands, on "a caller can still get out of it if they mean to" rather than
+// on "a caller's ordinary override is unaffected", which it is not.
+//
+// That test is this constant's only oracle -- it targets an element whose
+// height nothing else in this tree can observe -- so it must keep failing if
+// either the selector's specificity or the values below regress.
+//
+// WATCH ITEM, not a defect today: `display: flex` at `xs` takes this element
+// out of block layout, and `text-overflow: ellipsis` (which MUI sets on it,
+// SelectInput.js:92) only applies to a block container. So on a phone a label
+// too wide for the control would clip rather than ellipsize. Measured as
+// unreachable with the shipped vocabulary -- the longest label gives
+// scrollWidth 252 == clientWidth 252 at 320px, the narrowest width this app
+// targets -- so nothing is being traded away yet. If a longer interview type
+// is ever added, the fix is NOT to drop the centring: `display: block` plus
+// `align-content: center` keeps both, and is the thing to reach for, but it
+// is a 2024-era property with no fallback and no oracle in this tree, so it
+// is written down rather than shipped ahead of the need.
+//
+// Every `sm` branch here is deliberately NOT the bare CSS initial value --
+// each one is MUI's OWN value for that property on `.MuiSelect-select`,
+// verified at source (MUI 9.0.1):
+//   - minHeight: '1.4375em'   -- MUI, SelectInput.js:89 (a reset for
+//     multiple-select chips)
+//   - display: 'block'        -- MUI, InputBase.js:157
+//   - boxSizing: 'content-box' -- MUI, InputBase.js:150 (also the CSS
+//     initial value)
+//   - alignItems: 'normal'    -- nobody sets this; CSS initial value
+// This module's header rule is "the `sm` branch is the property's real
+// initial value, so rendering at `sm` and up is unchanged" -- for a property
+// MUI itself sets, the value that leaves rendering unchanged at `sm` and up
+// is MUI's own value, not CSS's bare initial. This is a deliberate reading of
+// that rule, not an exception to it -- and with the specificity raised it is
+// now load-bearing rather than belt-and-braces: at `sm` and up these rules
+// now WIN, so they have to restate exactly what they displaced.
+export const TOUCH_MUI_SELECT_SX = {
+  "& .MuiSelect-select.MuiSelect-select": {
+    minHeight: { xs: MOBILE_TAP_MIN, sm: "1.4375em" },
+    display: { xs: "flex", sm: "block" },
+    boxSizing: { xs: "border-box", sm: "content-box" },
+    alignItems: { xs: "center", sm: "normal" },
   },
 };
 

@@ -48,3 +48,52 @@ describe("SessionSetup's recording notice reuses the honest, engine-aware compan
     expect(SOURCE).toMatch(/isEmbedded,?\s*\n/);
   });
 });
+
+// §A.6, AC-A24/A25 — allocated to this file because CopilotClient.wiring.test.js
+// deliberately mocks SessionSetup wholesale (a real render drags in
+// PostingPicker's network calls), so nothing else in the tree reads this
+// component's own source at all. A source-text check cannot pin the
+// accessible name or the rendered reading order (that stays manual, R-269),
+// but it CAN pin that the picker is wired in above PostingPicker and that
+// the collapsed summary's own template literal names all three facts in the
+// right order.
+describe("the shared interview type is wired into SessionSetup (AC-A24/A25)", () => {
+  it("takes interviewType/onInterviewTypeChange/interviewTypeLabel as props", () => {
+    expect(SOURCE).toMatch(/\binterviewType\s*,/);
+    expect(SOURCE).toMatch(/\bonInterviewTypeChange\s*,/);
+    expect(SOURCE).toMatch(/\binterviewTypeLabel\s*,/);
+  });
+
+  it("imports InterviewTypePicker and renders it ABOVE PostingPicker", () => {
+    expect(SOURCE).toMatch(/import InterviewTypePicker from "\.\/InterviewTypePicker"/);
+    const pickerAt = SOURCE.indexOf("<InterviewTypePicker");
+    const postingAt = SOURCE.indexOf("<PostingPicker");
+    expect(pickerAt).toBeGreaterThan(-1);
+    expect(postingAt).toBeGreaterThan(-1);
+    expect(pickerAt).toBeLessThan(postingAt);
+  });
+
+  it("passes the shared value and callback straight through, enabled", () => {
+    expect(SOURCE).toMatch(
+      /<InterviewTypePicker\s+value=\{interviewType\}\s+onChange=\{onInterviewTypeChange\}\s+disabled=\{false\}\s*\/>/,
+    );
+  });
+
+  it("does not convert the picker to a native <select> (prohibition 15)", () => {
+    expect(SOURCE).not.toMatch(/<select[\s>]/);
+  });
+
+  it("wraps the disclosure glyph aria-hidden, and no longer inlines it into the button's own text", () => {
+    expect(SOURCE).toMatch(/aria-hidden="true"/);
+    // The old unwrapped form this replaces — its presence would mean the
+    // glyph is still entering the button's computed accessible name.
+    expect(SOURCE).not.toMatch(/"▾ Hide setup"/);
+    expect(SOURCE).not.toMatch(/▸ Show setup/);
+  });
+
+  it("labels every fact in the collapsed summary (posting, interview type, mic) in that order", () => {
+    expect(SOURCE).toMatch(
+      /Show setup — Posting: \$\{postingSummary\} · Interview type: \$\{interviewTypeLabel\} · Mic: \$\{micLabel\}/,
+    );
+  });
+});

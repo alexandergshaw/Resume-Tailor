@@ -8,6 +8,7 @@ import Stack from "@mui/material/Stack";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Typography from "@mui/material/Typography";
+import InterviewTypePicker from "./InterviewTypePicker";
 import MicPicker from "./MicPicker";
 import PostingPicker from "./PostingPicker";
 import SubmittedDocs from "./SubmittedDocs";
@@ -72,6 +73,14 @@ export default function SessionSetup({
   showConsent,
   onDismissConsent,
   sttProviderName,
+  // A24/A25: the shared interview type (contract 2) — the value, the
+  // callback and the already-resolved display label. `interviewTypeLabel`
+  // arrives pre-resolved rather than being computed here from `lib/`
+  // directly (§F-4: this file stays a flat presentational prop-taker, the
+  // same convention every other value on this component already follows).
+  interviewType,
+  onInterviewTypeChange,
+  interviewTypeLabel,
   posting,
   onPostingChange,
   postingPickerLabel,
@@ -129,7 +138,22 @@ export default function SessionSetup({
             ...BREAK_LONG_WORDS_SX,
           }}
         >
-          {expanded ? "▾ Hide setup" : `▸ Show setup — ${postingSummary} · Mic: ${micLabel}`}
+          {/* AC-A24/A25 (UX §7.2, M-4): the glyph is wrapped aria-hidden —
+              unwrapped it enters this button's computed accessible name
+              (read aloud, or dropped outright, depending on the screen
+              reader) and is redundant with aria-expanded above regardless —
+              same fix TranscriptDisclosure.js:84-91 already applies to the
+              sibling disclosure built from this same shape. Every fact is
+              label-prefixed ("Posting:", "Interview type:", "Mic:") because
+              `·` and `—` are silent at default punctuation settings and
+              cannot supply the pause a colon does (SessionSetup.js's own
+              em-dash fix elsewhere on this file is the precedent). */}
+          <Box component="span" aria-hidden="true">
+            {expanded ? "▾" : "▸"}
+          </Box>{" "}
+          {expanded
+            ? "Hide setup"
+            : `Show setup — Posting: ${postingSummary} · Interview type: ${interviewTypeLabel} · Mic: ${micLabel}`}
         </Button>
       ) : null}
 
@@ -440,6 +464,20 @@ export default function SessionSetup({
                 : `Recording notice: audio is streamed${sttProviderName ? ` to ${sttProviderName}` : ""} for transcription. Make sure everyone on the call consents before you start. Some regions require all-party consent. The company-research voice cue is separate: ${companyResearchNotice}`}
             </Alert>
           ) : null}
+
+          {/* A24: one type shared by both tabs — rendered here, immediately
+              above the posting picker (§4.1's deliberately adjacent pair).
+              Stays enabled at all times, including while a session is live,
+              exactly like the posting picker just below it — changing the
+              format mid-interview is the whole point of sharing the value
+              live (contract 6's redraft). Not converted to a native select
+              element: the non-native MUI Select's commit boundary (arrows
+              preview, activation commits) is what a control whose every
+              change can fire a billed model call needs — see
+              InterviewTypePicker.js's own doc. */}
+          <Box sx={{ mb: 2 }}>
+            <InterviewTypePicker value={interviewType} onChange={onInterviewTypeChange} disabled={false} />
+          </Box>
 
           {/* AC-H1.1/AC-H1.3: the same posting picker practice mode has, above
               the prep context panel, wording it for live mode's own meaning

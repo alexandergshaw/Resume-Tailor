@@ -17,6 +17,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createElement, act } from "react";
 import { createRoot } from "react-dom/client";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import CopilotDashboard, { LIVE_COPY, PRACTICE_COPY } from "./CopilotDashboard.js";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -341,5 +343,90 @@ describe("the dashboard's panel set is exactly three, by structure rather than b
     for (const banned of [/predict/i, /look[- ]?ahead/i, /upcoming/i, /anticipat/i, /forecast/i]) {
       expect(params, String(banned)).not.toMatch(banned);
     }
+  });
+});
+
+// Contract 8 (plan-chunk-a.md): CopilotClient sets `staleTypeChangeAt` to
+// `Date.now()` when the interview type changes from somewhere other than
+// this window's own picker — a change that (unlike a local one, AC-A15)
+// does NOT auto-redraft the visible card, so the card can go on describing
+// the wrong format unless something says so. The prop is defaulted `0` so
+// every existing caller and every test above — none of which pass it — is
+// unaffected: `current.at` is always a real, positive `Date.now()` value
+// (or `undefined`), and both fail `at < 0`.
+describe("staleTypeChangeAt marks a card left over from a superseded interview type", () => {
+  it("omitting the prop entirely never shows the line, even against a real current timestamp", async () => {
+    await render(baseProps({ questions: [entry({ at: Date.now() })] }));
+    expect(text()).not.toContain("Drafted before the interview type changed.");
+  });
+
+  it("shows the muted line when the current entry predates the change", async () => {
+    await render(baseProps({ questions: [entry({ at: 1000 })], staleTypeChangeAt: 2000 }));
+    expect(text()).toContain("Drafted before the interview type changed.");
+  });
+
+  it("stays silent once the current entry is at least as new as the change", async () => {
+    // Strict inequality: a question stamped in the very same instant as the
+    // change is not accused of predating it, and anything newer clears it —
+    // the "self-clearing at the next question" behaviour contract 8 relies
+    // on instead of an effect that resets a flag.
+    await render(baseProps({ questions: [entry({ at: 2000 })], staleTypeChangeAt: 2000 }));
+    expect(text()).not.toContain("Drafted before the interview type changed.");
+
+    await render(baseProps({ questions: [entry({ at: 2001 })], staleTypeChangeAt: 2000 }));
+    expect(text()).not.toContain("Drafted before the interview type changed.");
+  });
+
+  it("clears on its own the moment a newer question becomes current — no extra reset needed", async () => {
+    await render(baseProps({ questions: [entry({ id: "q1", at: 1000 })], staleTypeChangeAt: 2000 }));
+    expect(text()).toContain("Drafted before the interview type changed.");
+
+    await render(baseProps({ questions: [entry({ id: "q2", at: 3000 })], staleTypeChangeAt: 2000 }));
+    expect(text()).not.toContain("Drafted before the interview type changed.");
+  });
+
+  it("uses --text-secondary, never --text-muted — the measured-contrast rule for a 0.75rem caption", () => {
+    // Source-text, matching this repo's precedent for a color-token
+    // requirement (app/copilot/answerLineContrast.test.js): MUI's `sx`
+    // compiles to an emotion class, not an inline `style` attribute, so
+    // asserting against rendered DOM proves nothing here — reading which
+    // token the component names is the property that actually matters, per
+    // R-228 (`--text-muted` measures 3.90:1 against `--bg-soft`, below the
+    // 4.5:1 a 0.75rem caption needs; `--text-secondary` measures 6.67:1).
+    const src = readFileSync(path.join(process.cwd(), "app/copilot/dashboard/CopilotDashboard.js"), "utf8");
+    const start = src.indexOf("current.at < staleTypeChangeAt");
+    expect(start).toBeGreaterThan(-1);
+    const block = src.slice(start, src.indexOf(") : null}", start));
+    // Positive control: the window really does contain the styling.
+    expect(block).toContain("variant=\"caption\"");
+    expect(block).toContain("color:");
+    expect(block).not.toContain("var(--text-muted)");
+    expect(block).toContain("var(--text-secondary)");
+  });
+
+  it("has no current entry at all: no crash, and no marker", async () => {
+    await render(baseProps({ questions: [], staleTypeChangeAt: Number.MAX_SAFE_INTEGER }));
+    expect(text()).toContain(LIVE_COPY.noCurrentAnswer);
+    expect(text()).not.toContain("Drafted before the interview type changed.");
+  });
+
+  it("a card with no marker renders byte-identically to before this prop existed", async () => {
+    // Re-runs this file's own strongest pin (the exact full-text assertion
+    // above) with the new prop explicitly present at its default, so
+    // "unaffected" is proven against the strongest existing check rather
+    // than a looser one.
+    await render(baseProps({ staleTypeChangeAt: 0 }));
+    expect(text()).toBe(
+      [
+        LIVE_COPY.title,
+        LIVE_COPY.currentQuestionTitle,
+        QUESTION,
+        LIVE_COPY.currentAnswerTitle,
+        "Answer ready, 2 points",
+        "Point one.Point two.",
+        LIVE_COPY.deliveryTitle,
+        "140 words/minConversational1.2% fillerClean",
+      ].join(""),
+    );
   });
 });

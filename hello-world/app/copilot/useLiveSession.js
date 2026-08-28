@@ -11,6 +11,10 @@ import { useQuestionPin } from "./useQuestionPin";
 import { SPEAKER_ATTRIBUTION } from "@/lib/copilot/cuePolicy";
 import { useCueActions } from "./useCueActions";
 import { useQuestionPipeline } from "./useQuestionPipeline";
+import { getInterviewType } from "./useInterviewType";
+// Contract 6 (AC-A15): this file did not import pinnedQuestionEntry before —
+// its only importers were CopilotDashboard.js and QuestionFeed.js.
+import { pinnedQuestionEntry } from "@/lib/copilot/currentQuestion";
 
 const CONTEXT_TURNS = 12;
 
@@ -114,6 +118,12 @@ export function useLiveSession({
   setSetupExpanded,
   setShowHistory,
   onCompanyCue, // AC-T1.18: CopilotClient's state; return value reports whether it acted.
+  // MATERIAL-3 (step-9 review): fired when the CURRENT entry specifically
+  // is redrafted (never for a redraft of some other card) — CopilotClient
+  // clears its staleTypeChangeAt caption here, since `current.at` is
+  // stamped once at question detection and never moves, so nothing else
+  // would ever tell that caption a fresh draft has since landed.
+  onCurrentEntryRedrafted,
 }) {
   const [warning, setWarning] = useState("");
   const [error, setError] = useState("");
@@ -414,7 +424,9 @@ export function useLiveSession({
     // other per-session reset below — so even a session that fails inside
     // the try block still has a session.start entry to explain what it was.
     startLog();
-    logEvent("session.start", { source });
+    // AC-A23: the format this session's answers are drafted under, on the
+    // one event that already names what the session started as.
+    logEvent("session.start", { source, interviewType: getInterviewType() });
     setError("");
     setWarning("");
     setFinals([]);
@@ -686,9 +698,33 @@ export function useLiveSession({
       // "Redraft" (already answered) forces a fresh generation; the first draft
       // may reuse a cached answer.
       if (q) runDraft(id, q.question, { force: q.status === "done" });
+      // MATERIAL-3: a MANUAL redraft of the entry that is currently "the
+      // current one" (not just any card) is exactly what makes a prior
+      // staleness caption false — see onCurrentEntryRedrafted's own doc.
+      if (pinnedQuestionEntry(questionsRef.current, pinnedIdRef.current)?.id === id) {
+        onCurrentEntryRedrafted?.();
+      }
     },
-    [runDraft],
+    [runDraft, onCurrentEntryRedrafted],
   );
+
+  // Contract 6 (AC-A15): what an interview-type change fires when the LIVE
+  // tab's own picker made it. The load-bearing gate is `sessionRef.current`,
+  // never `live` — a ref cannot freeze into a stale closure the way
+  // render-scope state can, and that is what stops a BILLED model call
+  // firing into an unmounted branch after a finished session: `stop()`
+  // above never clears `questions`, and pinnedQuestionEntry(list, null)
+  // falls back to the latest entry, so without this check a change made
+  // after Stop would silently re-bill for whatever was last on screen.
+  const redraftCurrentAnswer = useCallback(() => {
+    if (!sessionRef.current) return;
+    // Not pin.entry — a render value, stale inside this change callback.
+    const entry = pinnedQuestionEntry(questionsRef.current, pinnedIdRef.current);
+    if (entry) {
+      runDraft(entry.id, entry.question, { force: true });
+      onCurrentEntryRedrafted?.(); // this redraft is ALWAYS the current entry, by construction.
+    }
+  }, [runDraft, onCurrentEntryRedrafted]);
 
   const clearAll = useCallback(() => {
     setFinals([]);
@@ -756,6 +792,9 @@ export function useLiveSession({
     start,
     stop,
     onDraft,
+    // Contract 6/AC-A15: CopilotClient's interview-type change subscriber
+    // calls this, gated on canRedraft — see that subscriber's own comment.
+    redraftCurrentAnswer,
     // AC-O2: CopilotClient wires this to ManualQuestion's onSubmit — see
     // addManualQuestion's own comment (useQuestionPipeline.js) for what it
     // deliberately skips.

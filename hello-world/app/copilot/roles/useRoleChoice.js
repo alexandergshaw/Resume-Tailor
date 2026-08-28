@@ -6,7 +6,7 @@ import { DEFAULT_ROLE, normalizeRole } from "@/lib/copilot/roleRegisters";
 // AC-Q0.4/AC-Q9 - which professional register the "Speak as" drill rehearses,
 // persisted in localStorage under its own key so it survives across visits
 // the same way practice mode's interview type does. This is a straight copy
-// of app/copilot/practice/useInterviewType.js's external-store shape (a real
+// of app/copilot/useInterviewType.js's external-store shape (a real
 // `useSyncExternalStore` store, not a mount effect that calls setState): the
 // server snapshot below equals DEFAULT_ROLE, so hydration never flashes or
 // mismatches, and there's no separate effect synchronously writing state
@@ -39,7 +39,8 @@ let memoryRole = DEFAULT_ROLE;
 // A stored value that isn't a known role - a role retired from the
 // registry, hand-edited storage, a stale build - reads back as the default
 // rather than being passed through unchecked, exactly like
-// useInterviewType's readInterviewType.
+// app/copilot/useInterviewType.js's store normalizes an unrecognized
+// stored value back to its default.
 function readRole() {
   if (typeof window === "undefined") return memoryRole;
   try {

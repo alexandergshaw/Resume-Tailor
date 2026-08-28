@@ -43,6 +43,7 @@ export const INTERVIEW_TYPES = [
     // Empty on purpose: general adds no format-specific critique, so the
     // embedded rubric's output is unchanged for callers that never opt in.
     expectations: [],
+    codeBearing: false,
   },
   {
     value: "phone-screen",
@@ -64,6 +65,7 @@ export const INTERVIEW_TYPES = [
           "speaking only in generalities.",
       },
     ],
+    codeBearing: false,
   },
   {
     value: "behavioral",
@@ -89,11 +91,14 @@ export const INTERVIEW_TYPES = [
           "situation in the abstract.",
       },
     ],
+    codeBearing: false,
   },
   {
     value: "technical",
     label: "Technical / coding",
-    blurb: "Coding and problem-solving questions judged on approach and trade-offs.",
+    blurb:
+      "Coding and problem-solving questions judged on approach and trade-offs. Answers are " +
+      "spoken points, not written code.",
     guidance:
       "This is a technical interview: questions should probe coding, debugging, or " +
       "engineering judgment, not personal stories. Expect the candidate to state an " +
@@ -112,6 +117,7 @@ export const INTERVIEW_TYPES = [
         note: "Name at least one trade-off or alternative you considered and why you ruled it out.",
       },
     ],
+    codeBearing: true,
   },
   {
     value: "system-design",
@@ -139,6 +145,7 @@ export const INTERVIEW_TYPES = [
           "cost versus latency, instead of presenting your design as the only option.",
       },
     ],
+    codeBearing: true,
   },
   {
     value: "case-study",
@@ -166,6 +173,7 @@ export const INTERVIEW_TYPES = [
           "figure, not only a qualitative judgment.",
       },
     ],
+    codeBearing: false,
   },
   {
     value: "leadership",
@@ -193,6 +201,7 @@ export const INTERVIEW_TYPES = [
           "leadership in the abstract.",
       },
     ],
+    codeBearing: false,
   },
 ];
 
@@ -221,4 +230,18 @@ export function interviewType(value) {
 // display label — e.g. "Judged as a {label} interview." in AnswerFeedback.
 export function interviewTypeLabel(value) {
   return interviewType(value).label;
+}
+
+// Whether this (possibly untrusted) interview type is one whose questions
+// are code-bearing — i.e. the answer is expected to involve actual code,
+// not just a spoken approach. Reads the registry's own `codeBearing` flag
+// via interviewType() (normalized, so this never throws and defaults to
+// general's false) rather than re-deriving the answer from some other
+// field: `questionGroups` is the wrong source, because "technical" is one
+// of general's three groups (see DEFAULT_INTERVIEW_TYPE's descriptor
+// above), so deriving from it would call the default code-bearing too.
+// Currently true only for "technical" and "system-design"; ships inert in
+// this chunk (no caller yet).
+export function isCodeBearingInterviewType(value) {
+  return interviewType(value).codeBearing === true;
 }

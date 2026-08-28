@@ -27,7 +27,8 @@ import { usePracticeQuestions } from "./usePracticeQuestions";
 import { useRoomQuestions } from "./useRoomQuestions";
 import { useSampleAnswer } from "./useSampleAnswer";
 import { shouldQueueSampleAnswer } from "@/lib/copilot/practiceFlow";
-import { useInterviewType } from "./useInterviewType";
+import { useInterviewType, useInterviewTypeChange } from "../useInterviewType";
+import { discardPracticeWork } from "@/lib/copilot/choiceChangeInvalidation";
 import { useSaveRecordings } from "./useSaveRecordings";
 import { usePrepContext } from "../usePrepContext";
 import { usePracticeCaptureSession } from "./usePracticeCaptureSession";
@@ -46,6 +47,11 @@ export default function PracticeClient({
   sttProviderName,
   micDeviceId,
   onMicDeviceChange,
+  // Contract 7. CopilotClient's only render site always supplies this
+  // (onPracticeTypeAnnouncement, which filters through the shared storage
+  // latch before setPracticeTypeAnnouncement) — no default, hard-called
+  // below with no `?.`, so a missing wire throws instead of going inert.
+  onInterviewTypeAnnouncement,
 } = {}) {
   const [status, setStatus] = useState("idle"); // idle | connecting | live | error
 
@@ -76,7 +82,8 @@ export default function PracticeClient({
     clearForNewSession,
     invalidateAndClearLoading,
     setManualQuestion,
-  } = usePracticeQuestions({ posting, interviewType });
+    markQuestionsStaleForNewFormat,
+  } = usePracticeQuestions({ posting });
 
   // Same shared prep-context hook the live session uses (AC-C4-7) — grounds
   // the critique in the candidate's real background. Practice mode has no
@@ -106,6 +113,9 @@ export default function PracticeClient({
     settling,
     answerTranscript,
     answerMetrics,
+    // AC-A11b/AC-A12: the type this on-screen critique was judged under —
+    // see usePracticeAnswer.js's own doc. Read below for judgedInterviewTypeLabel.
+    judgedInterviewType,
     // Final wave (AC-M2): the speaker tag that dominated the most recently
     // completed answer, learned by usePracticeAnswer's own doneAnswer and
     // persisted across "Next question"/"Try again" — see that hook's own
@@ -118,6 +128,8 @@ export default function PracticeClient({
     doneAnswer: doneAnswerFlow,
     abandonInProgressAnswer,
     resetAnswerState,
+    clearSessionScores,
+    describeInterviewTypeChange, // Contract 7 — see usePracticeAnswer.js's own doc.
     // Renamed at this destructuring site so it can be folded, below, into a
     // single combined callback with useRoomQuestions' own resetForSession —
     // usePracticeCaptureSession.js's start() calls exactly ONE
@@ -210,7 +222,10 @@ export default function PracticeClient({
 
   // BUG-J4: stays here — onDoneAnswer below reads it for the critique
   // payload, not exclusively a question-flow concern (askedRef/
-  // currentQuestionRef/interviewTypeRef/reqGenRef all moved into that hook).
+  // currentQuestionRef/reqGenRef all moved into that hook; its
+  // `interviewTypeRef` is gone entirely — a render-mirrored ref cannot be
+  // current inside a synchronous store listener, so every consumer reads
+  // `getInterviewType()` instead, see usePracticeQuestions.js:103).
   const postingRef = useRef(null);
   // AC-N2: arms "Next question"/"Try again" auto-start intent for
   // autoStartDecision (lib/copilot/practiceFlow.js) — a ref, not state,
@@ -401,21 +416,60 @@ export default function PracticeClient({
     [resetQuestions, abandonInProgressAnswer, resetAnswerState],
   );
 
-  // G2/AC-G2-C-3: changing the interview type reshapes questions, the
-  // sample answer, and the critique's rubric alike — it does everything
-  // onPostingChange above does, for the same reasons (a question request
-  // in flight belongs to the old format; the asked list, current question,
-  // and any answer on screen all belonged to it too), EXCEPT it leaves the
-  // selected posting untouched — the two selections are independent.
+  // G2/AC-G2-C-3/AC-A11-A13: the duty list that used to run inline here now
+  // runs from the store's change subscription below
+  // (onInterviewTypeChangeSubscriber), so the SAME origin-split list also
+  // runs for the other mode tab and another window's `storage` event. Kept
+  // as a named callback only because PracticeSetup.js passes it straight to
+  // the picker's onChange (AC-A14); collapsed to just the write, or the
+  // duty list would run twice for this tab's own picker.
   const onInterviewTypeChange = useCallback(
     (nextType) => {
       setInterviewType(nextType);
-      resetQuestions();
-      abandonInProgressAnswer();
-      resetAnswerState();
     },
-    [setInterviewType, resetQuestions, abandonInProgressAnswer, resetAnswerState],
+    [setInterviewType],
   );
+
+  // AC-A11-A13/contract 7: registered against the store's own change
+  // subscription (contract 2), AFTER usePracticeQuestions/usePracticeAnswer/
+  // useRoomQuestions above since it closes over their functions (§C.3). The
+  // origin is forwarded from the store's own argument, NEVER a literal
+  // "local" — that would make AC-A11's three-valued split unreachable,
+  // abandoning an in-progress recording for a change made in a window the
+  // candidate isn't looking at. The announcement's own facts live in
+  // usePracticeAnswer's describeInterviewTypeChange (see its own doc), which
+  // hands up a { storage, ordinary } PAIR, not a string — CopilotClient's
+  // claimStorageAnnouncement owns the once-per-tab latch and picks between
+  // them. Forwarded whole and never unwrapped here: picking a row on this
+  // side is what silenced every practice change after the first on a
+  // storage-blocked tab.
+  const onInterviewTypeChangeSubscriber = useCallback(
+    (next, prev, meta) => {
+      discardPracticeWork({
+        origin: meta.origin,
+        resetQuestions,
+        markQuestionsStale: markQuestionsStaleForNewFormat,
+        clearSessionScores,
+        abandonInProgressAnswer,
+        resetAnswerState,
+        invalidateRoomDrafts: roomQuestions.invalidateDrafts,
+      });
+      onInterviewTypeAnnouncement(
+        describeInterviewTypeChange({ origin: meta.origin, label: interviewTypeLabel(next) }),
+      );
+    },
+    [
+      resetQuestions,
+      markQuestionsStaleForNewFormat,
+      clearSessionScores,
+      abandonInProgressAnswer,
+      resetAnswerState,
+      roomQuestions.invalidateDrafts,
+      onInterviewTypeAnnouncement,
+      describeInterviewTypeChange,
+    ],
+  );
+  useInterviewTypeChange(onInterviewTypeChangeSubscriber);
 
   // AC-C3/AC-C4: the capture-session pipeline (camera/mic lifecycle,
   // transcript, elapsed clock, camera/mic toggles) lives in
@@ -574,12 +628,12 @@ export default function PracticeClient({
     hasSubmittedCoverLetter,
     saveEnabled,
   })} ${roomQuestionPrivacyClause({ isEmbedded, hasPosting, docsSettled, hasSubmittedResume, hasSubmittedCoverLetter, hasCompany })}`;
-  // G2/AC-G2-C-6: resolved once here, from the CURRENT interview type,
-  // rather than inside AnswerFeedback — changing interview type always
-  // clears any answer on screen (onInterviewTypeChange above), so this is
-  // always the type whatever critique is showing was actually judged
-  // against.
-  const judgedInterviewTypeLabel = interviewTypeLabel(interviewType);
+  // G2/AC-G2-C-6/AC-A12: resolved from usePracticeAnswer's OWN captured
+  // judgedInterviewType, not the live `interviewType` — a foreign-origin
+  // change no longer clears the answer on screen (AC-A11), so this now
+  // holds by CONSTRUCTION (captured at the moment each critique's
+  // answerMetrics are set) rather than by destruction.
+  const judgedInterviewTypeLabel = interviewTypeLabel(judgedInterviewType);
 
   // Mobile shell (defects 1/2): below `md` the primary "Start answering" /
   // "Done" loop and the self-view must both be reachable without scrolling

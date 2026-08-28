@@ -10,6 +10,9 @@ import { answerMetricsInputs } from "@/lib/copilot/answerSpeakers";
 import { critiqueAnswer } from "@/lib/copilot/critiqueClient";
 import { framesWereSent } from "@/lib/copilot/answerProvenance";
 import { savePracticeAnswer, updatePracticeAnswerCritique } from "@/lib/supabase/practiceAnswers";
+import { practiceInterviewTypeAnnouncement } from "@/lib/copilot/practiceInterviewTypeAnnouncement";
+import { CLEARED_ANSWER_REVIEW, recordAnswerReview } from "@/lib/copilot/practiceAnswerReview";
+import { getInterviewTypeStorageBlocked } from "../useInterviewType";
 
 // After "Done" is pressed, how long the transcript keeps draining before
 // closing for good. Deepgram's endpointing (300ms) plus normal network
@@ -37,7 +40,10 @@ export function usePracticeAnswer() {
   // still settling. See doneAnswer.
   const [settling, setSettling] = useState(false);
   const [answerTranscript, setAnswerTranscript] = useState([]); // string[] finalized during the last completed answer
-  const [answerMetrics, setAnswerMetrics] = useState(null);
+  // AC-A11b/AC-A12: metrics + judged-type as ONE piece of state, never a
+  // ref — see lib/copilot/practiceAnswerReview.js for the pairing rule.
+  const [answerReview, setAnswerReview] = useState(CLEARED_ANSWER_REVIEW);
+  const { metrics: answerMetrics, judgedInterviewType } = answerReview;
   // AC-M2: the other half of partitionAnswerFinals's split for the last
   // completed answer — every accepted final that was NOT attributed to the
   // candidate (raw `{ text, start, duration, speakerTag }` entries, same
@@ -242,7 +248,7 @@ export function usePracticeAnswer() {
   const resetAnswerState = useCallback(() => {
     revokeReplay();
     setAnswerTranscript([]);
-    setAnswerMetrics(null);
+    setAnswerReview(CLEARED_ANSWER_REVIEW);
     setOtherSpeakerFinals([]);
     answerFramesRef.current = [];
     setCritiqueStatus("idle");
@@ -744,7 +750,9 @@ export function usePracticeAnswer() {
       metrics.bodyLanguage = bodyLanguageResult;
 
       setAnswerTranscript(lines);
-      setAnswerMetrics(metrics);
+      // AC-A12: `context.interviewType` is the SAME value runCritique below
+      // reads its own baseInput from — see practiceAnswerReview.js.
+      setAnswerReview(recordAnswerReview({ metrics, interviewType: context.interviewType }));
       // AC-M2 (C): expose the non-candidate half for a later wave to scan
       // for interviewer questions — this hook does nothing with it beyond
       // handing it out. See otherSpeakerFinals' own doc comment above.
@@ -827,6 +835,40 @@ export function usePracticeAnswer() {
     }
   }, []);
 
+  // AC-A11b/A10: an interview-type change clears the running average — its
+  // rubric just changed, so a surviving figure mixes incommensurable scales
+  // into one number. Reachable TODAY: a live-defect fix, not new behaviour.
+  // ADDITIVE ONLY — never folded into resetAnswerState: roles/useRoleAnswer.js
+  // imports this hook (AC-A28), and resetAnswerState already runs on "Next
+  // question"/"Try again"/a posting change, which must keep the average.
+  const clearSessionScores = useCallback(() => {
+    setQuestionScores(new Map());
+  }, []);
+
+  // Contract 7: decision logic in practiceInterviewTypeAnnouncement
+  // (lib/copilot/) — this is the React shell. Step-9 review (BLOCKER-1):
+  // the once-per-tab storage latch USED to live here too, independently of
+  // CopilotClient's own — two latches for one browser-level fact, each
+  // convinced it alone decides whether the sentence has been said. This
+  // side still does not track it, and must not: CopilotClient's
+  // `claimStorageAnnouncement` is the single owner. What changed after the
+  // manual-regression pass is that this side no longer bets everything on
+  // one sentence — it returns BOTH rows (with and without the storage
+  // clause) and the owner picks, so a spent latch falls back to the
+  // ordinary row instead of silencing the change entirely.
+  const describeInterviewTypeChange = useCallback(
+    ({ origin, label }) =>
+      practiceInterviewTypeAnnouncement({
+        origin,
+        label,
+        answering,
+        settling,
+        answerMetrics,
+        blocked: getInterviewTypeStorageBlocked(),
+      }),
+    [answering, settling, answerMetrics],
+  );
+
   const sessionAnswered = questionScores.size;
   const sessionAverageScore =
     sessionAnswered > 0
@@ -838,6 +880,7 @@ export function usePracticeAnswer() {
     settling,
     answerTranscript,
     answerMetrics,
+    judgedInterviewType,
     otherSpeakerFinals,
     myTag,
     replayUrl,
@@ -847,6 +890,8 @@ export function usePracticeAnswer() {
     doneAnswer,
     abandonInProgressAnswer,
     resetAnswerState,
+    clearSessionScores,
+    describeInterviewTypeChange,
     resetForSession,
     recordTranscriptEvent,
     markMicMuted,

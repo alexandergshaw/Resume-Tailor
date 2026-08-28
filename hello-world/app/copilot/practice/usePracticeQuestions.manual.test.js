@@ -20,7 +20,7 @@ import { fetchNextQuestion } from "@/lib/copilot/questionClient";
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
 function Probe({ onState }) {
-  const state = usePracticeQuestions({ posting: null, interviewType: "general" });
+  const state = usePracticeQuestions({ posting: null });
   onState(state);
   return null;
 }
