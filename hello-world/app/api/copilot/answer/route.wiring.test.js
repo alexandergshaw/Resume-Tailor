@@ -133,6 +133,19 @@ describe("the three new modules exist and export what the route imports", () => 
   });
 });
 
+// Chunk C (the code-language control and its per-application resolver, plan
+// §D-31): brought this file from 839 to 870 raw lines, against this
+// `describe`'s own `<= 900` / `> 600` band. That budget is thin on purpose —
+// this is the ONE place in chunk C's design where an overrun has exactly one
+// sanctioned move, and it is not an extraction: `startCodeLanguageResolution`
+// and `generateCodeLanguage`'s own reasoning lives in
+// `lib/copilot/answerCodeLanguage.js`'s module header, not here, precisely so
+// growing this route never has to choose between exceeding this band and
+// shaving the prose the lower bound below exists to protect. If a future
+// change needs more room here, add to that header and leave a one-line
+// pointer in this route — do not shave a comment to hit a number, and do not
+// extract one of this route's own call sites: the call-count assertions two
+// `describe` blocks above pin every one of them by an exact count.
 describe("route.js's own line count (the whole point of this split)", () => {
   it("stays within the band this split actually landed in", () => {
     const lines = src.split(/\r?\n/).length;

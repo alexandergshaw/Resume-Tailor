@@ -794,6 +794,8 @@ export function useLiveSession({
     onDraft,
     // Contract 6/AC-A15: CopilotClient's interview-type change subscriber
     // calls this, gated on canRedraft — see that subscriber's own comment.
+    // AC-C25 added a second caller, the code-language change subscriber
+    // (useLiveCodeLanguageChange.js), gated the same way.
     redraftCurrentAnswer,
     // AC-O2: CopilotClient wires this to ManualQuestion's onSubmit — see
     // addManualQuestion's own comment (useQuestionPipeline.js) for what it

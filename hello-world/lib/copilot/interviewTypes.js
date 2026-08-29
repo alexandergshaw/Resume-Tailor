@@ -240,8 +240,11 @@ export function interviewTypeLabel(value) {
 // field: `questionGroups` is the wrong source, because "technical" is one
 // of general's three groups (see DEFAULT_INTERVIEW_TYPE's descriptor
 // above), so deriving from it would call the default code-bearing too.
-// Currently true only for "technical" and "system-design"; ships inert in
-// this chunk (no caller yet).
+// Currently true only for "technical" and "system-design". This is the
+// production render gate for the code-language control: app/copilot/
+// CodeLanguageField.js calls it twice — once for the current interview type
+// (whether the control renders at all) and once for the type a pending
+// change would switch to (whether that change would close the gate).
 export function isCodeBearingInterviewType(value) {
   return interviewType(value).codeBearing === true;
 }

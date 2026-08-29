@@ -33,7 +33,15 @@ import { normalizeQuestion } from "@/lib/copilot/questions";
 // complete, speakable, STAR-labeled-when-applicable sentences — in place of
 // a single prose string; this hook carries `points` through exactly where
 // it carried `answer` before, with the same caching/gating rules (AC-H9.37).
-export function useSampleAnswer({ question, profile, interviewType, applicationId }) {
+//
+// AC-C24/AC-C25/AC-C27: also takes `codeLanguage` (the code-language
+// control's current value, read by the caller's usePracticeCodeLanguage and
+// handed straight through by identifier, never re-derived here) — carried
+// alongside profile/interviewType/applicationId on every state write, every
+// cache write, and every draftAnswer call this hook makes, so a reveal after
+// a language change is a cache MISS and drafts fresh in the new language,
+// exactly like a profile edit or a posting change already does.
+export function useSampleAnswer({ question, profile, interviewType, applicationId, codeLanguage }) {
   const [state, setState] = useState(emptySampleAnswer);
   // Bumped on every new request; a response is only ever written to state
   // while it's still the newest one requested — a slow draft for a question
@@ -74,7 +82,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
   // silently undone the instant it lands; the draft still gets cached
   // either way. Errors are handled entirely inside this promise chain
   // (AC-G1-4): nothing here ever throws back out to a caller.
-  const request = useCallback((q, p, it, appId) => {
+  const request = useCallback((q, p, it, appId, cl) => {
     const gen = (genRef.current += 1);
     setState({
       question: q,
@@ -94,6 +102,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
       profile: p,
       interviewType: it,
       applicationId: appId,
+      codeLanguage: cl,
     });
     // AC-H9/AC-K1: the route's `mode: "answer"` response is
     // { points, cues, answer, type, grounding, buzzwords, resumeAnchor,
@@ -103,7 +112,22 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
     // it (ARCH §3.5 added `pageSources` — which knowledge-base page, if any,
     // each point came from). The derived prose `answer` field exists for a
     // later speech-synthesis feature and is deliberately not read here.
-    draftAnswer({ question: q, context: "", profile: p, interviewType: it, applicationId: appId, mode: "answer" })
+    // AC-C24/AC-C25: `codeLanguage` rides this request the same way
+    // `interviewType`/`applicationId` already do — the single most
+    // consequential wire in chunk C's practice reveal path (see
+    // usePracticeCodeLanguage.test.js's own header): a hook that keeps the
+    // language for its cache bookkeeping and drops it here would draft the
+    // sample answer in the wrong language while the cache faithfully records
+    // that it was drafted in the right one.
+    draftAnswer({
+      question: q,
+      context: "",
+      profile: p,
+      interviewType: it,
+      applicationId: appId,
+      codeLanguage: cl,
+      mode: "answer",
+    })
       .then(({ points, cues, buzzwords, resumeAnchor, idealProject, pageSources, grounding }) => {
         if (genRef.current !== gen) return;
         const cleanPoints = Array.isArray(points) ? points : [];
@@ -137,6 +161,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           profile: p,
           interviewType: it,
           applicationId: appId,
+          codeLanguage: cl,
         }));
         // AC-J2.8: a real (user-requested) draft is cached the exact same
         // way `queue`'s own silent pre-fetch is (see below) — same key, same
@@ -145,7 +170,8 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
         // rides this write too — a cache entry that dropped it would render
         // this question's citations on the first ask and lose them on a
         // reveal -> hide -> reveal of the SAME cached entry, with nothing on
-        // screen explaining why.
+        // screen explaining why. AC-C27: `codeLanguage` rides it the same
+        // way, one field later — see cachedSampleAnswerFor's own comparison.
         cacheRef.current.set(normalizeQuestion(q), {
           points: cleanPoints,
           cues: cleanCues,
@@ -157,6 +183,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           profile: p,
           interviewType: it,
           applicationId: appId,
+          codeLanguage: cl,
         });
       })
       .catch((err) => {
@@ -176,6 +203,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           profile: p,
           interviewType: it,
           applicationId: appId,
+          codeLanguage: cl,
         }));
       });
   }, []);
@@ -186,7 +214,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
   // just acts on it.
   const reveal = useCallback(
     (force) => {
-      if (needsRedraft(active, profile, interviewType, applicationId, force)) {
+      if (needsRedraft(active, profile, interviewType, applicationId, codeLanguage, force)) {
         // AC-J2.8: `force` (Retry/Regenerate) always bypasses the cache and
         // redrafts — needsRedraft already returns true unconditionally for
         // force, so this branch only reaches the cache lookup when force is
@@ -194,11 +222,12 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
         // draft must be FREE on reveal, not merely fast: before paying for a
         // fresh request, check whether `queue` already drafted this exact
         // question while it sat unrevealed. cachedSampleAnswerFor applies the
-        // same profile/interviewType/applicationId comparison needsRedraft's
-        // own "done" branch does, just against a cache entry instead of the
-        // draft already on screen, so a queued draft made before the user
-        // edited their prep context (or changed posting/interview type) is
-        // never served as if it still applied.
+        // same profile/interviewType/applicationId/codeLanguage comparison
+        // needsRedraft's own "done" branch does, just against a cache entry
+        // instead of the draft already on screen, so a queued draft made
+        // before the user edited their prep context (or changed posting/
+        // interview type/code language) is never served as if it still
+        // applied.
         if (!force) {
           const cached = cachedSampleAnswerFor(
             cacheRef.current.get(normalizeQuestion(question)),
@@ -206,18 +235,19 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
             profile,
             interviewType,
             applicationId,
+            codeLanguage,
           );
           if (cached) {
             setState(cached);
             return;
           }
         }
-        request(question, profile, interviewType, applicationId);
+        request(question, profile, interviewType, applicationId, codeLanguage);
         return;
       }
       setState((prev) => (prev.question === question ? { ...prev, visible: true } : prev));
     },
-    [active, profile, interviewType, applicationId, question, request],
+    [active, profile, interviewType, applicationId, codeLanguage, question, request],
   );
 
   // AC-N2: fetches a draft for `q` and writes it to the cache via the exact
@@ -228,7 +258,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
   // draft READY, never SHOWN — only `reveal` ever sets `state`. Callers
   // decide whether this should run at all via shouldQueueSampleAnswer
   // (lib/copilot/practiceFlow.js); this just does the fetch and the write.
-  const queue = useCallback((q, p, it, appId) => {
+  const queue = useCallback((q, p, it, appId, cl) => {
     // Written synchronously, before the fetch even starts — the same
     // moment `request` above marks its own state loading. `hasCached`
     // alone isn't enough to dedupe against: the cache entry doesn't exist
@@ -239,7 +269,18 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
     // runs, not from whenever the network call happens to finish.
     queuedForRef.current = normalizeQuestion(q);
     const gen = (queueGenRef.current += 1);
-    draftAnswer({ question: q, context: "", profile: p, interviewType: it, applicationId: appId, mode: "answer" })
+    // AC-C24/AC-C25: the other `draftAnswer` call in this hook, and the one
+    // whose result a reveal is then served from — a queue drafted under the
+    // wrong language poisons the cache the reveal reads.
+    draftAnswer({
+      question: q,
+      context: "",
+      profile: p,
+      interviewType: it,
+      applicationId: appId,
+      codeLanguage: cl,
+      mode: "answer",
+    })
       .then(({ points, cues, buzzwords, resumeAnchor, idealProject, pageSources, grounding }) => {
         // A newer queue (or a real `request`) has since started for a
         // different question — this response belongs to a question the
@@ -260,6 +301,7 @@ export function useSampleAnswer({ question, profile, interviewType, applicationI
           profile: p,
           interviewType: it,
           applicationId: appId,
+          codeLanguage: cl,
         });
       })
       .catch(() => {

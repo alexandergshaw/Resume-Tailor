@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { normalizeQuestion } from "@/lib/copilot/questions";
 import { cachedAnswerFor, groundingFor } from "@/lib/copilot/answerGrounding";
 import { getInterviewType } from "./useInterviewType";
+import { getCodeLanguage } from "./useCodeLanguage";
 // Namespace import, not named — see fetchAnswer's own comment for why.
 import * as answerClientModule from "@/lib/copilot/answerClient";
 
@@ -64,12 +65,13 @@ export function useDraftAnswer({
   // AC-A16/AC-A16b: monotonic per-entry draft ownership counter. NOT mirrored
   // from render state and NOT reset alongside answerCacheRef.current.clear()
   // — resetting could let a new token collide with a stale stamp still
-  // sitting on a surviving entry. The interview type itself is read straight
-  // from getInterviewType() at the top of runDraft, never mirrored into a
-  // ref: the store notifies synchronously inside a change, but
-  // useSyncExternalStore only SCHEDULES a render and useEffect is passive and
-  // commits after paint, so a ref mirrored during render would still read
-  // the OLD type inside a synchronous change listener.
+  // sitting on a surviving entry. The interview type AND the code language
+  // are both read straight from their stores' getters at the top of
+  // runDraft, never mirrored into a ref: the store notifies synchronously
+  // inside a change, but useSyncExternalStore only SCHEDULES a render and
+  // useEffect is passive and commits after paint, so a ref mirrored during
+  // render would still read the OLD value inside a synchronous change
+  // listener (AC-C26).
   const draftTokenRef = useRef(0);
 
   useEffect(() => {
@@ -84,19 +86,26 @@ export function useDraftAnswer({
       const norm = normalizeQuestion(question);
       // AC-N1.2/AC-A19: what this draft is (or would be) built from, read
       // ONCE, here — before the `await` further down. Re-reading
-      // profileRef/postingRef/getInterviewType() AFTER that await would
-      // report whatever the user has since selected, not what THIS draft
-      // actually used; capturing once and reusing the same value for the
-      // lookup below, the network call, and the eventual cache write is what
-      // AC-N1's correction to the original bug report is about. The
-      // interview type goes through groundingFor exactly like the other two
-      // fields — the shared machinery, not a hand-folded key — so a write
-      // from one mode's cache can be read back correctly by the other's, and
-      // this cache key stays correct the day a fourth field is added.
+      // profileRef/postingRef or either store's getter AFTER that await
+      // would report whatever the user has since selected, not what THIS
+      // draft actually used; capturing once and reusing the same value for
+      // the lookup below, the network call, and the eventual cache write is
+      // what AC-N1's correction to the original bug report is about. The
+      // interview type and the code language both go through groundingFor
+      // exactly like the other fields — the shared machinery, not a
+      // hand-folded key — so a write from one mode's cache can be read back
+      // correctly by the other's, and this cache key stays correct the day a
+      // fifth field is added.
       const grounding = groundingFor({
         profile: profileRef.current,
         interviewType: getInterviewType(),
         applicationId: postingRef.current?.id || null,
+        // AC-C26: read synchronously here, on the line directly below
+        // getInterviewType() — never mirrored into a ref (see draftTokenRef's
+        // comment above). This is the ONE capture point; the request body
+        // below reuses grounding.codeLanguage rather than reading the store
+        // a second time.
+        codeLanguage: getCodeLanguage(),
       });
       // AC-N1.3: this draft's generation, also captured before the await.
       // Bumped by onPostingChange/onProfileChange (CopilotClient.js) and by
@@ -231,6 +240,12 @@ export function useDraftAnswer({
             // this request must send exactly what postingRef held at capture
             // time (null), not the normalized comparison value.
             applicationId: grounding.applicationId || null,
+            // AC-C24/AC-C25/AC-C27b: no `|| null` here — the sentinel is
+            // always a non-empty string ("auto" when the user has stated no
+            // preference), never a falsy placeholder, so the route's
+            // normalizer and this cache's grounding always agree on what
+            // "no preference" looks like.
+            codeLanguage: grounding.codeLanguage,
           },
           {
             // AC-P4.2: bullets land on the card as they stream in — each

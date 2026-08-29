@@ -4,6 +4,7 @@ import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import InterviewTypePicker from "../InterviewTypePicker";
+import CodeLanguageField from "../CodeLanguageField";
 import PostingPicker from "../PostingPicker";
 import SubmittedDocs from "../SubmittedDocs";
 import PrepContext from "../PrepContext";
@@ -25,6 +26,14 @@ export default function PracticeSetup({
   onDismissWarning,
   interviewType,
   onInterviewTypeChange,
+  // A-34 (chunk C): the code-language control's value, change callback, and
+  // the one fact this file genuinely lacked before now (F-C1) — threaded
+  // straight through to CodeLanguageField below. Zero hooks, zero derived
+  // values added; the render gate and F-C2's deferred unmount both live in
+  // CodeLanguageField itself.
+  codeLanguage,
+  onCodeLanguageChange,
+  isEmbedded,
   posting,
   onPostingChange,
   submittedDocs,
@@ -55,6 +64,13 @@ export default function PracticeSetup({
       <Box sx={{ mb: 2 }}>
         <InterviewTypePicker value={interviewType} onChange={onInterviewTypeChange} disabled={false} />
       </Box>
+
+      <CodeLanguageField
+        interviewType={interviewType}
+        isEmbedded={isEmbedded}
+        value={codeLanguage}
+        onChange={onCodeLanguageChange}
+      />
 
       <Box sx={{ mb: 2 }}>
         <PostingPicker value={posting} onChange={onPostingChange} disabled={false} />

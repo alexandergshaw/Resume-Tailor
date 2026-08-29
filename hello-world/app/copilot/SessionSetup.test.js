@@ -97,3 +97,44 @@ describe("the shared interview type is wired into SessionSetup (AC-A24/A25)", ()
     );
   });
 });
+
+// A-31 (chunk C, §B.6/§B.8): the code-language control's render gate and
+// F-C2's deferred unmount both live inside CodeLanguageField, so this file
+// gains one element and no hooks — its own "no hooks, no handlers, no
+// derived values here" header (`:24-26`) stays literally true. A real render
+// is disproportionate here for the same reason it is above (PostingPicker's
+// network calls) — CodeLanguageField's own behaviour is pinned by
+// CodeLanguageField.test.js, which mounts the real thing.
+describe("the code-language control is wired into SessionSetup (§B.6, §B.8)", () => {
+  it("takes codeLanguage/onCodeLanguageChange as props", () => {
+    expect(SOURCE).toMatch(/\bcodeLanguage\s*,/);
+    expect(SOURCE).toMatch(/\bonCodeLanguageChange\s*,/);
+  });
+
+  it("renders CodeLanguageField and passes all four of its props straight through", () => {
+    expect(SOURCE).toMatch(/import CodeLanguageField from "\.\/CodeLanguageField"/);
+    expect(SOURCE).toMatch(/<CodeLanguageField[\s\S]{0,240}interviewType=\{interviewType\}/);
+    expect(SOURCE).toMatch(/<CodeLanguageField[\s\S]{0,240}isEmbedded=\{isEmbedded\}/);
+    expect(SOURCE).toMatch(/<CodeLanguageField[\s\S]{0,240}value=\{codeLanguage\}/);
+    expect(SOURCE).toMatch(/<CodeLanguageField[\s\S]{0,240}onChange=\{onCodeLanguageChange\}/);
+  });
+
+  it("sits between the interview-type picker and the posting picker, in that order", () => {
+    const typeAt = SOURCE.indexOf("<InterviewTypePicker");
+    const languageAt = SOURCE.indexOf("<CodeLanguageField");
+    const postingAt = SOURCE.indexOf("<PostingPicker");
+
+    expect(typeAt).toBeGreaterThan(-1);
+    expect(languageAt).toBeGreaterThan(-1);
+    expect(postingAt).toBeGreaterThan(-1);
+
+    const found = [typeAt, languageAt, postingAt];
+    expect([...found].sort((a, b) => a - b)).toEqual(found);
+  });
+
+  it("does not edit the existing InterviewTypePicker or PostingPicker elements", () => {
+    expect(SOURCE).toMatch(
+      /<InterviewTypePicker\s+value=\{interviewType\}\s+onChange=\{onInterviewTypeChange\}\s+disabled=\{false\}\s*\/>/,
+    );
+  });
+});

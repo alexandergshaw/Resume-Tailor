@@ -24,7 +24,14 @@ import { splitFrames } from "./answerStream.js";
 // so those need no plumbing here; the consumers that carry them into state
 // are useSampleAnswer.js (practice), CopilotClient.js (live) and
 // useCopilotDashboard.js (both dashboards).
-export async function draftAnswer({ question, context, profile, interviewType, applicationId, mode }) {
+//
+// `codeLanguage` (the code-language control's resolved/selected value) is
+// forwarded the same way `interviewType`/`applicationId` are. Chunk A's own
+// file map said this module needed no change for the interview-type field —
+// true then, but not for chunk C's: both request-building functions here
+// gain the field so the route can fold it into the answer-prompt precedence
+// and the grounding key.
+export async function draftAnswer({ question, context, profile, interviewType, applicationId, codeLanguage, mode }) {
   const res = await fetch("/api/copilot/answer", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -34,6 +41,7 @@ export async function draftAnswer({ question, context, profile, interviewType, a
       profile,
       interviewType,
       applicationId,
+      codeLanguage,
       mode,
       engine: readEngine(),
     }),
@@ -61,7 +69,7 @@ export async function draftAnswer({ question, context, profile, interviewType, a
 // render, say) is swallowed so an otherwise-intact stream is never lost to
 // it, and nothing is ever delivered to `onPoints` once this has resolved.
 export async function draftAnswerStreaming(
-  { question, context, profile, interviewType, applicationId, mode },
+  { question, context, profile, interviewType, applicationId, codeLanguage, mode },
   { onPoints } = {},
 ) {
   const res = await fetch("/api/copilot/answer", {
@@ -73,6 +81,7 @@ export async function draftAnswerStreaming(
       profile,
       interviewType,
       applicationId,
+      codeLanguage,
       mode,
       engine: readEngine(),
       stream: true,

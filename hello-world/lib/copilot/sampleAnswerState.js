@@ -31,6 +31,7 @@
 // comment), so the two stay independent implementations of the same rule
 // rather than one function calling into the other under two names.
 import { cachedAnswerFor, groundingFor } from "./answerGrounding.js";
+import { AUTO } from "./codeLanguages.js";
 
 export function emptySampleAnswer() {
   return {
@@ -88,6 +89,14 @@ export function emptySampleAnswer() {
     profile: "",
     interviewType: "",
     applicationId: null,
+    // AC-C27: the code-language control's value the draft (or in-flight
+    // request) was built from — the fourth field needsRedraft/
+    // cachedSampleAnswerFor compare alongside profile/interviewType/
+    // applicationId. Seeded to AUTO, never "", so an entry cached before this
+    // field existed still compares as an explicit "no preference stated"
+    // rather than the distinct "field omitted" spelling `normalizeField`
+    // reserves for that (answerGrounding.js's own header).
+    codeLanguage: AUTO,
   };
 }
 
@@ -116,19 +125,20 @@ export function activeSampleAnswer(state, question) {
 //   "loading" — a request for this exact question is already in flight.
 //               Never start a second one underneath it.
 //   "done"    — a real draft is cached. Only redrafts when the CURRENT
-//               `profile`, `interviewType`, or `applicationId` differs from
-//               what this draft was built from — AC-G1-6/AC-G2-C-5: editing
-//               the prep context, switching interview type, or switching
-//               posting never disturbs a draft already on screen, but the
-//               NEXT reveal after a hide redrafts against whatever changed
-//               instead of serving the stale cached answer. AC-G2-C-9 adds
-//               `applicationId` to this same comparison — a posting change
-//               invalidates a drafted sample answer exactly like a profile
-//               or interview-type change does.
+//               `profile`, `interviewType`, `applicationId`, or
+//               `codeLanguage` differs from what this draft was built from —
+//               AC-G1-6/AC-G2-C-5: editing the prep context, switching
+//               interview type, or switching posting never disturbs a draft
+//               already on screen, but the NEXT reveal after a hide redrafts
+//               against whatever changed instead of serving the stale cached
+//               answer. AC-G2-C-9 adds `applicationId` to this same
+//               comparison — a posting change invalidates a drafted sample
+//               answer exactly like a profile or interview-type change does.
+//               AC-C27 adds `codeLanguage` the same way, one field later.
 //
 // AC-N1.1: deliberately NOT routed through answerGrounding.js's
 // sameGrounding, unlike cachedSampleAnswerFor above. This function's "done"
-// branch is the exact same three-field comparison, and the two are already
+// branch is the exact same four-field comparison, and the two are already
 // cross-checked against each other for every combination of matching/
 // mismatching fields (see sampleAnswerState.test.js's "agrees with
 // needsRedraft" block, which drives both functions off one table of entries
@@ -138,17 +148,24 @@ export function activeSampleAnswer(state, question) {
 // itself. Kept as an independent inline comparison so that test keeps its
 // teeth; the values it compares never include the undefined/null/""
 // call-sites that answerGrounding.js's normalisation exists for (this
-// function is only ever called with the interview-type/profile/applicationId
-// values a real practice session already resolved), so there's no drift risk
-// in practice — see this module's own tests.
-export function needsRedraft(active, profile, interviewType, applicationId, force = false) {
+// function is only ever called with the interview-type/profile/applicationId/
+// codeLanguage values a real practice session already resolved), so there's
+// no drift risk in practice — see this module's own tests.
+//
+// AC-C27c: `codeLanguage` is the FIFTH parameter, before the trailing
+// `force = false` — never appended after it. Appending after `force` would
+// silently shift the positional argument useSampleAnswer.js's own call
+// already passes at that slot, turning `force` into a truthy string and
+// making every reveal pay for a fresh model call forever.
+export function needsRedraft(active, profile, interviewType, applicationId, codeLanguage, force = false) {
   if (force) return true;
   if (!active || active.status === "idle" || active.status === "error") return true;
   if (active.status === "loading") return false;
   return (
     active.profile !== profile ||
     active.interviewType !== interviewType ||
-    active.applicationId !== applicationId
+    active.applicationId !== applicationId ||
+    active.codeLanguage !== codeLanguage
   );
 }
 
@@ -178,16 +195,23 @@ export function needsRedraft(active, profile, interviewType, applicationId, forc
 // visibility — a draft queued by useSampleAnswer.queue for a question the
 // user has not asked to see must not put itself on screen.
 //
-// AC-N1.1: the emptiness check and the profile/interviewType/applicationId
-// comparison are delegated to answerGrounding.js's cachedAnswerFor, so this
-// function and live mode's own cache read can never disagree about what
-// counts as the same grounding — this is a straight refactor, not a
-// behaviour change: cachedAnswerFor's checks are byte-for-byte the same
-// checks this function used to run inline (down to returning the entry's
-// RAW `points` reference on a hit, never a filtered copy — see BUG-J6's
-// tests below), just reachable from one place instead of two.
-export function cachedSampleAnswerFor(entry, question, profile, interviewType, applicationId) {
-  const hit = cachedAnswerFor(entry, groundingFor({ profile, interviewType, applicationId }));
+// AC-N1.1: the emptiness check and the profile/interviewType/applicationId/
+// codeLanguage comparison are delegated to answerGrounding.js's
+// cachedAnswerFor, so this function and live mode's own cache read can never
+// disagree about what counts as the same grounding — this is a straight
+// refactor, not a behaviour change: cachedAnswerFor's checks are byte-for-byte
+// the same checks this function used to run inline (down to returning the
+// entry's RAW `points` reference on a hit, never a filtered copy — see
+// BUG-J6's tests below), just reachable from one place instead of two.
+//
+// AC-C27/A-15: `codeLanguage` is a SIXTH positional parameter and
+// deliberately NOT defaulted. An omitted sixth argument folds to `""` through
+// groundingFor's normalizeField and is a MISS, never a false hit — the
+// fail-safe direction. Defaulting it to AUTO "to be safe" would invert that:
+// a caller that forgot the argument would then HIT a genuine `auto` entry,
+// serving an answer drafted under an explicit language as the Auto answer.
+export function cachedSampleAnswerFor(entry, question, profile, interviewType, applicationId, codeLanguage) {
+  const hit = cachedAnswerFor(entry, groundingFor({ profile, interviewType, applicationId, codeLanguage }));
   if (!hit) return null;
   return {
     question,
@@ -218,5 +242,6 @@ export function cachedSampleAnswerFor(entry, question, profile, interviewType, a
     profile,
     interviewType,
     applicationId,
+    codeLanguage,
   };
 }

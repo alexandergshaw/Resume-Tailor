@@ -1,8 +1,9 @@
 // Pure, over injected callbacks. No React, no imports — node (this repo's
 // default environment) proves every case with nothing else in play.
 //
-// This file composes the duties that run when a persisted choice (today: the
-// interview type) changes. It exists because `PracticeClient` cannot be
+// This file composes the duties that run when a persisted choice — the
+// interview type, and (R-3) now the code language too — changes. It exists
+// because `PracticeClient` cannot be
 // rendered under test — its own comment says so at `PracticeClient.js:371`
 // — so a duty sequence inlined into its change callback would be
 // unfalsifiable. What proves these are WIRED, not merely correct in
@@ -218,6 +219,43 @@ function interviewTypeChangeRow({ surface, origin, label, hadRecording, hadRevie
     return `Interview type set to ${label}. Practice questions cleared and your last answer's review was closed.`;
   }
   return `Interview type set to ${label}. Practice questions cleared.`;
+}
+
+// R-3 remediation — HIGH a11y finding 2. `discardDraftedAnswers` blanks
+// every drafted answer in the room and leaves `status: "idle"` behind
+// (`useRoomQuestions.js`'s `invalidateDrafts`), and `answerStatusMessage`
+// returns `""` for `"idle"` (`lib/copilot/answerStatus.js:53-56`) — exactly
+// the silent status region `interviewTypeChangeRow`'s own comment above
+// names as the reason ITS sentence is the only report of an equivalent wipe.
+// Chunk C reused that seam without the sentence; this is the sentence.
+//
+// Three rows, not four, because two of the four (surface, origin) pairs are
+// not gaps:
+//   - practice, either origin — `discardDraftedAnswers` runs unconditionally
+//     on both (see its own comment), so both need the report.
+//   - live, local — deliberately `""`. `invalidateLiveAnswers` redrafts and
+//     the answer-status region reports drafting, same reasoning as
+//     `interviewTypeChangeRow`'s live/local row above. A second sentence here
+//     would be the exact defect chunk A shipped once already: two
+//     announcements for one user action.
+//   - live, foreign — `invalidateLiveAnswers` is origin-blind
+//     (`useLiveCodeLanguageChange.js`'s own header), so this window's answer
+//     is redrawn by a change nothing in this window explains. That absence
+//     of a local action is what earns the sentence, even though the redraft
+//     itself still runs.
+export function codeLanguageChangeAnnouncement({ surface, origin, label }) {
+  if (surface === "live") {
+    if (origin === "foreign") {
+      return `Code language changed to ${label} in another window. Your current answer is being redrafted.`;
+    }
+    return "";
+  }
+
+  // surface === "practice"
+  if (origin === "foreign") {
+    return `Code language changed to ${label} in another window. Drafted answers were cleared.`;
+  }
+  return `Code language set to ${label}. Drafted answers were cleared.`;
 }
 
 // Step-9 review (MATERIAL-1/BLOCKER-1): CopilotClient is mounted in every

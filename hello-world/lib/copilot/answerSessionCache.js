@@ -36,7 +36,10 @@
 // flags. Those are ranked/scored against THIS question's text — caching them
 // alongside the raw résumé/posting/pages rows would silently answer question
 // two with question one's page selection, with every other test still green.
-// Only cache raw fetch results.
+// Only cache raw fetch results — with two named exceptions, defined below
+// (companyFactsCache, codeLanguageCache): both are a model call over data
+// scoped to the APPLICATION, not the question, so neither can reproduce the
+// question-one-answers-question-two hazard this paragraph rules out.
 
 // A cache entry is fresh from `entry.createdAt` for `ttlMs`, then it is dead
 // weight: "stale" and "miss" are deliberately the same event (see `get`
@@ -135,7 +138,8 @@ export function createTtlCache({ ttlMs, maxEntries = Infinity } = {}) {
   // but exactly the cross-test leakage a shared-module-scope cache would
   // otherwise cause between unrelated test cases. See the `beforeEach` in
   // route.test.js / route.knowledgeBase.test.js / streaming.test.js /
-  // idealProjectWiring.test.js / route.latency.test.js.
+  // idealProjectWiring.test.js / route.latency.test.js /
+  // route.companyFacts.test.js / route.codeLanguage.test.js.
   function clear() {
     store.clear();
   }
@@ -178,6 +182,26 @@ export const answerContextCache = createTtlCache({ ttlMs: 10 * 60 * 1000, maxEnt
 // fresh search is a real Gemini call plus a page fetch per candidate fact —
 // worth reusing longer. Same 200-entry bound, for the same reason.
 export const companyFactsCache = createTtlCache({ ttlMs: 30 * 60 * 1000, maxEntries: 200 });
+
+// AC-C10/AC-C10b: the per-application resolved-code-language cache, keyed by
+// the SAME `${userId}::${applicationId}` string as answerContextCache and
+// companyFactsCache above, but held in its OWN Map — a write to one key in
+// companyFactsCache is invisible here for the same key, and vice versa, so
+// the shared key space can never collide. Lives beside companyFactsCache for
+// the reason this file's header now names: the resolved language
+// (lib/copilot/answerCodeLanguage.js) is a real Gemini call over the
+// posting, not a raw fetch result, but it is scoped to the APPLICATION, not
+// the question, so it carries none of the question-one-answers-question-two
+// hazard the header exists to rule out.
+//
+// 30 minutes, matching companyFactsCache rather than answerContextCache's
+// 10: this file's staleness answer is TTL-only — "stale" and "miss" are
+// deliberately the same event (see `get` above), so there is no
+// invalidation-on-posting-edit path to inherit. A user who edits their
+// posting's description sees the old resolved language for up to the TTL,
+// same as they would see stale company facts. Same 200-entry bound, for the
+// same reason.
+export const codeLanguageCache = createTtlCache({ ttlMs: 30 * 60 * 1000, maxEntries: 200 });
 
 // AC-V4.6 (wave 2, verified company facts): "start it, don't block on it,
 // except for a company-directed question." Resolves to the promise's value,

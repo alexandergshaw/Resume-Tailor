@@ -9,6 +9,7 @@ import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Typography from "@mui/material/Typography";
 import InterviewTypePicker from "./InterviewTypePicker";
+import CodeLanguageField from "./CodeLanguageField";
 import MicPicker from "./MicPicker";
 import PostingPicker from "./PostingPicker";
 import SubmittedDocs from "./SubmittedDocs";
@@ -81,6 +82,14 @@ export default function SessionSetup({
   interviewType,
   onInterviewTypeChange,
   interviewTypeLabel,
+  // A-30 (chunk C): the code-language control's value and change callback,
+  // handed straight through to CodeLanguageField below exactly as
+  // interviewType/onInterviewTypeChange are — this file stays a flat
+  // presentational prop-taker with zero hooks, zero handlers, zero derived
+  // values (the render gate and F-C2's deferred unmount both live in
+  // CodeLanguageField, one level below).
+  codeLanguage,
+  onCodeLanguageChange,
   posting,
   onPostingChange,
   postingPickerLabel,
@@ -478,6 +487,17 @@ export default function SessionSetup({
           <Box sx={{ mb: 2 }}>
             <InterviewTypePicker value={interviewType} onChange={onInterviewTypeChange} disabled={false} />
           </Box>
+
+          {/* A-30 (chunk C): the code-language control. isEmbedded is already
+              a prop above; the render gate (AC-C2/AC-C2b/AC-C28d) and F-C2's
+              deferred unmount both live inside CodeLanguageField itself, so
+              this file gains one element and no hooks. */}
+          <CodeLanguageField
+            interviewType={interviewType}
+            isEmbedded={isEmbedded}
+            value={codeLanguage}
+            onChange={onCodeLanguageChange}
+          />
 
           {/* AC-H1.1/AC-H1.3: the same posting picker practice mode has, above
               the prep context panel, wording it for live mode's own meaning

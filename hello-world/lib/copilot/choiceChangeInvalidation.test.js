@@ -43,6 +43,7 @@ import {
   discardPracticeWork,
   invalidateLiveAnswers,
   interviewTypeChangeAnnouncement,
+  codeLanguageChangeAnnouncement,
 } from "./choiceChangeInvalidation.js";
 
 // Every duty callback, as a regex that matches only a CALL of it — `foo()`,
@@ -480,5 +481,50 @@ describe("interviewTypeChangeAnnouncement — every row of the copy table", () =
     expect(interviewTypeChangeAnnouncement({ ...base, label: "System design" })).toBe(
       "Interview type set to System design. Practice questions cleared.",
     );
+  });
+});
+
+// R-3 remediation — HIGH a11y finding 2. Mirrors the interviewTypeChangeAnnouncement
+// suite above: this is the sentence that reports discardDraftedAnswers's wipe,
+// which the silent "idle" status region cannot report on its own.
+describe("codeLanguageChangeAnnouncement — the report discardDraftedAnswers's wipe has no other way to make", () => {
+  it("practice, local — the wipe is reported, attributed to this tab", () => {
+    expect(codeLanguageChangeAnnouncement({ surface: "practice", origin: "local", label: "Python" })).toBe(
+      "Code language set to Python. Drafted answers were cleared.",
+    );
+  });
+
+  it("practice, foreign — attributed to the other window", () => {
+    expect(codeLanguageChangeAnnouncement({ surface: "practice", origin: "foreign", label: "Python" })).toBe(
+      "Code language changed to Python in another window. Drafted answers were cleared.",
+    );
+  });
+
+  it("live, local — silent, because invalidateLiveAnswers's own redraft already updates the answer-status region", () => {
+    // Same reasoning as interviewTypeChangeRow's live/local row: a second
+    // sentence here for one user action is the exact defect chunk A shipped
+    // once and this file's own header (:157-174) records fixing.
+    expect(codeLanguageChangeAnnouncement({ surface: "live", origin: "local", label: "Python" })).toBe("");
+  });
+
+  it("live, foreign — spoken, because the redraft it also triggers has nothing local to explain it", () => {
+    expect(codeLanguageChangeAnnouncement({ surface: "live", origin: "foreign", label: "Python" })).toBe(
+      "Code language changed to Python in another window. Your current answer is being redrafted.",
+    );
+  });
+
+  it("names the label it was handed, rather than any single hardcoded value", () => {
+    expect(codeLanguageChangeAnnouncement({ surface: "practice", origin: "local", label: "C#" })).toBe(
+      "Code language set to C#. Drafted answers were cleared.",
+    );
+  });
+
+  it("uses periods only — no em dash or middle dot for a screen reader to swallow", () => {
+    for (const surface of ["live", "practice"]) {
+      for (const origin of ["local", "foreign"]) {
+        const text = codeLanguageChangeAnnouncement({ surface, origin, label: "Go" });
+        expect(text).not.toMatch(/[—·]/);
+      }
+    }
   });
 });

@@ -3,11 +3,22 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 vi.mock("@/lib/config/env", () => ({ getServerEnv: vi.fn() }));
 vi.mock("@/lib/llm/geminiClient", () => ({ getGeminiClient: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
+// AC-C9b: this file's own resolver stays a no-op/miss by default — every
+// case above this mock's addition sends no `applicationId`, so the real
+// module would already behave this way; mocked so the one new case below can
+// pin a resolved TOKEN without warming a real cache through a hanging
+// `generateContent` mock (AC-P3.2's worked-example stand-in, above).
+vi.mock("@/lib/copilot/answerCodeLanguage", () => ({
+  startCodeLanguageResolution: vi.fn(),
+  peekCodeLanguage: vi.fn(() => null),
+  generateCodeLanguage: vi.fn(),
+}));
 
 import { POST } from "./route.js";
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { createClient } from "@/lib/supabase/server";
+import { peekCodeLanguage } from "@/lib/copilot/answerCodeLanguage";
 import { splitFrames } from "@/lib/copilot/answerStream";
 
 // AC-P2.3/AC-P2.4/AC-P2.5/AC-P3.2: the streaming half of /api/copilot/answer.
@@ -35,6 +46,38 @@ function mockUser(id = "user-1") {
   });
   createClient.mockResolvedValue({
     auth: { getUser: async () => ({ data: { user: id ? { id } : null } }) },
+    from,
+  });
+}
+
+// AC-C9b: a signed-in user with a SELECTED posting, so the resolver's
+// `applicationId`/`description` gates are satisfied and there is a
+// description for the streamed prompt to leak. Same shape as
+// `route.codeLanguage.test.js`'s own `mockUserWithPosting` — one
+// `applications` row answers `fetchApplicationDocs`, `fetchPostingDescription`
+// and `fetchPostingEmployer` alike. `company` is deliberately empty so no
+// company-facts search starts and puts a third call on this request.
+function mockUserWithPosting(description) {
+  const from = vi.fn((table) => {
+    const chain = {
+      select: vi.fn(() => chain),
+      eq: vi.fn(() => chain),
+      is: vi.fn(() => chain),
+      order: vi.fn(async () => ({ data: [], error: null })),
+      maybeSingle: vi.fn(async () => {
+        if (table === "applications") {
+          return {
+            data: { id: "app-1", resume_used_id: null, cover_letter_id: null, positions: { description, company: "", title: "Backend Engineer" } },
+            error: null,
+          };
+        }
+        return { data: null, error: null };
+      }),
+    };
+    return chain;
+  });
+  createClient.mockResolvedValue({
+    auth: { getUser: async () => ({ data: { user: { id: "user-1" } } }) },
     from,
   });
 }
@@ -83,14 +126,14 @@ const PAYLOAD = {
 
 function mockGeminiStream(chunks, { idealProject } = {}) {
   getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
-  getGeminiClient.mockReturnValue({
-    models: {
-      generateContentStream: vi.fn().mockResolvedValue(chunkStream(chunks)),
-      // The worked-example call. Defaults to a promise that NEVER settles, so
-      // any test that completes proves the points frames did not wait on it.
-      generateContent: vi.fn(() => idealProject || new Promise(() => {})),
-    },
-  });
+  const models = {
+    generateContentStream: vi.fn().mockResolvedValue(chunkStream(chunks)),
+    // The worked-example call. Defaults to a promise that NEVER settles, so
+    // any test that completes proves the points frames did not wait on it.
+    generateContent: vi.fn(() => idealProject || new Promise(() => {})),
+  };
+  getGeminiClient.mockReturnValue({ models });
+  return models;
 }
 
 // Default the aux-feature engine to Gemini by making a key present, the same
@@ -106,6 +149,7 @@ function mockGeminiStream(chunks, { idealProject } = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("Gemini_LLM_API_Key", "test-key");
+  peekCodeLanguage.mockReturnValue(null);
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -218,6 +262,39 @@ describe("the worked example never blocks the bullets (AC-P3.2)", () => {
     expect(done).toBeTruthy();
     expect(done.points).toEqual(PAYLOAD.points);
   }, 5000);
+});
+
+describe("the code-language TOKEN reaches the streamed prompt, the posting never does (AC-C9b)", () => {
+  it("streams a code-bearing answer carrying the token but none of the posting's own wording", async () => {
+    // Distinctive spans from a posting that names no language at all, so
+    // their absence is about the DESCRIPTION not crossing rather than about
+    // some unrelated word being filtered.
+    const description = [
+      "Staff Engineer, Northwind Logistics",
+      "PAYBANDMARKER: $160,000 - $210,000 annually.",
+      "We operate 9 fulfillment centers across two continents.",
+    ].join("\n");
+    mockUserWithPosting(description);
+    peekCodeLanguage.mockReturnValue("Go");
+    const { generateContentStream } = mockGeminiStream(fragment(JSON.stringify(PAYLOAD), 6));
+    const res = await POST(
+      jsonRequest({
+        question: "Implement a rate limiter.",
+        applicationId: "app-1",
+        interviewType: "technical",
+        codeLanguage: "auto",
+        engine: "gemini",
+        stream: true,
+      }),
+    );
+    await readFrames(res);
+
+    const prompt = String(generateContentStream.mock.calls[0]?.[0]?.contents?.[0]?.parts?.[0]?.text || "");
+    expect(prompt).toContain("Go");
+    for (const marker of ["PAYBANDMARKER", "9 fulfillment centers", "two continents"]) {
+      expect(prompt).not.toContain(marker);
+    }
+  });
 });
 
 describe("the non-streaming path is untouched (AC-P2.4)", () => {

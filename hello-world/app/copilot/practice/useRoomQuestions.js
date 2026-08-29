@@ -7,6 +7,7 @@ import { confirmQuestion } from "@/lib/copilot/detectClient";
 import { draftAnswer } from "@/lib/copilot/answerClient";
 import { normalizeManualQuestion } from "@/lib/copilot/manualQuestion";
 import { getInterviewType } from "../useInterviewType";
+import { getCodeLanguage } from "../useCodeLanguage";
 
 // Final wave (AC-M2): practice mode's counterpart of live mode's own
 // detected-question pipeline (app/copilot/useLiveSession.js's
@@ -135,6 +136,14 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
   // getInterviewType() has no such lag because it reads the store directly,
   // not a value React has queued a re-render to reflect.
   //
+  // AC-C24/AC-C27b: `codeLanguage` is sent the same way, read synchronously
+  // off getCodeLanguage() (../useCodeLanguage.js) at the exact same capture
+  // point — a REQUEST FIELD ONLY. This hook holds no answer cache and does no
+  // grounding comparison at all (no `cacheRef`, no `groundingFor`), so there
+  // is no key for the language to join here and nothing to invalidate on a
+  // switch beyond `invalidateDrafts` (below), which the practice subscriber
+  // already calls.
+  //
   // AC-A21c: the value captured at that same moment is stamped as `token`
   // (roomDraftTokenRef, above) onto the "loading" write below, and BOTH
   // post-await writes — the success path and the catch — only apply if the
@@ -157,6 +166,7 @@ export function useRoomQuestions({ applicationId, profile, myTag, collecting }) 
         profile: profileRef.current,
         applicationId: applicationIdRef.current,
         interviewType: getInterviewType(),
+        codeLanguage: getCodeLanguage(),
       });
       setQuestions((prev) =>
         prev.map((q) =>

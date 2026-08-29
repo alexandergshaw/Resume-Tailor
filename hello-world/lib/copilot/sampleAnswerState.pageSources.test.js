@@ -19,6 +19,13 @@ import { emptySampleAnswer, cachedSampleAnswerFor } from "./sampleAnswerState.js
 const PROFILE = "Senior engineer, payments.";
 const TYPE = "behavioral";
 const APP = "app-1";
+// AC-C27/A-16b: the code-language control's value, on the same footing as
+// PROFILE/TYPE/APP above. `emptySampleAnswer()` now seeds this field to
+// "auto", so an entry built without an explicit override matches that same
+// default — the sixth `cachedSampleAnswerFor` argument below must be passed
+// explicitly, or an omitted argument folds to "" through groundingFor's
+// normalizeField and turns every one of these into a permanent miss.
+const LANG = "auto";
 const QUESTION = "Tell me about a time you sharded a ledger.";
 
 const P1 = { id: "p1", title: "Payments migration" };
@@ -34,6 +41,7 @@ function entry(extra = {}) {
     profile: PROFILE,
     interviewType: TYPE,
     applicationId: APP,
+    codeLanguage: LANG,
     ...extra,
   };
 }
@@ -47,7 +55,7 @@ describe("sample answer state — page sources", () => {
   });
 
   it("carries the page sources back out of the cache, in order", () => {
-    const hit = cachedSampleAnswerFor(entry({ pageSources: [P1, null] }), QUESTION, PROFILE, TYPE, APP);
+    const hit = cachedSampleAnswerFor(entry({ pageSources: [P1, null] }), QUESTION, PROFILE, TYPE, APP, LANG);
     expect(hit.pageSources).toEqual([P1, null]);
     // Positive control: the fields that already round-tripped still do, so a
     // change that broke the cache read entirely could not pass this file.
@@ -58,13 +66,13 @@ describe("sample answer state — page sources", () => {
   it("resolves an entry cached before the field existed to no citations, never undefined", () => {
     // The real case: a draft queued earlier in the same open session by
     // useSampleAnswer's own pre-fetch, written before this field shipped.
-    const hit = cachedSampleAnswerFor(entry(), QUESTION, PROFILE, TYPE, APP);
+    const hit = cachedSampleAnswerFor(entry(), QUESTION, PROFILE, TYPE, APP, LANG);
     expect(hit.pageSources).toEqual([]);
   });
 
   it("does not trust a malformed page-sources value off the cache", () => {
     for (const bad of [null, "p1", 7, {}]) {
-      const hit = cachedSampleAnswerFor(entry({ pageSources: bad }), QUESTION, PROFILE, TYPE, APP);
+      const hit = cachedSampleAnswerFor(entry({ pageSources: bad }), QUESTION, PROFILE, TYPE, APP, LANG);
       expect(hit.pageSources).toEqual([]);
     }
   });
@@ -72,8 +80,8 @@ describe("sample answer state — page sources", () => {
   it("still refuses the whole entry when the grounding no longer matches", () => {
     // Page sources must never be the thing that makes a stale entry look
     // usable — the grounding check outranks every field it carries.
-    expect(cachedSampleAnswerFor(entry({ pageSources: [P1, null] }), QUESTION, "a different profile", TYPE, APP)).toBe(
-      null,
-    );
+    expect(
+      cachedSampleAnswerFor(entry({ pageSources: [P1, null] }), QUESTION, "a different profile", TYPE, APP, LANG),
+    ).toBe(null);
   });
 });

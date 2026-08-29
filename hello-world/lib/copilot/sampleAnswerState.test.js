@@ -99,8 +99,9 @@ describe("needsRedraft — force", () => {
       profile: "profile-A",
       interviewType: "behavioral",
       applicationId: "app-1",
+      codeLanguage: "auto",
     };
-    expect(needsRedraft(active, "profile-A", "behavioral", "app-1", true)).toBe(true);
+    expect(needsRedraft(active, "profile-A", "behavioral", "app-1", "auto", true)).toBe(true);
   });
 
   it("redrafts even when a request for this question is already loading", () => {
@@ -110,8 +111,9 @@ describe("needsRedraft — force", () => {
       profile: "profile-A",
       interviewType: "behavioral",
       applicationId: "app-1",
+      codeLanguage: "auto",
     };
-    expect(needsRedraft(active, "profile-A", "behavioral", "app-1", true)).toBe(true);
+    expect(needsRedraft(active, "profile-A", "behavioral", "app-1", "auto", true)).toBe(true);
   });
 });
 
@@ -119,7 +121,7 @@ describe("needsRedraft — idle and error always redraft", () => {
   it("redrafts from idle even with no force and nothing to compare against", () => {
     const active = emptySampleAnswer();
     expect(active.status).toBe("idle");
-    expect(needsRedraft(active, "profile-A", "behavioral", "app-1", false)).toBe(true);
+    expect(needsRedraft(active, "profile-A", "behavioral", "app-1", "auto", false)).toBe(true);
   });
 
   it("redrafts from error even when every comparison key matches what's cached", () => {
@@ -129,26 +131,28 @@ describe("needsRedraft — idle and error always redraft", () => {
       profile: "profile-A",
       interviewType: "behavioral",
       applicationId: "app-1",
+      codeLanguage: "auto",
     };
-    expect(needsRedraft(active, "profile-A", "behavioral", "app-1", false)).toBe(true);
+    expect(needsRedraft(active, "profile-A", "behavioral", "app-1", "auto", false)).toBe(true);
   });
 
   it("treats a missing/null active as idle-like and redrafts", () => {
-    expect(needsRedraft(null, "profile-A", "behavioral", "app-1", false)).toBe(true);
-    expect(needsRedraft(undefined, "profile-A", "behavioral", "app-1", false)).toBe(true);
+    expect(needsRedraft(null, "profile-A", "behavioral", "app-1", "auto", false)).toBe(true);
+    expect(needsRedraft(undefined, "profile-A", "behavioral", "app-1", "auto", false)).toBe(true);
   });
 });
 
 describe("needsRedraft — loading never starts a second request", () => {
-  it("does not redraft while loading even when profile, interviewType, and applicationId have all since changed", () => {
+  it("does not redraft while loading even when profile, interviewType, applicationId, and codeLanguage have all since changed", () => {
     const active = {
       question: "Q",
       status: "loading",
       profile: "profile-A",
       interviewType: "behavioral",
       applicationId: "app-1",
+      codeLanguage: "auto",
     };
-    expect(needsRedraft(active, "profile-B", "technical", "app-2", false)).toBe(false);
+    expect(needsRedraft(active, "profile-B", "technical", "app-2", "java", false)).toBe(false);
   });
 
   it("does not redraft while loading even when nothing has changed", () => {
@@ -158,12 +162,13 @@ describe("needsRedraft — loading never starts a second request", () => {
       profile: "profile-A",
       interviewType: "behavioral",
       applicationId: "app-1",
+      codeLanguage: "auto",
     };
-    expect(needsRedraft(active, "profile-A", "behavioral", "app-1", false)).toBe(false);
+    expect(needsRedraft(active, "profile-A", "behavioral", "app-1", "auto", false)).toBe(false);
   });
 });
 
-describe("needsRedraft — done redrafts only when profile, interviewType, or applicationId differs", () => {
+describe("needsRedraft — done redrafts only when profile, interviewType, applicationId, or codeLanguage differs", () => {
   const doneActive = {
     question: "Q",
     status: "done",
@@ -171,27 +176,43 @@ describe("needsRedraft — done redrafts only when profile, interviewType, or ap
     profile: "profile-A",
     interviewType: "behavioral",
     applicationId: "app-1",
+    codeLanguage: "auto",
   };
 
-  it("serves the cache when profile, interviewType, and applicationId all still match", () => {
-    expect(needsRedraft(doneActive, "profile-A", "behavioral", "app-1", false)).toBe(false);
+  it("serves the cache when profile, interviewType, applicationId, and codeLanguage all still match", () => {
+    expect(needsRedraft(doneActive, "profile-A", "behavioral", "app-1", "auto", false)).toBe(false);
   });
 
   it("redrafts when only profile differs", () => {
-    expect(needsRedraft(doneActive, "profile-B", "behavioral", "app-1", false)).toBe(true);
+    expect(needsRedraft(doneActive, "profile-B", "behavioral", "app-1", "auto", false)).toBe(true);
   });
 
   it("redrafts when only interviewType differs", () => {
-    expect(needsRedraft(doneActive, "profile-A", "technical", "app-1", false)).toBe(true);
+    expect(needsRedraft(doneActive, "profile-A", "technical", "app-1", "auto", false)).toBe(true);
   });
 
   it("redrafts when only applicationId differs", () => {
-    expect(needsRedraft(doneActive, "profile-A", "behavioral", "app-2", false)).toBe(true);
+    expect(needsRedraft(doneActive, "profile-A", "behavioral", "app-2", "auto", false)).toBe(true);
   });
 
   it("redrafts when applicationId changes from null to a real id", () => {
     const activeWithNullApp = { ...doneActive, applicationId: null };
-    expect(needsRedraft(activeWithNullApp, "profile-A", "behavioral", "app-1", false)).toBe(true);
+    expect(needsRedraft(activeWithNullApp, "profile-A", "behavioral", "app-1", "auto", false)).toBe(true);
+  });
+
+  // AC-C27: codeLanguage is a fourth comparison field, driven off the exact
+  // same "done" branch as profile/interviewType/applicationId.
+  it("redrafts when only codeLanguage differs", () => {
+    expect(needsRedraft(doneActive, "profile-A", "behavioral", "app-1", "java", false)).toBe(true);
+  });
+
+  // AC-C27c: the case the ordering rule exists for. `codeLanguage` sits in
+  // the FIFTH slot, before `force` — appended after it instead, the language
+  // would land in the `force` slot, and a truthy string there redrafts
+  // unconditionally regardless of what actually matches.
+  it("puts codeLanguage BEFORE force, not after it", () => {
+    expect(needsRedraft(doneActive, "profile-A", "behavioral", "app-1", "auto", false)).toBe(false);
+    expect(needsRedraft(doneActive, "profile-A", "behavioral", "app-1", "auto", true)).toBe(true);
   });
 });
 
@@ -204,6 +225,7 @@ describe("cachedSampleAnswerFor", () => {
   const CURRENT_PROFILE = "profile-A";
   const CURRENT_TYPE = "behavioral";
   const CURRENT_APP = "app-1";
+  const CURRENT_LANG = "auto";
 
   function validEntry(overrides = {}) {
     return {
@@ -212,26 +234,27 @@ describe("cachedSampleAnswerFor", () => {
       profile: CURRENT_PROFILE,
       interviewType: CURRENT_TYPE,
       applicationId: CURRENT_APP,
+      codeLanguage: CURRENT_LANG,
       ...overrides,
     };
   }
 
   it("returns null for a missing entry", () => {
     expect(
-      cachedSampleAnswerFor(null, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP),
+      cachedSampleAnswerFor(null, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP, CURRENT_LANG),
     ).toBeNull();
   });
 
   it("returns null for an undefined entry", () => {
     expect(
-      cachedSampleAnswerFor(undefined, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP),
+      cachedSampleAnswerFor(undefined, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP, CURRENT_LANG),
     ).toBeNull();
   });
 
   it("returns null when points is an empty array", () => {
     const entry = validEntry({ points: [] });
     expect(
-      cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP),
+      cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP, CURRENT_LANG),
     ).toBeNull();
   });
 
@@ -239,7 +262,7 @@ describe("cachedSampleAnswerFor", () => {
     for (const badPoints of ["not an array", 42, {}, null, undefined]) {
       const entry = validEntry({ points: badPoints });
       expect(
-        cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP),
+        cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP, CURRENT_LANG),
       ).toBeNull();
     }
   });
@@ -247,39 +270,59 @@ describe("cachedSampleAnswerFor", () => {
   it("returns null when points contains only blank/non-string values — a blank answer must not render as a finished one", () => {
     const entry = validEntry({ points: ["", "   ", null, undefined, 0, false] });
     expect(
-      cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP),
+      cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP, CURRENT_LANG),
     ).toBeNull();
   });
 
-  it("returns null when the entry's profile differs from the current profile (interviewType and applicationId both still match)", () => {
+  it("returns null when the entry's profile differs from the current profile (interviewType, applicationId, and codeLanguage all still match)", () => {
     const entry = validEntry({ profile: "profile-B" });
     expect(
-      cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP),
+      cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP, CURRENT_LANG),
     ).toBeNull();
   });
 
-  it("returns null when the entry's interviewType differs from the current interviewType (profile and applicationId both still match)", () => {
+  it("returns null when the entry's interviewType differs from the current interviewType (profile, applicationId, and codeLanguage all still match)", () => {
     const entry = validEntry({ interviewType: "technical" });
     expect(
-      cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP),
+      cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP, CURRENT_LANG),
     ).toBeNull();
   });
 
-  it("returns null when the entry's applicationId differs from the current applicationId (profile and interviewType both still match)", () => {
+  it("returns null when the entry's applicationId differs from the current applicationId (profile, interviewType, and codeLanguage all still match)", () => {
     const entry = validEntry({ applicationId: "app-2" });
     expect(
-      cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP),
+      cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP, CURRENT_LANG),
     ).toBeNull();
   });
 
   it("returns null when the entry's applicationId is null but the current applicationId is a real id", () => {
     const entry = validEntry({ applicationId: null });
     expect(
+      cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP, CURRENT_LANG),
+    ).toBeNull();
+  });
+
+  // AC-C27: codeLanguage is a fourth comparison field, on the same footing as
+  // profile/interviewType/applicationId.
+  it("returns null when the entry's codeLanguage differs from the current codeLanguage (profile, interviewType, and applicationId all still match)", () => {
+    const entry = validEntry({ codeLanguage: "java" });
+    expect(
+      cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP, CURRENT_LANG),
+    ).toBeNull();
+  });
+
+  // A-15/AC-C27: the sixth argument is deliberately NOT defaulted. An omitted
+  // argument folds to "" through groundingFor's normalizeField and must miss
+  // against an entry that explicitly carries CURRENT_LANG — never a false
+  // hit, which is the fail-safe direction.
+  it("treats an omitted sixth argument as a miss, never as a false hit", () => {
+    const entry = validEntry();
+    expect(
       cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP),
     ).toBeNull();
   });
 
-  it("on a hit, returns a complete state slot: visible true, status done, no error, the entry's points, and the CURRENT question/profile/interviewType/applicationId", () => {
+  it("on a hit, returns a complete state slot: visible true, status done, no error, the entry's points, and the CURRENT question/profile/interviewType/applicationId/codeLanguage", () => {
     const entry = validEntry();
     const result = cachedSampleAnswerFor(
       entry,
@@ -287,6 +330,7 @@ describe("cachedSampleAnswerFor", () => {
       CURRENT_PROFILE,
       CURRENT_TYPE,
       CURRENT_APP,
+      CURRENT_LANG,
     );
     expect(result).toEqual({
       question: CURRENT_QUESTION,
@@ -310,6 +354,7 @@ describe("cachedSampleAnswerFor", () => {
       profile: CURRENT_PROFILE,
       interviewType: CURRENT_TYPE,
       applicationId: CURRENT_APP,
+      codeLanguage: CURRENT_LANG,
     });
   });
 
@@ -320,7 +365,14 @@ describe("cachedSampleAnswerFor", () => {
       anchor: { title: "Senior Engineer", company: "Quantum Robotics", matched: true, project: "Checkout redesign" },
       idealProject: { shape: "Distributed Systems", metrics: ["5+ years", "cost saved"] },
     });
-    const result = cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP);
+    const result = cachedSampleAnswerFor(
+      entry,
+      CURRENT_QUESTION,
+      CURRENT_PROFILE,
+      CURRENT_TYPE,
+      CURRENT_APP,
+      CURRENT_LANG,
+    );
     expect(result.cues).toEqual(["Situation: Checkout redesign"]);
     expect(result.buzzwords).toEqual(["Kubernetes"]);
     expect(result.anchor).toEqual({
@@ -342,7 +394,14 @@ describe("cachedSampleAnswerFor", () => {
   // deliberate decision, not a silent accident this test lets slip through.
   it("returns the entry's points array unchanged on a hit, not a filtered copy", () => {
     const entry = validEntry();
-    const result = cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP);
+    const result = cachedSampleAnswerFor(
+      entry,
+      CURRENT_QUESTION,
+      CURRENT_PROFILE,
+      CURRENT_TYPE,
+      CURRENT_APP,
+      CURRENT_LANG,
+    );
     expect(result.points).toBe(entry.points);
   });
 
@@ -355,7 +414,14 @@ describe("cachedSampleAnswerFor", () => {
   // redundant dead code instead of the last line of defense it actually is.
   it("returns a partly-malformed points array as-is on a hit, rather than silently cleaning it", () => {
     const entry = validEntry({ points: ["", "real point"] });
-    const result = cachedSampleAnswerFor(entry, CURRENT_QUESTION, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP);
+    const result = cachedSampleAnswerFor(
+      entry,
+      CURRENT_QUESTION,
+      CURRENT_PROFILE,
+      CURRENT_TYPE,
+      CURRENT_APP,
+      CURRENT_LANG,
+    );
     expect(result).not.toBeNull();
     expect(result.points).toEqual(["", "real point"]);
     expect(result.points).toBe(entry.points);
@@ -369,6 +435,7 @@ describe("cachedSampleAnswerFor", () => {
       CURRENT_PROFILE,
       CURRENT_TYPE,
       CURRENT_APP,
+      CURRENT_LANG,
     );
     expect(result.grounding).toBeNull();
   });
@@ -381,29 +448,32 @@ describe("cachedSampleAnswerFor", () => {
   // the other lacks.
   // This drives both functions off the SAME table of entries and asserts
   // they agree on every combination of matching/mismatching profile,
-  // interviewType, and applicationId.
+  // interviewType, applicationId, and (AC-C27) codeLanguage.
   describe("agrees with needsRedraft on every combination of matching/mismatching fields", () => {
-    const combinations = [
-      { profileMatches: true, typeMatches: true, appMatches: true },
-      { profileMatches: false, typeMatches: true, appMatches: true },
-      { profileMatches: true, typeMatches: false, appMatches: true },
-      { profileMatches: true, typeMatches: true, appMatches: false },
-      { profileMatches: false, typeMatches: false, appMatches: true },
-      { profileMatches: false, typeMatches: true, appMatches: false },
-      { profileMatches: true, typeMatches: false, appMatches: false },
-      { profileMatches: false, typeMatches: false, appMatches: false },
-    ];
+    const combinations = [];
+    for (const profileMatches of [true, false]) {
+      for (const typeMatches of [true, false]) {
+        for (const appMatches of [true, false]) {
+          for (const langMatches of [true, false]) {
+            combinations.push({ profileMatches, typeMatches, appMatches, langMatches });
+          }
+        }
+      }
+    }
 
-    for (const { profileMatches, typeMatches, appMatches } of combinations) {
+    for (const { profileMatches, typeMatches, appMatches, langMatches } of combinations) {
       const label = `profile ${profileMatches ? "matches" : "differs"}, interviewType ${
         typeMatches ? "matches" : "differs"
-      }, applicationId ${appMatches ? "matches" : "differs"}`;
+      }, applicationId ${appMatches ? "matches" : "differs"}, codeLanguage ${
+        langMatches ? "matches" : "differs"
+      }`;
 
       it(label, () => {
         const entry = validEntry({
           profile: profileMatches ? CURRENT_PROFILE : "profile-B",
           interviewType: typeMatches ? CURRENT_TYPE : "technical",
           applicationId: appMatches ? CURRENT_APP : "app-2",
+          codeLanguage: langMatches ? CURRENT_LANG : "java",
         });
 
         const cached = cachedSampleAnswerFor(
@@ -412,11 +482,13 @@ describe("cachedSampleAnswerFor", () => {
           CURRENT_PROFILE,
           CURRENT_TYPE,
           CURRENT_APP,
+          CURRENT_LANG,
         );
 
         // The same entry, reshaped as an "active" state slot the way the
         // hook would hold it after a real draft landed — needsRedraft only
-        // looks at status/profile/interviewType/applicationId, never points.
+        // looks at status/profile/interviewType/applicationId/codeLanguage,
+        // never points.
         const active = {
           question: CURRENT_QUESTION,
           status: "done",
@@ -424,8 +496,9 @@ describe("cachedSampleAnswerFor", () => {
           profile: entry.profile,
           interviewType: entry.interviewType,
           applicationId: entry.applicationId,
+          codeLanguage: entry.codeLanguage,
         };
-        const stale = needsRedraft(active, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP, false);
+        const stale = needsRedraft(active, CURRENT_PROFILE, CURRENT_TYPE, CURRENT_APP, CURRENT_LANG, false);
 
         // A cache hit (non-null) must mean "not stale", and a cache miss
         // (null) must mean "stale" — the two functions must never disagree.

@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { createTtlCache, settleWithin } from "./answerSessionCache";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { codeLanguageCache, companyFactsCache, createTtlCache, settleWithin } from "./answerSessionCache";
 
 // AC-V5.2 / AC-V4.5. The per-session cache that stops /api/copilot/answer
 // re-running the same four Supabase queries on every question of an
@@ -169,6 +169,43 @@ describe("createTtlCache#peek (AC-V4.6)", () => {
   it("reports nothing for a missing or stale key, and starts nothing", () => {
     const cache = makeCache();
     expect(cache.peek("nope", { now: 0 })).toBeNull();
+  });
+});
+
+describe("codeLanguageCache — its own instance, its own TTL (AC-C10, AC-C10b)", () => {
+  afterEach(() => {
+    codeLanguageCache.clear();
+    companyFactsCache.clear();
+  });
+
+  it("is a distinct instance from companyFactsCache, in its own Map", async () => {
+    // The two share the `${userId}::${applicationId}` key space by design
+    // (AC-C10) — safe only because they are different Maps. A write to one
+    // key in companyFactsCache must be invisible to codeLanguageCache for
+    // that same key, or a language entry would read back through the facts
+    // peek as an object it is not, and vice versa.
+    const key = "u1::app1";
+    expect(codeLanguageCache).not.toBe(companyFactsCache);
+
+    await companyFactsCache.get(key, async () => ["a fact"], { now: 0 });
+
+    expect(codeLanguageCache.peek(key, { now: 0 })).toBeNull();
+    expect(codeLanguageCache.size()).toBe(0);
+  });
+
+  it("has a 30-minute TTL, matching companyFactsCache rather than answerContextCache's 10", async () => {
+    const THIRTY_MIN = 30 * 60 * 1000;
+    const load = vi.fn(async () => ({ language: "Go", resolvedAt: 0 }));
+
+    await codeLanguageCache.get("u1::app1", load, { now: 0 });
+    // One tick short of 30 minutes: still fresh, no reload.
+    await codeLanguageCache.get("u1::app1", load, { now: THIRTY_MIN - 1 });
+    expect(load).toHaveBeenCalledTimes(1);
+
+    // At 30 minutes exactly: stale, same rule `isFresh` applies everywhere
+    // else in this file — reloads.
+    await codeLanguageCache.get("u1::app1", load, { now: THIRTY_MIN });
+    expect(load).toHaveBeenCalledTimes(2);
   });
 });
 

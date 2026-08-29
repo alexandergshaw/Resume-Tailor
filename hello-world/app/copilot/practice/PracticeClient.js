@@ -26,6 +26,7 @@ import { usePracticeAnswer } from "./usePracticeAnswer";
 import { usePracticeQuestions } from "./usePracticeQuestions";
 import { useRoomQuestions } from "./useRoomQuestions";
 import { useSampleAnswer } from "./useSampleAnswer";
+import { usePracticeCodeLanguage } from "./usePracticeCodeLanguage";
 import { shouldQueueSampleAnswer } from "@/lib/copilot/practiceFlow";
 import { useInterviewType, useInterviewTypeChange } from "../useInterviewType";
 import { discardPracticeWork } from "@/lib/copilot/choiceChangeInvalidation";
@@ -179,6 +180,19 @@ export default function PracticeClient({
     collecting: collectingAnswer,
   });
 
+  // A-25/D-1: the code-language store read AND its change subscriber, out of
+  // this component by necessity — see usePracticeCodeLanguage.js's own
+  // header for the full reasoning (D-1's negative this file must stay true
+  // to, and A17's narrow seam). Its invalidation duty is the room's stale
+  // drafts; R-3 (a11y finding 2, HIGH) adds a second, non-destructive one —
+  // reporting that wipe through the SAME announcement channel the interview
+  // type change already uses below, since both are "this tab's own
+  // announcement" and never fire in the same tick.
+  const { codeLanguage, setCodeLanguage } = usePracticeCodeLanguage({
+    invalidateRoomDrafts: roomQuestions.invalidateDrafts,
+    onAnnounce: onInterviewTypeAnnouncement,
+  });
+
   // Folds usePracticeAnswer's own per-session reset together with
   // useRoomQuestions' — see resetAnswerFlowForSession's own comment above
   // for why this single combined callback exists rather than
@@ -208,6 +222,7 @@ export default function PracticeClient({
     profile,
     interviewType,
     applicationId: posting?.id || null,
+    codeLanguage,
   });
 
   // AC-H3: the read-only "Submitted for this application" panel's data —
@@ -275,7 +290,7 @@ export default function PracticeClient({
       queuedFor: sampleAnswer.getQueuedFor(),
     });
     if (!should) return;
-    sampleAnswer.queue(currentQuestionText, profile, interviewType, posting?.id || null);
+    sampleAnswer.queue(currentQuestionText, profile, interviewType, posting?.id || null, codeLanguage);
     // `sampleAnswer` is a fresh literal every render — depending on the
     // specific, stable members this body actually reads/calls is what keeps
     // this effect from re-running on every unrelated render.
@@ -290,6 +305,7 @@ export default function PracticeClient({
     profile,
     interviewType,
     posting,
+    codeLanguage,
   ]);
 
   // J2.4: the one-entry array CopilotDashboard's "Current question"/"Current
@@ -655,6 +671,9 @@ export default function PracticeClient({
         onDismissWarning={() => setWarning("")}
         interviewType={interviewType}
         onInterviewTypeChange={onInterviewTypeChange}
+        codeLanguage={codeLanguage}
+        onCodeLanguageChange={setCodeLanguage}
+        isEmbedded={isEmbedded}
         posting={posting}
         onPostingChange={onPostingChange}
         submittedDocs={submittedDocs}

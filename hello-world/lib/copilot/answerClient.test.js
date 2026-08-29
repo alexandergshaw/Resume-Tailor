@@ -1,6 +1,28 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { draftAnswer } from "./answerClient.js";
+import { draftAnswer, draftAnswerStreaming } from "./answerClient.js";
 import { ENGINE_STORAGE_KEY } from "@/app/settings/engine";
+
+// Minimal NDJSON stream double for draftAnswerStreaming's codeLanguage
+// coverage below — the framing itself is answerClient.streaming.test.js's
+// job; here it exists only so the request body can be inspected.
+function streamingResponse(chunks) {
+  const encoder = new TextEncoder();
+  return {
+    ok: true,
+    status: 200,
+    body: new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+        controller.close();
+      },
+    }),
+    json: async () => ({}),
+  };
+}
+
+function frame(obj) {
+  return `${JSON.stringify(obj)}\n`;
+}
 
 // readEngine() reads localStorage, which the node test env lacks — install a
 // minimal fake on globalThis, same approach as questionClient.test.js and
@@ -42,7 +64,7 @@ afterEach(() => {
 });
 
 describe("draftAnswer", () => {
-  it("posts the question, context, profile, interviewType, applicationId, mode, and engine from readEngine() to /api/copilot/answer", async () => {
+  it("posts the question, context, profile, interviewType, applicationId, codeLanguage, mode, and engine from readEngine() to /api/copilot/answer", async () => {
     store[ENGINE_STORAGE_KEY] = "embedded";
     mockFetch(200, { points: ["Situation: led a migration."], type: "behavioral" });
 
@@ -52,6 +74,7 @@ describe("draftAnswer", () => {
       profile: "Experienced engineer.",
       interviewType: "technical_screen",
       applicationId: "app-123",
+      codeLanguage: "python",
       mode: "answer",
     });
 
@@ -66,9 +89,32 @@ describe("draftAnswer", () => {
       profile: "Experienced engineer.",
       interviewType: "technical_screen",
       applicationId: "app-123",
+      codeLanguage: "python",
       mode: "answer",
       engine: "embedded",
     });
+  });
+
+  it("sends codeLanguage even under a non-code-bearing interview type", async () => {
+    // The control's value is forwarded as-is; whether it means anything is
+    // the route/prompt layer's call, not this client's.
+    mockFetch(200, { points: ["Point one."], type: "general" });
+
+    await draftAnswer({
+      question: "Tell me about a conflict with a teammate.",
+      context: "",
+      profile: "Experienced engineer.",
+      interviewType: "general",
+      applicationId: "app-1",
+      codeLanguage: "auto",
+      mode: "points",
+    });
+
+    const [, opts] = global.fetch.mock.calls[0];
+    const parsed = JSON.parse(opts.body);
+    expect(parsed.codeLanguage).toBe("auto");
+    expect(typeof parsed.codeLanguage).toBe("string");
+    expect(parsed.codeLanguage.length).toBeGreaterThan(0);
   });
 
   it("falls back to the default engine when nothing is persisted", async () => {
@@ -169,5 +215,53 @@ describe("draftAnswer", () => {
     });
 
     expect(result).toEqual(payload);
+  });
+});
+
+describe("draftAnswerStreaming codeLanguage", () => {
+  it("posts codeLanguage alongside the rest of the request body", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      streamingResponse([frame({ t: "done", points: ["a"], type: "behavioral" })]),
+    );
+
+    await draftAnswerStreaming(
+      {
+        question: "Tell me about a time you led a project.",
+        context: "Prep notes.",
+        profile: "Experienced engineer.",
+        interviewType: "technical_screen",
+        applicationId: "app-123",
+        codeLanguage: "javascript",
+        mode: "points",
+      },
+      { onPoints: () => {} },
+    );
+
+    const [, opts] = global.fetch.mock.calls[0];
+    expect(JSON.parse(opts.body).codeLanguage).toBe("javascript");
+  });
+
+  it("sends codeLanguage, as a non-empty string, even under a non-code-bearing interview type", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      streamingResponse([frame({ t: "done", points: ["a"], type: "general" })]),
+    );
+
+    await draftAnswerStreaming(
+      {
+        question: "Tell me about a conflict with a teammate.",
+        context: "",
+        profile: "Experienced engineer.",
+        interviewType: "general",
+        applicationId: "app-1",
+        codeLanguage: "auto",
+        mode: "points",
+      },
+      { onPoints: () => {} },
+    );
+
+    const [, opts] = global.fetch.mock.calls[0];
+    const parsed = JSON.parse(opts.body);
+    expect(typeof parsed.codeLanguage).toBe("string");
+    expect(parsed.codeLanguage.length).toBeGreaterThan(0);
   });
 });

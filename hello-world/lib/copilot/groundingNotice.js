@@ -39,11 +39,13 @@ import { COMPANY_FACTS_CLAUSE, KNOWLEDGE_BASE_CLAUSE } from "./practiceNotices.j
 // empty, it is the only thing that discloses the transfer performed on every
 // single drafted answer. Unconditionally true on this path — the non-embedded
 // engine always drafts through Gemini (app/api/copilot/answer/route.js), and
-// lib/copilot/answerClient.js's draftAnswer sends exactly these three fields
-// (question, transcript context, prep profile) on every request, posting or no
-// posting. Dropping it would leave live mode's ordinary state — no posting
-// selected — silent about that, which is the BUG-H5 shape this whole notice
-// exists to prevent.
+// lib/copilot/answerClient.js's draftAnswer sends the question, the transcript
+// context and the prep profile named in this sentence on every request,
+// posting or no posting — alongside interviewType, applicationId and (chunk C)
+// codeLanguage, none of which are user content and so need no disclosure of
+// their own. Dropping this sentence would leave live mode's ordinary state —
+// no posting selected — silent about the three fields above, which is the
+// BUG-H5 shape this whole notice exists to prevent.
 //
 // It is NOT a second description of the knowledge base. That payload is
 // described once, by the imported clause, and nowhere else in this file.

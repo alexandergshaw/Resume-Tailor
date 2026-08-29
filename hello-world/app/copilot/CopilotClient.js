@@ -12,6 +12,8 @@ import useMediaQuery from "@mui/material/useMediaQuery";
 import { useTheme } from "@mui/material/styles";
 import { fmtClock } from "@/lib/copilot/clock";
 import { postingGroundingNotice as _postingGroundingNotice } from "@/lib/copilot/groundingNotice";
+import { shareInstructionsFor } from "@/lib/copilot/captureNotices";
+import { identityPropsFor } from "@/lib/copilot/identityProps";
 import { briefStatusMessage } from "@/lib/copilot/companyBrief";
 import { visuallyHidden } from "@/lib/copilot/answerStatus";
 import { useEngine } from "@/app/settings/engine";
@@ -38,6 +40,8 @@ import { useCaptureSetup } from "./useCaptureSetup";
 import { useCompanyBrief } from "./useCompanyBrief";
 import { useLiveColumnHeight } from "./useLiveColumnHeight";
 import { useInterviewType, useInterviewTypeChange, getInterviewTypeStorageBlocked } from "./useInterviewType";
+import { useCodeLanguage } from "./useCodeLanguage";
+import { useLiveCodeLanguageChange } from "./useLiveCodeLanguageChange";
 import { interviewTypeLabel } from "@/lib/copilot/interviewTypes";
 import {
   invalidateLiveAnswers,
@@ -85,6 +89,9 @@ export default function CopilotClient() {
   // A6: the shared interview type (contract 2) — one store, read by both
   // the live and practice surfaces.
   const { interviewType, setInterviewType } = useInterviewType();
+  // AC-C1/AC-C4: the shared code-language control (chunk C) — mirrors the
+  // line above; a second, independent store (app/copilot/useCodeLanguage.js).
+  const { codeLanguage, setCodeLanguage } = useCodeLanguage();
   // AC-H1: the tracked posting selected for this live session, if any — the
   // same picker practice mode has, feeding both the "Submitted for this
   // application" panel and the grounding documents draftAnswer sends along
@@ -420,6 +427,26 @@ export default function CopilotClient() {
   );
   useInterviewTypeChange(onInterviewTypeChanged);
 
+  // AC-C25/CONF-1: the code-language subscriber, in its own module (D-1, D-2)
+  // — origin-blind, unlike the interview-type one above, since a language
+  // change destroys nothing for a foreign click to protect (see that
+  // module's own header). R-3 (a11y finding 2, HIGH): `onForeignChange`
+  // reports a foreign change with nothing local to explain it; local stays
+  // silent, like the live/local row above (stable callbacks below — F5).
+  useLiveCodeLanguageChange({
+    canRedraft: mode === "live",
+    clearAnswerCache: useCallback(() => answerCacheRef.current.clear(), []),
+    bumpDraftGeneration: useCallback(() => { draftGenRef.current += 1; }, []),
+    redraftCurrentAnswer,
+    onForeignChange: useCallback(
+      (text) => {
+        setTypeAnnouncement(text);
+        setTypeAmbientAtSet(`${cueAnnouncement.text}|${briefLiveText}`);
+      },
+      [cueAnnouncement.text, briefLiveText],
+    ),
+  });
+
   // MATERIAL-1: filters PracticeClient's text through the SAME latch above.
   const onPracticeTypeAnnouncement = useCallback(
     (text) => {
@@ -461,59 +488,23 @@ export default function CopilotClient() {
     [stop, sessionRef],
   );
 
-  // The tab option keeps today's wording verbatim; the system option needs
-  // different share-dialog instructions plus a note on when to reach for it.
-  // AC-M1.5.3: "inperson" has no share dialog at all — mic-only capture via
-  // getUserMedia — so neither the tab nor the system wording may render for
-  // it; this branch says so instead of describing a picker that never
-  // appears for this source.
-  const shareInstructions =
-    source === "inperson"
-      ? // Extra (adversarial review): a period, not an em dash — this
-        // codebase's screen-reader rule (see other copilot notices' own
-        // comments) is that an em dash is not spoken as a pause at default
-        // punctuation settings, so a sentence whose two independent clauses
-        // depend on that pause for meaning is a defect, not a style choice.
-        "Everyone speaks into your selected microphone. There is no tab or screen to share."
-      : source === "system"
-        ? 'Share your Entire Screen (with "Share system audio" enabled) and allow your mic — use this when the interview is running in a desktop app (Zoom, Teams, etc.) rather than a browser tab.'
-        : 'Share the meeting tab (with "Share tab audio" enabled) and allow your mic.';
+  const shareInstructions = shareInstructionsFor(source);
 
-  // AC-M1.5.6: TranscriptView's optional identity props — passed only for
-  // the in-person source, which is the pinned compatibility gate
-  // (TranscriptView treats `onAssignUser`'s mere PRESENCE as "render the
-  // correction UI"; leaving it undefined for tab/system is what keeps that
-  // mode byte-identical to HEAD, per TranscriptView's own doc). Spread onto
-  // both TranscriptView render sites below (live-collapsed and !live).
-  //
-  // BUG-5: `identityUnsettled` (from useLiveSession) is true from mount —
-  // the default snapshot's confidence is "unknown" — and stays true for the
-  // rest of the page's idle life, before a session has ever run and again
-  // after one ends. Gating the whole bundle on `source` alone let
-  // TranscriptView's "Still working out who is who in this conversation"
-  // caption render over an idle transcript that had not heard a word yet
-  // ("Transcript will appear here once the session starts…" directly under
-  // a claim about a conversation that hasn't happened), and again once a
-  // session ends. `speakerLabelFor`/`onAssignUser` stay gated on `source`
-  // alone as before — BUG-2's fix already makes `onAssignUser` a safe no-op
-  // once no session exists, so leaving the correction control reachable
-  // post-session is harmless, just inert. Only the CLAIM of unsettled
-  // identity needs an extra gate: `live` (a session is running right now)
-  // or `speakerSnapshot.tags.length > 0` (at least one voice has actually
-  // been observed) — the latter is belt-and-braces given stop() (BUG-2)
-  // resets `speakerSnapshot` back to its tags-less default the instant a
-  // session ends, so `live` alone already covers every reachable case; kept
-  // explicit so this reads correctly on its own, the same discipline
-  // useLiveSession.js's own `identityUnsettled` comment already follows for
-  // its `!overridden` half.
-  const identityProps =
-    source === "inperson"
-      ? {
-          speakerLabelFor,
-          identityUnsettled: identityUnsettled && (live || speakerSnapshot.tags.length > 0),
-          onAssignUser,
-        }
-      : {};
+  // AC-M1.5.6/BUG-5: TranscriptView's optional identity props — the
+  // in-person-only compatibility gate plus the extra `identityUnsettled`
+  // gate that stops it claiming unsettled identity over an idle transcript
+  // that never heard a word. Moved to lib/copilot/identityProps.js (pure, no
+  // React) for this file's line budget — see that module for the full
+  // history this comment used to carry. Spread onto both TranscriptView
+  // render sites below (live-collapsed and !live).
+  const identityProps = identityPropsFor({
+    source,
+    speakerLabelFor,
+    identityUnsettled,
+    live,
+    speakerSnapshot,
+    onAssignUser,
+  });
 
   // AC-H6.24/AC-H6.25 (BUG-H5): moved to lib/copilot/groundingNotice.js — see
   // that module's own doc. Called with CURRENT state on every render, so it
@@ -722,6 +713,8 @@ export default function CopilotClient() {
               interviewType={interviewType}
               onInterviewTypeChange={setInterviewType}
               interviewTypeLabel={interviewTypeLabel(interviewType)}
+              codeLanguage={codeLanguage}
+              onCodeLanguageChange={setCodeLanguage}
               posting={posting}
               onPostingChange={onPostingChange}
               postingPickerLabel={POSTING_PICKER_LABEL}

@@ -41,11 +41,19 @@
 // AC-N1.2.3: a caller may have no posting selected, and now every caller
 // sends an interview type (live mode reads it from the shared store too) —
 // but `undefined`, `null`, and `""` still all mean "not applicable" and
-// must compare equal, on EVERY field, or a write from one mode/call-site
-// spelling "nothing selected" one way can never be read back by another
-// spelling it a different way. Getting this wrong doesn't throw and doesn't
-// fail loudly — it just makes the cache miss forever, silently doubling the
-// cost of every repeated question (see this file's own test header comment).
+// must compare equal, on EVERY one of the four fields, or a write from one
+// mode/call-site spelling "nothing selected" one way can never be read back
+// by another spelling it a different way. Getting this wrong doesn't throw
+// and doesn't fail loudly — it just makes the cache miss forever, silently
+// doubling the cost of every repeated question (see this file's own test
+// header comment).
+//
+// `codeLanguage` (the code-language control's resolved/selected value) joins
+// the other three fields the same way and through the SAME `normalizeField`
+// — no special-cased "missing means auto" here. An omitted field and an
+// explicit `"auto"` are different facts and must stay distinguishable, or a
+// cache write from before the control existed would silently start matching
+// a request that explicitly asked for `auto`.
 const NOT_APPLICABLE = "";
 
 function normalizeField(value) {
@@ -53,20 +61,22 @@ function normalizeField(value) {
 }
 
 // The grounding a draft was (or would be) built from, as a plain comparable
-// shape. Takes the same three fields both call sites already have lying
+// shape. Takes the same four fields both call sites already have lying
 // around — `profile` (the prep-context string), `interviewType` (the shared
 // selection both modes now read), `applicationId` (the selected posting's id,
-// or nothing) — and folds each one's "not applicable" spellings together.
-export function groundingFor({ profile, interviewType, applicationId } = {}) {
+// or nothing), `codeLanguage` (the code-language control's value, or nothing)
+// — and folds each one's "not applicable" spellings together.
+export function groundingFor({ profile, interviewType, applicationId, codeLanguage } = {}) {
   return {
     profile: normalizeField(profile),
     interviewType: normalizeField(interviewType),
     applicationId: normalizeField(applicationId),
+    codeLanguage: normalizeField(codeLanguage),
   };
 }
 
-// Field-by-field equality — deliberately NOT a concatenation of the three
-// values, which would let two genuinely different groundings collide (e.g.
+// Field-by-field equality — deliberately NOT a concatenation of the fields,
+// which would let two genuinely different groundings collide (e.g.
 // profile "ab" + applicationId "c" vs profile "a" + applicationId "bc"; see
 // this file's own test for the case).
 export function sameGrounding(a, b) {
@@ -74,7 +84,8 @@ export function sameGrounding(a, b) {
   return (
     a.profile === b.profile &&
     a.interviewType === b.interviewType &&
-    a.applicationId === b.applicationId
+    a.applicationId === b.applicationId &&
+    a.codeLanguage === b.codeLanguage
   );
 }
 

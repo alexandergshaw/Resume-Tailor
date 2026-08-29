@@ -57,6 +57,29 @@ describe("groundingFor normalisation", () => {
 
     expect(sameGrounding(none, some)).toBe(false);
   });
+
+  it("treats a missing code language the same however it is spelled", () => {
+    const a = groundingFor({ ...LIVE, codeLanguage: undefined });
+    const b = groundingFor({ ...LIVE, codeLanguage: null });
+    const c = groundingFor({ ...LIVE, codeLanguage: "" });
+
+    expect(sameGrounding(a, b)).toBe(true);
+    expect(sameGrounding(b, c)).toBe(true);
+  });
+
+  it("does NOT fold an explicit 'auto' into an omitted code language", () => {
+    // This is the whole point of routing codeLanguage through plain
+    // normalizeField rather than a missing->"auto" normalizer (reconciliation
+    // A18): an omitted field and an explicit "auto" are different facts. A
+    // cache entry written before the control existed (no field at all) must
+    // NOT be served back for a request that explicitly asked for "auto" —
+    // that would silently pass a language-scoped draft through where the
+    // resolver was never consulted.
+    const omitted = groundingFor({ ...LIVE });
+    const explicitAuto = groundingFor({ ...LIVE, codeLanguage: "auto" });
+
+    expect(sameGrounding(omitted, explicitAuto)).toBe(false);
+  });
 });
 
 describe("sameGrounding discrimination", () => {
@@ -86,6 +109,15 @@ describe("sameGrounding discrimination", () => {
       sameGrounding(
         groundingFor({ ...LIVE, interviewType: "behavioral" }),
         groundingFor({ ...LIVE, interviewType: "technical" }),
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a different code language", () => {
+    expect(
+      sameGrounding(
+        groundingFor({ ...LIVE, codeLanguage: "python" }),
+        groundingFor({ ...LIVE, codeLanguage: "javascript" }),
       ),
     ).toBe(false);
   });
@@ -128,6 +160,12 @@ describe("cachedAnswerFor", () => {
     expect(
       cachedAnswerFor(entry(), groundingFor({ ...LIVE, profile: "something else entirely" })),
     ).toBeNull();
+  });
+
+  it("rejects an entry whose stored code language differs from what's now selected", () => {
+    const stale = entry({ codeLanguage: "python" });
+
+    expect(cachedAnswerFor(stale, groundingFor({ ...LIVE, codeLanguage: "javascript" }))).toBeNull();
   });
 
   it("rejects an entry that never recorded its grounding", () => {

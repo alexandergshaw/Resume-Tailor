@@ -54,6 +54,8 @@ import { startCompanyFacts, resolveCompanyFacts } from "@/lib/copilot/answerComp
 // look at" can never drift apart.
 import { roleTerms, MAX_QUESTION_CHARS } from "@/lib/copilot/questionVocabulary";
 import { geminiRoleTermsFlag, embeddedRoleTermsFlag } from "@/lib/copilot/roleTermsFlag";
+import { normalizeCodeLanguageChoice } from "@/lib/copilot/codeLanguages";
+import { startCodeLanguageResolution, peekCodeLanguage } from "@/lib/copilot/answerCodeLanguage";
 
 // Two modes on one route (AC-G2-D-1). "points" (default, and the only mode
 // live mode ever sends — CopilotClient/QuestionFeed call draftAnswer with no
@@ -190,6 +192,10 @@ async function streamAnswer({
   grounding,
   story,
   kb,
+  // §B.8: `{ override, resolved } | undefined` — computed once in POST (the
+  // peek that started it lives there too) and handed down unchanged, exactly
+  // like `questionRoleTerms` below.
+  codeLanguage,
   // §4d: this route's own gate, computed once in POST from the (already
   // capped) question and handed down — streamAnswer is Gemini-only, so the
   // role-terms flag below always gets `geminiRoleTermsFlag` with `kb.block`
@@ -222,8 +228,8 @@ async function streamAnswer({
     // for why the wait belongs here and not in a shared prologue.
     const { facts, companyFacts } = await resolveCompanyFacts(awaitCompanyFacts);
     const promptText = isAnswerMode
-      ? buildAnswerPrompt({ question, context, profile, resume, coverLetter, descriptor, pagesBlock: kb.block })
-      : buildPointsPrompt(question, context, profile, descriptor, resume, coverLetter, kb.block, companyFacts);
+      ? buildAnswerPrompt({ question, context, profile, resume, coverLetter, descriptor, pagesBlock: kb.block, codeLanguage })
+      : buildPointsPrompt(question, context, profile, descriptor, resume, coverLetter, kb.block, companyFacts, codeLanguage);
 
     let stream;
     try {
@@ -389,6 +395,10 @@ export async function POST(request) {
     const interviewTypeValue = normalizeInterviewType(body?.interviewType);
     const descriptor = interviewType(interviewTypeValue);
     const mode = body?.mode === "answer" ? "answer" : "points";
+    // AC-C24b: any client-supplied value normalizes to a stored slug before
+    // it reaches the resolver's gate or the prompt below — never a bare
+    // `"auto"` default and never the raw body value.
+    const codeLanguageChoice = normalizeCodeLanguageChoice(body?.codeLanguage);
     // AC-H4.16: the route fetches the submitted documents ITSELF from
     // `applicationId` — any client-supplied resume/coverLetter field in the
     // request body is never read (there is nothing above that reads
@@ -450,6 +460,24 @@ export async function POST(request) {
       question,
       cacheKey: contextCacheKey,
     });
+
+    // The per-application code-language resolver (§D-31: its reasoning lives
+    // in lib/copilot/answerCodeLanguage.js's own header, not here). Same
+    // shape as the search just above — a different cache, the same call
+    // site — started eagerly, never awaited, and PEEKED (never `|| fallback`)
+    // so a cold cache costs this answer nothing (AC-C13). The four gates that
+    // decide whether it does anything live inside that module, not here
+    // (AC-C11b: `mode` is not one of them).
+    startCodeLanguageResolution({
+      engine: body?.engine,
+      descriptor,
+      override: codeLanguageChoice,
+      applicationId,
+      description: posting,
+      title: employer?.title,
+      cacheKey: contextCacheKey,
+    });
+    const codeLanguage = { override: codeLanguageChoice, resolved: peekCodeLanguage(contextCacheKey) };
 
     // AC-1.1/AC-1.5/ARCH §1.1/§6.6: the RANKING query is built from the
     // question plus the transcript context WITH ITS SPEAKER LABELS
@@ -564,6 +592,7 @@ export async function POST(request) {
         grounding,
         story,
         kb,
+        codeLanguage,
         questionRoleTerms,
         // AC-V5.4: the THUNK, not an already-awaited result — streamAnswer
         // opens the NDJSON body first and settles this inside its own
@@ -654,6 +683,7 @@ export async function POST(request) {
                   coverLetter,
                   descriptor,
                   pagesBlock: kb.block,
+                  codeLanguage,
                 }),
               },
             ],
@@ -782,6 +812,7 @@ export async function POST(request) {
                 coverLetter,
                 kb.block,
                 companyFacts,
+                codeLanguage,
               ),
             },
           ],

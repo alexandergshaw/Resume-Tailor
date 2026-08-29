@@ -35,6 +35,7 @@ import {
   POINTS_SYSTEM,
   ANSWER_SYSTEM,
   interviewFormatLines,
+  codeLanguageLines,
   buildPointsPrompt,
   answerShapeInstruction,
   buildAnswerPrompt,
@@ -204,6 +205,166 @@ describe("interviewFormatLines", () => {
     expect(lines[1]).toContain(BEHAVIORAL.label);
     expect(lines[1]).toContain(BEHAVIORAL.guidance);
     expect(lines[2]).toBe(`Emphasize: ${BEHAVIORAL.emphasis.join(", ")}.`);
+  });
+});
+
+// AC-C12/AC-C15/AC-C15b/AC-C15b2/AC-C16/AC-C16b/AC-C8d, D-13. This is the
+// PRIMARY home for AC-C8d, not a supplement: AC-C15b2 exists precisely so
+// AC-C8d can be asserted over the emitted precedence line ALONE. A
+// whole-prompt assertion is strictly weaker here — both builders interpolate
+// the candidate's own résumé (`answerPrompts.js:369`) and prep notes
+// (`:246`/`:363`), so a résumé that happens to say "Java and Python" would
+// put both names into every prompt regardless of what the resolver did, and
+// no whole-prompt form could ever be sound.
+describe("codeLanguageLines", () => {
+  const withLanguage = (override, resolved) => codeLanguageLines(TECHNICAL, { override, resolved });
+
+  it("takes the descriptor and ONE object — §B.8's cross-wave contract", () => {
+    // A three-positional (descriptor, override, resolved) shape is the
+    // natural thing an unguided implementation reaches for;
+    // Function.prototype.length is what tells the two apart, and W3-A builds
+    // its caller against this exact arity two waves before it exists.
+    expect(codeLanguageLines.length).toBe(2);
+  });
+
+  it("returns [] for a non-code-bearing descriptor, even with a language supplied", () => {
+    expect(codeLanguageLines(GENERAL, { override: "java", resolved: "Python" })).toEqual([]);
+    expect(codeLanguageLines(undefined, { override: "java", resolved: "Python" })).toEqual([]);
+  });
+
+  it("returns [] when no codeLanguage was supplied, even under a code-bearing type", () => {
+    // Both halves of the gate are load-bearing and are tested independently:
+    // a `codeLanguageLines` gated on only one of them is green on every
+    // ordinary request and wrong on exactly one path.
+    expect(codeLanguageLines(TECHNICAL, undefined)).toEqual([]);
+    expect(codeLanguageLines(TECHNICAL, null)).toEqual([]);
+  });
+
+  it("emits something under a code-bearing type — the positive control", () => {
+    expect(withLanguage("auto", null).length).toBeGreaterThan(0);
+  });
+
+  it("emits exactly FOUR numbered steps, in order, and nothing after step 4 (AC-C15, both directions)", () => {
+    // A LOWER BOUND CANNOT DETECT AN ADDITION: checking that steps 1-4 exist
+    // and are ordered says nothing about a fifth, contradicting block
+    // appended afterward. So this is bounded from both ends — exactly four
+    // numbered lines, in order, and step 4 is the LAST line there is.
+    const lines = withLanguage("java", "Python");
+    const numbered = lines.filter((line) => /^\d+\./.test(line));
+    expect(numbered).toHaveLength(4);
+    expect(numbered.map((line) => /^(\d+)\./.exec(line)[1])).toEqual(["1", "2", "3", "4"]);
+    expect(lines[lines.length - 1]).toBe(numbered[3]);
+    expect(numbered[0]).toMatch(/question/i);
+    expect(numbered[3]).toMatch(/pseudocode/i);
+  });
+
+  it("words step 2 as the candidate's stated preference, by equality (AC-C16)", () => {
+    expect(withLanguage("java", null)[3]).toBe("2. The candidate has said they want Java.");
+  });
+
+  it("emits the LABEL in step 2, never the storage slug, on BOTH rows where they differ (§B.1, D-13)", () => {
+    const csharp = withLanguage("csharp", null)[3];
+    expect(csharp).toBe("2. The candidate has said they want C#.");
+    expect(csharp).not.toContain("csharp");
+
+    // The row where slug and label differ only by case — the hardest kind to
+    // notice, and the one an earlier revision of the plan got wrong.
+    const pseudo = withLanguage("pseudocode", null)[3];
+    expect(pseudo).toBe("2. The candidate has said they want Pseudocode.");
+    expect(pseudo).not.toMatch(/\bpseudocode\b/);
+  });
+
+  it("says the candidate stated NO preference when the control reads Auto (AC-C16b)", () => {
+    // Not "they want Auto." — `Auto` is a control state meaning "infer", not
+    // a language, and reporting it as a stated preference invents one the
+    // user never expressed.
+    const text = withLanguage("auto", "Python").join("\n");
+    expect(text).toContain("2. The candidate has not stated a language preference.");
+    expect(text).not.toMatch(/\bAuto\b/);
+  });
+
+  it("words step 3 as a DERIVED GUESS, never as a fact about the employer (AC-C15b)", () => {
+    expect(withLanguage("auto", "Python")[4]).toBe(
+      "3. The posting selected for this application reads as a Python role. That is inferred from the posting's own wording — treat it as a guess, never as a fact about the employer, and do not mention the posting or its wording in your answer.",
+    );
+    // The banned phrasing, named by the criterion as its own failure mode: an
+    // unqualified assertion of fact about the employer's stack.
+    const text = withLanguage("auto", "Python").join("\n");
+    expect(text).not.toMatch(/the language resolved for this application is/i);
+    expect(text).toMatch(/treat it as a guess/i);
+  });
+
+  it("says nothing was established when there is no token (AC-C16b, AC-C8d)", () => {
+    const text = withLanguage("auto", null).join("\n");
+    expect(text).toContain("3. Nothing in the selected posting resolved to a language.");
+    // AC-C8d's prompt-side half, asserted over the addressable line: when the
+    // resolver abstains, is not called, or returns something the validator
+    // rejects, step 3 names NO language.
+    for (const language of ["Python", "JavaScript", "TypeScript", "Java", "C#", "Go", "SQL"]) {
+      expect(text).not.toContain(language);
+    }
+    expect(text).not.toContain("none");
+  });
+});
+
+// AC-C12: the resolved token reaches both builders — a defaulted ninth
+// parameter on buildPointsPrompt, a new key on buildAnswerPrompt's
+// destructured object — spliced in immediately after interviewFormatLines
+// and before any other section, and gated exactly as codeLanguageLines
+// itself is gated.
+describe("buildPointsPrompt threads codeLanguage through (AC-C12)", () => {
+  it("adds nothing when no codeLanguage is passed, even under a code-bearing type", () => {
+    const prompt = buildPointsPrompt("Q?", "", "", TECHNICAL, "", "", "");
+    expect(prompt).not.toContain("CODE LANGUAGE");
+  });
+
+  it("adds nothing under a non-code-bearing type, even WITH a codeLanguage — byte-identical to the frozen fixture", () => {
+    expect(
+      buildPointsPrompt("Tell me about yourself.", "", "", GENERAL, "", "", "", undefined, {
+        override: "java",
+        resolved: "Python",
+      }),
+    ).toBe(FROZEN_POINTS_PROMPT_NO_PAGES);
+  });
+
+  it("emits the block immediately after the interview format and before the JSON shape line", () => {
+    const prompt = buildPointsPrompt("Q?", "", "", TECHNICAL, "", "", "", undefined, {
+      override: "java",
+      resolved: null,
+    });
+    const codeLanguageAt = prompt.indexOf("--- CODE LANGUAGE ---");
+    expect(codeLanguageAt).toBeGreaterThan(prompt.indexOf("Emphasize:"));
+    expect(codeLanguageAt).toBeLessThan(prompt.indexOf("Return ONLY JSON"));
+  });
+
+  it("keeps arity at 7 with the new parameter defaulted (AC-H7.27's arity pin, unchanged)", () => {
+    expect(buildPointsPrompt.length).toBe(7);
+  });
+});
+
+describe("buildAnswerPrompt threads codeLanguage through (AC-C12)", () => {
+  const base = { question: "Tell me about yourself.", context: "", profile: "", resume: "", coverLetter: "", pagesBlock: "" };
+
+  it("adds nothing when no codeLanguage is passed, even under a code-bearing type", () => {
+    const prompt = buildAnswerPrompt({ ...base, descriptor: TECHNICAL });
+    expect(prompt).not.toContain("CODE LANGUAGE");
+  });
+
+  it("adds nothing under a non-code-bearing type, even WITH a codeLanguage — byte-identical to the frozen fixture", () => {
+    expect(
+      buildAnswerPrompt({ ...base, descriptor: GENERAL, codeLanguage: { override: "java", resolved: "Python" } }),
+    ).toBe(FROZEN_ANSWER_PROMPT_NO_PAGES);
+  });
+
+  it("emits the block immediately after the interview format", () => {
+    const prompt = buildAnswerPrompt({
+      ...base,
+      descriptor: TECHNICAL,
+      codeLanguage: { override: "auto", resolved: "Go" },
+    });
+    const codeLanguageAt = prompt.indexOf("--- CODE LANGUAGE ---");
+    expect(codeLanguageAt).toBeGreaterThan(prompt.indexOf("Emphasize:"));
+    expect(codeLanguageAt).toBeLessThan(prompt.indexOf("No submitted resume"));
   });
 });
 

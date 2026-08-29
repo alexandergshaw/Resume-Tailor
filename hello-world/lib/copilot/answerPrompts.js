@@ -48,6 +48,7 @@
 
 import { submittedDocsPromptParts } from "@/lib/copilot/applicationDocsPrompt";
 import { roleTerms } from "@/lib/copilot/questionVocabulary";
+import { AUTO, codeLanguageLabel } from "@/lib/copilot/codeLanguages";
 
 // AC-2.1/design §4a. The clause this replaces used to end with "if it is
 // thin, give strong generic points instead" — a near-verbatim description of
@@ -142,6 +143,39 @@ export function interviewFormatLines(descriptor) {
   ];
 }
 
+// AC-C12/C15/C15b/C15b2/C16/C16b — the addressable, four-step code-language
+// precedence block, gated on BOTH halves independently: a non-code-bearing
+// descriptor (the registry's own `codeBearing` field, never a hand-rolled
+// predicate) returns [] regardless of whether a language was resolved, and
+// no `codeLanguage` returns [] even under a code-bearing type. `codeLanguage`
+// is `{ override, resolved } | undefined` (§B.8's cross-wave contract):
+// `override` is a control slug (never empty; AUTO means "no preference
+// stated"), `resolved` is a RESOLVER_LANGUAGES member or `null`. Step 2 and
+// step 3 vary independently on those two facts; steps 1 and 4 never change.
+// Step 2 emits the LABEL via `codeLanguageLabel`, never the stored slug — a
+// slug reaching a prompt is a defect (§B.1). Step 3 is worded as a derived
+// guess, never as a fact about the employer — the banned form is any
+// sentence asserting the resolved language IS the employer's stack.
+export function codeLanguageLines(descriptor, codeLanguage) {
+  if (!codeLanguage || !descriptor?.codeBearing) return [];
+  const { override, resolved } = codeLanguage;
+  const preferenceLine =
+    override !== AUTO
+      ? `The candidate has said they want ${codeLanguageLabel(override)}.`
+      : "The candidate has not stated a language preference.";
+  const postingLine = resolved
+    ? `The posting selected for this application reads as a ${resolved} role. That is inferred from the posting's own wording — treat it as a guess, never as a fact about the employer, and do not mention the posting or its wording in your answer.`
+    : "Nothing in the selected posting resolved to a language.";
+  return [
+    "--- CODE LANGUAGE ---",
+    "If any code appears in this answer, choose its language in this order:",
+    "1. A language the interviewer's question itself names — if the question names one, write that.",
+    `2. ${preferenceLine}`,
+    `3. ${postingLine}`,
+    "4. Otherwise, write pseudocode.",
+  ];
+}
+
 // AC-H4.15: grounds live mode's talking points in the résumé and cover
 // letter actually submitted for the selected application, in addition to
 // the prep context — but never the posting description (AC-H7.27), which
@@ -207,10 +241,16 @@ export function buildPointsPrompt(
   coverLetter,
   pagesBlock,
   companyFacts = undefined,
+  codeLanguage = undefined,
 ) {
   const companyKnown = !!companyFacts?.companyKnown;
   const factsBlock = companyKnown && typeof companyFacts.block === "string" ? companyFacts.block : "";
-  const parts = [`The interviewer asked: "${question}"`, "", ...interviewFormatLines(descriptor)];
+  const parts = [
+    `The interviewer asked: "${question}"`,
+    "",
+    ...interviewFormatLines(descriptor),
+    ...codeLanguageLines(descriptor, codeLanguage),
+  ];
   // AC-V4.3/V4.7: the three states, and only three (ARCH §2.6). `companyFacts
   // === undefined` (no applicationId, or no company on the selected posting)
   // takes NEITHER branch below — the guarantee the byte-identity tests pin.
@@ -357,8 +397,22 @@ export function answerShapeInstruction(descriptor) {
 // a model handed a résumé and a project page otherwise reaches for the
 // résumé, because it is shorter and already answer-shaped, which is exactly
 // the generic-answer defect this change exists to fix.
-export function buildAnswerPrompt({ question, context, profile, resume, coverLetter, descriptor, pagesBlock }) {
-  const parts = [`The interviewer asked: "${question}"`, "", ...interviewFormatLines(descriptor)];
+export function buildAnswerPrompt({
+  question,
+  context,
+  profile,
+  resume,
+  coverLetter,
+  descriptor,
+  pagesBlock,
+  codeLanguage,
+}) {
+  const parts = [
+    `The interviewer asked: "${question}"`,
+    "",
+    ...interviewFormatLines(descriptor),
+    ...codeLanguageLines(descriptor, codeLanguage),
+  ];
   if (profile) {
     parts.push("", "--- CANDIDATE PREP NOTES (their own notes on background / target role) ---", profile);
   }

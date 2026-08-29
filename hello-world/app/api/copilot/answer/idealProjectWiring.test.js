@@ -81,6 +81,21 @@ function mockUserWithPosting(description = POSTING) {
   });
 }
 
+// AC-C9d — a PROSPECTIVE hazard recorded for the next person to add a case
+// here, not a live one: `draft()` below sends no `interviewType`, so
+// `route.js` normalizes that to `general` (not code-bearing), and chunk C's
+// code-language resolver is never reached by anything in this file today —
+// verified, not assumed. But the day a case here passes a code-bearing type,
+// the resolver's own model call becomes a THIRD description-carrying
+// `generateContent` call, which this router (`isExampleCall`, just below)
+// cannot tell apart from the worked-example call by an EXCLUSION test, and
+// which `:170`'s `.filter((text) => !text.includes("Problem"))` would then
+// misclassify as an answer call. At that point the fix is POSITIVE
+// identification of each call (e.g. by its own system instruction or a
+// distinctive marker each prompt actually carries), never a longer exclusion
+// list — this file's own header states that rule for the two calls it
+// already tells apart, and a third call is the same problem, not a new one.
+//
 // Answers each `generateContent` call by looking at what was actually asked
 // for. The example prompt is the only one carrying the posting description —
 // which is itself worth asserting, since AC-H7.27 requires the posting reach
