@@ -36,15 +36,19 @@
 //
 // FILLER_PAGE below is what makes the two genuinely diverge. It is
 // engineered (see its own comment) to out-rank WORKDAY_PAGE in
-// buildKnowledgeBaseBlock's packing order while sharing none of WORKDAY_
-// PAGE's DISTINCTIVE vocabulary, so it consumes almost the entire
-// MAX_PAGES_CHARS budget and pushes WORKDAY_PAGE below MIN_PAGE_CHARS —
-// excluded from `kb.block` ENTIRELY, heading and all. selectBestStory ranks
-// with no budget at all and clears its own honesty gate on distinctive
-// overlap (projectStories.js's clearsHonestyGate), which FILLER_PAGE's
-// vocabulary is built to fail, so `story` still resolves to WORKDAY_PAGE
-// regardless of what `kb.block` contains. That is the divergence: `story`
-// carries "Workday", `kb.block` does not, for the identical request.
+// buildKnowledgeBaseBlock's packing order — via BM25 term-frequency scoring,
+// which rewards repeating a small set of distinctive terms — while scoring
+// STRICTLY FEWER distinct terms than WORKDAY_PAGE under selectBestStory's own
+// overlapScore (8 vs 9; measured in the self-check below). So it consumes
+// almost the entire MAX_PAGES_CHARS budget and pushes WORKDAY_PAGE below
+// MIN_PAGE_CHARS — excluded from `kb.block` ENTIRELY, heading and all.
+// selectBestStory ranks with no budget at all, and even though FILLER_PAGE
+// now CLEARS its own honesty gate (clearsHonestyGate, projectStories.js — see
+// THE HONESTY GATE below for why that changed), it still loses the ranking on
+// that one-term overlapScore margin, so `story` still resolves to
+// WORKDAY_PAGE regardless of what `kb.block` contains. That is the
+// divergence: `story` carries "Workday", `kb.block` does not, for the
+// identical request.
 //
 // MEASURED, not assumed, before this file was written: for the Workday
 // question below, selectBestStory still picks page p1 (WORKDAY_PAGE) with
@@ -74,7 +78,7 @@ import { MAX_QUESTION_CHARS } from "@/lib/copilot/questionVocabulary";
 // claims, rather than trusting the hand-tuned body length blind (item 2).
 // Not a route import — these are the real modules route.js itself calls.
 import { buildKnowledgeBaseBlock, stripLinePrefixes } from "@/lib/experience/knowledgeBase";
-import { selectBestStory, isEligiblePage } from "@/lib/copilot/projectStories";
+import { selectBestStory, isEligiblePage, overlapScore, significantTerms } from "@/lib/copilot/projectStories";
 import { splitFrames } from "@/lib/copilot/answerStream";
 
 function jsonRequest(body) {
@@ -192,40 +196,63 @@ const WORKDAY_PAGE = {
   generated_kind: null,
 };
 
-// FILLER_PAGE (item 2 of the adversarial review): engineered to out-rank
-// WORKDAY_PAGE in buildKnowledgeBaseBlock's packing order while clearing NONE
-// of projectStories.js's clearsHonestyGate — see this file's header comment
-// above for why that combination is exactly what makes `story` and
-// `kb.block` diverge on the same request.
+// FILLER_PAGE (item 2 of the adversarial review, REBUILT after the BM25
+// ranker landed — see RANKING and THE HONESTY GATE below): engineered to
+// out-rank WORKDAY_PAGE in buildKnowledgeBaseBlock's packing order while
+// scoring one FEWER distinct term than WORKDAY_PAGE under selectBestStory's
+// own overlapScore — see this file's header comment above for why that
+// combination is exactly what makes `story` and `kb.block` diverge on the
+// same request.
 //
-// RANKING. Both buildKnowledgeBaseBlock (route.js's `kb`) and selectBestStory
-// rank candidates by the SAME shared contract — overlapScore/significantTerms,
-// /[a-z0-9]{4,}/ tokens, no stopword or scaffolding exclusion (that exclusion
-// applies only inside clearsHonestyGate, below). SAFE_OVERLAP_SENTENCE below
-// repeats ten words that are ALSO significant terms of WORKDAY_QUESTION —
-// "describe", "challenge", "what", "does", "work", "when", "building",
-// "which", "build", "with" — measured to be a strictly higher raw overlap
-// score (10 distinct terms) than WORKDAY_PAGE's own (9: workday, report,
-// custom, with, compliance, security, standards, sensitive, information).
-// Ranked first, its padded ~11.5KB body is included WHOLE (comfortably under
-// MAX_PAGES_CHARS's 12000 budget, minus the 400-char notice reserve), which
-// leaves less than MIN_PAGE_CHARS (200, lib/experience/knowledgeBase.js) for
-// WORKDAY_PAGE afterward — excluded from `kb.block` entirely, heading and all,
-// not merely excerpted.
+// RANKING — THE TWO RANKERS NO LONGER SHARE A CONTRACT. Before the BM25
+// ranker (lib/experience/pageRanking.js) landed, buildKnowledgeBaseBlock's
+// packing order and selectBestStory's overlapScore were the same
+// distinct-term-overlap rule. They are not anymore:
+//   - buildKnowledgeBaseBlock ranks via rankPagesByRelevance, which now
+//     delegates to Okapi BM25 (pageRanking.js): a 2-char token floor,
+//     STOPWORDS filtered out, and a score that rewards a term's FREQUENCY on
+//     the page (saturating, but repetition keeps adding until it does).
+//   - selectBestStory ranks candidates, and clearsHonestyGate gates them, on
+//     overlapScore/significantTerms (this file, lib/copilot/projectStories.js
+//     above): a 4-char token floor, NO stopword filtering, and a score that
+//     counts DISTINCT terms only — repeating a word again never scores it
+//     twice.
+// SAFE_OVERLAP_SENTENCE below repeats eight of WORKDAY_QUESTION's own terms
+// that WORKDAY_PAGE does NOT carry — "accuracy", "addressed", "business",
+// "complex", "designed", "especially", "managing", "particularly" — plus
+// "HR": short enough (2 chars) that BM25's floor counts it but
+// significantTerms' 4-char floor never does, so including it only ever
+// raises WORKDAY_PAGE's own "hr" document frequency, never FILLER_PAGE's
+// distinct count. Repeated across the padded ~11.5KB body, those eight terms
+// saturate BM25's per-term frequency reward; WORKDAY_PAGE has no repetition
+// of its own terms to answer with. MEASURED: BM25 totals filler=11.99,
+// workday=9.75 (a ~19% margin) — filler is ranked first and its body is
+// included WHOLE (comfortably under MAX_PAGES_CHARS's 12000 budget, minus the
+// 400-char notice reserve), which leaves less than MIN_PAGE_CHARS (200,
+// lib/experience/knowledgeBase.js) for WORKDAY_PAGE afterward — excluded from
+// `kb.block` entirely, heading and all, not merely excerpted.
 //
-// THE HONESTY GATE. Every one of those ten words is either a general
-// STOPWORDS entry (stopwords.json: "what", "does", "work", "when",
-// "building", "which", "build", "with") or one of projectStories.js's own
-// INTERVIEW_SCAFFOLDING words ("describe", "challenge") — both excluded from
-// clearsHonestyGate's DISTINCTIVE count on purpose (see that function's own
-// comment). So this page wins the KB packing order on raw score alone while
-// its distinctiveCount stays 0: it can never become selectBestStory's
-// `bestEligible`, and WORKDAY_PAGE (distinctiveCount 8, one of them on its own
-// title: "workday") stays the page a candidate is allowed to speak as their
-// own experience.
+// THE HONESTY GATE — WHAT IS TRUE NOW, STATED PLAINLY. Under overlapScore's
+// 4-char, no-stopword-filter, DISTINCT-only count, FILLER_PAGE's eight
+// repeated terms count as 8 distinct terms ("HR" is below the 4-char floor
+// and never counts here). WORKDAY_PAGE counts 9 (measured: workday, report,
+// custom, with, compliance, security, standards, sensitive, information). So
+// FILLER_PAGE now CLEARS clearsHonestyGate (distinctiveCount 8) — it is NOT
+// boilerplate the candidate is ineligible to speak. What still holds, and is
+// the entire reason this fixture keeps working, is narrower: FILLER_PAGE
+// loses selectBestStory's ranking on SCORE, by exactly one distinct term (8
+// vs 9), so `bestEligible` still resolves to WORKDAY_PAGE (distinctiveCount
+// 8, one of them on its own title: "workday"). The property this file used to
+// demonstrate incidentally — a page that sits in the prompt while being
+// INELIGIBLE to be spoken as the candidate's own experience — has moved out
+// of this file. It is not lost from the repo: it is pinned directly, by name,
+// in hello-world/lib/copilot/storyMatchHonesty.test.js:56, :92, :137, :167,
+// :245 (each a `matched === false` on a boilerplate page). In this file that
+// property was always a MEANS to the kb/story divergence, never an assertion
+// of its own — the divergence itself is what every case below actually
+// depends on, and it is fully preserved.
 const SAFE_OVERLAP_SENTENCE =
-  "Let me describe a broader challenge here. What does the work team do when building new processes, " +
-  "and which approach helps them build systems together with other colleagues? None of this touches any particular product area.";
+  "The accuracy we addressed for our business is complex, designed especially by managing it particularly for HR. ";
 const NEUTRAL_PADDING_SENTENCE =
   "The quarterly newsletter mentioned a fun lunch and a friendly trivia night that everyone enjoyed on a sunny " +
   "afternoon near the old oak tree by the fountain in the courtyard. ";
@@ -237,11 +264,18 @@ const NEUTRAL_PADDING_SENTENCE =
 // the real budget (12000, minus a 400-char notice reserve, minus this page's
 // own ~44-char heading) and re-verified by the self-check below rather than
 // trusted blind — if either module's constants ever move, that check goes
-// red before the route-level cases do, which is the point.
+// red before the route-level cases do, which is the point. The length itself
+// is forced, not a free tuning choice (see RANKING above): a page that does
+// not fit whole is excerpted instead of excluding WORKDAY_PAGE, so this must
+// land in the same (11400, 11600] window the old fixture needed. Interleaving
+// SAFE_OVERLAP_SENTENCE with NEUTRAL_PADDING_SENTENCE (rather than one block
+// of each) keeps the eight repeated question terms spread across the whole
+// body so BM25's term-frequency count is unaffected by where the target
+// length happens to cut the string.
 function buildFillerBody() {
   const target = 11460;
-  let body = `${SAFE_OVERLAP_SENTENCE} `;
-  while (body.length < target) body += NEUTRAL_PADDING_SENTENCE;
+  let body = "";
+  while (body.length < target) body += SAFE_OVERLAP_SENTENCE + NEUTRAL_PADDING_SENTENCE;
   return body.slice(0, target);
 }
 
@@ -295,11 +329,22 @@ describe("the FILLER_PAGE/WORKDAY_PAGE fixture actually diverges (item 2, self-c
     expect(kb.includedPageIds).toContain("filler");
   });
 
-  it("selectBestStory still resolves to WORKDAY_PAGE, matched, despite FILLER_PAGE outranking it on raw packing order", () => {
+  it("selectBestStory still resolves to WORKDAY_PAGE, matched, by a one-term overlapScore margin despite FILLER_PAGE winning BM25's packing order", () => {
     const story = selectBestStory([FILLER_PAGE, WORKDAY_PAGE], { question: WORKDAY_QUESTION, points: [] });
     expect(story?.pageId).toBe("p1");
     expect(story?.matched).toBe(true);
     expect(story?.bullets?.[0] || "").toContain("Workday");
+    // Pins the new premise explicitly (RANKING/THE HONESTY GATE above): the
+    // margin is now a single distinct term, not the ten-term gap the old
+    // fixture had. If a future change ever brings FILLER_PAGE's distinct
+    // count up to WORKDAY_PAGE's, `story` flips to FILLER_PAGE and :388/:544
+    // below fail loudly (`points` would carry no "Workday") rather than
+    // going quiet — but naming the constraint here is what lets the next
+    // reader see it coming instead of re-deriving it from a mutation.
+    const questionTerms = significantTerms(WORKDAY_QUESTION);
+    expect(overlapScore(questionTerms, `${FILLER_PAGE.title} ${FILLER_PAGE.body}`)).toBeLessThan(
+      overlapScore(questionTerms, `${WORKDAY_PAGE.title} ${WORKDAY_PAGE.body}`),
+    );
   });
 });
 

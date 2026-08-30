@@ -19,18 +19,26 @@
 // throws — callers include a live interview draft loop that cannot afford a
 // thrown error to become a broken answer.
 //
-// The one inward import (significantTerms/overlapScore, below) reaches into
-// lib/copilot/projectStories.js. That file used to have ZERO imports of its
-// own, which is the safety argument this comment used to make; it no longer
-// does — hardening its honesty gate needed the repo's shared stopword list —
-// so the argument is now the narrower one stated in that file's own header:
-// it imports the smallest thing that does the job (one 1.4KB JSON array) and
-// nothing else, because whatever it imports lands here, in lib/meeting/**,
-// and in the browser bundle. That constraint is load-bearing for THREE
-// consumers now, not one.
+// The inward imports (significantTerms/overlapScore, and rankPagesByBm25,
+// below) reach into lib/copilot/projectStories.js and this file's own sibling
+// lib/experience/pageRanking.js respectively. projectStories.js used to have
+// ZERO imports of its own, which is the safety argument this comment used to
+// make; it no longer does — hardening its honesty gate needed the repo's
+// shared stopword list — so the argument is now the narrower one stated in
+// that file's own header: it imports the smallest thing that does the job
+// (one 1.4KB JSON array) and nothing else, because whatever it imports lands
+// here, in lib/meeting/**, and in the browser bundle. pageRanking.js pulls in
+// that same 1.4KB stopword JSON and lands here and in lib/meeting/** the same
+// way — but NOT in the browser bundle: verified, this file's only
+// non-test importers are app/api/copilot/answer/route.js and
+// lib/meeting/meetingContext.js, and that file's only non-test importers are
+// lib/meeting/insightsLocal.js and app/api/meeting/insights/route.js — all
+// server-side. That "smallest import, nothing else" constraint is
+// load-bearing for FOUR consumers now, not one.
 
 import { formatAttachment } from "./pageContext.js";
 import { significantTerms, overlapScore } from "@/lib/copilot/projectStories.js";
+import { rankPagesByBm25 } from "./pageRanking.js";
 
 // The marker placed on its own line between two kept runs of a page's
 // content that are not adjacent in the source — the honest way of saying
@@ -128,62 +136,33 @@ function pluralize(count, singular, plural) {
 
 // rankPagesByRelevance(pages, queryText) -> Page[]
 //
-// How many of significantTerms(queryText)'s terms appear anywhere in the
-// page's title or body (each term counted once across the two — see
-// pageOverlapScore), descending; ties broken by `position` ascending (falling
-// back to array index when position isn't a number); stable for anything
-// still tied after that (Array.prototype.sort has been stable since ES2019).
+// Delegates to pageRanking.js's rankPagesByBm25 — Okapi BM25 over exactly
+// the pages passed in, with a stopword-filtered, unstemmed, 2-character-
+// floor query tokenizer (see that file for the scoring rule itself and why
+// it lives in its own module rather than here or in
+// lib/copilot/projectStories.js). This function used to be a plain
+// set-overlap count ("how many of significantTerms(queryText)'s terms
+// appear anywhere in the page"), which could not tell a page that mentions a
+// query term once from a page the term is the whole point of, and had no way
+// to weight a rare, specific term over a common one repeated on every page
+// in the knowledge base — see rankingQuality.test.js for the fixtures that
+// rule got wrong and pageRanking.js for the replacement's arithmetic.
 // Deliberately does NOT filter for eligibility — that decision belongs to
 // each caller's own rule (AC-7.3/A4), never to this module.
 //
 // Semantics are byte-identical to lib/meeting/meetingContext.js's own
-// rankMeetingPages, which now delegates to this function directly (ARCH
-// §4c) — one ranking rule, so the two surfaces can never disagree about
-// what "relevant" means.
+// rankMeetingPages, which delegates to this function directly (ARCH §4c) —
+// one ranking rule, so the two surfaces can never disagree about what
+// "relevant" means.
 //
-// AC-1.4's byte-identity guarantee: with no query, every page scores 0, so
-// the stable sort leaves the input order untouched — every existing caller
-// that never asked a question keeps behaving exactly as before.
+// AC-1.4's byte-identity guarantee still holds, for a different reason than
+// it used to: with no query, rankingQueryTerms(queryText) is an empty set,
+// so pageRanking.js's `weights` map stays empty and every page scores
+// literal 0 before any BM25 arithmetic runs — the stable sort then falls
+// through to `position` ascending, leaving the input order untouched for
+// every existing caller that never asked a question.
 export function rankPagesByRelevance(pagesInput, queryText) {
-  return rankPagesByTerms(pagesInput, significantTerms(queryText));
-}
-
-// The same ranking, for a caller that already holds the query's terms.
-// buildKnowledgeBaseBlock needs significantTerms(query) anyway (it hands them
-// down to excerptForQuery), and used to tokenise the query a SECOND time by
-// calling rankPagesByRelevance with the raw text. One tokenisation per call,
-// and the two can no longer disagree because there is only one.
-function rankPagesByTerms(pagesInput, queryTerms) {
-  const pages = Array.isArray(pagesInput) ? pagesInput : [];
-  return pages
-    .map((page, index) => ({
-      page,
-      score: pageOverlapScore(queryTerms, page),
-      position: typeof page?.position === "number" ? page.position : index,
-    }))
-    .sort((a, b) => b.score - a.score || a.position - b.position)
-    .map((entry) => entry.page);
-}
-
-// A page's overlap score. Scores the title and the body SEPARATELY instead of
-// building `${title} ${body}` — that concatenation allocated a copy of the
-// whole page corpus per page purely to join two strings the tokeniser was
-// about to walk one after the other anyway.
-//
-// `counted` is what keeps this a cheaper spelling of the old rule rather than
-// a different rule: `overlapScore(terms, title) + overlapScore(terms, body)`
-// would count a term appearing in BOTH halves twice, where the concatenated
-// set counted it once. That is a scoring-contract change, and this contract is
-// shared with lib/meeting/** (rankMeetingPages delegates to
-// rankPagesByRelevance above), so it does not get made in passing here.
-function pageOverlapScore(queryTerms, page) {
-  const counted = new Set();
-  for (const text of [str(page?.title), str(page?.body)]) {
-    for (const term of significantTerms(text)) {
-      if (queryTerms.has(term)) counted.add(term);
-    }
-  }
-  return counted.size;
+  return rankPagesByBm25(pagesInput, queryText);
 }
 
 // --- splitBlocks ------------------------------------------------------
@@ -689,10 +668,21 @@ export function buildKnowledgeBaseBlock(input) {
     .filter(hasUsableId)
     .filter(contributesMaterial);
 
-  // Tokenised ONCE and used twice — page ranking and, below, block ranking
-  // inside each page's excerpt. See rankPagesByTerms.
+  // The query is now tokenised TWICE, not once, and that comment used to say
+  // otherwise — it stopped being true the moment page ranking moved onto its
+  // own tokenizer. `rankPagesByRelevance` runs pageRanking.js's
+  // rankingQueryTerms (stopword-filtered, 2-character floor, no stemmer) to
+  // rank pages; `queryTerms` below is the shared significantTerms (4-character
+  // floor, no stopword filter) that excerptForQuery needs to rank BLOCKS
+  // inside a page's excerpt further down. The two tokenizers are
+  // deliberately different — see pageRanking.js's header for why the ranking
+  // tokenizer cannot be significantTerms — so unifying them onto one call
+  // would either regress page ranking back to the four-character floor or
+  // change block-level excerpting, which knowledgeBase.test.js pins. The
+  // honest cost of leaving excerptForQuery alone is one extra regex pass over
+  // a single question string per call — cheap, and correct beats "once".
   const queryTerms = significantTerms(src.query);
-  const ranked = rankPagesByTerms(usable, queryTerms);
+  const ranked = rankPagesByRelevance(usable, src.query);
 
   const budgetForPages = Math.max(0, budget - NOTICE_RESERVE_CHARS);
 
