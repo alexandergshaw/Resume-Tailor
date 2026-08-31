@@ -79,6 +79,16 @@ export function makeSupabase(tables = {}, opts = {}) {
     }),
     auth: {
       getUser: vi.fn(async () => ({ data: { user: opts.user ?? null } })),
+      // `getClaims()` is how a caller reads the JWT's `session_id`. Omitting
+      // `opts.claims` reproduces the real client's null-data path (an HS256
+      // project falls through to a network getUser(), so a transient blip
+      // legitimately yields `{ data: null }`); passing `opts.claims` supplies
+      // the claim set. Purely additive — callers that never pass `opts.claims`
+      // and never touch `auth.getClaims` behave exactly as before.
+      getClaims: vi.fn(async () =>
+        opts.claims === undefined
+          ? { data: null, error: null }
+          : { data: { claims: opts.claims }, error: null }),
     },
     storage: {
       from: vi.fn(() => ({
