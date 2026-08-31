@@ -13,6 +13,7 @@ import LightModeIcon from "@mui/icons-material/LightMode";
 import DarkModeIcon from "@mui/icons-material/DarkMode";
 import { useColorMode } from "@/app/theme/colorMode";
 import GmailButton from "./GmailButton";
+import DriveButton from "./DriveButton";
 import AccountSection from "./AccountSection";
 
 // Section wrapper: an uppercase label above its control(s).
@@ -99,6 +100,10 @@ export default function SettingsMenu() {
           <Divider />
           <Section label="Gmail">
             <GmailButton />
+          </Section>
+          <Divider />
+          <Section label="Google Drive">
+            <DriveButton />
           </Section>
           <Divider />
           <Section label="Account">

@@ -7,14 +7,30 @@
 // disconnected, never to nothing — B-5), disconnected, connected, and
 // disconnecting.
 //
-// NOT covered here: DriveButton is not yet mounted anywhere.
-// `app/components/SettingsMenu.js` renders `GmailButton` but has no Drive
-// equivalent, and `app/theme/themeSystem.test.js:128` pins that Gmail
-// wiring only. There is no companion wiring test in this file (an earlier
-// version of this comment claimed one existed below; it did not --
-// WAVE2-SEAMS.md MAJOR-6). Mounting `DriveButton` in `SettingsMenu` and
-// adding that wiring test belongs with whichever later change actually
-// performs the mount.
+// NOT covered here: the MOUNT. `DriveButton` is rendered by
+// `app/components/SettingsMenu.js:105-106` (imported at `:16`) inside a
+// `<Section label="Google Drive">`, and the assertion that the mount is
+// really there lives in `app/theme/themeSystem.test.js` -- the
+// "SettingsMenu actually renders DriveButton (not just imports it)"
+// describe at `:167`, backed by a source-text check at `:155`.
+//
+// Both halves are deliberate, and the split is the point. Nothing in THIS
+// file can tell you the component reaches a screen: every test below
+// imports `DriveButton` directly, so they would all still pass against a
+// `SettingsMenu` that never rendered it. That is not hypothetical -- this
+// repo shipped a component extraction where 27 tests passed against a
+// caller importing none of the new components, and Wave 5B's own mutation
+// reproduced it here: deleting the `<Section>` while leaving the now-unused
+// import in place left `themeSystem.test.js`'s source-text check GREEN and
+// failed only its render-based tests.
+//
+// This comment has been wrong in both directions. An earlier version
+// claimed a companion wiring test existed in this file when none did
+// (WAVE2-SEAMS.md MAJOR-6); a later one still said the component was
+// mounted nowhere after Wave 5B had mounted it. A comment that overstates
+// coverage is worse than none, because it stops the next reader looking --
+// so if you move the mount or the wiring test, fix the two references
+// above rather than leaving them to rot.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";

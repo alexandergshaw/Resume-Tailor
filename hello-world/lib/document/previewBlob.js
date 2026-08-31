@@ -25,7 +25,7 @@
 // the correct half; unifying the two paths would change the local
 // download's shipped bytes and is a follow-up, not part of this extraction.
 
-import { resolveDocumentBlob } from "./docx";
+import { resolveDocumentBlob, normalizeResultLines } from "./docx";
 
 // edited/*: the tailoring entry's hand-edit flag, per scope ({ resume, cover }) —
 // so hand-editing one document never marks the other "edited", and
@@ -72,6 +72,23 @@ export function scopeText(entry, scope) {
 // `edited = editedForScope(entry, scope)`. Supplied -> `edited =
 // editedForScope(entry, scope) || text !== scopeText(entry, scope)` — the
 // same boolean the download path computes as `!serveFinished`.
+//
+// `lines` normally passes the stored scope array straight through
+// (`resultLines`/`coverLetterResultLines`) — see previewBlob.test.js:87-97,
+// pinned deliberately for the common "no divergent text" case. But when the
+// caller supplies a `text` that actually differs from what's stored, that
+// text IS the caller's draft — the Drive save path hands this over
+// immediately after DocumentPreviewDialog's commitDraft(), before the
+// setTailoringMap update inside it has flushed and re-rendered this hook's
+// `entry` closure, so `entry.resultLines` is still the PRE-edit array at the
+// moment this runs. docx.js's buildDocxFromUploadedTemplate prefers a
+// non-empty `lines` over splitting `text` itself, so handing it the stale
+// array would silently discard the fresh `text` and rebuild the old
+// paragraphs. Re-deriving `lines` from the supplied `text` with
+// normalizeResultLines mirrors exactly what commitDraft's own
+// saveDocumentPreview will eventually store (`text.split("\n")`, here with
+// normalizeResultLines' extra \r\n/trailing-whitespace handling) — so the
+// synchronous rebuild and the eventual React state agree instead of racing.
 export function previewBlobArgs(entry, scope, { resumeFile, coverLetterFile, text } = {}) {
   if (scope === "email") return null;
   const e = entry || {};
@@ -80,14 +97,15 @@ export function previewBlobArgs(entry, scope, { resumeFile, coverLetterFile, tex
   if (scope === "cover") {
     const lines = Array.isArray(e.coverLetterResultLines) ? e.coverLetterResultLines : [];
     const stored = scopeText(e, "cover");
+    const textChanged = suppliedText && text !== stored;
     return {
       engineDocxB64: typeof e.coverLetterDocxB64 === "string" ? e.coverLetterDocxB64 : "",
       // generated_cover_letters has no docx_path column (F-11) — the cover
       // branch never has a per-generation stored document to hand over.
       docxPath: "",
-      edited: editedForScope(e, "cover") || (suppliedText && text !== stored),
+      edited: editedForScope(e, "cover") || textChanged,
       text: suppliedText ? text : stored,
-      lines,
+      lines: textChanged ? normalizeResultLines(text) : lines,
       uploadedTemplate: coverLetterFile ?? null,
     };
   }
@@ -101,12 +119,13 @@ export function previewBlobArgs(entry, scope, { resumeFile, coverLetterFile, tex
   // serving the engine doc verbatim instead of rebuilding the edited text
   // onto it — a real behaviour change. Preserve the original formula.
   const defaultText = e.result || lines.join("\n");
+  const textChanged = suppliedText && text !== stored;
   return {
     engineDocxB64: typeof e.docxB64 === "string" ? e.docxB64 : "",
     docxPath: typeof e.docxPath === "string" ? e.docxPath : "",
-    edited: editedForScope(e, "resume") || (suppliedText && text !== stored),
+    edited: editedForScope(e, "resume") || textChanged,
     text: suppliedText ? text : defaultText,
-    lines,
+    lines: textChanged ? normalizeResultLines(text) : lines,
     uploadedTemplate: resumeFile ?? null,
   };
 }

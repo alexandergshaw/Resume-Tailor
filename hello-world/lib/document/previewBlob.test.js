@@ -28,6 +28,8 @@ vi.mock("../supabase/client", () => ({
   createClient: () => ({}),
 }));
 
+import { normalizeResultLines } from "./docx.js";
+
 import {
   editedForScope,
   withEditedScope,
@@ -84,14 +86,25 @@ function entryFor({ scope, hasB64, hasPath, edited }) {
 // and the cover scope NEVER carries docxPath: generated_cover_letters has no
 // docx_path column, so entry.docxPath belongs to the RESUME. Handing it to the
 // cover branch would serve the resume's stored .docx as the cover letter.
+//
+// `lines` is pinned to the stored array (COVER_LINES/RESUME_LINES) ONLY for
+// "text omitted" and "text supplied unchanged" -- the NARROWED half of the
+// original pin. It no longer holds for "text supplied changed": a text that
+// actually diverges from what's stored is draft content the entry's own
+// resultLines/coverLetterResultLines have not caught up to yet (see the
+// comment on previewBlobArgs), so `lines` is re-derived from that text via
+// normalizeResultLines instead of the stale stored array. This is the fix
+// for the staleness bug the join test below exercises end to end.
 function expectedArgs({ scope, hasB64, hasPath, edited, text }) {
   const stored = scope === "cover" ? COVER_TEXT : RESUME_TEXT;
+  const storedLines = scope === "cover" ? COVER_LINES : RESUME_LINES;
+  const textChanged = text !== undefined && text !== stored;
   return {
     engineDocxB64: hasB64 ? (scope === "cover" ? COVER_B64 : RESUME_B64) : "",
     docxPath: scope === "cover" ? "" : hasPath ? DOCX_PATH : "",
-    edited: text === undefined ? edited : edited || text !== stored,
+    edited: text === undefined ? edited : edited || textChanged,
     text: text === undefined ? stored : text,
-    lines: scope === "cover" ? COVER_LINES : RESUME_LINES,
+    lines: textChanged ? normalizeResultLines(text) : storedLines,
     uploadedTemplate: scope === "cover" ? COVER_FILE : RESUME_FILE,
   };
 }

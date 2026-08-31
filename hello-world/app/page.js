@@ -16,10 +16,9 @@ import CopilotClient from "./copilot/CopilotClient";
 import ChatPanel from "./components/ChatPanel";
 import StatusBar from "./components/StatusBar";
 import BatchTailorDialog from "./components/BatchTailorDialog";
-import DocumentPreviewDialog from "./components/DocumentPreviewDialog";
+import DocumentPreviewMount from "./components/DocumentPreviewMount";
 import CompanyResearchDialog from "./components/CompanyResearchDialog";
 import LibraryUpdateDialog from "./components/LibraryUpdateDialog";
-import FocusPickerDialog from "./components/FocusPickerDialog";
 import SlotReviewDialog from "./components/SlotReviewDialog";
 import {
   buildJobContextString,
@@ -31,7 +30,6 @@ import {
   isTextResume,
   buildTemplateLinesForUpload,
   getDownloadFileNameForTitle,
-  getDownloadCoverLetterFileNameForTitle,
   createDocumentDownloaders,
   extractResumeTextLines,
   triggerBlobDownload,
@@ -42,7 +40,6 @@ import { weaveSources } from "../lib/document/coverLetterWeave";
 import { parseEmploymentHistory } from "../lib/resume/parseEmployment";
 import { editFingerprint } from "../lib/tailor/editMining";
 import { recordMatchGaps, annotateAndRank, promotedEditRules } from "../lib/tailor/localSignals";
-import { emailPreviewText } from "../lib/tailor/documentScopes";
 import { runWithConcurrency } from "../lib/tailor/runWithConcurrency";
 import { useProfileEntries } from "./hooks/useProfileEntries";
 import { useScreenshots } from "./hooks/useScreenshots";
@@ -194,9 +191,10 @@ export default function Home() {
   // dialog asks permission before any of them are committed. Deduped per job.
   const [libraryPrompt, setLibraryPrompt] = useState(null);
   const libraryPromptSeenRef = useRef(new Set());
-  // The previewer's "wrong focus" flag: opens a picker of the library's focus
-  // areas; applying one re-tailors the previewed job with that focus pinned.
-  const [focusPickerOpen, setFocusPickerOpen] = useState(false);
+  // The previewer's "wrong focus" flag (opens a picker of the library's focus
+  // areas; applying one re-tailors the previewed job with that focus pinned)
+  // now lives as local state inside DocumentPreviewMount.js -- nothing else
+  // in this file ever read it.
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
   const [aggressiveness, setAggressiveness] = useState(3);
   // Document-generation engine ("gemini" | "external" | "embedded"). Owned by a
@@ -3169,104 +3167,17 @@ export default function Home() {
         openCompanyResearch={research.openCompanyResearch}
       />
 
-      <DocumentPreviewDialog
-        open={preview.resumePreview.open}
-        jobTitle={preview.resumePreview.title}
-        company={preview.resumePreview.company}
-        initialTab={preview.resumePreview.tab}
-        scopes={{
-          resume: {
-            available: preview.previewScopeAvailable(tailoringMap[preview.resumePreview.jobId], "resume"),
-            text: tailoringMap[preview.resumePreview.jobId]?.result || "",
-            html: tailoringMap[preview.resumePreview.jobId]?.resumePreviewHtml,
-            fileName:
-              tailoringMap[preview.resumePreview.jobId]?.resumeFileName ||
-              getDownloadFileNameForTitle(preview.resumePreview.title, preview.resumePreview.company).replace(/\.docx$/i, ""),
-          },
-          cover: {
-            available: preview.previewScopeAvailable(tailoringMap[preview.resumePreview.jobId], "cover"),
-            text: (tailoringMap[preview.resumePreview.jobId]?.coverLetterResultLines || []).join("\n"),
-            html: tailoringMap[preview.resumePreview.jobId]?.coverLetterPreviewHtml,
-            fileName:
-              tailoringMap[preview.resumePreview.jobId]?.coverLetterFileName ||
-              getDownloadCoverLetterFileNameForTitle(preview.resumePreview.title, preview.resumePreview.company).replace(/\.docx$/i, ""),
-          },
-          // AC-1/AC-3: plain text only — no fileName/html, it's never downloaded
-          // as a docx or hand-edited (see DocumentPreviewDialog's DOCX_SCOPES gating).
-          email: {
-            available: preview.previewScopeAvailable(tailoringMap[preview.resumePreview.jobId], "email"),
-            text: emailPreviewText(tailoringMap[preview.resumePreview.jobId]),
-          },
-        }}
-        engine={tailorEngine}
-        loadModel={preview.loadPreviewModel}
-        reloadKey={previewReloadKey}
-        onClose={preview.closeResumePreview}
-        onSave={preview.saveDocumentPreview}
-        onRenameFile={preview.renameDocument}
-        onResubmit={preview.resubmitDocumentPreview}
-        onDownload={preview.downloadDocumentPreview}
-        onAskAi={(scope, payload) =>
-          chat.askAiAbout({
-            label: `${preview.resumePreview.company || "Job"}${preview.resumePreview.title ? ` · ${preview.resumePreview.title}` : ""} — ${scope === "cover" ? "Cover letter" : "Resume"}`,
-            content: payload?.text || "",
-            sourceJobId: preview.resumePreview.jobId,
-          })
-        }
-        onScrapePosting={
-          preview.resumePreview.posting || preview.resumePreview.url ? scrapePreviewPosting : null
-        }
-        focus={tailoringMap[preview.resumePreview.jobId]?.focusInfo || null}
-        coverVariant={tailoringMap[preview.resumePreview.jobId]?.coverVariantInfo || null}
-        persona={tailoringMap[preview.resumePreview.jobId]?.personaInfo || null}
-        keywordEditsCount={
-          (tailoringMap[preview.resumePreview.jobId]?.keywordEditsOverride?.boost?.length || 0) +
-          (tailoringMap[preview.resumePreview.jobId]?.keywordEditsOverride?.exclude?.length || 0)
-        }
-        onOpenFocusPicker={() => setFocusPickerOpen((v) => !v)}
-        focusControls={
-          <FocusPickerDialog
-            embedded
-            key={focusPickerOpen ? `focus-${preview.resumePreview.jobId}` : "focus-idle"}
-            open={focusPickerOpen}
-            currentFocus={tailoringMap[preview.resumePreview.jobId]?.focusInfo || null}
-            override={tailoringMap[preview.resumePreview.jobId]?.focusAreaOverride || ""}
-            keywords={tailoringMap[preview.resumePreview.jobId]?.keywordsInfo || null}
-            keywordEdits={tailoringMap[preview.resumePreview.jobId]?.keywordEditsOverride || null}
-            coverVariant={tailoringMap[preview.resumePreview.jobId]?.coverVariantInfo || null}
-            coverVariantOverride={tailoringMap[preview.resumePreview.jobId]?.coverVariantOverride || ""}
-            persona={tailoringMap[preview.resumePreview.jobId]?.personaInfo || null}
-            personaOverride={tailoringMap[preview.resumePreview.jobId]?.personaOverride || ""}
-            postingTitle={preview.resumePreview.title}
-            onClose={() => setFocusPickerOpen(false)}
-            onApply={preview.applyFocusArea}
-          />
-        }
-        onSetFraming={(variant) =>
-          preview.applyFocusArea(
-            tailoringMap[preview.resumePreview.jobId]?.focusAreaOverride || "",
-            tailoringMap[preview.resumePreview.jobId]?.keywordEditsOverride || null,
-            variant,
-            tailoringMap[preview.resumePreview.jobId]?.personaOverride || "",
-          )
-        }
-        onResearchCompany={() =>
-          research.openCompanyResearch({
-            id: preview.resumePreview.jobId,
-            title: preview.resumePreview.title,
-            company: preview.resumePreview.company,
-            description: tailoringMap[preview.resumePreview.jobId]?.jobDescription || "",
-          })
-        }
-        researchLoading={!!research.researchByJob[preview.resumePreview.jobId]?.loading}
-        researchCount={(research.researchByJob[preview.resumePreview.jobId]?.articles || []).length}
-        companyReferences={research.companyResearchByJob[preview.resumePreview.jobId] || []}
-        busy={preview.resumePreview.busy}
-        notice={preview.resumePreview.notice}
-        error={preview.resumePreview.error}
-        documentVersions={preview.documentVersions}
-        currentVersionId={preview.currentVersionId}
-        onSelectVersion={preview.selectDocumentVersion}
+      <DocumentPreviewMount
+        preview={preview}
+        tailoringMap={tailoringMap}
+        research={research}
+        chat={chat}
+        tailorEngine={tailorEngine}
+        previewReloadKey={previewReloadKey}
+        scrapePreviewPosting={scrapePreviewPosting}
+        currentUser={currentUser}
+        resumeFile={resumeFile}
+        coverLetterFile={coverLetterFile}
       />
 
       <CompanyResearchDialog
