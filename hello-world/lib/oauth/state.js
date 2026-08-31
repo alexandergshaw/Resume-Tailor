@@ -57,10 +57,15 @@ function computeMac(secret, payloadB64) {
  * Mint a signed, bound, expiring OAuth `state`.
  * Throws ONLY if the signing secret is missing, empty, or whitespace-only.
  *
- * @param {{ provider: string, userId: string, sessionId?: string|null }} binding
+ * @param {{ provider: string, userId: string, sessionId?: string|null, nonce?: string }} binding
+ *   `nonce` is OPTIONAL and additive: a caller with its own single-use nonce
+ *   (e.g. a double-submit cookie) may pass it here to have it carried inside
+ *   the SIGNED payload, so `verifyOAuthState` can later hand it back for
+ *   comparison against that caller's cookie. When omitted, this mints its own
+ *   random nonce exactly as before — existing callers (Gmail) are unaffected.
  * @returns {string} opaque URL-safe state
  */
-export function createOAuthState({ provider, userId, sessionId = null } = {}) {
+export function createOAuthState({ provider, userId, sessionId = null, nonce } = {}) {
   const secret = readSigningSecret();
   if (!secret) {
     throw new Error(
@@ -69,13 +74,14 @@ export function createOAuthState({ provider, userId, sessionId = null } = {}) {
   }
 
   const boundSession = sessionId !== null && sessionId !== undefined;
+  const stateNonce = typeof nonce === "string" && nonce.length > 0 ? nonce : randomBytes(16).toString("hex");
   const payload = {
     v: 1,
     provider,
     userId,
     sessionId: boundSession ? sessionId : null,
     boundSession,
-    nonce: randomBytes(16).toString("hex"),
+    nonce: stateNonce,
     iat: Date.now(),
   };
 
@@ -91,11 +97,16 @@ export function createOAuthState({ provider, userId, sessionId = null } = {}) {
  * @param {string|null|undefined} state
  * @param {{ provider: string, userId: string, sessionId?: string|null }} binding
  * @returns {Promise<
- *     { ok: true,  replayChecked: boolean }
+ *     { ok: true,  replayChecked: boolean, nonce: string, provider: string }
  *   | { ok: false, reason: "missing"|"malformed"|"bad-signature"|"expired"
  *                        |"wrong-provider"|"wrong-user"|"wrong-session"
  *                        |"replayed"|"no-secret" }
  * >}
+ *   On success, `nonce` and `provider` are lifted from the verified payload so
+ *   a caller composing its own nonce (see `createOAuthState`'s `nonce` param)
+ *   can compare it against its own record (e.g. a cookie) without re-decoding
+ *   the state itself. The `{ok:false}` branch NEVER carries payload contents —
+ *   a caller that logs a rejected result must not be able to leak them.
  */
 export async function verifyOAuthState(state, binding) {
   try {
@@ -201,5 +212,5 @@ async function verifyOAuthStateInner(state, binding) {
     replayChecked = false;
   }
 
-  return { ok: true, replayChecked };
+  return { ok: true, replayChecked, nonce: payload.nonce, provider: payload.provider };
 }

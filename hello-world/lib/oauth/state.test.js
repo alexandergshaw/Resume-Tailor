@@ -74,7 +74,7 @@ describe("createOAuthState / verifyOAuthState", () => {
     expect(state.length).toBeGreaterThan(0);
 
     const result = await verifyOAuthState(state, bindingFor({ sessionId: "sess-1" }));
-    expect(result).toEqual({ ok: true, replayChecked: true });
+    expect(result).toEqual({ ok: true, replayChecked: true, nonce: expect.any(String), provider: GMAIL });
   });
 
   it("T2: a single mutated byte in the payload segment is rejected as bad-signature", async () => {
@@ -130,7 +130,12 @@ describe("createOAuthState / verifyOAuthState", () => {
     expect(await verifyOAuthState(stale, bindingFor())).toEqual({ ok: false, reason: "expired" });
     // Positive control: the TTL must reject stale states without rejecting
     // every state, which a `return {ok:false,reason:"expired"}` would satisfy.
-    expect(await verifyOAuthState(fresh, bindingFor())).toEqual({ ok: true, replayChecked: true });
+    expect(await verifyOAuthState(fresh, bindingFor())).toEqual({
+      ok: true,
+      replayChecked: true,
+      nonce: expect.any(String),
+      provider: GMAIL,
+    });
   });
 
   it("T5: a state minted for a different binding is rejected despite a valid MAC", async () => {
@@ -161,7 +166,12 @@ describe("createOAuthState / verifyOAuthState", () => {
   it("T7: a state that already verified once is rejected as replayed", async () => {
     const state = createOAuthState(bindingFor());
 
-    expect(await verifyOAuthState(state, bindingFor())).toEqual({ ok: true, replayChecked: true });
+    expect(await verifyOAuthState(state, bindingFor())).toEqual({
+      ok: true,
+      replayChecked: true,
+      nonce: expect.any(String),
+      provider: GMAIL,
+    });
     expect(await verifyOAuthState(state, bindingFor())).toEqual({ ok: false, reason: "replayed" });
   });
 
@@ -184,6 +194,8 @@ describe("createOAuthState / verifyOAuthState", () => {
         expect(await verifyOAuthState(mutated, bindingFor())).toEqual({
           ok: true,
           replayChecked: true,
+          nonce: expect.any(String),
+          provider: GMAIL,
         });
         // ...and must have burned the SAME replay key as the canonical form.
         expect(await verifyOAuthState(state, bindingFor())).toEqual({
@@ -214,7 +226,12 @@ describe("createOAuthState / verifyOAuthState", () => {
     getRedisClient.mockReturnValue(null);
 
     const state = createOAuthState(bindingFor());
-    expect(await verifyOAuthState(state, bindingFor())).toEqual({ ok: true, replayChecked: false });
+    expect(await verifyOAuthState(state, bindingFor())).toEqual({
+      ok: true,
+      replayChecked: false,
+      nonce: expect.any(String),
+      provider: GMAIL,
+    });
 
     // An unavailable store may only ever ADD a rejection, never authorise one.
     const { payload, mac } = splitState(createOAuthState(bindingFor()));
@@ -238,7 +255,12 @@ describe("createOAuthState / verifyOAuthState", () => {
     });
 
     const state = createOAuthState(bindingFor());
-    expect(await verifyOAuthState(state, bindingFor())).toEqual({ ok: true, replayChecked: false });
+    expect(await verifyOAuthState(state, bindingFor())).toEqual({
+      ok: true,
+      replayChecked: false,
+      nonce: expect.any(String),
+      provider: GMAIL,
+    });
 
     const { payload, mac } = splitState(createOAuthState(bindingFor()));
     expect(
@@ -256,7 +278,12 @@ describe("createOAuthState / verifyOAuthState", () => {
     });
 
     const other = createOAuthState(bindingFor());
-    expect(await verifyOAuthState(other, bindingFor())).toEqual({ ok: true, replayChecked: false });
+    expect(await verifyOAuthState(other, bindingFor())).toEqual({
+      ok: true,
+      replayChecked: false,
+      nonce: expect.any(String),
+      provider: GMAIL,
+    });
     expect(await verifyOAuthState(other, bindingFor({ userId: OTHER_USER }))).toEqual({
       ok: false,
       reason: "wrong-user",
@@ -326,12 +353,16 @@ describe("createOAuthState / verifyOAuthState", () => {
       expect(await verifyOAuthState(unbound, bindingFor({ sessionId: "sess-9" }))).toEqual({
         ok: true,
         replayChecked: true,
+        nonce: expect.any(String),
+        provider: GMAIL,
       });
 
       const omitted = createOAuthState({ provider: GMAIL, userId: USER });
       expect(await verifyOAuthState(omitted, bindingFor({ sessionId: null }))).toEqual({
         ok: true,
         replayChecked: true,
+        nonce: expect.any(String),
+        provider: GMAIL,
       });
     });
 
@@ -390,7 +421,12 @@ describe("createOAuthState / verifyOAuthState", () => {
       process.env.GOOGLE_CLIENT_SECRET = "the-google-client-secret";
 
       const state = createOAuthState(bindingFor());
-      expect(await verifyOAuthState(state, bindingFor())).toEqual({ ok: true, replayChecked: true });
+      expect(await verifyOAuthState(state, bindingFor())).toEqual({
+        ok: true,
+        replayChecked: true,
+        nonce: expect.any(String),
+        provider: GMAIL,
+      });
     });
 
     it("prefers OAUTH_STATE_SECRET, so a rotation invalidates states minted under the old key", async () => {
@@ -411,7 +447,74 @@ describe("createOAuthState / verifyOAuthState", () => {
       delete process.env.Gemini_LLM_API_Key;
 
       const state = createOAuthState(bindingFor());
-      expect(await verifyOAuthState(state, bindingFor())).toEqual({ ok: true, replayChecked: true });
+      expect(await verifyOAuthState(state, bindingFor())).toEqual({
+        ok: true,
+        replayChecked: true,
+        nonce: expect.any(String),
+        provider: GMAIL,
+      });
+    });
+  });
+
+  describe("T28: caller-supplied nonce — the additive Drive composition seam", () => {
+    it("carries a caller-supplied nonce inside the signed payload and hands it back on verify", async () => {
+      const state = createOAuthState({ ...bindingFor(), nonce: "a-caller-chosen-nonce" });
+      const result = await verifyOAuthState(state, bindingFor());
+      expect(result).toEqual({
+        ok: true,
+        replayChecked: true,
+        nonce: "a-caller-chosen-nonce",
+        provider: GMAIL,
+      });
+    });
+
+    it("mints its own nonce when none is supplied — Gmail's existing, unaffected behaviour", async () => {
+      // Positive control for the claim in this module's docs that omitting
+      // `nonce` leaves today's behaviour unchanged: two states minted without
+      // a nonce still get two DIFFERENT random nonces, not the same fixed one.
+      const stateA = createOAuthState(bindingFor());
+      const stateB = createOAuthState(bindingFor());
+      const resultA = await verifyOAuthState(stateA, bindingFor());
+      const resultB = await verifyOAuthState(stateB, bindingFor());
+      expect(resultA.ok).toBe(true);
+      expect(resultB.ok).toBe(true);
+      expect(resultA.nonce).toMatch(/^[0-9a-f]{32}$/); // randomBytes(16).toString("hex")
+      expect(resultB.nonce).toMatch(/^[0-9a-f]{32}$/);
+      expect(resultA.nonce).not.toBe(resultB.nonce);
+    });
+
+    it("ignores a non-string nonce and mints its own instead of throwing", async () => {
+      const state = createOAuthState({ ...bindingFor(), nonce: 12345 });
+      const result = await verifyOAuthState(state, bindingFor());
+      expect(result.ok).toBe(true);
+      expect(result.nonce).toMatch(/^[0-9a-f]{32}$/);
+    });
+
+    it("the caller-supplied nonce still requires a valid signature — it is not a bypass", async () => {
+      const state = createOAuthState({ ...bindingFor(), nonce: "attacker-chosen-nonce" });
+      const { payload, mac } = splitState(state);
+      const at = 4;
+      const swapped = payload[at] === "A" ? "B" : "A";
+      const tampered = `${payload.slice(0, at)}${swapped}${payload.slice(at + 1)}.${mac}`;
+
+      expect(await verifyOAuthState(tampered, bindingFor())).toEqual({
+        ok: false,
+        reason: "bad-signature",
+      });
+    });
+  });
+
+  describe("no payload ever leaks on the {ok:false} path", () => {
+    it("a rejected verification carries only {ok:false, reason} — never nonce or provider", async () => {
+      const state = createOAuthState({ ...bindingFor(), nonce: "must-not-leak-on-rejection" });
+
+      const rejected = await verifyOAuthState(state, bindingFor({ userId: OTHER_USER }));
+      expect(rejected.ok).toBe(false);
+      expect(rejected.reason).toBe("wrong-user");
+      expect(Object.keys(rejected).sort()).toEqual(["ok", "reason"]);
+      expect(rejected).not.toHaveProperty("nonce");
+      expect(rejected).not.toHaveProperty("provider");
+      expect(rejected).not.toHaveProperty("payload");
     });
   });
 });
