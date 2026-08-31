@@ -31,6 +31,18 @@ export default function DriveButton() {
   const [connected, setConnected] = useState(null); // null = loading
   const [configured, setConfigured] = useState(true); // unknown until the fetch resolves; assume yes so a failure never hides the feature
   const [isDisconnecting, setIsDisconnecting] = useState(false);
+  // WAVE4-SEAMS.md MAJOR-1: app/api/drive/disconnect/route.js was built so a
+  // disconnect that fails over a SURVIVING credential row reports failure
+  // (503) rather than success -- deliberately the opposite of
+  // lib/gmail/gmailClient.js's deleteTokens, which ignores its response
+  // status and reports success regardless. That guarantee is worthless if
+  // the only caller throws the response away, which is exactly what this
+  // component used to do: `await fetch(...); setConnected(false);` with no
+  // `res.ok` check at all, so a user who clicked Disconnect while the store
+  // was unreachable was told "disconnected" while the refresh token stayed
+  // in the database -- the precise lie the route exists to avoid. `res.ok`
+  // now gates whether the UI actually flips to disconnected.
+  const [disconnectFailed, setDisconnectFailed] = useState(false);
   // The granting Google account, e.g. "person@gmail.com" -- OPTIONAL. The
   // status route (a later wave) may omit it, send an empty string, or send
   // something non-string; "" is the only value that means "don't render
@@ -58,9 +70,22 @@ export default function DriveButton() {
 
   async function handleDisconnect() {
     setIsDisconnecting(true);
+    setDisconnectFailed(false);
     try {
-      await fetch("/api/drive/disconnect", { method: "DELETE" });
-      setConnected(false);
+      const res = await fetch("/api/drive/disconnect", { method: "DELETE" });
+      if (res.ok) {
+        setConnected(false);
+      } else {
+        // The route only returns non-2xx when the disconnect did NOT
+        // happen (401/503) -- the credential row survives, so the UI must
+        // not claim otherwise. Stay connected and surface the failure.
+        setDisconnectFailed(true);
+      }
+    } catch {
+      // A network failure means we genuinely don't know whether the
+      // server-side delete happened -- same posture as res.ok === false:
+      // never optimistically claim disconnected.
+      setDisconnectFailed(true);
     } finally {
       setIsDisconnecting(false);
     }
@@ -109,6 +134,11 @@ export default function DriveButton() {
       >
         {isDisconnecting ? "Disconnecting…" : "Disconnect Drive"}
       </Button>
+      {disconnectFailed ? (
+        <Typography sx={{ fontSize: "0.72rem", color: "var(--danger)" }}>
+          Couldn&apos;t disconnect Drive. Try again.
+        </Typography>
+      ) : null}
       <Typography sx={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
         Documents are saved to a “Resume Tailor” folder in your Drive.
       </Typography>

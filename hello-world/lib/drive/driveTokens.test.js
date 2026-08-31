@@ -481,6 +481,71 @@ describe("authorizedDriveClient", () => {
     expect(sb.store["user-1"].expiry_date).toBe(9_999_999_999_999);
   });
 
+  // WAVE4-SEAMS.md GAP 3: this write-back is deliberately still
+  // fire-and-forget (see the comment at the `.on("tokens", ...)` call site
+  // for why), but a failure must be observable, not silently swallowed.
+  //
+  // WAVE4-REVERIFY.md MAJOR-1: the realistic shape of a storage failure here
+  // is `saveDriveConnection` RESOLVING `{ connection: null, error }` (its
+  // own try/catch already converts a real Supabase failure into that, per
+  // driveConnections.js) — not throwing. A mock that throws instead proves
+  // nothing about the code path production actually takes, which is exactly
+  // how the original dead `.catch` shipped and passed. This test uses the
+  // resolved shape.
+  it("GAP 3 / MAJOR-1: an ordinary (resolved) write-back error is logged rather than silently discarded", async () => {
+    sb.store["user-1"] = { ...CONNECTED_ROW };
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    saveDriveConnection.mockImplementationOnce(async () => ({ connection: null, error: "boom-write-back" }));
+
+    box.getAccessTokenImpl = async function (client) {
+      const refreshed = { access_token: "silently-refreshed-token", expiry_date: 9_999_999_999_999 };
+      client.setCredentials(refreshed);
+      client.emit("tokens", refreshed);
+      return { token: refreshed.access_token };
+    };
+
+    const result = await authorizedDriveClient("user-1", "https://app/cb");
+    // The in-flight request itself is unaffected by the listener's failure.
+    expect(result.ok).toBe(true);
+
+    await vi.waitFor(() => {
+      expect(consoleErrorSpy).toHaveBeenCalled();
+    });
+    expect(consoleErrorSpy.mock.calls[0][0]).toMatch(/drive/i);
+    expect(consoleErrorSpy.mock.calls[0].join(" ")).toContain("boom-write-back");
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  // MAJOR-1's fix keeps a rejection path too: `saveDriveConnection` CAN
+  // still throw synchronously (e.g. `createAdminClient()` itself, called
+  // outside its own try/catch) rather than resolve an error object.
+  it("MAJOR-1: a genuine rejection (not just a resolved error) is also logged", async () => {
+    sb.store["user-1"] = { ...CONNECTED_ROW };
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    saveDriveConnection.mockImplementationOnce(async () => {
+      throw new Error("boom-threw");
+    });
+
+    box.getAccessTokenImpl = async function (client) {
+      const refreshed = { access_token: "silently-refreshed-token", expiry_date: 9_999_999_999_999 };
+      client.setCredentials(refreshed);
+      client.emit("tokens", refreshed);
+      return { token: refreshed.access_token };
+    };
+
+    const result = await authorizedDriveClient("user-1", "https://app/cb");
+    expect(result.ok).toBe(true);
+
+    await vi.waitFor(() => {
+      expect(consoleErrorSpy).toHaveBeenCalled();
+    });
+    expect(consoleErrorSpy.mock.calls[0][0]).toMatch(/drive/i);
+    expect(consoleErrorSpy.mock.calls[0].join(" ")).toContain("boom-threw");
+
+    consoleErrorSpy.mockRestore();
+  });
+
   it("AC-E6: getAccessToken() is awaited before the client is handed back (proactive refresh happens before any upload)", async () => {
     sb.store["user-1"] = { ...CONNECTED_ROW };
     let getAccessTokenResolved = false;

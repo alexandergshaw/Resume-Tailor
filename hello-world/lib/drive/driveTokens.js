@@ -216,7 +216,36 @@ export async function authorizedDriveClient(userId, redirectUri) {
   // OWN internal refresh) -- so no refresh, proactive or transparent, is
   // ever discarded. `saveDriveTokens` merges: see this file's header.
   auth.on("tokens", (refreshed) => {
-    void saveDriveTokens(userId, refreshed);
+    // Deliberately NOT awaited — this listener fires synchronously from
+    // inside google-auth-library's own refresh machinery, potentially
+    // mid-request while the caller is doing other Drive I/O with the same
+    // `auth` instance. The genuinely mitigating fact is timing, not "no
+    // await would be meaningful": this fires while the caller is still
+    // inside `await auth.getAccessToken()` below, so the write-back has the
+    // rest of the request to land before the response is ever sent — the
+    // same reason `save/route.js`'s folder-id write-back (WAVE4-SEAMS.md
+    // GAP 3 / MAJOR-8) is able to just await it outright. Nothing here
+    // collects this listener's promise, so this is the one place in the
+    // call graph that must observe its own outcome.
+    //
+    // WAVE4-REVERIFY.md MAJOR-1: `saveDriveTokens` RESOLVES `{ connection:
+    // null, error }` on every realistic storage failure — it only REJECTS
+    // if something outside its own try/catch throws (e.g. `createAdminClient()`
+    // itself, per driveConnections.js's header). A bare `.catch` here would
+    // never see the resolved-with-error shape, so the ordinary failure this
+    // guard exists for would still be swallowed. Both shapes are handled: a
+    // resolved error is logged in `.then`, and a genuine rejection is still
+    // logged too — per GAP 3's "make the failure observable rather than
+    // silent", log rather than swallow either way.
+    saveDriveTokens(userId, refreshed)
+      .then(({ error }) => {
+        if (error) {
+          console.error("[drive] token write-back failed:", error);
+        }
+      })
+      .catch((err) => {
+        console.error("[drive] token write-back threw:", err);
+      });
   });
 
   // AC-E6: refresh proactively, once, before the caller ever reaches

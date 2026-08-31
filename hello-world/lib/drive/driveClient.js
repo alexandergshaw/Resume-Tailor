@@ -151,23 +151,51 @@ export async function ensureAppFolder(drive, cachedFolderId) {
  * persistence step and a retried save produces a duplicate Doc, which AM-3
  * forbids.
  *
+ * `adopt` (default `true`) gates that whole lookup-and-repoint behaviour.
+ * Pass `adopt: false` for a create that must NEVER touch a pre-existing
+ * same-named Doc — this is the ONLY way to get a genuinely new Doc out of
+ * this function. WAVE4-SEAMS.md BLOCKER-1: `save/route.js`'s "Save as a new
+ * Doc" conflict choice, and its "target is trashed / no longer a native
+ * Doc" replacement path, both call this with `adopt: false` — the whole
+ * reason the guard is a call-site option rather than a second, separate
+ * function is so there is exactly one place in this file that ever issues
+ * `files.list` before a create, and every caller has to say explicitly
+ * which behaviour it wants rather than getting adoption by accident.
+ *
+ * WAVE4-REVERIFY.md MAJOR-2: this lookup matches by NAME, which is the
+ * wrong identity whenever a stored id is available — a name is user-visible
+ * and, since `save/route.js`'s "Save as a new Doc" disambiguation, can now
+ * be shared on purpose by a Doc this app deliberately left untouched. The
+ * caller (`save/route.js`) is the one place that decides whether `adopt`
+ * runs at all, and it now keys its OWN `existingRef` on a stored id
+ * (the durable row, or the client's session-local knownRef) wherever one is
+ * available, falling into this by-name lookup only for its one remaining
+ * call site: a plain create reached with NO id anywhere — no durable row,
+ * no session-local ref. In that specific situation there is, by
+ * definition, no id for anyone to key on; name is what's left, and it's
+ * what the BLK-4/MAJ-11 retry-after-failed-persistence case above needs it
+ * for. See that call site's own comment for the narrowed set of ways this
+ * remains reachable.
+ *
  * @param {import('googleapis').drive_v3.Drive} drive
- * @param {{ name: string, folderId: string, docxBuffer: Buffer }} args
+ * @param {{ name: string, folderId: string, docxBuffer: Buffer, adopt?: boolean }} args
  * @returns {Promise<object>} the raw `Schema$File` fields named by `DRIVE_FIELDS`
  */
-export async function createDoc(drive, { name, folderId, docxBuffer }) {
-  const clauses = [`name = '${escapeDriveQueryValue(name)}'`, "trashed = false"];
-  if (folderId) clauses.unshift(`'${folderId}' in parents`);
-  const hits = await drive.files.list({
-    q: clauses.join(" and "),
-    spaces: "drive",
-    fields: "files(id,name,mimeType,webViewLink,version,modifiedTime)",
-    pageSize: 10,
-  });
-  const existing = hits?.data?.files?.[0];
-  if (existing) {
-    // Adopt: repoint onto the existing Doc rather than create a duplicate.
-    return updateDoc(drive, { fileId: existing.id, docxBuffer });
+export async function createDoc(drive, { name, folderId, docxBuffer, adopt = true }) {
+  if (adopt) {
+    const clauses = [`name = '${escapeDriveQueryValue(name)}'`, "trashed = false"];
+    if (folderId) clauses.unshift(`'${folderId}' in parents`);
+    const hits = await drive.files.list({
+      q: clauses.join(" and "),
+      spaces: "drive",
+      fields: "files(id,name,mimeType,webViewLink,version,modifiedTime)",
+      pageSize: 10,
+    });
+    const existing = hits?.data?.files?.[0];
+    if (existing) {
+      // Adopt: repoint onto the existing Doc rather than create a duplicate.
+      return updateDoc(drive, { fileId: existing.id, docxBuffer });
+    }
   }
 
   const parents = folderId ? [folderId] : undefined;

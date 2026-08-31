@@ -324,6 +324,40 @@ describe("driveErrorMessage", () => {
     expect(driveErrorMessage("something_new")).toBeNull();
     expect(driveErrorMessage("unknown")).toBeNull();
   });
+
+  // WAVE4-SEAMS.md MAJOR-3: the oauth2callback route forwards these reasons
+  // verbatim (its own "no-session"/"missing-code", and everything
+  // lib/drive/oauthState.js / lib/oauth/state.js can produce via
+  // `verified.reason`). None is individually actionable, so all twelve
+  // collapse onto the one honest "try again" sentence -- see
+  // oauth2callback/route.test.js's source-enumeration membership test for
+  // the proof that this list stays exhaustive.
+  it("maps every non-actionable oauth2callback state-verification reason to the one honest 'try again' sentence", () => {
+    const reasons = [
+      "missing-code",
+      "nonce-mismatch",
+      "missing",
+      "malformed",
+      "bad-signature",
+      "expired",
+      "wrong-provider",
+      "wrong-user",
+      "wrong-session",
+      "replayed",
+      "no-secret",
+    ];
+    for (const reason of reasons) {
+      expect(driveErrorMessage(reason)).toBe(DRIVE_BATCH_MESSAGE.tokenUnreadable);
+    }
+  });
+
+  // WAVE4-REVERIFY.md MINOR-1: "no-session" is deliberately NOT in the list
+  // above -- it is the one oauth2callback reason that already has an
+  // accurate, actionable bucket (the user's app session was gone), so it
+  // must resolve to that one, not to the generic "try again" copy.
+  it("maps 'no-session' to appSignedOut, not to the generic tokenUnreadable bucket", () => {
+    expect(driveErrorMessage("no-session")).toBe(DRIVE_BATCH_MESSAGE.appSignedOut);
+  });
 });
 
 describe("DRIVE_ANNOUNCE", () => {

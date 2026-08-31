@@ -41,6 +41,20 @@ describe("files.create — the real client's emitted request (AC-S3)", () => {
   });
 });
 
+describe("files.create with adopt:false — no duplicate-check list at all (BLOCKER-1)", () => {
+  it("issues exactly one request — the create — and never a files.list", async () => {
+    const requests = await captureDriveRequests((drive) =>
+      createDoc(drive, { name: "Acme - SWE - Resume", folderId: "FOLDER1", docxBuffer: DOCX_BUFFER, adopt: false }),
+    );
+    expect(requests).toHaveLength(1);
+    const [create] = requests;
+    expect(create.method).toBe("POST");
+    expect(create.params.uploadType).toBe("multipart");
+    expect(requestBodyOf(create)).toMatchObject({ mimeType: DOCS_MIME });
+    expect(mediaContentTypeOf(create)).toBe(DOCX_MIME);
+  });
+});
+
 describe("files.update — the real client's emitted request (AC-S30)", () => {
   it("carries requestBody.mimeType = the native-Doc type, a media part declaring the docx type, and uploadType=multipart", async () => {
     const requests = await captureDriveRequests((drive) =>

@@ -264,6 +264,40 @@ const ERROR_CODE_TO_KEY = {
   "popup-closed": "popupClosedNoResult",
   offline: "offline",
   "token-unreadable": "tokenUnreadable",
+
+  // WAVE4-SEAMS.md MAJOR-3: the remaining reasons app/api/drive/oauth2callback
+  // ever emits (its own "no-session"/"missing-code", plus every rejection
+  // lib/drive/oauthState.js and lib/oauth/state.js can produce and that the
+  // callback forwards verbatim as `verified.reason`). None of these is
+  // individually actionable by a user -- "bad-signature" vs "expired" vs
+  // "wrong-session" all mean the same thing to them: the connect attempt
+  // didn't finish and they should try again -- so all twelve collapse onto
+  // the one honest sentence this app already has for exactly that,
+  // "tokenUnreadable", rather than leaking internal state-verification
+  // vocabulary into the UI or silently resolving to no copy at all.
+  // oauth2callback/route.test.js's reason-vocabulary membership test
+  // enumerates every one of these from source and reds if a new value ever
+  // appears here without a matching entry.
+  //
+  // WAVE4-REVERIFY.md MINOR-1: "no-session" is the one exception to "all
+  // twelve collapse onto tokenUnreadable" above -- it means the user's OWN
+  // app session was gone at callback time, which is exactly what
+  // `appSignedOut` already says ("You've been signed out. Sign in again,
+  // then save."). Routing it to tokenUnreadable's "Couldn't finish
+  // connecting to Drive. Try again." tells a signed-out user to retry the
+  // exact action that will fail again for the same reason.
+  "no-session": "appSignedOut",
+  "missing-code": "tokenUnreadable",
+  "nonce-mismatch": "tokenUnreadable",
+  missing: "tokenUnreadable",
+  malformed: "tokenUnreadable",
+  "bad-signature": "tokenUnreadable",
+  expired: "tokenUnreadable",
+  "wrong-provider": "tokenUnreadable",
+  "wrong-user": "tokenUnreadable",
+  "wrong-session": "tokenUnreadable",
+  replayed: "tokenUnreadable",
+  "no-secret": "tokenUnreadable",
 };
 
 export function driveErrorMessage(code, { path = "save" } = {}) {

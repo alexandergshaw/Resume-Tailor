@@ -318,6 +318,113 @@ describe("DriveButton — disconnecting", () => {
   });
 });
 
+describe("DriveButton — disconnect failure (WAVE4-SEAMS.md MAJOR-1)", () => {
+  // app/api/drive/disconnect/route.js is deliberately built so a disconnect
+  // that fails over a SURVIVING credential row reports failure (401/503)
+  // rather than success -- the opposite of lib/gmail/gmailClient.js's
+  // deleteTokens. That guarantee is worthless if the only caller discards
+  // the response, which is the exact defect these tests pin.
+
+  it("stays connected and shows a failure message when the disconnect response is not ok (e.g. 503 drive_storage_unavailable)", async () => {
+    global.fetch = vi.fn((url, options = {}) => {
+      const method = (options && options.method) || "GET";
+      if (method === "DELETE") {
+        return Promise.resolve({ ok: false, status: 503, json: async () => ({ error: "drive_storage_unavailable" }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ connected: true, configured: true }) });
+    });
+    await mount();
+
+    const disconnect = findByText("Disconnect Drive");
+    await act(async () => {
+      disconnect.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    // The credential was never actually removed -- the UI must not claim
+    // otherwise. Still connected, Disconnect control still present, and a
+    // failure message is now visible.
+    expect(findByText("Connect Drive")).toBeNull();
+    expect(container.textContent).toContain("Drive connected");
+    expect(findByText("Disconnect Drive")).not.toBeNull();
+    expect(container.textContent).toContain("Couldn't disconnect Drive. Try again.");
+    expect(findByText("Disconnecting…")).toBeNull();
+  });
+
+  it("stays connected and shows a failure message when the disconnect fetch itself rejects (network failure)", async () => {
+    global.fetch = vi.fn((url, options = {}) => {
+      const method = (options && options.method) || "GET";
+      if (method === "DELETE") return Promise.reject(new Error("network down"));
+      return Promise.resolve({ ok: true, json: async () => ({ connected: true, configured: true }) });
+    });
+    await mount();
+
+    const disconnect = findByText("Disconnect Drive");
+    await act(async () => {
+      disconnect.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(findByText("Connect Drive")).toBeNull();
+    expect(container.textContent).toContain("Drive connected");
+    expect(container.textContent).toContain("Couldn't disconnect Drive. Try again.");
+  });
+
+  // Paired positive control: the SAME sequence of events (click, await),
+  // but with res.ok:true, ends up disconnected and shows NO failure
+  // message -- so "shows a failure message on !res.ok" cannot be trivially
+  // satisfied by a component that always shows the message, and "stays
+  // connected on failure" cannot be satisfied by one that never honours
+  // res.ok at all (i.e. the pre-fix component, which always disconnected).
+  it("positive control: the same click sequence with res.ok:true disconnects cleanly and shows no failure message", async () => {
+    global.fetch = vi.fn((url, options = {}) => {
+      const method = (options && options.method) || "GET";
+      if (method === "DELETE") return Promise.resolve({ ok: true, json: async () => ({ disconnected: true }) });
+      return Promise.resolve({ ok: true, json: async () => ({ connected: true, configured: true }) });
+    });
+    await mount();
+
+    const disconnect = findByText("Disconnect Drive");
+    await act(async () => {
+      disconnect.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(findByText("Connect Drive")).not.toBeNull();
+    expect(container.textContent).not.toContain("Couldn't disconnect Drive. Try again.");
+  });
+
+  it("clears a previous failure message once a retry succeeds", async () => {
+    let deleteCallCount = 0;
+    global.fetch = vi.fn((url, options = {}) => {
+      const method = (options && options.method) || "GET";
+      if (method === "DELETE") {
+        deleteCallCount += 1;
+        if (deleteCallCount === 1) return Promise.resolve({ ok: false, status: 503, json: async () => ({}) });
+        return Promise.resolve({ ok: true, json: async () => ({ disconnected: true }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ connected: true, configured: true }) });
+    });
+    await mount();
+
+    let disconnect = findByText("Disconnect Drive");
+    await act(async () => {
+      disconnect.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("Couldn't disconnect Drive. Try again.");
+
+    disconnect = findByText("Disconnect Drive");
+    await act(async () => {
+      disconnect.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(findByText("Connect Drive")).not.toBeNull();
+    expect(container.textContent).not.toContain("Couldn't disconnect Drive. Try again.");
+  });
+});
+
 describe("DriveButton — keyboard operability and focus", () => {
   it("the Connect Drive link is a native, focusable anchor with a visible outline left to the browser/theme (no custom focus suppression)", async () => {
     installFetch(() => Promise.resolve({ ok: true, json: async () => ({ connected: false, configured: true }) }));

@@ -139,51 +139,116 @@ describe("requireDriveConnection (AC-C4, REQUIRED)", () => {
 });
 
 describe("driveJson (AC-C4 / secret-leakage serializer)", () => {
-  it("strips every named secret key at the top level while preserving everything else", async () => {
+  // WAVE4-SEAMS.md MAJOR-4: `stripSecrets` (the function `driveJson` calls
+  // internally) is not exported, so `driveJson` -- its one and only caller
+  // in this codebase -- IS the direct test surface for it. The reviewer
+  // proved that deleting the strip entirely left every one of the seven
+  // Drive routes' 118 tests green, because each route builds its response
+  // body from explicitly named fields and the secret never enters
+  // `driveJson` in the first place. The tests below close that gap by
+  // constructing bodies that DO carry every named secret key -- something
+  // no real route currently does, which is exactly why route-level tests
+  // could never catch the strip's removal.
+
+  // The complete SECRET_KEYS set from routeSupport.js, kept as its own
+  // array (not re-derived from the module) so a mutation that drops one
+  // entry from that set is caught by the per-key assertions below rather
+  // than by a single all-or-nothing equality check that could pass even
+  // with one key silently missing.
+  const ALL_SECRET_KEYS = [
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "accessToken",
+    "refreshToken",
+    "idToken",
+    "client_secret",
+    "clientSecret",
+    "secret",
+  ];
+
+  it("strips every one of the nine named secret keys individually -- each assertion fails on its own if that ONE key is ever dropped from SECRET_KEYS", async () => {
+    for (const key of ALL_SECRET_KEYS) {
+      const res = driveJson({ scope: "resume", fileId: "1AbC", [key]: "SHOULD-NOT-LEAK" });
+      const body = await readJson(res);
+      expect(body, `key "${key}" was not stripped`).not.toHaveProperty(key);
+      expect(body).toEqual({ scope: "resume", fileId: "1AbC" });
+    }
+  });
+
+  it("strips all nine secret keys at once while preserving every non-secret sibling", async () => {
     const res = driveJson({
       scope: "resume",
       fileId: "1AbC",
       access_token: "SHOULD-NOT-LEAK",
       refresh_token: "SHOULD-NOT-LEAK",
       id_token: "SHOULD-NOT-LEAK",
+      accessToken: "SHOULD-NOT-LEAK",
+      refreshToken: "SHOULD-NOT-LEAK",
+      idToken: "SHOULD-NOT-LEAK",
       client_secret: "SHOULD-NOT-LEAK",
+      clientSecret: "SHOULD-NOT-LEAK",
+      secret: "SHOULD-NOT-LEAK",
     });
 
     const body = await readJson(res);
     expect(body).toEqual({ scope: "resume", fileId: "1AbC" });
-    expect(Object.keys(body)).not.toContain("access_token");
+    for (const key of ALL_SECRET_KEYS) expect(Object.keys(body)).not.toContain(key);
   });
 
-  it("strips camelCase secret keys too", async () => {
-    const res = driveJson({ name: "x", accessToken: "SHOULD-NOT-LEAK", refreshToken: "SHOULD-NOT-LEAK" });
-    const body = await readJson(res);
-    expect(body).toEqual({ name: "x" });
-  });
-
-  it("strips secrets nested inside an object", async () => {
+  it("strips secrets nested inside an object, at any depth, while preserving the non-secret fields alongside them", async () => {
     const res = driveJson({
       ok: true,
-      connection: { google_email: "a@example.com", refresh_token: "SHOULD-NOT-LEAK" },
+      connection: {
+        google_email: "a@example.com",
+        refresh_token: "SHOULD-NOT-LEAK",
+        deeper: { name: "kept", secret: "SHOULD-NOT-LEAK", idToken: "SHOULD-NOT-LEAK" },
+      },
     });
     const body = await readJson(res);
-    expect(body).toEqual({ ok: true, connection: { google_email: "a@example.com" } });
+    expect(body).toEqual({
+      ok: true,
+      connection: { google_email: "a@example.com", deeper: { name: "kept" } },
+    });
   });
 
-  it("strips secrets inside array elements", async () => {
+  it("strips secrets inside array elements, including a secret nested inside an object nested inside an array element", async () => {
     const res = driveJson({
       rows: [
         { name: "a", access_token: "SHOULD-NOT-LEAK" },
-        { name: "b", refresh_token: "SHOULD-NOT-LEAK" },
+        { name: "b", refresh_token: "SHOULD-NOT-LEAK", nested: { name: "c", clientSecret: "SHOULD-NOT-LEAK" } },
       ],
     });
     const body = await readJson(res);
-    expect(body).toEqual({ rows: [{ name: "a" }, { name: "b" }] });
+    expect(body).toEqual({
+      rows: [{ name: "a" }, { name: "b", nested: { name: "c" } }],
+    });
   });
 
-  it("positive control: a body with no secret keys is passed through unchanged, not emptied", async () => {
-    const res = driveJson({ scope: "cover", fileId: "z9", version: "3" });
+  // The paired positive control MAJOR-4 asked for: proves the non-secret
+  // fields survive BYTE-IDENTICAL (via JSON round-trip), including a field
+  // whose name merely CONTAINS "secret" or "token" as a substring, so this
+  // suite cannot be satisfied by a function that returns `{}` for any input
+  // (that would fail this control) OR by one that strips anything whose key
+  // name loosely resembles a secret (that would also fail this control).
+  it("positive control: a body with no secret keys -- including near-miss key names -- survives byte-identical, not emptied and not over-stripped", async () => {
+    const input = {
+      scope: "cover",
+      fileId: "z9",
+      version: "3",
+      webViewLink: "https://docs.google.com/document/d/z9",
+      // Near-miss names: contain "secret"/"token" as a substring but are
+      // NOT exact SECRET_KEYS entries, so they must survive too -- proves
+      // the strip matches by exact key name, not substring.
+      secretNote: "not a real secret key",
+      tokenCount: 3,
+      nested: { name: "kept", tokenType: "Bearer" },
+      rows: [{ name: "a", tokenized: true }],
+    };
+    const res = driveJson(input);
     const body = await readJson(res);
-    expect(body).toEqual({ scope: "cover", fileId: "z9", version: "3" });
+    expect(body).toEqual(input);
+    expect(JSON.stringify(body)).toBe(JSON.stringify(input));
   });
 
   it("passes the init (status code) through to Response.json", async () => {

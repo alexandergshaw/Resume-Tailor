@@ -172,6 +172,29 @@ describe("createDoc — the duplicate guard (ARCH.md §8.2, BLK-4/MAJ-11)", () =
     expect(capturedBody).toBeInstanceOf(Readable);
     expect(typeof capturedBody.pipe).toBe("function");
   });
+
+  // WAVE4-SEAMS.md BLOCKER-1: `adopt: false` is the ONLY way to get a
+  // genuinely new Doc out of this function. Without it, `save/route.js`'s
+  // "Save as a new Doc" conflict choice and its trashed/non-Doc replacement
+  // path both end up PATCHing the exact file they must never touch, because
+  // the conflicted/stale Doc almost always still carries this function's
+  // own lookup name.
+  it("adopt:false skips the duplicate-check list entirely and always creates — even when a same-named Doc exists", async () => {
+    const drive = fakeDrive({
+      list: async () => ({ data: { files: [{ id: "SHOULD_NEVER_BE_ADOPTED" }] } }),
+      create: async () => ({ data: { id: "NEW_DOC", mimeType: DOCS_MIME } }),
+    });
+    const result = await createDoc(drive, {
+      name: "Acme - SWE - Resume",
+      folderId: "FOLDER1",
+      docxBuffer: DOCX_BUFFER,
+      adopt: false,
+    });
+    expect(result).toEqual({ id: "NEW_DOC", mimeType: DOCS_MIME });
+    expect(drive.files.list).not.toHaveBeenCalled();
+    expect(drive.files.update).not.toHaveBeenCalled();
+    expect(drive.files.create).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("updateDoc — never re-parents, never renames (AC-S23)", () => {
