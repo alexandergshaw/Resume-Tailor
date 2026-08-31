@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Dialog from "@mui/material/Dialog";
 import DialogTitle from "@mui/material/DialogTitle";
 import DialogContent from "@mui/material/DialogContent";
@@ -35,6 +35,8 @@ import CombineDocumentsControl from "./preview/CombineDocumentsControl";
 import ReviseStrip from "./preview/ReviseStrip";
 import VersionControl from "./preview/VersionControl";
 import HighlightToggle from "./preview/HighlightToggle";
+import DriveActions from "./preview/DriveActions";
+import DriveResultRegion from "./preview/DriveResultRegion";
 
 // Cover-letter framing options for the in-preview control. "" = auto-detect; the
 // rest pin the framing — the technical/non-technical axis the user controls, plus
@@ -47,6 +49,13 @@ const FRAMING_OPTIONS = [
   { value: "staff", label: "University staff" },
 ];
 const FRAMING_LABEL = Object.fromEntries(FRAMING_OPTIONS.map((o) => [o.value, o.label]));
+
+// AC-A4's fallback focus target: the id DriveActions.js hardcodes on its own
+// save button (`saveLabelId` in that file, not exported -- this is a
+// deliberate, documented coupling to that literal string rather than a
+// prop/import, since the two components already agree on it for the "aria-
+// describedby points at the save control" wiring the a11y audit pinned).
+const DRIVE_SAVE_CONTROL_ID = "drive-save-control-label";
 
 // A page-like surface so the preview reads like the printed document. The
 // "paper" stays white with dark ink in both themes (it mirrors a printed page).
@@ -112,7 +121,39 @@ export default function DocumentPreviewDialog({
   documentVersions = {},
   currentVersionId = {},
   onSelectVersion,
+  // Wave 6A: `useDriveDocuments`'s full return value, mounted one level up
+  // in DocumentPreviewMount.js (not here, and not in page.js — ARCH.md
+  // §4.3/§12). REQUIRED, deliberately with no default (see the invariant at
+  // the top of the function body below for why).
+  drive,
+  // (scope: "resume"|"cover"|"email") => void. Fired whenever `tab` changes
+  // (including the dialog's own initial-tab resolution below, which can
+  // differ from `initialTab`) so the mount component can feed the LIVE
+  // active scope to `useDriveDocuments` — that hook needs it only to gate
+  // the hiring-email caption, but `initialTab` alone is stale the moment the
+  // user clicks a different tab (see DocumentPreviewMount.js's comment).
+  onActiveScopeChange,
 }) {
+  // WAVE6-VERIFY.md MAJOR-1 (M15): `drive` used to default to a hand-copied
+  // `DEFAULT_DRIVE` shape (`status: "unconfigured"`) whenever the prop was
+  // missing -- which meant DocumentPreviewMount.js forgetting `drive={drive}`
+  // rendered a perfectly normal-looking, silently Drive-less modal, and the
+  // ENTIRE shipped test suite stayed green through that mutation (verified).
+  // A default that masks a missing wire is exactly the wrong failure mode
+  // for the one prop this whole wave exists to add: fail loudly, immediately,
+  // before any hook below runs, rather than quietly. The only production
+  // caller (DocumentPreviewMount.js) always supplies useDriveDocuments()'s
+  // full return value, so this can never fire in a correctly wired app --
+  // and it now fires identically for both `drive={undefined}` (a missing
+  // prop) and `drive={null}`, closing the inconsistency where the JSX below
+  // reads `drive.leadingLine`/`drive.status` unguarded (crashes on `null`)
+  // while `handleSaveToDrive` used to read `drive?.saveToDrive?.()` (safe on
+  // `null`) -- two different behaviours for the same misconfiguration.
+  if (!drive) {
+    throw new Error(
+      "DocumentPreviewDialog requires a `drive` prop (ARCH.md §4.3) -- mount via DocumentPreviewMount, which always supplies useDriveDocuments()'s return value.",
+    );
+  }
   const isMobile = useIsMobile();
   // The revise box re-runs the selected engine (the `engine` prop), so its copy
   // reflects which one: Gemini rewrites freely; Embedded applies
@@ -317,6 +358,14 @@ export default function DocumentPreviewDialog({
     if (open && available(tab) && !docState[tab]) ensureLoaded(tab);
   }, [open, tab, docState, ensureLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Report the live active scope upward on every change — the tab-click
+  // handler, the open/reopen reseed, and the reloadKey reseed all funnel
+  // through `setTab`, so this one effect covers every path that can change
+  // it (see `onActiveScopeChange`'s own doc comment above).
+  useEffect(() => {
+    onActiveScopeChange?.(tab);
+  }, [tab, onActiveScopeChange]);
+
   // Seed the editable surface when entering edit mode (or switching scope while
   // editing). We set innerHTML imperatively so typing never resets the caret.
   useEffect(() => {
@@ -402,6 +451,79 @@ export default function DocumentPreviewDialog({
   const commitFileName = () => {
     const next = fileNameDraft.trim();
     if (next !== (scopes[tab]?.fileName || "")) onRenameFile?.(tab, next);
+  };
+
+  // AC-A4: "on the consent return, focus returns to the element captured at
+  // click time, else to the save control." Captured unconditionally on
+  // EVERY Save-to-Drive click, even the common case where this save never
+  // needs consent at all (already connected) -- harmless, since the ref is
+  // simply overwritten by the next click before the restoration effect
+  // below ever reads it for a save that actually opens the popup.
+  const consentReturnFocusRef = useRef(null);
+  // Where focus was the instant `drive.status` first became "consentPending"
+  // -- i.e. wherever the browser left it once the OAuth popup took over
+  // (typically <body>, since opening a new window blurs the opener
+  // document). Comparing against THIS snapshot on the way back out, rather
+  // than hardcoding `document.body`, is what lets a keyboard/AT user who
+  // deliberately moved focus elsewhere *while the popup was open* keep their
+  // own focus instead of being yanked back -- mirroring
+  // DriveOverwriteDialog.js's own "restore only if focus is still where you
+  // left it" precedent, adapted from a DOM-removal to a popup-window return.
+  const focusAtConsentOpenRef = useRef(null);
+  const prevDriveStatusRef = useRef(drive.status);
+
+  // `useLayoutEffect`, not `useEffect`, so the restoration happens
+  // synchronously as part of the SAME commit that carries the status change
+  // out of "consentPending" -- before the browser paints a frame with focus
+  // sitting nowhere useful. (DriveOverwriteDialog.js needs `useLayoutEffect`
+  // for a stronger reason -- its cleanup must read `document.activeElement`
+  // before React detaches the node it focused, which a passive effect's
+  // later-firing cleanup would miss entirely; there is no DOM removal here,
+  // but the same "run before paint, not after" ordering is what this needs
+  // too.)
+  useLayoutEffect(() => {
+    const prevStatus = prevDriveStatusRef.current;
+    const nextStatus = drive.status;
+    prevDriveStatusRef.current = nextStatus;
+    if (nextStatus === "consentPending" && prevStatus !== "consentPending") {
+      focusAtConsentOpenRef.current = document.activeElement;
+      return;
+    }
+    if (prevStatus === "consentPending" && nextStatus !== "consentPending") {
+      const untouchedSinceConsentOpened = document.activeElement === focusAtConsentOpenRef.current;
+      focusAtConsentOpenRef.current = null;
+      if (!untouchedSinceConsentOpened) return; // the user moved focus themselves -- don't yank it back
+      const captured = consentReturnFocusRef.current;
+      const target =
+        captured && typeof captured.focus === "function" && document.contains(captured)
+          ? captured
+          : document.getElementById(DRIVE_SAVE_CONTROL_ID);
+      target?.focus();
+    }
+  }, [drive.status]);
+
+  // The ONLY way a Drive save is invoked (ARCH.md §4.3). `useDriveDocuments`
+  // has no access to this dialog's local draft state, so it cannot itself be
+  // `DriveActions.onSave` (that prop is zero-argument) — this dialog must
+  // wrap `drive.saveToDrive` with the two commits, and in that exact order:
+  // `commitDraft()`/`commitFileName()` are synchronous writes into the
+  // PARENT's state via `onSave`/`onRenameFile`, which land through
+  // `setTailoringMap` — an ASYNCHRONOUS React state update that has not
+  // flushed by the time this function returns. Reading `activePayload()`
+  // and `fileNameDraft` directly (both local, already current) rather than
+  // anything derived from that parent state is what keeps the bytes handed
+  // to `saveToDrive` in sync with what the user just typed, instead of one
+  // tick stale. `activeFileName` is trimmed here to match exactly what
+  // `commitFileName` just persisted — `useDriveDocuments` uses it RAW.
+  const handleSaveToDrive = () => {
+    consentReturnFocusRef.current = document.activeElement; // AC-A4: capture at click time
+    commitDraft();
+    commitFileName();
+    drive.saveToDrive?.({
+      activeScope: tab,
+      activeText: activePayload().text,
+      activeFileName: fileNameDraft.trim(),
+    });
   };
 
   // Kick off the posting buzzword scrape. The parent scans the posting and, when
@@ -747,9 +869,9 @@ export default function DocumentPreviewDialog({
         )}
 
         {activeError ? (
-          <Box sx={{ mt: 1.5, color: "var(--danger)", fontSize: "0.85rem", textAlign: "center" }}>{activeError}</Box>
+          <Box data-testid="scope-error" sx={{ mt: 1.5, color: "var(--danger)", fontSize: "0.85rem", textAlign: "center" }}>{activeError}</Box>
         ) : activeNotice ? (
-          <Box sx={{ mt: 1.5, color: "var(--success)", fontSize: "0.85rem", textAlign: "center" }}>{activeNotice}</Box>
+          <Box data-testid="scope-notice" sx={{ mt: 1.5, color: "var(--success)", fontSize: "0.85rem", textAlign: "center" }}>{activeNotice}</Box>
         ) : null}
       </DialogContent>
 
@@ -766,6 +888,23 @@ export default function DocumentPreviewDialog({
           onResubmit={onResubmit}
         />
       ) : null}
+
+      {/* UX.md rev 2 §3/§13: a SIBLING of DialogActions, in the slot
+          ReviseStrip already occupies above -- never inside the action bar.
+          Mounted UNCONDITIONALLY (not gated on `steeringEnabled` or any tab
+          check) because its two live regions must exist for the dialog's
+          whole open lifetime (AC-A5), independent of whether there is
+          currently anything visible to show. */}
+      <DriveResultRegion
+        leadingLine={drive.leadingLine}
+        rows={drive.rows}
+        showConversionCaption={drive.showConversionCaption}
+        stale={drive.stale}
+        reconnectCaption={drive.reconnectCaption}
+        hiringEmail={drive.hiringEmail}
+        prompt={drive.prompt}
+        announcement={drive.announcement}
+      />
 
       <DialogActions sx={{ flexWrap: "wrap", gap: 1, px: { xs: 1.25, sm: 2 }, py: 1.5 }}>
         <Button onClick={handleClose} sx={{ textTransform: "none" }}>Close</Button>
@@ -784,6 +923,23 @@ export default function DocumentPreviewDialog({
           combineError={combineError}
           setCombineError={setCombineError}
           anyBusy={anyBusy}
+        />
+        {/* AC-K4: the save/download CONTROLS bind here, in DialogActions,
+            beside Close/Combine/Download — this modal's per-scope
+            `busy`/`notice`/`error` maps are never touched by anything Drive
+            does; `drive` is a wholly separate prop object from a wholly
+            separate hook, so a Drive write can never freeze the local
+            controls those maps gate. */}
+        <DriveActions
+          status={drive.status}
+          scopeCount={drive.scopeCount}
+          connected={drive.connected}
+          hasDriveReference={drive.hasDriveReference}
+          isStale={drive.isStale}
+          downloadStatus={drive.downloadStatus}
+          onSave={handleSaveToDrive}
+          onRefocusConsent={drive.onRefocusConsent}
+          onDownload={drive.onDownload}
         />
         {tab === "email" ? (
           // AC-3/AC-5: the email is plain text, never a docx — its primary

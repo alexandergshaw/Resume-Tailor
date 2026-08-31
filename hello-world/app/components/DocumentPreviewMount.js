@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import DocumentPreviewDialog from "./DocumentPreviewDialog";
 import FocusPickerDialog from "./FocusPickerDialog";
 import { getDownloadFileNameForTitle, getDownloadCoverLetterFileNameForTitle } from "../../lib/document/docx";
 import { emailPreviewText } from "../../lib/tailor/documentScopes";
+import { useDriveDocuments } from "../hooks/useDriveDocuments";
 
 // Extracted verbatim from app/page.js:3172-3270 (Wave 5C, mechanical move --
 // no logic changed). `focusPickerOpen` moved from page-level state into this
@@ -16,9 +17,13 @@ import { emailPreviewText } from "../../lib/tailor/documentScopes";
 // matching how StatusBar.js and TrackingTab.js already pull the same
 // pure/stateless helpers from lib/document/docx.
 //
-// `useDriveDocuments` mounts here in the NEXT wave (6A), not in this one --
-// deliberately kept out so this extraction stays pure and page.js does not
-// pick up any Drive wiring.
+// Wave 6A: `useDriveDocuments` mounts HERE, not in page.js and not in
+// DocumentPreviewDialog.js -- exactly per plan, since this component already
+// closes over `tailoringMap`/`currentUser`/`resumeFile`/`coverLetterFile`
+// (the three latter forwarded by Wave 5C for precisely this). The hook's
+// return value is handed down as one `drive` prop; the dialog wraps its
+// `saveToDrive` with its own `commitDraft()`/`commitFileName()` (ARCH.md
+// §4.3) because only the dialog has access to that in-flight draft state.
 export default function DocumentPreviewMount({
   preview,
   tailoringMap,
@@ -27,8 +32,9 @@ export default function DocumentPreviewMount({
   tailorEngine,
   previewReloadKey,
   scrapePreviewPosting,
-  // Forwarded so Wave 6A can mount useDriveDocuments here without reopening
-  // page.js -- not consumed by this component yet (see the header comment).
+  // Forwarded by Wave 5C so Wave 6A could mount useDriveDocuments here
+  // without reopening page.js (see the header comment) -- now consumed
+  // below, feeding the hook.
   currentUser,
   resumeFile,
   coverLetterFile,
@@ -36,6 +42,45 @@ export default function DocumentPreviewMount({
   // The previewer's "wrong focus" flag: opens a picker of the library's focus
   // areas; applying one re-tailors the previewed job with that focus pinned.
   const [focusPickerOpen, setFocusPickerOpen] = useState(false);
+
+  // The dialog's active tab is local state DocumentPreviewDialog has never
+  // reported upward. `preview.resumePreview.tab` (passed below as
+  // `initialTab`) is only the tab the dialog OPENED on -- the dialog can
+  // resolve a DIFFERENT starting tab when that one isn't available, and the
+  // user can switch tabs freely afterward with nothing telling this
+  // component. `useDriveDocuments` needs the LIVE active scope only to gate
+  // the hiring-email caption (`hiringEmail`), so the dialog reports every
+  // tab change back through `onActiveScopeChange`, and this is reset to the
+  // nominal starting tab whenever a different posting's preview opens.
+  const [activeScope, setActiveScope] = useState(preview.resumePreview.tab);
+  useEffect(() => {
+    // The same `await Promise.resolve()` microtask hop useDriveDocuments.js's
+    // own effects use (see that file's header comment) -- keeps this clear
+    // of react-hooks/set-state-in-effect (which rejects a setState reachable
+    // SYNCHRONOUSLY from an effect's own call stack) without changing the
+    // observable timing.
+    let cancelled = false;
+    const nextTab = preview.resumePreview.tab;
+    (async () => {
+      await Promise.resolve();
+      if (cancelled) return;
+      setActiveScope(nextTab);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [preview.resumePreview.jobId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const drive = useDriveDocuments({
+    currentUser,
+    tailoringMap,
+    resumeFile,
+    coverLetterFile,
+    jobId: preview.resumePreview.jobId,
+    jobTitle: preview.resumePreview.title,
+    company: preview.resumePreview.company,
+    activeScope,
+  });
 
   return (
     <DocumentPreviewDialog
@@ -136,6 +181,8 @@ export default function DocumentPreviewMount({
       documentVersions={preview.documentVersions}
       currentVersionId={preview.currentVersionId}
       onSelectVersion={preview.selectDocumentVersion}
+      drive={drive}
+      onActiveScopeChange={setActiveScope}
     />
   );
 }
