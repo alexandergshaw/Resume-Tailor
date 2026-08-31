@@ -19,8 +19,10 @@ import DriveOverwriteDialog from "./DriveOverwriteDialog";
  * Where Drive save/download outcomes are reported (`UX.md` rev 2 §3/§6,
  * `ARCH.md` §12 Wave 3B, module table row 26). Rendered by the caller as a
  * full-width SIBLING of `DialogActions`, in the slot `ReviseStrip` already
- * occupies (`DocumentPreviewDialog.js:756-768`) — never inside the action
- * bar, and never a child of it.
+ * occupies (`DocumentPreviewDialog.js:878-890`, the `{steeringEnabled ? …}`
+ * block) — never inside the action bar, and never a child of it. That
+ * caller is real as of R-283: the mount is `DocumentPreviewDialog.js:898`,
+ * immediately after the `ReviseStrip` block and outside `DialogActions`.
  *
  * Two hard constraints from the design, both true by construction here:
  *   1. This component NEVER writes the modal's per-scope `busy`/`notice`/
@@ -38,8 +40,12 @@ import DriveOverwriteDialog from "./DriveOverwriteDialog";
  *      export of `driveMessages.js` or that module's own function called
  *      with a caller-supplied count. No copy is retyped.
  *
- * ANNOUNCEMENTS. `DocumentPreviewDialog.js` has ZERO live regions today
- * (`AC.md` F-11), so the two spans below are net-new. They are rendered
+ * ANNOUNCEMENTS. Before this component `DocumentPreviewDialog.js` had ZERO
+ * live regions (`AC.md` F-11), and the two spans below (`:319`, `:322`) are
+ * still the ONLY ones it has — they reach it because R-283 mounts this
+ * component there. Do not read that as "the dialog has none"; it has these
+ * two, from here, and a sweep for `aria-live` over the dialog and its
+ * `preview/` children finds nothing else. They are rendered
  * UNCONDITIONALLY on every render of this component — never toggled by
  * whether there's currently anything to show — reusing the established
  * repo idiom (`app/copilot/ManualQuestion.js:122`, comment there: "mounted
@@ -123,7 +129,8 @@ const LINK_SX = {
 };
 
 // Binary success/failure colour, reusing the existing notice/error idiom
-// this modal already has (`DocumentPreviewDialog.js:749-753`) rather than
+// this modal already has (`DocumentPreviewDialog.js:871-875` — the
+// `data-testid="scope-error"` / `"scope-notice"` pair) rather than
 // inventing a third tone. A row's `kind` (from `driveSaveBatch.js`) decides
 // which side of the line it's on; UX.md gives no third colour for any row.
 const SUCCESS_ROW_KINDS = new Set(["saved", "saved-new-doc", "replaced-deleted"]);
