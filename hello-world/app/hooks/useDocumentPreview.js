@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { buildTemplateLinesForUpload } from "../../lib/document/docx";
 import {
-  buildTemplateLinesForUpload,
-  resolveDocumentBlob,
-} from "../../lib/document/docx";
+  editedForScope,
+  withEditedScope,
+  buildPreviewBlob,
+  scopeText,
+} from "../../lib/document/previewBlob";
 import { parseDocxToModel, linesToModel, modelToLines } from "../../lib/document/docxPreview";
 import { markVersionChanges } from "../../lib/document/versionDiff";
 import { addedEditText, editFingerprint } from "../../lib/tailor/editMining";
@@ -48,27 +51,11 @@ const EMPTY_SCOPE_FLAGS = { resume: false, cover: false };
 const EMPTY_SCOPE_TEXT = { resume: "", cover: "" };
 const VERSION_SCOPES = ["resume", "cover"];
 
-// edited/*: the tailoring entry's hand-edit flag, per scope ({ resume, cover })
-// just like busy/notice/error above — so hand-editing one document never
-// marks the other "edited", and a regenerate of one document never clears
-// the other's edited flag (which would silently ship a stale pre-edit docx
-// on its next download). AC-2: an object is ALWAYS truthy, so every consumer
-// must read through editedForScope — never `if (entry.edited)` / `!entry.edited`.
-// AC-7: tolerates a missing field (treated as not edited) and a legacy plain
-// boolean carried by an entry from before this migration — a legacy `true`
-// is read as edited on BOTH scopes (the safe direction: it still forces a
-// rebuild instead of risking the stale-verbatim-serve bug this fixes), a
-// legacy `false`/undefined as neither.
-function editedForScope(entry, scope) {
-  const e = entry?.edited;
-  if (e && typeof e === "object") return !!e[scope];
-  return !!e;
-}
-function withEditedScope(entry, scope, value) {
-  const e = entry?.edited;
-  const base = e && typeof e === "object" ? e : { resume: !!e, cover: !!e };
-  return { ...base, [scope]: value };
-}
+// edited/*: the tailoring entry's hand-edit flag, per scope ({ resume, cover }),
+// just like busy/notice/error above. editedForScope/withEditedScope (imported
+// above) hold the full contract — an object is ALWAYS truthy, never
+// `if (entry.edited)` — and now live in lib/document/previewBlob.js, which
+// buildPreviewBlob also needs and which has no reason to depend on React.
 
 export function useDocumentPreview({
   tailoringMap,
@@ -254,11 +241,27 @@ export function useDocumentPreview({
     updateTailoringJob(jobId, (entry) => ({
       ...entry,
       ...(scope === "cover"
-        ? { coverLetterResultLines: lines, coverLetterPreviewHtml: undefined }
+        ? {
+            coverLetterResultLines: lines,
+            coverLetterPreviewHtml: undefined,
+            // D-1 fix. Without this, docx.js:488 keeps serving the NEWEST
+            // generation's bytes for this OLDER version's text. No
+            // docx_path column on generated_cover_letters (F-11) to
+            // substitute, so loadPreviewModel falls back to the uploaded
+            // cover-letter template, or to plain text when none is uploaded,
+            // for the rest of the session. ACCEPTED: right content unformatted
+            // beats wrong content formatted, which is what ships today. Do
+            // not restore the stale bytes or add a docx_path column here.
+            coverLetterDocxB64: "",
+          }
         : {
             result: typeof version.content === "string" ? version.content : lines.join("\n"),
             resultLines: lines,
             resumePreviewHtml: undefined,
+            // D-1 fix: serve THIS version's own stored docx, not docxB64
+            // (newest generation) or the stale reload-pointer docxPath. docx_path is nullable with no backfill, so a pre-migration row (or a failed docx upload) has no pointer here either and degrades to the same uploaded-template fallback the cover letter above uses.
+            docxB64: "",
+            docxPath: version.docx_path || "",
           }),
       // AC-3: clears only THIS scope's edited flag — selecting a résumé
       // version must never discard a hand-edited cover letter's edited
@@ -387,36 +390,6 @@ export function useDocumentPreview({
     setResumePreview((prev) => ({ ...prev, open: false }));
   }
 
-  // The faithful .docx blob for a scope — delegates to the single document
-  // builder (resolveDocumentBlob) so preview render, drag, and download all
-  // produce identical output.
-  async function buildPreviewBlob(scope) {
-    // AC-3/CRITICAL: the hiring email is plain text pasted into an email
-    // client, never a docx-backed document — always fall through to the
-    // plain-text model below, same as an upload with no docx template.
-    if (scope === "email") return null;
-    const entry = tailoringMap[resumePreview.jobId] || {};
-    if (scope === "cover") {
-      const lines = Array.isArray(entry.coverLetterResultLines) ? entry.coverLetterResultLines : [];
-      return resolveDocumentBlob({
-        engineDocxB64: typeof entry.coverLetterDocxB64 === "string" ? entry.coverLetterDocxB64 : "",
-        edited: editedForScope(entry, "cover"),
-        text: lines.join("\n"),
-        lines,
-        uploadedTemplate: coverLetterFile,
-      });
-    }
-    const lines = Array.isArray(entry.resultLines) ? entry.resultLines : [];
-    return resolveDocumentBlob({
-      engineDocxB64: typeof entry.docxB64 === "string" ? entry.docxB64 : "",
-      docxPath: typeof entry.docxPath === "string" ? entry.docxPath : "",
-      edited: editedForScope(entry, "resume"),
-      text: entry.result || lines.join("\n"),
-      lines,
-      uploadedTemplate: resumeFile,
-    });
-  }
-
   // The saved generation immediately OLDER than the one currently shown for
   // a scope (documentVersions is newest-first), or null when there isn't
   // one — first generation, no version history loaded, or signed out all
@@ -437,7 +410,7 @@ export function useDocumentPreview({
   // versionDiff.js's line-level change map before it's returned.
   async function loadPreviewModel(scope, opts = {}) {
     const entry = tailoringMap[resumePreview.jobId] || {};
-    const blob = await buildPreviewBlob(scope);
+    const blob = await buildPreviewBlob(entry, scope, { resumeFile, coverLetterFile });
     const model = blob
       ? await parseDocxToModel(await blob.arrayBuffer())
       : linesToModel(
@@ -457,15 +430,6 @@ export function useDocumentPreview({
           ? previous.content.split("\n")
           : [];
     return markVersionChanges(model, previousLines, modelToLines(model, { includeEmpty: true }));
-  }
-
-  // The text + line payload currently stored for a scope (seed for the editor).
-  function previewScopeText(entry, scope) {
-    if (scope === "cover") {
-      const lines = Array.isArray(entry?.coverLetterResultLines) ? entry.coverLetterResultLines : [];
-      return lines.join("\n");
-    }
-    return entry?.result || "";
   }
 
   // Save edits back to the tailoring entry so this becomes the document the
@@ -541,7 +505,7 @@ export function useDocumentPreview({
     setScopeFlags(scope, { busy: true, error: "", notice: "" });
     try {
       const entry = tailoringMapRef.current[resumePreview.jobId] || {};
-      const unchanged = text === previewScopeText(entry, scope);
+      const unchanged = text === scopeText(entry, scope);
       const serveFinished = !editedForScope(entry, scope) && unchanged;
       const args = {
         jobTitle: resumePreview.title,
@@ -562,6 +526,13 @@ export function useDocumentPreview({
         args.resultLines = lines;
         args.resumeFileName = entry.resumeFileName || "";
         args.templateDocxB64 = typeof entry.docxB64 === "string" ? entry.docxB64 : "";
+        // MAJOR-1 fix: unconditional, NOT gated on serveFinished. docxB64 is
+        // also the rebuild TEMPLATE an edited download falls onto, and a
+        // version switch (D-1) clears it while pointing docxPath at THIS
+        // version's own stored docx — so an edited download after a switch
+        // needs that pointer too, not just the verbatim-serve path below.
+        // docx.js resolves docxPath || templateDocxPath as the rebuild source.
+        args.templateDocxPath = typeof entry.docxPath === "string" ? entry.docxPath : "";
         if (serveFinished && typeof entry.docxB64 === "string") args.docxB64 = entry.docxB64;
         // Restored chips have no in-session docx blob but do carry the saved
         // storage path — serve that faithful copy when the text is unedited.

@@ -545,6 +545,7 @@ export function createDocumentDownloaders(deps) {
     resumeFileName,
     coverLetterFileName,
     templateDocxB64,
+    templateDocxPath,
     coverLetterTemplateDocxB64,
   }) {
     // Download names honor an optional user override typed in the preview.
@@ -559,12 +560,16 @@ export function createDocumentDownloaders(deps) {
 
     try {
       // Résumé — one path via resolveDocumentBlob. docxB64/docxPath are supplied
-      // only for an UNEDITED finished doc (served verbatim); templateDocxB64 is
-      // the engine doc that edited text is rebuilt onto.
+      // only for an UNEDITED finished doc (served verbatim); templateDocxB64/
+      // templateDocxPath are the engine doc (in-session bytes, or its storage
+      // pointer) that edited text is rebuilt onto. templateDocxPath matters
+      // even when docxB64 has been cleared by a version switch (D-1) — that
+      // switch only repoints the PREVIEW's byte source, not this rebuild
+      // template, so it must be threaded through regardless of edited state.
       if (hasResume || docxB64 || docxPath) {
         const resumeBlob = await resolveDocumentBlob({
           engineDocxB64: docxB64 || templateDocxB64 || "",
-          docxPath: docxPath || "",
+          docxPath: docxPath || templateDocxPath || "",
           edited: !docxB64 && !docxPath,
           text: result || "",
           lines: resultLines || [],
@@ -691,6 +696,10 @@ export function createDocumentDownloaders(deps) {
       resumeFileName: tailoring.resumeFileName || "",
       coverLetterFileName: tailoring.coverLetterFileName || "",
       templateDocxB64: typeof tailoring.docxB64 === "string" ? tailoring.docxB64 : "",
+      // Unconditional, same reasoning as useDocumentPreview.js's downloadDocumentPreview:
+      // this is the rebuild TEMPLATE for an edited chip, not the verbatim-serve
+      // pointer above (which is gated on !editedForScope).
+      templateDocxPath: typeof tailoring.docxPath === "string" ? tailoring.docxPath : "",
       coverLetterTemplateDocxB64:
         typeof tailoring.coverLetterDocxB64 === "string" ? tailoring.coverLetterDocxB64 : "",
     });
