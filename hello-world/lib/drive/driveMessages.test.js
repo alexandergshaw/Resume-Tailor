@@ -19,9 +19,16 @@ import {
   hiringEmailDriveNote,
   DRIVE_FOLDER_CAPTION,
   DRIVE_DISCONNECT_NOTE,
+  DRIVE_DOWNLOAD_LABEL,
   DRIVE_BATCH_MESSAGE,
   driveErrorMessage,
   DRIVE_ANNOUNCE,
+  driveAnnounceStart,
+  overwriteHeading,
+  overwriteBody,
+  saveAsNewDocLabel,
+  overwriteDocLabel,
+  DRIVE_OVERWRITE_DISMISS_LABEL,
 } from "./driveMessages.js";
 
 describe("saveControlLabel", () => {
@@ -140,6 +147,16 @@ describe("per-scope strip rows", () => {
     expect(scopeFailureRow("Cover letter", "Google Drive is busy. Try saving again in a moment.")).toBe(
       "Cover letter — wasn't saved. Google Drive is busy. Try saving again in a moment.",
     );
+  });
+});
+
+describe("DRIVE_DOWNLOAD_LABEL (WAVE3-SEAMS.md M-1: the download control's labels, single-sourced here)", () => {
+  it("carries the exact three download-control strings", () => {
+    expect(DRIVE_DOWNLOAD_LABEL).toEqual({
+      download: "Download from Drive",
+      downloadStale: "Download older Drive copy",
+      downloading: "Downloading…",
+    });
   });
 });
 
@@ -318,5 +335,74 @@ describe("DRIVE_ANNOUNCE", () => {
 
   it("carries the cover-letter partial-failure alert sentence", () => {
     expect(DRIVE_ANNOUNCE.coverNotSavedAlert).toBe("Cover letter wasn't saved: couldn't rebuild the document.");
+  });
+});
+
+describe("driveAnnounceStart -- rule 7's mechanism (WAVE3-SEAMS.md MAJOR §5)", () => {
+  it("save: polite carries DRIVE_ANNOUNCE.saveStart, alert is cleared to '' in the SAME object", () => {
+    expect(driveAnnounceStart("save")).toEqual({ polite: DRIVE_ANNOUNCE.saveStart, alert: "" });
+  });
+
+  it("connect: polite carries DRIVE_ANNOUNCE.connectStart, alert is cleared", () => {
+    expect(driveAnnounceStart("connect")).toEqual({ polite: DRIVE_ANNOUNCE.connectStart, alert: "" });
+  });
+
+  it("export: polite carries DRIVE_ANNOUNCE.exportStart, alert is cleared", () => {
+    expect(driveAnnounceStart("export")).toEqual({ polite: DRIVE_ANNOUNCE.exportStart, alert: "" });
+  });
+
+  it("defaults to the save-start pair for an unrecognised kind, never throwing", () => {
+    expect(() => driveAnnounceStart("something-else")).not.toThrow();
+    expect(driveAnnounceStart("something-else")).toEqual({ polite: DRIVE_ANNOUNCE.saveStart, alert: "" });
+  });
+
+  it("every kind's alert half is always '' -- the structural guarantee this function exists for", () => {
+    for (const kind of ["connect", "save", "export"]) {
+      expect(driveAnnounceStart(kind).alert).toBe("");
+    }
+  });
+});
+
+describe("overwrite conflict prompt (§5.3) -- DriveOverwriteDialog", () => {
+  it("overwriteHeading names the single conflicted Doc in curly quotes", () => {
+    expect(overwriteHeading(["Acme - Senior Engineer - Resume"])).toBe(
+      "“Acme - Senior Engineer - Resume” has changed in your Drive since this app last saved it.",
+    );
+  });
+
+  it("overwriteHeading reads a plural sentence -- no Doc name -- for two conflicted Docs", () => {
+    expect(overwriteHeading(["Resume", "Cover Letter"])).toBe(
+      "Both Docs have changed in your Drive since this app last saved them.",
+    );
+  });
+
+  it("overwriteBody hedges singular: an edit, a rename, a move, or a comment", () => {
+    expect(overwriteBody(["Resume"])).toBe(
+      "That could be an edit, or just a rename, a move, or a comment — the app can't tell which. Overwriting replaces whatever is in the Doc now, and this app can't undo it.",
+    );
+  });
+
+  it("overwriteBody hedges plural: edits, renames, moves, or comments", () => {
+    expect(overwriteBody(["Resume", "Cover Letter"])).toBe(
+      "That could be edits, or just renames, moves, or comments — the app can't tell which. Overwriting replaces whatever is in the Docs now, and this app can't undo it.",
+    );
+  });
+
+  it("saveAsNewDocLabel is 'Save as a new Doc' singular and 'Save as new Docs' plural", () => {
+    expect(saveAsNewDocLabel(["Resume"])).toBe("Save as a new Doc");
+    expect(saveAsNewDocLabel(["Resume", "Cover Letter"])).toBe("Save as new Docs");
+  });
+
+  it("overwriteDocLabel is 'Overwrite the Doc' singular and 'Overwrite the Docs' plural", () => {
+    expect(overwriteDocLabel(["Resume"])).toBe("Overwrite the Doc");
+    expect(overwriteDocLabel(["Resume", "Cover Letter"])).toBe("Overwrite the Docs");
+  });
+
+  it("DRIVE_OVERWRITE_DISMISS_LABEL ('Not now') never pluralises -- UX.md gives it one form", () => {
+    expect(DRIVE_OVERWRITE_DISMISS_LABEL).toBe("Not now");
+  });
+
+  it("singular/plural derives from docNames.length alone, so an empty array reads as singular (no crash on names[0])", () => {
+    expect(overwriteHeading([])).toBe("“” has changed in your Drive since this app last saved it.");
   });
 });

@@ -139,6 +139,22 @@ export function scopeFailureRow(scopeLabel, reasonSentence) {
 }
 
 // ---------------------------------------------------------------------------
+// 4b. The download control's label (§6.1's sibling for the download path)
+// ---------------------------------------------------------------------------
+//
+// WAVE3-SEAMS.md M-1: this is the THIRD time this defect class has shipped
+// in this feature -- a component re-deriving strings driveMessages.js does
+// not yet own, instead of this module owning them from the start.
+// `DriveActions.js` used to hand-roll these three literals inline; they are
+// UX.md copy just like every other Drive string (`Download older Drive
+// copy` is quoted verbatim in `AC.md`/`UX.md`), so they belong here.
+export const DRIVE_DOWNLOAD_LABEL = {
+  download: "Download from Drive",
+  downloadStale: "Download older Drive copy",
+  downloading: "Downloading…",
+};
+
+// ---------------------------------------------------------------------------
 // 5. Captions (§6.5)
 // ---------------------------------------------------------------------------
 
@@ -272,3 +288,81 @@ export const DRIVE_ANNOUNCE = {
   exportStart: "Downloading from Google Drive…",
   coverNotSavedAlert: "Cover letter wasn't saved: couldn't rebuild the document.",
 };
+
+// WAVE3-SEAMS.md MAJOR (§5): UX.md §8 rule 7 -- "Every Drive action clears
+// both regions before writing its first message" -- has no mechanism
+// anywhere in the wave that built it. The three `*Start` strings above are
+// polite-side only; a caller that sets `politeMessage` from one of them and
+// forgets `alertMessage` leaves the ALERT region's stale value in place. On
+// a failure -> retry -> IDENTICAL failure sequence that omission means the
+// alert region's text never changes at all ("" is never written in
+// between), so React bails on the unchanged string and a screen-reader user
+// hears nothing on the retry -- proven with a MutationObserver: 0 alert
+// mutations across the whole cycle.
+//
+// The fix is structural, not caller discipline: these three functions
+// return `{polite, alert}` as ONE object, so clearing the region not in use
+// is inseparable from announcing the one that is -- there is no call shape
+// that sets one without the other. This mirrors the polite region's own
+// existing protection (a start sentence before every outcome, so no two
+// consecutive values are ever identical) and gives the alert region the
+// same property via its own distinct value in the sequence: a failure
+// message is always preceded by "" (the start clear), so even an
+// IDENTICAL failure on retry is never adjacent to itself.
+//
+// Deliberately NOT a nonce or zero-width character -- that was tried in
+// this repo before and leaked U+200B into copied text (`mui-a11y-traps`
+// item 6, `AC.md` AC-A6).
+export function driveAnnounceStart(kind) {
+  switch (kind) {
+    case "connect":
+      return { polite: DRIVE_ANNOUNCE.connectStart, alert: "" };
+    case "export":
+      return { polite: DRIVE_ANNOUNCE.exportStart, alert: "" };
+    case "save":
+    default:
+      return { polite: DRIVE_ANNOUNCE.saveStart, alert: "" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 8. Overwrite conflict prompt (§5.3) -- DriveOverwriteDialog
+// ---------------------------------------------------------------------------
+
+// `docNames` is the display name(s) of the conflicted Doc(s) -- 1 for a
+// single-scope conflict, 2 for "both documents conflicted" (one prompt,
+// never two -- UX.md §5.3/§5.7). Every function below derives
+// singular/plural from `docNames.length` itself, rather than taking a
+// separate `plural` flag, so a caller can never drift the heading, body, and
+// button labels out of sync by computing "plural" differently in two places.
+function isPlural(docNames) {
+  return (Array.isArray(docNames) ? docNames : []).length > 1;
+}
+
+export function overwriteHeading(docNames) {
+  const names = Array.isArray(docNames) ? docNames : [];
+  return isPlural(names)
+    ? "Both Docs have changed in your Drive since this app last saved them."
+    : `“${names[0] ?? ""}” has changed in your Drive since this app last saved it.`;
+}
+
+export function overwriteBody(docNames) {
+  return isPlural(docNames)
+    ? "That could be edits, or just renames, moves, or comments — the app can't tell which. Overwriting replaces whatever is in the Docs now, and this app can't undo it."
+    : "That could be an edit, or just a rename, a move, or a comment — the app can't tell which. Overwriting replaces whatever is in the Doc now, and this app can't undo it.";
+}
+
+// "Save as a new Doc[s]" -- the safe, first-in-DOM-order action (UX.md §5.4).
+export function saveAsNewDocLabel(docNames) {
+  return isPlural(docNames) ? "Save as new Docs" : "Save as a new Doc";
+}
+
+// "Overwrite the Doc[s]" -- the only destructive action in this feature.
+export function overwriteDocLabel(docNames) {
+  return isPlural(docNames) ? "Overwrite the Docs" : "Overwrite the Doc";
+}
+
+// "Not now" AND Escape (both routes call the same dismissal callback --
+// DriveOverwriteDialog.js). UX.md never pluralises this one; it never
+// mentions a Doc count at all.
+export const DRIVE_OVERWRITE_DISMISS_LABEL = "Not now";

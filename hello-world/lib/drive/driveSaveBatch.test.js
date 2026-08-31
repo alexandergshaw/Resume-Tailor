@@ -27,16 +27,16 @@ const COVER_LETTER_NO_BYTES = {
 };
 
 describe("driveSaveBatch — all saved", () => {
-  it("2 of 2 saved: summary and announcement pluralise, alert is empty, connectionLost is false", () => {
+  it("2 of 2 saved: leadingLine and announcement pluralise, alert is empty, connectionLost is false", () => {
     const result = driveSaveBatch([RESUME_SAVED, COVER_LETTER_SAVED]);
-    expect(result.summary).toBe("Saved 2 documents to Drive.");
+    expect(result.leadingLine).toEqual({ kind: "saved", count: 2 });
     expect(result.announcement).toEqual({ polite: "Saved 2 documents to Drive.", alert: "" });
     expect(result.connectionLost).toBe(false);
   });
 
-  it("1 of 1 saved: summary uses the singular 'document' (positive control against the plural case)", () => {
+  it("1 of 1 saved: leadingLine carries the singular count (positive control against the plural case)", () => {
     const result = driveSaveBatch([RESUME_SAVED]);
-    expect(result.summary).toBe("Saved 1 document to Drive.");
+    expect(result.leadingLine).toEqual({ kind: "saved", count: 1 });
     expect(result.announcement.polite).toBe("Saved 1 document to Drive.");
   });
 
@@ -74,7 +74,7 @@ describe("driveSaveBatch — all saved", () => {
 describe("driveSaveBatch — partial", () => {
   it("keeps the success row AND shows only the failing scope's error (never claims both succeeded)", () => {
     const result = driveSaveBatch([RESUME_SAVED, COVER_LETTER_NO_BYTES]);
-    expect(result.summary).toBe("Saved 1 of 2 documents to Drive.");
+    expect(result.leadingLine).toEqual({ kind: "partial", saved: 1, total: 2 });
     expect(result.rows).toHaveLength(2);
     expect(result.rows[0].kind).toBe("saved");
     expect(result.rows[0].scope).toBe("resume");
@@ -239,25 +239,25 @@ describe("driveSaveBatch — partial", () => {
       { scope: "cover", label: "Cover letter", result: SCOPE_OUTCOME.NO_BYTES },
       { scope: "email", label: "Hiring email", result: SCOPE_OUTCOME.TOO_LARGE },
     ]);
-    expect(result.summary).toBe("Saved 1 of 3 documents to Drive.");
+    expect(result.leadingLine).toEqual({ kind: "partial", saved: 1, total: 3 });
     expect(result.announcement.polite).toBe("Saved 1 of 3 documents to Drive.");
     expect(result.announcement.alert).toBe("2 documents weren't saved.");
   });
 });
 
 describe("driveSaveBatch — nothing saved (per-scope failures)", () => {
-  it("summary is absent (null); the failure row carries the message instead (AC-S20)", () => {
+  it("leadingLine is absent (null); the failure row carries the message instead (AC-S20)", () => {
     const result = driveSaveBatch([COVER_LETTER_NO_BYTES]);
-    expect(result.summary).toBeNull();
+    expect(result.leadingLine).toBeNull();
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0].kind).toBe("no-bytes");
   });
 
-  it("positive control: the SAME batch with one scope saved and one failing DOES get a summary", () => {
-    // Pairs with the assertion above so "summary is null" cannot be
-    // satisfied by an implementation that never sets a summary at all.
+  it("positive control: the SAME batch with one scope saved and one failing DOES get a leadingLine", () => {
+    // Pairs with the assertion above so "leadingLine is null" cannot be
+    // satisfied by an implementation that never sets a leadingLine at all.
     const result = driveSaveBatch([RESUME_SAVED, COVER_LETTER_NO_BYTES]);
-    expect(result.summary).not.toBeNull();
+    expect(result.leadingLine).not.toBeNull();
   });
 
   it("alert carries the single failure's full row text verbatim (not shortened, unlike the partial case)", () => {
@@ -308,9 +308,9 @@ describe("driveSaveBatch — batch aborts (nothing attempted at all)", () => {
   ];
 
   for (const [batchError, message] of cases) {
-    it(`renders the exact §6.6 sentence for "${batchError}", with no summary and no scope attribution`, () => {
+    it(`renders the exact §6.6 sentence for "${batchError}", with no leadingLine and no scope attribution`, () => {
       const result = driveSaveBatch([{ batchError }]);
-      expect(result.summary).toBeNull();
+      expect(result.leadingLine).toBeNull();
       expect(result.rows).toEqual([
         { scope: null, kind: "batch-error", attributed: false, errorKind: null, segments: [{ type: "text", value: message }] },
       ]);
@@ -327,7 +327,7 @@ describe("driveSaveBatch — edge cases", () => {
   it("returns an inert result for an empty batch, without throwing", () => {
     expect(driveSaveBatch([])).toEqual({
       rows: [],
-      summary: null,
+      leadingLine: null,
       announcement: { polite: "", alert: "" },
       connectionLost: false,
     });

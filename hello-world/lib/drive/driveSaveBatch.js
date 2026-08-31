@@ -10,7 +10,7 @@
  *
  * A partial batch must keep the successes visible and show only the
  * failing scope's error; it must never claim both succeeded when one did
- * not (`driveSaveBatch`'s central contract — see `buildSummary` and the
+ * not (`driveSaveBatch`'s central contract — see `buildLeadingLine` and the
  * "nothing saved" branch of `driveSaveBatch` itself).
  *
  * No React, no network calls: this module only turns already-resolved
@@ -213,12 +213,37 @@ function buildRow(outcome) {
   }
 }
 
-/** UX.md §6.3 / AC-S20's exact leading-line rules. */
-function buildSummary(total, savedCount) {
+/**
+ * UX.md §6.3 / AC-S20's exact leading-line rules — returns the STRUCTURED
+ * descriptor `DriveResultRegion`'s `leadingLine` prop consumes directly
+ * (`{kind:"saved",count}` / `{kind:"partial",saved,total}` / `null`), not a
+ * pre-formatted string. This is the fix for the seam review's BLOCKER B1:
+ * `driveSaveBatch` used to return `summary: string|null`, and the region
+ * expects a descriptor it switches on `.kind` — the single most obvious
+ * wiring (pass the string straight through) fell through the region's
+ * `default: return null` and silently dropped the leading line, with
+ * nothing throwing or going red. Producing the descriptor HERE, since this
+ * function already knows every fact `.kind` depends on (total, savedCount),
+ * means there is no second place — an adapter — that also has to know this
+ * shape and can drift from it.
+ */
+function buildLeadingLine(total, savedCount) {
   if (total === 0) return null;
   if (savedCount === 0) return null; // "absent when nothing was saved" — the failure row carries the message
-  if (savedCount === total) return savedSummary(savedCount);
-  return partialSavedSummary(savedCount, total);
+  if (savedCount === total) return { kind: "saved", count: savedCount };
+  return { kind: "partial", saved: savedCount, total };
+}
+
+// The polite region's text for a resolved leading line — used ONLY to build
+// `announcement.polite` below. Deliberately NOT exposed on the returned
+// object as a string: the descriptor above is the one shape callers see for
+// "what to render/announce", so there is exactly one place a caller can get
+// this wrong (the descriptor), not two.
+function leadingLineText(leadingLine) {
+  if (!leadingLine) return "";
+  return leadingLine.kind === "saved"
+    ? savedSummary(leadingLine.count)
+    : partialSavedSummary(leadingLine.saved, leadingLine.total);
 }
 
 function shortReasonFor(outcome) {
@@ -229,18 +254,20 @@ function shortReasonFor(outcome) {
 }
 
 /** UX.md §8's two live regions, for the save flow only. */
-function buildAnnouncement({ total, savedCount, summary, failed }) {
+function buildAnnouncement({ total, savedCount, leadingLine, failed }) {
   if (total === 0) return { polite: "", alert: "" };
 
+  const politeText = leadingLineText(leadingLine);
+
   if (savedCount === total) {
-    return { polite: summary, alert: "" };
+    return { polite: politeText, alert: "" };
   }
 
   if (savedCount > 0) {
     // Partial.
     if (failed.length === 1) {
       const label = scopeLabel(failed[0]);
-      return { polite: summary, alert: `${label} wasn't saved: ${shortReasonFor(failed[0])}.` };
+      return { polite: politeText, alert: `${label} wasn't saved: ${shortReasonFor(failed[0])}.` };
     }
     // More than one failure alongside at least one success has no example
     // in UX.md; this keeps rule 3 ("never ... a running list") by staying a
@@ -248,7 +275,7 @@ function buildAnnouncement({ total, savedCount, summary, failed }) {
     // EXTRAPOLATED beyond UX.md §8, which only specifies the single-failure
     // case (today's 2-scope batches can't reach this branch at all) —
     // accepted by the coordinator; revisit once a 3rd scope makes it reachable.
-    return { polite: summary, alert: `${failed.length} documents weren't saved.` };
+    return { polite: politeText, alert: `${failed.length} documents weren't saved.` };
   }
 
   // Nothing saved: polite is cleared, alert carries the failure's own
@@ -285,7 +312,7 @@ function buildAnnouncement({ total, savedCount, summary, failed }) {
  *   array holding a `BatchAbort` when nothing could be attempted at all.
  * @returns {{
  *   rows: Array<{scope: string|null, kind: string, attributed: boolean, errorKind: string|null, segments: Array}>,
- *   summary: string|null,
+ *   leadingLine: null | {kind:"saved",count:number} | {kind:"partial",saved:number,total:number},
  *   announcement: {polite: string, alert: string},
  *   connectionLost: boolean,
  * }}
@@ -298,7 +325,7 @@ export function driveSaveBatch(scopeOutcomes) {
     const message = driveErrorMessage(abort.batchError) ?? UNKNOWN_ERROR_MESSAGE;
     return {
       rows: [{ scope: null, kind: "batch-error", attributed: false, errorKind: null, segments: [textSeg(message)] }],
-      summary: null,
+      leadingLine: null,
       announcement: { polite: "", alert: message },
       connectionLost: false,
     };
@@ -310,11 +337,11 @@ export function driveSaveBatch(scopeOutcomes) {
   const savedCount = saved.length;
 
   const rows = outcomes.map(buildRow);
-  const summary = buildSummary(total, savedCount);
-  const announcement = buildAnnouncement({ total, savedCount, summary, failed });
+  const leadingLine = buildLeadingLine(total, savedCount);
+  const announcement = buildAnnouncement({ total, savedCount, leadingLine, failed });
   const connectionLost = failed.some(
     (o) => o.result === SCOPE_OUTCOME.ERROR && o.errorKind === "reconnect",
   );
 
-  return { rows, summary, announcement, connectionLost };
+  return { rows, leadingLine, announcement, connectionLost };
 }
