@@ -196,6 +196,33 @@ Token flow: `/api/gmail/connect` → Google consent → `/api/gmail/oauth2callba
 
 ---
 
+## Google Drive Integration Setup
+
+Drive reuses the **same** `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` as the Gmail integration
+(`lib/drive/driveOAuth.js` reads them straight from `process.env`), but it is a **separate consent
+flow with its own callback URI and its own scopes**. Enabling Gmail does not enable Drive — the
+Drive redirect URI must be registered too, or Google returns
+`Error 400: redirect_uri_mismatch`.
+
+1. Google Cloud Console → APIs & Services → **Library** → enable the **Google Drive API**.
+2. APIs & Services → **OAuth consent screen** → add both Drive scopes:
+   - `https://www.googleapis.com/auth/drive.file`
+   - `https://www.googleapis.com/auth/userinfo.email`
+3. APIs & Services → **Credentials** → open the *same* OAuth client used for Gmail → add to
+   **Authorized redirect URIs**:
+   - `https://resume-tailor-tan-psi.vercel.app/api/drive/oauth2callback`
+   - `http://localhost:3000/api/drive/oauth2callback` (for local dev)
+
+   Add one entry per deployment origin you actually sign in from — the routes build the redirect
+   from the *incoming request's* origin (`` `${origin}/api/drive/oauth2callback` ``), so a Vercel
+   preview URL needs its own entry.
+4. Changes to redirect URIs can take a few minutes to propagate; re-try **Connect Drive** after.
+
+Token flow: `/api/drive/connect` → Google consent → `/api/drive/oauth2callback` (stores tokens in
+the `drive_connections` table) → back to app.
+
+---
+
 ## Auto-tailor Cron
 
 The daily auto-tailor pipeline lives at `app/api/cron/tailor/route.js` and is scheduled in `vercel.json`. Each run tailors at most one new resume per user per saved search. Results are saved to `generated_resumes`, the application is marked `tailored`, and a notification row is written.
