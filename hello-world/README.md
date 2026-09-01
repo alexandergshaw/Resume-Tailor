@@ -198,17 +198,28 @@ Token flow: `/api/gmail/connect` → Google consent → `/api/gmail/oauth2callba
 
 ## Google Drive Integration Setup
 
-Drive reuses the **same** `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` as the Gmail integration
-(`lib/drive/driveOAuth.js` reads them straight from `process.env`), but it is a **separate consent
-flow with its own callback URI and its own scopes**. Enabling Gmail does not enable Drive — the
-Drive redirect URI must be registered too, or Google returns
-`Error 400: redirect_uri_mismatch`.
+Drive authenticates with whatever client `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` point at —
+`lib/drive/driveOAuth.js` reads that one pair straight from `process.env`, and the Gmail
+integration reads the same pair. There is no separate "Drive client" env var. But the consent flow
+**is** separate: its own callback URI, its own scopes. Registering Gmail's callback does not
+register Drive's, and an unregistered one gets you `Error 400: redirect_uri_mismatch`.
+
+**Which client is it?** Not necessarily one you created for Gmail. If Drive reaches Google's
+consent page at all, then `GOOGLE_CLIENT_ID` is set and valid (a wrong one fails as
+`invalid_client`, not `redirect_uri_mismatch`) — it may be the client you made for Supabase Google
+sign-in. To identify it, read `client_id=` out of the address bar on the Google error page, or
+check the value in Vercel → Settings → Environment Variables, and match it against
+APIs & Services → **Credentials**. If no such client exists, create one (Create credentials →
+OAuth client ID → **Web application**) and put its ID and secret into `GOOGLE_CLIENT_ID` /
+`GOOGLE_CLIENT_SECRET` in Vercel and in `.env.local`.
 
 1. Google Cloud Console → APIs & Services → **Library** → enable the **Google Drive API**.
 2. APIs & Services → **OAuth consent screen** → add both Drive scopes:
    - `https://www.googleapis.com/auth/drive.file`
    - `https://www.googleapis.com/auth/userinfo.email`
-3. APIs & Services → **Credentials** → open the *same* OAuth client used for Gmail → add to
+
+   Add your own Google account as a **Test user** while the app is unverified.
+3. APIs & Services → **Credentials** → open that client → add to
    **Authorized redirect URIs**:
    - `https://resume-tailor-tan-psi.vercel.app/api/drive/oauth2callback`
    - `http://localhost:3000/api/drive/oauth2callback` (for local dev)
