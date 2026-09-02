@@ -178,6 +178,29 @@ async function flush() {
   });
 }
 
+// A FIXED number of `flush()` calls pins an async SCHEDULE DEPTH, not a
+// behaviour, and that depth is not constant here. Each scope's save runs
+// `resolveDocumentBlob` (JSZip, whose internal chunking schedules a variable
+// number of its own macrotasks) plus two crypto digests, and `twoScopeEntry`
+// has two scopes, so the boundaries needed before the conflict prompt lands
+// were MEASURED at 1, 2 or 3 across 20 samples on 2026-09-01. The two
+// conflict tests below hardcoded exactly 2 and therefore failed roughly one
+// run in ten, in isolation, with nothing else running.
+//
+// This waits for the observable instead. `min` reproduces the original
+// unconditional drain so the surrounding tests keep the settling they were
+// written against — this is strictly a superset of `await flush()` repeated
+// `min` times, never less — and `max` keeps it bounded, so a prompt that
+// never arrives still reaches the assertion below and still fails, rather
+// than hanging or being retried into a false green.
+async function flushUntil(predicate, { min = 2, max = 12 } = {}) {
+  let turns = 0;
+  while (turns < min || (!predicate() && turns < max)) {
+    await flush();
+    turns += 1;
+  }
+}
+
 function baseProps(overrides = {}) {
   return {
     currentUser: USER,
@@ -481,8 +504,7 @@ describe("conflict resolution", () => {
     // `flush()`'s own act() calls are what actually drain the state updates
     // this kicks off.
     const savePromise = latest.saveToDrive({ activeScope: "resume", activeText: undefined, activeFileName: "" });
-    await flush();
-    await flush();
+    await flushUntil(() => latest.prompt);
     expect(latest.prompt).toBeTruthy();
 
     await act(async () => {
@@ -531,8 +553,7 @@ describe("conflict resolution", () => {
     // See the "Overwrite" test above for why this is deliberately not
     // wrapped in `act()`.
     const savePromise = latest.saveToDrive({ activeScope: "resume", activeText: undefined, activeFileName: "" });
-    await flush();
-    await flush();
+    await flushUntil(() => latest.prompt);
     expect(latest.prompt).toBeTruthy();
 
     await act(async () => {
