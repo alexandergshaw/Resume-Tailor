@@ -4574,3 +4574,125 @@ Fixed two ways, and **the deletion matters more than the test.** The permanent j
 **Still open from earlier waves and explicitly NOT fixed here** — none of these is a regression of this wave, and none is an oversight: the create-after-persistence-failure residual (R-281 — create succeeds, persistence fails, the user returns in a fresh context, and there is no id anywhere to key on); **PKCE on both OAuth providers** — an attacker who can read an unconsumed state can bind a victim's account to their own Drive; `DriveButton`'s failure string with no `aria-live` region; ~145 lines of pure, node-testable logic still inside a `"use client"` file; a download filename that disagrees with the Doc's actual name in Drive on **every** post-reload download of a renamed document, not merely on some (R-282's own note is sharpened there with the reason); and two buttons named `Close` on mobile (pre-existing, not introduced by the Drive controls).
 
 **Amended (manual regression pass) — steps 12 and 13 are new, and they were added for the same reason the rest of R-277…R-283 needed amending.** An adversarial pass over the seven Drive cases found the automated claims sound at the exact lines cited and the save/download wiring continuous end to end, but it also found that the two paths capable of destroying a user's document were reachable by no step in this document: the `files.update` PATCH branch was flown only at the transport level, and the conflict prompt — where R-281's data-loss BLOCKER lived through two correct fixes — had no manual step for any of its three options. Both gaps are structural rather than accidental: no test can edit a Doc in Drive between two saves, and no stubbed transport can observe what Google did with a request. **Recorded here rather than filed as a residual**, because unlike PKCE or the `aria-live` region these needed no code to close — only someone running the steps. Step 11 remains the acceptance check; 12 and 13 are the two things it does not touch.
+
+### R-284 | area: chat-response-parsing | parallel-safe: yes | automatable: yes
+
+**Summary:** `readChatResponse` reads the chat API's response body exactly once, via `response.text()`, and never calls `response.json()`. Every failure branch classifies by HTTP `status`, never by `content-type` — a platform-generated 413 can arrive as `text/plain`, `text/html`, `application/octet-stream`, or with no `content-type` header at all, and a content-type-keyed branch falls through to `.json()` for at least one of those shapes and reproduces the original `Unexpected token 'R', "Request En"... is not valid JSON` bug verbatim.
+
+**Steps:**
+1. Read `readChatResponse` in `hello-world/lib/chat/chatbot.js:103-159` and confirm the only body read is the single `await response.text()` at `:109`, that `JSON.parse` runs on that string in its own try/catch at `:118-122`, and that no branch below it ever calls `.json()`.
+2. From `hello-world`, run `npx vitest run lib/chat/chatbot.response.test.js`.
+
+**Expected:** All tests pass, including the parametrized 413 case that drives a `text/plain`, `text/html`, `application/octet-stream`, and no-content-type body through the SAME status-413 branch and gets the same classified message every time, never a raw `SyntaxError`. A 200 response with a real `reply` string still parses correctly through the same single-read path, proving the fix did not just move the crash elsewhere.
+
+### R-285 | area: chat-response-parsing | parallel-safe: yes | automatable: yes
+
+**Summary:** A route-supplied JSON `{error}` body surfaces verbatim to the user at 400 and 502; a 500 body does NOT, because `app/api/chat/route.js`'s catch-all returns `{error: err?.message}`, which can carry raw provider text (e.g. a bad Gemini key's SDK error) that must never print into the chat window.
+
+**Steps:**
+1. Read the status gate in `readChatResponse` (`hello-world/lib/chat/chatbot.js:144`) and confirm it explicitly excludes status 500 (`status !== 500 && parsed && typeof parsed.error === "string" && parsed.error`) before any verbatim pass-through.
+2. Read `hello-world/app/api/chat/route.js:296` and confirm the catch-all still returns `Response.json({error: err?.message || "Chat request failed."}, {status: 500})` — the branch in step 1 exists specifically to keep that string off the screen.
+3. From `hello-world`, run `npx vitest run lib/chat/chatbot.response.test.js`.
+
+**Expected:** All tests pass. A 400 `"No messages provided."`, a 502 `"Could not generate a reply."`, and a 502 `"Empty response from Gemini."` (the route's three JSON error shapes, `app/api/chat/route.js:177,233,291`) all surface verbatim to the user. A 500 body carrying `{"error":"fetch failed"}` (or any provider-shaped string, e.g. `[GoogleGenerativeAI Error]: API key not valid`) renders ONLY the generic "couldn't reach the assistant" message, and the raw provider text never appears in the rendered output.
+
+### R-286 | area: chat-attachments | parallel-safe: yes | automatable: yes
+
+**Summary:** The attachment byte budget is exact and internally consistent, and `base64Length` uses the ceiling formula so nothing at the edge of the accepted range can still trip the platform's 413.
+
+**Steps:**
+1. Read the constants block in `hello-world/lib/chat/chatbot.js:8-52`: `MAX_REQUEST_BYTES` (4,500,000), `CHAT_BODY_OVERHEAD_BYTES` (500,000), `MAX_ATTACHMENT_PAYLOAD_BYTES` (their difference, 4,000,000), `MAX_BINARY_ATTACHMENT_BYTES` (3,000,000), the `"2.8 MB"` label, and `base64Length`.
+2. From `hello-world`, run `npx vitest run lib/chat/chatbot.response.test.js`.
+
+**Expected:** All tests pass. `base64Length(n)` computes `4 * Math.ceil(n/3)`, not `n * 4/3` — confirmed against an input where the two formulas diverge (the ceiling form is the one that must win, since the asymptotic ratio under-counts and would leave a live failure band). A file of exactly 3,000,000 decoded bytes is accepted (its base64 form is exactly 4,000,000 bytes, i.e. exactly `MAX_ATTACHMENT_PAYLOAD_BYTES`), and an aggregate exactly at 4,000,000 payload bytes is accepted — both boundaries are inclusive, not exclusive. The old 5 MiB (5,242,880-byte) gate's base64 form (~6.99 MB) is confirmed to sit above `MAX_REQUEST_BYTES`; the new 3,000,000-byte gate's base64 form is confirmed to sit at or below `MAX_ATTACHMENT_PAYLOAD_BYTES`. The `"2.8 MB"` label is truthful under both a decimal-MB reading of the true byte cap and a MiB-labeled-as-MB reading.
+
+### R-287 | area: chat-attachments | parallel-safe: yes | automatable: yes
+
+**Summary:** Text and `.docx` attachments are charged by their EXTRACTED content in UTF-8 bytes, not by `file.size` — a `.docx` is a ZIP, so its `file.size` is the compressed size and understates what actually gets sent; a 300 KB résumé can extract to 4.5 MB of text. A separate absolute ceiling on the un-extracted source file stops an unbounded client-side unzip.
+
+**Steps:**
+1. Read `attachmentCost` in `hello-world/lib/chat/chatbot.js:278-287` and confirm the text/`.docx` branch encodes `entry.content` with `TextEncoder` (UTF-8 byte length), not `.length` (UTF-16 code units) — the binary branch's `dataB64` is pure ASCII base64 and needs no such adjustment.
+2. Read the `.docx` branch of `addChatAttachments` (`hello-world/lib/chat/chatbot.js:329-332`) and confirm the `MAX_DOCX_SOURCE_BYTES` (25 * 1024 * 1024) check runs on `file.size` BEFORE `buildTemplateLinesForUpload` — and therefore before `JSZip.loadAsync` — is ever called, and is a separate check from the per-file `MAX_BINARY_ATTACHMENT_BYTES` gate, which is explicitly skipped for `.docx` (`:320`, `!isDocx && file.size > MAX_BINARY_ATTACHMENT_BYTES`).
+3. From `hello-world`, run `npx vitest run lib/chat/chatbot.attachments.test.js`.
+
+**Expected:** All tests pass, including a case where a small-`file.size` `.docx` extracts to content whose UTF-8 byte length alone busts the aggregate budget, and a case where a `.docx` source file over 25 MB is refused before extraction is even attempted.
+
+### R-288 | area: chat-attachments | parallel-safe: yes | automatable: yes
+
+**Summary:** A bulk attach — `ExperienceTab.js`'s "Ask AI about these attachments", which hands `addChatAttachments` N files the user never individually chose — names EVERY refused file in the batch, not just the last one.
+
+**Steps:**
+1. Read `addChatAttachments` in `hello-world/lib/chat/chatbot.js:289-389` and confirm refusals accumulate onto an `errors` array across the whole loop and are joined once, at `:384` (`setChatAttachError(errors.join(" "))`), rather than overwriting a single error slot per file.
+2. Read `hello-world/app/components/experience/ExperienceTab.js:471` and confirm the bulk path calls `addChatAttachments(files)` once with the whole file list.
+3. From `hello-world`, run `npx vitest run lib/chat/chatbot.attachments.test.js app/components/ChatPanel.gaps.test.js`.
+
+**Expected:** All tests pass. A batch containing multiple oversized or unsupported files produces one combined refusal naming every rejected file, and `ChatPanel` renders that combined text rather than only the last file's refusal.
+
+### R-289 | area: chat-attachments | parallel-safe: yes | automatable: yes
+
+**Summary:** A successful send clears only the attachments that request actually sent — a file attached mid-flight (after the request snapshot was taken, before the reply arrived) survives. A FAILED send never clears the tray. `Clear` empties attachments and the attach-error together, and is offered whenever there are messages OR attachments, not only when both are present.
+
+**Steps:**
+1. Read the success branch of `runChatRequest` in `hello-world/lib/chat/chatbot.js:543-558` and confirm it filters `prev` by reference against the `sentAttachments` snapshot taken before the request went out (`:482`), so anything attached after that snapshot but before the response resolves is left in the tray untouched.
+2. Confirm the catch branch (`:560-575`) never reads or writes `chatAttachedFiles` at all.
+3. Read the Clear control's render guard and `onClick` in `hello-world/app/components/ChatPanel.js:161-184` and confirm it renders when `chatMessages.length > 0 || chatAttachedFiles.length > 0`, and its click handler clears `chatMessages`, `chatAttachedFiles`, and `chatAttachError` together.
+4. From `hello-world`, run `npx vitest run lib/chat/chatbot.request.test.js app/components/ChatPanel.clear.test.js`.
+
+**Expected:** All tests pass, including: a successful send removes only the attachments it sent and leaves a mid-flight-attached file in the tray; a failed send leaves every attachment in place, byte for byte; Clear is absent with an empty thread and an empty tray; Clear is offered with messages and no attachments, and with attachments and no messages; Clear still clears the attach-error and still works end to end when `setChatAttachError` is not supplied at all (older callers).
+
+### R-290 | area: chat-attachments | parallel-safe: yes | automatable: yes
+
+**Summary:** A failed turn is marked in place and its slot is reused on retry, so a retry cannot grow the request. It renders visibly and audibly distinct from a sent turn, and Resend stays reachable on it.
+
+**Steps:**
+1. Read the catch branch of `runChatRequest` (`hello-world/lib/chat/chatbot.js:560-575`) and confirm it marks the last user turn `failed: true` in place rather than appending a new one; read the top of `runChatRequest` (`:426-430`) and confirm a trailing `failed` user turn already present in `baseMessages` is popped before the new user turn is appended, so a retry reuses that slot instead of stacking a second, larger copy of the same turn.
+2. Read `hello-world/app/components/ChatPanel.js:244` (the `data-chat-turn="failed"` / `"sent"` attribute, scoped to its own element rather than folded into the message bubble) and `:280` (the `role="status"` "Not sent — try Resend below" cue).
+3. From `hello-world`, run `npx vitest run lib/chat/chatbot.request.test.js app/components/ChatPanel.gaps.test.js`.
+
+**Expected:** All tests pass, including: the failed turn carries `data-chat-turn="failed"`, distinct from a sent turn's `"sent"`; the cue element has `role="status"` so a screen reader announces it unprompted; its text states in words that the turn was not sent; its font size matches the panel's other error text (0.85rem); and the Resend control remains reachable and functional on that specific turn. A retry after a failure never leaves two copies of the same user turn in the transcript.
+
+### R-291 | area: chat-attachments | parallel-safe: yes | automatable: yes
+
+**Summary:** Blob preview URLs are revoked whenever an attachment leaves the tray — on a successful send, on Clear, and when a single chip is deleted individually — so none of the three paths leaks a blob URL for the rest of the page's life.
+
+**Steps:**
+1. Read `revokeAttachmentPreview` in `hello-world/lib/chat/chatbot.js:59-67` (guarded on `typeof URL`, not just try/catch, so it degrades to a no-op rather than throwing when the `URL` global is absent, as in a node test environment) and its three call sites: the success branch of `runChatRequest` (`:552`), the Clear handler in `hello-world/app/components/ChatPanel.js:172` (`chatAttachedFiles.forEach(revokeAttachmentPreview)`), and the per-chip `onDelete` handler (`:392-397`).
+2. From `hello-world`, run `npx vitest run lib/chat/chatbot.attachments.test.js app/components/ChatPanel.clear.test.js app/components/ChatPanel.gaps.test.js`.
+
+**Expected:** All tests pass, including that Clear revokes every remaining chip's preview URL before emptying the tray, and that deleting one chip revokes only that chip's URL and leaves the others' intact.
+
+**Full-suite verification for R-284 through R-291, one command:** from `hello-world`, `npx vitest run lib/chat app/components/ChatPanel --no-file-parallelism`. At the time of writing this returns `Test Files 7 passed (7)` / `Tests 115 passed (115)`, covering `lib/chat/chatbot.response.test.js`, `lib/chat/chatbot.attachments.test.js`, `lib/chat/chatbot.request.test.js`, `app/components/ChatPanel.clear.test.js`, `app/components/ChatPanel.gaps.test.js`, and the two pre-existing files the glob also picks up in the same directories.
+
+### R-292 | area: chat-platform-limits | parallel-safe: no | automatable: no
+
+**Summary:** A genuine Vercel-platform 413 is the one thing nothing below the platform can produce — `next dev` enforces no such cap, and the App Router's 4.5 MB body limit is generated by the platform before the route handler ever runs, with no configuration knob for it. Confirm the client-side attach-time refusal fires on a real deploy, and record the actually-observed response shape, since that is the only proof the status-keyed classifier in R-284 matches what Vercel really sends.
+
+**Steps:**
+1. Deploy the app to Vercel (not a local `next dev` server).
+2. With a résumé loaded, attach a PDF or image of roughly 3 MB and attempt to send it. Confirm the attach-time refusal names the file and quotes `"2.8 MB"` (`MAX_ATTACHMENT_SIZE_LABEL`).
+3. Using an attachment (or combination) large enough to pass the per-file gate but still exceed the platform's 4.5 MB cap once base64-encoded, send the message against the deployed instance and open the browser devtools network panel on the failed request.
+4. Record VERBATIM — in this entry's next amendment — the response's HTTP status code and its `content-type` header value, or explicitly note that no `content-type` header was present.
+
+**Expected:** Step 2's refusal fires client-side and the request never reaches the network. Step 4's recorded status and content-type are the only real-world evidence that `readChatResponse`'s status-only classification actually matches what Vercel sends for an oversized request on this platform and account — nobody in this repo has recorded that observed value yet, so this case is not satisfied by a green automated suite alone.
+
+### R-293 | area: chat-platform-limits | parallel-safe: yes | automatable: no
+
+**Summary:** A user with a large amount of tracked application history and ZERO attachments can still 413, because `applicationsContext` serializes every tracked application's full job description and tailored résumé, unbounded, on every send. The failure message must name that real cause, not attachments — and client-side trimming was deliberately NOT implemented, for a reason that must not be "fixed" by a future change adding it back in.
+
+**Steps:**
+1. With an account carrying roughly 200 tracked applications and NO attachments in the chat tray, send a message.
+2. Read the message the user sees on failure.
+
+**Expected:** The message names saved application history as the likely cause (`TOO_BIG_NO_ATTACHMENTS_MESSAGE`, `hello-world/lib/chat/chatbot.js:88-92`) — NOT "remove an attachment", which would be impossible advice with an empty tray. **Known limitation, recorded so it is not mistaken for an oversight:** this user still cannot send, and no client-side trimming closes that. `lib/chat/localAssistant.js:162-167` iterates ALL applications to find `stages[].scheduledAt` for its "Upcoming" summary, and for the embedded engine `app/api/chat/route.js`'s handler returns a reply (`:223-236`) with no caller applying caps to the request body first — so trimming `applicationsContext` client-side to fit a byte budget could silently delete a scheduled interview from the assistant's own answer. Do not add client-side trimming without first giving the embedded assistant's context builder a capped, prioritized view of applications; adding naive trimming against today's unbounded consumer would trade this message for a different, silent data-loss bug.
+
+### R-294 | area: chat-attachments | parallel-safe: yes | automatable: no
+
+**Summary:** After a successful send, the next turn does not carry the attachment that was just sent — the tray is cleared by design (R-289) — but there is currently no on-screen cue telling the user that happened.
+
+**Steps:**
+1. Attach a file, send a message, and wait for the reply.
+2. Send a follow-up message in the same thread with no new attachment.
+
+**Expected:** The follow-up request carries no attachment, confirming R-289's clear-on-success behavior end to end in the running app rather than only against a test harness. **Known gap, recorded so it is not mistaken for a future regression:** there is no on-screen indication that the attachment was consumed by the prior turn and is no longer part of the conversation's ongoing context — a user who expects the model to keep referencing an attached résumé across several turns gets no warning that it dropped out after the first successful send.
+
+**Known flakes, unrelated to this change:** `app/hooks/useDriveDocuments.connect.test.js`'s *"Overwrite retries with onConflict exactly 'overwrite'"* and *"Save as a new Doc retries with onConflict exactly 'new'"* (both recorded in R-282) fail only under full-suite load and pass in isolation — each is a promise deliberately left outside `act()`. Neither is touched by, nor caused by, the chat fix recorded in R-284 through R-294.

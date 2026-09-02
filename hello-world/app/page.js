@@ -3133,6 +3133,7 @@ export default function Home() {
           chatAttachedFiles={chat.chatAttachedFiles}
           setChatAttachedFiles={chat.setChatAttachedFiles}
           chatAttachError={chat.chatAttachError}
+          setChatAttachError={chat.setChatAttachError}
           chatInput={chat.chatInput}
           setChatInput={chat.setChatInput}
           sendChatMessage={chat.sendChatMessage}

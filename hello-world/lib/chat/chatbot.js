@@ -5,6 +5,159 @@
 
 import { readEngine } from "@/app/settings/engine";
 
+// --- Request-size budget ----------------------------------------------------
+//
+// Vercel's App Router rejects a request body over 4.5 MB at the edge, before
+// it ever reaches app/api/chat/route.js -- so that rejection carries whatever
+// body the PLATFORM felt like sending (see readChatResponse below), not JSON.
+// MAX_REQUEST_BYTES is that cap, read decimally (the conservative reading; the
+// optimistic 4.5 MiB = 4_718_592 would let a request through that Vercel
+// still bounces).
+export const MAX_REQUEST_BYTES = 4_500_000;
+// Reserved for everything in the body besides attachments: the message
+// transcript, resumeText, the applications array, pinnedContext, and the JSON
+// scaffolding around all of it.
+export const CHAT_BODY_OVERHEAD_BYTES = 500_000;
+// What's left for attachments, summed across the whole tray.
+export const MAX_ATTACHMENT_PAYLOAD_BYTES = MAX_REQUEST_BYTES - CHAT_BODY_OVERHEAD_BYTES;
+// The largest single binary file whose base64 form still fits the payload
+// budget on its own: 4 * ceil(n/3) <= 4_000_000  =>  ceil(n/3) <= 1_000_000
+// => n <= 3_000_000 decoded bytes. (The OLD gate was `5 * 1024 * 1024`, whose
+// base64 form is ~6.99 MB -- ~55% over the transport limit above -- which is
+// the root cause of the reported bug: an accepted file that always 413s.)
+export const MAX_BINARY_ATTACHMENT_BYTES = 3_000_000;
+// User-facing label for the per-file cap. Deliberately NOT "3 MB": macOS
+// reports file sizes in decimal MB and Windows reports MiB under the same
+// "MB" label, so a size just below the true byte cap under BOTH readings is
+// the only value that is never a lie in either direction.
+export const MAX_ATTACHMENT_SIZE_LABEL = "2.8 MB";
+// M1: a .docx is a ZIP, so the per-file gate above deliberately does NOT
+// apply to it (file.size is the COMPRESSED size and says nothing about how
+// much text comes out -- see the aggregate check further down, which is the
+// one that catches a small .docx with huge extracted text). But skipping the
+// PAYLOAD cap is not the same as skipping every ceiling: with no ceiling at
+// all, a 100 MB graphics-heavy resume -- or a decompression bomb -- goes
+// straight into `JSZip.loadAsync` with nothing to stop it, freezing the tab.
+// This is an absolute SOURCE-file ceiling, checked before extraction ever
+// starts. 25 MB comfortably covers any real resume/cover-letter .docx.
+export const MAX_DOCX_SOURCE_BYTES = 25 * 1024 * 1024;
+export const MAX_DOCX_SOURCE_LABEL = "25 MB";
+
+// Base64 encodes 3 raw bytes as 4 characters, rounding the LAST group up to a
+// full 4 characters (with `=` padding) rather than down. `n * 4 / 3` is the
+// asymptotic ratio, not the actual length, and it always UNDER-counts -- which
+// would leave a live failure band right at the top of the accepted range.
+export function base64Length(n) {
+  return 4 * Math.ceil(n / 3);
+}
+
+// M6: revoke an image attachment's preview blob URL so it doesn't leak for
+// the page's remaining life. Guarded on `typeof URL` -- not just try/catch --
+// because a node-environment test can be missing the `URL` global entirely,
+// which throws on the PROPERTY LOOKUP `URL.revokeObjectURL` before the call
+// itself ever happens. Prior art: app/hooks/useScreenshots.js:59,69.
+export function revokeAttachmentPreview(entry) {
+  if (!entry || !entry.previewUrl) return;
+  if (typeof URL === "undefined" || typeof URL.revokeObjectURL !== "function") return;
+  try {
+    URL.revokeObjectURL(entry.previewUrl);
+  } catch {
+    /* noop */
+  }
+}
+
+// --- Reading the chat API's response ---------------------------------------
+//
+// NEVER call `response.json()` on this path. Vercel's platform-level 413
+// (body over MAX_REQUEST_BYTES) rejects the request before route.js runs, so
+// the body is plain text ("Request Entity Too Large") with a content-type the
+// platform chose -- sometimes none at all -- and `.json()` throws a
+// `SyntaxError` that used to land in the chat window verbatim. Reading the
+// body as text first (once) and classifying failures by HTTP `status` is what
+// keeps that from ever happening again. Prior art:
+// lib/llm/engines/externalEngine.js:57-66 ("413 returns an HTML page (not
+// JSON), so it's handled separately").
+const TOO_BIG_MESSAGE =
+  `That message is too large to send (the platform limit is 4.5 MB total). ` +
+  `Remove an attachment, or attach a smaller file, and try again.`;
+// M4: "remove an attachment" is impossible advice when nothing is attached --
+// applicationsContext (below) serializes every tracked application's full
+// jobDescription and tailoredResume, unbounded, on EVERY send, so a user with
+// a lot of saved application history and zero attachments can 413 with no
+// attachment to blame. This branch names the real cause instead.
+const TOO_BIG_NO_ATTACHMENTS_MESSAGE =
+  `That message is too large to send (the platform limit is 4.5 MB total) — ` +
+  `most likely from all your saved application history riding along, not an ` +
+  `attachment. Try asking about one specific company or role, or send a ` +
+  `shorter, smaller message, and try again.`;
+const TIMED_OUT_MESSAGE = "That took too long and timed out. Please try again.";
+const UNREACHABLE_MESSAGE =
+  "Couldn't reach the assistant right now. Please try again in a moment.";
+const INCOMPLETE_REPLY_MESSAGE =
+  "The reply didn't come through completely. Please try again.";
+
+// `hasAttachments` defaults to true so a caller that doesn't know about
+// attachments (or doesn't pass the option at all) keeps getting the original
+// wording verbatim -- only `runChatRequest` (which knows what it just sent)
+// opts into the no-attachments branch.
+export async function readChatResponse(response, { hasAttachments = true } = {}) {
+  // Read the body EXACTLY ONCE, and only as text -- a second read of a real
+  // `Response` throws "body stream already read", so this is a correctness
+  // requirement, not a style choice.
+  let raw;
+  try {
+    raw = await response.text();
+  } catch {
+    return { ok: false, error: UNREACHABLE_MESSAGE };
+  }
+
+  // Parse AFTER the read, in its own try. A non-JSON body (the platform 413,
+  // an HTML error page) simply parses to nothing rather than throwing past
+  // this function.
+  let parsed = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = null;
+  }
+
+  if (response.ok) {
+    const reply = parsed && typeof parsed.reply === "string" ? parsed.reply : "";
+    if (reply) return { ok: true, reply };
+    return { ok: false, error: INCOMPLETE_REPLY_MESSAGE };
+  }
+
+  const { status } = response;
+
+  // The route's own JSON error responses ("No messages provided.", "Could
+  // not generate a reply.", "Empty response from Gemini.") are the one path
+  // that already works today -- a real `{ error }` string wins verbatim over
+  // any status-based classification below. BUT status 500 is route.js's
+  // catch-all (`{ error: err?.message }`, app/api/chat/route.js:296), which
+  // can carry a raw SDK/provider error string -- a bad Gemini key, an SDK
+  // exception, a Supabase failure -- straight from `err.message`. That is the
+  // exact class of leak this whole change exists to close, just arriving
+  // through the 500 door instead of a thrown SyntaxError. Gating verbatim
+  // pass-through OUT for 500 sends it to the generic UNREACHABLE_MESSAGE
+  // below instead; the two routes that legitimately need verbatim text (400,
+  // 502) are untouched, since neither of them is 500.
+  if (status !== 500 && parsed && typeof parsed.error === "string" && parsed.error) {
+    return { ok: false, error: parsed.error };
+  }
+
+  // Everything past here is classified on STATUS ONLY, never on content-type.
+  // A platform-generated 413 can arrive as text/plain, text/html,
+  // application/octet-stream, or no content-type header at all -- branching
+  // on content-type instead falls through to `.json()` (or an equivalent
+  // guess) for at least one of those shapes and reproduces the exact bug this
+  // fix closes.
+  if (status === 413) {
+    return { ok: false, error: hasAttachments ? TOO_BIG_MESSAGE : TOO_BIG_NO_ATTACHMENTS_MESSAGE };
+  }
+  if (status === 504 || status === 408) return { ok: false, error: TIMED_OUT_MESSAGE };
+  return { ok: false, error: UNREACHABLE_MESSAGE };
+}
+
 export function buildJobContextString(job) {
   const lines = [];
   if (job.title) lines.push(`Title: ${job.title}`);
@@ -118,56 +271,117 @@ export function createChatHandlers(deps) {
     });
   }
 
+  // What an already-attached (or about-to-be-attached) entry actually costs
+  // in the request body: a binary travels as base64 (`dataB64`), a text/.docx
+  // entry travels as its own extracted `content` -- charging a text file its
+  // base64-inflated size would refuse files that comfortably fit.
+  function attachmentCost(entry) {
+    if (entry.kind === "binary") return (entry.dataB64 || "").length;
+    // m4: `content` travels as UTF-8 inside a JSON string, not UTF-16 code
+    // units -- `.length` undercounts it. In a resume tool this is not an edge
+    // case: accented characters, em dashes, and bullets cost 2-3 UTF-8 bytes
+    // apiece, and every `\n` becomes the two JSON characters `\n` once
+    // escaped. `dataB64` above is base64 (pure ASCII), so it needs no such
+    // adjustment -- only the text/.docx path does.
+    return new TextEncoder().encode(entry.content || "").length;
+  }
+
   async function addChatAttachments(fileList) {
     const files = Array.from(fileList || []);
     if (files.length === 0) return;
-    setChatAttachError("");
+    // Accumulate refusals instead of overwriting `chatAttachError` per file:
+    // ExperienceTab.js's bulk "Ask AI about these attachments" hands over N
+    // files the user never individually chose, and a message naming only the
+    // last refusal reads as though the others attached fine.
+    const errors = [];
     const accepted = [];
+    // Running total of transmitted bytes: the existing tray, plus everything
+    // ACCEPTED EARLIER IN THIS SAME BATCH, plus the file under consideration.
+    // Reading only the snapshot `chatAttachedFiles` would let an entire batch
+    // through even when its members jointly bust the budget.
+    let runningTotal = (chatAttachedFiles || []).reduce((sum, f) => sum + attachmentCost(f), 0);
+
     for (const file of files) {
       if (!file) continue;
-      if (file.size > 5 * 1024 * 1024) {
-        setChatAttachError(`${file.name} is too large (max 5 MB).`);
-        continue;
-      }
       const lowerName = (file.name || "").toLowerCase();
       const type = file.type || "";
       const isImage = type.startsWith("image/") || /\.(png|jpe?g|webp|gif|heic|heif)$/i.test(lowerName);
       const isPdf = type === "application/pdf" || lowerName.endsWith(".pdf");
+      const isDocx = isDocxResume(file);
+      const isTextLike =
+        !isDocx &&
+        (isTextResume(file) || /\.(txt|md|csv|json|log)$/i.test(lowerName) || (type && type.startsWith("text/")));
+
+      // Per-file cap, keyed on `file.size` -- but NOT for `.docx`. A .docx is
+      // a ZIP, so `file.size` is the COMPRESSED size and tells us nothing
+      // about how much text comes out; a 300 KB resume can extract to 4.5 MB
+      // of text. Only the aggregate check below (applied to the EXTRACTED
+      // content, further down) can catch that case.
+      if (!isDocx && file.size > MAX_BINARY_ATTACHMENT_BYTES) {
+        errors.push(`${file.name} is too large (max ${MAX_ATTACHMENT_SIZE_LABEL}).`);
+        continue;
+      }
+      // M1: the ABSOLUTE source-file ceiling for .docx (see the constant's
+      // comment above) -- separate from, and checked before, the aggregate
+      // check on EXTRACTED content further down. Without this a .docx of any
+      // size sails past the per-file gate above and goes straight into
+      // `buildTemplateLinesForUpload` -> `JSZip.loadAsync`.
+      if (isDocx && file.size > MAX_DOCX_SOURCE_BYTES) {
+        errors.push(`${file.name} is too large to open (max ${MAX_DOCX_SOURCE_LABEL} source file).`);
+        continue;
+      }
+
       try {
-        if (isDocxResume(file)) {
+        let entry;
+        if (isDocx) {
           const lines = await buildTemplateLinesForUpload(file);
           const content = (lines || []).join("\n").trim();
-          if (!content) { setChatAttachError(`${file.name}: no text could be extracted.`); continue; }
-          accepted.push({ name: file.name, kind: "text", content });
-        } else if (
-          isTextResume(file) ||
-          /\.(txt|md|csv|json|log)$/i.test(lowerName) ||
-          (type && type.startsWith("text/"))
-        ) {
+          if (!content) { errors.push(`${file.name}: no text could be extracted.`); continue; }
+          entry = { name: file.name, kind: "text", content };
+        } else if (isTextLike) {
           const content = (await file.text()).trim();
-          if (!content) { setChatAttachError(`${file.name}: no text could be extracted.`); continue; }
-          accepted.push({ name: file.name, kind: "text", content });
+          if (!content) { errors.push(`${file.name}: no text could be extracted.`); continue; }
+          entry = { name: file.name, kind: "text", content };
         } else if (isImage || isPdf) {
           const dataB64 = await readFileAsBase64(file);
-          if (!dataB64) { setChatAttachError(`${file.name}: could not read file.`); continue; }
+          if (!dataB64) { errors.push(`${file.name}: could not read file.`); continue; }
           const mimeType = type || (isPdf ? "application/pdf" : "image/png");
-          accepted.push({
+          entry = {
             name: file.name,
             kind: "binary",
             mimeType,
             dataB64,
             previewUrl: isImage ? URL.createObjectURL(file) : null,
-          });
+          };
         } else {
-          setChatAttachError(
-            `${file.name}: unsupported type. Use text, .docx, images, or PDF.`,
+          errors.push(`${file.name}: unsupported type. Use text, .docx, images, or PDF.`);
+          continue;
+        }
+
+        const cost = attachmentCost(entry);
+        if (runningTotal + cost > MAX_ATTACHMENT_PAYLOAD_BYTES) {
+          // m3: `runningTotal` here is everything ALREADY accepted (the prior
+          // tray plus anything accepted earlier in this same batch) -- when
+          // it's zero, this file busts the budget entirely BY ITSELF, and
+          // there is nothing else to "remove" (the M1 case: one oversized
+          // .docx, empty tray). Naming a nonexistent tray there is exactly
+          // the impossible-advice defect M4 fixes elsewhere, so branch the
+          // same way here, and state the actual total either way.
+          const totalMB = ((runningTotal + cost) / 1_000_000).toFixed(1);
+          errors.push(
+            runningTotal > 0
+              ? `${file.name} would push the attachments over the total limit (${totalMB} MB) — remove one and try again.`
+              : `${file.name} is too large on its own (${totalMB} MB) to attach — try a smaller file.`,
           );
           continue;
         }
+        runningTotal += cost;
+        accepted.push(entry);
       } catch (err) {
-        setChatAttachError(`${file.name}: ${err.message || "failed to read."}`);
+        errors.push(`${file.name}: ${err.message || "failed to read."}`);
       }
     }
+    setChatAttachError(errors.join(" "));
     if (accepted.length > 0) {
       setChatAttachedFiles((prev) => [...prev, ...accepted]);
       setChatOpen(true);
@@ -203,8 +417,19 @@ export function createChatHandlers(deps) {
   async function runChatRequest(text, baseMessages) {
     const trimmed = (text || "").trim();
     if (!trimmed) return;
+    // A retry must not GROW the request: if the base transcript already ends
+    // with a turn we marked `failed`, drop it here so this attempt reuses
+    // that slot instead of appending a second, larger copy of the same turn.
+    // `resendUserMessage`'s own `slice(0, index)` already excludes the turn
+    // being resent (it never ends in a trailing failed turn that belongs to
+    // THIS call), so this is a no-op there.
+    const cleanedBase = Array.isArray(baseMessages) ? [...baseMessages] : [];
+    const lastBase = cleanedBase[cleanedBase.length - 1];
+    if (lastBase && lastBase.role === "user" && lastBase.failed) {
+      cleanedBase.pop();
+    }
     const userMsg = { role: "user", content: trimmed };
-    const nextMessages = [...(baseMessages || []), userMsg];
+    const nextMessages = [...cleanedBase, userMsg];
     setChatMessages(nextMessages);
     setChatError("");
     setChatSending(true);
@@ -222,7 +447,11 @@ export function createChatHandlers(deps) {
       const applicationsContext = (applicationData || []).map((app) => {
         const pos = app.positions || {};
         const resume = app.generated_resumes;
-        const stages = applicationStages[app.id] || [];
+        // m11: `buildApplicationContextString` (this file, above) already
+        // uses `?.` here -- without it, a missing `applicationStages` map
+        // throws a raw TypeError that lands as a "failed" turn showing the
+        // user a bare JS message instead of a chat reply.
+        const stages = applicationStages?.[app.id] || [];
         return {
           company: pos.company || null,
           role: pos.title || null,
@@ -242,31 +471,107 @@ export function createChatHandlers(deps) {
         };
       });
 
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: nextMessages,
-          resumeText,
-          applications: applicationsContext,
-          pinnedContext: chatPinnedContext
-            ? { label: chatPinnedContext.label, content: chatPinnedContext.content }
-            : null,
-          attachedFiles: (chatAttachedFiles || []).map((f) =>
-            f.kind === "binary"
-              ? { name: f.name, mimeType: f.mimeType, dataB64: f.dataB64 }
-              : { name: f.name, content: f.content },
-          ),
-          tab: mainTab,
-          section: activeSection,
-          // Embedded engine answers from context offline; otherwise Gemini.
-          engine: readEngine(),
-        }),
+      // M2/M6: snapshot the tray that is ACTUALLY going into this request's
+      // body, before anything async below can let a re-render swap in a
+      // newer `chatAttachedFiles`. Neither the `+ File` button nor the drop
+      // handler is disabled while sending, so a user can attach a fresh file
+      // while "Thinking…" is showing -- clearing the tray wholesale on
+      // success would silently delete that file even though it was never
+      // sent. Filtering by reference against THIS snapshot (below) removes
+      // only what this request actually carried.
+      const sentAttachments = chatAttachedFiles || [];
+      const hasAttachments = sentAttachments.length > 0;
+
+      const requestBody = JSON.stringify({
+        messages: nextMessages,
+        resumeText,
+        applications: applicationsContext,
+        pinnedContext: chatPinnedContext
+          ? { label: chatPinnedContext.label, content: chatPinnedContext.content }
+          : null,
+        attachedFiles: sentAttachments.map((f) =>
+          f.kind === "binary"
+            ? { name: f.name, mimeType: f.mimeType, dataB64: f.dataB64 }
+            : { name: f.name, content: f.content },
+        ),
+        tab: mainTab,
+        section: activeSection,
+        // Embedded engine answers from context offline; otherwise Gemini.
+        engine: readEngine(),
       });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || "Chat request failed.");
-      setChatMessages((prev) => [...prev, { role: "assistant", content: payload.reply || "" }]);
+
+      // M4: MEASURE, don't trim. `applicationsContext` above serializes every
+      // tracked application's full jobDescription and tailoredResume,
+      // unbounded, on every send -- a user with a lot of saved application
+      // history can bust the platform's 4.5 MB cap with zero attachments.
+      // Client-side trimming is deliberately out of scope: localAssistant.js
+      // (:162-167) iterates ALL applications for scheduled interviews, so
+      // silently dropping any of them here to fit a byte budget could make a
+      // scheduled interview vanish from the assistant's own answer. This only
+      // measures the body BEFORE sending, so the user gets the real-cause
+      // message immediately instead of round-tripping to the platform's own
+      // 413 for the same outcome.
+      const bodyBytes = new TextEncoder().encode(requestBody).length;
+      if (bodyBytes > MAX_REQUEST_BYTES) {
+        throw new Error(hasAttachments ? TOO_BIG_MESSAGE : TOO_BIG_NO_ATTACHMENTS_MESSAGE);
+      }
+
+      let response;
+      try {
+        response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: requestBody,
+        });
+      } catch (fetchErr) {
+        // A REJECTED fetch means no response ever arrived -- no status to
+        // classify, and the raw "Failed to fetch" TypeError is not something
+        // a job-seeker can act on. Prior art: app/hooks/useScreenshots.js:159-171.
+        const msg = fetchErr?.message || "";
+        const networkish =
+          fetchErr?.name === "TypeError" || /failed to fetch|networkerror|load failed/i.test(msg);
+        throw new Error(
+          networkish
+            ? "Couldn't reach the server — check your internet connection and try again."
+            : msg || "Chat request failed.",
+        );
+      }
+
+      const result = await readChatResponse(response, { hasAttachments });
+      if (!result.ok) throw new Error(result.error);
+
+      // The turn succeeded, so every attachment THIS REQUEST carried was
+      // delivered -- remove only those entries (by reference against the
+      // snapshot above), revoking each one's preview blob URL as it goes
+      // (M6). A wholesale `setChatAttachedFiles([])` here would also destroy
+      // any file the user attached mid-flight (M2) and leak its blob URL.
+      setChatAttachedFiles((prev) => {
+        const remaining = [];
+        for (const f of prev) {
+          if (sentAttachments.includes(f)) {
+            revokeAttachmentPreview(f);
+          } else {
+            remaining.push(f);
+          }
+        }
+        return remaining;
+      });
+      setChatMessages((prev) => [...prev, { role: "assistant", content: result.reply }]);
     } catch (err) {
+      // A FAILED send must never destroy the user's attachments -- they would
+      // have to re-pick and re-read the same files on every retry. Instead,
+      // mark the just-sent user turn `failed` in place; the next call through
+      // here strips a trailing failed turn (see above) and reuses the slot
+      // rather than growing the transcript.
+      setChatMessages((prev) => {
+        if (prev.length === 0) return prev;
+        const updated = [...prev];
+        const lastIdx = updated.length - 1;
+        if (updated[lastIdx].role === "user") {
+          updated[lastIdx] = { ...updated[lastIdx], failed: true };
+        }
+        return updated;
+      });
       setChatError(err.message || "Chat request failed.");
     } finally {
       setChatSending(false);

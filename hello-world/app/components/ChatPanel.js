@@ -7,6 +7,7 @@ import Avatar from "@mui/material/Avatar";
 import TextField from "@mui/material/TextField";
 import { useIsMobile } from "../hooks/useResponsive";
 import { useEngine } from "../settings/engine";
+import { revokeAttachmentPreview } from "../../lib/chat/chatbot";
 
 const EMBEDDED_TOOLTIP =
   "Embedded engine: replies are generated on-device from your pinned posting, resume, and applications — no AI, works offline. Switch to Gemini in the top bar for open-ended chat.";
@@ -34,6 +35,7 @@ export default function ChatPanel({
   chatAttachedFiles,
   setChatAttachedFiles,
   chatAttachError,
+  setChatAttachError,
   chatInput,
   setChatInput,
   sendChatMessage,
@@ -156,10 +158,26 @@ export default function ChatPanel({
             />
           ) : null}
         </Box>
-        {chatMessages.length > 0 ? (
+        {chatMessages.length > 0 || chatAttachedFiles.length > 0 ? (
           <Button
             size="small"
-            onClick={() => { setChatMessages([]); setChatError(""); }}
+            onClick={() => {
+              setChatMessages([]);
+              setChatError("");
+              // The bulk-attach path (ExperienceTab.js) can leave chips in the
+              // tray with zero messages sent -- Clear has to be the way out of
+              // that unsendable payload too, not just a thread reset.
+              // M6: revoke every discarded chip's preview blob URL before the
+              // tray is emptied, or each one leaks for the page's life.
+              chatAttachedFiles.forEach(revokeAttachmentPreview);
+              setChatAttachedFiles([]);
+              // M5: without this, a stale "...is too large..." refusal from a
+              // bulk add keeps pointing at files Clear just removed.
+              // Optional call: `setChatAttachError` is a prop, and some
+              // callers (older tests, callers that never surface the refusal
+              // banner) may not pass one.
+              setChatAttachError?.("");
+            }}
             sx={{ textTransform: "none", fontSize: "0.8rem", color: "var(--text-secondary)" }}
           >
             Clear
@@ -218,6 +236,12 @@ export default function ChatPanel({
           chatMessages.map((m, i) => (
             <Box
               key={i}
+              // Only user turns are ever marked failed/sent -- an assistant
+              // reply has nothing to retry, so it carries no attribute at
+              // all. A `failed` turn must be reachable as its own element
+              // (not folded into one outer wrapper) so the visible "not
+              // sent" cue below stays scoped to just that turn.
+              data-chat-turn={m.role === "user" ? (m.failed ? "failed" : "sent") : undefined}
               sx={{
                 alignSelf: m.role === "user" ? "flex-end" : "flex-start",
                 maxWidth: "85%",
@@ -243,6 +267,20 @@ export default function ChatPanel({
               >
                 {m.content}
               </Box>
+              {m.role === "user" && m.failed ? (
+                // A `data-chat-turn="failed"` attribute alone is invisible --
+                // slot re-use on the next send would silently replace this
+                // message with no cue at all. This is the human-perceivable
+                // half of that requirement (Resend below is the escape hatch).
+                // m8: `role="status"` (implicitly `aria-live="polite"`) so a
+                // screen-reader user is told a send failed without having to
+                // discover the cue visually, and the font size matches
+                // `chatError` below (0.85rem) rather than sitting well under
+                // it -- this was the smallest text in the whole panel.
+                <Box role="status" sx={{ alignSelf: "flex-end", pr: 0.5, fontSize: "0.85rem", color: "var(--danger)" }}>
+                  Not sent — try Resend below
+                </Box>
+              ) : null}
               {m.role === "assistant" ? (
                 <Box sx={{ display: "flex", justifyContent: "flex-start", pl: 0.5 }}>
                   <Button
@@ -351,9 +389,12 @@ export default function ChatPanel({
                 size="small"
                 label={f.name}
                 avatar={f.previewUrl ? <Avatar src={f.previewUrl} alt="" variant="rounded" /> : undefined}
-                onDelete={() =>
-                  setChatAttachedFiles((prev) => prev.filter((_, idx) => idx !== i))
-                }
+                onDelete={() => {
+                  // M6: revoke this chip's own preview blob URL before it's
+                  // dropped from the tray.
+                  revokeAttachmentPreview(f);
+                  setChatAttachedFiles((prev) => prev.filter((_, idx) => idx !== i));
+                }}
                 sx={{ maxWidth: 220 }}
               />
             ))}

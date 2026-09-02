@@ -118,7 +118,7 @@ export function useChat({ resumeFile, applicationData, applicationStages, mainTa
     chatError, setChatError,
     chatPinnedContext, setChatPinnedContext,
     chatAttachedFiles, setChatAttachedFiles,
-    chatAttachError,
+    chatAttachError, setChatAttachError,
     chatCopiedIndex, setChatCopiedIndex,
     chatDragActive, setChatDragActive,
     chatSize,
