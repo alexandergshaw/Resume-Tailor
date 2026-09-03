@@ -137,7 +137,7 @@ describe("readChatResponse: the 413 that produced the reported error", () => {
 });
 
 describe("readChatResponse: B1 -- a 500's own JSON error must NOT reach the user verbatim", () => {
-  // app/api/chat/route.js:296 is a catch-all: `Response.json({ error:
+  // app/api/chat/route.js:258 is a catch-all: `Response.json({ error:
   // err?.message || "Chat request failed." }, { status: 500 })`. A bad Gemini
   // key, an SDK exception, or a Supabase failure all funnel through THIS one
   // line, so `err.message` can be raw engineer-speak like

@@ -4,15 +4,43 @@
 // snapshot.
 
 import { readEngine } from "@/app/settings/engine";
+import { projectApplicationsForRequest } from "@/lib/chat/applicationContext";
 
 // --- Request-size budget ----------------------------------------------------
 //
-// Vercel's App Router rejects a request body over 4.5 MB at the edge, before
-// it ever reaches app/api/chat/route.js -- so that rejection carries whatever
-// body the PLATFORM felt like sending (see readChatResponse below), not JSON.
-// MAX_REQUEST_BYTES is that cap, read decimally (the conservative reading; the
-// optimistic 4.5 MiB = 4_718_592 would let a request through that Vercel
-// still bounces).
+// Vercel rejects an oversized request body before it ever reaches
+// app/api/chat/route.js -- so that rejection carries whatever body the
+// PLATFORM felt like sending (see readChatResponse below), not JSON.
+//
+// WHY 4_500_000, separating what's DOCUMENTED from what's INFERRED. An
+// earlier version of this comment stated the inference below as settled
+// fact -- it isn't, even though the conclusion (the constant) is still right.
+//
+// DOCUMENTED: Vercel's own docs give the request body limit as "4.5 MB", with
+// no stated unit base (decimal vs. binary). AWS documents Lambda's
+// synchronous-invocation payload limit as 6 MiB -- and documents the
+// request-line/header/cookie limit as a SEPARATE quota row, not part of that
+// 6 MiB body figure.
+//
+// INFERRED, and only an inference: that the body Vercel forwards to Lambda
+// arrives base64-encoded. Neither company's docs say so either way. IF it
+// does, the arithmetic ceiling is 6 MiB x 3/4 = 4_718_592 bytes -- exactly
+// 4.5 MiB the BINARY reading, which lines up with Vercel's stated "4.5 MB"
+// well enough to be a reasonable guess at what they mean, not a derivation
+// from a sourced mechanism. A second, weaker inference this comment used to
+// make -- that the same 6 MiB envelope also carries the request line, headers
+// and cookies, leaving a usable body budget somewhat below 4_718_592 -- does
+// NOT hold up: AWS lists those as the separate quota noted above, not a slice
+// of the body limit. That justification has been dropped here; it doesn't
+// follow from anything documented.
+//
+// The constant STAYS at 4_500_000 regardless of whether the base64 inference
+// is right, because it sits safely under Vercel's documented "4.5 MB" either
+// way -- the margin is deliberate slack against an unconfirmed mechanism, not
+// a number derived from one. Cost of that choice, stated honestly: a body in
+// [4_500_000, ~4_718_592) may be refused client-side even though the platform
+// would have carried it. Raising the number toward the inferred ceiling trades
+// that false refusal for a real 413 whose message is worse.
 export const MAX_REQUEST_BYTES = 4_500_000;
 // Reserved for everything in the body besides attachments: the message
 // transcript, resumeText, the applications array, pinnedContext, and the JSON
@@ -68,23 +96,38 @@ export function revokeAttachmentPreview(entry) {
 
 // --- Reading the chat API's response ---------------------------------------
 //
-// NEVER call `response.json()` on this path. Vercel's platform-level 413
-// (body over MAX_REQUEST_BYTES) rejects the request before route.js runs, so
-// the body is plain text ("Request Entity Too Large") with a content-type the
-// platform chose -- sometimes none at all -- and `.json()` throws a
-// `SyntaxError` that used to land in the chat window verbatim. Reading the
-// body as text first (once) and classifying failures by HTTP `status` is what
-// keeps that from ever happening again. Prior art:
+// NEVER call `response.json()` on this path. Vercel's platform-level 413 (body
+// over MAX_REQUEST_BYTES) does not come back as JSON, so `.json()` throws a
+// `SyntaxError` that used to land in the chat window verbatim.
+//
+// WHAT IS ACTUALLY KNOWN vs. what an earlier version of this comment asserted:
+// Vercel does not document where that rejection is generated, nor the body or
+// content-type it carries. The claim that it is "enforced at the edge, before
+// route.js runs" and arrives as the plain text "Request Entity Too Large" is
+// EMPIRICAL -- an observation, not a documented contract, and R-292 in
+// docs/REGRESSION.md exists precisely because nobody in this repo has yet
+// recorded the real status and content-type off a live deploy.
+//
+// The code is correct regardless, and that is the point: it reads the body as
+// TEXT exactly once and classifies on the HTTP `status`, so it never depends
+// on the response's shape. An empty body, an HTML error page, a JSON envelope
+// or a bare string all land in the same place. Never harden this path against
+// the literal string "Request Entity Too Large", and never reintroduce a
+// content-type check -- both would bind the client to an undocumented detail
+// the platform is free to change under us. Prior art:
 // lib/llm/engines/externalEngine.js:57-66 ("413 returns an HTML page (not
 // JSON), so it's handled separately").
 const TOO_BIG_MESSAGE =
   `That message is too large to send (the platform limit is 4.5 MB total). ` +
   `Remove an attachment, or attach a smaller file, and try again.`;
-// M4: "remove an attachment" is impossible advice when nothing is attached --
-// applicationsContext (below) serializes every tracked application's full
-// jobDescription and tailoredResume, unbounded, on EVERY send, so a user with
-// a lot of saved application history and zero attachments can 413 with no
-// attachment to blame. This branch names the real cause instead.
+// M4: "remove an attachment" is impossible advice when nothing is attached.
+// `applicationsContext` (below) is now BOUNDED by projectApplicationsForRequest
+// -- it no longer serializes every tracked application's full jobDescription
+// and tailoredResume -- but it still carries EVERY tracked application, so a
+// long enough history can still cross the cap with an empty tray. This branch
+// names the real cause instead. (Scale, so nobody reads this as dead code: the
+// unbounded shape crossed the cap at roughly 200 applications; the bounded one
+// needs order 10^4. See docs/REGRESSION.md R-293.)
 const TOO_BIG_NO_ATTACHMENTS_MESSAGE =
   `That message is too large to send (the platform limit is 4.5 MB total) — ` +
   `most likely from all your saved application history riding along, not an ` +
@@ -133,7 +176,7 @@ export async function readChatResponse(response, { hasAttachments = true } = {})
   // not generate a reply.", "Empty response from Gemini.") are the one path
   // that already works today -- a real `{ error }` string wins verbatim over
   // any status-based classification below. BUT status 500 is route.js's
-  // catch-all (`{ error: err?.message }`, app/api/chat/route.js:296), which
+  // catch-all (`{ error: err?.message }`, app/api/chat/route.js:258), which
   // can carry a raw SDK/provider error string -- a bad Gemini key, an SDK
   // exception, a Supabase failure -- straight from `err.message`. That is the
   // exact class of leak this whole change exists to close, just arriving
@@ -444,7 +487,7 @@ export function createChatHandlers(deps) {
         }
       }
 
-      const applicationsContext = (applicationData || []).map((app) => {
+      const mappedApplications = (applicationData || []).map((app) => {
         const pos = app.positions || {};
         const resume = app.generated_resumes;
         // m11: `buildApplicationContextString` (this file, above) already
@@ -465,11 +508,37 @@ export function createChatHandlers(deps) {
             type: s.stage_type || null,
             scheduledAt: s.scheduled_at || null,
             outcome: s.outcome || null,
+            // `interviewers` and `notes` are built here and then DELIBERATELY
+            // DISCARDED by projectApplicationsForRequest below -- it rebuilds
+            // each stage as {name, type, scheduledAt, outcome} only, because
+            // no consumer of `body.applications` reads either field
+            // (route.js's renderer and localAssistant.js both stop at
+            // outcome). They are not lost to the product: interviewer names
+            // and stage notes still travel to the model through
+            // `buildApplicationContextString` / `buildStageContextString`
+            // (this file, above), which render RAW Supabase rows into
+            // `pinnedContext.content` -- a different body field entirely. If
+            // you need them in a chat answer, add them to the allowlist in
+            // lib/chat/applicationContext.js; reading them off this array
+            // downstream will just yield `undefined`.
             interviewers: s.interviewer_names || [],
             notes: s.notes || null,
           })),
         };
       });
+
+      // Bound (not trim) the heavy per-application fields before they go on
+      // the wire: every application's scheduled dates and stage
+      // name/type/outcome survive, in order, for the whole tracked history
+      // (`stages[].interviewers` and `stages[].notes` are dropped -- see the
+      // note in the map above), but jobDescription/tailoredResume are
+      // capped for the first MAX_APPLICATIONS applications (the only ones
+      // route.js's Gemini renderer ever shows) and dropped entirely past
+      // that, where they were never rendered anyway. See
+      // lib/chat/applicationContext.js for the full contract and
+      // lib/chat/applicationContext.test.js for the proof that this is
+      // byte-identical to sending the unbounded array, for both consumers.
+      const applicationsContext = projectApplicationsForRequest(mappedApplications);
 
       // M2/M6: snapshot the tray that is ACTUALLY going into this request's
       // body, before anything async below can let a re-render swap in a
@@ -500,17 +569,22 @@ export function createChatHandlers(deps) {
         engine: readEngine(),
       });
 
-      // M4: MEASURE, don't trim. `applicationsContext` above serializes every
-      // tracked application's full jobDescription and tailoredResume,
-      // unbounded, on every send -- a user with a lot of saved application
-      // history can bust the platform's 4.5 MB cap with zero attachments.
-      // Client-side trimming is deliberately out of scope: localAssistant.js
-      // (:162-167) iterates ALL applications for scheduled interviews, so
-      // silently dropping any of them here to fit a byte budget could make a
-      // scheduled interview vanish from the assistant's own answer. This only
-      // measures the body BEFORE sending, so the user gets the real-cause
-      // message immediately instead of round-tripping to the platform's own
-      // 413 for the same outcome.
+      // M4: MEASURE, don't trim -- and, as of the projection above, BOUNDED
+      // rather than unbounded. `applicationsContext` no longer serializes
+      // every tracked application's full jobDescription and tailoredResume:
+      // projectApplicationsForRequest caps those two fields for the first
+      // MAX_APPLICATIONS applications and nulls them past that, the same
+      // slice route.js's Gemini renderer already used. It drops NO
+      // application, NO scheduled date and NO stage name/type/outcome --
+      // localAssistant.js (:162-167) iterates ALL applications for scheduled
+      // interviews, and every one of them, with every stage field either
+      // consumer reads, is still on the wire. (`stages[].interviewers` and
+      // `stages[].notes` ARE dropped; nothing reading this array reads them.
+      // See the map above.) This gate still
+      // measures the body BEFORE sending and refuses rather than shrinking
+      // further, because a body still over the cap after the bound above has
+      // no lossless remedy left here -- it needs the platform's own message,
+      // not a client-side guess at what to cut.
       const bodyBytes = new TextEncoder().encode(requestBody).length;
       if (bodyBytes > MAX_REQUEST_BYTES) {
         throw new Error(hasAttachments ? TOO_BIG_MESSAGE : TOO_BIG_NO_ATTACHMENTS_MESSAGE);

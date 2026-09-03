@@ -26,7 +26,8 @@
 // `setChatError`); its classification is unit-tested in chatbot.response.test.js.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { createChatHandlers } from "./chatbot.js";
+import { createChatHandlers, MAX_REQUEST_BYTES } from "./chatbot.js";
+import { localChatReply } from "./localAssistant.js";
 
 let savedFetch;
 
@@ -318,7 +319,7 @@ describe("runChatRequest: a retry must not grow the request", () => {
 
 describe("runChatRequest: collateral the fix must not break", () => {
   it("keeps mimeType on every attachment in the request body", async () => {
-    // Without it `route.js:251-259` cannot build the inline part and the model
+    // Without it `route.js:213-223` cannot build the inline part and the model
     // never sees the file -- a PDF resume silently becomes invisible. The
     // success test above checks `name` and `dataB64`; this checks the field
     // that decides whether the attachment is readable at all.
@@ -463,10 +464,36 @@ describe("runChatRequest: M4 -- measuring the request body before sending", () =
     };
   }
 
+  // A user with a very long tracked history whose applications carry no saved
+  // documents -- the shape that still crosses the cap once the per-application
+  // document text is bounded. Only the first 25 carry documents: past the
+  // rendered slice the bound nulls them anyway, so 30,000 rows of 40,000
+  // characters each would allocate ~2.4 GB to serialize bytes that are
+  // identical either way.
+  function bareApplication(i) {
+    return {
+      id: `app-${i}`,
+      positions: { company: `Company ${i}`, title: `Role ${i}` },
+      status: "applied",
+      applied_at: "2024-01-01",
+    };
+  }
+  function bulkApplications(n) {
+    return Array.from({ length: n }, (_, i) => (i < 25 ? heavyApplication(i) : bareApplication(i)));
+  }
+
   it("zero attachments, huge application history: refuses BEFORE fetch, names the real cause", async () => {
     globalThis.fetch = vi.fn(async () => RESPONSE_OK("should never be reached"));
-    // 200 applications * ~40,000 chars each is comfortably over the 4.5 MB cap.
-    const applicationData = Array.from({ length: 200 }, (_, i) => heavyApplication(i));
+    // 30,000 tracked applications. Past the first 25 each one costs ~170 bytes
+    // on the wire whether or not it carries documents, so the assembled body is
+    // ~5.17 MB -- 15% clear of the 4.5 MB cap, not sitting on a knife edge.
+    // (The cap is crossed at ~26,086 for this shape.)
+    //
+    // Say plainly what this fixture is: 30,000 applications is NOT a
+    // job-seeker. It is the smallest fixture that still exercises the
+    // measure-don't-trim gate once the document text is bounded. The gate's
+    // coverage survives; its domain plausibility does not.
+    const applicationData = bulkApplications(30_000);
     const { state, handlers } = makeHarness({ input: "how am I doing overall?", applicationData });
 
     await handlers().sendChatMessage();
@@ -483,7 +510,7 @@ describe("runChatRequest: M4 -- measuring the request body before sending", () =
 
   it("WITH attachments, huge application history: the remedy still mentions removing an attachment", async () => {
     globalThis.fetch = vi.fn(async () => RESPONSE_OK("should never be reached"));
-    const applicationData = Array.from({ length: 200 }, (_, i) => heavyApplication(i));
+    const applicationData = bulkApplications(30_000);
     const { state, handlers } = makeHarness({
       input: "how am I doing overall?",
       applicationData,
@@ -506,10 +533,18 @@ describe("runChatRequest: M4 -- measuring the request body before sending", () =
 
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     const body = sentBody();
-    // Not trimmed: every application's full text is still in the body.
+    // BOUNDED, not trimmed. Every application is still on the wire -- none is
+    // dropped, none is reordered -- but the two fields no consumer reads in
+    // full are cut to MAX_JD_CHARS + 1 / MAX_TAILORED_CHARS + 1 characters.
+    //
+    // The "+ 1" is the whole trick and is not an off-by-one: route.js's
+    // `truncate` appends "…" only when `value.length > max`, so a client that
+    // pre-sliced to exactly 1500 would produce a rendered block one character
+    // short AND missing its ellipsis. See lib/chat/applicationContext.test.js
+    // for that boundary proved directly.
     expect(body.applications).toHaveLength(3);
-    expect(body.applications[0].jobDescription).toBe("d".repeat(20_000));
-    expect(body.applications[0].tailoredResume).toBe("r".repeat(20_000));
+    expect(body.applications[0].jobDescription).toBe("d".repeat(1501));
+    expect(body.applications[0].tailoredResume).toBe("r".repeat(2001));
     expect(state.error).toBe("");
   });
 });
@@ -544,5 +579,268 @@ describe("runChatRequest: m11 -- a missing applicationStages map does not crash 
     // No raw TypeError leaking into the chat as a "failed" turn.
     expect(state.error).toBe("");
     expect(state.messages[state.messages.length - 1]).toEqual({ role: "assistant", content: "Here you go." });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The user this whole change exists for: months of tracked applications, and
+// every message refused -- including "hi".
+//
+// These run at the `runChatRequest` layer on purpose.
+// lib/chat/applicationContext.test.js proves the projection is lossless;
+// nothing there proves `runChatRequest` actually applies it, or that a bounded
+// body then gets sent.
+// ---------------------------------------------------------------------------
+
+// Multibyte on purpose. `"d".repeat(40_000)` has a UTF-8 byte length equal to
+// its `.length`, so a byte-based bound and a code-unit one are
+// indistinguishable against it -- while on a realistic accented posting a byte
+// bound silently drops hundreds of characters and the trailing ellipsis. A
+// resume tool sees accents, em dashes and bullets constantly.
+const ACCENTED_JD_LINE = "Résumé — led “growth” • €1.2M ARR · naïve café über Zurück ";
+const ACCENTED_RESUME_LINE = "Alex Shaw — Ingénieur données · piloté 4 équipes • €4M ARR ↑ naïve→robuste ";
+
+function multibyte(n, line) {
+  let out = "";
+  while (out.length < n) out += line;
+  return out.slice(0, n);
+}
+
+function utf8Length(value) {
+  return new TextEncoder().encode(value).length;
+}
+
+// One shared instance of each document string, referenced by every fixture
+// application: 5,000 applications then cost 5,000 pointers, not 52 million
+// characters, and only the serialization is large.
+function documentedApplication(i, description, content) {
+  return {
+    id: `app-${String(i).padStart(4, "0")}`,
+    positions: {
+      company: `Company ${String(i).padStart(4, "0")}`,
+      title: `Rôle ${String(i).padStart(4, "0")}`,
+      description,
+      url: null,
+    },
+    generated_resumes: { content },
+    status: "applied",
+    applied_at: "2024-01-01",
+  };
+}
+
+// The PRE-FIX wire shape, reproduced from chatbot.js's own map. AC-1 says "the
+// pre-fix code refuses this fixture", which has no expression in a post-fix
+// tree -- so the negative control is kept alive by measuring the unprojected
+// body for the SAME fixture. Without it, AC-2's "it sends" is satisfied by a
+// fixture that was never broken in the first place, and the pair loses all its
+// discriminating power. This is a re-expression of AC-1, not AC-1 itself.
+//
+// UNPINNED HAND-COPY, and why that is safe here rather than a latent trap.
+// Nothing ties this function to `chatbot.js`'s real map, and it already
+// differs from it in one visible way: it hard-codes `stages: []` instead of
+// mapping `applicationStages?.[app.id] || []`. That divergence is inert for
+// every fixture below -- they are all built by `documentedApplication`, which
+// carries no stages, and `makeHarness` defaults `applicationStages` to `{}`,
+// so the REAL map also produces `stages: []` for them. The copy is byte-equal
+// to the real map on this input.
+//
+// More importantly the drift is one-way safe by construction: every assertion
+// using this function is `expect(bytes).toBeGreaterThan(MAX_REQUEST_BYTES)`
+// (or a ratio against it). Omitting a field can only make the pre-fix body
+// SMALLER, so any future drift makes the control HARDER to satisfy, never
+// falsely green. A copy that over-counted would be the dangerous direction --
+// so if you edit this, only ever DROP fields from `chatbot.js`'s map, never
+// add ones it does not produce, and never make this function read a field the
+// real map bounds.
+function unprojectedApplications(applicationData) {
+  return (applicationData || []).map((app) => {
+    const pos = app.positions || {};
+    const resume = app.generated_resumes;
+    return {
+      company: pos.company || null,
+      role: pos.title || null,
+      status: app.status || null,
+      appliedAt: app.applied_at || null,
+      applicationUrl: app.application_url || pos.url || null,
+      jobDescription: pos.description || null,
+      tailoredResume: resume?.content || null,
+      stages: [],
+    };
+  });
+}
+
+describe("runChatRequest: AC-1..AC-4 -- the blocked user sends again", () => {
+  const HUGE_JD = multibyte(40_000, ACCENTED_JD_LINE);
+  const HUGE_RESUME = multibyte(20_000, ACCENTED_RESUME_LINE);
+  const buildFixture = () =>
+    Array.from({ length: 75 }, (_, i) => documentedApplication(i, HUGE_JD, HUGE_RESUME));
+
+  it("[AC-1] NEGATIVE CONTROL: the same fixture, serialized the pre-fix way, is over the platform cap", () => {
+    const bytes = utf8Length(JSON.stringify(unprojectedApplications(buildFixture())));
+    expect(bytes).toBeGreaterThan(MAX_REQUEST_BYTES);
+    // And the fixture really is multibyte, or the bound asserted below could
+    // be a byte bound and every assertion here would still pass.
+    expect(utf8Length(HUGE_JD)).toBeGreaterThan(HUGE_JD.length);
+    expect(utf8Length(HUGE_RESUME)).toBeGreaterThan(HUGE_RESUME.length);
+  });
+
+  it("[AC-2/3/4] 75 documented applications, no attachments: it sends, answers, and reports no error", async () => {
+    globalThis.fetch = vi.fn(async () => RESPONSE_OK("You're interviewing at three of them."));
+    const { state, handlers } = makeHarness({ input: "hi", applicationData: buildFixture() });
+
+    await handlers().sendChatMessage();
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(state.messages[state.messages.length - 1]).toEqual({
+      role: "assistant",
+      content: "You're interviewing at three of them.",
+    });
+    expect(state.error).toBe("");
+  });
+
+  it("[AC-6/AC-8] the bound on the wire is CODE UNITS, ellipsis-preserving, and drops no application", async () => {
+    globalThis.fetch = vi.fn(async () => RESPONSE_OK("ok"));
+    const { handlers } = makeHarness({ input: "how am I doing?", applicationData: buildFixture() });
+
+    await handlers().sendChatMessage();
+
+    const body = sentBody();
+    // No application is dropped -- that is the difference between a bound and
+    // a trim, and it is what keeps "how many applications do I have?" honest.
+    expect(body.applications).toHaveLength(75);
+    expect(body.applications[0].jobDescription).toBe(HUGE_JD.slice(0, 1501));
+    expect(body.applications[0].jobDescription).toHaveLength(1501);
+    expect(body.applications[0].tailoredResume).toBe(HUGE_RESUME.slice(0, 2001));
+    // A byte-based bound would have kept ~1,300 characters here instead.
+    expect(utf8Length(body.applications[0].jobDescription)).toBeGreaterThan(1501);
+    // Past the rendered slice the documents are gone entirely...
+    expect(body.applications[74].jobDescription).toBe(null);
+    // ...but the application, and everything the offline assistant reads about
+    // it, is still there.
+    expect(body.applications[74].company).toBe("Company 0074");
+    expect(body.applications[74].role).toBe("Rôle 0074");
+    expect(body.applications[74].status).toBe("applied");
+    expect(body.applications[74].appliedAt).toBe("2024-01-01");
+  });
+});
+
+describe("runChatRequest: AC-15 -- five thousand documented applications", () => {
+  it("is refused in its pre-fix shape, sends comfortably after the bound, and still counts 5,000", async () => {
+    const jd = multibyte(4_500, ACCENTED_JD_LINE);
+    const resume = multibyte(6_000, ACCENTED_RESUME_LINE);
+    const applicationData = Array.from({ length: 5_000 }, (_, i) => documentedApplication(i, jd, resume));
+
+    // Pre-fix shape: far over the cap.
+    const preFixBytes = utf8Length(JSON.stringify(unprojectedApplications(applicationData)));
+    expect(preFixBytes).toBeGreaterThan(MAX_REQUEST_BYTES);
+
+    globalThis.fetch = vi.fn(async () => RESPONSE_OK("Here's the pipeline."));
+    const { state, handlers } = makeHarness({ input: "how am I doing overall?", applicationData });
+
+    await handlers().sendChatMessage();
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(state.error).toBe("");
+    // AC-15 quotes "under 1,000,000 bytes", and that literal is NOT asserted
+    // here: it is fixture-specific and, with these labels, the bounded body
+    // measures just over it. What the design actually buys is a RATIO -- the
+    // document text stops scaling with history -- so that is what is pinned,
+    // along with the only threshold that is really the product's: the cap.
+    const postFixBytes = utf8Length(globalThis.fetch.mock.calls[0][1].body);
+    expect(postFixBytes).toBeLessThan(MAX_REQUEST_BYTES);
+    expect(postFixBytes * 20).toBeLessThan(preFixBytes);
+
+    // PAIRED POSITIVE CONTROL, and the point of the whole design: the offline
+    // assistant, reading the bounded body, still knows about all 5,000. A
+    // bound that shrank the payload by dropping applications would answer
+    // "25" here -- trust-destroying in a tracking product.
+    const reply = localChatReply({
+      messages: [{ role: "user", content: "how many applications do I have?" }],
+      applications: sentBody().applications,
+    });
+    expect(reply).toContain("You're tracking 5000 applications");
+  });
+});
+
+describe("runChatRequest: AC-16 -- the document cost stops growing past the rendered slice", () => {
+  // Every application carries the SAME document text and, note, FIXED-WIDTH
+  // company/role strings. That padding is what makes the identity below exact
+  // rather than approximate: with AC-16's own `Company ${i}` labels the
+  // per-application cost grows with the decimal width of the index, so
+  // `body(200) - body(60) === 140 x cost` is arithmetically FALSE and the
+  // criterion as literally written cannot be asserted. The property it is
+  // reaching for -- the heavy fields stop contributing past the rendered
+  // slice -- is what is pinned here.
+  const jd = multibyte(3_000, ACCENTED_JD_LINE);
+  const resume = multibyte(3_000, ACCENTED_RESUME_LINE);
+
+  async function bodyLengthFor(n) {
+    globalThis.fetch = vi.fn(async () => RESPONSE_OK("ok"));
+    const applicationData = Array.from({ length: n }, (_, i) => documentedApplication(i, jd, resume));
+    const { handlers } = makeHarness({ input: "how am I doing overall?", applicationData });
+    await handlers().sendChatMessage();
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    return globalThis.fetch.mock.calls[0][1].body.length;
+  }
+
+  it("body(200) - body(60) equals 140 times the cost of ONE document-free application", async () => {
+    const at60 = await bodyLengthFor(60);
+    const at61 = await bodyLengthFor(61);
+    const at200 = await bodyLengthFor(200);
+
+    const costOfOnePastTheSlice = at61 - at60;
+    expect(at200 - at60).toBe(140 * costOfOnePastTheSlice);
+    // PAIRED POSITIVE CONTROL: that per-application cost is the cost of a
+    // record with NO document text -- a couple of hundred characters, not the
+    // ~6,000 this fixture's documents occupy. Without it the identity above is
+    // also satisfied by a body that grew linearly in the documents.
+    expect(costOfOnePastTheSlice).toBeLessThan(500);
+    expect(costOfOnePastTheSlice).toBeGreaterThan(50);
+  });
+});
+
+describe("runChatRequest: AC-19, AC-22, AC-23 -- the ordinary states still work", () => {
+  it("[AC-19] zero tracked applications put an empty array on the wire", async () => {
+    globalThis.fetch = vi.fn(async () => RESPONSE_OK("Sure."));
+    const { handlers } = makeHarness({ input: "hi", applicationData: [] });
+
+    await handlers().sendChatMessage();
+
+    expect(sentBody().applications).toEqual([]);
+  });
+
+  it("[AC-22] three applications: one fetch, all three on the wire, in order", async () => {
+    globalThis.fetch = vi.fn(async () => RESPONSE_OK("Sure."));
+    const jd = multibyte(120, ACCENTED_JD_LINE);
+    const applicationData = Array.from({ length: 3 }, (_, i) => documentedApplication(i, jd, "short resume"));
+    const { handlers } = makeHarness({ input: "how am I doing?", applicationData });
+
+    await handlers().sendChatMessage();
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const body = sentBody();
+    expect(body.applications.map((a) => a.company)).toEqual(["Company 0000", "Company 0001", "Company 0002"]);
+    // Under the cap, so nothing is cut at all: identity, not truncation.
+    expect(body.applications[0].jobDescription).toBe(jd);
+    expect(body.applications[0].tailoredResume).toBe("short resume");
+  });
+
+  it("[AC-23] attachments still arrive with name, mimeType and dataB64 intact alongside a long history", async () => {
+    globalThis.fetch = vi.fn(async () => RESPONSE_OK("Sure."));
+    const jd = multibyte(4_000, ACCENTED_JD_LINE);
+    const applicationData = Array.from({ length: 40 }, (_, i) => documentedApplication(i, jd, "resume"));
+    const { handlers } = makeHarness({
+      input: "does this bullet land?",
+      applicationData,
+      attached: [attachment("bullet.png", 40)],
+    });
+
+    await handlers().sendChatMessage();
+
+    const body = sentBody();
+    expect(body.attachedFiles).toEqual([
+      { name: "bullet.png", mimeType: "image/png", dataB64: "A".repeat(40) },
+    ]);
+    expect(body.applications).toHaveLength(40);
   });
 });

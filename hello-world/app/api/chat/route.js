@@ -5,6 +5,7 @@ import { createClient as createSupabaseServerClient } from "@/lib/supabase/serve
 import { logChatMessage } from "@/lib/supabase/logChatMessage";
 import { wantsEmbedded } from "@/lib/llm/featureEngine";
 import { localChatReply } from "@/lib/chat/localAssistant";
+import { truncate, renderApplicationsSection } from "@/lib/chat/applicationContext";
 
 const SYSTEM_PROMPT = [
   "You are a concise, friendly career assistant inside the Resume Tailor app.",
@@ -18,18 +19,10 @@ const SYSTEM_PROMPT = [
 ].join(" ");
 
 const MAX_RESUME_CHARS = 12000;
-const MAX_APPLICATIONS = 25;
-const MAX_JD_CHARS = 1500;
-const MAX_TAILORED_CHARS = 2000;
 const MAX_ATTACHED_FILES = 10;
 const MAX_ATTACHED_CHARS = 8000;
 const MAX_FETCHED_URLS = 3;
 const MAX_FETCHED_URL_CHARS = 8000;
-
-function truncate(value, max) {
-  if (typeof value !== "string") return "";
-  return value.length > max ? `${value.slice(0, max)}…` : value;
-}
 
 function buildContextBlock(resumeText, applications, pinnedContext, attachedFiles, fetchedUrls) {
   const parts = [];
@@ -77,39 +70,8 @@ function buildContextBlock(resumeText, applications, pinnedContext, attachedFile
     );
   }
 
-  if (Array.isArray(applications) && applications.length > 0) {
-    const limited = applications.slice(0, MAX_APPLICATIONS);
-    const rendered = limited.map((app, idx) => {
-      const lines = [];
-      lines.push(`Application ${idx + 1}:`);
-      if (app.company) lines.push(`  Company: ${app.company}`);
-      if (app.role) lines.push(`  Role: ${app.role}`);
-      if (app.status) lines.push(`  Status: ${app.status}`);
-      if (app.appliedAt) lines.push(`  Applied: ${app.appliedAt}`);
-      if (app.applicationUrl) lines.push(`  URL: ${app.applicationUrl}`);
-      if (app.jobDescription) {
-        lines.push(`  Job Description: ${truncate(app.jobDescription, MAX_JD_CHARS)}`);
-      }
-      if (app.tailoredResume) {
-        lines.push(`  Tailored Resume: ${truncate(app.tailoredResume, MAX_TAILORED_CHARS)}`);
-      }
-      if (Array.isArray(app.stages) && app.stages.length > 0) {
-        const stageStrs = app.stages.map((s) => {
-          const bits = [];
-          if (s.name) bits.push(s.name);
-          else if (s.type) bits.push(s.type);
-          if (s.scheduledAt) bits.push(`@ ${s.scheduledAt}`);
-          if (s.outcome && s.outcome !== "pending") bits.push(`(${s.outcome})`);
-          return bits.join(" ");
-        }).filter(Boolean);
-        if (stageStrs.length > 0) {
-          lines.push(`  Interview Stages: ${stageStrs.join("; ")}`);
-        }
-      }
-      return lines.join("\n");
-    });
-    parts.push(`--- USER'S APPLICATIONS ---\n${rendered.join("\n\n")}`);
-  }
+  const applicationsSection = renderApplicationsSection(applications);
+  if (applicationsSection) parts.push(applicationsSection);
 
   return parts.join("\n\n");
 }
