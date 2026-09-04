@@ -197,7 +197,15 @@ export function overlapScore(questionTerms, text) {
 // matched "Community garden rota" on two terms the question had supplied for
 // free. Each was then spoken as the candidate's own experience and cited by
 // name.
-const INTERVIEW_SCAFFOLDING = new Set([
+// Exported for lib/copilot/answerLocal.js's rankedExperienceLines (R-257),
+// which had to answer the SAME question this gate answers — "is this term
+// about the subject, or is it just how interview questions are phrased?" —
+// and was answering it with nothing at all. A private second copy there
+// would be free to drift from the one the gate below consults, which is the
+// failure significantTerms.shared.test.js exists to prevent for the
+// tokenizer. Note what is NOT shared: the >= 2 THRESHOLD below. Ranking is
+// ordering, not refusal — see that function's own comment.
+export const INTERVIEW_SCAFFOLDING = new Set([
   "time", "times", "tell", "told", "telling", "describe", "walk", "example", "story",
   "situation", "challenge", "challenging", "difficult", "problem", "problems", "project",
   "projects", "worked", "handle", "handled", "recent", "recently", "biggest", "learned",

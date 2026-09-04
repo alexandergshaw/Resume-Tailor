@@ -12,6 +12,7 @@ import { extractKeywords } from "@/lib/llm/engines/tailor-lite/keywords";
 import { defaultLibraryData } from "@/lib/llm/engines/tailor-lite/library/defaults";
 import { parseEmploymentHistory } from "@/lib/resume/parseEmployment";
 import { pick } from "@/lib/text/phrasing";
+import { INTERVIEW_SCAFFOLDING } from "./projectStories.js";
 
 const SKILL_CATEGORIES = ["technology", "tool_platform", "domain"];
 const MAX_POINTS = 5;
@@ -134,6 +135,32 @@ function cleanLine(sentence) {
 export const ACHIEVEMENT_VERBS =
   /\b(built|led|designed|shipped|launched|scaled|drove|improved|reduced|created|owned|delivered|managed|architected|automated|migrated|grew|cut|increased|implemented|developed|optimi[sz]ed|mentored)\b/i;
 
+// The general-purpose stopword list, read through defaultLibraryData because
+// this module already imports it — see rankedExperienceLines below for what
+// it is for.
+const RANKING_STOPWORDS = new Set(defaultLibraryData.stopwords);
+
+// ...minus two words, because `stopwords.json` is two lists concatenated: a
+// classic English stoplist, then a job-posting boilerplate tail (`experience`,
+// `role`, `team`, `teams`, `work`, `build`, `new`, ...) written for stripping
+// ATS filler out of job DESCRIPTIONS. Applied question-side to interview
+// QUESTIONS, that tail deletes the SUBJECT of every leadership and delegation
+// question ("...delegated a high-stakes task to someone on your team"), and
+// the ranker is left with nothing to match on.
+//
+// MEASURED over 840 held-out rows, 15 winner-changes turn solely on a tail
+// word: `role` x8 and `new` x2 are IMPROVEMENTS (they demote "applying for
+// this role" cover-letter lines and "New York, NY"); `team` x5 are ALL
+// regressions. So the tail is not uniformly wrong and is not dropped
+// wholesale -- only these two, and only here. `stopwords.json` itself stays
+// as it is: clearsHonestyGate, resumeAnchor and pageRanking all read it.
+//
+// Those three apply the same list question-side already, so every OTHER tail
+// word remains a pre-existing blind spot that this filter extends rather than
+// invents. Said plainly so the vocabulary choice is not read as cost-free.
+RANKING_STOPWORDS.delete("team");
+RANKING_STOPWORDS.delete("teams");
+
 // The top `limit` candidate lines from `profile`, ranked exactly the way a
 // single "most relevant line" search would score them — overlap with the
 // question terms plus an "accomplishment" signal (a verb or metric),
@@ -148,12 +175,54 @@ export const ACHIEVEMENT_VERBS =
 // replace on equal score) — the same determinism `relevantExperienceLine`
 // got before this was factored out, where only a STRICTLY greater score
 // replaced the running best.
+//
+// R-257 — WHAT MAY COUNT AS OVERLAP. The question's terms are filtered to
+// the ones that could DISTINGUISH one line from another before anything is
+// counted: not ordinary English/résumé filler (STOPWORDS) and not interview
+// scaffolding (INTERVIEW_SCAFFOLDING, imported from projectStories.js rather
+// than copied). Without it, ordinary words scored. Measured on the profile
+// in AC-bulletexpand.md §5.3, against the bank's real leadership question
+// ("…led an initiative without having formal authority over the people
+// involved"): the payments line scored 5 on "led"+"the", and an unrelated
+// beekeeping-club line scored SEVEN on three occurrences of "the" — so the
+// candidate's own generated answer offered their beekeeping club as the
+// concrete example. Overlap counts occurrences, so a repeated filler word
+// alone could outrank a real subject match.
+//
+// FILTERED ON THE QUESTION SIDE ONLY, deliberately: a line's term can score
+// only if it is also a question term, so filtering the line side as well
+// would be redundant rather than wrong. Same reasoning, same shape as
+// lib/experience/pageRanking.js's rankingQueryTerms, which already ships it.
+//
+// NO THRESHOLD, and that is the difference from clearsHonestyGate
+// (projectStories.js), whose comment names this exact failure mode. That is
+// a REFUSAL gate deciding whether the engine may speak a page as the
+// candidate's own, so it demands two distinctive terms. This is an ORDERING
+// problem, and a caller asking for candidates must still get candidates.
+// Measured over 84 discriminable rows of real bank questions x real profile
+// fixtures, porting that >= 2 floor here would have returned NOTHING on 45
+// of them — including every correct one-distinctive-term answer, like the
+// payments line above. Pinned by answerLocal.ranking.test.js.
+//
+// `limit` STAYS AT 1 (R-257 ruling, investigated and deliberately not
+// changed). Every call site in the tree passes an explicit limit —
+// relevantExperienceLine passes 1, resumeAnchor.js passes
+// MAX_DESCRIPTION_CANDIDATES — so the default is unreachable for shipped
+// callers, and widening it would change no observable behaviour while
+// silently changing what every FUTURE caller gets. The consumer for which
+// pool size matters (copilot bullet expansion, AC-bulletexpand.md BE13.2)
+// is required by its own AC to pin its pool at its own call site; what it
+// needs from R-257 is the ordering above, not this default.
 export function rankedExperienceLines(profile, question, limit = 1) {
   const lines = String(profile || "")
     .split(/\r?\n+/)
     .map((l) => l.replace(/^[\s•\-*–—>]+/, "").trim())
     .filter(Boolean);
-  const qTerms = new Set((String(question || "").toLowerCase().match(/[a-z0-9]{3,}/g) || []));
+  const qTerms = new Set(
+    (String(question || "").toLowerCase().match(/[a-z0-9]{3,}/g) || []).filter(
+      (w) => !RANKING_STOPWORDS.has(w) && !INTERVIEW_SCAFFOLDING.has(w),
+    ),
+  );
 
   const scored = [];
   for (const s of lines) {
