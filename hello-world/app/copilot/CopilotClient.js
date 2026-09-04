@@ -39,16 +39,10 @@ import { useLiveSession } from "./useLiveSession";
 import { useCaptureSetup } from "./useCaptureSetup";
 import { useCompanyBrief } from "./useCompanyBrief";
 import { useLiveColumnHeight } from "./useLiveColumnHeight";
-import { useInterviewType, useInterviewTypeChange, getInterviewTypeStorageBlocked } from "./useInterviewType";
+import { useInterviewType } from "./useInterviewType";
 import { useCodeLanguage } from "./useCodeLanguage";
-import { useLiveCodeLanguageChange } from "./useLiveCodeLanguageChange";
 import { interviewTypeLabel } from "@/lib/copilot/interviewTypes";
-import {
-  invalidateLiveAnswers,
-  interviewTypeChangeAnnouncement,
-  joinInterviewTypeAnnouncements,
-  claimStorageAnnouncement,
-} from "@/lib/copilot/choiceChangeInvalidation";
+import { useTypeAnnouncements } from "./useTypeAnnouncements";
 
 // I1: 280px rail + a usable main column needs 824px minimum, so the
 // breakpoint is `md` (900), not `sm`. `noSsr: true` matches useIsMobile/useIsTablet.
@@ -381,80 +375,23 @@ export default function CopilotClient() {
     onCurrentEntryRedrafted, // MATERIAL-3: clears the caption below on redraft.
   });
 
-  // Contract 7/8: this surface's own announcement and practice's own.
-  const [typeAnnouncement, setTypeAnnouncement] = useState("");
-  const [practiceTypeAnnouncement, setPracticeTypeAnnouncement] = useState("");
-  const announcedStorageBlockRef = useRef(false); // AC-A15b: once per tab; touched in the handler only.
-  // Step-9c-iii: each slot's ambient "cue|brief" signature when SET, compared
-  // at render time near the join — see joinInterviewTypeAnnouncements's doc.
-  const [typeAmbientAtSet, setTypeAmbientAtSet] = useState("");
-  const [practiceAmbientAtSet, setPracticeAmbientAtSet] = useState("");
-
-  // C.2: the ONE live-surface subscriber (closes over redraftCurrentAnswer).
-  // AC-A15b: canRedraft reads render-scope `mode`, listed below.
-  const onInterviewTypeChanged = useCallback(
-    (next, prev, meta) => {
-      const blocked = getInterviewTypeStorageBlocked();
-      // BLOCKER-1: claim ONLY when this text is actually spoken (same
-      // predicate the join uses) — else it silences the other surface.
-      const announceBlocked = blocked && mode === "live" && !announcedStorageBlockRef.current;
-      if (announceBlocked) announcedStorageBlockRef.current = true;
-      invalidateLiveAnswers({
-        clearAnswerCache: () => answerCacheRef.current.clear(),
-        bumpDraftGeneration: () => {
-          draftGenRef.current += 1;
-        },
-        redraftCurrentAnswer,
-        canRedraft: meta.origin === "local" && mode === "live",
-      });
-      // Contract 8: a foreign change may leave an on-screen card drafted
-      // under the old type — CurrentAnswerPanel dims it once its own `at`
-      // predates this timestamp.
-      if (meta.origin === "foreign") setStaleTypeChangeAt(Date.now());
-      setTypeAnnouncement(
-        interviewTypeChangeAnnouncement({
-          surface: "live",
-          origin: meta.origin,
-          label: interviewTypeLabel(next),
-          hadRecording: false,
-          hadReview: false,
-          storageBlocked: announceBlocked,
-        }),
-      );
-      setTypeAmbientAtSet(`${cueAnnouncement.text}|${briefLiveText}`);
-    },
-    [mode, redraftCurrentAnswer, cueAnnouncement.text, briefLiveText],
-  );
-  useInterviewTypeChange(onInterviewTypeChanged);
-
-  // AC-C25/CONF-1: the code-language subscriber, in its own module (D-1, D-2)
-  // — origin-blind, unlike the interview-type one above, since a language
-  // change destroys nothing for a foreign click to protect (see that
-  // module's own header). R-3 (a11y finding 2, HIGH): `onForeignChange`
-  // reports a foreign change with nothing local to explain it; local stays
-  // silent, like the live/local row above (stable callbacks below — F5).
-  useLiveCodeLanguageChange({
-    canRedraft: mode === "live",
-    clearAnswerCache: useCallback(() => answerCacheRef.current.clear(), []),
-    bumpDraftGeneration: useCallback(() => { draftGenRef.current += 1; }, []),
+  // Headroom extraction (wave 2), NOT a feature: the type-change announcement
+  // state (live + practice), the interview-type/code-language subscribers
+  // that populate it, and the join that folds it into the consolidated live
+  // region now live in useTypeAnnouncements.js — see that hook's own doc for
+  // the full history these comments used to carry inline here.
+  // `resetTypeAnnouncements` is the one piece onModeChange below still needs
+  // (MATERIAL-2); `consolidatedLiveText` is rendered into the live region
+  // further down.
+  const { consolidatedLiveText, onPracticeTypeAnnouncement, resetTypeAnnouncements } = useTypeAnnouncements({
+    mode,
     redraftCurrentAnswer,
-    onForeignChange: useCallback(
-      (text) => {
-        setTypeAnnouncement(text);
-        setTypeAmbientAtSet(`${cueAnnouncement.text}|${briefLiveText}`);
-      },
-      [cueAnnouncement.text, briefLiveText],
-    ),
+    answerCacheRef,
+    draftGenRef,
+    setStaleTypeChangeAt,
+    cueText: cueAnnouncement.text,
+    briefText: briefLiveText,
   });
-
-  // MATERIAL-1: filters PracticeClient's text through the SAME latch above.
-  const onPracticeTypeAnnouncement = useCallback(
-    (text) => {
-      setPracticeTypeAnnouncement(claimStorageAnnouncement(text, announcedStorageBlockRef));
-      setPracticeAmbientAtSet(`${cueAnnouncement.text}|${briefLiveText}`);
-    },
-    [cueAnnouncement.text, briefLiveText],
-  );
 
   // BUG-3: bumped on every new session and handed to SpeakerBar (which now
   // owns the who's-talking announcement) as `sessionNonce` — without this, a
@@ -481,8 +418,7 @@ export default function CopilotClient() {
       if (val !== "live" && val !== "practice" && val !== "roles") return;
       if ((val === "roles" || val === "practice") && sessionRef.current) stop();
       // MATERIAL-2: closes the one gap the ambient check alone can't — a round trip back to the SAME mode.
-      setTypeAnnouncement("");
-      setPracticeTypeAnnouncement("");
+      resetTypeAnnouncements();
       setMode(val);
     },
     [stop, sessionRef],
@@ -536,20 +472,6 @@ export default function CopilotClient() {
     },
     [pinCurrentQuestion, unpinQuestion, companyBrief],
   );
-
-  // MATERIAL-1/step-9c-iii: see joinInterviewTypeAnnouncements's own doc.
-  const [liveTypeText, practiceTypeText] = joinInterviewTypeAnnouncements({
-    mode,
-    live: typeAnnouncement,
-    practice: practiceTypeAnnouncement,
-    liveAmbientAtSet: typeAmbientAtSet,
-    practiceAmbientAtSet,
-    cueText: cueAnnouncement.text,
-    briefText: briefLiveText,
-  });
-  const consolidatedLiveText = [cueAnnouncement.text, briefLiveText, liveTypeText, practiceTypeText]
-    .filter(Boolean)
-    .join(" ");
 
   // I11: the brief panel takes over the rail's slot rather than opening beside it (no room for both — I1).
   const railContent = companyBrief.open ? (

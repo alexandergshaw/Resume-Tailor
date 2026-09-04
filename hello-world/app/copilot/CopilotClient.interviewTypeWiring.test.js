@@ -37,6 +37,22 @@
 // AND THE STANDING CONSTRAINT: when this property moves to another module,
 // AMEND these assertions to name the module that now holds it. A module must
 // never be left carrying dead code to keep a source-text test green.
+//
+// THIS ALREADY HAPPENED ONCE (headroom extraction, wave 2): the live/practice
+// announcement state, both change-subscriber handlers (interview-type AND
+// code-language), the practice wrapper, and the join call site all moved
+// from CopilotClient.js into app/copilot/useTypeAnnouncements.js (read below
+// as HOOK) to buy CopilotClient.extraction.test.js's 950-line cap some
+// headroom. CLIENT kept only two seams: feeding the hook the real
+// `cueAnnouncement.text`/`briefLiveText` values (as `cueText`/`briefText`),
+// and calling the `resetTypeAnnouncements` the hook hands back from
+// `onModeChange`. When ANY of this moves again, re-amend the assertions
+// below rather than deleting them — an assertion made to merely prove a
+// string exists somewhere, rather than that the module which now owns the
+// property still enforces it, is the exact failure mode this note warns
+// against. (Mutation-tested against useTypeAnnouncements.js when it moved:
+// every relocated assertion was confirmed to still fail when the property it
+// names was individually broken in the new module.)
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -45,6 +61,14 @@ import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CLIENT = readFileSync(join(HERE, "CopilotClient.js"), "utf8");
+// Headroom extraction (wave 2): the interview-type/code-language change
+// handlers, the announcement state and the join now live in
+// useTypeAnnouncements.js — see ITS OWN doc, and CopilotClient.js's own
+// comment at the call site, for the move. Every assertion below that used to
+// read CLIENT for one of THOSE properties now reads HOOK instead; anything
+// that stayed behind in CopilotClient.js (onPostingChange, the
+// practice-composer ban, onModeChange's call site) still reads CLIENT.
+const HOOK = readFileSync(join(HERE, "useTypeAnnouncements.js"), "utf8");
 
 // The full expression starting at `marker`, bracket-balanced.
 function callExpression(src, marker) {
@@ -100,39 +124,61 @@ function subscriptionHandler(src, hookName) {
 // dependency array sits inside the handler's own extent, so a name mentioned
 // only there would satisfy a handler-wide match while the callback bag omitted
 // it. That loophole was found by mutating this file.
-function invalidateLiveAnswersCall() {
-  const handler = subscriptionHandler(CLIENT, "useInterviewTypeChange");
+//
+// Takes `src` explicitly (wave 2): the handler this extracts from now lives
+// in useTypeAnnouncements.js (HOOK), not CopilotClient.js (CLIENT).
+function invalidateLiveAnswersCall(src) {
+  const handler = subscriptionHandler(src, "useInterviewTypeChange");
   if (handler === null) return null;
   return callExpression(handler, "invalidateLiveAnswers(");
 }
 
 describe("CopilotClient reads the shared interview type", () => {
-  it("imports the store hook and the change subscription from app/copilot/", () => {
+  it("imports the store hook itself from app/copilot/", () => {
+    // useInterviewType (the read/write pair CopilotClient still uses directly
+    // for interviewTypeLabel/setInterviewType) stayed in CLIENT; only the
+    // CHANGE SUBSCRIPTION moved (next test).
     expect(CLIENT).toMatch(
       /import\s*\{[^}]*\buseInterviewType\b[^}]*\}\s*from\s*["']\.\/useInterviewType(?:\.js)?["']/,
     );
-    expect(CLIENT).toMatch(
+  });
+
+  // wave 2: the change subscription itself moved into useTypeAnnouncements.js
+  // along with the handler it feeds — so the import assertion now targets
+  // HOOK, not CLIENT.
+  it("HOOK imports the change subscription from app/copilot/", () => {
+    expect(HOOK).toMatch(
       /import\s*\{[^}]*\buseInterviewTypeChange\b[^}]*\}\s*from\s*["']\.\/useInterviewType(?:\.js)?["']/,
     );
   });
 
-  it("imports the live invalidation composer from lib/copilot/", () => {
-    expect(CLIENT).toMatch(
+  it("HOOK imports the live invalidation composer from lib/copilot/", () => {
+    expect(HOOK).toMatch(
       /import\s*\{[^}]*\binvalidateLiveAnswers\b[^}]*\}\s*from\s*["']@\/lib\/copilot\/choiceChangeInvalidation(?:\.js)?["']/,
     );
   });
 
-  it("registers a change subscription", () => {
-    expect(CLIENT).toMatch(/\buseInterviewTypeChange\s*\(/);
+  it("HOOK registers a change subscription", () => {
+    expect(HOOK).toMatch(/\buseInterviewTypeChange\s*\(/);
+  });
+
+  it("CopilotClient itself no longer imports or registers the subscription directly", () => {
+    // Nothing here bans CLIENT from mentioning the NAME in a comment — this
+    // guards against the extraction leaving a second, dead registration
+    // behind rather than actually moving the only one.
+    expect(CLIENT).not.toMatch(/\buseInterviewTypeChange\s*\(/);
+    expect(CLIENT).toMatch(/from\s*["']\.\/useTypeAnnouncements(?:\.js)?["']/);
   });
 });
 
 describe("the live duty list runs off the STORE, on every origin (AC-A12)", () => {
+  // wave 2: the subscriber itself (and everything below in this block) moved
+  // to useTypeAnnouncements.js — read HOOK, not CLIENT, for all three.
   it("calls invalidateLiveAnswers INSIDE the change handler", () => {
     // Presence of the call anywhere in the file is not wiring. This is the
     // live-side twin of the practice mutant: both names imported, both
     // "called", and the interview type still does nothing.
-    const handler = subscriptionHandler(CLIENT, "useInterviewTypeChange");
+    const handler = subscriptionHandler(HOOK, "useInterviewTypeChange");
     expect(handler).not.toBe(null);
     expect(handler).toMatch(/\binvalidateLiveAnswers\s*\(/);
   });
@@ -142,7 +188,7 @@ describe("the live duty list runs off the STORE, on every origin (AC-A12)", () =
     // of the practice-tab -> live direction. `CopilotClient` stays mounted in
     // practice mode, so `answerCacheRef` and `draftGenRef` survive the mode
     // switch and would otherwise serve a stale-format cached answer.
-    const args = invalidateLiveAnswersCall();
+    const args = invalidateLiveAnswersCall(HOOK);
     expect(args).not.toBe(null);
     expect(args).toMatch(/\bclearAnswerCache\b/);
     expect(args).toMatch(/\bbumpDraftGeneration\b/);
@@ -152,17 +198,20 @@ describe("the live duty list runs off the STORE, on every origin (AC-A12)", () =
     // A hardcoded origin makes AC-A15's billing gate unreachable: a
     // foreign-window change would fire a billed model call in every open
     // window, for a click the candidate is not even looking at.
-    const handler = subscriptionHandler(CLIENT, "useInterviewTypeChange");
+    const handler = subscriptionHandler(HOOK, "useInterviewTypeChange");
     expect(handler).not.toMatch(/\borigin\s*:\s*["']/);
     expect(handler).toMatch(/[A-Za-z_$][\w$]*\s*\??\.\s*origin\b/);
   });
 });
 
 describe("the auto-redraft is gated, and the posting path cannot reach it (AC-A15)", () => {
+  // wave 2: the change handler these three drive now lives in
+  // useTypeAnnouncements.js — read HOOK. The posting-path negative below
+  // stays on CLIENT: onPostingChange never moved.
   it("passes redraftCurrentAnswer, so the redraft is reachable at all", () => {
     // The positive control for the two negatives below. Without it, a
     // `CopilotClient` that simply never redrafts satisfies both.
-    const args = invalidateLiveAnswersCall();
+    const args = invalidateLiveAnswersCall(HOOK);
     expect(args).not.toBe(null);
     expect(args).toMatch(/\bredraftCurrentAnswer\b/);
   });
@@ -173,7 +222,7 @@ describe("the auto-redraft is gated, and the posting path cannot reach it (AC-A1
     // visible at the registration site. A literal `true` fires a billed call
     // for a foreign-window change; a literal `false` ships the feature's most
     // visible half switched off, and nothing else in the suite would notice.
-    const args = invalidateLiveAnswersCall();
+    const args = invalidateLiveAnswersCall(HOOK);
     expect(args).not.toBe(null);
     expect(args).toMatch(/\bcanRedraft\b/);
     expect(args).not.toMatch(/\bcanRedraft\s*:\s*(?:true|false)\b/);
@@ -189,7 +238,7 @@ describe("the auto-redraft is gated, and the posting path cannot reach it (AC-A1
     // `react-hooks/exhaustive-deps` at this project's 0-warnings gate is the
     // real oracle and catches the general case; this catches only the literal
     // `[]`, which is the shape a hand-written subscription actually takes.
-    const handler = subscriptionHandler(CLIENT, "useInterviewTypeChange");
+    const handler = subscriptionHandler(HOOK, "useInterviewTypeChange");
     expect(handler).not.toMatch(/,\s*\[\s*\]\s*\)/);
   });
 
@@ -253,15 +302,25 @@ describe("composing the two announcement sources (step-6/9 verification, MATERIA
     // This is what BLOCKER-1 actually was: the CLAIM and the JOIN disagreed
     // (`mode !== "roles"` vs `mode === "live"`). Pinning the literal
     // condition in the handler's own source is what stops that gap
-    // reopening silently under a future edit to either side alone.
-    const handler = subscriptionHandler(CLIENT, "useInterviewTypeChange");
+    // reopening silently under a future edit to either side alone. Wave 2:
+    // both the handler and the join it disagreed with now live in the SAME
+    // file (useTypeAnnouncements.js) — read HOOK.
+    const handler = subscriptionHandler(HOOK, "useInterviewTypeChange");
     expect(handler).toMatch(/announceBlocked\s*=\s*blocked\s*&&\s*mode\s*===\s*"live"\s*&&/);
   });
 
-  it("claimStorageAnnouncement is called from exactly one place in CopilotClient.js — the practice wrapper, never the live handler", () => {
-    const handler = subscriptionHandler(CLIENT, "useInterviewTypeChange");
+  it("claimStorageAnnouncement is called from exactly one place — the practice wrapper, never the live handler", () => {
+    // Wave 2: the live handler AND the practice wrapper moved TOGETHER into
+    // useTypeAnnouncements.js (splitting them would have separated two
+    // things that read each other's ambient state — see the extraction's own
+    // doc), so the "exactly one call site" property now applies to HOOK. The
+    // stronger, still-true half of the original claim survives as its own
+    // assertion: CLIENT doesn't call it AT ALL any more, because it no
+    // longer even imports it.
+    expect(CLIENT).not.toMatch(/\bclaimStorageAnnouncement\b/);
+    const handler = subscriptionHandler(HOOK, "useInterviewTypeChange");
     expect(handler).not.toMatch(/\bclaimStorageAnnouncement\s*\(/);
-    const callSites = CLIENT.match(/\bclaimStorageAnnouncement\s*\(/g) || [];
+    const callSites = HOOK.match(/\bclaimStorageAnnouncement\s*\(/g) || [];
     expect(callSites).toHaveLength(1);
   });
 
@@ -634,29 +693,74 @@ function makeLiveSurfaceWith(joinInterviewTypeAnnouncements) {
 }
 
 describe("CopilotClient.js's own mechanism matches the model above (step-9c-iii, 2nd pass)", () => {
-  it("stamps an ambient signature in both change handlers, with no effect/flushSync anywhere in the file", () => {
+  // wave 2: the whole mechanism (both change handlers, the ambient state,
+  // the join) moved into useTypeAnnouncements.js. Every property below that
+  // used to be checked against CLIENT's own source is now checked against
+  // HOOK's; CLIENT keeps only the two seams that stayed behind — feeding the
+  // hook the real cueAnnouncement.text/briefLiveText, and calling the reset
+  // it hands back from onModeChange.
+  it("HOOK stamps an ambient signature in both change handlers, with no effect/flushSync anywhere in either file", () => {
     expect(CLIENT).not.toMatch(/\buseLayoutEffect\b/);
     expect(CLIENT).not.toMatch(/\bflushSync\b/);
-    expect(CLIENT).toMatch(/setTypeAmbientAtSet\(`\$\{cueAnnouncement\.text\}\|\$\{briefLiveText\}`\)/);
-    expect(CLIENT).toMatch(/setPracticeAmbientAtSet\(`\$\{cueAnnouncement\.text\}\|\$\{briefLiveText\}`\)/);
+    expect(HOOK).not.toMatch(/\buseLayoutEffect\b/);
+    expect(HOOK).not.toMatch(/\bflushSync\b/);
+    // HOOK receives the ambient text as its OWN `cueText`/`briefText`
+    // parameters (CLIENT's job, checked below, is handing it the real
+    // `cueAnnouncement.text`/`briefLiveText` values under those names) — so
+    // the stamp itself is keyed on the parameter names, not the outer
+    // variables that no longer exist inside this file.
+    //
+    // Scoped to EACH handler's own extent, not "somewhere in HOOK" — both
+    // stamp calls are textually identical (`cueText`/`briefText` are shared
+    // params), so a bare file-wide match here would still pass with one of
+    // the two calls deleted, because the other's identical text satisfies
+    // the same regex. Found by mutating this file.
+    const stamp = /setTypeAmbientAtSet\(`\$\{cueText\}\|\$\{briefText\}`\)/;
+    const interviewTypeHandler = subscriptionHandler(HOOK, "useInterviewTypeChange");
+    expect(interviewTypeHandler).toMatch(stamp);
+    const codeLanguageConfig = callExpression(HOOK, "useLiveCodeLanguageChange(");
+    expect(codeLanguageConfig).not.toBe(null);
+    expect(codeLanguageConfig).toMatch(stamp);
+    expect(HOOK).toMatch(/setPracticeAmbientAtSet\(`\$\{cueText\}\|\$\{briefText\}`\)/);
   });
 
-  it("the live handler's OWN deps include cueAnnouncement.text and briefLiveText — the stale-closure guard", () => {
-    const handler = subscriptionHandler(CLIENT, "useInterviewTypeChange");
-    expect(handler).toMatch(/\[\s*mode\s*,\s*redraftCurrentAnswer\s*,\s*cueAnnouncement\.text\s*,\s*briefLiveText\s*\]/);
+  it("HOOK's live handler OWN deps include cueText and briefText — the stale-closure guard, and CLIENT feeds it the real values", () => {
+    const handler = subscriptionHandler(HOOK, "useInterviewTypeChange");
+    // Renamed from cueAnnouncement.text/briefLiveText to cueText/briefText —
+    // an unavoidable consequence of parameterizing the hook (it has no
+    // `cueAnnouncement` or `briefLiveText` of its own to close over) — but
+    // the guard is the SAME one: a stale-closure defense on whichever
+    // variables actually carry the live cue/brief text at the moment the
+    // handler runs.
+    expect(handler).toMatch(/\[\s*mode\s*,\s*redraftCurrentAnswer\s*,\s*cueText\s*,\s*briefText\s*\]/);
+    // The other half of the guard: those parameters must actually BE
+    // cueAnnouncement.text/briefLiveText, not some other stand-in — checked
+    // at CLIENT's call site into the hook, which is the one place those two
+    // real values still exist under their own names.
+    const call = callExpression(CLIENT, "useTypeAnnouncements(");
+    expect(call).not.toBe(null);
+    expect(call).toMatch(/cueText:\s*cueAnnouncement\.text/);
+    expect(call).toMatch(/briefText:\s*briefLiveText/);
   });
 
-  it("onModeChange still clears both slots explicitly (MATERIAL-2's remaining half)", () => {
+  it("onModeChange still triggers the explicit reset (MATERIAL-2's remaining half), and the reset itself clears both slots", () => {
+    // Split in two by the move: CLIENT still owns the discrete,
+    // user-initiated EVENT (leaving a mode with cue/brief unchanged, which
+    // the ambient comparison alone can't catch); HOOK now owns what that
+    // event actually clears.
     const modeChangeBody = declarationBody(CLIENT, "onModeChange");
     expect(modeChangeBody).not.toBe(null);
-    expect(modeChangeBody).toMatch(/setTypeAnnouncement\(""\)/);
-    expect(modeChangeBody).toMatch(/setPracticeTypeAnnouncement\(""\)/);
+    expect(modeChangeBody).toMatch(/\bresetTypeAnnouncements\s*\(\s*\)/);
+    const resetBody = declarationBody(HOOK, "resetTypeAnnouncements");
+    expect(resetBody).not.toBe(null);
+    expect(resetBody).toMatch(/setTypeAnnouncement\(""\)/);
+    expect(resetBody).toMatch(/setPracticeTypeAnnouncement\(""\)/);
   });
 
-  it("the join call site passes the ambient fields through to the real composer", () => {
-    expect(CLIENT).toMatch(/liveAmbientAtSet:\s*typeAmbientAtSet/);
-    expect(CLIENT).toMatch(/practiceAmbientAtSet/);
-    expect(CLIENT).toMatch(/cueText:\s*cueAnnouncement\.text/);
-    expect(CLIENT).toMatch(/briefText:\s*briefLiveText/);
+  it("the join call site (inside HOOK) passes the ambient fields through to the real composer", () => {
+    expect(HOOK).toMatch(/liveAmbientAtSet:\s*typeAmbientAtSet/);
+    expect(HOOK).toMatch(/practiceAmbientAtSet/);
+    expect(HOOK).toMatch(/cueText(?:,|\s*:\s*cueText)/);
+    expect(HOOK).toMatch(/briefText(?:,|\s*:\s*briefText)/);
   });
 });
