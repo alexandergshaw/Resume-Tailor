@@ -19,10 +19,14 @@
 //   2. `myTag` - which speaker tag is the candidate's, learned from the
 //      dominant tag of the previous completed answer (see
 //      answerSpeakers.js's dominantTag). Only usable ONCE an answer has
-//      completed; `null` until then.
+//      completed; `null` until then, and `null` forever in a session whose
+//      provider does not diarize. While it is `null` no turn is the room's -
+//      a tag alone says someone spoke, not that it was someone else.
 //
 // *** THE ASYMMETRY WITH LIVE MODE - DO NOT "FIX" THIS TO MATCH IT ***
-// With NO speaker tag at all, this returns false. Live mode's equivalent
+// Whenever this cannot tell a voice apart from the candidate's - no speaker
+// tag at all, or a tag with no learned `myTag` to compare it against - this
+// returns false and nothing is sent. Live mode's equivalent
 // gate (session.js / speakerIdentity.js) makes the OPPOSITE call and
 // evaluates everything when it has no diarization at all. That is
 // deliberate in both directions, not an inconsistency to reconcile:
@@ -67,11 +71,35 @@ export function shouldTreatAsRoomQuestion({ speakerTag, myTag, collecting } = {}
   if (isUntagged(speakerTag)) return false;
 
   // Signal 2: myTag is only learnable from a finished answer, so it is
-  // `null` for the entire first turn (and any turn before the first answer
-  // completes). A tagged voice in that window is still worth evaluating -
-  // the LLM confirmation step downstream still has to agree it is actually
-  // a question before anything reaches the screen.
-  if (myTag === null || myTag === undefined) return true;
+  // `null` for the entire window before the candidate's first answer of the
+  // session completes (and forever, in a session whose provider never
+  // diarizes). This USED to return true there, on the argument that the LLM
+  // confirmation step downstream would catch a false positive anyway. That
+  // argument was wrong twice over, and the second way is the serious one:
+  //   - A tag on the frame says only that SOMEONE spoke. With no myTag to
+  //     compare it against, the candidate's own voice is indistinguishable
+  //     from the room's, so the commonest case in that window - the
+  //     candidate thinking out loud between questions, in a session where
+  //     they are the only person present - was classified as the room.
+  //   - "The LLM confirms it" is not a filter placed BEFORE the transfer. It
+  //     IS the transfer: confirmQuestion posts the raw utterance to
+  //     /api/copilot/detect (useRoomQuestions.js -> detectClient.js), and a
+  //     confirmed one then posts the question text and the prep profile to
+  //     /api/copilot/answer. The candidate's own words had already left the
+  //     machine by the time anything "caught" them.
+  // The disclosure this feature renders (app/copilot/practice/
+  // practiceRoomQuestionPrivacy.js) promises egress only for what someone
+  // ELSE in the room says. So an unattributable turn is silent, which also
+  // makes this consistent with the untagged case just above: the app speaks
+  // only about voices it can actually tell apart from the candidate's.
+  //
+  // The cost is real and deliberate: the first question a rehearsal partner
+  // asks, before the candidate has answered anything, is not detected. That
+  // is the same trade the untagged branch above already makes, and manual
+  // entry (useRoomQuestions.js's addManualQuestion, which deliberately does
+  // NOT come through here) is the route for it - an explicit statement about
+  // someone else's question, rather than a guess about a voice.
+  if (myTag === null || myTag === undefined) return false;
 
   // Both tags known: the room is whoever is NOT the candidate. Strict
   // inequality, not a truthiness check - see isUntagged's comment on why

@@ -58,13 +58,27 @@ describe("shouldTreatAsRoomQuestion between answers", () => {
     ).toBe(false);
   });
 
-  it("evaluates an unidentified voice before any answer has been completed", () => {
-    // myTag is only learnable from a finished answer. Before that, a tagged
-    // voice between questions is worth evaluating - the LLM confirm still has
-    // to agree it is a question.
+  it("stays silent for a tagged voice before any answer has been completed", () => {
+    // myTag is only learnable from a finished answer. Before that a tag says
+    // only that SOMEONE spoke, and in practice mode's overwhelmingly solo
+    // population that someone is the candidate thinking out loud. This used
+    // to return true here, on the argument that the downstream LLM confirm
+    // would reject a non-question anyway - but that confirm is not a filter
+    // before the transfer, it IS the transfer (the raw utterance is posted to
+    // /api/copilot/detect to ask), so the candidate's own words had already
+    // left the machine. See app/copilot/practice/useRoomQuestions.ownSpeech.
+    // test.js, which pins that on the wire, and the disclosure in
+    // practiceRoomQuestionPrivacy.js, which promises egress only for what
+    // someone ELSE says.
     expect(
       shouldTreatAsRoomQuestion({ speakerTag: 0, myTag: null, collecting: false }),
-    ).toBe(true);
+    ).toBe(false);
+  });
+
+  it("stays silent the same way for an undefined myTag, not just a null one", () => {
+    expect(
+      shouldTreatAsRoomQuestion({ speakerTag: 0, myTag: undefined, collecting: false }),
+    ).toBe(false);
   });
 
   it("handles tag 0 as a real tag on both sides", () => {
