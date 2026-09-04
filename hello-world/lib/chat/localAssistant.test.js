@@ -1,5 +1,20 @@
 import { describe, it, expect } from "vitest";
-import { localChatReply, topTerms } from "./localAssistant.js";
+import { localChatReply, topTerms, formatInterviewWhen } from "./localAssistant.js";
+
+// Restores `process.env.TZ` to what it was before a test pinned it. `TZ` is
+// genuinely unset on this machine, so naively assigning back the captured
+// `undefined` (`process.env.TZ = originalTZ`) coerces to the literal string
+// "undefined", which Node's ICU binding treats as an unrecognized zone and
+// falls back to `Etc/Unknown` (UTC+0) for the rest of the process - silently
+// corrupting the ambient zone for every test that runs afterward instead of
+// restoring it.
+function restoreTZ(original) {
+  if (original === undefined) {
+    delete process.env.TZ;
+  } else {
+    process.env.TZ = original;
+  }
+}
 
 const POSTING = [
   "We're hiring a Senior Backend Engineer.",
@@ -22,6 +37,68 @@ describe("topTerms", () => {
     const terms = topTerms(POSTING).map((t) => t.toLowerCase());
     expect(terms.some((t) => t.includes("node"))).toBe(true);
     expect(topTerms("")).toEqual([]);
+  });
+});
+
+describe("formatInterviewWhen — human date-time with an explicit zone, never a raw ISO string", () => {
+  const originalTZ = process.env.TZ;
+
+  it("renders a human date-time with a zone abbreviation, pinned to America/Chicago", () => {
+    expect(formatInterviewWhen("2026-09-10T18:00:00+00:00", "America/Chicago")).toBe("Sep 10, 2026, 1:00 PM CDT");
+  });
+
+  it("renders the SAME instant correctly under a completely different zone, pinned to Asia/Kolkata", () => {
+    expect(formatInterviewWhen("2026-09-10T18:00:00+00:00", "Asia/Kolkata")).toBe("Sep 10, 2026, 11:30 PM GMT+5:30");
+  });
+
+  it("always includes the year, so a stale stage is never indistinguishable from an upcoming one", () => {
+    // This string is surfaced with no date filter at all (summarizeApplications
+    // lists every scheduled stage under "Upcoming:", past or future), so the
+    // year is the only thing that lets a reader notice a stale stage.
+    const past = formatInterviewWhen("2019-09-10T18:00:00Z", "America/Chicago");
+    const present = formatInterviewWhen("2026-09-10T18:00:00Z", "America/Chicago");
+    const future = formatInterviewWhen("2031-09-10T18:00:00Z", "America/Chicago");
+    expect(past).toBe("Sep 10, 2019, 1:00 PM CDT");
+    expect(present).toBe("Sep 10, 2026, 1:00 PM CDT");
+    expect(future).toBe("Sep 10, 2031, 1:00 PM CDT");
+    // Distinct years must not collapse to the same rendered string.
+    expect(past).not.toBe(present);
+    expect(present).not.toBe(future);
+  });
+
+  it("never emits the raw ISO string", () => {
+    const rendered = formatInterviewWhen("2026-09-10T18:00:00+00:00", "America/Chicago");
+    expect(rendered).not.toContain("2026-09-10T18:00:00");
+    expect(rendered).not.toContain("+00:00");
+  });
+
+  it("treats a bare (offset-less) stored value as UTC, not local — under two different ambient zones", () => {
+    try {
+      process.env.TZ = "America/Chicago";
+      expect(formatInterviewWhen("2026-09-10T18:00:00", "America/Chicago")).toBe("Sep 10, 2026, 1:00 PM CDT");
+      process.env.TZ = "Asia/Kolkata";
+      expect(formatInterviewWhen("2026-09-10T18:00:00", "Asia/Kolkata")).toBe("Sep 10, 2026, 11:30 PM GMT+5:30");
+    } finally {
+      restoreTZ(originalTZ);
+    }
+  });
+
+  it("falls back to the viewer's own ambient zone when none is passed in", () => {
+    try {
+      process.env.TZ = "America/Chicago";
+      expect(formatInterviewWhen("2026-09-10T18:00:00+00:00")).toBe("Sep 10, 2026, 1:00 PM CDT");
+      process.env.TZ = "Asia/Kolkata";
+      expect(formatInterviewWhen("2026-09-10T18:00:00+00:00")).toBe("Sep 10, 2026, 11:30 PM GMT+5:30");
+    } finally {
+      restoreTZ(originalTZ);
+    }
+  });
+
+  it("renders nothing (empty string) for an unparseable or non-string value, in either zone", () => {
+    expect(formatInterviewWhen(null, "America/Chicago")).toBe("");
+    expect(formatInterviewWhen(undefined, "America/Chicago")).toBe("");
+    expect(formatInterviewWhen("2026-09-10", "America/Chicago")).toBe(""); // date-only, no time
+    expect(formatInterviewWhen("not a date", "Asia/Kolkata")).toBe("");
   });
 });
 
@@ -48,6 +125,30 @@ describe("localChatReply intents", () => {
     expect(reply).toMatch(/tracking 3 applications/i);
     expect(reply).toMatch(/2 applied/);
     expect(reply).toMatch(/Acme.*Phone screen/);
+  });
+
+  it("renders an upcoming interview's date/time as human prose with a zone, never the raw ISO timestamp — under two ambient zones", () => {
+    const originalTZ = process.env.TZ;
+    const apps = [
+      {
+        company: "Acme",
+        status: "interviewing",
+        stages: [{ name: "Phone screen", scheduledAt: "2026-09-10T18:00:00+00:00" }],
+      },
+    ];
+    try {
+      process.env.TZ = "America/Chicago";
+      const chicagoReply = localChatReply({ ...userMsg("how many applications do I have?"), applications: apps });
+      expect(chicagoReply).toContain("Acme — Phone screen on Sep 10, 2026, 1:00 PM CDT");
+      expect(chicagoReply).not.toContain("2026-09-10T18:00:00");
+
+      process.env.TZ = "Asia/Kolkata";
+      const kolkataReply = localChatReply({ ...userMsg("how many applications do I have?"), applications: apps });
+      expect(kolkataReply).toContain("Acme — Phone screen on Sep 10, 2026, 11:30 PM GMT+5:30");
+      expect(kolkataReply).not.toContain("2026-09-10T18:00:00");
+    } finally {
+      restoreTZ(originalTZ);
+    }
   });
 
   it("gives interview prep guidance", () => {

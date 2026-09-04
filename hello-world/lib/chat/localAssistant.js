@@ -7,6 +7,7 @@
 // uses, so its advice is grounded in real terms. Plain prose only (the chat UI
 // forbids markdown emphasis), no network, no API key.
 
+import { parseStageInstant } from "@/lib/tracking/stages";
 import { extractKeywords } from "@/lib/llm/engines/tailor-lite/keywords";
 import { defaultLibraryData } from "@/lib/llm/engines/tailor-lite/library/defaults";
 import { summarize, rankSentences } from "@/lib/text/summarize";
@@ -63,6 +64,37 @@ export function topTerms(text, limit = 8) {
 
 function list(items) {
   return items.join(", ");
+}
+
+// Human date-time for a stage's `scheduledAt`, for the chat's own prose.
+// `scheduledAt` is a raw stored value (parseStageInstant's domain, not the
+// datetime-local input's), and the app never captures the interviewer's
+// timezone anywhere, so the only honest claim is the VIEWER's own zone -
+// resolved here the same way TechWatchPanel.js does, and always rendered
+// alongside the time so a bare clock number is never left ambiguous.
+// `timeZone` is overridable so callers (tests) can pin it instead of relying
+// on the ambient ICU zone. Returns "" - never a raw ISO string - when the
+// value doesn't parse, so callers can drop the "on ..." clause cleanly.
+//
+// The year is ALWAYS included, unconditionally. This string is surfaced by
+// summarizeApplications with no date filter at all — a rejected stage from
+// years ago is listed under "Upcoming:" exactly like one from next week — so
+// a stale stage is the normal case here, not an edge one. Making the year
+// conditional on "is this the current year" would reintroduce a clock (and
+// therefore a timezone dependency) into a formatter that is otherwise pure
+// and zone-invariant, just to shave off a few characters in the common case.
+export function formatInterviewWhen(scheduledAt, timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone) {
+  const instant = parseStageInstant(scheduledAt);
+  if (!instant) return "";
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(instant);
 }
 
 // The subject text the user is asking about: the pinned posting, else the first
@@ -162,7 +194,9 @@ function summarizeApplications(applications, depth = 0) {
   for (const a of apps) {
     for (const st of a.stages || []) {
       if (st && st.scheduledAt) {
-        upcoming.push(`${a.company || "a role"} — ${st.name || st.type || "interview"} on ${st.scheduledAt}`);
+        const label = st.name || st.type || "interview";
+        const when = formatInterviewWhen(st.scheduledAt);
+        upcoming.push(when ? `${a.company || "a role"} — ${label} on ${when}` : `${a.company || "a role"} — ${label}`);
       }
     }
   }
