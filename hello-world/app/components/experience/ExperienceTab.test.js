@@ -449,6 +449,70 @@ describe("ExperienceTab -- a live region announces page create and rename (D5)",
 
     expect(withoutZwsp(liveRegion().textContent)).toContain('Renamed to "Renamed Root"');
   });
+
+  // The live region's `seq` counter - the ONE thing no assertion on
+  // announcement TEXT can ever reach. Two announcements whose text differs
+  // already produce a different DOM text node whatever `seq` does, which is
+  // why even the "3 -> 2 -> 3" test above (named for this mechanism) stays
+  // green with the bump removed: its non-consecutive repeat still changes
+  // the text in between. Only two CONSECUTIVE IDENTICAL messages depend on
+  // the alternating invisible character, and the shortest way to produce a
+  // genuine pair of them is two top-level creates in a row: both announce
+  // Created "Untitled page", and nothing announces in between (the first
+  // new row's inline rename is left at its unchanged title, which
+  // handleRenameCommit discards without announcing).
+  it("makes two CONSECUTIVE IDENTICAL announcements distinguishable in the DOM", async () => {
+    let created = 0;
+    global.fetch = vi.fn((url, options) => {
+      if (!options) {
+        return Promise.resolve(jsonResponse(200, { pages: [] }));
+      }
+      if (options.method === "POST") {
+        created += 1;
+        return Promise.resolve(
+          jsonResponse(200, {
+            page: {
+              id: `new${created}`,
+              parent_id: null,
+              title: "Untitled page",
+              body: "",
+              position: created - 1,
+              archived_at: null,
+              created_at: "2026-01-05T00:00:00.000Z",
+              updated_at: "2026-01-05T00:00:00.000Z",
+            },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+
+    await render();
+    await flush();
+
+    const emptyStateCreateBtn = buttons().find((b) => b.textContent.trim() === "Create your first project page");
+    expect(emptyStateCreateBtn).toBeDefined();
+    await click(emptyStateCreateBtn);
+    await flush();
+    const first = liveRegion().textContent;
+
+    // The second create goes through the header button (the empty state is
+    // gone by now) and lands on the very same string.
+    const headerCreateBtn = buttons().find((b) => /new top-level page/i.test(b.textContent));
+    expect(headerCreateBtn).toBeDefined();
+    await click(headerCreateBtn);
+    await flush();
+    const second = liveRegion().textContent;
+
+    expect(created).toBe(2);
+    // The VISIBLE message is byte-for-byte the same one both times, so the
+    // two announcements really are a consecutive identical pair...
+    expect(withoutZwsp(first)).toBe('Created "Untitled page"');
+    expect(withoutZwsp(second)).toBe('Created "Untitled page"');
+    // ...and yet the RAW text differs, which is the only thing that makes a
+    // polite live region speak a message it has just spoken a second time.
+    expect(second).not.toBe(first);
+  });
 });
 
 // Chunk 8: checkbox selection and the bulk actions bar. PageTree.test.js
@@ -628,6 +692,82 @@ describe("ExperienceTab -- bulk selection and the bulk actions bar (chunk 8)", (
     const moveCalls = global.fetch.mock.calls.filter(([u]) => u === "/api/experience/move");
     expect(moveCalls).toHaveLength(1);
     expect(JSON.parse(moveCalls[0][1].body)).toMatchObject({ id: "p1", newParentId: "p3" });
+  });
+
+  // The BULK move's OWN destination expansion. handleBulkMove expands the
+  // destination at its own call site, entirely separately from the single
+  // move's copy of the same line - so the "a move into a collapsed parent
+  // expands it" test elsewhere in this file, which drives handleMove
+  // through the row's Move button, says nothing about this path at all.
+  // Without it every moved row disappears into a still-collapsed
+  // destination at once: the selection empties, the bar vanishes, and the
+  // sidebar simply has fewer rows in it than it did a moment ago.
+  it("bulk move into a COLLAPSED destination expands it, leaving the moved rows visible underneath", async () => {
+    const PAGE_THIRD = {
+      ...PAGE_SIBLING,
+      id: "p4",
+      title: "Third Page",
+      position: 2,
+      created_at: "2026-01-04T00:00:00.000Z",
+    };
+    // Stateful on purpose: handleBulkMove fires one move per selection ROOT
+    // SEQUENTIALLY, and each response REPLACES the whole page list - so the
+    // second response has to still carry the first move's re-parenting, or
+    // the tree ends up describing only whichever move happened to land last.
+    let rows = [PAGE_ROOT, PAGE_CHILD, PAGE_SIBLING, PAGE_THIRD];
+    global.fetch = vi.fn((url, options) => {
+      if (!options) {
+        return Promise.resolve(jsonResponse(200, { pages: rows }));
+      }
+      if (url === "/api/experience/move") {
+        const { id, newParentId } = JSON.parse(options.body);
+        rows = rows.map((r) => (r.id === id ? { ...r, parent_id: newParentId } : r));
+        return Promise.resolve(jsonResponse(200, { pages: rows }));
+      }
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+
+    await render();
+    await flush();
+
+    // p3 is the destination, and starts out a childless leaf - a leaf row
+    // carries no aria-expanded at all (see the single-move test above), so
+    // "collapsed" here means p3 is absent from the expanded set, which only
+    // becomes observable as aria-expanded once it actually has children.
+    const destinationBefore = container.querySelector('[role="treeitem"][data-page-id="p3"]');
+    expect(destinationBefore.getAttribute("aria-expanded")).toBeNull();
+
+    // Two top-level selection ROOTS, so this is a genuine bulk move rather
+    // than a one-page move wearing the bulk bar's clothes.
+    await act(async () => {
+      checkboxFor("p1").click();
+    });
+    await act(async () => {
+      checkboxFor("p4").click();
+    });
+
+    const moveSelectedBtn = buttons().find((b) => b.textContent.trim() === "Move selected");
+    expect(moveSelectedBtn).toBeDefined();
+    await click(moveSelectedBtn);
+    await flush();
+
+    const dialogTarget = [...document.querySelectorAll('[aria-label="Move to"] [role="button"]')].find(
+      (b) => b.textContent.trim() === "Sibling Page",
+    );
+    expect(dialogTarget).toBeDefined();
+    await click(dialogTarget);
+    await flush();
+
+    const destinationAfter = container.querySelector('[role="treeitem"][data-page-id="p3"]');
+    expect(destinationAfter.getAttribute("aria-expanded")).toBe("true");
+
+    const movedRoot = container.querySelector('[role="treeitem"][data-page-id="p1"]');
+    const movedThird = container.querySelector('[role="treeitem"][data-page-id="p4"]');
+    expect(movedRoot).not.toBeNull();
+    expect(movedThird).not.toBeNull();
+    // Rendered UNDER the destination, not merely still somewhere on screen.
+    expect(destinationAfter.contains(movedRoot)).toBe(true);
+    expect(destinationAfter.contains(movedThird)).toBe(true);
   });
 });
 
