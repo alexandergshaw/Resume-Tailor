@@ -4,7 +4,11 @@
 // `createChatHandlers` uses `FileReader`, which node has no implementation of.
 // Everything else here is plain function calls against setter spies.
 //
-// What this file pins: the attach-time gate at lib/chat/chatbot.js:128, today
+// [HISTORICAL LINE REFERENCE -- DO NOT REPOINT. The 5 MB gate quoted below
+// was DELETED by this change; `chatbot.js` now gates on
+// MAX_BINARY_ATTACHMENT_BYTES (3,000,000) via MAX_ATTACHMENT_SIZE_LABEL.
+// The citation is the record of what was replaced, not a live pointer.]
+// What this file pins: the attach-time gate at lib/chat/chatbot.js:128, then
 //
 //     if (file.size > 5 * 1024 * 1024) { ... "(max 5 MB)" }
 //

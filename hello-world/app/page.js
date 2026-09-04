@@ -3127,6 +3127,7 @@ export default function Home() {
           chatPinnedContext={chat.chatPinnedContext}
           setChatPinnedContext={chat.setChatPinnedContext}
           chatSending={chat.chatSending}
+          chatProgress={chat.chatProgress}
           chatCopiedIndex={chat.chatCopiedIndex}
           setChatCopiedIndex={chat.setChatCopiedIndex}
           resendUserMessage={chat.resendUserMessage}

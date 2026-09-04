@@ -6,6 +6,7 @@ import Chip from "@mui/material/Chip";
 import Avatar from "@mui/material/Avatar";
 import TextField from "@mui/material/TextField";
 import { useIsMobile } from "../hooks/useResponsive";
+import { useChatErrorAnnouncementSeq } from "../hooks/useChat";
 import { useEngine } from "../settings/engine";
 import { revokeAttachmentPreview } from "../../lib/chat/chatbot";
 
@@ -29,6 +30,7 @@ export default function ChatPanel({
   chatPinnedContext,
   setChatPinnedContext,
   chatSending,
+  chatProgress,
   chatCopiedIndex,
   setChatCopiedIndex,
   resendUserMessage,
@@ -47,6 +49,15 @@ export default function ChatPanel({
   // no-AI assistant, so surface that plainly in the header and empty state.
   const { engine } = useEngine();
   const isEmbedded = engine === "embedded";
+  // AC-34: one number per announcement, used ONLY as a `key` on the error node
+  // (never rendered). See app/hooks/useChat.js for the whole mechanism and for
+  // why it is not a prop.
+  const chatErrorSeq = useChatErrorAnnouncementSeq();
+  // AC-31h: the Send button's own unavailable state, computed once and used
+  // both for `aria-disabled` and for the visual affordance that replaces
+  // MUI's `.Mui-disabled` now that the `disabled` attribute is gone (see the
+  // button below).
+  const sendUnavailable = chatSending || !chatInput.trim();
   return (
     <Box
       ref={chatPanelRef}
@@ -226,14 +237,25 @@ export default function ChatPanel({
           gap: 1,
         }}
       >
-        {chatMessages.length === 0 ? (
-          <Box sx={{ color: "var(--text-secondary)", fontSize: "0.9rem", lineHeight: 1.5, px: 0.5, pt: 0.5 }}>
-            {isEmbedded
-              ? "Offline assistant (no AI). I answer from your pinned posting, uploaded resume, and tracked applications — try “analyze this posting”, “review my resume”, or “my applications”. Switch to Gemini in the top bar for open-ended chat."
-              : "Ask anything about your resume, this posting, or your job search."}
-          </Box>
-        ) : (
-          chatMessages.map((m, i) => (
+        {/* AC-31g clause 4/5: `aria-busy` marks this turn list as mid-update
+            while a send is in flight -- it is NOT an announcement (no screen
+            reader speaks an `aria-busy` change; the progress region below is
+            the announcement) and it must never wrap either live region, or it
+            SUPPRESSES that region's announcements until it clears, silencing
+            the refusal AC-31f rests on. `display: "contents"` keeps this Box
+            out of the flex layout entirely -- its children stay direct flex
+            items of the scroll container above, so the existing spacing is
+            unchanged -- while still giving `aria-busy` a real element to live
+            on and `closest()` a real ancestor to find (or not find). */}
+        <Box aria-busy={chatSending} sx={{ display: "contents" }}>
+          {chatMessages.length === 0 ? (
+            <Box sx={{ color: "var(--text-secondary)", fontSize: "0.9rem", lineHeight: 1.5, px: 0.5, pt: 0.5 }}>
+              {isEmbedded
+                ? "Offline assistant (no AI). I answer from your pinned posting, uploaded resume, and tracked applications — try “analyze this posting”, “review my resume”, or “my applications”. Switch to Gemini in the top bar for open-ended chat."
+                : "Ask anything about your resume, this posting, or your job search."}
+            </Box>
+          ) : (
+            chatMessages.map((m, i) => (
             <Box
               key={i}
               // Only user turns are ever marked failed/sent -- an assistant
@@ -350,25 +372,88 @@ export default function ChatPanel({
               ) : null}
             </Box>
           ))
-        )}
-        {chatSending ? (
-          <Box
-            sx={{
-              alignSelf: "flex-start",
-              fontSize: "0.85rem",
-              color: "var(--text-secondary)",
-              fontStyle: "italic",
-              px: 0.5,
-            }}
-          >
-            Thinking…
-          </Box>
-        ) : null}
-        {chatError ? (
-          <Box sx={{ alignSelf: "flex-start", color: "var(--danger)", fontSize: "0.85rem", px: 0.5 }}>
-            {chatError}
-          </Box>
-        ) : null}
+          )}
+          {chatSending ? (
+            <Box
+              sx={{
+                alignSelf: "flex-start",
+                fontSize: "0.85rem",
+                color: "var(--text-secondary)",
+                fontStyle: "italic",
+                px: 0.5,
+              }}
+            >
+              Thinking…
+            </Box>
+          ) : null}
+        </Box>
+        {/* AC-31g: a SECOND always-mounted polite region, distinct from
+            AC-33's below (never nested inside the aria-busy Box above --
+            AC-31g clause 5 forbids it) and hooked by `data-chat-status` so a
+            selector cannot silently re-point itself the day a third notice is
+            added. Carries a SHORT CUE ONLY -- "Sending…" / "Reply ready" --
+            never the reply text: `role="status"` is implicitly
+            `aria-atomic="true"`, so a live region is re-read WHOLE on every
+            change, and the reply is often hundreds of words. The cue node is
+            keyed by state (AC-34's mechanism, restated here) so a transition
+            is a tree modification, not a text diff VoiceOver can miss. Empty
+            on mount, and empty again on any refusal or failure (set from
+            lib/chat/chatbot.js's runChatRequest, which is the only thing that
+            knows whether a send actually reached the network) -- the refusal
+            belongs to the chatError region alone (AC-31f); two polite regions
+            changing in one commit have unspecified announcement order across
+            AT, and the refusal must not be the one that loses that race.
+            Visually hidden: this cue has no sighted-user surface of its own,
+            same technique as ExperienceTab.js's HIDDEN_STATUS_SX. */}
+        <Box
+          role="status"
+          aria-live="polite"
+          data-chat-status="progress"
+          sx={{
+            position: "absolute",
+            width: "1px",
+            height: "1px",
+            padding: 0,
+            margin: "-1px",
+            overflow: "hidden",
+            clip: "rect(0 0 0 0)",
+            whiteSpace: "nowrap",
+            border: 0,
+          }}
+        >
+          {chatProgress === "sending" ? (
+            <span key="sending">Sending…</span>
+          ) : chatProgress === "ready" ? (
+            <span key="ready">Reply ready</span>
+          ) : null}
+        </Box>
+        {/* AC-33: unconditionally mounted (never `chatError ? … : null`) so
+            the region exists in the accessibility tree BEFORE the first
+            error ever appears -- assistive tech that starts observing only
+            once mounted would otherwise miss the very first announcement.
+            role="status" + aria-live="polite" mirror the failed-turn cue's
+            own `<Box role="status">` (in the `m.role === "user" && m.failed`
+            branch above), which must stay first in DOM order (verified: the
+            turn map ends above this point). Never display:none /
+            visibility:hidden here even when chatError is empty -- both pull
+            the node out of the accessibility tree and would silence every
+            future announcement, defeating the point of keeping it mounted.
+            `sx` is verbatim from the conditional Box this replaces: A2 adds
+            no new notice style (UX.md §8). Also never nested inside the
+            aria-busy Box above -- AC-31g clause 5 forbids it, and this is the
+            region AC-31f rests the entire non-sighted refusal experience on.
+
+            AC-34: the REGION is permanent; the node carrying the text is not.
+            Keying it by the announcement counter makes React destroy and
+            recreate that node on every announcement, so a second, byte-
+            identical refusal is still a tree modification inside a live
+            region rather than a text diff that comes out empty. This is what
+            @react-aria/live-announcer does. The counter is a `key` only --
+            it is never rendered, so nothing reaches the speech stream or the
+            clipboard that the user did not cause. */}
+        <Box role="status" aria-live="polite" sx={{ alignSelf: "flex-start", color: "var(--danger)", fontSize: "0.85rem", px: 0.5 }}>
+          {chatError ? <span key={chatErrorSeq}>{chatError}</span> : null}
+        </Box>
       </Box>
 
       <Box
@@ -383,21 +468,41 @@ export default function ChatPanel({
       >
         {chatAttachedFiles.length > 0 ? (
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-            {chatAttachedFiles.map((f, i) => (
-              <Chip
-                key={`${f.name}-${i}`}
-                size="small"
-                label={f.name}
-                avatar={f.previewUrl ? <Avatar src={f.previewUrl} alt="" variant="rounded" /> : undefined}
-                onDelete={() => {
-                  // M6: revoke this chip's own preview blob URL before it's
-                  // dropped from the tray.
-                  revokeAttachmentPreview(f);
-                  setChatAttachedFiles((prev) => prev.filter((_, idx) => idx !== i));
-                }}
-                sx={{ maxWidth: 220 }}
-              />
-            ))}
+            {chatAttachedFiles.map((f, i) => {
+              // AC-27b: the refusal names this control as the remedy, so it
+              // has to be OPERABLE, not just present. Shipped as a bare
+              // `onDelete`, MUI binds only `isDeleteKeyboardEvent`
+              // (Backspace/Delete) to it -- Enter and Space, ButtonBase's own
+              // keys, have no `onClick` to call, so they do nothing, and the
+              // real ✕ (`MuiChip-deleteIcon`) is `aria-hidden` with no name
+              // and no tab stop of its own: mouse-only. `onClick` running the
+              // SAME removal makes ButtonBase's Enter/Space path fire it too,
+              // and `aria-label` gives the root a name that says what
+              // activating it does (SC 4.1.2) while still containing the
+              // visible label, the file name (SC 2.5.3). Backspace/Delete via
+              // `onDelete` stay wired -- this ADDS keys, it does not swap
+              // them. Deliberately NOT a real `<button>` inside `deleteIcon`:
+              // the chip root is already a ButtonBase, and a button nested in
+              // a button is invalid markup no AT handles predictably.
+              const removeThisAttachment = () => {
+                // M6: revoke this chip's own preview blob URL before it's
+                // dropped from the tray.
+                revokeAttachmentPreview(f);
+                setChatAttachedFiles((prev) => prev.filter((_, idx) => idx !== i));
+              };
+              return (
+                <Chip
+                  key={`${f.name}-${i}`}
+                  size="small"
+                  label={f.name}
+                  avatar={f.previewUrl ? <Avatar src={f.previewUrl} alt="" variant="rounded" /> : undefined}
+                  onDelete={removeThisAttachment}
+                  onClick={removeThisAttachment}
+                  aria-label={`Remove ${f.name}`}
+                  sx={{ maxWidth: 220 }}
+                />
+              );
+            })}
           </Box>
         ) : null}
         {chatAttachError ? (
@@ -449,13 +554,45 @@ export default function ChatPanel({
                 sendChatMessage();
               }
             }}
-            disabled={chatSending}
+            // AC-31 rev 6: the composer is deliberately NOT disabled while
+            // `chatSending` is true. Disabling it is what drops focus to
+            // <body> mid-send on a real browser (a disabled element cannot
+            // hold focus), which is what let the 80 ms restore in
+            // runChatRequest's `finally` cut off a screen reader's refusal
+            // announcement. `chatSending` itself, the double-send guard on
+            // the Send button below, and the "Thinking…" indicator are
+            // unaffected -- only this input stops consuming the flag.
           />
+          {/* AC-31h: the SEND button is the second control the "never
+              disable" rule has to cover -- rev 6 only covered the composer.
+              A browser blurs a focused control the moment it becomes
+              `disabled`, dropping the keyboard user who just activated Send
+              to <body>, and `runChatRequest`'s `finally` restores focus only
+              `if (!refusedBeforeSend)` -- so on the refused path nobody
+              brings them back. Deleting just `chatSending` from the old
+              expression does NOT fix this: `sendChatMessage` clears
+              `chatInput` on entry, so `!chatInput.trim()` alone keeps the
+              button disabled for the whole flight -- the `disabled`
+              ATTRIBUTE has to go entirely. `aria-disabled` replaces it, and
+              is not redundant with nothing: the double-send guard already
+              lives in JS (`sendChatMessage`'s `if (!text || chatSending)
+              return`, `resendUserMessage`'s own guard), so the attribute was
+              only ever a correctness no-op that cost the control its
+              focusability. */}
           <Button
             variant="contained"
             onClick={sendChatMessage}
-            disabled={chatSending || !chatInput.trim()}
-            sx={{ textTransform: "none", minWidth: 0, px: 2 }}
+            aria-disabled={sendUnavailable}
+            sx={{
+              textTransform: "none",
+              minWidth: 0,
+              px: 2,
+              // Dropping `disabled` also drops MUI's `.Mui-disabled`
+              // styling, so the sighted cue has to come from somewhere else --
+              // same dimmed, inert-looking affordance, without touching
+              // focusability or the tab stop.
+              ...(sendUnavailable ? { opacity: 0.5, pointerEvents: "none" } : null),
+            }}
           >
             Send
           </Button>

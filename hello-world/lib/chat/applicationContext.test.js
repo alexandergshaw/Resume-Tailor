@@ -287,7 +287,9 @@ const PROFILES = [
 // does with it.
 //
 // The shape is NOT REACHABLE from the live data path, which is why keeping it
-// out of the corpus costs nothing. `chatbot.js:494-495` builds
+// out of the corpus costs nothing. `chatbot.js`'s `applicationsContext` map
+// (`:543-544` as of this writing -- anchor by the symbol, the line has gone
+// stale twice) builds
 // `jobDescription: pos.description || null` from `positions.description`, a
 // Supabase TEXT column (string or null/undefined, never a truthy non-string),
 // and `tailoredResume: resume?.content || null` from `generated_resumes`,

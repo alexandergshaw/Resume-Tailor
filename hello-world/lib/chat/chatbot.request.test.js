@@ -11,6 +11,9 @@
 //      retry re-uploads the same multi-megabyte payload and re-fails until the
 //      page is reloaded.
 //
+//   [HISTORICAL LINE REFERENCES in this numbered list -- DO NOT REPOINT.
+//   They cite the file as it stood BEFORE this change, as the record of what
+//   it was for; the lines no longer hold that code.]
 //   2. A retry must not GROW the request. `chatbot.js:208` commits
 //      `nextMessages` to state BEFORE the fetch, and `sendChatMessage` (:280)
 //      hands that transcript back in as `baseMessages` next time -- so the
@@ -27,6 +30,15 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createChatHandlers, MAX_REQUEST_BYTES } from "./chatbot.js";
+// Namespace import ALONGSIDE the named one above, deliberately: the refusal
+// constants A2 introduces do not exist yet, and a named import of a missing
+// export can fail at module-link time -- which would make this whole file fail
+// for the wrong reason. Through the namespace a missing export is `undefined`
+// and only the assertion that names it goes red. (Same rationale as
+// chatbot.response.test.js:49-53.) The A2 vocabulary itself is exercised in
+// lib/chat/chatbot.refusal.test.js; the two cases below only need the two
+// constants their own fixtures select, as identities rather than wordings.
+import * as chatbot from "./chatbot.js";
 import { localChatReply } from "./localAssistant.js";
 
 let savedFetch;
@@ -190,7 +202,20 @@ describe("runChatRequest: what the user reads when it fails", () => {
     // PAIRED POSITIVE CONTROL: what it says instead.
     expect(state.error).toMatch(/too (big|large)/i);
     expect(state.error).toMatch(/4\.5\s*MB/i);
-    expect(state.error).toMatch(/(remove|detach|fewer|smaller)/i);
+    // A2: the remedy is now the one that fits THIS body, not a regex family
+    // over four remedy-flavoured words. This fixture has an empty tray, no
+    // pinned context and no applications, so the largest measured section is
+    // `messages` and the platform 413 is answered with the TRANSCRIPT
+    // constant -- which names Clear, and contains none of
+    // remove/detach/fewer/smaller. Only the ATTACHMENTS constant contains any
+    // of them, and it is unreachable with an empty tray, so the old regex
+    // family could not be satisfied by any implementation that also satisfies
+    // AC-55 (chatbot.refusal.test.js: the same fixture shape -- gate-passed
+    // body, transcript dominant, platform 413 -- REQUIRES this constant). The
+    // two assertions contradicted each other; this is the identity form, the
+    // same repair :524 and :550 already use, so a reworded message cannot
+    // drift past it either.
+    expect(state.error).toBe(chatbot.TOO_BIG_TRANSCRIPT_MESSAGE);
   });
 
   it("a fetch that never returns says to check the connection", async () => {
@@ -504,22 +529,42 @@ describe("runChatRequest: M4 -- measuring the request body before sending", () =
     expect(globalThis.fetch).not.toHaveBeenCalled();
     expect(state.error).not.toMatch(/remove an attachment/i);
     expect(state.error).toMatch(/application/i);
-    expect(state.error).toMatch(/(company|role|specific)/i);
+    // A2/AC-26: the old wording's "Try asking about one specific company or
+    // role" is DELETED -- it could never have reduced the body, because
+    // `applicationsContext` -- `runChatRequest`'s application map plus
+    // `projectApplicationsForRequest` -- never reads the user's
+    // question. The regex family that used to stand here
+    // (/(company|role|specific)/i) is replaced by an IDENTITY against the
+    // constant the measured selection picks for this fixture, so AC-43 keeps
+    // the measure-don't-trim gate's coverage and a reworded message cannot
+    // drift past it.
+    expect(state.error).toBe(chatbot.TOO_BIG_APPLICATIONS_MESSAGE);
     expect(state.error).toMatch(/too (big|large)/i);
   });
 
-  it("WITH attachments, huge application history: the remedy still mentions removing an attachment", async () => {
+  it("WITH a dominant attachment: the remedy still mentions removing an attachment", async () => {
     globalThis.fetch = vi.fn(async () => RESPONSE_OK("should never be reached"));
-    const applicationData = bulkApplications(30_000);
+    // RE-FIXTURED for A2. This case previously paired `bulkApplications(30_000)`
+    // (~5.17 MB of applications) with a FORTY-BYTE attachment. Once the refusal
+    // is selected by the measured largest body section, that fixture's largest
+    // section is `applications`, so it renders the applications constant plus
+    // AC-29's secondary -- and the two assertions below would have passed by
+    // accident, off the secondary clause, while the attachments branch AC-44
+    // exists to cover went untested. The attachment now dominates by three
+    // orders of magnitude, and the body (~4.6 MB) is still refused, which is
+    // what AC-44 asks for. Its sibling above remains the applications case, so
+    // the two now cover DIFFERENT constants.
+    const applicationData = bulkApplications(3);
     const { state, handlers } = makeHarness({
       input: "how am I doing overall?",
       applicationData,
-      attached: [attachment("bullet.png", 40)],
+      attached: [attachment("scan.png", 4_600_000)],
     });
 
     await handlers().sendChatMessage();
 
     expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(state.error).toBe(chatbot.TOO_BIG_ATTACHMENTS_MESSAGE);
     expect(state.error).toMatch(/(remove|detach|fewer|smaller)/i);
     expect(state.error).toMatch(/attach/i);
   });

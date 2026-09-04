@@ -5,7 +5,7 @@
 // app/components/JobDescriptionTab.test.js.
 //
 // `Clear` is the one control a stuck user reaches for. Today
-// (ChatPanel.js:159-167) it:
+// (the header **Clear** button's `onClick` in `ChatPanel.js`) it:
 //
 //   * renders ONLY when `chatMessages.length > 0`, and
 //   * does `setChatMessages([]); setChatError("")` -- leaving the attachment
@@ -232,5 +232,104 @@ describe("ChatPanel: M6 -- Clear revokes every attachment's preview blob URL", (
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:one");
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:two");
     expect(URL.revokeObjectURL).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("ChatPanel: AC-36 -- Clear is the recommended remedy, so it must not destroy the question", () => {
+  // A2's transcript refusal tells the user to press Clear. That advice is only
+  // honest if pressing it leaves what they were asking about intact: the
+  // composer text is restored there by the refusal itself
+  // (lib/chat/chatbot.refusal.test.js, AC-30), and Clear must not then wipe it.
+  //
+  // AC-36's checkable is "chatInput is non-empty after the refusal AND STILL
+  // non-empty after pressing Clear". This is that second half. MUTATION PROOF:
+  // add `setChatInput("")` to the Clear handler (`ChatPanel.js`) and
+  // this goes red while every other test in this file stays green.
+  const QUESTION = "does this bullet land for a senior PM role?";
+
+  function composerValue() {
+    const el = container.querySelector("textarea:not([aria-hidden])");
+    return el ? el.value : null;
+  }
+
+  it("Clear empties the thread, the error and the tray -- and leaves chatInput alone", async () => {
+    const props = baseProps({
+      chatMessages: [{ role: "user", content: "review this", failed: true }],
+      chatError: "That message is too large to send (the platform limit is 4.5 MB total).",
+      chatAttachedFiles: [ATTACHMENT],
+      chatInput: QUESTION,
+    });
+    await render(props);
+    expect(composerValue()).toBe(QUESTION);
+
+    const button = clearButton();
+    expect(button).toBeDefined();
+    await act(async () => {
+      button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    // ABSENCE: the composer setter is never touched...
+    expect(props.setChatInput).not.toHaveBeenCalled();
+    // ...and the text is still on screen, since ChatPanel holds it in a
+    // controlled value that nothing in the Clear handler writes to.
+    expect(composerValue()).toBe(QUESTION);
+
+    // PAIRED POSITIVE CONTROLS, so the absence above cannot be satisfied by a
+    // Clear button that simply did nothing at all.
+    expect(props.setChatMessages).toHaveBeenCalledTimes(1);
+    expect(resolvedArg(props.setChatMessages, props.chatMessages)).toEqual([]);
+    expect(props.setChatError).toHaveBeenCalledTimes(1);
+    expect(resolvedArg(props.setChatError, props.chatError)).toBe("");
+    expect(props.setChatAttachedFiles).toHaveBeenCalledTimes(1);
+    expect(resolvedArg(props.setChatAttachedFiles, props.chatAttachedFiles)).toEqual([]);
+  });
+
+  it("Send is still reachable and available with the restored text, so Clear -> Send is 2 clicks", async () => {
+    // The click-count claim A2 makes for the transcript state is
+    // Send(1) -> Clear(2) -> Send(3), with NO retype. That only holds if Send
+    // is available off the restored text. AC-31h retired the `disabled`
+    // attribute on this control (a disabled control cannot hold focus, which
+    // drops a keyboard user to <body>) in favour of `aria-disabled` -- see
+    // `const sendUnavailable = chatSending || !chatInput.trim()` in
+    // `ChatPanel.js` -- so an empty composer would have left the user
+    // retyping the whole question.
+    const props = baseProps({
+      chatMessages: [{ role: "user", content: "review this", failed: true }],
+      chatInput: QUESTION,
+    });
+    await render(props);
+
+    const send = [...container.querySelectorAll("button")]
+      .find((b) => (b.textContent || "").trim() === "Send");
+    expect(send).toBeDefined();
+    // Real assertion on the live mechanism, not the retired `disabled`
+    // attribute: [MEASURED, this repo] a MUI Button given `aria-disabled`
+    // and no `disabled` renders the boolean literally, so "available" is
+    // `aria-disabled="false"`, never absent.
+    expect(send.getAttribute("aria-disabled")).toBe("false");
+
+    await act(async () => {
+      send.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    expect(props.sendChatMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("ABSENCE CONTROL: with an empty composer, Send is aria-disabled -- so the restore is load-bearing", async () => {
+    const props = baseProps({
+      chatMessages: [{ role: "user", content: "review this", failed: true }],
+      chatInput: "",
+    });
+    await render(props);
+
+    const send = [...container.querySelectorAll("button")]
+      .find((b) => (b.textContent || "").trim() === "Send");
+    expect(send).toBeDefined();
+    // AC-31h retired the `disabled` attribute on Send in favour of
+    // `aria-disabled` (a disabled control cannot hold focus, which drops a
+    // keyboard user to <body>). Assert the real mechanism...
+    expect(send.getAttribute("aria-disabled")).toBe("true");
+    // ...and, as a regression guard, that the retired attribute has not come
+    // back.
+    expect(send.hasAttribute("disabled")).toBe(false);
   });
 });

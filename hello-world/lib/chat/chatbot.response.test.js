@@ -6,6 +6,10 @@
 //     Unexpected token 'R', "Request En"... is not valid JSON
 //
 // `lib/chat/chatbot.js:266` calls `await response.json()` UNCONDITIONALLY,
+// [HISTORICAL LINE REFERENCE -- DO NOT REPOINT. This cites the file as it
+// stood BEFORE the fix, as the record of what the fix was for. The line no
+// longer holds that code; repointing it at whatever moved in would erase the
+// record. The same applies to `:267` further down.]
 // before the `response.ok` check on the next line. When Vercel rejects the
 // POST at the edge with its 4.5 MB App Router body cap, the body is the plain
 // string "Request Entity Too Large" and `.json()` throws that SyntaxError,
@@ -372,4 +376,141 @@ describe("attachment budget: the arithmetic, stated", () => {
     expect(n * 1024 * 1024).toBeGreaterThan(chatbot.MAX_BINARY_ATTACHMENT_BYTES * 0.85);
   });
 
+});
+
+// ---------------------------------------------------------------------------
+// Chunk A2 -- `readChatResponse` is the SECOND emitter of the refusal
+// vocabulary.
+//
+// The pre-`fetch` gate (the `bodyBytes > MAX_REQUEST_BYTES` throw in
+// `runChatRequest`) has the whole body and can measure
+// which section is largest. This function does not: a platform 413 arrives
+// with nothing but a status, and all it has ever been told is
+// `hasAttachments`. A2 closes that gap by letting the caller hand it the
+// measurement LAZILY -- a zero-argument function that is only ever invoked on
+// the 413 branch, because measuring the five sections costs a second full
+// serialization of a body up to 4.5 MB and no successful send should pay it.
+//
+// The `hasAttachments = true` default and its rationale (the comment directly
+// above `readChatResponse`)
+// survive untouched: they are what keeps a caller that knows nothing --
+// including every existing test in this file -- getting the original wording.
+// ---------------------------------------------------------------------------
+
+describe("readChatResponse: AC-53/AC-54 -- the lazily supplied measurement", () => {
+  const RES_413 = () =>
+    fakeResponse({ status: 413, body: BODY_413, contentType: undefined });
+
+  it("AC-53: a supplied measurement wins, verbatim, and is invoked exactly once", async () => {
+    const measure = vi.fn(() => "PRIMARY FROM THE GATE'S OWN MEASUREMENT");
+    const res = RES_413();
+
+    const result = await chatbot.readChatResponse(res, {
+      hasAttachments: true,
+      refusalMessage: measure,
+    });
+
+    expect(result).toEqual({ ok: false, error: "PRIMARY FROM THE GATE'S OWN MEASUREMENT" });
+    expect(measure).toHaveBeenCalledTimes(1);
+    // The body is still read exactly once, and still never as JSON.
+    expect(res.json).toHaveBeenCalledTimes(0);
+    expect(res.text).toHaveBeenCalledTimes(1);
+  });
+
+  it("AC-54: with NO options at all, the attachment-presence default still decides", async () => {
+    // Every existing caller in this file passes no options, and the production
+    // call site (`runChatRequest`'s `readChatResponse(response, {...})`) is the
+    // only one that knows better. That is
+    // the contract `hasAttachments = true` exists to hold.
+    const result = await chatbot.readChatResponse(RES_413());
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe(chatbot.TOO_BIG_ATTACHMENTS_MESSAGE);
+  });
+
+  it("AC-54/AC-56: with hasAttachments false and no measurement, the HEDGED applications constant", async () => {
+    // AMENDED FOR AC-56 (AC.md rev 5), and RED until the constant lands.
+    //
+    // This assertion previously named `TOO_BIG_APPLICATIONS_MESSAGE`. It was a
+    // faithful test of AC-54 as it stood, and AC-54 has been superseded here:
+    // the measured constant makes a FLAT causal claim ("most of it is your
+    // saved application history"), which is earned on the gate's path -- there
+    // we serialized the five sections and counted -- and unearned on THIS one,
+    // which by definition measured nothing. `readChatResponse` has no body; on
+    // this branch it knows only that the platform said 413 and that the tray
+    // was empty. AC-55 already concedes our count and the platform's can
+    // legitimately disagree, so a flat claim here asserts a cause nobody
+    // established.
+    //
+    // The full ruling, the two negatives, and the paired positive control that
+    // keeps the MEASURED path flat live in
+    // lib/chat/chatbot.refusal.test.js's AC-56 describe. This case is the
+    // second emitter's own copy of the identity, kept here because this file
+    // is where `readChatResponse`'s fallback branches are pinned.
+    const result = await chatbot.readChatResponse(RES_413(), { hasAttachments: false });
+    expect(result.error).toBe(chatbot.TOO_BIG_APPLICATIONS_UNMEASURED_MESSAGE);
+    expect(result.error).not.toBe(chatbot.TOO_BIG_APPLICATIONS_MESSAGE);
+  });
+
+  it("AC-54: a measurement that returns nothing falls back rather than showing an empty panel", async () => {
+    // A builder that hit an empty payload, or a caller that passed a function
+    // returning `undefined`, must not blank the message out.
+    for (const empty of [() => "", () => null, () => undefined]) {
+      const result = await chatbot.readChatResponse(RES_413(), {
+        hasAttachments: true,
+        refusalMessage: empty,
+      });
+      expect(result.error).toBe(chatbot.TOO_BIG_ATTACHMENTS_MESSAGE);
+    }
+  });
+
+  it("B5: a measurement that THROWS never leaks a raw JS message into the chat window", async () => {
+    // This function is exported and any caller can hand it a function that
+    // throws -- `JSON.stringify` on a multi-megabyte payload really can raise
+    // a RangeError. An escape here lands in runChatRequest's catch
+    // (`runChatRequest`'s `catch (err)`) and prints the raw message to the user: exactly the
+    // leak class this file's :97-119 header and commit af9ac29 exist to close.
+    const boom = vi.fn(() => { throw new RangeError("Invalid string length"); });
+    const result = await chatbot.readChatResponse(RES_413(), {
+      hasAttachments: true,
+      refusalMessage: boom,
+    });
+
+    expect(boom).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(false);
+    // ABSENCE...
+    expect(result.error).not.toMatch(/RangeError/i);
+    expect(result.error).not.toMatch(/Invalid string length/i);
+    // ...PAIRED with the POSITIVE CONTROL that makes the absence mean
+    // something: what the user gets instead is AC-54's real fallback.
+    expect(result.error).toBe(chatbot.TOO_BIG_ATTACHMENTS_MESSAGE);
+  });
+
+  it("a non-function `refusalMessage` is ignored rather than called", async () => {
+    // AMENDED FOR AC-56 alongside the case above, and for the same reason: a
+    // non-function measurement is NO measurement, so this lands on the
+    // unmeasured branch and must read as the unmeasured branch. The thing
+    // under test here is unchanged -- that a string/number/object/null is
+    // ignored rather than invoked -- only the constant it falls back to moves.
+    for (const bad of ["a string", 42, {}, null]) {
+      const result = await chatbot.readChatResponse(RES_413(), {
+        hasAttachments: false,
+        refusalMessage: bad,
+      });
+      expect(result.error).toBe(chatbot.TOO_BIG_APPLICATIONS_UNMEASURED_MESSAGE);
+    }
+  });
+
+  it("PAIRED POSITIVE CONTROL: no other status consults the measurement", async () => {
+    // 413 is the only branch that may spend it. A 504 or a 500 asking for a
+    // size measurement would be both wrong and expensive.
+    const measure = vi.fn(() => "SHOULD NEVER BE USED");
+    for (const status of [200, 400, 500, 502, 504, 408]) {
+      const res = status === 200
+        ? fakeJsonResponse({ status, payload: { reply: "hi" } })
+        : fakeResponse({ status, body: "boom", contentType: undefined });
+      const result = await chatbot.readChatResponse(res, { refusalMessage: measure });
+      expect(result.error, `status ${status}`).not.toBe("SHOULD NEVER BE USED");
+    }
+    expect(measure).not.toHaveBeenCalled();
+  });
 });

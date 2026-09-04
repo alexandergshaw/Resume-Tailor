@@ -5,6 +5,55 @@
 
 import { readEngine } from "@/app/settings/engine";
 import { projectApplicationsForRequest } from "@/lib/chat/applicationContext";
+// Refusal message vocabulary (A2): the constants and selection functions
+// used below moved verbatim to lib/chat/refusal.js -- a self-contained block
+// that closes over nothing in createChatHandlers -- to make room under the
+// ceiling lib/chat/chatbot.refusal.test.js's "lib/chat's line budget: the
+// ceiling A2's module headers cite" enforces, without trimming a single
+// comment. Re-exported further down so this file's import surface (and every
+// test written against it) is unchanged.
+import {
+  TOO_BIG_ATTACHMENTS_MESSAGE,
+  TOO_BIG_APPLICATIONS_MESSAGE,
+  TOO_BIG_APPLICATIONS_UNMEASURED_MESSAGE,
+  measureBodySections,
+  refusalMessageFor,
+} from "@/lib/chat/refusal";
+// Composer focus helpers (A2 / AC-31, AC-31a): moved verbatim to
+// lib/chat/composerFocus.js -- another self-contained block, operating only
+// on the ref its caller supplies -- for the same line-budget reason as the
+// refusal vocabulary above. Re-exported further down.
+import { focusComposerEnd, restoreComposerFocusIfLost } from "@/lib/chat/composerFocus";
+// The request-size cap, and the WHY-4_500_000 derivation, now live in
+// lib/chat/chatLimits.js -- a leaf module importing nothing -- because
+// refusal.js needs the same value and used to import it back from HERE,
+// closing an import cycle. Imported for this file's own use AND re-exported
+// just below, so `chatbot.MAX_REQUEST_BYTES` is unchanged for every caller
+// and every test.
+import { MAX_REQUEST_BYTES } from "@/lib/chat/chatLimits";
+
+// Re-export of the refusal vocabulary and the request-size cap imported above
+// (see each import's comment) -- this file's export surface stays identical
+// to before A2's extraction. Placed HERE, immediately after the imports,
+// rather than further down: sitting between a section header and the function
+// it describes is how the `readChatResponse` header below came to be severed
+// from `readChatResponse`.
+export { MAX_REQUEST_BYTES } from "@/lib/chat/chatLimits";
+export {
+  TOO_BIG_ATTACHMENTS_MESSAGE,
+  TOO_BIG_PINNED_CONTEXT_MESSAGE,
+  TOO_BIG_TRANSCRIPT_MESSAGE,
+  TOO_BIG_RESUME_MESSAGE,
+  TOO_BIG_APPLICATIONS_MESSAGE,
+  TOO_BIG_APPLICATIONS_UNMEASURED_MESSAGE,
+  TOO_BIG_ATTACHMENT_SECONDARY,
+  TOO_BIG_MULTIPLE_MESSAGE,
+  BODY_SECTION_ORDER,
+  REFUSAL_MESSAGES,
+  measureBodySections,
+  largestBodyContributor,
+  refusalMessageFor,
+} from "@/lib/chat/refusal";
 
 // --- Request-size budget ----------------------------------------------------
 //
@@ -12,36 +61,6 @@ import { projectApplicationsForRequest } from "@/lib/chat/applicationContext";
 // app/api/chat/route.js -- so that rejection carries whatever body the
 // PLATFORM felt like sending (see readChatResponse below), not JSON.
 //
-// WHY 4_500_000, separating what's DOCUMENTED from what's INFERRED. An
-// earlier version of this comment stated the inference below as settled
-// fact -- it isn't, even though the conclusion (the constant) is still right.
-//
-// DOCUMENTED: Vercel's own docs give the request body limit as "4.5 MB", with
-// no stated unit base (decimal vs. binary). AWS documents Lambda's
-// synchronous-invocation payload limit as 6 MiB -- and documents the
-// request-line/header/cookie limit as a SEPARATE quota row, not part of that
-// 6 MiB body figure.
-//
-// INFERRED, and only an inference: that the body Vercel forwards to Lambda
-// arrives base64-encoded. Neither company's docs say so either way. IF it
-// does, the arithmetic ceiling is 6 MiB x 3/4 = 4_718_592 bytes -- exactly
-// 4.5 MiB the BINARY reading, which lines up with Vercel's stated "4.5 MB"
-// well enough to be a reasonable guess at what they mean, not a derivation
-// from a sourced mechanism. A second, weaker inference this comment used to
-// make -- that the same 6 MiB envelope also carries the request line, headers
-// and cookies, leaving a usable body budget somewhat below 4_718_592 -- does
-// NOT hold up: AWS lists those as the separate quota noted above, not a slice
-// of the body limit. That justification has been dropped here; it doesn't
-// follow from anything documented.
-//
-// The constant STAYS at 4_500_000 regardless of whether the base64 inference
-// is right, because it sits safely under Vercel's documented "4.5 MB" either
-// way -- the margin is deliberate slack against an unconfirmed mechanism, not
-// a number derived from one. Cost of that choice, stated honestly: a body in
-// [4_500_000, ~4_718_592) may be refused client-side even though the platform
-// would have carried it. Raising the number toward the inferred ceiling trades
-// that false refusal for a real 413 whose message is worse.
-export const MAX_REQUEST_BYTES = 4_500_000;
 // Reserved for everything in the body besides attachments: the message
 // transcript, resumeText, the applications array, pinnedContext, and the JSON
 // scaffolding around all of it.
@@ -117,22 +136,7 @@ export function revokeAttachmentPreview(entry) {
 // the platform is free to change under us. Prior art:
 // lib/llm/engines/externalEngine.js:57-66 ("413 returns an HTML page (not
 // JSON), so it's handled separately").
-const TOO_BIG_MESSAGE =
-  `That message is too large to send (the platform limit is 4.5 MB total). ` +
-  `Remove an attachment, or attach a smaller file, and try again.`;
-// M4: "remove an attachment" is impossible advice when nothing is attached.
-// `applicationsContext` (below) is now BOUNDED by projectApplicationsForRequest
-// -- it no longer serializes every tracked application's full jobDescription
-// and tailoredResume -- but it still carries EVERY tracked application, so a
-// long enough history can still cross the cap with an empty tray. This branch
-// names the real cause instead. (Scale, so nobody reads this as dead code: the
-// unbounded shape crossed the cap at roughly 200 applications; the bounded one
-// needs order 10^4. See docs/REGRESSION.md R-293.)
-const TOO_BIG_NO_ATTACHMENTS_MESSAGE =
-  `That message is too large to send (the platform limit is 4.5 MB total) — ` +
-  `most likely from all your saved application history riding along, not an ` +
-  `attachment. Try asking about one specific company or role, or send a ` +
-  `shorter, smaller message, and try again.`;
+
 const TIMED_OUT_MESSAGE = "That took too long and timed out. Please try again.";
 const UNREACHABLE_MESSAGE =
   "Couldn't reach the assistant right now. Please try again in a moment.";
@@ -143,7 +147,7 @@ const INCOMPLETE_REPLY_MESSAGE =
 // attachments (or doesn't pass the option at all) keeps getting the original
 // wording verbatim -- only `runChatRequest` (which knows what it just sent)
 // opts into the no-attachments branch.
-export async function readChatResponse(response, { hasAttachments = true } = {}) {
+export async function readChatResponse(response, { hasAttachments = true, refusalMessage = null } = {}) {
   // Read the body EXACTLY ONCE, and only as text -- a second read of a real
   // `Response` throws "body stream already read", so this is a correctness
   // requirement, not a style choice.
@@ -195,7 +199,32 @@ export async function readChatResponse(response, { hasAttachments = true } = {})
   // guess) for at least one of those shapes and reproduces the exact bug this
   // fix closes.
   if (status === 413) {
-    return { ok: false, error: hasAttachments ? TOO_BIG_MESSAGE : TOO_BIG_NO_ATTACHMENTS_MESSAGE };
+    // A2/AC-53/AC-54: the gate that measures the body and picks among the
+    // five-way vocabulary lives in runChatRequest, which has the whole
+    // payload; this function never does. `refusalMessage` lets that caller
+    // hand over the SAME selection lazily -- a zero-argument function, called
+    // only here, never on a 200 (measuring the five sections is a second full
+    // serialization of a body up to 4.5 MB, and no successful send should pay
+    // it). `hasAttachments` stays the AC-54 fallback for every caller that
+    // does not supply one, unchanged from before A2.
+    if (typeof refusalMessage === "function") {
+      try {
+        const measured = refusalMessage();
+        if (measured) return { ok: false, error: measured };
+      } catch {
+        // B5: refusalMessage can throw (e.g. JSON.stringify on a multi-MB
+        // payload raising a RangeError) -- never let a raw JS message reach
+        // the chat window. Fall through to the AC-54 default below.
+      }
+    }
+    // AC-56: this branch is reached only when no measurement was available (no
+    // `refusalMessage` supplied, or it threw/returned nothing) -- by
+    // definition nothing here was measured, so the no-attachments case emits
+    // the HEDGED constant, never the measured flat-claim one.
+    return {
+      ok: false,
+      error: hasAttachments ? TOO_BIG_ATTACHMENTS_MESSAGE : TOO_BIG_APPLICATIONS_UNMEASURED_MESSAGE,
+    };
   }
   if (status === 504 || status === 408) return { ok: false, error: TIMED_OUT_MESSAGE };
   return { ok: false, error: UNREACHABLE_MESSAGE };
@@ -279,6 +308,12 @@ export function createChatHandlers(deps) {
     setChatMessages,
     setChatSending,
     setChatError,
+    // AC-31g: the short send/reply cue for the progress live region
+    // (ChatPanel.js's `data-chat-status="progress"` node). Optional and
+    // defaulted to a no-op: several tests in this file call
+    // createChatHandlers directly without it, and a cue nobody renders is
+    // harmless to compute.
+    setChatProgress = () => {},
     setChatOpen,
     setChatPinnedContext,
     setChatAttachedFiles,
@@ -442,19 +477,7 @@ export function createChatHandlers(deps) {
     const origin = (label || "this").toString().trim() || "this";
     setChatInput(`I need help with ${origin}: `);
     setChatOpen(true);
-    setTimeout(() => {
-      const el = chatInputRef.current;
-      if (!el) return;
-      try {
-        el.focus();
-        const len = el.value?.length ?? 0;
-        if (typeof el.setSelectionRange === "function") {
-          el.setSelectionRange(len, len);
-        }
-      } catch {
-        /* noop */
-      }
-    }, 80);
+    focusComposerEnd(chatInputRef);
   }
 
   async function runChatRequest(text, baseMessages) {
@@ -476,6 +499,16 @@ export function createChatHandlers(deps) {
     setChatMessages(nextMessages);
     setChatError("");
     setChatSending(true);
+    // AC-31g: clear any cue left by a PRIOR send before this one has proven
+    // it will actually reach the network -- "sending" is set only once the
+    // size gate below has passed, never here, so a send refused before
+    // `fetch` never announces one at all.
+    setChatProgress("");
+    // AC-30/UNSPEC 2: set ONLY on the pre-fetch gate below, never on a 413
+    // (the body left the browser by then, and per AC-55 the platform's count
+    // and ours can legitimately disagree, so Resend is not provably futile
+    // there). Read by sendChatMessage, never by resendUserMessage (U-M3).
+    let refusedBeforeSend = false;
     try {
       let resumeText = "";
       if (resumeFile) {
@@ -551,7 +584,16 @@ export function createChatHandlers(deps) {
       const sentAttachments = chatAttachedFiles || [];
       const hasAttachments = sentAttachments.length > 0;
 
-      const requestBody = JSON.stringify({
+      // §3.2: hoisted to a named const (was inline inside JSON.stringify) so
+      // the AC-52/AC-25 measurement below can be taken off the EXACT object
+      // that was serialized -- not the tray entries (`previewUrl`, `content`,
+      // `kind`, none of which goes on the wire) or the unprojected
+      // applications map, either of which would measure the wrong thing and
+      // misattribute the refusal (AC-17).
+      // `let`, not `const`, for one reason only: it is NULLED the moment
+      // `readChatResponse` returns (see below), so a successful send does not
+      // keep a second multi-MB object alive for the rest of this async frame.
+      let payload = {
         messages: nextMessages,
         resumeText,
         applications: applicationsContext,
@@ -567,7 +609,8 @@ export function createChatHandlers(deps) {
         section: activeSection,
         // Embedded engine answers from context offline; otherwise Gemini.
         engine: readEngine(),
-      });
+      };
+      const requestBody = JSON.stringify(payload);
 
       // M4: MEASURE, don't trim -- and, as of the projection above, BOUNDED
       // rather than unbounded. `applicationsContext` no longer serializes
@@ -586,9 +629,56 @@ export function createChatHandlers(deps) {
       // no lossless remedy left here -- it needs the platform's own message,
       // not a client-side guess at what to cut.
       const bodyBytes = new TextEncoder().encode(requestBody).length;
-      if (bodyBytes > MAX_REQUEST_BYTES) {
-        throw new Error(hasAttachments ? TOO_BIG_MESSAGE : TOO_BIG_NO_ATTACHMENTS_MESSAGE);
+
+      // AC-24/AC-25/AC-52: memoized so it costs at most one extra
+      // serialization of `payload`, and only ever pays it on a refusal --
+      // never on a successful send (this is what `refusalMessage` below hands
+      // to readChatResponse's 413 branch LAZILY, per AC-53). Guarded: a
+      // multi-MB payload's second stringify can throw (RangeError, allocation
+      // failure), and letting that escape here would print a raw JS message
+      // into the chat window -- the exact leak class commit af9ac29 exists to
+      // close (B5).
+      //
+      // `overOurCap` says WHICH emitter is asking, and it is not decoration:
+      // it is the difference between "we measured this body past our own cap"
+      // (the gate below) and "the body fit our cap and the platform rejected
+      // it anyway" (the 413 path). refusalMessageFor's AC-29 secondary is
+      // gated on proof that emptying the tray brings the body under
+      // MAX_REQUEST_BYTES -- a check that is VACUOUSLY TRUE on the 413 path,
+      // where being under the cap is a precondition of having reached fetch
+      // at all. See refusal.js.
+      //
+      // ONE cache for both emitters is still correct: exactly one of them can
+      // run per request, because the gate throws before `fetch` and the 413
+      // path only exists when the gate did not fire.
+      let refusalCache = null;
+      function buildRefusal(overOurCap) {
+        if (refusalCache !== null) return refusalCache;
+        try {
+          const sizes = measureBodySections(payload);
+          refusalCache = refusalMessageFor(sizes, { hasAttachments, totalBytes: bodyBytes, overOurCap });
+        } catch {
+          // AC-56: this catch is reached ONLY when the measurement itself
+          // threw, so nothing here was measured -- the flat
+          // TOO_BIG_APPLICATIONS_MESSAGE ("most of it IS your saved
+          // application history") would assert a cause nobody established,
+          // making AC-56's own guarantee false on exactly the path that most
+          // needs it. The hedged constant is the one this route can earn.
+          refusalCache = hasAttachments ? TOO_BIG_ATTACHMENTS_MESSAGE : TOO_BIG_APPLICATIONS_UNMEASURED_MESSAGE;
+        }
+        return refusalCache;
       }
+
+      if (bodyBytes > MAX_REQUEST_BYTES) {
+        refusedBeforeSend = true;
+        throw new Error(buildRefusal(true));
+      }
+
+      // AC-31g: past this point the request WILL reach the network -- this is
+      // the one place a "sending" cue can be announced without ever being
+      // heard on a path that refuses before `fetch`. Never moved earlier: the
+      // gate above is what decides whether this send is real.
+      setChatProgress("sending");
 
       let response;
       try {
@@ -611,8 +701,25 @@ export function createChatHandlers(deps) {
         );
       }
 
-      const result = await readChatResponse(response, { hasAttachments });
+      const result = await readChatResponse(response, {
+        hasAttachments,
+        refusalMessage: () => buildRefusal(false),
+      });
+      // MEASURED (--expose-gc, scratchpad/bench-mem2.mjs): handing `payload`
+      // to `readChatResponse` through the closure above keeps a second
+      // multi-MB object reachable for the whole remaining async frame -- 4.62
+      // MB before A2 and 9.25 MB after, on every SUCCESSFUL send at the cap.
+      // The CPU cost of the lazy measurement really is zero on this path; the
+      // memory cost was not. Nothing calls `buildRefusal` past this line: the
+      // 413 branch inside `readChatResponse` has already returned.
+      payload = null;
       if (!result.ok) throw new Error(result.error);
+
+      // AC-31g: the reply is ready. A short, DIFFERENT cue from "sending" --
+      // never the reply text itself, which stays reachable as ordinary text
+      // with a review cursor; what was missing was the EVENT, not the
+      // content (see ChatPanel.js's own comment on the region this feeds).
+      setChatProgress("ready");
 
       // The turn succeeded, so every attachment THIS REQUEST carried was
       // delivered -- remove only those entries (by reference against the
@@ -647,16 +754,64 @@ export function createChatHandlers(deps) {
         return updated;
       });
       setChatError(err.message || "Chat request failed.");
+      // AC-31g clause 3: a refused or failed send announces neither cue --
+      // the refusal is the chatError region's alone. Two polite regions
+      // changing in the same commit have unspecified announcement order
+      // across AT, and the refusal must not be the one that loses that race.
+      setChatProgress("");
     } finally {
       setChatSending(false);
+      // AC-31 rev 6: the restore runs from the `finally` only when the send
+      // was NOT refused before `fetch`. `ifLost`-guarded (§2.1) so a user who
+      // tabbed away during the send does not have focus yanked back.
+      //
+      // WHY THE GATE, RATHER THAN "EXACTLY ONCE" (rev 3's old requirement).
+      // Screen readers cancel in-progress speech on a focus change. The
+      // refusal is 25-62 words (MEASURED on this tree, every constant,
+      // whitespace-split) -- 5-10+ seconds of speech -- and the restore used
+      // to fire 80 ms in, so a screen-reader user heard roughly the first
+      // syllable of WHY their message failed and then the composer's label --
+      // the pre-A2 experience, reintroduced by A2's own focus half. AC-35's
+      // old rationale ("chatError is set BEFORE focus moves") was unsound:
+      // ordering two synchronous calls cannot protect an asynchronous
+      // utterance still being spoken seconds later. Only not moving focus
+      // can. On the refused-before-fetch path the composer is never
+      // disabled (ChatPanel.js no longer wires it to `chatSending`), so focus
+      // never leaves it and there is nothing to restore -- the TEXT restore
+      // in `sendChatMessage` is untouched; it does not go through this path.
+      // Moving focus to the live region instead is NOT the alternative:
+      // WCAG 2.1 SC 4.1.3 Status Messages (AA) exists precisely so a status
+      // message can be presented to assistive technology "without receiving
+      // focus", and a focus event forces an immediate accessibility-tree
+      // serialization that would inject a focus utterance ahead of the
+      // announcement anyway.
+      if (!refusedBeforeSend) restoreComposerFocusIfLost(chatInputRef);
     }
+    // AC-30/UNSPEC 2: reported to the caller so ONLY sendChatMessage decides
+    // whether to restore the composer text -- resendUserMessage must not.
+    return refusedBeforeSend ? { refusedBeforeSend: true } : undefined;
   }
 
   async function sendChatMessage() {
     const text = chatInput.trim();
     if (!text || chatSending) return;
     setChatInput("");
-    await runChatRequest(text, chatMessages);
+    const outcome = await runChatRequest(text, chatMessages);
+    // AC-30/AC-36. Scoped to THIS entry point, never resendUserMessage: that
+    // path would overwrite a draft typed after the failed turn (U-M3).
+    //
+    // RB1: the guard is `!live || live === text`, NOT `!live`. `!live` alone
+    // makes this depend on whether React has committed setChatInput("") from
+    // the line above by the time we resume -- and if it has not, the guard
+    // sees the ORIGINAL text, reads it as "the user typed a draft", skips the
+    // restore, and the user's question is destroyed with no error anywhere.
+    // Two careful measurements of this repo disagreed on that commit timing
+    // (PLAN-A2 §RB1), which is the point: this must not depend on it.
+    // `live === text` covers the not-yet-committed case; `!live` covers the
+    // committed one; anything else really is a draft and is left alone.
+    if (!outcome?.refusedBeforeSend) return;
+    const live = (chatInputRef?.current?.value || "").trim();
+    if (!live || live === text) setChatInput(text);
   }
 
   // Resend a previously-sent user message. Truncates the conversation so that
@@ -710,3 +865,8 @@ export function createChatHandlers(deps) {
     startChatResize,
   };
 }
+
+// Re-export of the composer focus helpers imported above (see that import's
+// comment) -- this file's export surface stays identical to before A2's
+// extraction.
+export { FOCUS_RESTORE_DELAY_MS, focusComposerEnd, restoreComposerFocusIfLost } from "@/lib/chat/composerFocus";
