@@ -12,6 +12,76 @@ import { setApplicationStatusByUser, deleteApplicationForUser } from "../../lib/
 import { buildEditApplicationPayload } from "../../lib/applications/applicationDecisions";
 import { STATUS, STATUS_LABELS, isAppliedOrLater } from "../../lib/applications/statusVocabulary";
 
+// Uploads a resume file and points one application row at the newly saved
+// generation. Module-level (not a closure inside the hook below) because it
+// touches none of the hook's state — every value it needs travels through
+// its own params — which is also what makes it directly unit-testable
+// without mounting the hook.
+//
+// The `applications` UPDATE carries a tenant filter (`user_id`) alongside
+// the id, same reasoning as `deleteApplicationForUser` in
+// lib/supabase/applicationStatusWriter.js: the statement's only OTHER
+// predicate was an id, so nothing constrained it to the caller's own row.
+// Whether that was exploitable depended on RLS state on `applications`,
+// which is unknown and must not be assumed either way — which is exactly
+// why the filter belongs on the statement rather than left to RLS alone.
+export async function uploadAndLinkResumeForApplication(supabase, {
+  file,
+  userId,
+  applicationId,
+  positionId,
+}) {
+  if (!file || !userId || !applicationId) return { error: null };
+  if (!isDocxResume(file) && !isTextResume(file)) {
+    return { error: "Resume must be a .docx or .txt file." };
+  }
+
+  const ext = isDocxResume(file) ? "docx" : "txt";
+  const storagePath = `${userId}/applications/${applicationId}.${ext}`;
+
+  const { error: uploadErr } = await supabase
+    .storage
+    .from("resumes")
+    .upload(storagePath, file, { upsert: true, contentType: file.type || undefined });
+  if (uploadErr) {
+    return { error: uploadErr.message || "Failed to upload resume." };
+  }
+
+  let contentLines = [];
+  try {
+    contentLines = await buildTemplateLinesForUpload(file);
+  } catch {
+    contentLines = [];
+  }
+  const content = (contentLines || []).join("\n").trim();
+  if (!content) {
+    return { error: "Could not extract text from the uploaded resume." };
+  }
+
+  const generatedResumeId = await saveGeneratedResume(supabase, {
+    userId,
+    positionId: positionId || null,
+    content,
+    contentLines,
+    sourceResumePath: storagePath,
+  });
+
+  if (!generatedResumeId) {
+    return { error: "Failed to save resume record." };
+  }
+
+  const { error: appErr } = await supabase
+    .from("applications")
+    .update({ resume_used_id: generatedResumeId })
+    .eq("id", applicationId)
+    .eq("user_id", userId); // the tenant filter this statement had none of.
+  if (appErr) {
+    return { error: appErr.message || "Failed to link resume to application." };
+  }
+
+  return { error: null };
+}
+
 // Add/edit/stage/communications dialogs for the Tracking tab, plus their save
 // handlers (Supabase mutations). The application data itself (applicationData /
 // applicationStages / refresh key) stays in the parent — this hook receives the
@@ -267,62 +337,6 @@ export function useApplicationDialogs({
       applicationUrl: app.application_url || pos.url || "",
       description: pos.description || "",
     });
-  }
-
-  async function uploadAndLinkResumeForApplication(supabase, {
-    file,
-    userId,
-    applicationId,
-    positionId,
-  }) {
-    if (!file || !userId || !applicationId) return { error: null };
-    if (!isDocxResume(file) && !isTextResume(file)) {
-      return { error: "Resume must be a .docx or .txt file." };
-    }
-
-    const ext = isDocxResume(file) ? "docx" : "txt";
-    const storagePath = `${userId}/applications/${applicationId}.${ext}`;
-
-    const { error: uploadErr } = await supabase
-      .storage
-      .from("resumes")
-      .upload(storagePath, file, { upsert: true, contentType: file.type || undefined });
-    if (uploadErr) {
-      return { error: uploadErr.message || "Failed to upload resume." };
-    }
-
-    let contentLines = [];
-    try {
-      contentLines = await buildTemplateLinesForUpload(file);
-    } catch {
-      contentLines = [];
-    }
-    const content = (contentLines || []).join("\n").trim();
-    if (!content) {
-      return { error: "Could not extract text from the uploaded resume." };
-    }
-
-    const generatedResumeId = await saveGeneratedResume(supabase, {
-      userId,
-      positionId: positionId || null,
-      content,
-      contentLines,
-      sourceResumePath: storagePath,
-    });
-
-    if (!generatedResumeId) {
-      return { error: "Failed to save resume record." };
-    }
-
-    const { error: appErr } = await supabase
-      .from("applications")
-      .update({ resume_used_id: generatedResumeId })
-      .eq("id", applicationId);
-    if (appErr) {
-      return { error: appErr.message || "Failed to link resume to application." };
-    }
-
-    return { error: null };
   }
 
   async function uploadCommunicationAttachments(supabase, { files, userId, applicationId }) {

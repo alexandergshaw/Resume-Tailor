@@ -88,7 +88,13 @@ export async function persistGeneratedDocuments(supabase, {
     if (Object.keys(updates).length > 0 && (applicationId || positionId)) {
       let query = supabase.from("applications").update(updates);
       query = applicationId
-        ? query.eq("id", applicationId)
+        // The tenant filter this statement had none of — its only other
+        // predicate was an id, so nothing constrained it to the caller's own
+        // row. Same reasoning as deleteApplicationForUser in
+        // lib/supabase/applicationStatusWriter.js: whether that was
+        // exploitable depends on RLS state on `applications`, which is
+        // unknown and must not be assumed either way.
+        ? query.eq("id", applicationId).eq("user_id", userId)
         : query.eq("user_id", userId).eq("position_id", positionId);
 
       const { error } = await query;
