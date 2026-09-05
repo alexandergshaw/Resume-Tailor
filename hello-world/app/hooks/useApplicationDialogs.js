@@ -8,9 +8,9 @@ import { getInterviewStages, upsertInterviewStage } from "../../lib/supabase/ups
 import { createRecruiterCommunication, listRecruiterCommunications } from "../../lib/supabase/recruiterCommunications";
 import { isDocxResume, isTextResume, buildTemplateLinesForUpload } from "../../lib/document/docx";
 import { STAGE_TYPE_LABELS, createStageDialogState } from "../../lib/tracking/stages";
-import { setApplicationStatusByUser } from "../../lib/supabase/applicationStatusWriter";
+import { setApplicationStatusByUser, deleteApplicationForUser } from "../../lib/supabase/applicationStatusWriter";
 import { buildEditApplicationPayload } from "../../lib/applications/applicationDecisions";
-import { STATUS, isAppliedOrLater } from "../../lib/applications/statusVocabulary";
+import { STATUS, STATUS_LABELS, isAppliedOrLater } from "../../lib/applications/statusVocabulary";
 
 // Add/edit/stage/communications dialogs for the Tracking tab, plus their save
 // handlers (Supabase mutations). The application data itself (applicationData /
@@ -580,14 +580,46 @@ export function useApplicationDialogs({
   }
 
   async function handleDeleteApplication(app) {
-    if (!app?.id) return;
+    if (!app?.id || !currentUser) return;
     const label = `${app.positions?.company || "this application"}${app.positions?.title ? ` — ${app.positions.title}` : ""}`;
+
+    // Refuse outright at an applied-or-later status, before even asking. A
+    // `window.confirm` is a dialog, not a guard — it is not what stands
+    // between a misclick and permanently destroying the record of a job
+    // offer; `deleteApplicationForUser`'s statement-level allow-list is (see
+    // lib/supabase/applicationStatusWriter.js). This check only decides which
+    // message the user sees; the statement enforces the real guard
+    // regardless, in case `app.status` is stale. A user who really wants this
+    // row gone can move it back to a pre-apply status first via Edit (which
+    // has its own confirmation for the applied date that move would
+    // destroy), then delete it from here.
+    if (isAppliedOrLater(app.status)) {
+      window.alert(
+        `${label} is marked "${STATUS_LABELS[app.status] || app.status}" and can't be deleted directly — that would permanently destroy the record. Use Edit to move it back to Tailored or Tracking first, then delete it.`,
+      );
+      return;
+    }
+
     if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return;
 
     const supabase = createClient();
-    const { error } = await supabase.from("applications").delete().eq("id", app.id);
-    if (error) {
-      window.alert(error.message || "Failed to delete application.");
+    const result = await deleteApplicationForUser(supabase, {
+      userId: currentUser.id,
+      applicationId: app.id,
+    });
+
+    if (!result.deleted) {
+      // A refusal must never look like a no-op — always say why. The two
+      // "changed status underneath us" reasons (protected / unknown-status)
+      // share a message naming the CURRENT status, since either means the row
+      // moved between when this list loaded and now.
+      const message =
+        result.reason === "protected" || result.reason === "unknown-status"
+          ? `${label} is now marked "${STATUS_LABELS[result.currentStatus] || result.currentStatus}" and can no longer be deleted directly. Refresh to see its current status.`
+          : result.reason === "not-found"
+            ? `${label} no longer exists or you don't have access to it.`
+            : "Failed to delete application.";
+      window.alert(message);
       return;
     }
 

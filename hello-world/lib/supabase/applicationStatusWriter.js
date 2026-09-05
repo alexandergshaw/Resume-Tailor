@@ -402,3 +402,76 @@ export async function deleteUntrackedApplication(supabase, { userId, positionId 
   if (error) return { deleted: false };
   return { deleted: (data || []).length > 0 };
 }
+
+/**
+ * Deletes ONE application row by id, tenant-scoped, refusing outright at any
+ * applied-or-later status. This is the general "Delete" button's statement
+ * (`app/hooks/useApplicationDialogs.js`'s `handleDeleteApplication`) —
+ * unlike `deleteUntrackedApplication` above (narrow: only a dateless
+ * `tracking` row, for the "remove from queue" action), that button is
+ * reachable on a row at ANY status, and until this function existed its
+ * statement carried no tenant filter and no status guard at all:
+ * `supabase.from("applications").delete().eq("id", app.id)`. Whether the
+ * missing tenant filter is exploitable depends on RLS state on
+ * `applications`, which is unknown and must not be assumed either way — which
+ * is exactly why the filter belongs on the statement rather than left to RLS
+ * alone.
+ *
+ * REFUSE, not "confirm harder": once a hard DELETE lands it is invisible to
+ * every downstream check, so the guard here is the SAME allow-list discipline
+ * as C1 above (`.in("status", PRE_APPLY_STATUSES)`, un-negated, never a
+ * deny-list) rather than merely another dialog in front of the same
+ * unfiltered statement — a `window.confirm` is a request, not a guarantee.
+ * The two-way door already exists for a user who really does want an
+ * applied-or-later row gone: `setApplicationStatusByUser` (the Edit dialog)
+ * can move it back to a pre-apply status first — under its OWN explicit
+ * confirmation for the date that move would destroy — after which this
+ * function deletes it like any other pre-apply row.
+ *
+ * Zero rows from the DELETE is ambiguous (wrong tenant / wrong id / already
+ * gone vs. protected vs. unknown-status), so — mirroring C2's three-valued
+ * disambiguation above — a single tenant-scoped read-back resolves it. No
+ * retry: unlike C1's promotion case, a delete that matched nothing has
+ * nothing useful to retry against. The read-back is scoped to the SAME
+ * tenant filter as the delete, so a row belonging to a different user is
+ * reported identically to "no such row" — never disclosing another user's
+ * status.
+ *
+ * @param {*} supabase
+ * @param {{userId: string, applicationId: string}} args
+ * @returns {Promise<{deleted: boolean, reason: string, id: string|null, currentStatus: string|null}>}
+ */
+export async function deleteApplicationForUser(supabase, { userId, applicationId }) {
+  if (!userId || !applicationId) {
+    return { deleted: false, reason: "no-key", id: null, currentStatus: null };
+  }
+
+  const { data, error } = await supabase
+    .from(APPLICATIONS_TABLE)
+    .delete()
+    .eq("id", applicationId)
+    .eq("user_id", userId) // the tenant filter this statement had none of.
+    .in("status", PRE_APPLY_STATUSES) // ALLOW-LIST. NEVER .not(..., "in", ...).
+    .select("id");
+  if (error) return { deleted: false, reason: "error", id: null, currentStatus: null };
+  if ((data || []).length > 0) {
+    return { deleted: true, reason: "deleted", id: applicationId, currentStatus: null };
+  }
+
+  const { data: row, error: readErr } = await supabase
+    .from(APPLICATIONS_TABLE)
+    .select("id, status")
+    .eq("id", applicationId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (readErr) return { deleted: false, reason: "error", id: null, currentStatus: null };
+  if (!row) return { deleted: false, reason: "not-found", id: null, currentStatus: null };
+
+  const classification = classifyStatus(row.status);
+  return {
+    deleted: false,
+    reason: classification === "unknown" ? "unknown-status" : "protected",
+    id: row.id,
+    currentStatus: row.status,
+  };
+}

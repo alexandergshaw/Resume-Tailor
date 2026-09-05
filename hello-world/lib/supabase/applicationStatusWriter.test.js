@@ -6,6 +6,7 @@ import {
   setApplicationStatusByUser,
   loadAppliedOrLaterExternalIds,
   deleteUntrackedApplication,
+  deleteApplicationForUser,
 } from "@/lib/supabase/applicationStatusWriter.js";
 import {
   APPLICATION_STATUSES,
@@ -1549,5 +1550,148 @@ describe("deleteUntrackedApplication", () => {
     });
     expect(out).toEqual({ deleted: false });
     expect(sb.rows("applications")).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deleteApplicationForUser — the general "Delete" button's guarded statement
+// (app/hooks/useApplicationDialogs.js's handleDeleteApplication). Unlike
+// deleteUntrackedApplication above (narrow: only a dateless `tracking` row,
+// for the "remove from queue" action), this is the delete reachable on a row
+// at ANY status, and today it carries NO tenant filter and NO status guard at
+// all: `supabase.from("applications").delete().eq("id", app.id)`. Whether the
+// missing tenant filter is exploitable depends on RLS state on `applications`,
+// which is unknown and must not be assumed either way — which is exactly why
+// the filter belongs on the statement.
+//
+// Refuse, not "confirm harder": once a hard DELETE lands, nothing downstream
+// can catch it, so the guard here is the SAME allow-list discipline as C1
+// (`.in("status", PRE_APPLY_STATUSES)`, un-negated, never a deny-list) rather
+// than merely another dialog in front of the same unfiltered statement.
+// ---------------------------------------------------------------------------
+
+describe("deleteApplicationForUser", () => {
+  it("deletes a pre-apply row, carrying BOTH the tenant filter and the status allow-list on the DELETE itself", async () => {
+    const sb = client([appRow({ status: "tracking" })]);
+    const out = await deleteApplicationForUser(sb, {
+      userId: USER_ID,
+      applicationId: APP_ID,
+    });
+
+    expect(out).toEqual({ deleted: true, reason: "deleted", id: APP_ID, currentStatus: null });
+    expect(sb.rows("applications")).toEqual([]);
+
+    const del = sb.calls.find((c) => c.verb === "delete");
+    // The whole four-key filter records, not `.some(f => f.column === "id")` —
+    // `negated: false` is what distinguishes the allow-list from a deny-list a
+    // walk-by glance would also call "a guard".
+    expect(del.filters).toContainEqual({ column: "id", operator: "eq", value: APP_ID, negated: false });
+    expect(del.filters).toContainEqual({ column: "user_id", operator: "eq", value: USER_ID, negated: false });
+    expect(del.filters).toContainEqual({
+      column: "status",
+      operator: "in",
+      value: PRE_APPLY_STATUSES,
+      negated: false,
+    });
+    expect(del.filters.filter((f) => f.negated)).toEqual([]);
+  });
+
+  it("deletes from each of the four pre-apply statuses — the common case, unchanged", async () => {
+    for (const status of PRE_APPLY_STATUSES) {
+      const sb = client([appRow({ status })]);
+      const out = await deleteApplicationForUser(sb, { userId: USER_ID, applicationId: APP_ID });
+      expect({ status, deleted: out.deleted, reason: out.reason }).toEqual({
+        status,
+        deleted: true,
+        reason: "deleted",
+      });
+      expect(sb.rows("applications")).toEqual([]);
+    }
+  });
+
+  it("refuses to delete a row at EACH applied-or-later status, and it survives untouched", async () => {
+    for (const status of APPLIED_OR_LATER_STATUSES) {
+      const sb = client([appRow({ status, applied_at: APPLIED_AT })]);
+      const out = await deleteApplicationForUser(sb, { userId: USER_ID, applicationId: APP_ID });
+      expect({ status, deleted: out.deleted, reason: out.reason, currentStatus: out.currentStatus }).toEqual({
+        status,
+        deleted: false,
+        reason: "protected",
+        currentStatus: status,
+      });
+      // The refusal is on the DELETE's WHERE, not a read that decided to skip
+      // it: exactly two statements (the delete that matched nothing, then the
+      // read that says why), never zero and never a retry.
+      expect(verbs(sb)).toEqual(["delete", "select"]);
+      expect(sb.rows("applications")).toHaveLength(1);
+      expect(stored(sb).status).toBe(status);
+      expect(stored(sb).applied_at).toBe(APPLIED_AT);
+    }
+  });
+
+  it("refuses a row whose stored status is outside the eleven, and does not delete it", async () => {
+    const sb = client([appRow({ status: "screening" })]);
+    const out = await deleteApplicationForUser(sb, { userId: USER_ID, applicationId: APP_ID });
+    expect(out.deleted).toBe(false);
+    expect(out.reason).toBe("unknown-status");
+    expect(out.currentStatus).toBe("screening");
+    expect(sb.rows("applications")).toHaveLength(1);
+  });
+
+  it("cannot reach another user's row, even though the id matches — reported as not-found, not protected", async () => {
+    // Reported the same as "no such row" rather than disclosing the OTHER
+    // user's status: this user's read-back is tenant-scoped too.
+    const sb = client([appRow({ id: APP_ID, user_id: "user-2", status: "tracking" })]);
+    const out = await deleteApplicationForUser(sb, { userId: USER_ID, applicationId: APP_ID });
+    expect(out).toEqual({ deleted: false, reason: "not-found", id: null, currentStatus: null });
+    expect(sb.rows("applications")).toHaveLength(1);
+    expect(sb.row("applications", (r) => r.id === APP_ID).status).toBe("tracking");
+  });
+
+  it("reports 'not-found' when the id does not exist at all", async () => {
+    const sb = client([]);
+    const out = await deleteApplicationForUser(sb, { userId: USER_ID, applicationId: "nope" });
+    expect(out).toEqual({ deleted: false, reason: "not-found", id: null, currentStatus: null });
+  });
+
+  it("refuses with 'no-key' before any IO when userId or applicationId is missing", async () => {
+    for (const args of [
+      { userId: null, applicationId: APP_ID },
+      { userId: USER_ID, applicationId: null },
+      { userId: "", applicationId: "" },
+    ]) {
+      const sb = client([appRow({ status: "tracking" })]);
+      const out = await deleteApplicationForUser(sb, args);
+      expect(out).toEqual({ deleted: false, reason: "no-key", id: null, currentStatus: null });
+      // Exact zero, not "no applications writes": a refusal that costs a round
+      // trip is not a refusal before IO.
+      expect(sb.calls).toHaveLength(0);
+      expect(sb.rows("applications")).toHaveLength(1);
+    }
+  });
+
+  it("reports 'error' when the DELETE itself fails, and deletes nothing", async () => {
+    const sb = client([appRow({ status: "tracking" })], {
+      errors: { applications: { delete: { message: "boom" } } },
+    });
+    const out = await deleteApplicationForUser(sb, { userId: USER_ID, applicationId: APP_ID });
+    expect(out).toEqual({ deleted: false, reason: "error", id: null, currentStatus: null });
+    expect(sb.rows("applications")).toHaveLength(1);
+  });
+
+  it("reports 'error' when the disambiguating read-back fails", async () => {
+    const sb = client([appRow({ status: "offer", applied_at: APPLIED_AT })], {
+      errors: { applications: { select: { message: "read boom" } } },
+    });
+    const out = await deleteApplicationForUser(sb, { userId: USER_ID, applicationId: APP_ID });
+    expect(out).toEqual({ deleted: false, reason: "error", id: null, currentStatus: null });
+    expect(sb.rows("applications")).toHaveLength(1);
+  });
+
+  it("issues exactly ONE statement on success — no unnecessary read-back", async () => {
+    const sb = client([appRow({ status: "tracking" })]);
+    await deleteApplicationForUser(sb, { userId: USER_ID, applicationId: APP_ID });
+    expect(verbs(sb)).toEqual(["delete"]);
+    expect(sb.calls).toHaveLength(1);
   });
 });
