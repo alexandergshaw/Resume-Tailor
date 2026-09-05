@@ -8,6 +8,7 @@ import DescriptionIcon from "@mui/icons-material/Description";
 import styles from "../page.module.css";
 import { useIsMobile } from "../hooks/useResponsive";
 import { resolveDocumentBlob } from "../../lib/document/docx";
+import { selectAppliedToggleAction } from "../../lib/applications/applicationDecisions";
 
 // edited/*: a tailoring entry's hand-edit flag, per scope ({ resume, cover }),
 // mirroring the helper in app/hooks/useDocumentPreview.js. An object is
@@ -40,7 +41,6 @@ export default function StatusBar({
   buildJobContextString,
   setMainTab,
   setActiveSection,
-  setHighlightedJobId,
   downloadResumeForChipJob,
   handleToggleApplied,
   handleIgnoreJob,
@@ -48,6 +48,7 @@ export default function StatusBar({
   openResumePreview,
   openCompanyResearch,
   onRegenerate,
+  appliedByExternalId,
 }) {
   const isMobile = useIsMobile();
   // On phones the bar defaults to the roomier vertical list.
@@ -84,20 +85,22 @@ export default function StatusBar({
     fn?.();
   };
 
+  // The url/manual/screenshots section tabs (app/page.js's NavTabs at
+  // ~line 2781) live under `mainTab === "manualApplying"`, not "applying"
+  // (that now renders the unrelated Materials tab) -- and that section set
+  // has no "search" entry at all; the "search" section was JobSearchTab.js,
+  // deleted in e8c6427, along with the only DOM elements a `job-card-${id}`
+  // lookup could ever find. A url-/manual- job is the only tracked-job shape
+  // with a real, reachable owning section today, so this only ever routes
+  // those two; the caller (the "Go to card" MenuItem below) is hidden
+  // entirely for every other job shape rather than silently sending it to a
+  // section that no longer exists.
   function goToCard(job) {
     const isUrlJob = typeof job.id === "string" && job.id.startsWith("url-");
     const isManualJob = typeof job.id === "string" && job.id.startsWith("manual-");
-    const targetSection = isUrlJob ? "url" : isManualJob ? "manual" : "search";
-    setMainTab("applying");
-    setActiveSection(targetSection);
-    if (targetSection === "search") {
-      setHighlightedJobId(job.id);
-      setTimeout(() => setHighlightedJobId(null), 3000);
-      setTimeout(() => {
-        const card = document.getElementById(`job-card-${job.id}`);
-        if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
-      }, 50);
-    }
+    if (!isUrlJob && !isManualJob) return;
+    setMainTab("manualApplying");
+    setActiveSection(isUrlJob ? "url" : "manual");
   }
 
   function regenerate(job, scope) {
@@ -109,6 +112,27 @@ export default function StatusBar({
   // The currently-open menu's job and its flags.
   const menuJob = menu.jobId ? trackedJobs.find((j) => j.id === menu.jobId) : null;
   const menuFlags = menuJob ? jobFlags(menuJob) : null;
+
+  // "Mark as applied" no longer toggles (R1: this control only ever
+  // promotes, never demotes — see test/repro/appliedStatusDataLoss.test.js
+  // REPRO D1 for what an un-apply used to do to a real applied_at). Its
+  // label and enabled state come from the SAME classification
+  // `handleToggleApplied` acts on, never re-derived here — a row already
+  // applied-or-later gets "Open in Tracking" instead of a second "apply".
+  // `appliedByExternalId` is null until it has loaded (or for a signed-out
+  // session, which has no `applications` row to classify at all); default to
+  // the promote-only action so the item degrades to today's behaviour rather
+  // than disabling itself on an absent map.
+  const appliedAction = menuJob && appliedByExternalId
+    ? selectAppliedToggleAction(appliedByExternalId, menuJob.id)
+    : "apply";
+  const appliedMenuItem = {
+    label: appliedAction === "open-tracking" ? "Open in Tracking" : "Mark as applied",
+    disabled:
+      appliedAction === "open-tracking"
+        ? false
+        : !!menuFlags?.isSynthetic || appliedAction === "refuse-unknown",
+  };
 
   // Whether a tailoring entry has resume / cover-letter content to preview.
   function previewable(tailoring) {
@@ -344,9 +368,16 @@ export default function StatusBar({
               >
                 Research company
               </MenuItem>,
-              <MenuItem key="card" onClick={() => runAndClose(() => goToCard(menuJob))}>
-                Go to card
-              </MenuItem>,
+              // Only a url-/manual- job has a section left to go to (see
+              // goToCard above) -- offering this for a feed-/search-sourced
+              // job would silently select a dead section (fixed defect: it
+              // used to send those to a "search" section NavTabs has not
+              // rendered since e8c6427 deleted JobSearchTab.js).
+              menuFlags.isSynthetic ? (
+                <MenuItem key="card" onClick={() => runAndClose(() => goToCard(menuJob))}>
+                  Go to card
+                </MenuItem>
+              ) : null,
               menuJob.url ? (
                 <MenuItem
                   key="posting"
@@ -363,10 +394,10 @@ export default function StatusBar({
               <Divider key="d3" />,
               <MenuItem
                 key="applied"
-                disabled={menuFlags.isSynthetic}
+                disabled={appliedMenuItem.disabled}
                 onClick={() => runAndClose(() => handleToggleApplied(menuJob))}
               >
-                Mark as applied
+                {appliedMenuItem.label}
               </MenuItem>,
               <MenuItem
                 key="ignore"

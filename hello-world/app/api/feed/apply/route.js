@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { upsertPosition } from "@/lib/supabase/upsertPosition";
 import { upsertApplication } from "@/lib/supabase/upsertApplication";
+import { STATUS } from "@/lib/applications/statusVocabulary.js";
 
 export const runtime = "nodejs";
 
@@ -73,7 +74,7 @@ export async function POST(request) {
   const applicationId = await upsertApplication(supabase, {
     userId: user.id,
     positionId,
-    status: "tracking",
+    status: STATUS.TRACKING,
   });
   if (!applicationId) {
     return Response.json({ error: "Failed to add application" }, { status: 500 });

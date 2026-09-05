@@ -7,6 +7,10 @@ import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import TextField from "@mui/material/TextField";
 import FormDialog from "./FormDialog";
+import {
+  USER_SELECTABLE_STATUSES_ORDERED,
+  STATUS_LABELS,
+} from "../../lib/applications/statusVocabulary";
 
 export default function AddAppDialog({
   addAppDialog,
@@ -52,14 +56,11 @@ export default function AddAppDialog({
           value={addAppDialog.status}
           onChange={(e) => setAddAppDialog((prev) => ({ ...prev, status: e.target.value }))}
         >
-          <MenuItem value="tailored">Tailored</MenuItem>
-          <MenuItem value="applied">Applied</MenuItem>
-          <MenuItem value="phone_screen">Phone Screen</MenuItem>
-          <MenuItem value="interviewing">Interviewing</MenuItem>
-          <MenuItem value="offer">Offer</MenuItem>
-          <MenuItem value="accepted">Accepted</MenuItem>
-          <MenuItem value="rejected">Rejected</MenuItem>
-          <MenuItem value="withdrawn">Withdrawn</MenuItem>
+          {USER_SELECTABLE_STATUSES_ORDERED.map((value) => (
+            <MenuItem key={value} value={value}>
+              {STATUS_LABELS[value]}
+            </MenuItem>
+          ))}
         </Select>
       </FormControl>
       <TextField

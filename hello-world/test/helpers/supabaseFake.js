@@ -356,7 +356,34 @@ export function makeStatefulSupabase(seed = {}, opts = {}) {
     };
 
     function execute() {
-      calls.push({ table, verb: state.verb, filters: state.filters.map((f) => ({ ...f })), payload: clone(state.payload) });
+      // `options` is recorded PER STATEMENT, read off this builder's own
+      // `state` at execute() time. A guard walk over `calls` has to be able to
+      // tell an `ON CONFLICT DO NOTHING` upsert from a merge-duplicates one,
+      // and either from a plain UPDATE — the conflict clause is part of what
+      // makes C3's insert incapable of demoting, so a walk that cannot see it
+      // cannot check it. Non-upsert verbs record `{onConflict: undefined,
+      // ignoreDuplicates: false}`, which is the state's own initial value.
+      //
+      // `select` is recorded for the same reason, and it is NOT cosmetic. In
+      // this fake `.select()` does two separable things: it sets the RETURNING
+      // projection, and on a write verb it flips `state.returning`. Neither is
+      // visible in `{table, verb, filters, payload, options}`, so without this
+      // field a `.select()` chained onto a statement is completely unobservable
+      // from `calls` — a walk cannot tell an `ON CONFLICT DO NOTHING` upsert
+      // that reads its row back on the SAME statement (which returns nothing on
+      // the conflict path, and is banned on `applications`) from one that reads
+      // it back separately, and cannot tell a narrow projection from `"*"`.
+      // `null` is the sentinel for "no `.select()` was chained", which is
+      // `state.select`'s own initial value; the projection string is recorded
+      // verbatim otherwise.
+      calls.push({
+        table,
+        verb: state.verb,
+        filters: state.filters.map((f) => ({ ...f })),
+        payload: clone(state.payload),
+        options: { onConflict: state.onConflict, ignoreDuplicates: state.ignoreDuplicates },
+        select: state.select,
+      });
 
       const forced = forcedError(table, state.verb);
       if (forced) return { data: null, error: forced, count: null };
@@ -391,7 +418,12 @@ export function makeStatefulSupabase(seed = {}, opts = {}) {
           const existing = rows.find((r) => keys.every((k) => !isNull(r[k]) && sameScalar(r[k], payload[k])));
           if (existing) {
             if (state.ignoreDuplicates) {
-              touched.push(existing);
+              // [7] `INSERT … ON CONFLICT DO NOTHING RETURNING` returns NO row
+              // for a conflicting insert: nothing was inserted, so there is
+              // nothing to return. Pushing `existing` here made a `.select()`
+              // on an ignoreDuplicates upsert look like "the row I just wrote"
+              // — green in the fake, PGRST116 in production. The existing row
+              // is still left untouched; only the RETURNING projection changes.
               continue;
             }
             // [5] merge-duplicates: the PAYLOAD's columns are overwritten

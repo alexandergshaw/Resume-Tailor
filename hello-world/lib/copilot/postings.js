@@ -5,6 +5,7 @@
 // loadApplications for the reference query this mirrors.
 
 import { createClient } from "@/lib/supabase/client";
+import { excludeTrackingTabHiddenStatuses } from "@/lib/applications/statusVocabulary.js";
 
 function toTime(value) {
   const t = value ? new Date(value).getTime() : NaN;
@@ -70,16 +71,16 @@ export async function fetchPracticePostings() {
   }
   if (!user?.id) return [];
 
-  const { data, error } = await supabase
-    .from("applications")
-    .select(`
-      id, status, applied_at,
-      positions ( id, title, company, description, url )
-    `)
-    .eq("user_id", user.id)
-    .neq("status", "tracking")
-    .neq("status", "auto_tailored")
-    .order("applied_at", { ascending: false });
+  const query = excludeTrackingTabHiddenStatuses(
+    supabase
+      .from("applications")
+      .select(`
+        id, status, applied_at,
+        positions ( id, title, company, description, url )
+      `)
+      .eq("user_id", user.id),
+  );
+  const { data, error } = await query.order("applied_at", { ascending: false });
 
   if (error) {
     throw new Error(error.message);

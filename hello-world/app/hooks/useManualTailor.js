@@ -7,6 +7,7 @@ import { createClient } from "../../lib/supabase/client";
 import { upsertPosition } from "../../lib/supabase/upsertPosition";
 import { upsertApplication } from "../../lib/supabase/upsertApplication";
 import { persistGeneratedDocuments } from "../../lib/supabase/persistGeneration";
+import { STATUS } from "../../lib/applications/statusVocabulary";
 
 // The manual (job-description) tailoring pipeline -- moved verbatim out of
 // app/page.js's `handleManualSubmit` so it can be called both directly (a
@@ -201,7 +202,22 @@ export function useManualTailor({
         const supabase = createClient();
         const positionId = await upsertPosition(supabase, syntheticJob);
         if (positionId) {
-          await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "applied" });
+          // Tailoring is not applying (P-1): the user has generated a
+          // document from pasted posting text, not submitted anything.
+          // Promote to "tailored" — a PRE-APPLY status, same target
+          // handleTailorJob and app/page.js's handleUrlSubmit /
+          // handleTailorFeedPosting use — never "applied". upsertApplication's
+          // own guard (writeApplicationStatus's C1 allow-list UPDATE) only
+          // refuses to demote when the row's CURRENT status is pre-apply; it
+          // does not care what the target is, so writing "applied" here would
+          // have let a brand-new row be created already "applied" with a
+          // fabricated applied_at, and — for an existing row already at some
+          // OTHER applied-or-later status (e.g. "offer") — have been ready to
+          // overwrite it with "applied" the moment that row ever went back
+          // through a pre-apply status. Targeting "tailored" instead means
+          // the promote can never carry an applied-or-later value, so the
+          // guard actually protects.
+          await upsertApplication(supabase, { userId: currentUser.id, positionId, status: STATUS.TAILORED });
         }
         await persistGeneratedDocuments(supabase, {
           userId: currentUser.id,

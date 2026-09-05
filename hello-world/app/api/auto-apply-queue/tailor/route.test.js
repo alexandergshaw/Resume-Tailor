@@ -19,6 +19,7 @@ import {
   loadAlreadyTrackedExternalIds,
   tailorAndQueueOne,
 } from "@/lib/feed/tailorAndQueue";
+import { STATUS, APPLIED_OR_LATER_STATUSES } from "@/lib/applications/statusVocabulary.js";
 
 const USER = { id: "user-1" };
 
@@ -91,12 +92,15 @@ describe("POST /api/auto-apply-queue/tailor", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, alreadyQueued: true });
     expect(tailorAndQueueOne).not.toHaveBeenCalled();
-    // Dedup is scoped to the active pipeline statuses only.
+    // Dedup is "already in the pipeline": auto_queued plus every
+    // applied-or-later status (interviewing, offer, accepted, ... — not just
+    // "applied"), sourced from the vocabulary module so a status the module
+    // adds later is covered here too without a second edit.
     expect(loadAlreadyTrackedExternalIds).toHaveBeenCalledWith(
       expect.anything(),
       "user-1",
       ["gh-1"],
-      ["auto_queued", "applied"],
+      [STATUS.AUTO_QUEUED, ...APPLIED_OR_LATER_STATUSES],
     );
   });
 

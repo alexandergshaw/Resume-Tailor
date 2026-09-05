@@ -1,45 +1,36 @@
+import { writeApplicationStatus } from "./applicationStatusWriter.js";
+
 /**
- * Upserts an application row for a given user + position.
+ * Upserts an application row for a given user + position, promoting it to
+ * `status` — never demoting a row already at an applied-or-later status.
  *
- * - status='applied'   → sets applied_at to now
- * - status='tracking'  → clears applied_at (keeps the row, reverts pipeline stage)
+ * This is now a thin wrapper around `writeApplicationStatus` (the fail-closed
+ * allow-list writer at `lib/supabase/applicationStatusWriter.js`, PART 3 of
+ * `3-plan-dataloss.md`). It used to upsert unconditionally with
+ * `applied_at: status === "applied" ? now() : null` — which meant ANY
+ * non-"applied" write (tracking a job, tailoring one, auto-queueing) both
+ * overwrote a real `status` back to pre-apply AND nulled a real `applied_at`
+ * on a row the user had already applied to (see
+ * `test/repro/appliedStatusDataLoss.test.js` REPRO D1, and REPRO D4 for the
+ * mirror-image defect: an unconditional "applied" write re-stamping a
+ * genuine `applied_at` with `now()`). `writeApplicationStatus` refuses both
+ * directions by construction: an UPDATE guarded by an allow-list of
+ * pre-apply statuses, and an insert that can only ever set `applied_at` once.
  *
- * On conflict (user_id, position_id) only status and applied_at are updated;
- * tracked_at, notes, and application_url are left untouched.
- *
- * Returns the application UUID, or null on any error.
+ * Signature and return type (`Promise<string|null>`) are FROZEN —
+ * `lib/feed/tailorAndQueue.test.js:86` and three call sites inside
+ * `app/page.js` (`handleTrackJob`, `handleUrlSubmit`, `handleTailorFeedPosting`)
+ * all await a bare id, not the writer's richer `{id, changed, reason, ...}`
+ * object, so they inherit every one of the writer's guards without changing
+ * a character at the call site.
  *
  * @param {import('@supabase/supabase-js').SupabaseClient} supabase
  * @param {{ userId: string, positionId: string, status: string }} params
  * @returns {Promise<string|null>}
  */
 export async function upsertApplication(supabase, { userId, positionId, status }) {
-  if (!userId || !positionId || !status) return null;
-
-  try {
-    const { data, error } = await supabase
-      .from("applications")
-      .upsert(
-        {
-          user_id: userId,
-          position_id: positionId,
-          status,
-          applied_at: status === "applied" ? new Date().toISOString() : null,
-        },
-        { onConflict: "user_id,position_id" },
-      )
-      .select("id")
-      .single();
-
-    if (error) {
-      console.error("[upsertApplication] upsert failed:", error.message);
-      return null;
-    }
-    return data?.id ?? null;
-  } catch (err) {
-    console.error("[upsertApplication] threw:", err?.message || err);
-    return null;
-  }
+  const result = await writeApplicationStatus(supabase, { userId, positionId, status });
+  return result.id;
 }
 
 /**

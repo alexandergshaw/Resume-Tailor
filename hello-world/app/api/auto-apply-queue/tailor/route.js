@@ -6,6 +6,15 @@ import {
   loadAlreadyTrackedExternalIds,
   tailorAndQueueOne,
 } from "@/lib/feed/tailorAndQueue";
+import { STATUS, APPLIED_OR_LATER_STATUSES } from "@/lib/applications/statusVocabulary.js";
+
+// `auto_queued` plus every applied-or-later status — a row already queued OR
+// already at any of interviewing/offer/accepted/etc. is "already in the
+// pipeline" and must not be re-tailored and re-queued. The set used to be
+// `["auto_queued", "applied"]` — two of eleven statuses — so a row at
+// "interviewing" or "offer" was NOT treated as tracked, and the rocket would
+// re-tailor and re-queue a job the user already has an offer on.
+const DEDUP_STATUSES = [STATUS.AUTO_QUEUED, ...APPLIED_OR_LATER_STATUSES];
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -73,10 +82,7 @@ export async function POST(request) {
   // duplicate so re-running recovers it into the queue.
   const externalId = postingExternalId(posting);
   if (externalId) {
-    const tracked = await loadAlreadyTrackedExternalIds(admin, user.id, [externalId], [
-      "auto_queued",
-      "applied",
-    ]);
+    const tracked = await loadAlreadyTrackedExternalIds(admin, user.id, [externalId], DEDUP_STATUSES);
     if (tracked.has(externalId)) {
       return Response.json(
         { ok: true, alreadyQueued: true, message: "This job is already in your pipeline." },

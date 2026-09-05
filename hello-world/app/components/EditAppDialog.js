@@ -7,6 +7,11 @@ import MenuItem from "@mui/material/MenuItem";
 import Select from "@mui/material/Select";
 import TextField from "@mui/material/TextField";
 import FormDialog from "./FormDialog";
+import {
+  USER_SELECTABLE_STATUSES,
+  USER_SELECTABLE_STATUSES_ORDERED,
+  STATUS_LABELS,
+} from "../../lib/applications/statusVocabulary";
 
 export default function EditAppDialog({
   editAppDialog,
@@ -50,14 +55,20 @@ export default function EditAppDialog({
           value={editAppDialog.status}
           onChange={(e) => setEditAppDialog((prev) => ({ ...prev, status: e.target.value }))}
         >
-          <MenuItem value="tailored">Tailored</MenuItem>
-          <MenuItem value="applied">Applied</MenuItem>
-          <MenuItem value="phone_screen">Phone Screen</MenuItem>
-          <MenuItem value="interviewing">Interviewing</MenuItem>
-          <MenuItem value="offer">Offer</MenuItem>
-          <MenuItem value="accepted">Accepted</MenuItem>
-          <MenuItem value="rejected">Rejected</MenuItem>
-          <MenuItem value="withdrawn">Withdrawn</MenuItem>
+          {USER_SELECTABLE_STATUSES_ORDERED.map((value) => (
+            <MenuItem key={value} value={value}>
+              {STATUS_LABELS[value]}
+            </MenuItem>
+          ))}
+          {/* A row can sit at a status a human never picks (today: only
+              "auto_queued", which loadApplications does not exclude from
+              Tracking) — offer it as one appended, ENABLED item rather than
+              silently coercing the Select to a value not in its own list. */}
+          {editAppDialog.status && !USER_SELECTABLE_STATUSES.includes(editAppDialog.status) ? (
+            <MenuItem value={editAppDialog.status}>
+              {`${STATUS_LABELS[editAppDialog.status] || editAppDialog.status} (current)`}
+            </MenuItem>
+          ) : null}
         </Select>
       </FormControl>
       <TextField

@@ -80,6 +80,13 @@ import { GREENHOUSE_COMPANIES, COMPANY_CATEGORIES } from "../lib/greenhouse/comp
 import { createClient } from "../lib/supabase/client";
 import { upsertPosition } from "../lib/supabase/upsertPosition";
 import { upsertApplication, getPositionId } from "../lib/supabase/upsertApplication";
+import {
+  writeApplicationStatus,
+  loadAppliedOrLaterExternalIds,
+  deleteUntrackedApplication,
+} from "../lib/supabase/applicationStatusWriter";
+import { STATUS, excludeTrackingTabHiddenStatuses } from "../lib/applications/statusVocabulary";
+import { selectAppliedToggleAction } from "../lib/applications/applicationDecisions";
 import { persistGeneratedDocuments } from "../lib/supabase/persistGeneration";
 import { normalizeInterviewValue } from "../lib/tracking/stages";
 
@@ -139,6 +146,14 @@ export default function Home() {
   const [activeSection, setActiveSection] = useState("url");
   const [ignoredJobIds, setIgnoredJobIds] = useState(new Set());
   const [appliedJobIds, setAppliedJobIds] = useState(new Set());
+  // Keyed by external id, populated only for signed-in users (see
+  // loadAppliedOrLaterExternalIds below) — {status, appliedAt, applicationId}
+  // for every row that is EITHER applied-or-later by status OR carries a
+  // non-null applied_at (the disjunct that surfaces a row a past bug demoted
+  // to "tracking" while leaving its real date in place). null until it has
+  // loaded; StatusBar and handleToggleApplied both treat null as "unknown"
+  // rather than "empty".
+  const [appliedByExternalId, setAppliedByExternalId] = useState(null);
   const [trackedJobs, setTrackedJobs] = useState([]);
   const [highlightedJobId, setHighlightedJobId] = useState(null);
   const [toolbarCanScrollLeft, setToolbarCanScrollLeft] = useState(false);
@@ -157,8 +172,12 @@ export default function Home() {
   // Cleared as soon as the user modifies any of the search controls.
   const [activeSavedSearchId, setActiveSavedSearchId] = useState(null);
   // Pre-warmed Greenhouse results for saved searches, keyed by saved-search id.
-  // Populated in the background after savedSearches loads, then consumed by
-  // applySavedSearch so clicking a chip shows results instantly.
+  // Populated in the background after savedSearches loads. `applySavedSearch`
+  // (the live consumer this comment used to name) is gone — its only caller
+  // was the now-deleted `handleJobSearch`/`runJobSearch` pair, part of the
+  // orphaned JobSearchTab chain (see page-js-consolidation) — so this loop
+  // is now a background fetch nothing reads; `prewarmedResults` itself is
+  // still read by the freshness check a few lines below.
   // Shape: { [id]: { jobs: Job[], fetchedAt: number, error: string|null } }
   const [prewarmedResults, setPrewarmedResults] = useState({});
   // Auto-tailored postings shown on the Auto Tailor tab. Populated lazily when the tab is opened.
@@ -234,6 +253,11 @@ export default function Home() {
     setApplicationData,
     setApplicationStages,
     setApplicationsRefreshKey,
+    // The arrow wrapper is REQUIRED — `window.confirm` as a bare method
+    // reference is green under jsdom (which tolerates an unbound receiver)
+    // but throws `TypeError: Illegal invocation` in a real browser. See
+    // 3-plan-dataloss.md PART 6 / G-15.
+    confirm: (message) => window.confirm(message),
   });
 
   // Company & role research column on the tracking table - see
@@ -383,15 +407,17 @@ export default function Home() {
         } catch {}
         uiPrefsLoadedRef.current = true;
 
-        // Load applied jobs from applications table
-        const { data: appliedData } = await supabase
-          .from("applications")
-          .select("positions(external_id)")
-          .eq("user_id", user.id)
-          .eq("status", "applied");
-        if (appliedData) {
-          setAppliedJobIds(new Set(appliedData.map((a) => a.positions?.external_id).filter(Boolean)));
-        }
+        // Load every external id this user is applied-or-later for — by
+        // STATUS, or by a non-null applied_at regardless of status (the
+        // disjunct that surfaces a row a past bug demoted to "tracking"
+        // while leaving a real applied_at in place; see
+        // lib/supabase/applicationStatusWriter.js's
+        // loadAppliedOrLaterExternalIds and test/repro/appliedStatusDataLoss
+        // .test.js). A bare `.eq("status", "applied")` — the previous query —
+        // could never see that shape at all.
+        const { ids, byExternalId } = await loadAppliedOrLaterExternalIds(supabase, user.id);
+        setAppliedJobIds(ids);
+        setAppliedByExternalId(byExternalId);
 
         // Load stored resume + cover letter from Storage
         for (const [storageName, setter] of [
@@ -637,8 +663,9 @@ export default function Home() {
   const PREWARM_FRESH_MS = 5 * 60 * 1000;
   const PREWARM_CONCURRENCY = 3;
 
-  // Build the /api/greenhouse search URL. Shared between the live search
-  // (`runJobSearch`) and the saved-search pre-warmer so they stay in sync.
+  // Build the /api/greenhouse search URL. `runJobSearch`, this comment's
+  // other consumer, is gone (see the orphaning note on `prewarmedResults`
+  // above) — only the saved-search pre-warmer below calls this now.
   function buildGreenhouseSearchUrl(query, companies) {
     let params = "";
     const list = Array.isArray(companies) ? companies : [];
@@ -775,72 +802,6 @@ export default function Home() {
       }
     }
     setSavedSearches((prev) => [entry, ...prev]);
-  }
-  function applySavedSearch(entry) {
-    if (!entry) return;
-    let nextJobKeywords = [];
-    if (Array.isArray(entry.jobKeywords)) {
-      nextJobKeywords = entry.jobKeywords.filter((s) => typeof s === "string" && s.trim().length > 0);
-    } else if (typeof entry.jobQuery === "string" && entry.jobQuery.trim()) {
-      nextJobKeywords = entry.jobQuery.trim().split(/\s+/).filter(Boolean);
-    }
-    const nextMaxYears = typeof entry.maxYearsExp === "string" ? entry.maxYearsExp : "any";
-    const nextCategories = Array.isArray(entry.selectedCategories) ? entry.selectedCategories : [];
-    const companies = Array.isArray(entry.selectedCompanies) ? entry.selectedCompanies : [];
-    const nextSelectedCompanies = companies
-      .map((slug) => GREENHOUSE_COMPANIES.find((c) => c.slug === slug) || slug)
-      .filter(Boolean);
-    const excluded = Array.isArray(entry.excludedCompanies) ? entry.excludedCompanies : [];
-    const nextExcludedCompanies = GREENHOUSE_COMPANIES.filter((c) => excluded.includes(c.slug));
-    const nextExcludedTitleKeywords = Array.isArray(entry.excludedTitleKeywords)
-      ? entry.excludedTitleKeywords.filter((s) => typeof s === "string" && s.trim().length > 0)
-      : [];
-
-    setJobKeywords(nextJobKeywords);
-    setMaxYearsExp(nextMaxYears);
-    setSelectedCategories(nextCategories);
-    setSelectedCompanies(nextSelectedCompanies);
-    setExcludedCompanies(nextExcludedCompanies);
-    setExcludedTitleKeywords(nextExcludedTitleKeywords);
-    setActiveSavedSearchId(entry.id);
-
-    // If the pre-warmer already fetched results for this saved search and
-    // they're still fresh (less than 3 hours old), render them instantly
-    // instead of round-tripping through runJobSearch (which would flash a
-    // loading state and race the prewarmer).
-    const APPLY_SAVED_MAX_AGE_MS = 3 * 60 * 60 * 1000;
-    const cached = prewarmedResults[entry.id];
-    const query = nextJobKeywords.join(" ").trim();
-    if (
-      query &&
-      cached &&
-      Array.isArray(cached.jobs) &&
-      cached.jobs.length > 0 &&
-      Date.now() - cached.fetchedAt < APPLY_SAVED_MAX_AGE_MS
-    ) {
-      setIsSearching(false);
-      setJobSearchError("");
-      setJobResults(cached.jobs);
-      // Clear stale tailoring entries (same hygiene as runJobSearch).
-      setTailoringMap((current) => {
-        const trackedIds = new Set(trackedJobs.map((j) => j.id));
-        const next = {};
-        for (const [jobId, e] of Object.entries(current || {})) {
-          if (trackedIds.has(jobId)) next[jobId] = e;
-        }
-        return next;
-      });
-      hasFetchedRef.current = true;
-      activeQueryRef.current = query;
-      return;
-    }
-
-    // Fire the search using the entry's values directly so we don't have to
-    // wait for React state batching to flush.
-    runJobSearch({
-      jobKeywords: nextJobKeywords,
-      selectedCompanies: nextSelectedCompanies,
-    });
   }
   function deleteSavedSearch(id) {
     setSavedSearches((prev) => prev.filter((s) => s.id !== id));
@@ -1381,16 +1342,20 @@ export default function Home() {
       const supabase = createClient();
 
       // Step 1: fetch applications + positions
-      const { data: appRows, error: appErr } = await supabase
-        .from("applications")
-        .select(`
-          id, status, applied_at, tracked_at, application_url, resume_used_id, cover_letter_id,
-          positions ( id, external_id, title, company, description, url, posted_at )
-        `)
-        .eq("user_id", currentUser.id)
-        .neq("status", "tracking")
-        .neq("status", "auto_tailored")
-        .order("applied_at", { ascending: false });
+      const applicationsQuery = excludeTrackingTabHiddenStatuses(
+        supabase
+          .from("applications")
+          .select(`
+            id, status, applied_at, tracked_at, application_url, resume_used_id, cover_letter_id,
+            positions ( id, external_id, title, company, description, url, posted_at )
+          `)
+          .eq("user_id", currentUser.id),
+      );
+      // NULLS FIRST for a DESC order is Postgres's own default (no
+      // `nullsFirst` here) — deliberately left as-is; it is what pins a
+      // stranded-applied_at row (a demoted row whose real date survived) to
+      // the top where it is visible. See 3-plan-dataloss.md PART 6 / G-4.
+      const { data: appRows, error: appErr } = await applicationsQuery.order("applied_at", { ascending: false });
 
       if (appErr) {
         console.error("[loadApplications] applications query failed:", appErr);
@@ -1813,13 +1778,19 @@ export default function Home() {
     }
     if (currentUser && row?.id) {
       const supabase = createClient();
-      const { error: updErr } = await supabase
-        .from("applications")
-        .update({ status: "applied", applied_at: new Date().toISOString() })
-        .eq("id", row.id)
-        .eq("user_id", currentUser.id);
-      if (updErr) {
-        console.error("[applyAutoTailoredRow] status update failed:", updErr);
+      // loadAutoTailored selects `positions ( id, ... )`, so row.positions.id
+      // is the position id writeApplicationStatus's allow-list keys on.
+      // Unconditionally writing status+applied_at by id (the previous code)
+      // re-stamped a genuine applied_at with now() on every click if the row
+      // had already moved past "auto_tailored" some other way — see
+      // test/repro/appliedStatusDataLoss.test.js REPRO D4.
+      const result = await writeApplicationStatus(supabase, {
+        userId: currentUser.id,
+        positionId: row.positions?.id,
+        status: STATUS.APPLIED,
+      });
+      if (result.reason === "error" || result.reason === "no-key") {
+        console.error("[applyAutoTailoredRow] status update failed:", result);
       }
       setApplicationsRefreshKey((k) => k + 1);
     }
@@ -1836,83 +1807,6 @@ export default function Home() {
     }));
   }
 
-  async function handleJobSearch(event) {
-    if (event && typeof event.preventDefault === "function") event.preventDefault();
-    // If the current form matches an active saved search and the pre-warmer
-    // already has results that are less than 3 hours old, render those
-    // directly instead of hitting the Greenhouse API again — the live fetch
-    // tends to race the prewarmer and clobber its results.
-    const PREWARM_SEARCH_MAX_AGE_MS = 3 * 60 * 60 * 1000;
-    const cached = activeSavedSearchId && !activeSavedSearchDirty
-      ? prewarmedResults[activeSavedSearchId]
-      : null;
-    if (
-      cached &&
-      Array.isArray(cached.jobs) &&
-      cached.jobs.length > 0 &&
-      Date.now() - cached.fetchedAt < PREWARM_SEARCH_MAX_AGE_MS
-    ) {
-      const query = jobKeywords.join(" ").trim();
-      setIsSearching(false);
-      setJobSearchError("");
-      setJobResults(cached.jobs);
-      setTailoringMap((current) => {
-        const trackedIds = new Set(trackedJobs.map((j) => j.id));
-        const next = {};
-        for (const [jobId, entry] of Object.entries(current || {})) {
-          if (trackedIds.has(jobId)) next[jobId] = entry;
-        }
-        return next;
-      });
-      hasFetchedRef.current = true;
-      activeQueryRef.current = query;
-      return;
-    }
-    await runJobSearch({ jobKeywords, selectedCompanies });
-  }
-
-  async function runJobSearch({ jobKeywords: keywordsArg, selectedCompanies: companiesArg }) {
-    const keywords = (Array.isArray(keywordsArg) ? keywordsArg : [])
-      .map((k) => (typeof k === "string" ? k.trim() : ""))
-      .filter(Boolean);
-    const query = keywords.join(" ").trim();
-    if (!query) return;
-
-    const companies = Array.isArray(companiesArg) ? companiesArg : [];
-
-    setIsSearching(true);
-    setJobSearchError("");
-    setJobResults([]);
-    // Drop tailoring entries for jobs that aren't currently tracked, so a
-    // fresh search doesn't show stale "Ready" badges on cards that no longer
-    // appear in the results — but preserve statuses for tracked jobs so the
-    // floating toolbar chips don't lose their state.
-    setTailoringMap((current) => {
-      const trackedIds = new Set(trackedJobs.map((j) => j.id));
-      const next = {};
-      for (const [jobId, entry] of Object.entries(current || {})) {
-        if (trackedIds.has(jobId)) next[jobId] = entry;
-      }
-      return next;
-    });
-    hasFetchedRef.current = false;
-    activeQueryRef.current = query;
-
-    try {
-      const data = await fetch(buildGreenhouseSearchUrl(query, companies)).then((r) => r.json());
-
-      const ghJobs = data.jobs || [];
-      if (ghJobs.length === 0) throw new Error(data.error || "No jobs found.");
-
-      hasFetchedRef.current = true;
-      setJobResults(ghJobs);
-    } catch (err) {
-      setJobSearchError(err.message || "Failed to fetch jobs.");
-    } finally {
-      setIsSearching(false);
-    }
-  }
-
   function handleIgnoreJob(jobId) {
     setIgnoredJobIds((prev) => new Set([...prev, jobId]));
   }
@@ -1927,41 +1821,55 @@ export default function Home() {
 
   async function handleToggleApplied(job) {
     const jobId = typeof job === "string" ? job : job.id;
-    const isApplied = appliedJobIds.has(jobId);
 
-    // Optimistic update
-    setAppliedJobIds((prev) => {
-      const next = new Set(prev);
-      if (isApplied) next.delete(jobId);
-      else {
-        next.add(jobId);
-        handleUntrackJob(jobId);
-      }
+    if (!currentUser) {
+      // No signed-in user, no `applications` row to protect — the data-loss
+      // defect this function otherwise guards against (REPRO D1: an
+      // un-apply nulling a real applied_at) cannot occur here. Keep the
+      // original localStorage-only toggle.
+      setAppliedJobIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(jobId)) next.delete(jobId);
+        else next.add(jobId);
+        localStorage.setItem("appliedJobIds", JSON.stringify([...next]));
+        return next;
+      });
+      return;
+    }
+
+    // R1: this control only ever PROMOTES now. The un-apply branch that used
+    // to live here reverted an applied-or-later row straight back to
+    // "tracking" — silently nulling a real applied_at — see
+    // test/repro/appliedStatusDataLoss.test.js REPRO D1. A row already
+    // applied-or-later routes to Tracking instead of a second "apply".
+    const action = selectAppliedToggleAction(appliedByExternalId, jobId);
+    if (action === "refuse-unknown") return; // the map hasn't loaded yet; do nothing rather than guess.
+    if (action === "open-tracking") {
+      setMainTab("interviewing");
+      return;
+    }
+
+    const supabase = createClient();
+    const positionId = typeof job !== "string" ? await upsertPosition(supabase, job) : null;
+    if (!positionId) return;
+
+    const result = await writeApplicationStatus(supabase, {
+      userId: currentUser.id,
+      positionId,
+      status: STATUS.APPLIED,
+    });
+    if (!result.changed) return;
+
+    setAppliedByExternalId((prev) => {
+      const next = new Map(prev || []);
+      next.set(jobId, { status: STATUS.APPLIED, appliedAt: new Date().toISOString(), applicationId: result.id });
       return next;
     });
-
-    if (currentUser) {
-      const supabase = createClient();
-      if (isApplied) {
-        // Un-apply: revert application status to tracking
-        const positionId = await getPositionId(supabase, jobId);
-        if (positionId) {
-          await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "tracking" });
-        }
-      } else {
-        // Apply: upsert position → upsert application as applied
-        const positionId = typeof job !== "string" ? await upsertPosition(supabase, job) : null;
-        if (positionId) {
-          await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "applied" });
-        }
-      }
-    } else {
-      // Not signed in — persist to localStorage
-      setAppliedJobIds((current) => {
-        localStorage.setItem("appliedJobIds", JSON.stringify([...current]));
-        return current;
-      });
-    }
+    setAppliedJobIds((prev) => new Set(prev).add(jobId));
+    // Lifted out of the optimistic setState updater and awaited (StrictMode
+    // double-invokes an updater in development, which would have fired the
+    // DELETE twice — see 3-plan-dataloss.md PART 6 / G-20).
+    await handleUntrackJob(jobId);
   }
 
   function handleToolbarScroll() {
@@ -2019,20 +1927,25 @@ export default function Home() {
   }
 
   async function handleUntrackJob(jobId) {
-    setTrackedJobs((prev) => prev.filter((j) => j.id !== jobId));
+    // The optimistic chip removal is deferred until the delete reports
+    // whether it actually ran (R9) — dropping the chip unconditionally, as
+    // this used to, is how a row this guard refused (still carrying a real
+    // applied_at, or already past "tracking") lost its only visible trace:
+    // see test/repro/appliedStatusDataLoss.test.js REPRO D2/D5.
+    let refused = false;
     if (currentUser) {
       const supabase = createClient();
       const positionId = await getPositionId(supabase, jobId);
       if (positionId) {
-        // Only delete if still in tracking state — leave applied rows intact
-        await supabase
-          .from("applications")
-          .delete()
-          .eq("user_id", currentUser.id)
-          .eq("position_id", positionId)
-          .eq("status", "tracking");
+        const { deleted } = await deleteUntrackedApplication(supabase, {
+          userId: currentUser.id,
+          positionId,
+        });
+        refused = !deleted;
       }
     }
+    if (refused) return;
+    setTrackedJobs((prev) => prev.filter((j) => j.id !== jobId));
   }
 
   function handleRegenerateSyntheticJob(job, scope = "both") {
@@ -2306,60 +2219,27 @@ export default function Home() {
           console.error("[handleTailorJob] saveGeneratedCoverLetter returned null", { userId: currentUser.id, positionId });
         }
         if (generatedResumeId && positionId) {
-          // Make sure an application row exists for this (user, position) so
-          // the tailored job shows up in the Tracking tab even if the user
-          // never clicked "Track" first.
-          const appId = await upsertApplication(supabase, {
+          // ONE call now creates the row (if it doesn't exist yet) AND
+          // promotes it — never demoting a row already at an applied-or-
+          // later status. The row this used to be a separate upsertApplication
+          // ("tracking") followed by a NOT-IN-guarded UPDATE: that guard ran
+          // AFTER the upsert had already overwritten the very status column
+          // it filtered on, so it never protected anything — see
+          // test/repro/appliedStatusDataLoss.test.js REPRO D3.
+          // "auto_tailored" (vs. "tailored") routes the row to the dedicated
+          // Auto Tailor tab instead of the Interviewing tab.
+          const targetStatus = opts.markAsAutoTailor ? STATUS.AUTO_TAILORED : STATUS.TAILORED;
+          const promotion = await writeApplicationStatus(supabase, {
             userId: currentUser.id,
             positionId,
-            status: "tracking",
+            status: targetStatus,
           });
-          if (!appId) {
-            console.error("[handleTailorJob] upsertApplication returned null", { userId: currentUser.id, positionId });
-          }
-          // Upgrade status → tailored (or auto_tailored when this run came
-          // from "Tailor all visible" / batch flow). The auto_tailored
-          // status routes these rows to the dedicated Auto Tailor tab
-          // instead of the Interviewing tab.
-          //
-          // We use a NOT-IN filter on the applied-and-later pipeline states
-          // (instead of a tighter IN filter on the pre-applied states) so
-          // that any unexpected/stale value — including NULL, or a status
-          // that wasn't anticipated — still gets promoted. We only refuse to
-          // downgrade rows that are already past the apply stage.
-          const targetStatus = opts.markAsAutoTailor ? "auto_tailored" : "tailored";
-          const protectedStatuses = ["applied", "interviewing", "offer", "rejected", "withdrawn"];
-          console.log(
-            "[handleTailorJob] promoting status",
-            { jobId: job?.id, positionId, targetStatus, markAsAutoTailor: !!opts.markAsAutoTailor },
-          );
-          const { data: updatedRows, error: statusErr } = await supabase
-            .from("applications")
-            .update({ status: targetStatus })
-            .eq("user_id", currentUser.id)
-            .eq("position_id", positionId)
-            .not("status", "in", `(${protectedStatuses.join(",")})`)
-            .select("id, status");
-          if (statusErr) {
-            console.error("[handleTailorJob] status update failed:", statusErr);
-          } else {
-            console.log(
-              "[handleTailorJob] status update result",
-              { jobId: job?.id, positionId, updatedRows },
-            );
-            // Read-back so we can see the row's final state even if 0 rows
-            // were touched by the update (e.g. due to RLS, constraint, or
-            // the row simply not existing).
-            const { data: verifyRow } = await supabase
-              .from("applications")
-              .select("id, status")
-              .eq("user_id", currentUser.id)
-              .eq("position_id", positionId)
-              .maybeSingle();
-            console.log(
-              "[handleTailorJob] post-update read-back",
-              { jobId: job?.id, positionId, verifyRow },
-            );
+          if (!promotion.id) {
+            console.error("[handleTailorJob] writeApplicationStatus returned no id", {
+              userId: currentUser.id,
+              positionId,
+              promotion,
+            });
           }
           // Trigger the Interviewing tab to refetch so the new tailored row
           // (or its freshly attached resume) shows up immediately. During a
@@ -2567,7 +2447,20 @@ export default function Home() {
         const supabase = createClient();
         const positionId = await upsertPosition(supabase, syntheticJob);
         if (positionId) {
-          await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "applied" });
+          // Tailoring is not applying (P-1): the user has generated a
+          // document, not submitted anything. Promote to "tailored" — a
+          // PRE-APPLY status, same target handleTailorJob uses — never
+          // "applied". upsertApplication's own guard (writeApplicationStatus's
+          // C1 allow-list UPDATE) only refuses to demote when the row's
+          // CURRENT status is pre-apply; it does not care what the target is,
+          // so writing "applied" here would have let a brand-new row be
+          // created already "applied" with a fabricated applied_at, and — for
+          // an existing row already at some OTHER applied-or-later status
+          // (e.g. "offer") — have been ready to overwrite it with "applied"
+          // the moment that row ever went back through a pre-apply status.
+          // Targeting "tailored" instead means the promote can never carry an
+          // applied-or-later value, so the guard actually protects.
+          await upsertApplication(supabase, { userId: currentUser.id, positionId, status: STATUS.TAILORED });
         }
         await persistGeneratedDocuments(supabase, {
           userId: currentUser.id,
@@ -2772,7 +2665,9 @@ export default function Home() {
         const supabase = createClient();
         const positionId = await upsertPosition(supabase, syntheticJob);
         if (positionId) {
-          await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "applied" });
+          // Tailoring is not applying (P-1) — see the matching comment in
+          // handleUrlSubmit above. Promote to "tailored", never "applied".
+          await upsertApplication(supabase, { userId: currentUser.id, positionId, status: STATUS.TAILORED });
         }
         await persistGeneratedDocuments(supabase, {
           userId: currentUser.id,
@@ -3167,6 +3062,7 @@ export default function Home() {
         handleUntrackJob={handleUntrackJob}
         openResumePreview={preview.openResumePreview}
         openCompanyResearch={research.openCompanyResearch}
+        appliedByExternalId={appliedByExternalId}
       />
 
       <DocumentPreviewMount

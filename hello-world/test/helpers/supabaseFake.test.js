@@ -410,6 +410,46 @@ describe("supabaseFake — .upsert() with onConflict", () => {
     expect(sb.rows("applications")[0].status).toBe("applied");
   });
 
+  it("[canary] ignoreDuplicates returns NO row for a conflicting insert, the way DO NOTHING … RETURNING does", async () => {
+    // `INSERT … ON CONFLICT DO NOTHING RETURNING` returns only the rows it
+    // actually inserted. The fake used to return the pre-existing row here,
+    // which made `.select().single()` on such an upsert look like "the row I
+    // just wrote" — green here, PGRST116 in production. A fake that hands the
+    // existing row back fails this test.
+    const sb = appsFake([{ id: "a1", user_id: "u1", position_id: "p1", status: "applied" }]);
+    const { data, error } = await sb
+      .from("applications")
+      .upsert(
+        { user_id: "u1", position_id: "p1", status: "tracking" },
+        { onConflict: "user_id,position_id", ignoreDuplicates: true },
+      )
+      .select("id, status");
+
+    expect(error).toBeNull();
+    expect(data).toEqual([]);
+    // Positive control on the same semantic: the row itself is still untouched,
+    // so "returns nothing" is about the RETURNING projection and not about the
+    // conflict branch having stopped running.
+    expect(sb.rows("applications")).toHaveLength(1);
+    expect(sb.rows("applications")[0].status).toBe("applied");
+  });
+
+  it("[control] ignoreDuplicates still returns the row when there is NO conflict", async () => {
+    // The paired direction. Without this, "returns no row" would also be
+    // satisfied by a fake whose ignoreDuplicates upsert returns nothing ever.
+    const sb = appsFake([{ id: "a1", user_id: "u1", position_id: "p1", status: "applied" }]);
+    const { data, error } = await sb
+      .from("applications")
+      .upsert(
+        { user_id: "u1", position_id: "p2", status: "tracking" },
+        { onConflict: "user_id,position_id", ignoreDuplicates: true },
+      )
+      .select("position_id, status");
+
+    expect(error).toBeNull();
+    expect(data).toEqual([{ position_id: "p2", status: "tracking" }]);
+  });
+
   it("handles a bulk (array) payload", async () => {
     const sb = appsFake([{ id: "a1", user_id: "u1", position_id: "p1", status: "applied" }]);
     await sb
@@ -560,6 +600,110 @@ describe("supabaseFake — projection and embeds", () => {
     await expect(
       sb.from("positions").select("external_id, applications!inner(user_id, status)"),
     ).rejects.toThrow(/!inner/);
+  });
+});
+
+describe("supabaseFake — calls.options", () => {
+  it("records the upsert's conflict options on the recorded statement", async () => {
+    const sb = appsFake([]);
+    await sb
+      .from("applications")
+      .upsert(
+        { user_id: "u1", position_id: "p1", status: "tracking" },
+        { onConflict: "user_id,position_id", ignoreDuplicates: true },
+      );
+
+    expect(sb.calls).toHaveLength(1);
+    expect(sb.calls[0].options).toStrictEqual({
+      onConflict: "user_id,position_id",
+      ignoreDuplicates: true,
+    });
+  });
+
+  it("[canary] populates options PER STATEMENT, not once per client", async () => {
+    // The failure this catches: `options` carried over from a previous
+    // statement on the same `calls` array. A field that is always
+    // `{ignoreDuplicates:true}` and a field that is correctly `true` on the
+    // upsert look identical unless a second, differently-shaped statement is
+    // recorded beside it.
+    const sb = appsFake([{ id: "a1", user_id: "u1", position_id: "p1", status: "tracking" }]);
+    await sb
+      .from("applications")
+      .upsert(
+        { user_id: "u1", position_id: "p2", status: "tracking" },
+        { onConflict: "user_id,position_id", ignoreDuplicates: true },
+      );
+    await sb.from("applications").update({ status: "tailored" }).eq("id", "a1");
+
+    expect(sb.calls.map((c) => c.verb)).toEqual(["upsert", "update"]);
+    expect(sb.calls[0].options).toStrictEqual({
+      onConflict: "user_id,position_id",
+      ignoreDuplicates: true,
+    });
+    expect(sb.calls[1].options).toStrictEqual({ onConflict: undefined, ignoreDuplicates: false });
+  });
+
+  it("records options on a plain select too, so a walk never reads undefined", async () => {
+    const sb = appsFake([{ id: "a1", user_id: "u1" }]);
+    await sb.from("applications").select("*").eq("user_id", "u1");
+    expect(sb.calls[0].options).toStrictEqual({ onConflict: undefined, ignoreDuplicates: false });
+  });
+
+  it("an rpc record carries NEITHER options NOR select — a walk must tolerate the asymmetry", async () => {
+    // The title above ("so a walk never reads undefined") is true of every
+    // statement that goes through `from()`, and false of `rpc`, which pushes
+    // its own four-key record. That asymmetry is real and is pinned here rather
+    // than left for a walk author to discover: `rpc` has no conflict clause and
+    // no RETURNING projection, so recording either would be a fiction. A walk
+    // that reaches for `c.options.ignoreDuplicates` or `c.select` without
+    // filtering on `c.table` first throws on this record.
+    const sb = appsFake([]);
+    await sb.rpc("some_function", { a: 1 });
+
+    expect(sb.calls).toHaveLength(1);
+    const rec = sb.calls[0];
+    expect(rec.table).toBeNull();
+    expect(rec.verb).toBe("rpc");
+    expect(Object.prototype.hasOwnProperty.call(rec, "options")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(rec, "select")).toBe(false);
+  });
+});
+
+describe("supabaseFake — calls.select", () => {
+  it("[canary] records the projection PER STATEMENT, and null when no .select() was chained", async () => {
+    // The failure this catches, stated as the reason the field exists: without
+    // it, `.select(...)` is INVISIBLE in `calls`. A statement that chains a
+    // read-back onto itself and one that does not produce byte-identical
+    // records, so a guard walk cannot tell them apart — and on an
+    // `ON CONFLICT DO NOTHING` upsert that difference decides whether the
+    // read-back returns the row or nothing at all.
+    //
+    // Both directions, on ONE client and one `calls` array: a field that is
+    // always the projection and a field that is correctly the projection look
+    // identical unless a statement WITHOUT one is recorded beside it.
+    const sb = appsFake([{ id: "a1", user_id: "u1", position_id: "p1", status: "tracking" }]);
+    await sb.from("applications").update({ status: "tailored" }).eq("id", "a1");
+    await sb.from("applications").update({ status: "auto_queued" }).eq("id", "a1").select("id, status");
+    await sb
+      .from("applications")
+      .upsert(
+        { user_id: "u1", position_id: "p2", status: "tracking" },
+        { onConflict: "user_id,position_id", ignoreDuplicates: true },
+      );
+
+    expect(sb.calls.map((c) => c.verb)).toEqual(["update", "update", "upsert"]);
+    expect(sb.calls.map((c) => c.select)).toEqual([null, "id, status", null]);
+  });
+
+  it("records the projection verbatim on a read, including \"*\"", async () => {
+    // Verbatim, not normalised: a walk that wants to refuse a widened
+    // projection has to be able to see the difference between "id, status" and
+    // "*", and a fake that normalised both to a column list would erase it.
+    const sb = appsFake([{ id: "a1", user_id: "u1", status: "applied" }]);
+    await sb.from("applications").select("*").eq("user_id", "u1");
+    await sb.from("applications").select("id, status, applied_at").eq("user_id", "u1");
+
+    expect(sb.calls.map((c) => c.select)).toEqual(["*", "id, status, applied_at"]);
   });
 });
 

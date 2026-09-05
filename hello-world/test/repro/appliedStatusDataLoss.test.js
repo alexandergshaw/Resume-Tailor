@@ -68,8 +68,12 @@ const APPLIED_OR_LATER = [
   "withdrawn",
 ];
 
-// app/page.js:2331 — five of the seven above.
-const PROTECTED_STATUSES = ["applied", "interviewing", "offer", "rejected", "withdrawn"];
+// Imported from the vocabulary module (lib/applications/statusVocabulary.js)
+// rather than hand-copied — all SEVEN of the seven above, not five. The old
+// five-element literal this line replaced could never satisfy the two
+// "phone_screen" / "accepted" expansions below; importing the real,
+// seven-element APPLIED_OR_LATER_STATUSES is what makes them satisfiable.
+import { APPLIED_OR_LATER_STATUSES as PROTECTED_STATUSES } from "@/lib/applications/statusVocabulary.js";
 
 function seedApplied(status = "applied") {
   return makeStatefulSupabase(
@@ -133,9 +137,19 @@ describe("REPRO D1 — demotion: a non-applied upsert overwrites status AND null
   });
 
   it("[pin] the merge itself is column-scoped — tracked_at and notes survive", () => {
-    // Green today and after the fix. It is here as the fake's control: if the
-    // fake replaced rows instead of merging them, the test above would go red
-    // for a reason that has nothing to do with the defect.
+    // Green today, and green after the fix for a DIFFERENT reason — recorded
+    // here so nobody reads this as "the merge is still exercised". Before the
+    // fix, this pins the fake's own control: if it replaced rows instead of
+    // merging them, the test above would go red for a reason that has nothing
+    // to do with the defect. After the fix, `upsertApplication` routes through
+    // `writeApplicationStatus`, whose C1 allow-list misses this row ("offer"
+    // is not pre-apply) and whose C2 read-back classifies it "protected" — so
+    // the writer refuses before any statement ever reaches the fake, and
+    // `tracked_at`/`notes`/`application_url` survive because nothing was
+    // written, not because the merge is column-scoped. The merge itself is
+    // still covered — by the writer's own C3-branch test in
+    // lib/supabase/applicationStatusWriter.test.js, which does issue an
+    // upsert.
     const sb = seedApplied("offer");
     return upsertApplication(sb, { userId: USER_ID, positionId: POSITION_ID, status: "tracking" }).then(() => {
       const row = appRow(sb);
@@ -303,7 +317,7 @@ describe("REPRO D3 — dead guard: protectedStatuses filters on a value the upse
     expect(appRow(sb).status).toBe("tailored");
   });
 
-  it("[pin] a NULL-status row is NOT promoted, contradicting the comment at app/page.js:2325-2329", async () => {
+  it("[pin] a NULL-status row is NOT promoted by a NOT-IN guard, whatever its rationale claimed", async () => {
     // The source comment says the NOT-IN filter was chosen "so that any
     // unexpected/stale value — including NULL ... still gets promoted."
     // It does not. PostgreSQL, "Row and Array Comparisons": "if the left-hand

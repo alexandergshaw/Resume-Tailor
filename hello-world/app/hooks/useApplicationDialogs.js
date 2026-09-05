@@ -8,17 +8,33 @@ import { getInterviewStages, upsertInterviewStage } from "../../lib/supabase/ups
 import { createRecruiterCommunication, listRecruiterCommunications } from "../../lib/supabase/recruiterCommunications";
 import { isDocxResume, isTextResume, buildTemplateLinesForUpload } from "../../lib/document/docx";
 import { STAGE_TYPE_LABELS, createStageDialogState } from "../../lib/tracking/stages";
+import { setApplicationStatusByUser } from "../../lib/supabase/applicationStatusWriter";
+import { buildEditApplicationPayload } from "../../lib/applications/applicationDecisions";
+import { STATUS, isAppliedOrLater } from "../../lib/applications/statusVocabulary";
 
 // Add/edit/stage/communications dialogs for the Tracking tab, plus their save
 // handlers (Supabase mutations). The application data itself (applicationData /
 // applicationStages / refresh key) stays in the parent — this hook receives the
 // setters so a save can optimistically update or trigger a reload.
+//
+// `confirm` is REQUIRED — it is the human door's one guard against silently
+// destroying a real `applied_at` (AC-2a). It cannot arrive through either
+// dialog (`FormDialog.js` invokes `onSubmit?.()` with zero arguments, and
+// neither dialog's prop signature may change — 3-plan-dataloss.md PART 8 /
+// X2, X3), so it comes in through this options object instead, supplied by
+// `app/page.js`. Thrown here rather than left to fail lazily inside
+// `setApplicationStatusByUser` so a wiring mistake surfaces at mount, not at
+// the first save that would have needed it.
 export function useApplicationDialogs({
   currentUser,
   setApplicationData,
   setApplicationStages,
   setApplicationsRefreshKey,
+  confirm,
 }) {
+  if (typeof confirm !== "function") {
+    throw new TypeError("useApplicationDialogs: confirm is required and must be a function");
+  }
   const [appDialog, setAppDialog] = useState({ open: false, rowIndex: null, kind: "jd" });
   const [stageDialog, setStageDialog] = useState(createStageDialogState());
   const [stageSaving, setStageSaving] = useState(false);
@@ -48,8 +64,12 @@ export function useApplicationDialogs({
     positionId: null,
     company: "",
     role: "",
-    status: "applied",
+    status: STATUS.APPLIED,
     appliedAt: "",
+    // The exact `applied_at` PostgREST returned when the dialog was opened —
+    // the CAS operand `setApplicationStatusByUser` compares against, not
+    // merely a display value. See openEditApplicationDialog below.
+    appliedAtStored: null,
     applicationUrl: "",
     description: "",
   });
@@ -59,7 +79,7 @@ export function useApplicationDialogs({
     open: false,
     company: "",
     role: "",
-    status: "applied",
+    status: STATUS.APPLIED,
     appliedAt: "",
     applicationUrl: "",
     description: "",
@@ -241,8 +261,9 @@ export function useApplicationDialogs({
       positionId: pos.id || null,
       company: pos.company || "",
       role: pos.title || "",
-      status: app.status || "applied",
+      status: app.status || STATUS.APPLIED,
       appliedAt: app.applied_at ? new Date(app.applied_at).toISOString().slice(0, 10) : "",
+      appliedAtStored: app.applied_at ?? null,
       applicationUrl: app.application_url || pos.url || "",
       description: pos.description || "",
     });
@@ -336,25 +357,68 @@ export function useApplicationDialogs({
   }
 
   async function handleSaveEditApplication() {
-    if (!editAppDialog.applicationId) return;
+    if (!editAppDialog.applicationId || !currentUser) return;
     setEditAppSaving(true);
     setEditAppError("");
 
     const supabase = createClient();
 
-    const appUpdates = {
-      status: editAppDialog.status,
-      application_url: editAppDialog.applicationUrl.trim() || null,
-      applied_at: editAppDialog.appliedAt ? new Date(editAppDialog.appliedAt).toISOString() : null,
-    };
+    // `applied_at` is present in `payload` ONLY when the date-only string
+    // actually differs from the stored date (AC-8b) — today's inline literal
+    // named it on EVERY save, which rewrote the column via a UTC round-trip
+    // on a save that touched nothing but the URL. See
+    // lib/applications/applicationDecisions.js's buildEditApplicationPayload.
+    const { payload } = buildEditApplicationPayload({
+      form: {
+        status: editAppDialog.status,
+        appliedAt: editAppDialog.appliedAt,
+        applicationUrl: editAppDialog.applicationUrl,
+      },
+      storedAppliedAt: editAppDialog.appliedAtStored,
+    });
+    const dateSupplied = Object.prototype.hasOwnProperty.call(payload, "applied_at");
 
-    const { error: appErr } = await supabase
+    // The guarded statement: status + (maybe) applied_at, through the ONE
+    // door this repo trusts with them — tenant-filtered, compare-and-set on
+    // applied_at, and gated by an explicit confirmation whenever the save
+    // would clear or overwrite a real date (AC-2a). See
+    // lib/supabase/applicationStatusWriter.js's setApplicationStatusByUser.
+    const result = await setApplicationStatusByUser(supabase, {
+      applicationId: editAppDialog.applicationId,
+      userId: currentUser.id,
+      status: payload.status,
+      ...(dateSupplied ? { appliedAt: payload.applied_at } : {}),
+      appliedAtStored: editAppDialog.appliedAtStored,
+      confirm,
+    });
+
+    if (result.reason === "declined") {
+      // The user backed out of the confirmation. Leave the dialog open with
+      // nothing saved rather than silently discarding their edits.
+      setEditAppSaving(false);
+      return;
+    }
+    if (!result.changed) {
+      setEditAppError(
+        result.reason === "stale"
+          ? "This application changed elsewhere since the dialog opened. Close it and reopen to try again."
+          : "Failed to save changes.",
+      );
+      setEditAppSaving(false);
+      return;
+    }
+
+    // `application_url` is not a status/date concern, so it is not part of
+    // the guarded statement above — same reasoning as the position fields
+    // below, on their own statement.
+    const { error: urlErr } = await supabase
       .from("applications")
-      .update(appUpdates)
-      .eq("id", editAppDialog.applicationId);
+      .update({ application_url: payload.application_url })
+      .eq("id", editAppDialog.applicationId)
+      .eq("user_id", currentUser.id);
 
-    if (appErr) {
-      setEditAppError(appErr.message || "Failed to save changes.");
+    if (urlErr) {
+      setEditAppError(urlErr.message || "Failed to save changes.");
       setEditAppSaving(false);
       return;
     }
@@ -382,9 +446,12 @@ export function useApplicationDialogs({
         a.id === editAppDialog.applicationId
           ? {
               ...a,
-              status: appUpdates.status,
-              application_url: appUpdates.application_url,
-              applied_at: appUpdates.applied_at,
+              status: payload.status,
+              application_url: payload.application_url,
+              // Untouched when the date-only string didn't change (AC-8b) —
+              // the write above named nothing, so the prior value is still
+              // exactly what's stored.
+              applied_at: dateSupplied ? payload.applied_at : a.applied_at,
               positions: a.positions
                 ? {
                     ...a.positions,
@@ -425,7 +492,7 @@ export function useApplicationDialogs({
       open: true,
       company: "",
       role: "",
-      status: "applied",
+      status: STATUS.APPLIED,
       appliedAt: new Date().toISOString().slice(0, 10),
       applicationUrl: "",
       description: "",
@@ -469,9 +536,19 @@ export function useApplicationDialogs({
         position_id: positionId,
         status: addAppDialog.status,
         application_url: addAppDialog.applicationUrl.trim() || null,
-        applied_at: addAppDialog.appliedAt
-          ? new Date(addAppDialog.appliedAt).toISOString()
-          : new Date().toISOString(),
+        // [R2-M4] `now()` is only a defensible guess for a BLANK date when
+        // the chosen status is applied-or-later (today's behaviour,
+        // unchanged). For a pre-apply status (e.g. "tracking") a blank date
+        // must stay null — stamping `now()` here fabricated an application
+        // date the user never gave, which then classified the row as
+        // applied-or-later on the strength of that date alone (see
+        // lib/supabase/applicationStatusWriter.js's loadAppliedOrLaterExternalIds
+        // and 3-plan-dataloss.md PART 4 / F-4). A user who TYPES a date keeps
+        // it regardless of status — this only changes the blank case, and
+        // only for a pre-apply status.
+        applied_at: isAppliedOrLater(addAppDialog.status)
+          ? (addAppDialog.appliedAt ? new Date(addAppDialog.appliedAt).toISOString() : new Date().toISOString())
+          : (addAppDialog.appliedAt ? new Date(addAppDialog.appliedAt).toISOString() : null),
       })
       .select("id")
       .single();

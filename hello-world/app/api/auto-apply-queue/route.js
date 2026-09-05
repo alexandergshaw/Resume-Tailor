@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { STATUS } from "@/lib/applications/statusVocabulary.js";
 
 export const runtime = "nodejs";
 
@@ -25,7 +26,7 @@ export async function GET() {
       "id, status, auto_saved_at, applied_at, auto_apply_opened_at, position_id, resume_used_id, cover_letter_id, auto_search_id",
     )
     .eq("user_id", user.id)
-    .eq("status", "auto_queued")
+    .eq("status", STATUS.AUTO_QUEUED)
     .order("auto_saved_at", { ascending: false })
     .limit(500);
 

@@ -1,5 +1,7 @@
 import { tailorResumeHeadless, tailorCoverLetterHeadless } from "@/lib/llm/tailorForUserHeadless";
 import { upsertApplication } from "@/lib/supabase/upsertApplication";
+import { writeApplicationStatus } from "@/lib/supabase/applicationStatusWriter";
+import { STATUS } from "@/lib/applications/statusVocabulary";
 import { saveGeneratedResume } from "@/lib/supabase/saveGeneratedResume";
 import { saveGeneratedCoverLetter } from "@/lib/supabase/saveGeneratedCoverLetter";
 import { postingToJob } from "@/lib/feed/selectQueueCandidates";
@@ -228,10 +230,17 @@ export async function tailorAndQueueOne({
     throw new Error("Could not create the application row (upsertApplication failed).");
   }
 
+  // Split in two, IN THIS ORDER. The metadata names no status at all, so it
+  // can never race the guard below; the queue placement is a status claim
+  // (pre-apply → "auto_queued") and goes through the same fail-closed
+  // allow-list every other status write in this repo goes through — a row
+  // already applied-or-later (the user tailored, then applied, then this
+  // cron run landed) must not be silently dragged back into the queue.
+  // See test/repro/appliedStatusDataLoss.test.js REPRO D2/D5's rocket/queue
+  // chain, and 3-plan-dataloss.md PART 4 / F-7.
   const { error: updErr } = await admin
     .from("applications")
     .update({
-      status: "auto_queued",
       resume_used_id: generatedResumeId || null,
       cover_letter_id: coverLetterId || null,
       auto_search_id: savedSearchId || null,
@@ -244,6 +253,12 @@ export async function tailorAndQueueOne({
     throw new Error(`Could not move the application into the queue: ${updErr.message}`);
   }
 
+  const { changed: queued } = await writeApplicationStatus(admin, {
+    userId,
+    positionId,
+    status: STATUS.AUTO_QUEUED,
+  });
+
   await markFeedSaved(admin, userId, posting.id);
 
   return {
@@ -251,6 +266,7 @@ export async function tailorAndQueueOne({
     positionId,
     generatedResumeId,
     coverLetterId,
+    queued,
     title: job.title,
     company: job.company,
     url: job.url,

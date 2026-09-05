@@ -89,15 +89,25 @@ describe("tailorAndQueueOne", () => {
       status: "tracking",
     });
 
-    // The final UPDATE flips it to auto_queued with queue metadata.
-    const updateArgs = admin.calls.applications.update[0][0];
-    expect(updateArgs).toMatchObject({
-      status: "auto_queued",
+    // The metadata UPDATE runs FIRST and names no status at all — the queue
+    // placement is a separate statement (below), guarded by the writer's
+    // allow-list, so a race with a status change elsewhere can never see a
+    // half-applied metadata write silently reinterpreted as a status claim.
+    // See lib/feed/tailorAndQueue.js and 3-plan-dataloss.md PART 4 / F-7/F-8.
+    const metadataArgs = admin.calls.applications.update[0][0];
+    expect(metadataArgs).toMatchObject({
       resume_used_id: "gen-resume-1",
       cover_letter_id: "gen-cover-1",
       auto_search_id: "search-1",
     });
-    expect(updateArgs.auto_saved_at).toBeTruthy();
+    expect(metadataArgs.status).toBeUndefined();
+    expect(metadataArgs.auto_saved_at).toBeTruthy();
+
+    // The SECOND update is the queue placement itself, issued by
+    // writeApplicationStatus's guarded UPDATE (C1) — it is unmocked here, so
+    // this is the real allow-list running against `makeSupabase`.
+    const statusArgs = admin.calls.applications.update[1][0];
+    expect(statusArgs).toEqual({ status: "auto_queued" });
 
     // markFeedSaved upserted feed_user_state for the source posting.
     expect(admin.calls.feed_user_state.upsert.length).toBe(1);
