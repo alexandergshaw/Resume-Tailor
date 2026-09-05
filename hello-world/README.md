@@ -31,7 +31,6 @@ app/
   components/
     AuthButton.js                Sign in / sign out (Supabase Google OAuth)
     GmailButton.js               Connect / disconnect Gmail OAuth2
-    JobSearchTab.js              Job search UI, filters, results
     TrackingTab.js               Application tracking table
     AutoTailorTab.js             Auto-tailor queue viewer
     ChatPanel.js                 AI chat drawer
