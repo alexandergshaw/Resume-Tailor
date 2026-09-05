@@ -7,6 +7,31 @@ describe("normalizeCompanyKey", () => {
     expect(normalizeCompanyKey("Foo & Bar Technologies")).toBe("fooandbar");
     expect(normalizeCompanyKey("")).toBe("");
   });
+
+  // FINDING 3 of the security review asked whether the unanchored suffix strip
+  // has the same quadratic shape as stripTags' /<[^>]+>/g (29.5 s on 200 000
+  // '<'). It does NOT: its alternation is a flat list of literals fenced by
+  // zero-width \b, so there is nothing to backtrack into. Measured on 2026-09-05,
+  // Node 22: the worst of nine 200 KB shapes was 80 ms ("&" repeated, which is
+  // just the " and " expansion tripling the string), and 1 MB of "co." was
+  // 64 ms. Left unchanged — including its matching semantics, which the board
+  // slugs depend on. This test is the guard on that conclusion.
+  it.each([
+    ["200 KB of the shortest alternative", () => "co".repeat(100000)],
+    ["200 KB with no alternative present", () => "a".repeat(200000)],
+    ["200 KB of separators", () => " ".repeat(200000)],
+    ["200 KB of '&', the expanding rewrite", () => "&".repeat(200000)],
+    ["200 KB of word-boundaried alternatives", () => "co ".repeat(66666)],
+    ["200 KB of punctuation-boundaried alternatives", () => "co.".repeat(66666)],
+    ["200 KB of a near-miss prefix", () => "compan".repeat(33333)],
+    ["200 KB of the longest alternative, one char short", () => "technologie".repeat(18181)],
+    ["1 MB of punctuation-boundaried alternatives", () => "co.".repeat(349525)],
+  ])("stays linear on %s", (_why, build) => {
+    const input = build();
+    const t0 = performance.now();
+    normalizeCompanyKey(input);
+    expect(performance.now() - t0).toBeLessThan(1000);
+  }, 60000);
 });
 
 describe("titleMatchScore", () => {

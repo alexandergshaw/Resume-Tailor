@@ -1,9 +1,3 @@
-const BLOCKED_HOSTNAMES = ["localhost", "127.0.0.1", "0.0.0.0", "::1", "169.254.169.254"];
-const BLOCKED_IP_PREFIXES = [
-  "10.", "192.168.",
-  "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.",
-  "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
-];
 const MAX_BYTES = 2 * 1024 * 1024;
 const DEFAULT_MAX_DESCRIPTION_CHARS = 12000;
 // A browser-like UA so sites that block obvious bots (but allow normal browsers)
@@ -13,6 +7,259 @@ const BROWSER_UA =
 // Workday job pages are JS-rendered SPAs with no usable server HTML, but each
 // tenant exposes the posting as JSON via its Candidate Experience (CXS) API.
 const WORKDAY_HOST_RE = /(^|\.)myworkdayjobs\.com$/i;
+
+// ===========================================================================
+// SSRF gate
+//
+// This module fetches URLs that users and LLM output hand it, from the server.
+// Everything below exists so that a request is never sent to an address only
+// this server can reach — the cloud instance-metadata service above all.
+//
+// It replaces an exact-string blocklist ("localhost", "127.0.0.1", "::1", …)
+// plus a startsWith() prefix list. That was bypassable by every address the
+// list didn't spell out literally: the rest of 127.0.0.0/8, the decimal / hex /
+// octal / short-form encodings of an IPv4 address, "[::1]" (the brackets a URL
+// hostname actually carries), every IPv6 private range, "localhost." with the
+// root dot, and metadata.google.internal. It also over-blocked, refusing any
+// DNS name that merely began "10." or "192.168.".
+//
+// KNOWN LIMIT — DNS REBINDING IS NOT CLOSED. This is a URL/hostname-level
+// control. It judges literal addresses and the names that always mean "this
+// host", and it re-runs on every redirect hop — but it does NOT resolve DNS.
+// A public hostname whose A record points at 169.254.169.254 (deliberate
+// rebinding, or just an internal record) still passes this gate. Closing that
+// requires resolving the name here and pinning the resolved IP for the socket
+// that actually connects (a custom undici dispatcher / lookup hook), which is
+// a larger change than this module. Treat the gate as defence in depth, not
+// as proof the destination is public.
+// ===========================================================================
+
+const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
+const BLOCKED_URL_ERROR = "That URL is not allowed.";
+
+/** Redirects we will follow ourselves, re-checking each hop. */
+export const MAX_REDIRECT_HOPS = 5;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+// Names that always denote the local host, a link-local/mDNS peer, or a cloud
+// instance-metadata service. Matched on the whole host or on a dot-delimited
+// suffix, so "api.localhost" and "metadata.google.internal." are covered too.
+// None of these are publicly resolvable, so nothing legitimate is lost.
+const BLOCKED_HOST_SUFFIXES = [
+  "localhost",
+  "localdomain",
+  "local", // mDNS
+  "internal", // GCE private zone, incl. metadata.google.internal
+  "metadata.goog",
+];
+
+// Lowercase and drop the trailing root dot(s) a fully-qualified name may carry
+// ("localhost." and "localhost" are the same name).
+function normalizeHost(hostname) {
+  let host = String(hostname || "").trim().toLowerCase();
+  while (host.endsWith(".")) host = host.slice(0, -1);
+  return host;
+}
+
+/**
+ * Parse an IPv4 literal the way inet_aton (and therefore the URL spec, and
+ * therefore the OS resolver) does: 1-4 dot-separated parts, each decimal,
+ * octal (leading 0) or hex (leading 0x), with the last part absorbing all the
+ * remaining low-order bytes. This is what makes "2130706433", "0x7f000001",
+ * "0177.0.0.1" and "127.1" all mean 127.0.0.1.
+ * @returns {number|null} the address as a uint32, or null if not an IPv4 literal.
+ */
+export function parseIPv4(hostname) {
+  const parts = String(hostname).split(".");
+  if (parts.length < 1 || parts.length > 4) return null;
+  const nums = [];
+  for (const part of parts) {
+    let n;
+    if (/^0[xX][0-9a-fA-F]+$/.test(part)) n = parseInt(part.slice(2), 16);
+    else if (/^0[0-7]+$/.test(part)) n = parseInt(part.slice(1), 8);
+    else if (/^[0-9]+$/.test(part)) n = parseInt(part, 10);
+    else return null;
+    if (!Number.isSafeInteger(n) || n < 0) return null;
+    nums.push(n);
+  }
+  const last = nums.pop();
+  if (nums.some((n) => n > 255)) return null;
+  if (last >= 256 ** (4 - nums.length)) return null;
+  let value = last;
+  for (let i = 0; i < nums.length; i += 1) value += nums[i] * 256 ** (3 - i);
+  return value >>> 0;
+}
+
+function parseDottedQuad(text) {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(text);
+  if (!m) return null;
+  const o = m.slice(1).map(Number);
+  if (o.some((n) => n > 255)) return null;
+  return (((o[0] << 24) >>> 0) + (o[1] << 16) + (o[2] << 8) + o[3]) >>> 0;
+}
+
+/**
+ * Parse an IPv6 literal, with or without the brackets a URL hostname carries,
+ * handling "::" compression and a trailing dotted quad ("::ffff:127.0.0.1").
+ * @returns {number[]|null} eight 16-bit groups, or null if not an IPv6 literal.
+ */
+export function parseIPv6(hostname) {
+  let s = String(hostname).trim().toLowerCase();
+  if (s.startsWith("[") && s.endsWith("]")) s = s.slice(1, -1);
+  const zone = s.indexOf("%"); // "fe80::1%eth0"
+  if (zone !== -1) s = s.slice(0, zone);
+  if (!s.includes(":")) return null;
+
+  const halves = s.split("::");
+  if (halves.length > 2) return null;
+  const toGroups = (chunk) => {
+    if (chunk === "") return [];
+    const out = [];
+    const pieces = chunk.split(":");
+    for (let i = 0; i < pieces.length; i += 1) {
+      const piece = pieces[i];
+      if (piece.includes(".")) {
+        // A dotted quad is legal only as the final piece; it fills two groups.
+        if (i !== pieces.length - 1) return null;
+        const v4 = parseDottedQuad(piece);
+        if (v4 === null) return null;
+        out.push((v4 >>> 16) & 0xffff, v4 & 0xffff);
+        continue;
+      }
+      if (!/^[0-9a-f]{1,4}$/.test(piece)) return null;
+      out.push(parseInt(piece, 16));
+    }
+    return out;
+  };
+  const head = toGroups(halves[0]);
+  if (head === null) return null;
+  if (halves.length === 1) return head.length === 8 ? head : null;
+  const tail = toGroups(halves[1]);
+  if (tail === null) return null;
+  const fill = 8 - head.length - tail.length;
+  if (fill < 1) return null;
+  return [...head, ...new Array(fill).fill(0), ...tail];
+}
+
+// Ranges that are loopback, private, link-local, shared, or otherwise not a
+// public destination. Deny by RANGE, never by spelled-out address.
+function isBlockedIPv4(value) {
+  const a = (value >>> 24) & 0xff;
+  const b = (value >>> 16) & 0xff;
+  const c = (value >>> 8) & 0xff;
+  if (a === 0) return true; // 0.0.0.0/8 "this network"
+  if (a === 10) return true; // RFC1918
+  if (a === 127) return true; // loopback
+  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64/10 CGNAT
+  if (a === 169 && b === 254) return true; // link-local, incl. 169.254.169.254
+  if (a === 172 && b >= 16 && b <= 31) return true; // RFC1918
+  if (a === 192 && b === 168) return true; // RFC1918
+  if (a === 192 && b === 0 && (c === 0 || c === 2)) return true; // IETF protocol / TEST-NET-1
+  if (a === 198 && (b === 18 || b === 19)) return true; // benchmarking
+  if (a === 198 && b === 51 && c === 100) return true; // TEST-NET-2
+  if (a === 203 && b === 0 && c === 113) return true; // TEST-NET-3
+  if (a >= 224) return true; // multicast, reserved, broadcast
+  return false;
+}
+
+function isBlockedIPv6(groups) {
+  const [g0, g1, g2, g3, g4, g5, g6, g7] = groups;
+  const low32 = ((((g6 << 16) >>> 0) + g7) >>> 0);
+  const topFiveZero = g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0;
+  // ::ffff:a.b.c.d (IPv4-mapped) and ::a.b.c.d (deprecated IPv4-compatible,
+  // which also covers :: and ::1) — judge the embedded IPv4.
+  if (topFiveZero && (g5 === 0xffff || g5 === 0)) return isBlockedIPv4(low32);
+  if (g0 === 0x64 && g1 === 0xff9b) return isBlockedIPv4(low32); // 64:ff9b::/96 NAT64
+  if (g0 === 0x2002) return isBlockedIPv4(((((g1 << 16) >>> 0) + g2) >>> 0)); // 2002::/16 6to4
+  if ((g0 & 0xfe00) === 0xfc00) return true; // fc00::/7 unique-local
+  if ((g0 & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
+  if ((g0 & 0xff00) === 0xff00) return true; // ff00::/8 multicast
+  if (g0 === 0x0100 && g1 === 0 && g2 === 0 && g3 === 0) return true; // 100::/64 discard
+  if (g0 === 0x2001 && g1 === 0x0db8) return true; // 2001:db8::/32 documentation
+  return false;
+}
+
+/**
+ * The deny-by-range core: is this hostname an address (or a name) we must not
+ * send a request to? Exported so the ranges can be unit-tested directly rather
+ * than only through a fetch.
+ */
+export function isBlockedHost(hostname) {
+  const host = normalizeHost(hostname);
+  if (!host) return true;
+
+  const v6 = parseIPv6(host);
+  if (v6) return isBlockedIPv6(v6);
+
+  const v4 = parseIPv4(host);
+  if (v4 !== null) return isBlockedIPv4(v4);
+
+  // Not an address literal, so it is a name. Only the names that always mean
+  // "this host" or "instance metadata" are refused — a name is otherwise left
+  // to DNS, with the rebinding caveat documented above.
+  return BLOCKED_HOST_SUFFIXES.some((suffix) => host === suffix || host.endsWith(`.${suffix}`));
+}
+
+/**
+ * THE gate. Every outbound request this module makes — the first one and every
+ * redirect hop — is decided here, so the rules cannot drift apart.
+ * @param {string} rawUrl the URL, absolute or (with `base`) relative.
+ * @param {string} [base] the URL a redirect Location was read from.
+ * @returns {{ ok: true, url: URL } | { ok: false, error: string }}
+ */
+export function checkRequestUrl(rawUrl, base) {
+  let parsed;
+  try {
+    parsed = base ? new URL(rawUrl, base) : new URL(rawUrl);
+  } catch {
+    return { ok: false, error: "Invalid URL." };
+  }
+  if (!ALLOWED_PROTOCOLS.has(parsed.protocol)) {
+    return { ok: false, error: "Only HTTP and HTTPS URLs are supported." };
+  }
+  if (isBlockedHost(parsed.hostname)) {
+    return { ok: false, error: BLOCKED_URL_ERROR };
+  }
+  return { ok: true, url: parsed };
+}
+
+/**
+ * fetch(), walking redirects OURSELVES so `checkRequestUrl` runs on every hop.
+ *
+ * `redirect: "follow"` hands the chain to the platform, where a perfectly
+ * ordinary allowed host can 302 straight into http://169.254.169.254/ and a
+ * pre-flight check never sees it. That is precisely the hole this closes, so
+ * do not "simplify" this back to redirect: "follow".
+ *
+ * @returns {Promise<{ response: Response, finalUrl: string } | { error: string }>}
+ */
+async function safeFetch(startUrl, init) {
+  let current = startUrl;
+  // One initial request plus at most MAX_REDIRECT_HOPS redirects.
+  for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop += 1) {
+    const check = checkRequestUrl(current);
+    if (!check.ok) return { error: check.error };
+
+    let response;
+    try {
+      response = await fetch(check.url.href, { ...init, redirect: "manual" });
+    } catch (err) {
+      return { error: err?.message || "Failed to fetch URL." };
+    }
+    if (!response || !REDIRECT_STATUSES.has(response.status)) {
+      return { response, finalUrl: check.url.href };
+    }
+    const location = response.headers?.get?.("location");
+    // A redirect status with no Location is not a redirect we can follow —
+    // hand it back and let the caller report the status.
+    if (!location) return { response, finalUrl: check.url.href };
+
+    const next = checkRequestUrl(location, check.url.href);
+    if (!next.ok) return { error: next.error };
+    current = next.url.href;
+  }
+  return { error: "Too many redirects." };
+}
 
 export function decodeHtmlEntities(value) {
   if (typeof value !== "string") return "";
@@ -29,14 +276,70 @@ export function decodeHtmlEntities(value) {
     });
 }
 
+// Replace every `<…>` span with `replacement`, in ONE left-to-right scan.
+//
+// This is a drop-in for /<[^>]+>/g, which is quadratic: at every '<' the engine
+// runs `[^>]+` forward to the end of the input, fails to find a '>', and
+// backtracks the whole way before advancing one character. Measured on
+// 2026-09-05 (Node 22): 504 ms at 25 000 '<', 2.0 s at 50 000, 11.2 s at
+// 100 000, 29.5 s at 200 000 — and htmlToText runs it up to twice over bodies
+// as large as MAX_BYTES (2 MB), which extrapolates to roughly an hour.
+//
+// The language is unchanged: a '<', at least one non-'>' character, then a '>'.
+// Because `indexOf` finds the FIRST '>' after the '<', and `[^>]+` cannot cross
+// a '>', that span is exactly what the greedy regex would have matched.
+function removeTagSpans(text, replacement) {
+  let out = "";
+  let i = 0;
+  for (;;) {
+    const lt = text.indexOf("<", i);
+    if (lt === -1) return out + text.slice(i);
+    const gt = text.indexOf(">", lt + 1);
+    if (gt === -1) return out + text.slice(i);
+    if (gt === lt + 1) {
+      // "<>" — the pattern needs at least one character between the brackets,
+      // so nothing matches here. Resume scanning just after this '<'.
+      out += text.slice(i, lt + 1);
+      i = lt + 1;
+      continue;
+    }
+    out += text.slice(i, lt) + replacement;
+    i = gt + 1;
+  }
+}
+
+// Is there still a literal tag in the text? Equivalent to
+// /<\/?[a-z][^>]*>/i.test(text), which is quadratic for the same reason as
+// above — measured at 14.7 s on 100 000 "<a" pairs.
+function hasLiteralTag(text) {
+  let i = 0;
+  for (;;) {
+    const lt = text.indexOf("<", i);
+    if (lt === -1) return false;
+    const gt = text.indexOf(">", lt + 1);
+    if (gt === -1) return false;
+    // "<a…>" or "</a…>": a letter must sit right after the '<' (or the '</'),
+    // and before the closing '>'.
+    const nameAt = text[lt + 1] === "/" ? lt + 2 : lt + 1;
+    if (nameAt < gt && /[a-z]/i.test(text[nameAt])) return true;
+    i = lt + 1;
+  }
+}
+
 // Strip tags + map block/line breaks to newlines (one pass).
-function stripTags(html) {
-  return html
+//
+// The <script>/<style> regexes below were MEASURED, not assumed: 0.3 ms and
+// 0.2 ms on 200 000 '<', 3.8 ms on "<script" followed by 200 000 '<'. They are
+// linear here because `[^<]*` is fenced by the literal '<' that follows it.
+// The close-tag and <br> regexes measured at 0.1-0.4 ms. All four are fine and
+// deliberately left alone — only the unbounded `[^>]` scan was the problem.
+export function stripTags(html) {
+  const collapsed = html
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, " ")
     .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, " ")
     .replace(/<\/(p|div|li|h[1-6]|tr|br)>/gi, "\n")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]+>/g, " ");
+    .replace(/<br\s*\/?>/gi, "\n");
+  return removeTagSpans(collapsed, " ");
 }
 
 export function htmlToText(html) {
@@ -45,7 +348,7 @@ export function htmlToText(html) {
   // JobPosting.description) are HTML that's been entity-encoded, so decoding
   // reveals a second layer of literal tags (<strong>, <br>) — strip those too.
   let text = decodeHtmlEntities(stripTags(html));
-  if (/<\/?[a-z][^>]*>/i.test(text)) text = decodeHtmlEntities(stripTags(text));
+  if (hasLiteralTag(text)) text = decodeHtmlEntities(stripTags(text));
   return text
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
@@ -256,17 +559,14 @@ export function workdayCxsUrl(parsed) {
 async function fetchWorkday(parsed, maxChars) {
   const cxs = workdayCxsUrl(parsed);
   if (!cxs) return null;
-  let response;
-  try {
-    response = await fetch(cxs, {
-      headers: { "User-Agent": BROWSER_UA, Accept: "application/json" },
-      redirect: "follow",
-      signal: AbortSignal.timeout(15000),
-    });
-  } catch {
-    return null;
-  }
-  if (!response.ok) return null;
+  // safeFetch, not fetch: the CXS endpoint can redirect, and every hop has to
+  // go back through the SSRF gate.
+  const walked = await safeFetch(cxs, {
+    headers: { "User-Agent": BROWSER_UA, Accept: "application/json" },
+    signal: AbortSignal.timeout(15000),
+  });
+  const response = walked.response;
+  if (walked.error || !response || !response.ok) return null;
   let data;
   try {
     data = await response.json();
@@ -287,7 +587,7 @@ async function fetchWorkday(parsed, maxChars) {
     company: cleanOrgName(orgName),
     description,
     publishedDate: formatMonthYear(info.startDate || ""),
-    finalUrl: cxs,
+    finalUrl: walked.finalUrl || cxs,
   };
 }
 
@@ -307,22 +607,13 @@ const SPA_PROVIDERS = [
 export async function fetchUrlContent(rawUrl, options = {}) {
   const maxChars = options.maxChars || DEFAULT_MAX_DESCRIPTION_CHARS;
 
-  let parsed;
-  try {
-    parsed = new URL(rawUrl);
-  } catch {
-    return { error: "Invalid URL." };
-  }
-  if (!["http:", "https:"].includes(parsed.protocol)) {
-    return { error: "Only HTTP and HTTPS URLs are supported." };
-  }
+  // Scheme allow-list + deny-by-range host check. safeFetch runs this again on
+  // the request itself and on every redirect hop; doing it here too lets the
+  // SPA-provider dispatch below work from an already-validated URL.
+  const gate = checkRequestUrl(rawUrl);
+  if (!gate.ok) return { error: gate.error };
+  const parsed = gate.url;
   const hostname = parsed.hostname.toLowerCase();
-  if (
-    BLOCKED_HOSTNAMES.includes(hostname) ||
-    BLOCKED_IP_PREFIXES.some((prefix) => hostname.startsWith(prefix))
-  ) {
-    return { error: "That URL is not allowed." };
-  }
 
   // SPA boards (Workday, …) expose the posting only via a JSON API — use it. Any
   // board not covered here still works through the generic HTML + embedded-JSON
@@ -334,24 +625,20 @@ export async function fetchUrlContent(rawUrl, options = {}) {
     break; // matched the provider but its API didn't yield a posting — fall through
   }
 
-  let response;
-  try {
-    response = await fetch(rawUrl, {
-      // A browser-like UA + headers so the many sites that block obvious bots
-      // (but allow normal browsers) return the page. Sites behind a JS/WAF
-      // challenge will still 403 — the company-research URL path then falls back
-      // to Gemini's own fetcher.
-      headers: {
-        "User-Agent": BROWSER_UA,
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-      },
-      redirect: "follow",
-      signal: AbortSignal.timeout(15000),
-    });
-  } catch (err) {
-    return { error: err?.message || "Failed to fetch URL." };
-  }
+  const walked = await safeFetch(rawUrl, {
+    // A browser-like UA + headers so the many sites that block obvious bots
+    // (but allow normal browsers) return the page. Sites behind a JS/WAF
+    // challenge will still 403 — the company-research URL path then falls back
+    // to Gemini's own fetcher.
+    headers: {
+      "User-Agent": BROWSER_UA,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (walked.error) return { error: walked.error };
+  const response = walked.response;
 
   if (!response.ok) {
     return { error: `Failed to fetch URL (status ${response.status}).` };
@@ -431,8 +718,11 @@ export async function fetchUrlContent(rawUrl, options = {}) {
     description,
     publishedDate,
     // The URL after any redirects — lets callers resolve a grounding-redirect
-    // link to the real article it points at.
-    finalUrl: typeof response.url === "string" && response.url ? response.url : rawUrl,
+    // link to the real article it points at. safeFetch tracked the chain, so
+    // its last hop is authoritative even though we no longer let the platform
+    // follow redirects for us.
+    finalUrl:
+      typeof response.url === "string" && response.url ? response.url : walked.finalUrl || rawUrl,
   };
 }
 
