@@ -50,6 +50,31 @@ describe("[src] every file this feature creates or is pinned against stays under
   });
 });
 
+describe("app/components/DocumentPreviewDialog.js: a one-time post-condition for the copy-text change", () => {
+  it("stays at or under 980 lines (AC-C5.3, plan section 3.2.1: 993 - 57 + 35 = 971)", () => {
+    // Tighter than the generic <1000 sweep above, on purpose: the copy-text
+    // plan's own arithmetic (993 removed 57, added 35) lands at 971, and this
+    // is the post-condition that ratchet was measured against. Do not raise
+    // this constant to make room for an unrelated change -- extract into
+    // app/components/preview/ instead, the way this change did.
+    expect(lineCount("../../app/components/DocumentPreviewDialog.js")).toBeLessThanOrEqual(980);
+  });
+});
+
+describe("[src] the copy-text preview leaves stay well under the dialog's own ceiling", () => {
+  // NOT appended to CAPPED_AT_1000 above -- that would silently give these
+  // three files a 1000-line bound instead of the 400 AC-C13.4 actually names.
+  const CAPPED_AT_400 = [
+    "../../app/components/preview/copyOutcome.js",
+    "../../app/components/preview/CopyFeedback.js",
+    "../../app/components/preview/CopyDocumentControl.js",
+  ];
+
+  it.each(CAPPED_AT_400)("%s stays under 400 lines", (file) => {
+    expect(lineCount(file)).toBeLessThan(400);
+  });
+});
+
 describe("app/hooks/useDocumentPreview.js: one line of margin, on purpose", () => {
   it("stays under 935 lines", () => {
     // This file sits at 934 lines today against this 935 bound -- a single

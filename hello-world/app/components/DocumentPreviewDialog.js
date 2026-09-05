@@ -27,6 +27,8 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import CloseIcon from "@mui/icons-material/Close";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
 import { renderModelToHtml } from "@/lib/document/docxPreview";
+import { htmlToPlainText } from "@/lib/document/htmlToPlainText";
+import { writePlainText } from "@/lib/clipboard/plainText";
 import { changedScopes as changedScopesOf } from "@/lib/tailor/previewScopes";
 import { SCOPES, SCOPE_LABEL, DOCX_SCOPES } from "@/lib/tailor/documentScopes";
 import { useIsMobile } from "../hooks/useResponsive";
@@ -37,6 +39,9 @@ import VersionControl from "./preview/VersionControl";
 import HighlightToggle from "./preview/HighlightToggle";
 import DriveActions from "./preview/DriveActions";
 import DriveResultRegion from "./preview/DriveResultRegion";
+import CopyDocumentControl from "./preview/CopyDocumentControl";
+import { useCopyFeedback, CopyFeedbackStrip } from "./preview/CopyFeedback";
+import { copyStateFor } from "./preview/copyOutcome";
 
 // Cover-letter framing options for the in-preview control. "" = auto-detect; the
 // rest pin the framing — the technical/non-technical axis the user controls, plus
@@ -184,11 +189,6 @@ export default function DocumentPreviewDialog({
   const [combineFormat, setCombineFormat] = useState("docx"); // "docx" | "pdf"
   const [combining, setCombining] = useState(false);
   const [combineError, setCombineError] = useState("");
-  // AC-4: inline feedback for the email tab's "Copy" control — "Copied" on
-  // success, an explanation on the rare rejection (clipboard API can reject
-  // when the document isn't focused or permission is denied).
-  const [copyFeedback, setCopyFeedback] = useState("");
-  const copyFeedbackTimerRef = useRef(null);
   // AC-4: line-level version highlighting, per scope, defaulting OFF so the
   // normal preview stays clean.
   const [highlightOn, setHighlightOn] = useState({ resume: false, cover: false });
@@ -377,7 +377,6 @@ export default function DocumentPreviewDialog({
   // Never leave a debounce timer running after unmount.
   useEffect(() => () => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    if (copyFeedbackTimerRef.current) clearTimeout(copyFeedbackTimerRef.current);
   }, []);
 
   // Remember the editor's current selection so a control that steals focus (e.g.
@@ -397,28 +396,8 @@ export default function DocumentPreviewDialog({
     return sel;
   };
 
-  const copyText = (text) => {
-    try {
-      navigator.clipboard?.writeText(text);
-    } catch {
-      /* clipboard may be unavailable */
-    }
-  };
-  // AC-4: the email tab's primary action — copies subject + body (the same
-  // text the preview shows) so the user can paste both into their email
-  // client. Uses the async clipboard API, which can reject when the document
-  // isn't focused or permission is denied, so a failure gets its own visible
-  // message instead of silently doing nothing.
-  const copyEmail = async () => {
-    if (copyFeedbackTimerRef.current) clearTimeout(copyFeedbackTimerRef.current);
-    try {
-      await navigator.clipboard.writeText(scopes.email?.text || "");
-      setCopyFeedback("Copied");
-    } catch {
-      setCopyFeedback("Couldn't copy — select the text below and copy it manually.");
-    }
-    copyFeedbackTimerRef.current = setTimeout(() => setCopyFeedback(""), 3000);
-  };
+  // AC-C5.1: delegates to writePlainText, which never throws -- no try/catch.
+  const copyText = (text) => { writePlainText(text, { mode }); };
   // Insert a sentence at the caret (edit mode) as its own paragraph; otherwise
   // copy it so the user can paste wherever they like.
   const insertReference = (text) => {
@@ -440,6 +419,12 @@ export default function DocumentPreviewDialog({
     }
     return { text: scopes[tab]?.text || "", html: scopes[tab]?.html || docState[tab]?.html || "" };
   };
+
+  // AC-C1.5: edit mode reads the LIVE innerHTML (commitDraft still writes innerText -- D2/F-1);
+  // view mode prefers the hand-edited scopes[tab].html over the parsed model (AC-C1.2, and the
+  // same precedence as activePayload above). O-1: called at CLICK time, never memoised.
+  const copySourceText = () =>
+    htmlToPlainText(mode === "edit" && editorRef.current ? editorRef.current.innerHTML : scopes[tab]?.html || docState[tab]?.html || "");
 
   // Commit any pending edit, then download the active document.
   const handleDownload = () => { commitDraft(); onDownload?.(tab, activePayload()); };
@@ -558,6 +543,11 @@ export default function DocumentPreviewDialog({
 
   const heading = [company, jobTitle].filter(Boolean).join(" · ");
   const state = docState[tab] || {};
+  // R-2/O-6: reads docState[tab] directly -- the `|| {}` local above erases
+  // the null this gate's fourth conjunct needs on the very first paint.
+  const copyState = copyStateFor(available(tab), docState[tab]);
+  // O-3: one key collapses all four clear triggers (tab/mode/reloadKey/open).
+  const copy = useCopyFeedback(`${tab}|${mode}|${reloadKey}|${open}`);
   const hasContent = SCOPES.some(available);
   // "Combine both" is offered only when a résumé AND a cover letter both
   // exist — deliberately DOCX_SCOPES, not SCOPES, so the plain-text email
@@ -865,7 +855,9 @@ export default function DocumentPreviewDialog({
             sx={{ ...pageSx, outline: "none", "&:focus": { boxShadow: "0 0 0 2px var(--accent)" } }}
           />
         ) : (
-          <Box sx={pageSx} dangerouslySetInnerHTML={{ __html: state.html || "" }} />
+          // AC-C14.5/D1: prefer scopes[tab].html (hand-edited) over the stale
+          // docState -- ensureLoaded never re-parses after a commit.
+          <Box sx={pageSx} dangerouslySetInnerHTML={{ __html: scopes[tab]?.html || state.html || "" }} />
         )}
 
         {activeError ? (
@@ -906,6 +898,11 @@ export default function DocumentPreviewDialog({
         announcement={drive.announcement}
       />
 
+      {/* R-9/O-4 INVARIANT: DriveResultRegion -> CopyFeedbackStrip ->
+          DialogActions -- keeps the drive suite's own [role="status"] lookup
+          resolving to DriveResultRegion's node, not this strip's. */}
+      <CopyFeedbackStrip {...copy.regionProps} />
+
       <DialogActions sx={{ flexWrap: "wrap", gap: 1, px: { xs: 1.25, sm: 2 }, py: 1.5 }}>
         <Button onClick={handleClose} sx={{ textTransform: "none" }}>Close</Button>
         <Box sx={{ flex: 1 }} />
@@ -941,37 +938,20 @@ export default function DocumentPreviewDialog({
           onRefocusConsent={drive.onRefocusConsent}
           onDownload={drive.onDownload}
         />
-        {tab === "email" ? (
-          // AC-3/AC-5: the email is plain text, never a docx — its primary
-          // action is copying it (AC-4), not "Download .docx", which would
-          // otherwise silently run the wrong (résumé) build pipeline for it.
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            {copyFeedback ? (
-              <Box
-                component="span"
-                sx={{
-                  fontSize: "0.8rem",
-                  color: copyFeedback.startsWith("Couldn't") ? "var(--danger)" : "var(--success)",
-                }}
-              >
-                {copyFeedback}
-              </Box>
-            ) : null}
-            <Tooltip title="Copy the subject and body so you can paste them into your email client.">
-              <span>
-                <Button
-                  onClick={copyEmail}
-                  disabled={!available(tab)}
-                  startIcon={<ContentCopyIcon />}
-                  variant="contained"
-                  sx={{ textTransform: "none" }}
-                >
-                  Copy email
-                </Button>
-              </span>
-            </Tooltip>
-          </Box>
-        ) : (
+        {/* AC-C4/AC-C10: the click handler owns the blank/enable-gate
+            refusals -- never a `disabled` attribute (DriveActions.js's header
+            rules that out for this bar). Contained on email, its only
+            delivery action; outlined beside Download .docx elsewhere. */}
+        <CopyDocumentControl
+          getText={copySourceText}
+          copyState={copyState}
+          scopeLabel={SCOPE_LABEL[tab]}
+          accessibleName={`Copy text of the ${SCOPE_LABEL[tab].toLowerCase()}`}
+          variant={DOCX_SCOPES.includes(tab) ? "outlined" : "contained"}
+          mode={mode}
+          onOutcome={copy.announce}
+        />
+        {DOCX_SCOPES.includes(tab) ? (
           <Tooltip title={`Download the ${SCOPE_LABEL[tab].toLowerCase()} as .docx`}>
             <span>
               <Button
@@ -985,7 +965,7 @@ export default function DocumentPreviewDialog({
               </Button>
             </span>
           </Tooltip>
-        )}
+        ) : null}
       </DialogActions>
     </Dialog>
   );

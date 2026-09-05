@@ -47,7 +47,16 @@ function runText(runXml) {
   let m;
   TEXT_RE.lastIndex = 0;
   // Walk the run in order so <w:br/> / <w:tab/> land between the right <w:t>s.
-  const TOKEN_RE = /<w:t\b[^>]*>([\s\S]*?)<\/w:t>|<w:br\s*\/?>|<w:tab\s*\/?>/g;
+  // AC-C17: matches an ATTRIBUTE-BEARING <w:br w:type="textWrapping"/> and
+  // <w:tab w:val="..."/>, not just the bare forms -- without this a cover
+  // letter's <w:br w:type="textWrapping"/> sign-off break is silently dropped
+  // and "Sincerely," fuses onto "Alex Shaw" on both the screen and the
+  // clipboard. Safety is NOT the `\b` (it does not keep a `<w:tab w:val=...
+  // w:pos=.../>` tab-STOP out, once one is inside a string this sees) -- it is
+  // the CALL GRAPH: tab stops live in <w:pPr>, and runText only ever sees the
+  // inside of a matched <w:r>...</w:r>, so a <w:tabs> child is never in a
+  // string this regex is run against.
+  const TOKEN_RE = /<w:t\b[^>]*>([\s\S]*?)<\/w:t>|<w:br\b[^>]*\/?>|<w:tab\b[^>]*\/?>/g;
   while ((m = TOKEN_RE.exec(runXml)) !== null) {
     if (m[1] != null) out += decodeXml(m[1]);
     else if (m[0].startsWith("<w:br")) out += "\n";
