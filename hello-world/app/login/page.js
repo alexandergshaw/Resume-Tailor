@@ -20,6 +20,8 @@ import Visibility from "@mui/icons-material/Visibility";
 import VisibilityOff from "@mui/icons-material/VisibilityOff";
 import GoogleIcon from "@mui/icons-material/Google";
 import ShieldOutlinedIcon from "@mui/icons-material/ShieldOutlined";
+import { safeRedirectPath } from "@/lib/url/safeRedirectPath";
+import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 // Full login experience: email/password sign in + sign up, Google OAuth, and a
 // TOTP MFA challenge step shown when the signed-in user must step up to aal2.
@@ -27,7 +29,7 @@ import ShieldOutlinedIcon from "@mui/icons-material/ShieldOutlined";
 function LoginForm() {
   const [supabase] = useState(() => createClient());
   const searchParams = useSearchParams();
-  const redirectTo = searchParams?.get("redirect") || "/";
+  const redirectTo = safeRedirectPath(searchParams?.get("redirect"));
 
   const [mode, setMode] = useState("signin"); // "signin" | "signup"
   const [step, setStep] = useState("credentials"); // "credentials" | "mfa" | "verifyEmail"
@@ -39,7 +41,17 @@ function LoginForm() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  const goToApp = () => window.location.assign(redirectTo);
+  // redirectTo is already constrained to a same-origin path by
+  // safeRedirectPath (see lib/url/safeRedirectPath.js). Every browser
+  // navigation in this app additionally flows through the canonical
+  // safeExternalHref gate before it reaches a location API — see
+  // app/components/windowOpenSafety.sweep.test.js — so re-validate the
+  // concrete, now-absolute target through it here too rather than making
+  // this one call site a snowflake.
+  const goToApp = () => {
+    const target = safeExternalHref(`${window.location.origin}${redirectTo}`) || "/";
+    window.location.assign(target);
+  };
 
   const resetMessages = () => {
     setError("");
