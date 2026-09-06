@@ -40,12 +40,30 @@ export async function listDigests(supabase, userId, applicationIds) {
 
 // Creates or overwrites the one digest row for `applicationId` — a digest is
 // a "latest known" fact about an application, not a history, so this is
-// always an upsert on the primary key rather than an insert-then-update
-// pair. `fields` is whatever of markdown/status/error/sources/engine the
-// caller has; anything omitted keeps its column default (or, on an update
-// of an existing row, its current value — upsert here is a full-row
-// replace, so the API route is expected to pass every field it means to
-// keep, matching how it is actually called: one write per digest attempt).
+// always an upsert on the primary key rather than an insert-then-update pair.
+// `fields` is whatever of markdown/status/error/sources/engine/
+// citation_outcome/researched_at the caller has.
+//
+// THE UPSERT IS COLUMN-WISE, NOT ROW-WISE. `.upsert(row, { onConflict })`
+// sends only the keys present in `row`, so on the UPDATE branch an omitted
+// column keeps its EXISTING value — this is not a full-row replace, whatever
+// an earlier version of this comment claimed. Two consequences the callers
+// depend on, in opposite directions:
+//
+//   * A write that omits `citation_outcome` leaves the PREVIOUS run's stamp
+//     attached to the NEW run's markdown, and every citation marker then
+//     splices at an offset computed against a different document. So the
+//     digest route passes it on every write, on both paths, and carries
+//     markdown, sources and the outcome forward together as one generation.
+//   * A write that omits `researched_at` leaves the last SUCCESSFUL research
+//     time standing. That is exactly what the failure path wants: `updated_at`
+//     below is stamped unconditionally and honestly means "row last written",
+//     so it must never be read as research recency.
+//
+// The whitelist is the only thing standing between `fields` and PostgREST, and
+// a field it does not name is dropped in silence — no error, no warning, a 200
+// response and a column that stays NULL forever. Anything added to `fields`
+// must be added here, spelled EXACTLY as the column is spelled.
 export async function upsertDigest(supabase, userId, applicationId, fields = {}) {
   try {
     if (!applicationId) return { digest: null, error: "Missing application id." };
@@ -60,6 +78,29 @@ export async function upsertDigest(supabase, userId, applicationId, fields = {})
     if (typeof fields.error === "string" || fields.error === null) row.error = fields.error;
     if (Array.isArray(fields.sources)) row.sources = fields.sources;
     if (typeof fields.engine === "string" || fields.engine === null) row.engine = fields.engine;
+    // `null` is written EXPLICITLY, mirroring how `error` is handled above.
+    // `typeof null === "object"`, so a check written with only the typeof arm
+    // lets null through by accident and cannot say whether that was meant —
+    // and here it is very much meant. SQL NULL in this column is the only
+    // signal separating "this row predates the citation pipeline" from "the
+    // pipeline ran and found nothing to cite", the two states render
+    // differently, and the failure path carries a legacy row's null forward
+    // alongside the markdown it describes.
+    if (fields.citation_outcome === null
+        || (fields.citation_outcome && typeof fields.citation_outcome === "object")) {
+      row.citation_outcome = fields.citation_outcome;
+    }
+    // NO null arm here, and the asymmetry with the line above is deliberate.
+    // `researched_at` is when research last SUCCEEDED; there is no caller that
+    // wants to ERASE that, and a failure path is exactly where a stray null
+    // would arrive. Omitting the key keeps the stored value, which is the
+    // correct behaviour for every non-success write. A timestamp is stored as
+    // an ISO string; a Date or an epoch number is refused rather than coerced,
+    // because a silently coerced timestamp is indistinguishable from a right
+    // one until someone reads it.
+    if (typeof fields.researched_at === "string" && fields.researched_at !== "") {
+      row.researched_at = fields.researched_at;
+    }
 
     const { data, error } = await supabase
       .from(TABLE)

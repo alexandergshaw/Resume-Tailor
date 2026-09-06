@@ -49,7 +49,6 @@ import {
 
 const REUTERS = "https://www.reuters.com/business/nestle-q3";
 const AP = "https://apnews.com/article/zurich-depots";
-const NOW = Date.parse("2026-09-05T18:04:11.219Z");
 
 const encoder = new TextEncoder();
 // The vendor sends BYTE offsets. Building every fixture's offsets this way,
@@ -85,7 +84,6 @@ function build(overrides = {}) {
       annotations: sources.length,
     },
     previousOutcome: null,
-    now: NOW,
     ...overrides,
   });
 }
@@ -123,9 +121,21 @@ describe("buildCitedDigest -- the outcome record", () => {
     expect(outcome.surface).not.toBe("legacy");
   });
 
-  it("stamps the time of the SUCCESSFUL research from the injected clock", () => {
+  it("does NOT carry a researchedAt of its own — that fact has exactly one home", () => {
+    // `application_digests.researched_at` is a real timestamptz column, added
+    // by the same migration as `citation_outcome`, and the route writes it. A
+    // copy inside the jsonb would be a second home for one fact: two writers,
+    // two readers, and no way to tell which is right the first time they
+    // disagree. The column wins because SQL wants to filter and order by
+    // research recency, and a timestamp buried in jsonb needs a cast at every
+    // call site and yields NULL on a typo in the key name.
+    //
+    // `previous.researchedAt` is NOT a second home: it is a historical
+    // snapshot of a generation that no longer exists anywhere else, and the
+    // route sources it FROM the column.
     const { outcome } = build();
-    expect(outcome.researchedAt).toBe("2026-09-05T18:04:11.219Z");
+    expect(Object.prototype.hasOwnProperty.call(outcome, "researchedAt")).toBe(false);
+    expect(outcome.researchedAt).toBeUndefined();
   });
 
   it("carries exactly one generation of history, never a chain", () => {

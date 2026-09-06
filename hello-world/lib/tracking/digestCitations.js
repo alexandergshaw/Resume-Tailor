@@ -205,12 +205,21 @@ function removalPass(text, ranges) {
   return { text: out, image };
 }
 
-function isoFrom(now) {
-  const ms = now instanceof Date ? now.getTime() : now;
-  const stamp = Number.isFinite(ms) ? ms : Date.now();
-  return new Date(stamp).toISOString();
-}
-
+// ONE generation of history, and `researchedAt` here is a HISTORICAL SNAPSHOT,
+// not this record's own timestamp.
+//
+// This record deliberately carries no `researchedAt` of its own: research
+// recency lives in the `application_digests.researched_at` COLUMN, written by
+// the route on the success path only, and two homes for one fact is how they
+// come to disagree. The column is the home because SQL wants to filter and
+// order by "which digests are stale", and a timestamp buried in jsonb needs a
+// cast at every call site, cannot be b-tree indexed without an expression
+// index, and yields NULL on a typo in the key name.
+//
+// `previous.researchedAt` is not a second home for the same fact — it is when
+// the PREVIOUS generation was researched, which the column no longer holds
+// once the current run overwrites it, and which "it used to have four sources
+// and now has none" is useless without. The caller sources it from the column.
 function previousGeneration(previousOutcome) {
   if (!previousOutcome || typeof previousOutcome !== "object" || Array.isArray(previousOutcome)) {
     return null;
@@ -234,8 +243,9 @@ function previousGeneration(previousOutcome) {
  * @param {unknown} input.searched        `interactionSearched(interaction)`
  * @param {unknown} input.truncated       `interactionTruncated(interaction)`
  * @param {unknown} input.stageCounts     `interactionStageCounts(interaction)`
- * @param {unknown} input.previousOutcome `existing?.citation_outcome ?? null`
- * @param {unknown} input.now             injected clock, ms or Date
+ * @param {unknown} input.previousOutcome `existing?.citation_outcome` with its
+ *                                        `researchedAt` taken from the row's
+ *                                        `researched_at` COLUMN, or null
  * @returns {{markdown: string, sources: Array<object>, outcome: object}}
  */
 export function buildCitedDigest(input) {
@@ -246,7 +256,6 @@ export function buildCitedDigest(input) {
     truncated,
     stageCounts,
     previousOutcome,
-    now,
   } = input && typeof input === "object" ? input : {};
 
   const raw = typeof text === "string" ? text : "";
@@ -404,7 +413,6 @@ export function buildCitedDigest(input) {
     },
     len: stamp.len,
     hash: stamp.hash,
-    researchedAt: isoFrom(now),
     previous: previousGeneration(previousOutcome),
   };
 

@@ -1,27 +1,34 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // AC-Y2. The tracking table's researched digest actually ASKS for Google
-// Search on the wire.
+// Search on the wire — and it now asks a DIFFERENT API than every other
+// grounded call site in this repo.
 //
-// THE DEFECT THIS FILE EXISTS TO CATCH. `GenerateContentParameters` has
-// exactly three properties — `model`, `contents`, `config` — and `tools`
-// belongs to `GenerateContentConfig`. The SDK's parameter transformer reads
-// only those three keys and silently discards everything else before building
-// the request body, so a `tools` passed at the TOP LEVEL never reaches Google:
-// no error, no warning.
-//
-// Downstream the failure is total and invisible: no tools -> no search -> no
-// groundingMetadata -> `extractGroundingSources` returns [] -> the digest's
-// citation reconciliation strips every link and stores a claim-only digest,
-// while still paying for a full grounded call. It looks exactly like a model
-// that found nothing.
+// THE SURFACE MIGRATED, AND THE TWO REQUEST SHAPES ARE INVERTED.
+//   * `models.generateContent` — seven call sites, unchanged: `tools` lives
+//     INSIDE `config`. `GenerateContentParameters` has exactly three
+//     properties (`model`, `contents`, `config`), and the SDK's parameter
+//     transformer silently discards everything else, so a top-level `tools`
+//     never reaches Google. The third test in this file still pins that.
+//   * `interactions.create` — this route, and only this route: `tools` is
+//     TOP-LEVEL, the input field is `input` (not `contents`), and there is no
+//     `config` object at all.
+// An assertion copied between the two is wrong in both directions. Nothing in
+// this file may be propagated to the other seven wire tests.
 //
 // WHY THIS DRIVES THE REAL SDK. `route.test.js` asserts the request shape
 // against an INJECTED FAKE client, which sees whatever object the route hands
-// it and cannot observe the layer that drops the key — that assertion was
-// green for months against a request that never carried `tools`. Only the real
-// transformer can catch this, so this file stubs `fetch` and reads the bytes.
-// See `lib/llm/geminiWireProbe.js`.
+// it and cannot observe the layer that drops a key — that assertion was green
+// for months against a request that never carried `tools`. Only the real
+// transport can catch it, so this file stubs `fetch` and reads the bytes. See
+// `lib/llm/geminiWireProbe.js`.
+//
+// A FRESH CLIENT IS BUILT INSIDE EACH CAPTURE WINDOW, deliberately. The
+// Interactions transport binds `globalThis.fetch` at the first `.interactions`
+// access and holds that reference, so a client reused across windows can send
+// its request to a stub that has already been restored. `getGeminiClient` is
+// mocked with an IMPLEMENTATION rather than a return value for exactly that
+// reason — the route calls it inside the window, so the client is built there.
 
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 vi.mock("@/lib/llm/geminiClient", () => ({ getGeminiClient: vi.fn() }));
@@ -78,35 +85,61 @@ beforeEach(() => {
     digest: { application_id: id, ...fields },
     error: null,
   }));
-  // The REAL client. A fake here would reproduce exactly the blindness that
-  // let the defect ship.
-  getGeminiClient.mockReturnValue(new GoogleGenAI({ apiKey: "test-key" }));
+  // The REAL client, built lazily INSIDE the capture window. A fake here would
+  // reproduce exactly the blindness that let the original defect ship.
+  getGeminiClient.mockImplementation(() => new GoogleGenAI({ apiKey: "test-key" }));
 });
 
 afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe("the digest asks for search on the wire (AC-Y2)", () => {
-  it("puts googleSearch in the request body of its real Gemini call", async () => {
-    const bodies = await captureGeminiRequests(() => POST(request()), { text: "## What they do\n\nRobots." });
+describe("the digest asks the Interactions API for search on the wire (AC-Y2)", () => {
+  it("sends google_search as a TOP-LEVEL tool on the interactions request body", async () => {
+    const bodies = await captureGeminiRequests(() => POST(request()));
     expect(bodies).toHaveLength(1);
-    expect(toolsOf(bodies[0])).toEqual([{ googleSearch: {} }]);
+    expect(toolsOf(bodies[0])).toEqual([{ type: "google_search" }]);
   });
 
-  it("does not force a JSON mime type alongside the search tool", async () => {
-    // googleSearch is not combinable with response_mime_type on this model,
-    // which is why the digest is parsed defensively out of markdown prose.
-    const bodies = await captureGeminiRequests(() => POST(request()), { text: "## What they do\n\nRobots." });
-    expect(bodies[0]?.generationConfig?.responseMimeType).toBeUndefined();
+  it("proves from the body alone that the request went to Interactions, not generateContent", async () => {
+    // The surface discriminator, needing no probe change: an Interactions body
+    // carries `input`; a generateContent body carries `contents`. If a future
+    // change reverts the call site, `tools` would still be present (nested,
+    // and therefore also on the wire) and the test above would still pass.
+    const bodies = await captureGeminiRequests(() => POST(request()));
+    expect(bodies[0]?.input).toBeDefined();
+    expect(bodies[0]?.contents).toBeUndefined();
+    expect(String(JSON.stringify(bodies[0]?.input))).toContain("Acme Robotics");
+  });
+
+  it("sends no response_format, response_mime_type or generation_config beside the search tool", async () => {
+    // The predecessor of this test asserted `generationConfig.responseMimeType`
+    // was undefined. On an Interactions body that whole object is absent, so
+    // the assertion would have passed VACUOUSLY — a test that can no longer
+    // fail reads as coverage on every future audit. The positive control below
+    // is what stops an empty or missing body satisfying it: a forced response
+    // format is what would silently kill grounded prose.
+    const bodies = await captureGeminiRequests(() => POST(request()));
+    expect(bodies).toHaveLength(1);
+    expect(toolsOf(bodies[0])).toBeDefined();
+    expect(bodies[0]?.input).toBeDefined();
+    expect(bodies[0]?.response_format).toBeUndefined();
+    expect(bodies[0]?.response_mime_type).toBeUndefined();
+    expect(bodies[0]?.generation_config).toBeUndefined();
+    expect(bodies[0]?.generationConfig).toBeUndefined();
   });
 });
 
-describe("the top-level position is pinned as dropped (AC-Y2)", () => {
-  it("proves the SDK discards a top-level tools key", async () => {
-    // A standing negative control against the shape this call site used. If a
-    // future SDK starts honouring the top-level key this goes red — the right
-    // outcome: it means the rule changed and every comment about it is stale.
+describe("the top-level position is pinned as dropped on generateContent (AC-Y2)", () => {
+  it("proves the SDK discards a top-level tools key on models.generateContent", async () => {
+    // A standing negative control for the surface this route NO LONGER USES.
+    // It never touched the route — it builds its own client and calls
+    // `models.generateContent` directly — so the migration neither breaks it
+    // nor inverts it: the fact it pins is still true, and seven other grounded
+    // call sites still depend on it. Do not delete it, and do not "update" it
+    // to the Interactions shape; those are different APIs with opposite rules.
+    // If a future SDK starts honouring the top-level key this goes red, which
+    // is the right outcome: it means every comment about the rule is stale.
     const bodies = await captureGeminiRequests(() =>
       new GoogleGenAI({ apiKey: "test-key" }).models.generateContent({
         model: "gemini-2.5-flash",
