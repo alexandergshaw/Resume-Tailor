@@ -6,6 +6,7 @@ import { saveGeneratedResume } from "@/lib/supabase/saveGeneratedResume";
 import { saveGeneratedCoverLetter } from "@/lib/supabase/saveGeneratedCoverLetter";
 import { postingToJob } from "@/lib/feed/selectQueueCandidates";
 import { tailorPostingFields } from "@/lib/feed/postingDescription";
+import { writePositionMerged } from "@/lib/supabase/writePosition";
 
 // Shared tailoring + queueing pipeline used by both the cron route
 // (bulk, every saved-search match) and the single-posting API route
@@ -38,57 +39,28 @@ export function jobToPositionRow(job) {
 }
 
 // Upsert a position and return its id. Unlike the shared upsertPosition helper
-// (which swallows errors), this surfaces the underlying Postgres error so the
-// caller can report it. Falls back to select-then-insert if the ON CONFLICT
-// target constraint is missing.
+// (which swallows errors), this surfaces the underlying error so the caller
+// can report it.
+//
+// This is the highest-volume writer in the repo — the cron path runs it for
+// every saved-search match, for every user — so it goes through the same merge
+// (lib/supabase/writePosition.js) as the browser's route rather than
+// overwriting the whole row. It used to `.upsert(row, { onConflict:
+// "external_id" })`, which PostgREST renders as `ON CONFLICT DO UPDATE SET
+// <every payload column> = excluded.<col>`: a cron run whose posting carried
+// no company blanked the company another account's application points at.
+//
+// The old "no unique constraint on external_id" fallback is gone with it: the
+// merge is a SELECT plus a targeted UPDATE and never issues ON CONFLICT at
+// all, so that failure mode is now unreachable by construction rather than
+// worked around. The lost-insert race it also has to survive is handled inside
+// writePositionMerged.
 async function upsertPositionOrThrow(admin, job) {
-  const row = jobToPositionRow(job);
-
-  const { data, error } = await admin
-    .from("positions")
-    .upsert(row, { onConflict: "external_id" })
-    .select("id")
-    .single();
-
-  if (!error) return data?.id ?? null;
-
-  // If there's no unique constraint on external_id, ON CONFLICT can't be used.
-  // Fall back to a manual select-then-insert/update.
-  const noConstraint =
-    /no unique|exclusion constraint|on conflict/i.test(error.message || "");
-  if (!noConstraint) {
+  const { id, error } = await writePositionMerged(admin, jobToPositionRow(job));
+  if (error) {
     throw new Error(`Could not save the position: ${error.message}`);
   }
-
-  const { data: existing, error: selErr } = await admin
-    .from("positions")
-    .select("id")
-    .eq("external_id", row.external_id)
-    .maybeSingle();
-  if (selErr) {
-    throw new Error(`Could not look up the position: ${selErr.message}`);
-  }
-
-  if (existing?.id) {
-    const { error: updErr } = await admin
-      .from("positions")
-      .update(row)
-      .eq("id", existing.id);
-    if (updErr) {
-      throw new Error(`Could not update the position: ${updErr.message}`);
-    }
-    return existing.id;
-  }
-
-  const { data: inserted, error: insErr } = await admin
-    .from("positions")
-    .insert(row)
-    .select("id")
-    .single();
-  if (insErr) {
-    throw new Error(`Could not insert the position: ${insErr.message}`);
-  }
-  return inserted?.id ?? null;
+  return id ?? null;
 }
 
 // Download a file from the "resumes" storage bucket as a Buffer, or null.

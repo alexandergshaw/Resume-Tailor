@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { createClient } from "../../lib/supabase/client";
-import { upsertPosition } from "../../lib/supabase/upsertPosition";
+import { upsertPosition, editPositionFieldsViaApi } from "../../lib/supabase/upsertPosition";
 import { saveGeneratedResume } from "../../lib/supabase/saveGeneratedResume";
 import { getInterviewStages, upsertInterviewStage } from "../../lib/supabase/upsertInterviewStage";
 import { createRecruiterCommunication, listRecruiterCommunications } from "../../lib/supabase/recruiterCommunications";
@@ -438,18 +438,26 @@ export function useApplicationDialogs({
     }
 
     if (editAppDialog.positionId) {
-      const posUpdates = {
-        title: editAppDialog.role.trim() || null,
-        company: editAppDialog.company.trim() || null,
-        description: editAppDialog.description || null,
-      };
-      const { error: posErr } = await supabase
-        .from("positions")
-        .update(posUpdates)
-        .eq("id", editAppDialog.positionId);
+      // Through the API route, NOT straight at the table. `positions` is a
+      // shared catalogue with no user_id column, and its UPDATE policy is
+      // `auth.role() = 'authenticated'` — so this statement, issued from the
+      // browser, could edit any row belonging to anyone. The route checks the
+      // signed-in user actually holds an application on this position, which
+      // is authorization the policy never performed, and it is what lets that
+      // policy be tightened (ordering: app/api/positions/route.js).
+      //
+      // The route also refuses to blank a stored value from an empty box —
+      // which is what the optimistic update just below has always DISPLAYED
+      // for title and company (`...trim() || a.positions.company`). The store
+      // and the screen now agree instead of diverging.
+      const { error: posErr } = await editPositionFieldsViaApi(editAppDialog.positionId, {
+        title: editAppDialog.role.trim(),
+        company: editAppDialog.company.trim(),
+        description: editAppDialog.description,
+      });
 
       if (posErr) {
-        setEditAppError(posErr.message || "Failed to save position changes.");
+        setEditAppError(posErr || "Failed to save position changes.");
         setEditAppSaving(false);
         return;
       }
@@ -471,7 +479,11 @@ export function useApplicationDialogs({
                     ...a.positions,
                     title: editAppDialog.role.trim() || a.positions.title,
                     company: editAppDialog.company.trim() || a.positions.company,
-                    description: editAppDialog.description,
+                    // Same never-blank rule the write above now applies, so
+                    // the screen keeps matching the store: an emptied box
+                    // leaves the stored description alone rather than showing
+                    // a blank that was never persisted.
+                    description: editAppDialog.description || a.positions.description,
                   }
                 : a.positions,
             }

@@ -721,13 +721,13 @@ export function useDocumentPreview({
         try {
           const supabase = createClient();
           // Look up the existing position by external id rather than
-          // upserting one: upsertPosition writes every column of a full job
-          // object unconditionally on conflict (location, salary, raw_data,
-          // etc.), and here we only have preview-derived title/company/url —
-          // upserting with that partial data would null out the real
-          // posting's fields and overwrite its title with the AI-generated
-          // one. A revise must not touch positions at all; it only needs the
-          // id to link the newly persisted documents.
+          // upserting one. A revise must not touch positions at all; it only
+          // needs the id to link the newly persisted documents, and all it
+          // holds here is preview-derived title/company/url including an
+          // AI-generated title. upsertPosition no longer NULLs a row's other
+          // columns (it merges — lib/supabase/positionMerge.js), but this is
+          // still wrong: identity fields are fill-once, so a guess written
+          // into an empty row would become permanent.
           const { data: posRow } = await supabase
             .from("positions")
             .select("id")

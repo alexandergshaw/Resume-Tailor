@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { upsertPosition } from "@/lib/supabase/upsertPosition";
 import { upsertApplication } from "@/lib/supabase/upsertApplication";
 import { STATUS } from "@/lib/applications/statusVocabulary.js";
@@ -66,7 +67,14 @@ export async function POST(request) {
     return Response.json({ error: "Posting missing external id" }, { status: 422 });
   }
 
-  const positionId = await upsertPosition(supabase, job);
+  // The position write goes through the SERVICE-ROLE client, not the
+  // user-scoped one above. `positions` is a shared catalogue with no user_id
+  // column, and the policy that currently lets a user-scoped client write it
+  // (`positions_update_authenticated`: auth.role() = 'authenticated') is the
+  // one being dropped — see app/api/positions/route.js for the ordering. The
+  // application write below stays on the user client, where applications' own
+  // per-user RLS is doing real work.
+  const positionId = await upsertPosition(createAdminClient(), job);
   if (!positionId) {
     return Response.json({ error: "Failed to save position" }, { status: 500 });
   }
