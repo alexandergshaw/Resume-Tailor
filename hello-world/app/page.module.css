@@ -511,6 +511,101 @@
   color: #c0d0ee;
 }
 
+/* ── Duplicate-application flag (1e) ────────────────────────────
+   Part of the dark-glass dock: literal colours ONLY, no var(--…).
+   Every pair below is measured in scratchpad/dup-contrast.mjs.
+   #c0d0ee/#1c2333 10.09 · #7a8faf/#1c2333 4.77 · #fde68a/#1c2333 12.61 */
+
+.dupFlag {
+  order: -1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0 10px;
+  border-bottom: 1px solid #7a8faf;   /* 4.77:1 — the ONLY line colour in this
+                                         palette that clears 3:1 on the dock */
+}
+
+.dupFlagSignal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  column-gap: 8px;
+  row-gap: 2px;
+}
+
+.dupFlagGlyph { flex-shrink: 0; }      /* size comes from fontSize="small" */
+
+.dupFlagKicker {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.dupFlagSentence { font-size: 0.82rem; color: #c0d0ee; min-width: 0; }
+
+[data-dupe-severity="hit"] .dupFlagKicker,
+[data-dupe-severity="hit"] .dupFlagGlyph          { color: #fde68a; }
+[data-dupe-severity="hit"] .dupFlagSentence       { font-weight: 600; }
+[data-dupe-severity="indeterminate"] .dupFlagKicker,
+[data-dupe-severity="indeterminate"] .dupFlagGlyph,
+[data-dupe-severity="unavailable"]   .dupFlagKicker,
+[data-dupe-severity="unavailable"]   .dupFlagGlyph { color: #7a8faf; }
+
+.dupFlagEvidence {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 30vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* deliberately NOT `scrollbar-width: none` — see V-5.2 */
+}
+.dupFlagRow  { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.dupFlagRowMain { font-size: 0.82rem; color: #c0d0ee; overflow-wrap: anywhere; }
+.dupFlagRowMeta { font-size: 0.76rem; color: #7a8faf; overflow-wrap: anywhere; }
+
+.dupFlagActions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dupFlagQueue   { font-size: 0.76rem; color: #7a8faf; }
+
+.dupFlagAction {
+  background: none;
+  border: 1px solid #7a8faf;          /* NOT #2e3a4e — that measures 1.37:1 */
+  color: #c0d0ee;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 5px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+.dupFlagActionQuiet { color: #7a8faf; }
+
+@media (hover: hover) {
+  /* BOTH properties change together — background alone leaves #7a8faf on
+     #243049 at 4.00:1 (F12x). `.toolbarClear:hover` already does this. */
+  .dupFlagAction:hover { background: #243049; color: #c0d0ee; }
+}
+
+.dupFlagAction:focus-visible {
+  outline: 2px solid #c0d0ee;         /* 10.09:1 on the dock */
+  outline-offset: 2px;                /* the ring sits on the dock, not on the fill */
+}
+
+@media (max-width: 640px) {
+  .dupFlagAction { min-height: 44px; }       /* MOBILE_TAP_MIN */
+}
+@media (min-width: 641px) {
+  .dupFlagActions { padding-right: 100px; }  /* keep clear of the FAB — V-1.6 */
+}
+
 @media (max-width: 640px) {
   .main {
     gap: 16px;

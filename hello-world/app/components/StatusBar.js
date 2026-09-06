@@ -5,6 +5,8 @@ import Menu from "@mui/material/Menu";
 import MenuItem from "@mui/material/MenuItem";
 import Divider from "@mui/material/Divider";
 import DescriptionIcon from "@mui/icons-material/Description";
+import ReportProblemOutlinedIcon from "@mui/icons-material/ReportProblemOutlined";
+import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import styles from "../page.module.css";
 import { useIsMobile } from "../hooks/useResponsive";
 import { resolveDocumentBlob } from "../../lib/document/docx";
@@ -50,6 +52,17 @@ export default function StatusBar({
   openCompanyResearch,
   onRegenerate,
   appliedByExternalId,
+  // Wave 3A (3-plan-dupapply.md §2.7): the duplicate-application banner.
+  // `dupeNotice` is `lib/duplicateApply/verdictPresentation.js`'s
+  // `presentVerdict(...)` output, verbatim, or `null` -- this component
+  // renders that shape and decides NOTHING about copy, severity or
+  // partitioning itself. `onDupeDismiss(jobId)` and
+  // `onOpenApplications(searchSeed)` are callbacks closed over page.js's own
+  // state (the dismissal set, `setMainTab` + `setInterviewSearch`); neither
+  // callback's argument is recomputed here.
+  dupeNotice = null,
+  onDupeDismiss,
+  onOpenApplications,
 }) {
   const isMobile = useIsMobile();
   // On phones the bar defaults to the roomier vertical list.
@@ -234,12 +247,92 @@ export default function StatusBar({
     );
   }
 
+  // Duplicate-application banner (Wave 3A). One glyph per severity --
+  // `ReportProblemOutlined` (triangle) for `hit`, `InfoOutlined` (circle)
+  // for anything else -- so the shape channel survives a monochrome render
+  // even when colour does not (1e V-2.2). MUI's own `createSvgIcon` adds
+  // `data-testid={displayName}Icon` outside production builds, which is
+  // this component's own instrument-independent hook for that shape.
+  function dupeGlyph(severity) {
+    return severity === "hit" ? (
+      <ReportProblemOutlinedIcon className={styles.dupFlagGlyph} fontSize="small" />
+    ) : (
+      <InfoOutlinedIcon className={styles.dupFlagGlyph} fontSize="small" />
+    );
+  }
+
+  // A plain `<div>`, never an MUI `<Alert>` (1e's C-2 ruling): `<Alert
+  // severity="warning">` defaults to `role="alert"`, which would both
+  // double-announce what the separate live region (app/page.js, S-11) just
+  // said and interrupt the user mid-task, and its `lighten/darken(main,0.9)`
+  // fill measures unreadably loud in light mode and near-invisible in dark
+  // against this theme-independent dock. A plain element satisfies the
+  // "carries no role" requirement structurally, with nothing to un-set.
+  const dupeBanner = dupeNotice ? (
+    <div className={styles.dupFlag} data-dupe-flag="banner" data-dupe-job={dupeNotice.jobId}>
+      {dupeNotice.signals.map((signal) => (
+        <div
+          key={signal.signal}
+          className={styles.dupFlagSignal}
+          data-dupe-signal={signal.signal}
+          data-dupe-severity={signal.severity}
+          data-dupe-reason={signal.reason || undefined}
+        >
+          {dupeGlyph(signal.severity)}
+          <span className={styles.dupFlagKicker}>{signal.kicker}</span>
+          <span className={styles.dupFlagSentence}>{signal.sentence}</span>
+        </div>
+      ))}
+      {dupeNotice.evidence.length > 0 ? (
+        <ul className={styles.dupFlagEvidence} data-dupe-evidence>
+          {dupeNotice.evidence.map((row) => (
+            <li key={row.key} className={styles.dupFlagRow} data-dupe-row data-dupe-row-dated={row.dated}>
+              <span className={styles.dupFlagRowMain}>{row.main}</span>
+              <span className={styles.dupFlagRowMeta}>{row.meta}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <div className={styles.dupFlagActions}>
+        {/* One navigation control, not a per-row link (S-14a/N-9): the
+            search seed is `presentVerdict`'s own S-14-guarded value,
+            forwarded verbatim -- never recomputed here. */}
+        <button
+          type="button"
+          className={styles.dupFlagAction}
+          data-dupe-action="open-applications"
+          onClick={() => onOpenApplications?.(dupeNotice.interviewSearchSeed)}
+        >
+          Open your applications
+        </button>
+        <button
+          type="button"
+          className={`${styles.dupFlagAction} ${styles.dupFlagActionQuiet}`}
+          data-dupe-action="dismiss"
+          onClick={() => onDupeDismiss?.(dupeNotice.jobId)}
+        >
+          Dismiss
+        </button>
+        {dupeNotice.queueLabel ? (
+          <span className={styles.dupFlagQueue} data-dupe-queue>
+            {dupeNotice.queueLabel}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  ) : null;
+
+  // S-15.5's checkable form: with no banner, `dockStyle` is byte-identical
+  // to what this dock rendered before this feature existed (`undefined`
+  // when horizontal, the same three-key object when vertical). `flexWrap`
+  // is added ONLY while a banner is present -- one conditional, never
+  // touching the no-notice render.
+  const dockBaseStyle = vertical ? { flexDirection: "column", alignItems: "stretch", gap: 8 } : undefined;
+  const dockStyle = dupeNotice ? { ...(dockBaseStyle || {}), flexWrap: "wrap" } : dockBaseStyle;
+
   return (
-    <div
-      className={styles.floatingToolbar}
-      onWheel={vertical ? undefined : handleToolbarWheel}
-      style={vertical ? { flexDirection: "column", alignItems: "stretch", gap: 8 } : undefined}
-    >
+    <div className={styles.floatingToolbar} onWheel={vertical ? undefined : handleToolbarWheel} style={dockStyle}>
+      {dupeBanner}
       <div style={{ display: "flex", alignItems: "center", gap: 12, width: vertical ? "100%" : "auto" }}>
         <span className={styles.toolbarLabel}>Generated ({trackedJobs.length})</span>
         <button
