@@ -606,3 +606,174 @@ describe("timing -- every regex in this module, on >=100KB adversarial input", (
     expect(elapsed).toBeLessThan(TIMING_BOUND_MS);
   });
 });
+
+// ---------------------------------------------------------------------------
+// C-16b -- ONE IDENTITY RELATION. The pairwise invariant over a corpus, plus
+// the non-vacuity control (AC-duplicate-apply-r4.md C-16b, R4-6; plan V-1/V-2).
+//
+// The document's own history is why this group exists: round three's first
+// draft of this rule was FALSE (two rows with no posting evidence both fell
+// back to `pos:${positions.id}`, so canonical-key equality said "same" while
+// samePostingRows said "different"). The fix that made it TRUE also made it
+// VACUOUS: under the argument types actually used, every row's key came out
+// null and fell through to the same fallback shape, so the biconditional was
+// satisfied on 0 of 132 pairs that could ever have disagreed -- a suite that
+// is green against `postingKeyOfPosition = () => null` proves nothing. This
+// group states the invariant over a corpus built to span every key shape
+// (URL, external id, no evidence, absent embed, a namespace-collision pin),
+// reports the count of pairs that COULD have disagreed, and separately pins
+// the one shape the invariant's own stated precondition exists to fence off.
+// ---------------------------------------------------------------------------
+describe("C-16b -- pairwise invariant over a corpus, with a non-vacuity control", () => {
+  // Every distinct row below carries a distinct `positions.id`, matching the
+  // invariant's stated precondition (C-16b: two distinct rows in one user's
+  // set must not share a positions.id -- guaranteed live by
+  // `UNIQUE (user_id, position_id)`, per AC R4-7/Q12). The one shape that
+  // deliberately violates that precondition (two distinct rows sharing one
+  // positions.id) is pinned separately below, OUTSIDE this corpus, because it
+  // is a documented boundary of the invariant's domain, not a shape the
+  // "holds for every pair" sweep is stated over.
+  const CORPUS = [
+    // -- URL-keyed, one posting, three spellings (host case / trailing slash)
+    //    -- must all key identically (C-1, C-3 steps 3-4).
+    { name: "url-canonical", row: { id: "app-u1", positions: { id: "pos-u1", url: "https://acme.com/jobs/700001" } } },
+    { name: "url-trailing-slash", row: { id: "app-u2", positions: { id: "pos-u2", url: "https://acme.com/jobs/700001/" } } },
+    { name: "url-host-case", row: { id: "app-u3", positions: { id: "pos-u3", url: "HTTPS://WWW.Acme.com/jobs/700001" } } },
+    // -- URL-keyed, a different posting (E1 digit-run evidence).
+    { name: "url-different-posting", row: { id: "app-u4", positions: { id: "pos-u4", url: "https://acme.com/jobs/700002" } } },
+    // -- URL-keyed via E2 (UUID as the last path segment).
+    { name: "url-uuid", row: { id: "app-u5", positions: { id: "pos-u5", url: "https://boards.acme.com/postings/a1b2c3d4-1234-5678-9abc-1234567890ab" } } },
+    // -- URL-keyed via E3 (an id-shaped query param).
+    { name: "url-idparam", row: { id: "app-u6", positions: { id: "pos-u6", url: "https://acme.com/careers?gh_jid=555" } } },
+
+    // -- external-id-keyed, one posting, two rows sharing one external id.
+    { name: "extid-a-1", row: { id: "app-x1", positions: { id: "pos-x1", url: null, external_id: "gh-9001" } } },
+    { name: "extid-a-2", row: { id: "app-x2", positions: { id: "pos-x2", url: null, external_id: "gh-9001" } } },
+    // -- external-id-keyed, a different posting.
+    { name: "extid-different", row: { id: "app-x3", positions: { id: "pos-x3", url: null, external_id: "gh-9002" } } },
+
+    // -- no evidence at all: a URL present but carrying no posting-id
+    //    evidence, and a row with neither a URL nor an external id.
+    { name: "no-evidence-slug-url", row: { id: "app-n1", positions: { id: "pos-n1", url: "https://acme.com/careers/senior-software-engineer" } } },
+    { name: "no-evidence-bare-careers-url", row: { id: "app-n2", positions: { id: "pos-n2", url: "https://acme.com/careers" } } },
+    { name: "no-evidence-neither-field", row: { id: "app-n3", positions: { id: "pos-n3" } } },
+
+    // -- ephemeral external id (C-2a) plus an empty URL (the screenshot-run
+    //    shape): both sides of postingKeyOfPosition are null.
+    { name: "ephemeral-shot", row: { id: "app-e1", positions: { id: "pos-e1", url: "", external_id: "shot-1699999999-0-123" } } },
+    { name: "ephemeral-manual", row: { id: "app-e2", positions: { id: "pos-e2", url: "", external_id: "manual-abc123" } } },
+
+    // -- absent / null embed (C-1c): must never throw, and must be excluded.
+    { name: "embed-null", row: { id: "app-ab1", positions: null } },
+    { name: "embed-undefined", row: { id: "app-ab2" } },
+
+    // -- the C-16b/C-1b namespace-collision pin: positions.id is the LITERAL
+    //    string of a URL, alongside a genuine row whose URL is that same
+    //    string. The fallback's "pos:" prefix must not cross-match the real
+    //    row's "u:" prefix.
+    { name: "namespace-collision-fallback", row: { id: "app-c1", positions: { id: "https://acme.com/jobs/4012345", url: null, external_id: null } } },
+    { name: "namespace-collision-real-url", row: { id: "app-c2", positions: { id: "pos-c2-real", url: "https://acme.com/jobs/4012345" } } },
+  ];
+
+  it("[invariant] for every DISTINCT pair (a, b) with a != b, samePostingRows agrees with canonical-key equality", () => {
+    const violations = [];
+    for (let i = 0; i < CORPUS.length; i += 1) {
+      for (let j = 0; j < CORPUS.length; j += 1) {
+        if (i === j) continue;
+        const { name: nameA, row: a } = CORPUS[i];
+        const { name: nameB, row: b } = CORPUS[j];
+        const lhs = samePostingRows(a, b);
+        const keyA = canonicalPositionKey(a);
+        const keyB = canonicalPositionKey(b);
+        const rhs = keyA !== null && keyA === keyB;
+        if (lhs !== rhs) {
+          violations.push(
+            `${nameA} vs ${nameB}: samePostingRows=${lhs}, canonicalKey-equality=${rhs} (keyA=${JSON.stringify(keyA)}, keyB=${JSON.stringify(keyB)})`,
+          );
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it("[invariant, irreflexivity] a null-key row does not match itself -- by design, not a defect", () => {
+    const nullKeyRows = CORPUS.filter(({ row }) => postingKeyOfPosition(row?.positions) === null);
+    // The corpus must actually exercise this clause -- otherwise the
+    // assertion below would pass on an empty set and prove nothing.
+    expect(nullKeyRows.length).toBeGreaterThan(0);
+    for (const { name, row } of nullKeyRows) {
+      expect(samePostingRows(row, row), `${name} must not match itself`).toBe(false);
+    }
+  });
+
+  it("[non-vacuity] a floor on the pairs that could have produced a failure, plus both truth values observed", () => {
+    // A pair "could have disagreed" only when BOTH sides carry a non-null
+    // postingKeyOfPosition -- this is the exact quantity that collapses to
+    // zero under a stub that always returns null (see the red-run proof
+    // pasted in the PR/report for this change; not shipped here, because a
+    // permanently-mocked module would make this file test a stub instead of
+    // the shipped implementation).
+    const failablePairs = [];
+    for (let i = 0; i < CORPUS.length; i += 1) {
+      for (let j = 0; j < CORPUS.length; j += 1) {
+        if (i === j) continue;
+        const keyA = postingKeyOfPosition(CORPUS[i].row?.positions);
+        const keyB = postingKeyOfPosition(CORPUS[j].row?.positions);
+        if (keyA !== null && keyB !== null) {
+          failablePairs.push({ equal: keyA === keyB });
+        }
+      }
+    }
+
+    // Floor set well below the corpus's measured count (90) so a routine
+    // corpus edit has headroom, but a quiet drain toward vacuity still trips
+    // this red. See the report for this change for the exact measured count.
+    const NON_VACUITY_FLOOR = 40;
+    expect(failablePairs.length).toBeGreaterThanOrEqual(NON_VACUITY_FLOOR);
+    // Both limbs of the biconditional must actually be exercised among the
+    // failable pairs, or the invariant sweep above could be passing only on
+    // its "must-not-match" half (or only on its "must-match" half).
+    expect(failablePairs.some((pair) => pair.equal)).toBe(true);
+    expect(failablePairs.some((pair) => !pair.equal)).toBe(true);
+  });
+});
+
+describe("C-16b -- the precondition boundary (documented, not a defect in this module)", () => {
+  it(
+    "[pin] two distinct rows sharing one fallback positions.id, neither carrying independent evidence, " +
+      "diverge from the invariant -- this is exactly the shape the stated precondition (UNIQUE(user_id, position_id), " +
+      "AC R4-7/Q12) exists to rule out in the live database; this pure module has no way to see that constraint",
+    () => {
+      const a = { id: "app-f1", positions: { id: "pos-shared-999", url: null, external_id: null } };
+      const b = { id: "app-f2", positions: { id: "pos-shared-999", url: "", external_id: "" } };
+
+      // Neither row carries independent posting evidence.
+      expect(postingKeyOfPosition(a.positions)).toBeNull();
+      expect(postingKeyOfPosition(b.positions)).toBeNull();
+
+      // samePostingRows says "different" -- a null key never matches, by
+      // construction (C-16b's irreflexivity clause generalizes: a null key
+      // never equals anything, including another null key).
+      expect(samePostingRows(a, b)).toBe(false);
+
+      // canonicalPositionKey says "same": both fall back to the identical
+      // positions.id.
+      const keyA = canonicalPositionKey(a);
+      const keyB = canonicalPositionKey(b);
+      expect(keyA).toBe("pos:pos-shared-999");
+      expect(keyA).toBe(keyB);
+
+      // The biconditional's right-hand side (equal AND non-null) is true
+      // here while samePostingRows is false -- a genuine divergence. It is
+      // reachable only by violating the stated precondition (two distinct
+      // application rows for one user sharing one positions.id), which this
+      // checkout's migrations do not create (AC R4-7: 22 migrations, no
+      // `CREATE TABLE applications`, no UNIQUE constraint on it) even though
+      // the owner reports it holds in the live database. Reported here as a
+      // finding about the module's documented precondition -- not fixed,
+      // per this change's scope.
+      const rhs = keyA !== null && keyA === keyB;
+      expect(samePostingRows(a, b)).not.toBe(rhs);
+    },
+  );
+});
