@@ -47,6 +47,23 @@ function safeName(part, fallback) {
   return cleaned || fallback;
 }
 
+// `applications.application_url` is a per-user override of the shared
+// `positions.url` -- the same precedence TrackingTab.js already applies
+// (`app.application_url || pos?.url`). `positions` has no user_id column
+// and positions_update_authenticated lets any signed-in account overwrite
+// any row (see lib/url/safeExternalHref.js), so once a user has recorded
+// their own application URL it must win over the catalogue value
+// everywhere this component chooses which URL to open or link to.
+//
+// NOTE: GET /api/auto-apply-queue (app/api/auto-apply-queue/route.js) does
+// not select or return `application_url` on the application row today, so
+// `row.application_url` is `undefined` in production until that route is
+// updated -- this falls through to `row.positions?.url` exactly as before
+// until then. Out of this fix's file scope; see the accompanying report.
+function postingUrlFor(row) {
+  return row?.application_url || row?.positions?.url;
+}
+
 export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onCountChange }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -155,7 +172,7 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
 
   const handleApply = useCallback(
     async (row) => {
-      const url = row?.positions?.url;
+      const url = postingUrlFor(row);
       // Download tailored docs and open the posting, then record the open.
       handleDownloadResume(row);
       if (coverFor(row)) handleDownloadCover(row);
@@ -206,9 +223,10 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
   // past the end (or the queue empties).
   const walking = walkIndex >= 0;
   const current = walking && walkIndex < items.length ? items[walkIndex] : null;
-  // The shared `positions` catalogue is writable by any signed-in account, so
-  // this url is not this user's to trust. See lib/url/safeExternalHref.js.
-  const currentPostingHref = safeExternalHref(current?.positions?.url);
+  // `application_url` (a per-user override) wins over the shared `positions`
+  // catalogue, which is writable by any signed-in account -- see
+  // postingUrlFor above and lib/url/safeExternalHref.js.
+  const currentPostingHref = safeExternalHref(postingUrlFor(current));
 
   useEffect(() => {
     if (!walking) return undefined;
@@ -408,7 +426,7 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
                 await handleApply(current);
                 goNext();
               }}
-              disabled={busyId === current.id || !current.positions?.url}
+              disabled={busyId === current.id || !postingUrlFor(current)}
               sx={{ textTransform: "none" }}
             >
               {busyId === current.id
@@ -544,6 +562,8 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
             <Box component="tbody">
               {items.map((row) => {
                 const pos = row.positions || {};
+                // `application_url` override -- see postingUrlFor above.
+                const postingUrl = postingUrlFor(row);
                 const dateLabel = row.auto_saved_at ? new Date(row.auto_saved_at).toLocaleString() : "—";
                 return (
                   <Box
@@ -662,7 +682,7 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
                     >
                       <Tooltip
                         title={
-                          !pos.url
+                          !postingUrl
                             ? "No posting URL available"
                             : row.auto_apply_opened_at
                               ? "Re-open posting and re-download docs"
@@ -676,7 +696,7 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
                             color={row.auto_apply_opened_at ? "success" : "primary"}
                             startIcon={row.auto_apply_opened_at ? <CheckCircleIcon /> : null}
                             onClick={() => handleApply(row)}
-                            disabled={busyId === row.id || !pos.url}
+                            disabled={busyId === row.id || !postingUrl}
                             sx={{
                               textTransform: "none",
                               fontSize: "0.75rem",

@@ -150,4 +150,59 @@ describe("GET /api/auto-apply-queue", () => {
     const body = await res.json();
     expect(body.items[0].generated_resumes).toMatchObject({ id: "res-1" });
   });
+
+  // LIVE DEFECT under test: `applications.application_url` is a per-user
+  // override of the shared `positions.url`. AutoApplyQueueTab.js's own
+  // `postingUrlFor(row)` already prefers `row.application_url`, but this
+  // route neither selects the column from `applications` nor copies it onto
+  // the item it returns -- so `row.application_url` is `undefined` in every
+  // response this route has ever sent, and the tab's fix has nothing to read.
+  it("selects application_url from applications so the per-user override can reach the client", async () => {
+    const user = makeSupabase({ applications: { data: [] } }, { user: USER });
+    createClient.mockResolvedValue(user);
+    await GET();
+    const selectArgs = user.calls.applications.select[0];
+    expect(selectArgs.some((arg) => /\bapplication_url\b/.test(arg))).toBe(true);
+  });
+
+  it("returns application_url on each item alongside the shared position's url", async () => {
+    const rows = [
+      {
+        id: "app-1",
+        status: "auto_queued",
+        position_id: "pos-1",
+        resume_used_id: null,
+        cover_letter_id: null,
+        auto_search_id: null,
+        application_url: "https://mine.example/1",
+      },
+      {
+        id: "app-2",
+        status: "auto_queued",
+        position_id: "pos-1",
+        resume_used_id: null,
+        cover_letter_id: null,
+        auto_search_id: null,
+        application_url: null,
+      },
+    ];
+    const user = makeSupabase(
+      {
+        applications: { data: rows },
+        positions: { data: [{ id: "pos-1", title: "Eng", company: "Acme", location: "Remote", url: "https://acme.example/shared" }] },
+      },
+      { user: USER },
+    );
+    createClient.mockResolvedValue(user);
+
+    const res = await GET();
+    const body = await res.json();
+
+    expect(body.items[0].application_url).toBe("https://mine.example/1");
+    expect(body.items[0].positions).toMatchObject({ url: "https://acme.example/shared" });
+    // No override on this row -- must come back null, not silently dropped
+    // (dropped would read `undefined`, which is NOT what `toBeNull()` below
+    // accepts; this pins the shape, not merely its truthiness).
+    expect(body.items[1].application_url).toBeNull();
+  });
 });

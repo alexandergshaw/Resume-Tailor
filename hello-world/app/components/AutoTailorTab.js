@@ -164,11 +164,24 @@ export default function AutoTailorTab({
                       const dateRaw = row.tracked_at || row.applied_at || null;
                       const dateLabel = dateRaw ? new Date(dateRaw).toLocaleString() : "—";
                       const pos = row.positions || {};
-                      // Shared `positions` catalogue - any signed-in account
-                      // can overwrite this row's url. Refused -> the same
-                      // em-dash this cell already shows for a posting with no
-                      // url at all, never a dead link.
-                      const postingHref = safeExternalHref(pos.url);
+                      // `application_url` is a per-user override of the
+                      // shared `positions.url` -- same precedence
+                      // TrackingTab.js already applies
+                      // (`app.application_url || pos?.url`). Shared
+                      // `positions` catalogue - any signed-in account can
+                      // overwrite this row's url, so once recorded the
+                      // override must win. Refused -> the same em-dash this
+                      // cell already shows for a posting with no url at all,
+                      // never a dead link.
+                      //
+                      // NOTE: the query that loads `autoTailoredPostings`
+                      // (app/page.js's loadAutoTailored, outside this fix's
+                      // file scope) does not select `application_url` yet, so
+                      // `row.application_url` is `undefined` in production
+                      // until that query is updated -- this falls through to
+                      // `pos.url` exactly as before until then.
+                      const postingUrl = row.application_url || pos.url;
+                      const postingHref = safeExternalHref(postingUrl);
                       return (
                         <Box component="tr" key={row.id} sx={{ "&:hover": { bgcolor: "var(--bg-soft)" } }}>
                           <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)", whiteSpace: "nowrap" }}>{dateLabel}</Box>
@@ -184,7 +197,7 @@ export default function AutoTailorTab({
                               size="small"
                               variant="contained"
                               onClick={() => applyAutoTailoredRow(row)}
-                              disabled={!pos.url || !row.resume_used_id}
+                              disabled={!postingUrl || !row.resume_used_id}
                               sx={{ mr: 0.75, textTransform: "none", py: 0.25, px: 1, fontSize: "0.75rem" }}
                               title="Download the tailored resume and open the posting in a new tab"
                             >

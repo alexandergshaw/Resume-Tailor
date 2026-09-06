@@ -23,7 +23,7 @@ export async function GET() {
   const { data: apps, error } = await supabase
     .from("applications")
     .select(
-      "id, status, auto_saved_at, applied_at, auto_apply_opened_at, position_id, resume_used_id, cover_letter_id, auto_search_id",
+      "id, status, application_url, auto_saved_at, applied_at, auto_apply_opened_at, position_id, resume_used_id, cover_letter_id, auto_search_id",
     )
     .eq("user_id", user.id)
     .eq("status", STATUS.AUTO_QUEUED)
@@ -75,6 +75,10 @@ export async function GET() {
   const items = rows.map((r) => ({
     id: r.id,
     status: r.status,
+    // Per-user override of the shared positions.url -- see
+    // AutoApplyQueueTab.js's postingUrlFor (`row.application_url ||
+    // row.positions?.url`), which needs this column to have any effect.
+    application_url: r.application_url,
     auto_saved_at: r.auto_saved_at,
     applied_at: r.applied_at,
     auto_apply_opened_at: r.auto_apply_opened_at,

@@ -1455,7 +1455,7 @@ export default function Home() {
       const { data, error } = await supabase
         .from("applications")
         .select(`
-          id, status, applied_at, tracked_at, resume_used_id,
+          id, status, applied_at, tracked_at, resume_used_id, application_url,
           positions ( id, title, company, url )
         `)
         .eq("user_id", currentUser.id)
@@ -1761,7 +1761,12 @@ export default function Home() {
   // auto_tailored → applied so it moves out of the Auto Tailor tab and into
   // the Interviewing tab.
   async function applyAutoTailoredRow(row) {
-    const url = row?.positions?.url;
+    // `application_url` is a per-user override of the shared `positions.url`
+    // -- same precedence TrackingTab.js, AutoApplyQueueTab.js and
+    // AutoTailorTab.js already apply. Now that loadAutoTailored (above)
+    // selects it, it must win here too, or the Apply button stays wrong even
+    // though the View link and the Apply button's enabled state are fixed.
+    const url = row?.application_url || row?.positions?.url;
     // Open a positioned blank popup synchronously, before the awaited download,
     // so Chrome grants popup-window placement (it downgrades to a tab if
     // window.open runs after an await). We navigate it once the download is done.
