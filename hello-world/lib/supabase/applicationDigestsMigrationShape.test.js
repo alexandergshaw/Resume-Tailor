@@ -21,7 +21,7 @@
 // this test nothing in the repo goes red when it happens. That is the whole
 // point — the rest of the assertions here are guard rails around it.
 //
-// Two facts shape the parsing below, both verified against the real files
+// Three facts shape the parsing below, all verified against the real files
 // rather than assumed:
 //
 //   1. The migration's own header comment repeatedly says the words "default",
@@ -34,11 +34,29 @@
 //      `alter table` statement specifically.
 //   2. The migration adds TWO columns in one `alter table`, so the anchor must
 //      read to the statement's terminating `;`, not to the end of a line.
+//   3. The lesson from (1) was not, at first, applied consistently: the
+//      mentions-sweep near the bottom of this file ("exactly ONE migration
+//      file mentions citation_outcome") searched the RAW file across the
+//      whole migrations directory, comments included. A later migration,
+//      20260906000000_applications_user_position_key.sql, legitimately
+//      explains an unrelated constraint by contrasting it with this one and
+//      names this file BY FILENAME in a `--` comment — and the filename
+//      contains "citation_outcome" as a substring, which tripped the sweep
+//      on a migration that touches none of this table's columns. The fix:
+//      the sweep now searches comment-stripped text
+//      (lib/sourceScan/stripSqlComments.js — a shared module, because
+//      lib/applications/statusMigrationShape.test.js had already forked an
+//      identical, equally naive stripper of its own; see that module's own
+//      header for why one shared implementation replaces both). See the
+//      "[fixture]" describe block below for the proof that this fix does not
+//      just make the sweep quieter: a synthetic second migration that
+//      genuinely touches the column in real DDL still fails it.
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { stripSqlComments } from "../sourceScan/stripSqlComments.js";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const MIGRATIONS_DIR = path.join(ROOT, "supabase/migrations");
@@ -56,21 +74,11 @@ const DEFAULTS_CONTROL_TABLE = "public.experience_attachments";
 // RLS/policy/grant absence assertions, since it legitimately has all three.
 const POLICY_CONTROL_NAME = "20260817000000_application_digests.sql";
 
-function stripSqlLineComments(sql) {
-  return sql
-    .split("\n")
-    .map((line) => {
-      const idx = line.indexOf("--");
-      return idx === -1 ? line : line.slice(0, idx);
-    })
-    .join("\n");
-}
-
 // The `alter table <table>` statement, from its anchor to the terminating `;`.
 // Returns null when the anchor is absent, so "no statement found" is
 // distinguishable from "found an empty statement".
 function alterStatement(sql, table) {
-  const stripped = stripSqlLineComments(sql);
+  const stripped = stripSqlComments(sql);
   const anchor = `alter table ${table}`;
   const anchorIdx = stripped.indexOf(anchor);
   if (anchorIdx === -1) return null;
@@ -102,7 +110,7 @@ let alterBlock = null;
 beforeAll(() => {
   migrationFiles = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql"));
   raw = readFileSync(path.join(MIGRATIONS_DIR, MIGRATION_NAME), "utf8");
-  stripped = stripSqlLineComments(raw);
+  stripped = stripSqlComments(raw);
   alterBlock = alterStatement(raw, TABLE);
 });
 
@@ -193,7 +201,7 @@ describe("[src] 20260905000000_application_digest_citation_outcome.sql shape", (
       // created this table really does contain a line-anchored `drop`.
       expect("drop policy if exists x on public.y;").toMatch(DESTRUCTIVE[0]);
       const policyControl = readFileSync(path.join(MIGRATIONS_DIR, POLICY_CONTROL_NAME), "utf8");
-      expect(stripSqlLineComments(policyControl)).toMatch(DESTRUCTIVE[0]);
+      expect(stripSqlComments(policyControl)).toMatch(DESTRUCTIVE[0]);
     });
 
     it("changes no column's type — no `alter column`, no `using`", () => {
@@ -215,7 +223,7 @@ describe("[src] 20260905000000_application_digest_citation_outcome.sql shape", (
       // ...paired with a positive control: the migration that CREATED this
       // table legitimately has all of them, and the same patterns find them
       // there, so the absences above are real rather than mis-scoped.
-      const controlStripped = stripSqlLineComments(
+      const controlStripped = stripSqlComments(
         readFileSync(path.join(MIGRATIONS_DIR, POLICY_CONTROL_NAME), "utf8"),
       );
       expect(countOccurrences(controlStripped, /create policy/i)).toBe(4);
@@ -250,11 +258,52 @@ describe("[src] 20260905000000_application_digest_citation_outcome.sql shape", (
     expect(raw).toContain("billed grounded search");
   });
 
-  it("exactly ONE migration file mentions citation_outcome — a second one must fail loudly here", () => {
-    const matching = migrationFiles.filter((f) =>
-      readFileSync(path.join(MIGRATIONS_DIR, f), "utf8").includes("citation_outcome"),
-    );
-    expect(matching).toEqual([MIGRATION_NAME]);
+  describe("the mentions-sweep is comment-aware — the false positive this file was just bitten by", () => {
+    // A second migration legitimately naming THIS migration BY FILENAME in
+    // its own header comment (to contrast a different table's constraint
+    // with this one) contains "citation_outcome" as a pure substring of the
+    // filename, in prose, touching none of this table's columns. Searching
+    // raw file text for the column name flags it anyway. mentionsColumn()
+    // is the fix: comments stripped first, via the same shared,
+    // string-literal-aware stripper the "no default" check above already
+    // trusts for anchoring.
+    function mentionsColumn(sql) {
+      return stripSqlComments(sql).includes("citation_outcome");
+    }
+
+    it("[fixture, red before the fix] a header comment naming this migration BY FILENAME does not trip the sweep", () => {
+      // The exact real shape of 20260906000000_applications_user_position_key.sql's
+      // header, reduced to a fixture rather than editing that real file.
+      const secondMigration = [
+        "-- Unlike drive_documents' primary key (user_id, position_id, scope), no",
+        "-- idempotent `add column if not exists` exists for table constraints --",
+        "-- unlike 20260826000000_experience_attachment_text.sql,",
+        "-- 20260905000000_application_digest_citation_outcome.sql), there is no",
+        "-- idempotent spelling of \"add this table constraint\".",
+        "alter table public.applications",
+        "  add constraint applications_user_position_key unique (user_id, position_id);",
+      ].join("\n");
+      expect(mentionsColumn(secondMigration)).toBe(false);
+    });
+
+    it("[fixture, must stay red] a second migration that genuinely adds citation_outcome in real DDL DOES trip the sweep", () => {
+      const genuineSecondMigration = [
+        "-- Some unrelated table also wants a citation outcome record.",
+        "alter table public.other_digests",
+        "  add column if not exists citation_outcome jsonb;",
+      ].join("\n");
+      expect(mentionsColumn(genuineSecondMigration)).toBe(true);
+    });
+
+    it("[fixture, must stay red] a second migration that only ALTERS the column (no fresh add) still trips it", () => {
+      const genuineAlter = "comment on column public.other_digests.citation_outcome is 'reused elsewhere too';";
+      expect(mentionsColumn(genuineAlter)).toBe(true);
+    });
+
+    it("exactly ONE migration file mentions citation_outcome — a second one must fail loudly here", () => {
+      const matching = migrationFiles.filter((f) => mentionsColumn(readFileSync(path.join(MIGRATIONS_DIR, f), "utf8")));
+      expect(matching).toEqual([MIGRATION_NAME]);
+    });
   });
 
   describe("the column names are snake_case, and the DDL offers no second spelling", () => {
@@ -283,7 +332,7 @@ describe("[src] 20260905000000_application_digest_citation_outcome.sql shape", (
       // that the mention exists and is confined to prose.
       expect(raw).toMatch(/researchedAt/);
       expect(raw).toContain("(citation_outcome->>'researchedAt')::timestamptz");
-      expect(stripSqlLineComments(raw)).not.toMatch(/researchedAt/);
+      expect(stripSqlComments(raw)).not.toMatch(/researchedAt/);
     });
   });
 });

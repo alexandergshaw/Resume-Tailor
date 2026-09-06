@@ -7,7 +7,7 @@
 // was actually applied to any real database. Precedent for parsing migration
 // SQL in a test: lib/supabase/driveMigrationShape.test.js.
 //
-// Two measured facts shape this file, both re-verified here rather than
+// Three measured facts shape this file, all re-verified here rather than
 // trusted from the plan:
 //
 //   1. Exactly ONE migration file mentions `applications_status_check` — so
@@ -23,6 +23,17 @@
 //      specifically on `add constraint applications_status_check` (not
 //      merely the bare name, which the `drop constraint` line also
 //      contains) risks matching prose instead of SQL.
+//   3. The file-count sweep in fact #1 above searched RAW file text, comments
+//      included, across every migration — the same shape that let
+//      lib/supabase/applicationDigestsMigrationShape.test.js false-positive
+//      on a later migration that named a DIFFERENT migration by filename in
+//      a header comment. No migration here currently names this constraint
+//      in prose without also declaring it, so the bug was latent rather than
+//      triggered — but it is the identical defect, so the sweep below now
+//      searches comment-stripped text via the same shared, string-aware
+//      stripper (lib/sourceScan/stripSqlComments.js) that fix introduced,
+//      instead of this file's own separate, byte-for-byte-identical, naive
+//      copy of a line-comment stripper.
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -30,6 +41,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { APPLICATION_STATUSES } from "@/lib/applications/statusVocabulary.js";
+import { stripSqlComments } from "@/lib/sourceScan/stripSqlComments.js";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const MIGRATIONS_DIR = path.join(ROOT, "supabase/migrations");
@@ -52,16 +64,6 @@ const MIGRATION_ORDER = [
   "withdrawn",
 ];
 
-function stripSqlLineComments(sql) {
-  return sql
-    .split("\n")
-    .map((line) => {
-      const idx = line.indexOf("--");
-      return idx === -1 ? line : line.slice(0, idx);
-    })
-    .join("\n");
-}
-
 // Anchors on "add constraint applications_status_check" specifically — NOT
 // the bare constraint name, which also appears in a `drop constraint if
 // exists` line and in prose — then reads the `status in (...)` value list
@@ -69,7 +71,7 @@ function stripSqlLineComments(sql) {
 // silently matched nothing is distinguishable from one that found an empty
 // list.
 function parseStatusCheckValues(sql) {
-  const stripped = stripSqlLineComments(sql);
+  const stripped = stripSqlComments(sql);
   const anchor = `add constraint ${CONSTRAINT_NAME}`;
   const anchorIdx = stripped.indexOf(anchor);
   if (anchorIdx === -1) return null;
@@ -84,14 +86,20 @@ function parseStatusCheckValues(sql) {
   return [...listText.matchAll(/'([^']*)'/g)].map((m) => m[1]);
 }
 
+// Comment-stripped before searching — see fact #3 above. A migration
+// mentioning this constraint only in prose (e.g. naming this file by
+// filename the way 20260906000000_applications_user_position_key.sql names
+// application_digest_citation_outcome.sql) must NOT count as "mentions it".
+function mentionsStatusCheck(sql) {
+  return stripSqlComments(sql).includes(CONSTRAINT_NAME);
+}
+
 let migrationFiles = null;
 let matchingFiles = null;
 
 beforeAll(() => {
   migrationFiles = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql"));
-  matchingFiles = migrationFiles.filter((f) =>
-    readFileSync(path.join(MIGRATIONS_DIR, f), "utf8").includes(CONSTRAINT_NAME),
-  );
+  matchingFiles = migrationFiles.filter((f) => mentionsStatusCheck(readFileSync(path.join(MIGRATIONS_DIR, f), "utf8")));
 });
 
 describe("[src] applications_status_check migration shape — AC-4a", () => {
@@ -101,6 +109,23 @@ describe("[src] applications_status_check migration shape — AC-4a", () => {
 
   it("exactly ONE migration file mentions applications_status_check — the tie-break is dead code otherwise", () => {
     expect(matchingFiles).toEqual(["20260610020000_applications_status_auto_queued.sql"]);
+  });
+
+  describe("[fixture] the sweep is comment-aware, not just currently lucky", () => {
+    it("a header comment naming this constraint in prose, with no real DDL, does not count as a mention", () => {
+      const prose = [
+        "-- Unlike applications_status_check (see",
+        "-- 20260610020000_applications_status_auto_queued.sql), this constraint",
+        "-- has no idempotent add.",
+        "alter table public.other_table add column if not exists x int;",
+      ].join("\n");
+      expect(mentionsStatusCheck(prose)).toBe(false);
+    });
+
+    it("[must stay red] a second migration that genuinely adds this exact constraint still trips the sweep", () => {
+      const genuineSecond = "alter table public.other_table add constraint applications_status_check check (status in ('x'));";
+      expect(mentionsStatusCheck(genuineSecond)).toBe(true);
+    });
   });
 
   it("[canary] the bare constraint name appears FOUR times in that file — 2 comments, 1 drop, 1 add", () => {
