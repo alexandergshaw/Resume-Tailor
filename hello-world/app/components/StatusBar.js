@@ -9,6 +9,7 @@ import styles from "../page.module.css";
 import { useIsMobile } from "../hooks/useResponsive";
 import { resolveDocumentBlob } from "../../lib/document/docx";
 import { selectAppliedToggleAction } from "../../lib/applications/applicationDecisions";
+import { openPostingBeside } from "../../lib/window/openPostingBeside";
 
 // edited/*: a tailoring entry's hand-edit flag, per scope ({ resume, cover }),
 // mirroring the helper in app/hooks/useDocumentPreview.js. An object is
@@ -384,7 +385,13 @@ export default function StatusBar({
                   onClick={() =>
                     runAndClose(() => {
                       downloadResumeForChipJob(menuJob).catch(() => {});
-                      window.open(menuJob.url, "_blank", "noopener,noreferrer");
+                      // No "if (!opened) window.open(...)" fallback here:
+                      // openPostingBeside refuses an unsafe url with a
+                      // TRUTHY sentinel specifically so callers don't add
+                      // one (see the module's REFUSED banner comment) --
+                      // a falsy-checked fallback would re-open the exact
+                      // url openPostingBeside just refused.
+                      openPostingBeside(menuJob.url);
                     })
                   }
                 >

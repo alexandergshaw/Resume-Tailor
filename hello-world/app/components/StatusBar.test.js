@@ -191,3 +191,83 @@ describe("StatusBar — Go to card (live navigation defect)", () => {
     expect(props.setActiveSection).not.toHaveBeenCalledWith("search");
   });
 });
+
+// LIVE DEFECT under test: StatusBar's "Open posting" menu item (~line 387)
+// calls `window.open(menuJob.url, "_blank", "noopener,noreferrer")` directly.
+// `menuJob.url` is `positions.url` -- a value from the shared `public.positions`
+// catalogue, whose update policy is `auth.role() = 'authenticated'` (see the
+// banner comment in lib/window/openPostingBeside.js), so any signed-in
+// account can overwrite any row's `url`. There is no framework sanitizer in
+// front of a raw `window.open` call, so a hostile url reaches the browser
+// unfiltered.
+//
+// Fix under test: route through `openPostingBeside` (lib/window/
+// openPostingBeside.js), which runs every url through `safeExternalHref`
+// before it can reach `window.open`, and DELETE the manual `window.open`
+// call -- matching the pattern already used in AutoApplyQueueTab.js and
+// LiveFeedTab.js. `openPostingBeside` refuses an unsafe url with a TRUTHY
+// sentinel (deliberately, so a caller's own `if (!opened) window.open(...)`
+// popup-blocked fallback doesn't re-open the very url just refused) -- which
+// is exactly why this fix adds NO such fallback here.
+describe("StatusBar — Open posting (unguarded window.open)", () => {
+  // Gives trackedJobs a single job carrying the url under test, so
+  // openMenuForJobIndex(0) reaches its "More actions" menu directly.
+  // downloadResumeForChipJob must resolve to a promise -- the onClick handler
+  // calls `.catch()` on its return value -- independent of the fix under test.
+  function postingProps(url) {
+    return baseProps({
+      trackedJobs: [job("url-posting", { url })],
+      downloadResumeForChipJob: vi.fn(() => Promise.resolve()),
+    });
+  }
+
+  async function clickOpenPosting(url) {
+    const props = postingProps(url);
+    await render(props);
+    await openMenuForJobIndex(0);
+
+    const openPosting = findMenuItem("Open posting");
+    expect(openPosting).not.toBeNull();
+
+    await act(async () => {
+      openPosting.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    return props;
+  }
+
+  // LOAD-BEARING: `url.username !== ""` is what safeExternalHref's rule 5
+  // catches here. A naive `startsWith("https://")` (or any check that never
+  // parses the string as a URL) would let this straight through -- the host
+  // it renders as (acme.com) is not the host it navigates to (evil.example).
+  it("refuses a userinfo host-swap url (https://acme.com@evil.example/x) -- window.open is never called", async () => {
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    await clickOpenPosting("https://acme.com@evil.example/x");
+    // Asserting "not called with the bad url" would still pass if the code
+    // called window.open with some OTHER value -- assert it isn't called at
+    // all.
+    expect(openSpy).not.toHaveBeenCalled();
+  });
+
+  // React's own href sanitizer blocks `javascript:` but not `data:` (measured
+  // against this repo's installed React 19.2.4 -- see the safeExternalHref.js
+  // module banner). safeExternalHref's rule 4 (protocol allow-list) is what
+  // has to catch this one; React is not a backstop for window.open at all.
+  it("refuses a data: url -- window.open is never called", async () => {
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    await clickOpenPosting("data:text/html,<script>alert(1)</script>");
+    expect(openSpy).not.toHaveBeenCalled();
+  });
+
+  // Positive control: without this, "window.open is never called" would pass
+  // trivially against a menu item that stopped opening postings altogether.
+  it("still opens a plainly safe https:// posting url", async () => {
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    await clickOpenPosting("https://jobs.example.com/posting/123");
+    expect(openSpy).toHaveBeenCalled();
+    // The url reaching window.open must be the exact, unmodified string --
+    // openPostingBeside's contract returns/forwards `raw` verbatim, never a
+    // normalised copy.
+    expect(openSpy.mock.calls[0][0]).toBe("https://jobs.example.com/posting/123");
+  });
+});
