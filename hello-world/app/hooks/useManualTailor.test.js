@@ -380,3 +380,71 @@ describe("useManualTailor -- the tracked job", () => {
     });
   });
 });
+
+// The duplicate-application flag's E4/E6 fire point (3-plan-dupapply.md
+// §2.9, §4 A-1). `onCheckDuplicate` is a plain callback prop -- this hook
+// has no opinion about what it does, only that calling it must never be
+// able to turn a successful, already-paid-for tailor run into a reported
+// failure (RM-15/F-1: this fire point sits INSIDE tailorPosting's own try,
+// unlike page.js's three handlers, so a throw here that escaped would be
+// caught by the SAME catch that handles a failed /api/tailor response).
+describe("useManualTailor -- the duplicate-application check (onCheckDuplicate)", () => {
+  it("is called with the resolved job (company known) and a jobId/entryPoint context, after the response resolves", async () => {
+    const onCheckDuplicate = vi.fn();
+    await mount(baseProps({ onCheckDuplicate }));
+    const result = await run({ overridePosting: "A posting" });
+    expect(onCheckDuplicate).toHaveBeenCalledTimes(1);
+    const [candidate, ctx] = onCheckDuplicate.mock.calls[0];
+    expect(candidate).toMatchObject({ id: result.jobId, company: "Acme", description: "A posting" });
+    expect(ctx).toMatchObject({ jobId: result.jobId, entryPoint: "manual" });
+  });
+
+  it("does not fire it before the request resolves (a rejected request never calls it)", async () => {
+    mockFetchOnce({ ok: false, payload: { error: "Engine unavailable." } });
+    const onCheckDuplicate = vi.fn();
+    await mount(baseProps({ onCheckDuplicate }));
+    await run({ overridePosting: "A posting" });
+    expect(onCheckDuplicate).not.toHaveBeenCalled();
+  });
+
+  it("a throwing onCheckDuplicate does not abort the run -- the preview still opens and the result is still ok", async () => {
+    const onCheckDuplicate = vi.fn(() => {
+      throw new Error("duplicate check exploded");
+    });
+    const props = baseProps({ onCheckDuplicate });
+    await mount(props);
+    const result = await run({ overridePosting: "A posting" });
+    expect(result.ok).toBe(true);
+    expect(props.finishByOpeningPreview).toHaveBeenCalledTimes(1);
+  });
+
+  it("a throwing onCheckDuplicate does not mark the tracked job errored", async () => {
+    const onCheckDuplicate = vi.fn(() => {
+      throw new Error("duplicate check exploded");
+    });
+    const props = baseProps({ onCheckDuplicate });
+    await mount(props);
+    await run({ overridePosting: "A posting" });
+    const statuses = props.updateTailoringJob.mock.calls.map((call) => {
+      const arg = call[1];
+      return typeof arg === "function" ? arg({}).status : arg.status;
+    });
+    expect(statuses).not.toContain("error");
+    expect(statuses).toContain("done");
+  });
+
+  it("persists the generated documents even when onCheckDuplicate throws", async () => {
+    const onCheckDuplicate = vi.fn(() => {
+      throw new Error("duplicate check exploded");
+    });
+    await mount(baseProps({ onCheckDuplicate, currentUser: { id: "user-1" } }));
+    await run({ overridePosting: "A posting" });
+    expect(persistGeneratedDocuments).toHaveBeenCalledTimes(1);
+  });
+
+  it("is optional -- omitting it entirely does not break the pipeline", async () => {
+    await mount(baseProps());
+    const result = await run({ overridePosting: "A posting" });
+    expect(result.ok).toBe(true);
+  });
+});

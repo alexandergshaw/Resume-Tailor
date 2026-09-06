@@ -94,6 +94,9 @@ import {
   tailorPostingFields,
   truncatedDescriptionNotice,
 } from "@/lib/feed/postingDescription";
+// Duplicate-application flag (W3B); state/logic in the hook (line ceiling).
+import { useDuplicateApplyCheck } from "./hooks/useDuplicateApplyCheck";
+import { visuallyHidden } from "@/lib/copilot/answerStatus";
 
 // Sets one scope of a tailoring entry's per-scope edited flag ({ resume,
 // cover }) without disturbing the other, mirroring the same helper in
@@ -198,6 +201,8 @@ export default function Home() {
   const [applicationData, setApplicationData] = useState([]);
   const [applicationLoading, setApplicationLoading] = useState(false);
   const [applicationError, setApplicationError] = useState(null);
+  // §4 A-2: "loading for the first time" vs "refreshing a good snapshot".
+  const [applicationLoadedOnce, setApplicationLoadedOnce] = useState(false);
   const [applicationStages, setApplicationStages] = useState({});
   const [interviewSearch, setInterviewSearch] = useState("");
   const [interviewSort, setInterviewSort] = useState({ field: null, dir: "asc" });
@@ -1432,6 +1437,7 @@ export default function Home() {
         setApplicationData(merged);
         setApplicationStages(nextStageMap);
         setApplicationLoading(false);
+        setApplicationLoadedOnce(true);
       }
     }
     loadApplications();
@@ -1631,6 +1637,16 @@ export default function Home() {
       return interviewSort.dir === "asc" ? cmp : -cmp;
     });
 
+  const dupeApply = useDuplicateApplyCheck({
+    applicationData,
+    applicationError,
+    applicationLoadedOnce,
+    appliedByExternalId,
+    trackedJobs,
+    setMainTab,
+    setInterviewSearch,
+  });
+
   function toggleInterviewSort(field) {
     setInterviewSort((prev) => {
       if (prev.field !== field) return { field, dir: "asc" };
@@ -1704,6 +1720,9 @@ export default function Home() {
     setPreviewReloadKey,
     onDocumentEdited: handleDocumentEdited,
     currentUser,
+    // Revise fire point (row 5): a tracked job survives a reload via
+    // localStorage with no check ever having run against it this session.
+    onCheckDuplicate: dupeApply.runDuplicateCheck,
   });
 
   // Screenshots → tailored-documents pipeline (Manual Applying › Screenshots).
@@ -1735,6 +1754,8 @@ export default function Home() {
     maybeOfferLibraryUpdate,
     withClearedEditedScopes,
     finishByOpeningPreview: preview.finishByOpeningPreview,
+    // E4/E6's fire point: a callback, not `applicationData` (1c U-7 #7).
+    onCheckDuplicate: dupeApply.runDuplicateCheck,
   });
 
   // Manual Applying › Job Description: several posting boxes, each tracked
@@ -2108,6 +2129,11 @@ export default function Home() {
     const { skipDownload = false, scope = "both" } = opts;
     const applyResume = scope !== "cover";
     const applyCover = scope !== "resume";
+    // E2's fire point: before handleTrackJob's own write (1c U-7 #8).
+    dupeApply.runDuplicateCheck(
+      { id: job.id, title: job.title || "", company: job.company || "", url: job.url || "", description: job.description || "" },
+      { jobId: job.id, entryPoint: "search" },
+    );
     // Await so its upsertApplication({status:'tracking'}) is guaranteed to
     // land BEFORE the later status promotion below. Otherwise a fire-and-
     // forget version can race in and overwrite auto_tailored back to tracking.
@@ -2381,6 +2407,14 @@ export default function Home() {
     );
     updateTailoringJob(syntheticJobId, { status: "tailoring" });
 
+    // E3 Signal-1 (RM-15/F-1): OUTSIDE the try, before company is known --
+    // `""` routes Signal 2 to a silent `indeterminate` (S-8), never `clear`.
+    const dupeRunStartedAt = Date.now();
+    dupeApply.runDuplicateCheck(
+      { id: syntheticJobId, title: "", company: "", url: trimmedUrl, description: "" },
+      { jobId: syntheticJobId, entryPoint: "url", runStartedAt: dupeRunStartedAt },
+    );
+
     try {
       const formData = new FormData();
       formData.append("jobPostingUrl", trimmedUrl);
@@ -2444,6 +2478,17 @@ export default function Home() {
         url: trimmedUrl,
         description: nextJobDescription,
       };
+      // E3 Signal-2, company now known -- UNLIKE Signal-1, INSIDE this try
+      // (RM-15/F-1): an escaped throw would discard a paid-for résumé.
+      try {
+        dupeApply.runDuplicateCheck(syntheticJob, {
+          jobId: syntheticJobId,
+          entryPoint: "url",
+          runStartedAt: dupeRunStartedAt,
+        });
+      } catch {
+        // Defense in depth only -- see the comment above.
+      }
       setTrackedJobs((prev) =>
         prev.map((j) =>
           j.id === syntheticJobId
@@ -2605,6 +2650,13 @@ export default function Home() {
           ],
     );
     updateTailoringJob(syntheticJobId, { status: "tailoring" });
+
+    // E1 (1c U-1): OUTSIDE the try -- company/URL/description all already
+    // known, unlike E3, so this is the only fire needed.
+    dupeApply.runDuplicateCheck(
+      { id: syntheticJobId, title: posting.title || "", company: posting.company || "", url: postingUrl, description: postingText },
+      { jobId: syntheticJobId, entryPoint: "feed" },
+    );
 
     try {
       const formData = new FormData();
@@ -3100,6 +3152,14 @@ export default function Home() {
         />
       ) : null}
 
+      {/* Live region (1c U-6): mounted UNCONDITIONALLY here, not StatusBar.js
+          (its empty-dock early return would mount this already carrying the
+          warning -- S-11). Never nested in the banner (S-8a); `null`, never
+          `""`, so an unchanged `clear` mutates nothing (S-9). */}
+      <Box component="span" data-dupe-flag="live" role="status" aria-live="polite" sx={visuallyHidden}>
+        {dupeApply.dupeNotice?.announcement ? <span key={dupeApply.dupeAnnounceSeq}>{dupeApply.dupeNotice.announcement}</span> : null}
+      </Box>
+
       <StatusBar
         trackedJobs={trackedJobs}
         setTrackedJobs={setTrackedJobs}
@@ -3127,6 +3187,11 @@ export default function Home() {
         openResumePreview={preview.openResumePreview}
         openCompanyResearch={research.openCompanyResearch}
         appliedByExternalId={appliedByExternalId}
+        // StatusBar.js's (Wave 3A) banner props; `onDupeDownloadLog` is
+        // Wave 4 and not wired yet -- no log instance exists for it.
+        dupeNotice={dupeApply.dupeNotice}
+        onOpenApplications={dupeApply.onOpenApplications}
+        onDupeDismiss={dupeApply.onDupeDismiss}
       />
 
       <DocumentPreviewMount

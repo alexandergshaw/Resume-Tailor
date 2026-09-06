@@ -7,19 +7,26 @@
 // positive control, and self-exclusion by exact resolved path rather than a
 // `.test.js` suffix rule — is lib/supabase/driveMigrationShape.test.js.
 //
-// MEASURED, not assumed: a raw sweep of this corpus turns up EIGHT files, not
+// MEASURED, not assumed: a raw sweep of this corpus turns up NINE files, not
 // the "the module, plus the two dialogs if inlined" outcome the original
-// acceptance criteria envisioned. Five of the eight are coincidental
+// acceptance criteria envisioned. Six of the nine are coincidental
 // collisions with a DIFFERENT vocabulary (a React `key=`, a
-// `Promise.allSettled` result `.status`, an email keyword list, and
-// `interview_stages.stage_type` twice) — each individually verified below,
-// by reading the exact line, not assumed from a name. The remaining three are
-// real: the vocabulary module itself (expected — it is the one place
-// permitted to name every value), plus TWO residual files this wave's own
-// brief places off limits (app/page.js, lib/feed/tailorAndQueue.js) that
-// still pass a bare status string as a literal ARGUMENT at a handful of call
-// sites 3-plan-dataloss.md's own F-1/F-7 sections name and deliberately do
-// NOT convert to a `STATUS.*` constant. See the comments on
+// `Promise.allSettled` result `.status`, an email keyword list,
+// `interview_stages.stage_type` twice, and a `mainTab` UI-tab identifier) —
+// each individually verified below, by reading the exact line, not assumed
+// from a name. Five of those six are excluded WHOLESALE by resolved path
+// (`KNOWN_FALSE_POSITIVES`) because each is entirely about its own unrelated
+// vocabulary; the sixth (the `mainTab` collision, in a shared hook that could
+// plausibly gain a real status literal later) is excluded more narrowly, by
+// stripping only its one proven construct's exact text
+// (`KNOWN_CONSTRUCT_FALSE_POSITIVES`) — see the comment there for why, and
+// the two [pinned] tests that prove it is neither vacuous nor a blanket. The
+// remaining three are real: the vocabulary module itself (expected — it is
+// the one place permitted to name every value), plus TWO residual files this
+// wave's own brief places off limits (app/page.js, lib/feed/tailorAndQueue.js)
+// that still pass a bare status string as a literal ARGUMENT at a handful of
+// call sites 3-plan-dataloss.md's own F-1/F-7 sections name and deliberately
+// do NOT convert to a `STATUS.*` constant. See the comments on
 // `KNOWN_RESIDUALS` below for the exact citations — this is reported as a
 // finding, not silently normalised away.
 
@@ -134,6 +141,67 @@ const KNOWN_FALSE_POSITIVES = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
+// A SIXTH coincidental collision, deliberately NOT added to
+// KNOWN_FALSE_POSITIVES above: that Set excludes a file WHOLESALE, which is
+// fine for the five files above because each is entirely about its own,
+// unrelated vocabulary and carries no other applications.status hit to lose.
+// useDuplicateApplyCheck.js is a shared duplicate-application hook that reads
+// application rows more broadly (TRACKING_TAB_HIDDEN_STATUSES.includes(...)
+// at line 92) and could plausibly gain a genuine status literal later — a
+// whole-file exclusion here would silently swallow that too. So this strips
+// only the one proven-coincidental construct's exact text before the
+// status-literal check runs, leaving the rest of the file's text (any FUTURE
+// literal included) fully exposed to the sweep. See the two [pinned] tests
+// below: one proves this exact construct is what is being removed (not
+// vacuous), the other proves a genuine literal planted anywhere ELSE in this
+// same file is still caught (not a blanket).
+// ---------------------------------------------------------------------------
+const KNOWN_CONSTRUCT_FALSE_POSITIVES = new Map([
+  [
+    "app/hooks/useDuplicateApplyCheck.js",
+    // `onOpenApplications`'s `setMainTab("interviewing")` at line 155 (see
+    // the comment on the function two lines above it: "land the user on
+    // Interviewing with the search seeded to the employer"). `setMainTab` is
+    // app/page.js's `const [mainTab, setMainTab] = useState("applying")`
+    // (app/page.js:200) — a UI-tab identifier, also set to "applying"
+    // (app/page.js:2372), and checked against "manualApplying", "feed",
+    // "copilot", "library" and "experience" elsewhere in app/page.js
+    // (app/page.js:2852-3053) — never a write to applications.status.
+    // `mainTab === "interviewing"` at app/page.js:2958 is what gates
+    // rendering `<TrackingTab>`, the applications/tracking list, confirming
+    // this is a tab id, not a status. Coincidental spelling only:
+    // "interviewing" also happens to be one of the eleven real statuses
+    // (lib/applications/statusVocabulary.js), but this call site never
+    // touches that column.
+    'setMainTab("interviewing")',
+  ],
+]);
+
+// Removes ONLY the exact, documented construct for a file that has one
+// registered above — never a bare substring match on the status word itself,
+// which is the "blanket for the string 'interviewing' anywhere" this sweep
+// must not become (that would also hide a genuine literal elsewhere in the
+// SAME file, and could even mask one in a DIFFERENT file if the substring
+// were ever loosened past this one exact call expression).
+function stripKnownConstructs(rel, text) {
+  const construct = KNOWN_CONSTRUCT_FALSE_POSITIVES.get(rel);
+  return construct ? text.split(construct).join("") : text;
+}
+
+// The exact predicate the main sweep test below applies, pulled out so the
+// [pinned] "still fires" proof can run it against a deliberately mutated
+// corpus without touching any file on disk (app/hooks/useDuplicateApplyCheck.js
+// is off limits to this wave — a review agent is reading it).
+function computeFlagged(files) {
+  return files
+    .filter(([rel]) => !KNOWN_FALSE_POSITIVES.has(rel))
+    .map(([rel, src]) => [rel, stripKnownConstructs(rel, stripComments(src))])
+    .filter(([, strippedSrc]) => hasStatusLiteral(strippedSrc))
+    .map(([rel]) => rel)
+    .sort();
+}
+
+// ---------------------------------------------------------------------------
 // Real `applications.status` literals that remain after this wave, OUTSIDE
 // this wave's allowed files, each with the exact citation for why the
 // literal was not converted to a `STATUS.*` constant.
@@ -226,12 +294,44 @@ describe("[src] applications.status literals — AC-3a, one home", () => {
     }
   });
 
+  it("[pinned] the construct-level exclusion removes exactly its documented hit — not vacuous", () => {
+    for (const [rel, construct] of KNOWN_CONSTRUCT_FALSE_POSITIVES) {
+      const entry = sourceFiles().find(([r]) => r === rel);
+      expect(entry, `expected ${rel} to exist in the swept corpus`).toBeDefined();
+      const [, src] = entry;
+      const stripped = stripComments(src);
+      expect(stripped.includes(construct), `${rel} was expected to still contain "${construct}"`).toBe(true);
+      expect(hasStatusLiteral(stripped), `${rel} was expected to raw-match before its construct is removed`).toBe(
+        true,
+      );
+      expect(
+        hasStatusLiteral(stripKnownConstructs(rel, stripped)),
+        `${rel} should no longer match once only its documented construct is removed`,
+      ).toBe(false);
+    }
+  });
+
+  it("[pinned] a genuine status literal planted anywhere ELSE in useDuplicateApplyCheck.js is still caught — proves the exclusion is not a whole-file blanket", () => {
+    // This is the "does the exclusion still let the sweep fire" proof, run
+    // for real through computeFlagged (the exact predicate the test below
+    // applies) against a corpus mutated ONLY in memory — the on-disk file is
+    // never touched, since app/hooks/useDuplicateApplyCheck.js is off limits
+    // to this wave (a review agent is reading it).
+    const rel = "app/hooks/useDuplicateApplyCheck.js";
+    const files = sourceFiles();
+    expect(computeFlagged(files), "baseline: the coincidental hit alone must NOT flag the file").not.toContain(rel);
+
+    const planted = files.map(([r, src]) =>
+      r === rel ? [r, `${src}\nconst plantedForProof = "rejected"; // a genuine status literal, planted for this proof\n`] : [r, src],
+    );
+    expect(
+      computeFlagged(planted),
+      "a genuine literal planted elsewhere in the same file must still be flagged red",
+    ).toContain(rel);
+  });
+
   it("consolidates applications.status literals to ONE place, plus two named off-lane residuals — toEqual, not toContain", () => {
-    const flagged = sourceFiles()
-      .filter(([rel]) => !KNOWN_FALSE_POSITIVES.has(rel))
-      .filter(([, src]) => hasStatusLiteral(stripComments(src)))
-      .map(([rel]) => rel)
-      .sort();
+    const flagged = computeFlagged(sourceFiles());
 
     expect(flagged).toEqual(["app/page.js", "lib/applications/statusVocabulary.js", "lib/feed/tailorAndQueue.js"]);
 

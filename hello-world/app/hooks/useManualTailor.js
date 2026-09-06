@@ -51,6 +51,12 @@ export function useManualTailor({
   maybeOfferLibraryUpdate,
   withClearedEditedScopes,
   finishByOpeningPreview,
+  // E4/E6's Signal-2 fire point (3-plan-dupapply.md §2.9). A callback, not
+  // `applicationData` (1c U-7 #7): passing the row set in would put the row
+  // set, the evaluator and the verdict in two places, and this hook would
+  // have to learn what an application is. Optional -- a caller that omits it
+  // (e.g. an existing test) gets the pipeline's original behaviour.
+  onCheckDuplicate,
 }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -182,6 +188,28 @@ export function useManualTailor({
         url: "",
         description: sourcePosting,
       };
+      // E4/E6's Signal-2 fire point, now that the resolved company exists --
+      // there is no Signal-1 fire for this entry point at all: a manual
+      // paste/queue posting carries neither a URL nor an external id, so
+      // postingIdentity.js's candidateKey is permanently null and Signal 1 is
+      // a silent, permanent `no-posting-identity` (a capability reason,
+      // never rendered on its own). UNLIKE page.js's three handlers, this
+      // fire point sits INSIDE tailorPosting's own try (RM-15/F-1) and
+      // `onCheckDuplicate` is an OPAQUE prop supplied by the caller (page.js)
+      // -- this hook cannot rely on knowing that the caller's implementation
+      // never throws, so the try/catch below is not optional here the way it
+      // is for page.js's own always-safe runDuplicateCheck. A throw that
+      // escaped would be caught by this function's own catch further down,
+      // which sets status:"error" and returns { ok:false }, discarding an
+      // already-generated, already-paid-for résumé and never opening the
+      // preview.
+      try {
+        if (typeof onCheckDuplicate === "function") {
+          onCheckDuplicate(syntheticJob, { jobId: syntheticJobId, entryPoint: "manual" });
+        }
+      } catch {
+        // Defense in depth only -- see the comment above.
+      }
       setTrackedJobs((prev) =>
         prev.map((j) =>
           j.id === syntheticJobId

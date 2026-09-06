@@ -1,5 +1,4 @@
 "use client";
-
 import { useEffect, useRef, useState } from "react";
 import { buildTemplateLinesForUpload } from "../../lib/document/docx";
 import {
@@ -33,6 +32,7 @@ import { readEngine } from "../settings/engine";
 import { createClient } from "../../lib/supabase/client";
 import { persistGeneratedDocuments } from "../../lib/supabase/persistGeneration";
 import { fetchDocumentVersions, pointApplicationAtVersion } from "../../lib/supabase/documentVersions";
+import { fireDuplicateCheckSafely } from "../../lib/tailor/duplicateCheckFire";
 
 // Resume/cover-letter preview + edit modal (opened from the status-bar chips and
 // at the end of a Generate flow). Renders the faithful .docx (or a plain-text
@@ -70,7 +70,7 @@ export function useDocumentPreview({
   startBackgroundResearch,
   setPreviewReloadKey,
   onDocumentEdited,
-  currentUser,
+  currentUser, onCheckDuplicate, // opaque prop -- see lib/tailor/duplicateCheckFire.js
 }) {
   const [resumePreview, setResumePreview] = useState({
     open: false,
@@ -592,7 +592,7 @@ export function useDocumentPreview({
       setScopeFlags(lockScopes, { error: "Couldn't find the job posting to revise against.", notice: "" });
       return false;
     }
-
+    fireDuplicateCheckSafely(onCheckDuplicate, { id: jobId, title: resumePreview.title, company: resumePreview.company, url, description: posting }, { jobId, entryPoint: "revise" }); // row 5: a job rehydrated from localStorage may never have been checked this session; fires before the paid call, title/company already known (like E1/E2).
     lockScopes.forEach((s) => inFlightScopesRef.current.add(s));
     setScopeFlags(lockScopes, { busy: true, notice: "", error: "" });
     try {
