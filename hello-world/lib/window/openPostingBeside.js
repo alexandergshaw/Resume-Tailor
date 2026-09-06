@@ -9,8 +9,55 @@
 //     inspect the return value and fall back to a normal new tab.
 //   - Multi-monitor setups: we respect screen.availLeft/availTop so the popup
 //     lands on the same display as the app.
+//
+// SECURITY: every url this module is handed (`openPostingBeside`'s `url`,
+// `navigateBeside`'s `url`) is `positions.url` or a value derived from it.
+// `public.positions` has no `user_id` column and its update policy is
+// `auth.role() = 'authenticated'`, so any signed-in account can overwrite any
+// row's `url` - see lib/url/safeExternalHref.js for the full writeup. That
+// module is the control for every `<a href>` in this app; `window.open` and
+// `popup.location.href =` are the other two ways a string becomes a browser
+// navigation, and neither has React (or anything else) filtering it. So
+// every url reaches `safeExternalHref` here before it reaches either one.
+//
+// Refusal is signalled with a TRUTHY, non-popup sentinel rather than the
+// `null`/`false` used for "blocked" or "no url" - see REFUSED below for why:
+// every caller of this module (AutoApplyQueueTab.js, LiveFeedTab.js,
+// app/page.js) writes its own `if (!opened) window.open(url, ...)` /
+// `if (!navigated) { ...; window.open(url, ...) }` fallback for a
+// browser-blocked popup, using the SAME url this module just validated (or
+// refused). Returning falsy for a refusal would trip that fallback and open
+// the exact url this module refused, one line later, in a file this fix does
+// not touch.
+
+import { safeExternalHref } from "../url/safeExternalHref.js";
 
 const PREF_KEY = "openPostingsBeside";
+
+// Returned by openPostingBeside/navigateBeside in place of a popup reference
+// when the url fails safeExternalHref. Truthy so callers' own "did this
+// return falsy? then fall back to a raw window.open(url, ...)" logic treats
+// refusal as "handled" rather than "blocked, please retry" - see the module
+// banner above. `closed: true` so any caller that later guards a close()
+// call with `!popup.closed` (app/page.js does, for its preset blank popup)
+// treats this sentinel as already gone rather than calling methods on it.
+const REFUSED = Object.freeze({ refused: true, closed: true });
+
+// A refused url must not fail silently: the user clicked something expecting
+// a posting to open. `window.alert` is the only feedback channel available
+// to a plain module with no access to the app's own UI state, so it is used
+// here deliberately, guarded for the SSR/test environments that lack it.
+function refuseUnsafeUrl() {
+  try {
+    if (typeof window !== "undefined" && typeof window.alert === "function") {
+      window.alert("This posting's link couldn't be verified as safe, so it wasn't opened.");
+    }
+  } catch {
+    // alert can throw or be suppressed (e.g. a sandboxed frame); the refusal
+    // itself still holds regardless.
+  }
+  return REFUSED;
+}
 
 // Whether the "open beside" behavior is enabled. Defaults to true. Stored in
 // localStorage so the choice persists. SSR-safe.
@@ -50,6 +97,10 @@ function readScreenGeometry() {
 // back to a plain new tab.
 export function openPostingBeside(url, { forceNewTab = false } = {}) {
   if (!url || typeof window === "undefined") return null;
+  // Validate BEFORE branching: forceNewTab/opted-out calls window.open
+  // directly, a few lines below, so the check has to precede that branch
+  // rather than live only in the docked-popup path.
+  if (safeExternalHref(url) === null) return refuseUnsafeUrl();
 
   if (forceNewTab || !isOpenBesideEnabled()) {
     return window.open(url, "_blank", "noopener,noreferrer");
@@ -73,6 +124,20 @@ export function openBlankBeside() {
 // Point a previously-opened blank popup (from openBlankBeside) at the real URL.
 export function navigateBeside(popup, url) {
   if (!popup || popup.closed || !url) return false;
+  if (safeExternalHref(url) === null) {
+    // A preset blank popup (from openBlankBeside) is already open and
+    // visible - don't leave it dangling on about:blank.
+    try {
+      popup.close();
+    } catch {
+      // closing may be denied; not critical
+    }
+    refuseUnsafeUrl();
+    // See REFUSED/module banner: `true` here, not `false`, so the caller's
+    // own `if (!navigated) { openPostingBeside(url) ... }` fallback does not
+    // retry this same refused url through a second path.
+    return true;
+  }
   try {
     popup.location.href = url;
   } catch {
