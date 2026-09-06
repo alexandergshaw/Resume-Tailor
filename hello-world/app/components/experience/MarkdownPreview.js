@@ -139,7 +139,18 @@ function renderBlock(token, key, renderLink) {
     }
     case "paragraph":
       return (
-        <Box key={key} component="p" sx={{ my: 1, whiteSpace: "pre-wrap" }}>
+        <Box
+          key={key}
+          component="p"
+          // `pre-wrap` preserves the author's line breaks, but on its own it
+          // only wraps at whitespace - an unbroken long token (a URL, a
+          // base64 blob, a minified line) overflows the box instead. There
+          // is no scrollbar to reach it: globals.css clips overflow-x at
+          // <html>, so an overflowing token is not just off-screen, it is
+          // unreachable. `overflowWrap: "anywhere"` lets the browser break
+          // inside such a token so it wraps within this box instead.
+          sx={{ my: 1, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+        >
           {renderInline(token.children, key, renderLink)}
         </Box>
       );
@@ -154,7 +165,14 @@ function renderBlock(token, key, renderLink) {
             my: 1,
             p: 1.5,
             borderRadius: 1,
-            bgcolor: "rgba(0,0,0,0.06)",
+            // Was a literal rgba(0,0,0,0.06) - a fixed black wash that
+            // reads as a faint fill on a white/light-mode ground but is
+            // indistinguishable from a near-black dark-mode ground (this
+            // app switches theme via <html data-theme>, not a CSS media
+            // query, so a literal never adapts). `--border` is one of the
+            // tokens app/theme/tokens.js flips per mode, so this fill
+            // switches with it instead of staying frozen.
+            bgcolor: "var(--border)",
             overflowX: "auto",
           }}
         >
@@ -172,7 +190,12 @@ function renderBlock(token, key, renderLink) {
             my: 1,
             ml: 0,
             pl: 2,
-            borderLeft: "3px solid rgba(0,0,0,0.2)",
+            // Was a literal rgba(0,0,0,0.2) - see the "code" case above for
+            // why a literal here is invisible in dark mode. --border-strong
+            // is the same family of token, one step more prominent, which
+            // matches how it's already used for other emphasised dividers
+            // (see ChatPanel.js, ApplyingControls.js).
+            borderLeft: "3px solid var(--border-strong)",
             color: "text.secondary",
           }}
         >
@@ -180,7 +203,9 @@ function renderBlock(token, key, renderLink) {
         </Box>
       );
     case "hr":
-      return <Box key={key} component="hr" sx={{ my: 2, border: 0, borderTop: "1px solid rgba(0,0,0,0.12)" }} />;
+      // Was a literal rgba(0,0,0,0.12) - see the "code" case above. Same
+      // fix, same token as the code block's fill: --border.
+      return <Box key={key} component="hr" sx={{ my: 2, border: 0, borderTop: "1px solid var(--border)" }} />;
     default:
       return null;
   }

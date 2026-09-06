@@ -13,7 +13,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createElement, act } from "react";
 import { createRoot } from "react-dom/client";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import MarkdownPreview from "./MarkdownPreview.js";
+import { tokens } from "../../theme/tokens.js";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -142,4 +145,149 @@ describe("MarkdownPreview -- hostile input", () => {
     // A blocked link keeps its label as inert text rather than vanishing.
     expect(container.textContent).toContain("click me");
   });
+});
+
+// --- Dark-mode contrast of the code block, blockquote rule and hr --------
+//
+// This app expresses theme as `<html data-theme="dark">`, not
+// `prefers-color-scheme` (that media feature is used exactly once in the
+// whole repo, only to SEED the attribute -- app/theme/tokens.js:135 -- and
+// there is no CSS media query for it anywhere). A plain color literal in an
+// `sx` prop therefore never flips: it paints the same RGB in both modes.
+//
+// That is provable from source and from the real token values without
+// rendering anything: jsdom never resolves `var()` (a var() reference
+// round-trips as the literal string "var(--x)", not the color it names), so
+// mounting the component and reading getComputedStyle here would either see
+// the un-resolved var() string or (for a plain rgba() literal) a color that
+// is real but tells us nothing about which theme it was "meant" for, since
+// it's the same color in both. So this suite reads the actual declaration
+// out of the component's source text and resolves it against the actual hex
+// values in app/theme/tokens.js -- the single source both the CSS vars and
+// the MUI palette are generated from -- and computes contrast the way WCAG
+// defines it (relative luminance).
+//
+// What this proves: the source DECLARES a color that, under the app's real
+// design tokens, computes to materially better contrast against the app's
+// real dark-mode grounds than a mode-frozen literal ever can. What it does
+// NOT prove: that a browser paints it that way pixel-for-pixel (that needs a
+// real rendering/paint engine, which jsdom is not) -- nor does it assert
+// full WCAG 1.4.11 (3:1) compliance, which the existing --border /
+// --border-strong tokens themselves cannot reach for a hairline divider
+// (see app/copilot/AnswerAids.js's own documented 1.28:1 / 1.76:1 ceiling
+// for the same two tokens) -- that is a token-value question for
+// app/theme/, out of this file's scope.
+function srgbToLinear(c) {
+  const n = c / 255;
+  return n <= 0.03928 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4);
+}
+function relativeLuminance([r, g, b]) {
+  return 0.2126 * srgbToLinear(r) + 0.7152 * srgbToLinear(g) + 0.0722 * srgbToLinear(b);
+}
+function contrastRatio(rgbA, rgbB) {
+  const [l1, l2] = [relativeLuminance(rgbA), relativeLuminance(rgbB)].sort((a, b) => b - a);
+  return (l1 + 0.05) / (l2 + 0.05);
+}
+function hexToRgb(hex) {
+  const h = hex.replace("#", "");
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
+// The exact composite a browser performs for a literal `rgba(0,0,0,a)` over
+// whatever sits behind it -- and the reason a black-based overlay can never
+// be fixed for a dark ground by raising the alpha: blending toward black can
+// only ever DARKEN an already-dark background, never separate from it.
+function blendBlackOver(groundRgb, alpha) {
+  return groundRgb.map((c) => c * (1 - alpha));
+}
+
+function resolveColorExpr(expr) {
+  const rgba = expr.match(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)\)/);
+  if (rgba) {
+    const [, r, g, b, a] = rgba.map(Number);
+    return { kind: "alpha-black", r, g, b, a };
+  }
+  const token = expr.match(/var\(--([a-z0-9-]+)/);
+  if (token) return { kind: "token", name: token[1] };
+  throw new Error(`MarkdownPreview.test.js does not know how to resolve color expression: "${expr}"`);
+}
+
+// The effective color a declaration paints against `groundHex` in `mode`.
+function effectiveRgb(decl, groundHex, mode) {
+  if (decl.kind === "alpha-black") return blendBlackOver(hexToRgb(groundHex), decl.a);
+  const hex = tokens[mode][decl.name];
+  if (!hex) throw new Error(`unknown design token --${decl.name} for mode "${mode}"`);
+  return hexToRgb(hex);
+}
+
+const SRC_PATH = path.join(process.cwd(), "app", "components", "experience", "MarkdownPreview.js");
+const SRC = readFileSync(SRC_PATH, "utf8");
+
+// renderInline() has its OWN `case "code":` arm (inline `<code>` spans), so
+// searching the whole file for `case "code":` finds that one first. Scope
+// the search to renderBlock()'s own body -- the function that owns the
+// block-level code/quote/hr arms this suite cares about.
+const RENDER_BLOCK_START = SRC.indexOf("function renderBlock(token, key, renderLink) {");
+const RENDER_BLOCK_END = SRC.indexOf("function renderBlocks(tokens, keyPrefix, renderLink) {");
+if (RENDER_BLOCK_START === -1 || RENDER_BLOCK_END === -1 || RENDER_BLOCK_END <= RENDER_BLOCK_START) {
+  throw new Error(`could not locate renderBlock()'s source region in ${SRC_PATH}`);
+}
+const RENDER_BLOCK_SRC = SRC.slice(RENDER_BLOCK_START, RENDER_BLOCK_END);
+
+// Isolates one `case` arm's body (up to the next `case`/`default` at the
+// switch's own indent) so the property regex below can't wander into a
+// different arm and read the wrong literal.
+function armBody(caseLabel) {
+  const re = new RegExp(`case "${caseLabel}":[\\s\\S]*?(?=\\n    case |\\n    default)`);
+  const m = RENDER_BLOCK_SRC.match(re);
+  if (!m) throw new Error(`could not locate a \`case "${caseLabel}":\` arm inside renderBlock() in ${SRC_PATH}`);
+  return m[0];
+}
+function declFor(caseLabel, propName) {
+  const prop = armBody(caseLabel).match(new RegExp(`${propName}:\\s*"([^"]+)"`));
+  if (!prop) throw new Error(`could not find "${propName}" inside the "${caseLabel}" arm`);
+  return resolveColorExpr(prop[1]);
+}
+
+// The three sites named in the defect report, each keyed to the exact
+// renderBlock() case it comes from.
+const SITES = {
+  "code block background (case \"code\", bgcolor)": declFor("code", "bgcolor"),
+  "blockquote left border (case \"quote\", borderLeft)": declFor("quote", "borderLeft"),
+  "hr rule (case \"hr\", borderTop)": declFor("hr", "borderTop"),
+};
+
+// The real grounds this renders on: app/page.module.css's `.main` is a
+// gradient between these two tokens (bg-surface at the top, bg-soft at the
+// bottom -- page.module.css:15), and ExperienceTab.js adds no background of
+// its own (confirmed by reading it), so either stop can sit directly behind
+// the element depending on scroll position.
+const DARK_GROUNDS = { "bg-surface": tokens.dark["bg-surface"], "bg-soft": tokens.dark["bg-soft"] };
+
+// Comfortably ABOVE every pre-fix literal's best dark-ground ratio (measured
+// max across the three sites: 1.098, the blockquote's 20%-alpha black
+// against dark bg-soft) and comfortably BELOW every candidate fix's worst
+// ratio (measured min: 1.282, --border against dark bg-soft) -- chosen so
+// this threshold cannot pass or fail by accident in either direction.
+const MIN_DARK_CONTRAST = 1.2;
+
+describe("MarkdownPreview -- dark-mode contrast (the three literals)", () => {
+  for (const [label, decl] of Object.entries(SITES)) {
+    it(`${label}: is not a mode-frozen rgba(0,0,0,...) literal`, () => {
+      // This alone would only prove the literal's ABSENCE, not that
+      // anything is legible -- it is paired below with the actual computed
+      // ratio, which is the assertion that carries the defect.
+      expect(decl.kind).toBe("token");
+    });
+
+    it(`${label}: computes to at least ${MIN_DARK_CONTRAST}:1 against both real dark grounds`, () => {
+      const ratios = Object.entries(DARK_GROUNDS).map(([groundName, groundHex]) => ({
+        groundName,
+        ratio: contrastRatio(effectiveRgb(decl, groundHex, "dark"), hexToRgb(groundHex)),
+      }));
+      const worst = Math.min(...ratios.map((r) => r.ratio));
+      expect(worst, `ratios against dark grounds: ${JSON.stringify(ratios)}`).toBeGreaterThanOrEqual(
+        MIN_DARK_CONTRAST
+      );
+    });
+  }
 });
