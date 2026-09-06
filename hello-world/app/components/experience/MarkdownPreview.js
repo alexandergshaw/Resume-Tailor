@@ -22,20 +22,36 @@ const HEADING_FONT_SIZE = { h2: 20, h3: 17, h4: 15 };
 const LINK_SX = { color: "var(--accent, #1976d2)" };
 const MAILTO = /^mailto:/i;
 
-function renderInline(children, keyPrefix) {
+function renderInline(children, keyPrefix, renderLink) {
   return (children || []).map((token, index) => {
     const key = `${keyPrefix}-${index}`;
     switch (token.type) {
       case "text":
         return token.value;
       case "strong":
-        return <strong key={key}>{renderInline(token.children, key)}</strong>;
+        return <strong key={key}>{renderInline(token.children, key, renderLink)}</strong>;
       case "em":
-        return <em key={key}>{renderInline(token.children, key)}</em>;
+        return <em key={key}>{renderInline(token.children, key, renderLink)}</em>;
       case "code":
         return <code key={key}>{token.value}</code>;
       case "link": {
         const external = !!token.external;
+        // The optional seam. A caller that knows something this component
+        // cannot - the digest panel, which knows a given href is a citation
+        // marker and what number the renderer assigned it - returns its own
+        // element here. Returning `undefined` (including from a caller that
+        // recognises nothing) falls through to the rendering below, so with
+        // no `renderLink` prop this file behaves byte-identically to before
+        // and PageEditor's preview is unchanged.
+        if (renderLink) {
+          const custom = renderLink({
+            href: token.href,
+            external,
+            key,
+            children: renderInline(token.children, key, renderLink),
+          });
+          if (custom !== undefined) return custom;
+        }
         // `token.href` has already passed lib/experience/markdown.js's
         // sanitizeUrl - but that is a scheme-PREFIX test, not a URL parse.
         // It admits `[acme.com](https://acme.com@evil.example/story)`, a
@@ -62,15 +78,15 @@ function renderInline(children, keyPrefix) {
               rel={external ? "noopener noreferrer" : undefined}
               sx={LINK_SX}
             >
-              {renderInline(token.children, key)}
+              {renderInline(token.children, key, renderLink)}
             </Box>
           );
         }
         const href = safeExternalHref(token.href);
-        if (!href) return <span key={key}>{renderInline(token.children, key)}</span>;
+        if (!href) return <span key={key}>{renderInline(token.children, key, renderLink)}</span>;
         return (
           <Box key={key} component="a" href={href} target="_blank" rel="noopener noreferrer" sx={LINK_SX}>
-            {renderInline(token.children, key)}
+            {renderInline(token.children, key, renderLink)}
           </Box>
         );
       }
@@ -80,7 +96,7 @@ function renderInline(children, keyPrefix) {
   });
 }
 
-function renderList(token, key) {
+function renderList(token, key, renderLink) {
   const ListTag = token.ordered ? "ol" : "ul";
   return (
     <Box key={key} component={ListTag} sx={{ pl: 3, m: 0, my: 1 }}>
@@ -98,7 +114,7 @@ function renderList(token, key) {
                 inputProps={{ "aria-label": item.checked ? "Completed task" : "Incomplete task" }}
               />
             ) : null}
-            {renderBlocks(item.children, itemKey)}
+            {renderBlocks(item.children, itemKey, renderLink)}
           </Box>
         );
       })}
@@ -106,7 +122,7 @@ function renderList(token, key) {
   );
 }
 
-function renderBlock(token, key) {
+function renderBlock(token, key, renderLink) {
   switch (token.type) {
     case "heading": {
       const level = Math.min(token.level + HEADING_OFFSET, MAX_HEADING_TAG);
@@ -117,18 +133,18 @@ function renderBlock(token, key) {
           component={HeadingTag}
           sx={{ mt: 2, mb: 1, fontWeight: 700, fontSize: HEADING_FONT_SIZE[HeadingTag] || 14 }}
         >
-          {renderInline(token.children, key)}
+          {renderInline(token.children, key, renderLink)}
         </Box>
       );
     }
     case "paragraph":
       return (
         <Box key={key} component="p" sx={{ my: 1, whiteSpace: "pre-wrap" }}>
-          {renderInline(token.children, key)}
+          {renderInline(token.children, key, renderLink)}
         </Box>
       );
     case "list":
-      return renderList(token, key);
+      return renderList(token, key, renderLink);
     case "code":
       return (
         <Box
@@ -160,7 +176,7 @@ function renderBlock(token, key) {
             color: "text.secondary",
           }}
         >
-          {renderBlocks(token.children, key)}
+          {renderBlocks(token.children, key, renderLink)}
         </Box>
       );
     case "hr":
@@ -170,19 +186,28 @@ function renderBlock(token, key) {
   }
 }
 
-function renderBlocks(tokens, keyPrefix) {
-  return (tokens || []).map((token, index) => renderBlock(token, `${keyPrefix}-${index}`));
+function renderBlocks(tokens, keyPrefix, renderLink) {
+  return (tokens || []).map((token, index) => renderBlock(token, `${keyPrefix}-${index}`, renderLink));
 }
 
-// <MarkdownPreview markdown={body} /> - the only prop this component needs.
-// It parses internally so callers (PageEditor's preview mode) never touch
-// the token tree directly.
-export default function MarkdownPreview({ markdown }) {
+// <MarkdownPreview markdown={body} /> - the only prop most callers need. It
+// parses internally so callers (PageEditor's preview mode) never touch the
+// token tree directly.
+//
+// `renderLink` is optional and is the digest panel's seam: it is called for
+// every link token with { href, external, key, children } and may return an
+// element to render instead. Returning `undefined` - which includes every
+// link a caller does not recognise - falls through to the rendering below, so
+// omitting the prop leaves this component byte-identical to what it was.
+// The seam exists because the marker's number, its accessible name and its
+// affordance are decided by a citation record this component knows nothing
+// about, and the alternative was a second markdown renderer.
+export default function MarkdownPreview({ markdown, renderLink }) {
   const tokens = parseMarkdown(markdown);
   if (tokens.length === 0) {
     return (
       <Box sx={{ color: "text.secondary", fontStyle: "italic" }}>Nothing to preview yet.</Box>
     );
   }
-  return <Box sx={{ fontSize: 14, lineHeight: 1.7 }}>{renderBlocks(tokens, "b")}</Box>;
+  return <Box sx={{ fontSize: 14, lineHeight: 1.7 }}>{renderBlocks(tokens, "b", renderLink)}</Box>;
 }

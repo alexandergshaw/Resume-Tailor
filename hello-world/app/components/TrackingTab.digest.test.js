@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 const read = (rel) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 const tab = read("./TrackingTab.js");
 const dialog = read("./AppViewDialog.js");
+const panel = read("./tracking/DigestPanel.js");
 
 describe("TrackingTab renders the digest column", () => {
   it("adds a header cell naming the column", () => {
@@ -43,7 +44,40 @@ describe("TrackingTab renders the digest column", () => {
   it("renders the digest with the real markdown parser, not the job-description heuristic", () => {
     // FormattedContent.js is a plain-text heuristic shaped for job ads and
     // resumes; the digest is genuine markdown the model wrote.
-    expect(dialog).toMatch(/MarkdownPreview/);
+    //
+    // Re-anchored when the panel moved into its own module: the literal
+    // "MarkdownPreview" left AppViewDialog.js with the extraction, and a test
+    // that went red for THAT reason would have said nothing about this
+    // property. Both teeth are kept - the dialog delegates to the panel, and
+    // the panel is the one on the real parser - and neither file routes the
+    // digest through FormattedContent.
+    expect(dialog).toMatch(/import DigestPanel from ".\/tracking\/DigestPanel/);
+    expect(dialog).toContain("<DigestPanel");
+    expect(panel).toMatch(/MarkdownPreview/);
+    expect(panel).not.toContain("FormattedContent");
+  });
+
+  it("actually renders the extracted panel rather than keeping a second copy", () => {
+    // lib/feed/liveFeedWiring.test.js's three-part shape: the render site, the
+    // import, and the ABSENCE of the shape it replaced. Only the third can
+    // fail when someone imports the new module and leaves the old one
+    // rendering - which is how a repo ships a fully-tested component twice.
+    expect(dialog).not.toMatch(/function DigestPanel/);
+  });
+
+  it("threads the research controls the panel needs into the dialog", () => {
+    // The panel's `Research again` is only reachable if TrackingTab passes
+    // what it already holds. Both are already props of TrackingTab (:100-101),
+    // so this is a threading assertion, not a new data path.
+    expect(tab).toMatch(/researchingIds=\{/);
+    expect(tab).toMatch(/researchOne=\{/);
+  });
+
+  it("surfaces a failed digest's own error, and a way to read the stale prose", () => {
+    // digest.error is written on both route paths and was read by nothing.
+    // The failure disclosure lives in the dialog, so the failed cell must
+    // offer a way to reach it rather than returning before the summary.
+    expect(tab).toContain("digest.error");
   });
 
   it("still renders the phone layout, which is a separate block from the table", () => {

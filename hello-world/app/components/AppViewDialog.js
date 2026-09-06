@@ -12,67 +12,15 @@ import DialogTitle from "@mui/material/DialogTitle";
 import { useIsMobile } from "../hooks/useResponsive";
 import FieldError from "./FieldError";
 import FormattedContent from "./FormattedContent";
-import MarkdownPreview from "./experience/MarkdownPreview";
-import { formatRelative } from "../../lib/feed/liveFeedClient";
-import { safeExternalHref } from "@/lib/url/safeExternalHref";
+import DigestPanel from "./tracking/DigestPanel";
 
-// The digest tab's body: the real markdown parser (never FormattedContent.js
-// - that heuristic is shaped for a job ad's plain text, not genuine markdown
-// a model wrote), the sources the model actually grounded on, and when the
-// research last ran. A module-level component (not one declared inside
-// AppViewDialog) so it is not recreated - and its own state, if it ever
-// grows any, reset - on every AppViewDialog render.
-function DigestPanel({ digest, nowTs }) {
-  if (!digest?.markdown) {
-    return <Box sx={{ color: "text.secondary", fontStyle: "italic" }}>Not researched yet.</Box>;
-  }
-  const sources = Array.isArray(digest.sources) ? digest.sources : [];
-  return (
-    <Box>
-      <MarkdownPreview markdown={digest.markdown} />
-      {sources.length > 0 && (
-        <Box sx={{ mt: 2, pt: 1.5, borderTop: "1px solid var(--border)" }}>
-          <Box sx={{ fontWeight: 700, fontSize: 12, mb: 0.5 }}>Sources</Box>
-          {sources.map((s, i) => {
-            // `sources` is `jsonb not null default '[]'` - the read-back
-            // gives no element-level type guarantee, and these values come
-            // from grounded search, where isGroundedHost compares hostnames
-            // with no scheme test at all. So nothing upstream has checked
-            // this string, and `String({url})` would render "[object
-            // Object]" as an href. A refused source stays VISIBLE (it is
-            // still what the model grounded on) but is not a link.
-            const href = safeExternalHref(s?.url);
-            const label = s?.title || (typeof s?.url === "string" ? s.url : "Unnamed source");
-            return (
-              <Box key={href || `source-${i}`} sx={{ fontSize: 12, mb: 0.25 }}>
-                {href ? (
-                  <Box
-                    component="a"
-                    href={href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    sx={{ color: "var(--accent)" }}
-                  >
-                    {label}
-                  </Box>
-                ) : (
-                  <Box component="span" sx={{ color: "var(--text-secondary)" }}>
-                    {label}
-                  </Box>
-                )}
-              </Box>
-            );
-          })}
-        </Box>
-      )}
-      {digest.updated_at && nowTs > 0 && (
-        <Box sx={{ mt: 1.5, fontSize: 11, color: "text.secondary" }}>
-          Researched {formatRelative(digest.updated_at, nowTs)}
-        </Box>
-      )}
-    </Box>
-  );
-}
+// The digest tab's body lives in ./tracking/DigestPanel.js. It moved out
+// because it grew the thing this dialog cannot host: citation markers, three
+// separately labelled source groups, and the four states that look alike but
+// mean opposite things (cited / never searched / searched-and-none-placed /
+// written before the pipeline existed). None of that is falsifiable while it
+// is a private function inside a component that needs a page-sized prop tree
+// to mount.
 
 export default function AppViewDialog({
   appDialog,
@@ -82,6 +30,8 @@ export default function AppViewDialog({
   loadCommunicationsForApp,
   openAddCommunicationDialog,
   digestsById = {},
+  researchingIds,
+  researchOne,
 }) {
   const isMobile = useIsMobile();
 
@@ -174,7 +124,11 @@ export default function AppViewDialog({
           </Button>
         </Box>
       </DialogTitle>
-      <DialogContent dividers sx={{ maxHeight: "70vh" }}>
+      {/* On a phone the dialog is already fullScreen, so a 70vh cap on the
+          scrolling body leaves ~30% of the screen unused above a footer that
+          has nowhere to go - and the source groups this feature adds are what
+          gets pushed off the bottom. The cap is desktop-only. */}
+      <DialogContent dividers sx={{ maxHeight: isMobile ? "none" : "70vh" }}>
         {appDialog.kind === "communications" ? (
           !commsLoadedForThisApp || communicationsDialog.loading ? (
             <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
@@ -226,7 +180,12 @@ export default function AppViewDialog({
             </Box>
           )
         ) : appDialog.kind === "digest" ? (
-          <DigestPanel digest={dDigest} nowTs={nowTs} />
+          <DigestPanel
+            digest={dDigest}
+            nowTs={nowTs}
+            researching={!!researchingIds?.has?.(dApp?.id)}
+            onResearchAgain={researchOne}
+          />
         ) : (
           <FormattedContent
             text={appDialog.kind === "jd" ? (dPos?.description ?? "") : (dResume?.content ?? "")}

@@ -137,9 +137,41 @@ export default function TrackingTab({
     }
 
     if (digest && digest.status === "failed") {
+      const stale = digestSummaryLine(digest.markdown);
       return (
         <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 0.25 }}>
           <Box sx={{ fontSize: 11, color: "var(--danger)" }}>Research failed</Box>
+          {/* When the last attempt failed but earlier research survived, this
+              branch used to return before the summary button - so the panel
+              that discloses "the latest research failed, and this is from
+              <when>" was reachable only by opening a different page of the
+              dialog and pressing an undocumented arrow key. The stale prose is
+              the only copy there is; it gets a way in. */}
+          {stale ? (
+            <Button
+              size="small"
+              onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "digest" })}
+              sx={{
+                p: 0,
+                minWidth: 0,
+                fontSize: 12,
+                textAlign: "left",
+                textTransform: "none",
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              }}
+            >
+              {stale}
+            </Button>
+          ) : null}
+          {/* digest.error is written on both route paths and was read by
+              nothing at all, so a schema failure and a model timeout looked
+              identical from here. */}
+          {digest.error ? (
+            <Box sx={{ fontSize: 10.5, color: "var(--text-secondary)" }}>{String(digest.error)}</Box>
+          ) : null}
           {/* researchOne is always passed by app/page.js (see useApplicationDigests) —
               call it directly so a future wiring regression throws instead of
               silently no-opping the button. */}
@@ -822,6 +854,8 @@ export default function TrackingTab({
         loadCommunicationsForApp={loadCommunicationsForApp}
         openAddCommunicationDialog={openAddCommunicationDialog}
         digestsById={digestsById}
+        researchingIds={researchingIds}
+        researchOne={researchOne}
       />
     </section>
   );
