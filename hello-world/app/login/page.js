@@ -331,7 +331,7 @@ function LoginForm() {
               size="large"
               fullWidth
               startIcon={<GoogleIcon />}
-              sx={{ color: "var(--text-primary)", borderColor: "var(--border-strong)" }}
+              sx={{ color: "var(--text-primary)", borderColor: "var(--border-control)" }}
             >
               Continue with Google
             </Button>

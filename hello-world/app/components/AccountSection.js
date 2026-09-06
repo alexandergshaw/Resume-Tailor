@@ -48,7 +48,7 @@ export default function AccountSection() {
         variant="outlined"
         size="small"
         startIcon={<ShieldOutlinedIcon fontSize="small" />}
-        sx={{ textTransform: "none", justifyContent: "flex-start", borderColor: "var(--border-strong)", color: "var(--text-primary)" }}
+        sx={{ textTransform: "none", justifyContent: "flex-start", borderColor: "var(--border-control)", color: "var(--text-primary)" }}
       >
         Two-factor authentication
       </Button>

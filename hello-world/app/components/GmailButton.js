@@ -42,7 +42,7 @@ export default function GmailButton() {
         variant="outlined"
         size="small"
         fullWidth
-        sx={{ textTransform: "none", justifyContent: "flex-start", borderColor: "var(--border-strong)", color: "var(--text-primary)" }}
+        sx={{ textTransform: "none", justifyContent: "flex-start", borderColor: "var(--border-control)", color: "var(--text-primary)" }}
       >
         Connect Gmail
       </Button>

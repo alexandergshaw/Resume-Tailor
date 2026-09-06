@@ -29,6 +29,18 @@ const light = {
   // Lines
   border: "#d2deea",
   "border-strong": "#aebfd1",
+  // The boundary of an interactive control (text fields, selects, the
+  // outlined buttons that pin their own border). WCAG 2.2 SC 1.4.11 asks for
+  // 3:1 against the background, and NEITHER line token above can reach it —
+  // `--border` measures 1.28:1 and `--border-strong` 1.76:1 against the
+  // `.main` gradient, so a third, deliberately accessible step was added
+  // rather than pressing a decorative hairline into a job it cannot do.
+  // Same hue-210 blue-grey ramp, sitting between `--border-strong` (75% L)
+  // and `--text-muted` (50% L). Measures 3.27:1 on the worse gradient stop —
+  // clear of the threshold, and well short of text weight (`--text-muted`
+  // would be 3.90:1, `--text-secondary` 6.67:1). See
+  // ./controlBorderContrast.test.js, which measures this by rendering.
+  "border-control": "#738ca5",
 
   // Brand accent
   accent: "#0d4a8f",
@@ -72,6 +84,10 @@ const dark = {
 
   border: "#2a394a",
   "border-strong": "#3a4d63",
+  // Light-mode note above applies. Same ramp position inverted for a dark
+  // ground: between `--border-strong` (31% L) and `--text-muted` (57% L).
+  // Measures 3.28:1 on the worse gradient stop.
+  "border-control": "#5d7892",
 
   accent: "#4c9be8",
   "accent-hover": "#6fb0ee",
