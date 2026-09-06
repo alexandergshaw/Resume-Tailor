@@ -17,6 +17,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { stripComments } from "../../lib/sourceScan/tokenizeSource.js";
 
 const APP_DIR = path.join(process.cwd(), "app");
 const GATE = "safeExternalHref";
@@ -85,59 +86,32 @@ function balanced(src, open) {
   return src.slice(open + 1);
 }
 
-/**
- * Blank out `//` and block comments, keeping every newline so line numbers
- * still line up. Without this the sweep reads its own explanatory prose -
- * a comment saying `never href=""` is not an href site - and this file's
- * first run did exactly that, in two files.
- *
- * String and template literals are tracked so a `https://` inside one is
- * never mistaken for a line comment. Known limit: a regex literal
- * containing an escaped `//` would confuse it; there is none in app/, and
- * one would have to also contain `href=` to matter.
- */
-export function stripComments(src) {
-  let out = "";
-  let i = 0;
-  let quote = null; // "'", '"', or "`"
-  while (i < src.length) {
-    const c = src[i];
-    const next = src[i + 1];
-    if (quote) {
-      if (c === "\\") {
-        out += c + (next ?? "");
-        i += 2;
-        continue;
-      }
-      if (c === quote) quote = null;
-      out += c;
-      i += 1;
-      continue;
-    }
-    if (c === "'" || c === '"' || c === "`") {
-      quote = c;
-      out += c;
-      i += 1;
-      continue;
-    }
-    if (c === "/" && next === "/") {
-      while (i < src.length && src[i] !== "\n") {
-        out += " ";
-        i += 1;
-      }
-      continue;
-    }
-    if (c === "/" && next === "*") {
-      const end = src.indexOf("*/", i + 2);
-      const stop = end === -1 ? src.length : end + 2;
-      for (; i < stop; i += 1) out += src[i] === "\n" ? "\n" : " ";
-      continue;
-    }
-    out += c;
-    i += 1;
-  }
-  return out;
-}
+// Comment-stripping used to be a byte-for-byte local copy of the same
+// algorithm windowOpenSafety.sweep.test.js also needed - forked rather than
+// shared because importing a `.test.js` file executes its whole `describe`
+// tree (see that file's header for the measurement: 33 tests instead of 1).
+// The forks drifted: only windowOpenSafety's copy was ever taught to
+// recognise a regex literal, so a `"` inside one (the real shape at
+// app/components/AutoApplyQueueTab.js:46,
+// `.replace(/[\\/:*?"<>|]/g, "")`) desynced THIS file's quote tracker for
+// the rest of that source file. For this sweep that is latent rather than
+// wrong - a desync here can only leak an unstripped comment through (a
+// false positive), never blank out a real `href=` site the way
+// windowOpenSafety's stricter string-blanking view could - but it is the
+// same class of bug, and nothing here made that non-effect on today's tree
+// a guarantee about tomorrow's.
+//
+// So the tokenizer now lives once, in lib/sourceScan/tokenizeSource.js (a
+// plain module, not a test file, so both sweeps can import it), with
+// regex-literal handling included. `stripComments` here is that module's
+// `readable` view: comments blanked, string/template contents preserved -
+// exactly this sweep's original contract, since a JSX `href=` attribute
+// never legitimately appears as plain text inside a string.
+//
+// Verified when this file switched over: the fixed tokenizer produces a
+// byte-identical set of href sites across every file in app/ - see
+// tokenizeSource.test.js and this file's own "classifier itself" tests
+// below for the regex-literal case directly.
 
 /**
  * Every JSX `href=` in one source, classified. Returns
@@ -335,6 +309,27 @@ describe("the classifier itself", () => {
   it("does not mistake a URL's // inside a string for a comment", () => {
     const src = 'const u = "https://acme.com/x";\n<a href={safeExternalHref(u)}>y</a>';
     expect(classifyHrefs(src).expression).toHaveLength(1);
+  });
+
+  it("finds a real href site after a regex literal containing a quote, without desyncing", () => {
+    // The bug this file's stripComments used to have (before it moved to
+    // the shared lib/sourceScan/tokenizeSource.js): a naive quote-tracker
+    // doesn't know a `/…/` regex literal exists, so a `"` sitting inside one
+    // - the real shape at app/components/AutoApplyQueueTab.js:46,
+    // `.replace(/[\\/:*?"<>|]/g, "")` - is misread as opening a string that
+    // never closes, desyncing quote-tracking for the rest of the file. For
+    // THIS sweep a desync can only leak an unstripped comment through (see
+    // this file's header), but the underlying defect is the same class of
+    // bug windowOpenSafety hit as a real under-count. Pin it here too so a
+    // regression in the shared tokenizer fails this file directly.
+    const src = [
+      'const cleaned = (part || "").replace(/[\\\\/:*?"<>|]/g, "").trim();',
+      '<a href={safeExternalHref(u)}>y</a>',
+    ].join("\n");
+    const { literal, expression } = classifyHrefs(src);
+    expect(literal).toHaveLength(0);
+    expect(expression).toHaveLength(1);
+    expect(expression[0].expression).toBe("safeExternalHref(u)");
   });
 
   it("does not mistake a DOM property assignment for a JSX attribute", () => {

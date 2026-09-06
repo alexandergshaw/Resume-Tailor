@@ -21,7 +21,6 @@ import VisibilityOff from "@mui/icons-material/VisibilityOff";
 import GoogleIcon from "@mui/icons-material/Google";
 import ShieldOutlinedIcon from "@mui/icons-material/ShieldOutlined";
 import { safeRedirectPath } from "@/lib/url/safeRedirectPath";
-import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 // Full login experience: email/password sign in + sign up, Google OAuth, and a
 // TOTP MFA challenge step shown when the signed-in user must step up to aal2.
@@ -41,16 +40,21 @@ function LoginForm() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  // redirectTo is already constrained to a same-origin path by
-  // safeRedirectPath (see lib/url/safeRedirectPath.js). Every browser
-  // navigation in this app additionally flows through the canonical
-  // safeExternalHref gate before it reaches a location API — see
-  // app/components/windowOpenSafety.sweep.test.js — so re-validate the
-  // concrete, now-absolute target through it here too rather than making
-  // this one call site a snowflake.
+  // redirectTo is already constrained to a same-origin
+  // pathname+search+hash by safeRedirectPath (see
+  // lib/url/safeRedirectPath.js) — a control built specifically for this
+  // "?redirect=... after login" shape, using URL-resolution rather than
+  // string matching so it isn't fooled by a protocol-relative or
+  // backslash-host trick. window.location.assign() resolves a relative
+  // path like this against the current origin on its own, so there is
+  // nothing left for a second, more generic gate to add: wrapping it in
+  // safeExternalHref would only re-check a value it cannot make any less
+  // safe, at the cost of a second control to keep in sync with the first.
+  // app/components/windowOpenSafety.sweep.test.js recognises
+  // safeRedirectPath as a sanctioned gate directly, so this one call is
+  // enough for both the security invariant and the sweep that enforces it.
   const goToApp = () => {
-    const target = safeExternalHref(`${window.location.origin}${redirectTo}`) || "/";
-    window.location.assign(target);
+    window.location.assign(redirectTo);
   };
 
   const resetMessages = () => {

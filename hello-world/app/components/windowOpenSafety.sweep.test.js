@@ -55,34 +55,37 @@
 // itself" below for the positive, false-negative and false-positive
 // controls.
 //
-// ON stripComments(): hrefSafety.sweep.test.js already exports a
-// byte-for-byte version of the comment stripper this file also needs.
-// Importing it was tried and rejected: Vitest treats an imported `.test.js`
-// module as a normal ES module, which means importing it here EXECUTES its
-// top-level `describe(...)` calls too -- verified by a throwaway import that
-// made hrefSafety's entire 21-test suite re-run nested inside this file's
-// run (33 tests total instead of the expected ~1 for a one-line check).
-// That is drift waiting to happen the moment either file's harness changes.
-// So the tokenizer below is a deliberate duplicate of hrefSafety's
-// comment-stripping algorithm, not a second implementation invented
-// independently -- if a third caller ever needs it, that is the point at
-// which it belongs in a real (non-test) module both files import, the same
-// call this codebase already made for citationHref (see
-// lib/url/safeExternalHref.js's header).
+// ON tokenize(): this used to be a byte-for-byte duplicate of a comment
+// stripper hrefSafety.sweep.test.js also needed. Sharing it by importing
+// hrefSafety's copy was tried and rejected: Vitest treats an imported
+// `.test.js` module as a normal ES module, which means importing it here
+// EXECUTES its top-level `describe(...)` calls too -- verified by a
+// throwaway import that made hrefSafety's entire 21-test suite re-run
+// nested inside this file's run (33 tests total instead of the expected ~1
+// for a one-line check). So the tokenizer was forked instead of shared --
+// and the forks drifted: only THIS copy was ever taught about regex
+// literals (see the next paragraph), which is exactly the kind of silent
+// divergence a fork invites. It now lives once, in the plain (non-test)
+// module lib/sourceScan/tokenizeSource.js, which both sweeps import --
+// solving the Vitest-import hazard the same way this codebase already
+// solved it for citationHref (see lib/url/safeExternalHref.js's header):
+// promote the shared logic out once a second caller needs it.
 //
 // ONE MORE BUG, FOUND BY RUNNING THIS AGAINST THE REAL TREE: a naive
-// quote-tracker (hrefSafety's stripComments included) does not know about
-// regex literals, and a `"` or `'` sitting inside one desyncs it for the
-// REST OF THE FILE. app/components/AutoApplyQueueTab.js:46 has exactly this
-// -- `.replace(/[\\/:*?"<>|]/g, "")`, a filename-sanitizing regex whose
-// character class contains a raw `"` -- and without regex-awareness this
-// scanner silently blanked out that file's real, later `window.open(url,
-// ...)` call entirely, UNDER-reporting the sweep by one real site with no
-// error at all. (hrefSafety's own stripComments has the same latent gap; it
-// doesn't produce a wrong result for THAT sweep today because a desynced quote
-// state there can only leak an unstripped comment's text through, never
-// blank out real code the way this file's stricter codeMask does -- but
-// it is the same class of bug.) tokenize() below tells a regex literal from
+// quote-tracker (hrefSafety's old, unfixed stripComments included) does not
+// know about regex literals, and a `"` or `'` sitting inside one desyncs it
+// for the REST OF THE FILE. app/components/AutoApplyQueueTab.js:46 has
+// exactly this -- `.replace(/[\\/:*?"<>|]/g, "")`, a filename-sanitizing
+// regex whose character class contains a raw `"` -- and without
+// regex-awareness this scanner silently blanked out that file's real, later
+// `window.open(url, ...)` call entirely, UNDER-reporting the sweep by one
+// real site with no error at all. (hrefSafety's stripComments had the same
+// latent gap; it did not produce a wrong result for THAT sweep because a
+// desynced quote state there can only leak an unstripped comment's text
+// through, never blank out real code the way this file's stricter codeMask
+// does -- but it was the same class of bug, which is why the fix now lives
+// in the one shared tokenizer both sweeps use instead of staying a
+// windowOpenSafety-only patch.) tokenizeSource() tells a regex literal from
 // division with the standard heuristic (a `/` starts a regex unless the
 // last significant character could have ended a value: an identifier
 // character, digit, `)`, `]`, `}`, or a closing quote) and then treats the
@@ -91,15 +94,42 @@
 // (533 files): zero length mismatches, and the only raw-vs-masked count
 // differences left are the expected ones -- text inside a comment or a
 // template-literal string, both covered by the false-positive controls
-// below.
+// below. See lib/sourceScan/tokenizeSource.js and its own test file for the
+// tokenizer itself; this file only imports it.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { tokenizeSource as tokenize } from "../../lib/sourceScan/tokenizeSource.js";
 
 const ROOT = process.cwd();
 const SCAN_DIRS = ["app", "lib"];
-const GATE = "safeExternalHref";
+
+// Sanctioned gates: functions this app trusts to decide whether a string may
+// drive a browser navigation. This is a DELIBERATE, NAMED allow-list, never
+// a pattern like "any function whose name contains `safe`" -- the whole
+// point is that adding a gate is a reviewed, one-line act, not something a
+// call site can opt itself into by naming a helper well. See the isGated()
+// doc comment for what "recognised" means for each entry.
+//
+//   safeExternalHref  lib/url/safeExternalHref.js  -- any http(s) URL,
+//                      any origin, that is safe to hand to window.open or
+//                      a `location` API. The original, and still the only
+//                      gate for a value that may leave this origin.
+//   safeRedirectPath   lib/url/safeRedirectPath.js  -- a same-origin
+//                      `pathname+search+hash` resolved from an
+//                      attacker-influenced `?redirect=`-style value. Added
+//                      after app/login/page.js needed it: before this sweep
+//                      recognised it by name, the call site had to wrap an
+//                      already-safe `safeRedirectPath` result in a SECOND,
+//                      redundant `safeExternalHref` call purely to give this
+//                      file a name it recognised -- see app/login/page.js
+//                      for the current shape now that this list closes that
+//                      gap directly.
+const SANCTIONED_GATES = ["safeExternalHref", "safeRedirectPath"];
+// Kept as the default/representative gate name for error messages; the
+// sweep itself always checks the full SANCTIONED_GATES list.
+const GATE = SANCTIONED_GATES[0];
 
 // The module IS the control: every url it is handed is checked with
 // safeExternalHref before it reaches window.open or a popup's location, so
@@ -146,142 +176,10 @@ function walk(dir, out = []) {
   return out;
 }
 
-/** True if `ch` is a character a JS value could legitimately end with --
- * used only to tell a regex literal from a division operator. */
-function isValueEndChar(ch) {
-  return /[A-Za-z0-9_$)\]}]/.test(ch);
-}
-
-/**
- * Single-pass tokenizer producing two parallel, SAME-LENGTH strings so
- * offsets keep lining up with the original file:
- *
- *   readable  comments and regex literals blanked to spaces (newlines kept);
- *             string/template CONTENTS preserved verbatim, so a literal
- *             argument like "/login" is still readable.
- *   codeMask  comments, regex literals AND string/template contents ALL
- *             blanked -- used only to locate real "site" keyword text, so
- *             text sitting inside a comment, a regex, or a string can never
- *             register as a site (`window.open(` typed in a comment, or
- *             sitting inside a template-literal HTML blob, both blank out).
- *
- * Regex literals get their own branch for two reasons: a bare `/` cannot be
- * told apart from division without one, and a regex character class can
- * contain an unescaped quote character -- see the file header for the real
- * file (AutoApplyQueueTab.js:46) this broke before regex-awareness was
- * added, and why the resulting bug was a silent under-count rather than a
- * crash.
- *
- * Deliberately duplicated from hrefSafety.sweep.test.js's stripComments
- * (see the file header for why importing it instead was rejected), and
- * then extended with regex-literal handling that file does not have.
- */
-export function tokenize(src) {
-  let readable = "";
-  let codeMask = "";
-  let i = 0;
-  let lastSignificant = "";
-  const n = src.length;
-  const blank = (ch) => (ch === "\n" ? "\n" : " ");
-
-  while (i < n) {
-    const c = src[i];
-    const next = src[i + 1];
-
-    if (c === "/" && next === "/") {
-      while (i < n && src[i] !== "\n") {
-        readable += " ";
-        codeMask += " ";
-        i += 1;
-      }
-      continue;
-    }
-    if (c === "/" && next === "*") {
-      const end = src.indexOf("*/", i + 2);
-      const stop = end === -1 ? n : end + 2;
-      for (; i < stop; i += 1) {
-        const ch = blank(src[i]);
-        readable += ch;
-        codeMask += ch;
-      }
-      continue;
-    }
-    if (c === "'" || c === '"' || c === "`") {
-      const quote = c;
-      readable += c;
-      codeMask += " ";
-      i += 1;
-      while (i < n) {
-        const cc = src[i];
-        if (cc === "\\") {
-          readable += cc + (src[i + 1] ?? "");
-          codeMask += " " + (src[i + 1] != null ? blank(src[i + 1]) : "");
-          i += 2;
-          continue;
-        }
-        if (cc === quote) {
-          readable += cc;
-          codeMask += " ";
-          i += 1;
-          break;
-        }
-        readable += cc;
-        codeMask += cc === "\n" ? "\n" : " ";
-        i += 1;
-      }
-      lastSignificant = quote;
-      continue;
-    }
-    // Regex literal vs division: a `/` starts a regex unless the last
-    // significant character could have ended a value.
-    if (c === "/" && !isValueEndChar(lastSignificant)) {
-      let j = i + 1;
-      let inClass = false;
-      let closed = false;
-      while (j < n) {
-        const cj = src[j];
-        if (cj === "\\") {
-          j += 2;
-          continue;
-        }
-        if (cj === "[") {
-          inClass = true;
-          j += 1;
-          continue;
-        }
-        if (cj === "]") {
-          inClass = false;
-          j += 1;
-          continue;
-        }
-        if (cj === "/" && !inClass) {
-          j += 1;
-          closed = true;
-          break;
-        }
-        if (cj === "\n") break;
-        j += 1;
-      }
-      if (closed) {
-        while (j < n && /[a-zA-Z]/.test(src[j])) j += 1; // flags
-        for (let k = i; k < j; k += 1) {
-          readable += src[k];
-          codeMask += blank(src[k]);
-        }
-        i = j;
-        lastSignificant = "/";
-        continue;
-      }
-      // Not a well-formed regex (no closing `/` before a newline) -- fall
-      // through and treat it as an ordinary character.
-    }
-    readable += c;
-    codeMask += c;
-    if (!/\s/.test(c)) lastSignificant = c;
-    i += 1;
-  }
-  return { readable, codeMask };
-}
+// tokenize() (imported above as `tokenizeSource`, aliased to this file's
+// existing local name) now lives in lib/sourceScan/tokenizeSource.js -- see
+// that module's header for the readable/codeMask contract and the
+// regex-literal handling this file's own header describes.
 
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -461,13 +359,15 @@ export function findSites(rawSrc) {
 }
 
 /**
- * Is the url this site passes produced by the gate, directly or through the
- * sanctioned helper?
+ * Is the url this site passes produced by A sanctioned gate (see
+ * SANCTIONED_GATES above), directly or through the openPostingBeside
+ * helper?
  *
- * Three accepted shapes:
+ * Three accepted shapes, checked against EVERY name in SANCTIONED_GATES,
+ * not just safeExternalHref:
  *
  *   window.open(safeExternalHref(u))                                inline
- *   const h = safeExternalHref(u); ...; window.open(h)               bound
+ *   const h = safeRedirectPath(u); ...; window.open(h)                bound
  *   const opened = openPostingBeside(u);
  *   if (!opened) window.open(u, ...)              fallback-after-helper-call
  *
@@ -479,13 +379,18 @@ export function findSites(rawSrc) {
  * the gate a moment earlier. Recognising this requires the guard variable
  * (`opened`) and the fallback's own url expression to match a prior
  * `guard = openPostingBeside(url)` / `navigateBeside(popup, url)` call using
- * that EXACT same expression -- not just "some earlier call exists".
+ * that EXACT same expression -- not just "some earlier call exists". (This
+ * fallback shape is specific to openPostingBeside/navigateBeside, which are
+ * themselves built on safeExternalHref -- it is not extended to every
+ * SANCTIONED_GATES entry, since safeRedirectPath has no such helper today.)
  */
 export function isGated(site, fileReadable) {
-  if (site.expression.includes(GATE)) return true;
+  if (SANCTIONED_GATES.some((gate) => site.expression.includes(gate))) return true;
   if (/^[A-Za-z_$][\w$]*$/.test(site.expression)) {
-    const boundRe = new RegExp(`\\b${escapeRegExp(site.expression)}\\s*=\\s*${GATE}\\s*\\(`);
-    if (boundRe.test(fileReadable)) return true;
+    const boundToSanctionedGate = SANCTIONED_GATES.some((gate) =>
+      new RegExp(`\\b${escapeRegExp(site.expression)}\\s*=\\s*${gate}\\s*\\(`).test(fileReadable),
+    );
+    if (boundToSanctionedGate) return true;
   }
   if (site.kind === "open") {
     const guardMatch = /if\s*\(\s*!\s*([A-Za-z_$][\w$]*)\s*\)\s*(?:window|self|top|parent|[A-Za-z_$][\w$]*)\.open\(/.exec(
@@ -523,12 +428,13 @@ const CONTROL_SITES = ALL_SITES.filter((s) => s.file === CONTROL_FILE);
 
 describe("every direct window/location navigation in app/ and lib/ passes through the URL gate", () => {
   it("finds the sites at all, so an empty sweep cannot pass", () => {
-    // Enumerated by hand at the time of writing: 3 gated (app/page.js,
-    // AutoApplyQueueTab.js, LiveFeedTab.js, all the openPostingBeside
-    // fallback-after-helper-call shape), 2 allow-listed literal exceptions
-    // (useDriveDocuments.js, AccountSection.js), and one open finding
-    // (app/login/page.js -- see the dedicated test below). Total: 6, plus
-    // the 3 control-module sites excluded above.
+    // Enumerated by hand at the time of writing: 4 gated (app/page.js,
+    // AutoApplyQueueTab.js and LiveFeedTab.js via the openPostingBeside
+    // fallback-after-helper-call shape; app/login/page.js via a direct
+    // safeRedirectPath binding -- see the dedicated test below), and 2
+    // allow-listed literal exceptions (useDriveDocuments.js,
+    // AccountSection.js). Total: 6, plus the 3 control-module sites
+    // excluded above.
     expect(SITES.length).toBeGreaterThanOrEqual(6);
   });
 
@@ -541,32 +447,37 @@ describe("every direct window/location navigation in app/ and lib/ passes throug
       }
       expect(
         isGated(site, site.readable),
-        `${site.kind}(${site.expression}) in ${site.file}:${site.line} is not produced by ${GATE} ` +
-          `(directly, via a same-file binding, or via the openPostingBeside/navigateBeside fallback shape) ` +
-          `and is not a reviewed literal exception`,
+        `${site.kind}(${site.expression}) in ${site.file}:${site.line} is not produced by a sanctioned gate ` +
+          `(${SANCTIONED_GATES.join(" / ")}, directly, via a same-file binding, or via the ` +
+          `openPostingBeside/navigateBeside fallback shape) and is not a reviewed literal exception`,
       ).toBe(true);
     });
   }
 
-  // KNOWN, LIVE FINDING -- see the assertion above for app/login/page.js:42.
+  // FORMERLY A KNOWN, LIVE FINDING for app/login/page.js -- now closed, and
+  // the history is worth keeping because it is the whole reason
+  // SANCTIONED_GATES exists as a list rather than a single hard-coded name.
   //
-  // `const goToApp = () => window.location.assign(redirectTo)`, where
-  // `redirectTo = searchParams?.get("redirect") || "/"` -- an EXPRESSION
-  // (not a hard-coded literal) that is neither gated nor allow-listed, so
-  // its "gates app/login/page.js:42 assign(redirectTo)" test above FAILS.
+  // `goToApp` originally read `window.location.assign(redirectTo)`, where
+  // `redirectTo = searchParams?.get("redirect") || "/"` was an unvalidated
+  // EXPRESSION -- this sweep failed on it, correctly: `/login?redirect=
+  // https://evil.example` would have sent a signed-in user straight to an
+  // attacker's origin right after they authenticated.
   //
-  // This is a real gap, not a scanner bug: the sibling OAuth path
-  // (app/auth/callback/route.js:9) validates the SAME query param --
-  // `const next = requested.startsWith("/") ? requested : "/";` -- before
-  // ever redirecting, but the direct email/password sign-in path in
-  // app/login/page.js's goToApp() has no such check, so
-  // `/login?redirect=https://evil.example` sends a signed-in user straight
-  // to an attacker's origin after they authenticate.
+  // The real fix was `redirectTo = safeRedirectPath(...)` -- a control
+  // purpose-built for exactly this "?redirect=... after login" shape (see
+  // lib/url/safeRedirectPath.js). But at the time this sweep only knew the
+  // literal name `safeExternalHref`, so the fix couldn't land as-is: the
+  // call site had to ALSO wrap the already-safe result in
+  // `safeExternalHref(`${origin}${redirectTo}`)` purely so this file would
+  // recognise it, a redundant validation whose only job was satisfying the
+  // sweep's hard-coded name.
   //
-  // app/login/page.js is outside this task's file scope (read-only), so
-  // this is reported rather than fixed or allow-listed -- allow-listing an
-  // expression that is not a hard-coded literal would be exactly the kind
-  // of quiet exemption this sweep exists to make impossible.
+  // Recognising safeRedirectPath as its own sanctioned gate (see
+  // SANCTIONED_GATES above) removed the reason for that workaround:
+  // app/login/page.js now reads plain `window.location.assign(redirectTo)`
+  // again, and this sweep gates it directly through the
+  // `redirectTo = safeRedirectPath(...)` binding -- no wrapper needed.
 
   it("keeps the ungated allow-list to exactly the reviewed exceptions", () => {
     // Growing this list is how the sweep gets defeated: it takes a code
@@ -578,6 +489,14 @@ describe("every direct window/location navigation in app/ and lib/ passes throug
     for (const entry of ALLOWED_UNGATED) {
       expect(entry.why.length).toBeGreaterThan(20);
     }
+  });
+
+  it("keeps SANCTIONED_GATES to exactly the reviewed, named controls", () => {
+    // The whole point of Weakness 2's fix: a new gate is a one-line,
+    // reviewed addition to THIS list, not a workaround at a call site, and
+    // not a pattern ("any function whose name contains 'safe'") that would
+    // let an unreviewed helper opt itself in.
+    expect(SANCTIONED_GATES).toEqual(["safeExternalHref", "safeRedirectPath"]);
   });
 
   it("keeps lib/window/openPostingBeside.js's own navigations behind its safeExternalHref check", () => {
@@ -600,6 +519,23 @@ describe("every direct window/location navigation in app/ and lib/ passes throug
     expect(site).toBeTruthy();
     expect(site.expression).toBe("url");
     expect(isGated(site, site.readable)).toBe(true);
+  });
+
+  it("positive control: app/login/page.js's redirect is gated directly by safeRedirectPath, no wrapper needed", () => {
+    // The dedicated test the comment above this describe block points to --
+    // see it for the history. `redirectTo` is bound from safeRedirectPath,
+    // not safeExternalHref, so this is the one real site in the tree that
+    // only passes because SANCTIONED_GATES has more than one entry.
+    const site = SITES.find((s) => s.file === "app/login/page.js" && s.kind === "assign");
+    expect(site).toBeTruthy();
+    expect(site.expression).toBe("redirectTo");
+    expect(isGated(site, site.readable)).toBe(true);
+    const src = readFileSync(path.join(ROOT, "app/login/page.js"), "utf8");
+    expect(src).toMatch(/const redirectTo = safeRedirectPath\(/);
+    // No second, redundant wrapper call -- a plain assign, not
+    // `safeExternalHref(...)`-around-a-concatenated-origin.
+    expect(src).not.toMatch(/safeExternalHref\(/);
+    expect(src).not.toMatch(/from ["']@\/lib\/url\/safeExternalHref["']/);
   });
 });
 
@@ -668,6 +604,31 @@ describe("the classifier itself", () => {
     const src = "const postingHref = safeExternalHref(posting.url);\nwindow.open(postingHref);";
     const [site] = findSites(src);
     expect(isGated(site, src)).toBe(true);
+  });
+
+  describe("SANCTIONED_GATES: a second named gate (safeRedirectPath), not just safeExternalHref", () => {
+    it("accepts the inline safeRedirectPath shape", () => {
+      const src = "window.location.assign(safeRedirectPath(next));";
+      const [site] = findSites(src);
+      expect(isGated(site, src)).toBe(true);
+    });
+
+    it("accepts a local binding initialised from safeRedirectPath -- the real app/login/page.js shape", () => {
+      const src = 'const redirectTo = safeRedirectPath(searchParams?.get("redirect"));\nwindow.location.assign(redirectTo);';
+      const [site] = findSites(src);
+      expect(site.expression).toBe("redirectTo");
+      expect(isGated(site, src)).toBe(true);
+    });
+
+    it("does not accept an arbitrary function whose name merely contains \"safe\"", () => {
+      // The brief is explicit: an explicit, named allow-list, never a
+      // pattern like "any function whose name contains safe". A lookalike
+      // helper that was never reviewed and added to SANCTIONED_GATES must
+      // still be rejected.
+      const src = "const next = safeButUnreviewed(raw);\nwindow.location.assign(next);";
+      const [site] = findSites(src);
+      expect(isGated(site, src)).toBe(false);
+    });
   });
 
   it("false-negative control: a real ungated shape is detected, not waved through", () => {
