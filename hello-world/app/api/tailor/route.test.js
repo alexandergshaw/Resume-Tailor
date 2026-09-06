@@ -19,6 +19,7 @@ import { createClient } from "@/lib/supabase/server";
 import { listPages } from "@/lib/supabase/experiencePages";
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
+import { registerEngine } from "@/lib/llm/engines";
 import { POST } from "./route.js";
 
 function fakeSupabase(userId) {
@@ -202,5 +203,162 @@ describe("POST /api/tailor feeds project pages into the Gemini prompt", () => {
     expect(generateContent.mock.calls.length).toBeGreaterThanOrEqual(2);
     const coverLetterPrompt = generateContent.mock.calls[1][0].contents;
     expect(coverLetterPrompt).toContain("Payments migration");
+  });
+});
+
+// The gap left open by 7d0f1c2: /api/tailor's `warnings` aggregated only the
+// résumé result's own warnings, so a cover-letter- (or hiring-email-) specific
+// degradation from the embedded engine's producers (resolveSteering,
+// focusOutputs, resolveKeywordEdits, editRuleOutputs in
+// lib/llm/engines/tailor-lite/engine.js) was silently dropped at the route
+// before any client could render it. These tests exercise the REAL embedded
+// engine (deterministic, offline, no mocking needed) so the warning text is
+// exactly what a user would see, and pin: (1) a cover-letter-only warning
+// reaches the response, attributed with a "Cover letter:" prefix; (2) a
+// warning the résumé and cover letter both legitimately raise for the
+// identical reason (steeringInstructions/focusArea/keywordEdits are threaded
+// unchanged into both engine calls) is not shown twice; (3) a résumé-only run
+// is byte-identical to the pre-existing (unprefixed) behavior; (4) the same
+// attribution applies to a hiring-email warning, via a fake engine registered
+// through the public registerEngine() contract (lib/llm/engines/index.js) —
+// no real engine populates tailorHiringEmail's warnings today, so this is the
+// only way to pin the route's handling of that field without touching
+// lib/llm/engines internals.
+describe("POST /api/tailor aggregates and attributes cover-letter / hiring-email warnings (DEFECT: known gap in 7d0f1c2)", () => {
+  const EMBEDDED_POSTING = [
+    "Senior Software Engineer.",
+    "Requirements:",
+    "React, JavaScript, TypeScript, SQL, PostgreSQL, REST APIs, Agile, leadership.",
+    "Nice to have: Kubernetes, Docker.",
+  ].join("\n");
+
+  function embeddedRequest({
+    engine = "embedded",
+    steeringInstructions = "",
+    focusArea = "",
+    editRules = null,
+    withCoverLetter = true,
+  } = {}) {
+    const fd = new FormData();
+    fd.append("jobPosting", EMBEDDED_POSTING);
+    fd.append("resume", textFile("resume.txt", "Jane Doe\nSoftware Engineer\nBuilt things."));
+    fd.append("templateLines", JSON.stringify(["Jane Doe", "Software Engineer", "Built things."]));
+    fd.append("engine", engine);
+    if (steeringInstructions) fd.append("steeringInstructions", steeringInstructions);
+    if (focusArea) fd.append("focusArea", focusArea);
+    if (editRules) fd.append("editRules", JSON.stringify(editRules));
+    if (withCoverLetter) {
+      fd.append(
+        "coverLetterTemplateLines",
+        JSON.stringify(["Dear Hiring Manager,", "I am excited.", "Sincerely, Jane"]),
+      );
+      fd.append("coverLetter", textFile("cover.txt", "Dear Hiring Manager,\nI am excited.\nSincerely, Jane"));
+    }
+    return { formData: async () => fd };
+  }
+
+  it("surfaces a cover-letter-only degradation in `warnings`, attributed to the cover letter", async () => {
+    signedOut();
+    // This edit-rule's `before` text ("I lead an engineering team of five")
+    // only occurs in the embedded engine's cover-letter template (industry
+    // variant) — never in the résumé template's digit-form "team of 5" — so
+    // this is a genuine cover-letter-ONLY degradation, confirmed against the
+    // real engine before writing this assertion.
+    const res = await POST(
+      embeddedRequest({
+        editRules: [
+          { before: "I lead an engineering team of five", after: "I lead an engineering team of six" },
+        ],
+      }),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.warnings).toContain(
+      'Cover letter: Applied your recurring edit: "I lead an engineering team of five" → "I lead an engineering team of six".',
+    );
+    // The résumé's own run over the same edit rule produces no such warning
+    // (the phrase never appears there), so nothing unprefixed should smuggle
+    // the same text in under the résumé's name.
+    expect(data.warnings).not.toContain(
+      'Applied your recurring edit: "I lead an engineering team of five" → "I lead an engineering team of six".',
+    );
+  });
+
+  it("does not duplicate a warning the résumé and cover letter both legitimately raise for the identical reason", async () => {
+    signedOut();
+    // steeringInstructions is threaded unchanged into both the tailorResume and
+    // tailorCoverLetter calls (see app/api/tailor/route.js), so an unparseable
+    // note deterministically raises the identical warning text on both — this
+    // is confirmed identical byte-for-byte against the real engine, not
+    // assumed.
+    const res = await POST(
+      embeddedRequest({ steeringInstructions: "make it generally nicer somehow" }),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    const matches = data.warnings.filter((w) => /couldn't find any in your note/i.test(w));
+    expect(matches.length).toBe(1);
+    // Kept in the résumé's own (unprefixed) form — it is genuinely, equally
+    // true of the document the user is looking at, whichever one that is.
+    expect(matches[0]).not.toMatch(/^Cover letter:/i);
+  });
+
+  it("leaves a résumé-only run's warnings exactly as before (no cover letter in the request)", async () => {
+    signedOut();
+    const res = await POST(
+      embeddedRequest({ focusArea: "Underwater Basket Weaving", withCoverLetter: false }),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.warnings).toEqual([
+      "Focus area \"Underwater Basket Weaving\" isn't in your library — auto-detection was used instead.",
+    ]);
+  });
+
+  it("attributes a hiring-email warning the same way, via the public registerEngine() contract", async () => {
+    signedOut();
+    registerEngine({
+      name: "test-hiring-email-warnings",
+      isConfigured: () => true,
+      async tailorResume() {
+        return {
+          engine: "test-hiring-email-warnings",
+          result: "Jane Doe\nSoftware Engineer",
+          resultLines: ["Jane Doe", "Software Engineer"],
+          jobTitle: "Software Engineer",
+          companyName: "Acme",
+          docxB64: "",
+          report: null,
+          warnings: [],
+          degraded: false,
+        };
+      },
+      async tailorCoverLetter() {
+        return {
+          engine: "test-hiring-email-warnings",
+          result: "",
+          resultLines: [],
+          docxB64: "",
+          report: null,
+          warnings: [],
+          degraded: false,
+        };
+      },
+      async tailorHiringEmail() {
+        return {
+          engine: "test-hiring-email-warnings",
+          subject: "Application",
+          bodyLines: ["Dear Hiring Committee,"],
+          warnings: ["Couldn't confirm a matching capability in your library."],
+        };
+      },
+    });
+
+    const res = await POST(embeddedRequest({ engine: "test-hiring-email-warnings", withCoverLetter: false }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.warnings).toContain(
+      "Hiring email: Couldn't confirm a matching capability in your library.",
+    );
   });
 });

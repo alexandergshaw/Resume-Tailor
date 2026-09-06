@@ -402,6 +402,15 @@ export async function POST(request) {
     let coverLetterDocxB64 = "";
     let coverLetterMatch = null;
     let coverVariantUsed = null;
+    // The cover letter's own degradation warnings (an unparsed steering note,
+    // a missing focus area, an out-of-taxonomy buzzword, an applied recurring
+    // edit — see lib/llm/engines/tailor-lite/engine.js's tailorCoverLetter,
+    // and externalEngine.js's tailorCoverLetter for the "external" engine).
+    // Previously computed by the engine and then silently discarded here —
+    // never read off coverDraft, so a cover-letter-specific degradation never
+    // reached a client even after 7d0f1c2 wired up `result.warnings`. See the
+    // aggregation/attribution/dedup logic below (`warnings`).
+    let coverLetterWarnings = [];
     // The cover letter's content source: the client's stored (possibly hand-
     // edited) tailored résumé lines when it sent them, otherwise the résumé
     // just tailored above in this same request. Either way this is the
@@ -444,6 +453,7 @@ export async function POST(request) {
         coverLetterResult = coverDraft.result;
         coverLetterDocxB64 = typeof coverDraft.docxB64 === "string" ? coverDraft.docxB64 : "";
         coverLetterMatch = coverDraft.report?.match || null;
+        coverLetterWarnings = Array.isArray(coverDraft.warnings) ? coverDraft.warnings : [];
         // Which framing was used (teaching/staff/industry) and whether the user
         // pinned it — the previewer's letter-framing control reads this.
         coverVariantUsed = coverDraft.report?.meta?.coverVariant
@@ -475,6 +485,10 @@ export async function POST(request) {
     let emailSubject = "";
     let emailResultLines = [];
     let emailError = "";
+    // The hiring email's own degradation warnings, if the engine ever supplies
+    // them (none does today — see the aggregation comment below — but the
+    // field is read defensively so a future producer needs no route change).
+    let emailWarnings = [];
     if (typeof activeEngine.tailorHiringEmail === "function") {
       try {
         const emailDraft = await activeEngine.tailorHiringEmail({
@@ -491,6 +505,7 @@ export async function POST(request) {
         if (emailDraft) {
           emailSubject = typeof emailDraft.subject === "string" ? emailDraft.subject : "";
           emailResultLines = Array.isArray(emailDraft.bodyLines) ? emailDraft.bodyLines : [];
+          emailWarnings = Array.isArray(emailDraft.warnings) ? emailDraft.warnings : [];
         }
       } catch (err) {
         console.error("Error generating hiring-team email:", err);
@@ -498,7 +513,47 @@ export async function POST(request) {
       }
     }
 
-    const warnings = [...engineWarnings, ...(Array.isArray(result.warnings) ? result.warnings : [])];
+    // Résumé warnings stay exactly as before (engine-fallback notices, then the
+    // résumé result's own warnings) — unprefixed, in this same order — so a
+    // client showing them today (they all just `.filter(Boolean).join(" ")`
+    // the array into one string; see useDocumentPreview.js/useManualTailor.js/
+    // page.js) sees byte-identical text for a résumé-only run.
+    const resumeWarnings = [...engineWarnings, ...(Array.isArray(result.warnings) ? result.warnings : [])];
+    // Cover-letter / hiring-email warnings are folded in too (the actual gap
+    // this fixes), each attributed with a plain "<Document>: " prefix rather
+    // than a structured field — every current reader treats `warnings` as an
+    // array of display-ready strings and joins them, so a prefix is the only
+    // attribution scheme that reaches the user without a client change (and
+    // client hooks are off-limits for this fix).
+    //
+    // Dedup rule: steeringInstructions, focusArea, and keywordEdits are all
+    // threaded UNCHANGED into both the tailorResume and tailorCoverLetter
+    // calls above, so a warning from one of those shared inputs (an unparsed
+    // revision note, a focus area missing from the library, a boosted/excluded
+    // term outside the taxonomy) is byte-identical across both documents when
+    // it fires at all — the same underlying cause restated, not two distinct
+    // problems. Such a warning is kept exactly once, in whichever unprefixed
+    // form already appeared (the résumé's, by construction below) — the text
+    // is already, equally true of both documents, so restating it with a
+    // second prefix would tell the user nothing new. A warning that is NOT a
+    // byte-for-byte duplicate (e.g. editRuleOutputs' "applied recurring
+    // edit(s)" text, which reports the edits actually found in that
+    // document's own text and so can legitimately differ between the two) is
+    // deliberately kept separate, once per document, each attributed.
+    const seenWarnings = new Set(resumeWarnings);
+    const coverLetterAttributed = [];
+    for (const raw of coverLetterWarnings) {
+      if (!raw || seenWarnings.has(raw)) continue;
+      seenWarnings.add(raw);
+      coverLetterAttributed.push(`Cover letter: ${raw}`);
+    }
+    const emailAttributed = [];
+    for (const raw of emailWarnings) {
+      if (!raw || seenWarnings.has(raw)) continue;
+      seenWarnings.add(raw);
+      emailAttributed.push(`Hiring email: ${raw}`);
+    }
+    const warnings = [...resumeWarnings, ...coverLetterAttributed, ...emailAttributed];
     // Real budget, not a silent slice: buildTailorContextBlock already says so
     // inside the prompt content itself (what the model sees); this is the
     // same fact surfaced to the caller (what the response's warning needs).
