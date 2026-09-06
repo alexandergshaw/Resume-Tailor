@@ -466,6 +466,87 @@ describe("supabaseFake — .upsert() with onConflict", () => {
   });
 });
 
+describe("supabaseFake — .upsert() with onConflict on a GENERATED column", () => {
+  // A generated column's value cannot appear in the payload at all — Postgres
+  // rejects an INSERT/UPSERT that supplies one ("cannot insert into column
+  // ... generated column"). So when the conflict target is a generated
+  // column, `payload[k]` is ALWAYS undefined, by construction, for every
+  // upsert — correct ones included. A fake that reads the arbiter's value out
+  // of the payload can therefore never find the existing row for a generated
+  // conflict target, and every "regenerate this row" upsert silently becomes
+  // an append. This is the exact defect the fake existed to avoid
+  // reproducing in reverse: green here, backwards in what it proves.
+  //
+  // Modelled via `opts.generatedColumns: { [table]: { [column]: (payload) =>
+  // value } }` — the smallest honest stand-in for `GENERATED ALWAYS AS (...)
+  // STORED`. Real Postgres computes such a column from an expression over
+  // the SAME row's other columns only (no subqueries, no other rows), which
+  // is exactly what a JS function over the payload can express without the
+  // fake becoming a SQL expression evaluator.
+  function summariesFake(rows, generator) {
+    return makeStatefulSupabase(
+      { digest_summaries: rows },
+      { generatedColumns: { digest_summaries: { scope_key: generator } } },
+    );
+  }
+  const scopeKeyOf = (row) => `${row.user_id}:${row.scope}`;
+
+  it("[canary] REPLACES the existing row instead of appending a duplicate", async () => {
+    const sb = summariesFake(
+      [{ id: "s1", user_id: "u1", scope: "resume", scope_key: "u1:resume", summary: "old" }],
+      scopeKeyOf,
+    );
+    await sb
+      .from("digest_summaries")
+      .upsert({ user_id: "u1", scope: "resume", summary: "new" }, { onConflict: "scope_key" });
+
+    const rows = sb.rows("digest_summaries");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe("s1");
+    expect(rows[0].summary).toBe("new");
+  });
+
+  it("still inserts when no stored row's generated value matches", async () => {
+    const sb = summariesFake(
+      [{ id: "s1", user_id: "u1", scope: "resume", scope_key: "u1:resume", summary: "old" }],
+      scopeKeyOf,
+    );
+    await sb
+      .from("digest_summaries")
+      .upsert({ user_id: "u1", scope: "cover_letter", summary: "new" }, { onConflict: "scope_key" });
+
+    expect(sb.rows("digest_summaries")).toHaveLength(2);
+  });
+
+  it("a freshly inserted row's generated value is stored, so a LATER upsert can still match it", async () => {
+    const sb = summariesFake([], scopeKeyOf);
+    await sb.from("digest_summaries").upsert({ user_id: "u1", scope: "resume", summary: "first" }, { onConflict: "scope_key" });
+    await sb.from("digest_summaries").upsert({ user_id: "u1", scope: "resume", summary: "second" }, { onConflict: "scope_key" });
+
+    const rows = sb.rows("digest_summaries");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].summary).toBe("second");
+    expect(rows[0].scope_key).toBe("u1:resume");
+  });
+
+  it("a conflict target present in the payload keeps matching directly, unaffected by generatedColumns", async () => {
+    const sb = summariesFake(
+      [{ id: "s1", user_id: "u1", scope: "resume", scope_key: "u1:resume", summary: "old" }],
+      scopeKeyOf,
+    );
+    // The payload supplies scope_key explicitly (a plain, non-generated
+    // conflict target on some other row of the same call) — the generator
+    // must not override a value the payload actually provided.
+    await sb
+      .from("digest_summaries")
+      .upsert({ scope_key: "u1:resume", user_id: "u1", scope: "resume", summary: "direct" }, { onConflict: "scope_key" });
+
+    const rows = sb.rows("digest_summaries");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].summary).toBe("direct");
+  });
+});
+
 describe("supabaseFake — .update()", () => {
   it("touches only the filtered rows", async () => {
     const sb = appsFake([

@@ -19,9 +19,10 @@ import { vi } from "vitest";
 //
 // What it models: row storage per table, and the subset of PostgREST this
 // repo's `applications` chains actually use — `.select() .insert() .upsert()
-// (with onConflict merge) .update() .delete() .eq() .neq() .in()
-// .not(col, op, value) .order() (incl. nullsFirst) .limit() .single()
-// .maybeSingle()`, plus declared many-to-one embeds.
+// (with onConflict merge, including a declared GENERATED conflict column —
+// see [8]) .update() .delete() .eq() .neq() .in() .not(col, op, value)
+// .order() (incl. nullsFirst) .limit() .single() .maybeSingle()`, plus
+// declared many-to-one embeds.
 //
 // What it does NOT model, and throws loudly on rather than guessing:
 // `.or()`, `.filter()`, `!inner` embeds, dotted filters onto an embedded
@@ -80,6 +81,38 @@ import { vi } from "vitest";
 //
 //  [6] `.single()` on 0 or >1 rows is an ERROR (PGRST116), not a null.
 //      `.maybeSingle()` tolerates 0 but still errors on >1.
+//
+//  [8] A conflict target CAN be a generated column (`GENERATED ALWAYS AS
+//      (...) STORED`) — PostgreSQL allows a unique index, and therefore an
+//      `ON CONFLICT` target, on one. The payload can never carry a value for
+//      it: supplying any value (even an explicit null) for a generated
+//      column is a hard INSERT-time error ("cannot insert a non-DEFAULT
+//      value into column ... Column ... is a generated column"), so a
+//      *correct* upsert against such a target always omits it. Reading the
+//      arbiter's value out of `payload[k]` — which is exactly right for an
+//      ordinary column under [5] — is therefore `undefined` for exactly the
+//      payloads that are right, the row is never found, and the upsert
+//      degrades to append-only. This fake instead resolves each conflict
+//      column as: the payload's own value when the payload supplies one
+//      (unchanged from before); otherwise, if the caller declared
+//      `opts.generatedColumns[table][column]`, the result of calling that
+//      function with the payload. This mirrors Postgres exactly for what a
+//      STORED generated column is allowed to depend on — the SAME row's
+//      other columns only, never another row, a subquery, or a sequence — so
+//      a same-row JS function is a faithful stand-in, not a cut corner. The
+//      computed value is also written onto the row when it is inserted (by
+//      `.insert()` or by `.upsert()`'s insert branch), so a LATER upsert has
+//      a real stored value to match against, the way Postgres would. A
+//      conflict column that is absent from the payload AND undeclared in
+//      `generatedColumns` is NOT treated as generated — it still resolves to
+//      `undefined` and never matches, exactly as before this fix.
+//
+//      What this does NOT model: recomputation on `.update()`. A real STORED
+//      generated column recomputes whenever any input column changes, on
+//      ANY write — this fake only computes it on `.insert()` / `.upsert()`,
+//      never on `.update()`. A test that needs a generated value to react to
+//      a plain `.update()` is exercising something this fake cannot answer;
+//      reseed or re-upsert the row instead of trusting `.update()` here.
 //
 // Usage:
 //   const sb = makeStatefulSupabase({
@@ -300,6 +333,11 @@ function projectRow(row, select, table, store, relationships) {
  * @param {object} [opts.claims]           what auth.getClaims() returns
  * @param {Record<string,string[]>} [opts.primaryKeys]  conflict target when upsert
  *                                         is called without onConflict (default ["id"])
+ * @param {Record<string,Record<string,(payload:object)=>*>>} [opts.generatedColumns]
+ *                                         per-table, per-column functions modelling a
+ *                                         `GENERATED ALWAYS AS (...) STORED` column that
+ *                                         can be an onConflict target — see [8]. Shape:
+ *                                         { [table]: { [column]: (payload) => value } }
  * @param {Record<string,object>} [opts.relationships]  declared embeds, keyed
  *                                         "<table>.<embedName>"
  * @param {Record<string,Record<string,object>>} [opts.errors]  force an error:
@@ -314,6 +352,7 @@ export function makeStatefulSupabase(seed = {}, opts = {}) {
   }
   const relationships = opts.relationships || {};
   const primaryKeys = opts.primaryKeys || {};
+  const generatedColumns = opts.generatedColumns || {};
   const errors = opts.errors || {};
   const calls = [];
   let idCounter = 0;
@@ -339,6 +378,29 @@ export function makeStatefulSupabase(seed = {}, opts = {}) {
   function conflictTarget(table, onConflict) {
     if (onConflict) return String(onConflict).split(",").map((s) => s.trim()).filter(Boolean);
     return primaryKeys[table] || ["id"];
+  }
+
+  // [8] The value a conflict column resolves to for THIS payload: the
+  // payload's own value if it has one, else — when the caller declared this
+  // column generated for this table — the declared generator applied to the
+  // payload. Undeclared + absent stays `undefined` (never matches), same as
+  // before this fix.
+  function resolveConflictValue(table, column, payload) {
+    if (!isNull(payload[column])) return payload[column];
+    const generator = (generatedColumns[table] || {})[column];
+    return generator ? generator(payload) : payload[column];
+  }
+
+  // Stamp any declared generated columns this row omitted onto the row
+  // itself before it is stored, so a LATER upsert has a real stored value to
+  // match against — mirroring a STORED generated column's persistence.
+  function stampGeneratedColumns(table, columns, row) {
+    for (const k of columns) {
+      if (isNull(row[k])) {
+        const generator = (generatedColumns[table] || {})[k];
+        if (generator) row[k] = generator(row);
+      }
+    }
   }
 
   function builderFor(table) {
@@ -407,6 +469,9 @@ export function makeStatefulSupabase(seed = {}, opts = {}) {
         for (const raw of incoming) {
           const row = clone(raw);
           if (row.id === undefined) row.id = nextId(table);
+          // A table with a declared generated column (see [8]) computes and
+          // stores it on insert, exactly as Postgres would.
+          stampGeneratedColumns(table, Object.keys(generatedColumns[table] || {}), row);
           rows.push(row);
           touched.push(row);
         }
@@ -415,7 +480,12 @@ export function makeStatefulSupabase(seed = {}, opts = {}) {
         const keys = conflictTarget(table, state.onConflict);
         for (const raw of incoming) {
           const payload = clone(raw);
-          const existing = rows.find((r) => keys.every((k) => !isNull(r[k]) && sameScalar(r[k], payload[k])));
+          // [8] Resolve each conflict column from the payload, falling back
+          // to a declared generator — NOT from `payload[k]` directly, which
+          // is `undefined` by construction for a real generated column.
+          const keyValues = {};
+          for (const k of keys) keyValues[k] = resolveConflictValue(table, k, payload);
+          const existing = rows.find((r) => keys.every((k) => !isNull(r[k]) && sameScalar(r[k], keyValues[k])));
           if (existing) {
             if (state.ignoreDuplicates) {
               // [7] `INSERT … ON CONFLICT DO NOTHING RETURNING` returns NO row
@@ -432,6 +502,10 @@ export function makeStatefulSupabase(seed = {}, opts = {}) {
             touched.push(existing);
           } else {
             if (payload.id === undefined) payload.id = nextId(table);
+            // [8] No stored row conflicted, so this becomes an INSERT — stamp
+            // any declared generated columns onto it, the same as the plain
+            // `.insert()` branch above, so a LATER upsert can match it.
+            stampGeneratedColumns(table, Object.keys(generatedColumns[table] || {}), payload);
             rows.push(payload);
             touched.push(payload);
           }
