@@ -7,6 +7,7 @@ import FormControlLabel from "@mui/material/FormControlLabel";
 import IconButton from "@mui/material/IconButton";
 import Switch from "@mui/material/Switch";
 import TextField from "@mui/material/TextField";
+import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 import styles from "../page.module.css";
 
@@ -163,14 +164,19 @@ export default function AutoTailorTab({
                       const dateRaw = row.tracked_at || row.applied_at || null;
                       const dateLabel = dateRaw ? new Date(dateRaw).toLocaleString() : "—";
                       const pos = row.positions || {};
+                      // Shared `positions` catalogue - any signed-in account
+                      // can overwrite this row's url. Refused -> the same
+                      // em-dash this cell already shows for a posting with no
+                      // url at all, never a dead link.
+                      const postingHref = safeExternalHref(pos.url);
                       return (
                         <Box component="tr" key={row.id} sx={{ "&:hover": { bgcolor: "var(--bg-soft)" } }}>
                           <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)", whiteSpace: "nowrap" }}>{dateLabel}</Box>
                           <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)" }}>{pos.company || "—"}</Box>
                           <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)" }}>{pos.title || "—"}</Box>
                           <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)" }}>
-                            {pos.url ? (
-                              <a href={pos.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}>View</a>
+                            {postingHref ? (
+                              <a href={postingHref} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}>View</a>
                             ) : "—"}
                           </Box>
                           <Box component="td" sx={{ p: 1, borderBottom: "1px solid var(--bg-soft)", whiteSpace: "nowrap" }}>

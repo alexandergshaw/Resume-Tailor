@@ -3,6 +3,7 @@
 import Box from "@mui/material/Box";
 import Checkbox from "@mui/material/Checkbox";
 import { parseMarkdown } from "../../../lib/experience/markdown.js";
+import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 // Renders the token tree from lib/experience/markdown.js as real React
 // elements - never dangerouslySetInnerHTML, anywhere in this file. The page
@@ -18,6 +19,8 @@ const MAX_HEADING_TAG = 6;
 // Rough size step-down per rendered tag (h2 body heading down to h4 body
 // heading, since the parser caps at level 3 and HEADING_OFFSET adds one).
 const HEADING_FONT_SIZE = { h2: 20, h3: 17, h4: 15 };
+const LINK_SX = { color: "var(--accent, #1976d2)" };
+const MAILTO = /^mailto:/i;
 
 function renderInline(children, keyPrefix) {
   return (children || []).map((token, index) => {
@@ -33,15 +36,40 @@ function renderInline(children, keyPrefix) {
         return <code key={key}>{token.value}</code>;
       case "link": {
         const external = !!token.external;
+        // `token.href` has already passed lib/experience/markdown.js's
+        // sanitizeUrl - but that is a scheme-PREFIX test, not a URL parse.
+        // It admits `[acme.com](https://acme.com@evil.example/story)`, a
+        // link labelled acme.com that navigates to evil.example, and admits
+        // strings new URL() rejects outright. So an external http(s) link is
+        // re-checked here against the shared control, and a refused one
+        // renders as inert text with NO anchor at all - the same degradation
+        // the javascript: case has always had.
+        //
+        // Two shapes deliberately keep sanitizeUrl's own verdict, and are
+        // the reviewed exceptions recorded in hrefSafety.sweep.test.js:
+        //   * a same-origin "/path" (external === false). Not an external
+        //     navigation; its deliberately rel-LESS rendering is pinned by
+        //     MarkdownPreview.test.js and safeExternalHref refuses every
+        //     relative URL by construction (rule 3).
+        //   * mailto:, which opens a mail client rather than a page.
+        if (!external || MAILTO.test(token.href)) {
+          return (
+            <Box
+              key={key}
+              component="a"
+              href={token.href}
+              target={external ? "_blank" : undefined}
+              rel={external ? "noopener noreferrer" : undefined}
+              sx={LINK_SX}
+            >
+              {renderInline(token.children, key)}
+            </Box>
+          );
+        }
+        const href = safeExternalHref(token.href);
+        if (!href) return <span key={key}>{renderInline(token.children, key)}</span>;
         return (
-          <Box
-            key={key}
-            component="a"
-            href={token.href}
-            target={external ? "_blank" : undefined}
-            rel={external ? "noopener noreferrer" : undefined}
-            sx={{ color: "var(--accent, #1976d2)" }}
-          >
+          <Box key={key} component="a" href={href} target="_blank" rel="noopener noreferrer" sx={LINK_SX}>
             {renderInline(token.children, key)}
           </Box>
         );

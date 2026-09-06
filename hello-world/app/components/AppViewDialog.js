@@ -14,6 +14,7 @@ import FieldError from "./FieldError";
 import FormattedContent from "./FormattedContent";
 import MarkdownPreview from "./experience/MarkdownPreview";
 import { formatRelative } from "../../lib/feed/liveFeedClient";
+import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 // The digest tab's body: the real markdown parser (never FormattedContent.js
 // - that heuristic is shaped for a job ad's plain text, not genuine markdown
@@ -32,19 +33,36 @@ function DigestPanel({ digest, nowTs }) {
       {sources.length > 0 && (
         <Box sx={{ mt: 2, pt: 1.5, borderTop: "1px solid var(--border)" }}>
           <Box sx={{ fontWeight: 700, fontSize: 12, mb: 0.5 }}>Sources</Box>
-          {sources.map((s, i) => (
-            <Box key={s?.url || i} sx={{ fontSize: 12, mb: 0.25 }}>
-              <Box
-                component="a"
-                href={s?.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                sx={{ color: "var(--accent)" }}
-              >
-                {s?.title || s?.url}
+          {sources.map((s, i) => {
+            // `sources` is `jsonb not null default '[]'` - the read-back
+            // gives no element-level type guarantee, and these values come
+            // from grounded search, where isGroundedHost compares hostnames
+            // with no scheme test at all. So nothing upstream has checked
+            // this string, and `String({url})` would render "[object
+            // Object]" as an href. A refused source stays VISIBLE (it is
+            // still what the model grounded on) but is not a link.
+            const href = safeExternalHref(s?.url);
+            const label = s?.title || (typeof s?.url === "string" ? s.url : "Unnamed source");
+            return (
+              <Box key={href || `source-${i}`} sx={{ fontSize: 12, mb: 0.25 }}>
+                {href ? (
+                  <Box
+                    component="a"
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    sx={{ color: "var(--accent)" }}
+                  >
+                    {label}
+                  </Box>
+                ) : (
+                  <Box component="span" sx={{ color: "var(--text-secondary)" }}>
+                    {label}
+                  </Box>
+                )}
               </Box>
-            </Box>
-          ))}
+            );
+          })}
         </Box>
       )}
       {digest.updated_at && nowTs > 0 && (

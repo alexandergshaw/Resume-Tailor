@@ -14,6 +14,7 @@ import { formatRelative } from "@/lib/feed/liveFeedClient.js";
 // imports above) so this import and that mock resolve to the same module id.
 import { useTechWatch } from "../../hooks/useTechWatch";
 import TechWatchItemCard from "./TechWatchItemCard.js";
+import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 // The Tech Watch briefing panel - AC-9. Placed in ExperienceTab AFTER
 // <BulkActionsBar>, outside the `pages.length === 0` branch (that wiring is a
@@ -334,6 +335,12 @@ export default function TechWatchPanel({ now = new Date() }) {
                     citation - never colour alone. */}
                 {aiLifecycleRows.map((row, i) => {
                   const note = lifecycleNote(row, now);
+                  // The citation is AI-search output: isGroundedHost compares
+                  // hostnames with no scheme test, so nothing upstream has
+                  // checked this string. Refused -> the citation LINE stays
+                  // (an AI-sourced row without its citation would be exactly
+                  // the untraceable date AC-4 forbids) but carries no anchor.
+                  const citationHref = safeExternalHref(row.citation?.url);
                   return (
                     <Box key={`ai-${row.technologyId}-${row.cycle}-${i}`}>
                       <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", flexWrap: "wrap" }}>
@@ -352,9 +359,15 @@ export default function TechWatchPanel({ now = new Date() }) {
                       ) : null}
                       {row.citation?.url ? (
                         <Typography sx={{ fontSize: 12.5 }}>
-                          <a href={row.citation.url} target="_blank" rel="noopener noreferrer">
-                            {`${row.technology} lifecycle source — ${row.citation.label || row.citation.url}`}
-                          </a>
+                          {citationHref ? (
+                            <a href={citationHref} target="_blank" rel="noopener noreferrer">
+                              {`${row.technology} lifecycle source — ${row.citation.label || citationHref}`}
+                            </a>
+                          ) : (
+                            <Box component="span" sx={{ color: "var(--text-secondary)" }}>
+                              {`${row.technology} lifecycle source — not linkable`}
+                            </Box>
+                          )}
                         </Typography>
                       ) : null}
                     </Box>

@@ -33,6 +33,7 @@ import AddCommunicationDialog from "./AddCommunicationDialog";
 import EditAppDialog from "./EditAppDialog";
 import AddAppDialog from "./AddAppDialog";
 import AppViewDialog from "./AppViewDialog";
+import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 export default function TrackingTab({
   currentUser,
@@ -232,6 +233,12 @@ export default function TrackingTab({
               {visibleApplicationData.map((app) => {
                 const idx = applicationData.findIndex((candidate) => candidate.id === app.id);
                 const pos = app.positions;
+                // `positions` is a SHARED catalogue - no user_id column, and
+                // positions_update_authenticated lets any signed-in account
+                // overwrite any row - so `pos.url` is a value another user
+                // controls. Refused URLs render no anchor at all, not a dead
+                // one; see lib/url/safeExternalHref.js.
+                const postingHref = safeExternalHref(app.application_url || pos?.url);
                 const resume = app.generated_resumes;
                 const stages = applicationStages[app.id] || [];
                 const emailClassification = emailClassificationsByAppId[app.id] ?? null;
@@ -342,8 +349,8 @@ export default function TrackingTab({
                         </Button>
                       )}
                       <Button size="small" variant="outlined" onClick={() => openCommsInAppDialog(app, idx)}>Comms</Button>
-                      {(app.application_url || pos?.url) && (
-                        <Button size="small" variant="outlined" href={app.application_url || pos.url} target="_blank" rel="noopener noreferrer">Posting ↗</Button>
+                      {postingHref && (
+                        <Button size="small" variant="outlined" href={postingHref} target="_blank" rel="noopener noreferrer">Posting ↗</Button>
                       )}
                     </Box>
 
@@ -483,6 +490,9 @@ export default function TrackingTab({
                 {visibleApplicationData.map((app) => {
                   const idx = applicationData.findIndex((candidate) => candidate.id === app.id);
                   const pos = app.positions;
+                  // Same shared-catalogue hazard as the compact card layout
+                  // above: gate before it can become an href.
+                  const postingHref = safeExternalHref(app.application_url || pos?.url);
                   const resume = app.generated_resumes;
                   const stages = applicationStages[app.id] || [];
                   const emailClassification = emailClassificationsByAppId[app.id] ?? null;
@@ -711,8 +721,8 @@ export default function TrackingTab({
                         ) : "—"}
                       </TableCell>
                       <TableCell>
-                        {(app.application_url || pos?.url) && (
-                          <Button size="small" href={app.application_url || pos.url} target="_blank" rel="noopener noreferrer" sx={{ whiteSpace: "nowrap" }}>
+                        {postingHref && (
+                          <Button size="small" href={postingHref} target="_blank" rel="noopener noreferrer" sx={{ whiteSpace: "nowrap" }}>
                             Posting ↗
                           </Button>
                         )}

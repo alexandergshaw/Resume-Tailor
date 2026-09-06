@@ -8,6 +8,7 @@ import Skeleton from "@mui/material/Skeleton";
 import Typography from "@mui/material/Typography";
 import { TOUCH_TARGET_SX, BREAK_LONG_WORDS_SX, WRAP_ROW_SX } from "./mobileSx";
 import { companyResearchDestination } from "@/lib/copilot/groundingNotice";
+import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 // T2-3 (AC-T2.10..T2.14, superseded by AC-group-T-amendment.md section I11).
 // The live-interview "company" voice cue's results panel — purely
@@ -68,11 +69,17 @@ function ArticleMeta({ source, date }) {
 // rename the link's accessible name (the same F96 hazard VoiceCueSidebar's
 // buttons avoid).
 function ArticleCard({ article }) {
+  // Grounded-search output: isGroundedHost compares hostnames with no scheme
+  // test at all, so nothing upstream has checked this string. Refused -> the
+  // headline falls through to the SAME plain-Typography branch this card
+  // already had for an article with no url, so a refused link is
+  // indistinguishable from no link and there is no anchor to tab to.
+  const articleHref = safeExternalHref(article.url);
   return (
     <Box sx={CARD_SX}>
-      {article.url ? (
+      {articleHref ? (
         <Typography sx={{ fontSize: "0.9rem", fontWeight: 600, ...BREAK_LONG_WORDS_SX }}>
-          <a href={article.url} target="_blank" rel="noopener noreferrer">
+          <a href={articleHref} target="_blank" rel="noopener noreferrer">
             {article.title}
           </a>
         </Typography>

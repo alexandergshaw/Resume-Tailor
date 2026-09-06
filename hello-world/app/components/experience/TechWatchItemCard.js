@@ -4,6 +4,7 @@ import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
+import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 // One briefing item, addressable on its own via `data-techwatch-item` (AC-9
 // / TechWatchPanel.wiring.test.js) - a test asserting what a CARD says must
@@ -119,11 +120,20 @@ export default function TechWatchItemCard({ item }) {
               // six identical "Advisory" entries with nothing to tell them
               // apart out of context.
               const linkText = source.label ? `${tech} ${source.label}` : `${tech} reference`;
+              // `source.url` is model output and has been checked by nothing
+              // upstream. Refused -> the entry stays in the list as text (a
+              // named source the user can look up) but is not a link, and
+              // there is no anchor at all: no href="", no "#", no dead <a>.
+              const href = safeExternalHref(source.url);
               return (
-                <Typography key={`${source.url}-${i}`} sx={{ fontSize: 12.5 }}>
-                  <a href={source.url} target="_blank" rel="noopener noreferrer">
-                    {linkText}
-                  </a>
+                <Typography key={`${href || "unlinked"}-${i}`} sx={{ fontSize: 12.5 }}>
+                  {href ? (
+                    <a href={href} target="_blank" rel="noopener noreferrer">
+                      {linkText}
+                    </a>
+                  ) : (
+                    <Box component="span" sx={{ color: "var(--text-secondary)" }}>{linkText}</Box>
+                  )}
                 </Typography>
               );
             })}

@@ -17,6 +17,7 @@ import {
   sourceProvenance,
   formatRelative,
 } from "@/lib/feed/liveFeedClient";
+import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 // One posting in the Live Feed. Extracted out of LiveFeedTab.js as MARKUP
 // only -- purely presentational (props in, callbacks out, no state, no
@@ -53,6 +54,12 @@ export default function FeedPostingCard({
   onHide,
 }) {
   const title = posting.title || "Untitled role";
+
+  // `posting.url` reaches here from the shared `positions` catalogue, which
+  // any signed-in account can overwrite. Refused -> the open-posting control
+  // is omitted entirely rather than rendered dead; the card itself still
+  // shows the role, so nothing the user tracked disappears.
+  const postingHref = safeExternalHref(posting.url);
 
   // Prefer the salary columns populated during ingestion; for any posting
   // still missing them (older rows predate the columns), fall back to
@@ -159,12 +166,12 @@ export default function FeedPostingCard({
       </Box>
 
       <Box sx={{ display: "flex", flexDirection: "column", gap: 0.25 }}>
-        {posting.url && (
+        {postingHref && (
           <Tooltip title="Open posting">
             <IconButton
               size="small"
               component="a"
-              href={posting.url}
+              href={postingHref}
               target="_blank"
               rel="noopener noreferrer"
               aria-label={`Open ${title}`}

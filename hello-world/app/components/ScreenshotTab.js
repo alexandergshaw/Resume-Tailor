@@ -13,10 +13,52 @@ import VisibilityIcon from "@mui/icons-material/Visibility";
 import AddPhotoAlternateIcon from "@mui/icons-material/AddPhotoAlternate";
 import EmptyState from "./EmptyState";
 import StatusPill from "./StatusPill";
+import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 import styles from "../page.module.css";
 
 const ACCEPT = "image/png,image/jpeg,image/webp";
+
+const URL_LINE_SX = {
+  fontSize: "0.75rem",
+  textDecoration: "none",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  flex: 1,
+  minWidth: 0,
+};
+
+// The posting URL read out of the screenshot. It is shown as text either
+// way - seeing where a scraped link points is the whole point of the line -
+// but it is only a LINK when safeExternalHref admits it. A refused URL
+// renders no anchor at all (never href="", never "#", never a dead <a>) and
+// loses the open-in-new affordance with it, so the control does not lie
+// about being clickable.
+function PostingUrlLine({ url }) {
+  if (!url) return null;
+  const href = safeExternalHref(url);
+  return (
+    <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mt: 0.25, minWidth: 0 }}>
+      {href ? (
+        <>
+          <Box
+            component="a"
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            sx={{ ...URL_LINE_SX, color: "var(--accent-hover)" }}
+          >
+            {url}
+          </Box>
+          <OpenInNewIcon sx={{ fontSize: 13, color: "var(--accent-hover)", flexShrink: 0 }} />
+        </>
+      ) : (
+        <Box sx={{ ...URL_LINE_SX, color: "var(--text-secondary)" }}>{url}</Box>
+      )}
+    </Box>
+  );
+}
 
 export default function ScreenshotTab({
   items = [],
@@ -149,20 +191,7 @@ export default function ScreenshotTab({
                       {[item.jobTitle, item.company].filter(Boolean).join(" · ")}
                     </Box>
                   ) : null}
-                  {item.url ? (
-                    <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mt: 0.25, minWidth: 0 }}>
-                      <Box
-                        component="a"
-                        href={item.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        sx={{ fontSize: "0.75rem", color: "var(--accent-hover)", textDecoration: "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}
-                      >
-                        {item.url}
-                      </Box>
-                      <OpenInNewIcon sx={{ fontSize: 13, color: "var(--accent-hover)", flexShrink: 0 }} />
-                    </Box>
-                  ) : null}
+                  <PostingUrlLine url={item.url} />
                   {item.error ? (
                     <Box sx={{ fontSize: "0.78rem", color: "var(--danger)", mt: 0.5, overflowWrap: "anywhere" }}>{item.error}</Box>
                   ) : null}

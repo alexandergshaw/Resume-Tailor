@@ -25,6 +25,7 @@ import EmptyState from "./EmptyState";
 
 import styles from "../page.module.css";
 import { openPostingBeside } from "@/lib/window/openPostingBeside";
+import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 // Turn generated content (string or line array) into a downloadable text file.
 function downloadText(filename, lines, fallback) {
@@ -205,6 +206,9 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
   // past the end (or the queue empties).
   const walking = walkIndex >= 0;
   const current = walking && walkIndex < items.length ? items[walkIndex] : null;
+  // The shared `positions` catalogue is writable by any signed-in account, so
+  // this url is not this user's to trust. See lib/url/safeExternalHref.js.
+  const currentPostingHref = safeExternalHref(current?.positions?.url);
 
   useEffect(() => {
     if (!walking) return undefined;
@@ -375,13 +379,15 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
                 </Button>
               </span>
             </Tooltip>
-            {current.positions?.url && (
+            {/* Refused -> the button is omitted entirely; the queue card
+                keeps company, title and both document downloads. */}
+            {currentPostingHref && (
               <Tooltip title="Open job posting in new window">
                 <Button
                   size="small"
                   variant="outlined"
                   startIcon={<OpenInNewIcon />}
-                  href={current.positions.url}
+                  href={currentPostingHref}
                   target="_blank"
                   rel="noopener noreferrer"
                   sx={{ textTransform: "none" }}

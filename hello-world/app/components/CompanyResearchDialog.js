@@ -18,8 +18,25 @@ import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import { weaveSourcesAnnotated, placementOptions, DEFAULT_PLACEMENT } from "@/lib/document/coverLetterWeave";
 import { useIsMobile } from "../hooks/useResponsive";
+import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 const PLACEMENT_OPTS = placementOptions();
+
+// The icon-only "open this article" control. `a.url` is grounded-search
+// output, or a URL the user pasted, so it is gated before it can become an
+// href. A refused URL renders NO control at all - not a dead one - and the
+// article's title, source and summary stay on screen unchanged.
+function ArticleLinkButton({ url }) {
+  const href = safeExternalHref(url);
+  if (!href) return null;
+  return (
+    <Tooltip title={href}>
+      <IconButton size="small" component="a" href={href} target="_blank" rel="noopener noreferrer" sx={{ p: 0.25 }}>
+        <OpenInNewIcon sx={{ fontSize: 15 }} />
+      </IconButton>
+    </Tooltip>
+  );
+}
 
 // Research the target company, pick which recent positive articles (plus any URL
 // you paste) to reference, then arrange where each lands in the cover letter and
@@ -137,13 +154,7 @@ export default function CompanyResearchDialog({
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Box sx={{ display: "flex", alignItems: "baseline", gap: 1, flexWrap: "wrap" }}>
               <Box sx={{ fontWeight: 600, fontSize: "0.9rem" }}>{a.title}</Box>
-              {a.url ? (
-                <Tooltip title={a.url}>
-                  <IconButton size="small" component="a" href={a.url} target="_blank" rel="noopener noreferrer" sx={{ p: 0.25 }}>
-                    <OpenInNewIcon sx={{ fontSize: 15 }} />
-                  </IconButton>
-                </Tooltip>
-              ) : null}
+              <ArticleLinkButton url={a.url} />
             </Box>
             <Box sx={{ fontSize: "0.72rem", color: "var(--text-secondary)" }}>
               {[a.source, a.date].filter(Boolean).join(" · ")}

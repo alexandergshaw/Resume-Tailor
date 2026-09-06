@@ -14,6 +14,7 @@ import {
   hiringEmailDriveNote,
 } from "@/lib/drive/driveMessages";
 import DriveOverwriteDialog from "./DriveOverwriteDialog";
+import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 /**
  * Where Drive save/download outcomes are reported (`UX.md` rev 2 §3/§6,
@@ -166,24 +167,25 @@ function resolveLeadingLine(leadingLine) {
 }
 
 function Segments({ segments }) {
-  return segments.map((segment, i) =>
-    segment.type === "link" ? (
-      <Box
-        key={i}
-        component="a"
-        href={segment.href}
-        target="_blank"
-        rel="noopener noreferrer"
-        sx={LINK_SX}
-      >
-        {segment.text}
-      </Box>
-    ) : (
+  return segments.map((segment, i) => {
+    if (segment.type !== "link") {
       // Index as key: text segments carry no stable identity of their own,
       // and the index is stable within one row's fixed-shape segment list.
-      <span key={i}>{segment.value}</span>
-    ),
-  );
+      return <span key={i}>{segment.value}</span>;
+    }
+    // driveSaveBatch.js:111 builds a link segment as `href: href ?? ""` from
+    // whatever the Drive API returned as webViewLink, so the empty string is
+    // already a reachable value here - and an empty href resolves to the
+    // current page, which is exactly the dead control this must not render.
+    // A refused link degrades to its own text, in place.
+    const href = safeExternalHref(segment.href);
+    if (!href) return <span key={i}>{segment.text}</span>;
+    return (
+      <Box key={i} component="a" href={href} target="_blank" rel="noopener noreferrer" sx={LINK_SX}>
+        {segment.text}
+      </Box>
+    );
+  });
 }
 
 function ResultRow({ row }) {

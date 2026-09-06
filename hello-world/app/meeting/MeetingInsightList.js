@@ -27,6 +27,7 @@ import CircularProgress from "@mui/material/CircularProgress";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { INSIGHT_KINDS } from "@/lib/meeting/insightContract";
+import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 // Inlined for the same reason MeetingTranscript.js inlines its own copy:
 // one small, stable style object is a smaller dependency than importing
@@ -181,21 +182,33 @@ function ReferenceResults({ insight, referenceState, onRetry }) {
 
       {references.length > 0 ? (
         <Stack spacing={0.5} sx={{ mt: 0.5 }}>
-          {references.map((ref, index) => (
-            <Typography key={`${ref.url}-${index}`} variant="body2" sx={{ wordBreak: "break-word" }}>
-              <a href={ref.url} target="_blank" rel="noopener noreferrer">
+          {references.map((ref, index) => {
+            // Search output. Refused -> the reference keeps its TITLE as
+            // plain text (it is still what the point was checked against)
+            // but renders no anchor, and loses the host caption with it: a
+            // host shown beside a link that does not exist is a claim about
+            // a destination there is no longer any way to reach.
+            const refHref = safeExternalHref(ref.url);
+            return (
+            <Typography key={`${refHref || "unlinked"}-${index}`} variant="body2" sx={{ wordBreak: "break-word" }}>
+              {refHref ? (
+              <a href={refHref} target="_blank" rel="noopener noreferrer">
                 {ref.title}
               </a>
+              ) : (
+                <Box component="span" sx={{ color: "var(--text-secondary)" }}>{ref.title}</Box>
+              )}
               {/* The host is shown so the user can see where a link goes
                   BEFORE saying it out loud - the whole point of citing
                   something in a live meeting. */}
-              {ref.host ? (
+              {refHref && ref.host ? (
                 <Typography component="span" variant="caption" sx={{ ml: 0.5, color: "var(--text-secondary)" }}>
                   ({ref.host})
                 </Typography>
               ) : null}
             </Typography>
-          ))}
+            );
+          })}
         </Stack>
       ) : null}
 
