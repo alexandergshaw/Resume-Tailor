@@ -5,6 +5,7 @@ import { STATUS } from "@/lib/applications/statusVocabulary";
 import { saveGeneratedResume } from "@/lib/supabase/saveGeneratedResume";
 import { saveGeneratedCoverLetter } from "@/lib/supabase/saveGeneratedCoverLetter";
 import { postingToJob } from "@/lib/feed/selectQueueCandidates";
+import { tailorPostingFields } from "@/lib/feed/postingDescription";
 
 // Shared tailoring + queueing pipeline used by both the cron route
 // (bulk, every saved-search match) and the single-posting API route
@@ -193,14 +194,30 @@ export async function tailorAndQueueOne({
   let coverLetterId = null;
   if (coverLetterBuffer) {
     try {
+      // jobPosting and jobPostingUrl are NOT additive (see
+      // lib/feed/postingDescription.js's tailorPostingFields doc comment):
+      // for Gemini the URL wins and discards any text sent alongside it; for
+      // the embedded engine the text wins. Sending both — as this call used
+      // to — throws away the full raw_data.description this pipeline
+      // already selected (upsertPositionOrThrow/jobToPositionRow above) and
+      // has Gemini re-fetch the URL instead, same defect commit aa98b17
+      // fixed on the Live Feed's own Tailor button. `full` reflects whether
+      // job.description really is the whole posting (raw_data.description)
+      // or just postingToJob's description_snippet fallback — only the
+      // former should ever outrank the URL.
+      const { jobPosting: coverJobPosting, jobPostingUrl: coverJobPostingUrl } = tailorPostingFields({
+        text: job.description || job.title || "",
+        full: Boolean(posting?.raw_data?.description),
+        url: job.url || "",
+      });
       const coverDraft = await tailorCoverLetterHeadless({
         coverLetterBuffer,
         resumeBuffer,
         // Ground the letter in the résumé just tailored above for this
         // posting, not a re-extraction of the original upload.
         tailoredResume: { result: resumeDraft.result, resultLines: resumeDraft.resultLines },
-        jobPosting: job.description || job.title || "",
-        jobPostingUrl: job.url || "",
+        jobPosting: coverJobPosting,
+        jobPostingUrl: coverJobPostingUrl,
         companyName: job.company || "",
         jobTitle: resumeDraft.jobTitle || job.title || "",
         userId,

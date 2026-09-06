@@ -149,11 +149,18 @@ export function useManualTailor({
       const nextEmailSubject = typeof payload.emailSubject === "string" ? payload.emailSubject : "";
       const nextEmailResultLines = Array.isArray(payload.emailResultLines) ? payload.emailResultLines : [];
 
+      // DEFECT 2: /api/tailor's `warnings` array (engine-fallback notices,
+      // embedded-engine degradations like an unmatched focus area or an
+      // unparsed steering note, project-pages truncation) previously reached
+      // no client at all. It rides the same channel as a cover-letter
+      // failure below — combined, never replacing it, so neither is lost
+      // when both occur on the same run.
+      const engineWarnings = Array.isArray(payload.warnings) ? payload.warnings.filter(Boolean) : [];
       // Change 4: the résumé generated fine even when the cover letter
       // failed, so this is never a tab-wide error — it's returned as a
       // warning for the caller to show wherever this posting's own outcome
       // is shown (its own card in the queue, for the multi-posting case).
-      const warning = nextCoverLetterError || "";
+      const warning = [nextCoverLetterError, ...engineWarnings].filter(Boolean).join(" ");
 
       // A3: the queue reads `warning` off the return value and shows it on
       // the posting's own card -- but handleRegenerateSyntheticJob and
@@ -161,10 +168,11 @@ export function useManualTailor({
       // directly and discard whatever it returns, exactly like they discard
       // everything else here for a non-queued run. Without this, the résumé
       // regenerates, the chip reads "done", the preview auto-opens, and
-      // nobody is ever told the cover letter failed. `setError("")` when
-      // there's no warning is deliberate too: it's what actually clears a
-      // stale cover-letter error left over from a previous run.
-      if (!opts.queued) setError(nextCoverLetterError);
+      // nobody is ever told the cover letter failed (or, per DEFECT 2, that
+      // the engine degraded some other way). `setError("")` when there's
+      // nothing to report is deliberate too: it's what actually clears a
+      // stale warning left over from a previous run.
+      if (!opts.queued) setError(warning);
 
       // Update the synthesized tracked job's title/company now that we have them.
       const syntheticJob = {

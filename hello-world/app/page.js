@@ -2171,6 +2171,12 @@ export default function Home() {
           ? payload.coverLetterResult
           : coverLetterResultLines.join("\n");
       const coverLetterError = typeof payload.coverLetterError === "string" ? payload.coverLetterError : "";
+      // DEFECT 2: /api/tailor's `warnings` (engine-fallback notices, embedded-
+      // engine degradations, project-pages truncation) reached no client.
+      // Combined into the same `error` field a cover-letter failure already
+      // uses below, never replacing it.
+      const engineWarnings = Array.isArray(payload.warnings) ? payload.warnings.filter(Boolean) : [];
+      const tailorWarning = [coverLetterError, ...engineWarnings].filter(Boolean).join(" ");
       const engineUsed = typeof payload.engine === "string" ? payload.engine : "";
       const docxB64 = typeof payload.docxB64 === "string" ? payload.docxB64 : "";
       const coverLetterDocxB64 = typeof payload.coverLetterDocxB64 === "string" ? payload.coverLetterDocxB64 : "";
@@ -2190,7 +2196,7 @@ export default function Home() {
           ...(applyResume ? ["resume"] : []),
           ...(applyCover ? ["cover"] : []),
         ]),
-        error: coverLetterError || "",
+        error: tailorWarning,
         emailSubject,
         emailResultLines,
         ...(applyResume ? { result, resultLines, docxB64 } : {}),
@@ -2272,8 +2278,13 @@ export default function Home() {
       });
 
       if (dlError) {
-        updateTailoringJob(job.id, { error: dlError });
-        return { ok: false, error: dlError };
+        // Combine, don't clobber: a cover-letter/engine warning already
+        // written into the "done" update above must survive a download
+        // failure too, exactly like handleTailorFeedPosting combines its
+        // own truncation notice with a download error (commit aa98b17).
+        const combinedError = [tailorWarning, dlError].filter(Boolean).join(" ");
+        updateTailoringJob(job.id, { error: combinedError });
+        return { ok: false, error: combinedError };
       }
       updateTailoringJob(job.id, { downloaded: true });
       return { ok: true };
@@ -2414,7 +2425,11 @@ export default function Home() {
       const nextEmailSubject = typeof payload.emailSubject === "string" ? payload.emailSubject : "";
       const nextEmailResultLines = Array.isArray(payload.emailResultLines) ? payload.emailResultLines : [];
 
-      if (nextCoverLetterError) setUrlError(nextCoverLetterError);
+      // DEFECT 2: combine /api/tailor's engine `warnings` with a cover-letter
+      // failure into the same urlError channel, rather than dropping them.
+      const nextEngineWarnings = Array.isArray(payload.warnings) ? payload.warnings.filter(Boolean) : [];
+      const urlWarning = [nextCoverLetterError, ...nextEngineWarnings].filter(Boolean).join(" ");
+      if (urlWarning) setUrlError(urlWarning);
 
       // Update the synthesized tracked job's title now that we have one.
       const syntheticJob = {
@@ -2652,6 +2667,10 @@ export default function Home() {
         reason: fullDescription.reason,
       });
       if (truncationNotice) console.warn("[handleTailorFeedPosting]", truncationNotice);
+      // DEFECT 2: the engine's own `warnings` (fallback notices, embedded-
+      // engine degradations, project-pages truncation) reached no client —
+      // fold them into the same returned-string channel as truncationNotice.
+      const nextEngineWarnings = Array.isArray(payload.warnings) ? payload.warnings.filter(Boolean) : [];
 
       const syntheticJob = {
         id: syntheticJobId,
@@ -2729,11 +2748,11 @@ export default function Home() {
         coverLetterDocxB64: nextCoverLetterDocxB64,
       });
 
-      // Both are surfaced through the same channel the download error already
-      // uses: LiveFeedTab renders whatever this returns in its Alert. A
-      // truncated tailor that reported nothing would be indistinguishable from
-      // a good one.
-      return [truncationNotice, dlError].filter(Boolean).join(" ") || null;
+      // All three are surfaced through the same channel the download error
+      // already uses: LiveFeedTab renders whatever this returns in its Alert.
+      // A truncated (or otherwise degraded) tailor that reported nothing
+      // would be indistinguishable from a good one.
+      return [truncationNotice, ...nextEngineWarnings, dlError].filter(Boolean).join(" ") || null;
     } catch (err) {
       updateTailoringJob(syntheticJobId, { status: "error" });
       return err.message || "Unexpected error.";

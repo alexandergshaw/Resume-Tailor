@@ -285,6 +285,60 @@ describe("useManualTailor -- a cover letter that failed", () => {
   });
 });
 
+// DEFECT 2: app/api/tailor/route.js returns a `warnings` array (engine
+// fallback notices, embedded-engine degradations like an unmatched focus
+// area or an unparsed steering note, project-pages truncation) that nothing
+// on the client ever read. This hook already has an established channel for
+// a post-success problem -- the cover-letter-failure `warning` above -- so
+// an engine warning follows the exact same shape: combined into it (never
+// replacing a cover-letter failure that also occurred), for both the
+// returned value (queued callers) and the tab-wide error (unqueued callers).
+describe("useManualTailor -- engine warnings reaching the user (DEFECT 2)", () => {
+  it("surfaces an engine warning even when the cover letter succeeded", async () => {
+    mockFetchOnce({
+      payload: okPayload({
+        warnings: ['Focus area "Data Science" isn\'t in your library — auto-detection was used instead.'],
+      }),
+    });
+    await mount(baseProps());
+    const result = await run({ overridePosting: "A posting" });
+    expect(result.ok).toBe(true);
+    expect(result.warning).toContain("isn't in your library");
+    expect(api.error).toContain("isn't in your library");
+  });
+
+  it("combines an engine warning with a cover-letter failure rather than dropping one", async () => {
+    mockFetchOnce({
+      payload: okPayload({
+        coverLetterError: "Cover letter model refused.",
+        warnings: ['Applied your recurring edit: "foo" → "bar".'],
+      }),
+    });
+    await mount(baseProps());
+    const result = await run({ overridePosting: "A posting" });
+    expect(result.warning).toContain("Cover letter model refused.");
+    expect(result.warning).toContain("Applied your recurring edit");
+    expect(api.error).toContain("Cover letter model refused.");
+    expect(api.error).toContain("Applied your recurring edit");
+  });
+
+  it("is NOT reported to the tab for a queued run -- its own card shows it", async () => {
+    mockFetchOnce({ payload: okPayload({ warnings: ["This role reads as non-technical."] }) });
+    await mount(baseProps());
+    const result = await run({ overridePosting: "A posting", queued: true });
+    expect(result.warning).toContain("This role reads as non-technical.");
+    expect(api.error).toBe("");
+  });
+
+  it("ignores a non-array warnings field instead of throwing", async () => {
+    mockFetchOnce({ payload: okPayload({ warnings: null }) });
+    await mount(baseProps());
+    const result = await run({ overridePosting: "A posting" });
+    expect(result.ok).toBe(true);
+    expect(result.warning).toBe("");
+  });
+});
+
 describe("useManualTailor -- the tracked job", () => {
   it("registers the posting as a tracked job before the request goes out", async () => {
     const props = baseProps();

@@ -202,6 +202,65 @@ describe("tailorAndQueueOne", () => {
       });
       expect(result.coverLetterId).toBe("gen-cover-1");
     });
+
+    // jobPosting and jobPostingUrl are NOT additive (see
+    // lib/feed/postingDescription.js's tailorPostingFields doc comment, and
+    // commit aa98b17 which fixed the identical defect on the Live Feed path):
+    // for Gemini the URL wins and the fetched text is discarded; for the
+    // embedded engine the text wins. Sending both here throws away the full
+    // `raw_data.description` this pipeline already selected and makes Gemini
+    // re-fetch the URL instead -- slower, costlier, and worse when the fetch
+    // fails. Exactly one of the two must reach tailorCoverLetterHeadless.
+    describe("jobPosting/jobPostingUrl exclusivity (DEFECT 1)", () => {
+      it("sends the full raw_data description as text, with no URL, when it's available", async () => {
+        postingToJob.mockReturnValue({
+          ...JOB,
+          description: "The FULL posting text straight from raw_data.description.",
+          url: "https://example.com/job/1",
+        });
+        const admin = makeSupabase({
+          positions: { data: { id: "pos-1" } },
+          applications: { data: null, error: null },
+        });
+        await tailorAndQueueOne({
+          admin,
+          userId: "u",
+          posting: {
+            id: "feed-1",
+            raw_data: { description: "The FULL posting text straight from raw_data.description." },
+          },
+          resumeBuffer: Buffer.from("r"),
+          coverLetterBuffer: Buffer.from("c"),
+        });
+        const callArgs = tailorCoverLetterHeadless.mock.calls[0][0];
+        expect(callArgs.jobPosting).toBe("The FULL posting text straight from raw_data.description.");
+        expect(callArgs.jobPostingUrl).toBe("");
+      });
+
+      it("sends only the URL, not the truncated snippet, when raw_data.description is missing", async () => {
+        postingToJob.mockReturnValue({
+          ...JOB,
+          description: "A 400-character snippet…",
+          url: "https://example.com/job/1",
+        });
+        const admin = makeSupabase({
+          positions: { data: { id: "pos-1" } },
+          applications: { data: null, error: null },
+        });
+        await tailorAndQueueOne({
+          admin,
+          userId: "u",
+          // No raw_data.description -- postingToJob's own fallback means
+          // job.description here is only the truncated description_snippet.
+          posting: { id: "feed-1" },
+          resumeBuffer: Buffer.from("r"),
+          coverLetterBuffer: Buffer.from("c"),
+        });
+        const callArgs = tailorCoverLetterHeadless.mock.calls[0][0];
+        expect(callArgs.jobPostingUrl).toBe("https://example.com/job/1");
+        expect(callArgs.jobPosting).toBe("");
+      });
+    });
   });
 });
 

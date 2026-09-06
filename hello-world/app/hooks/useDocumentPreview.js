@@ -863,10 +863,10 @@ export function useDocumentPreview({
       }
       const hintTail = workflowHints.filter(Boolean).join(" ");
 
-      const focusWarning = (payload.warnings || []).find((w) => /focus area/i.test(w)) || "";
+      const engineWarnings = (Array.isArray(payload.warnings) ? payload.warnings : []).filter(Boolean).join(" "); // DEFECT 2: every warning, not just "focus area", and not only on a focus change.
       const notice = focusChange
-        ? `Regenerated with the ${opts.focusArea ? `“${opts.focusArea}”` : "auto-detected"} focus.${focusWarning ? ` ${focusWarning}` : ""}${hintTail ? ` ${hintTail}` : ""}`
-        : `Revised the ${applyCover ? "cover letter" : "resume"} with your instructions.${habitHint ? ` ${habitHint}` : ""}`;
+        ? `Regenerated with the ${opts.focusArea ? `“${opts.focusArea}”` : "auto-detected"} focus.${engineWarnings ? ` ${engineWarnings}` : ""}${hintTail ? ` ${hintTail}` : ""}`
+        : `Revised the ${applyCover ? "cover letter" : "resume"} with your instructions.${habitHint ? ` ${habitHint}` : ""}${engineWarnings ? ` ${engineWarnings}` : ""}`;
       setScopeFlags(lockScopes, { busy: false, error: "", notice });
       return true;
     } catch (err) {
