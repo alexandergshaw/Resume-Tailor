@@ -93,6 +93,21 @@ export function useApplicationDigests(applications) {
     });
   }, []);
 
+  // 1h F-7: the SET of ids with a request in flight, checked synchronously
+  // before anything else in runOne. `researchingIds` (React state) cannot do
+  // this job on its own - runOne is a stable useCallback (deps
+  // [markResearching, setDigest] never change), so a check against the
+  // `researchingIds` closure would forever see the value from the FIRST
+  // render and never observe a later update. A ref sidesteps that: it is
+  // read and written synchronously, in the same tick a duplicate call would
+  // need to be turned away in. Per id, not a single shared flag, so two
+  // different rows can still research concurrently - only a second call for
+  // the SAME id while the first is unsettled is a no-op. Before this, the
+  // only thing stopping a double-fire was TrackingTab's "Researching…"
+  // branch not rendering a clickable control - a UI-level guard a fast
+  // double click or a programmatic double call bypasses entirely.
+  const inFlightIdsRef = useRef(new Set());
+
   // Shared by the auto fan-out and the Research button. A network-level
   // throw (offline, a non-2xx the route itself did not turn into a recorded
   // digest) still has to leave the cell showing something actionable rather
@@ -102,20 +117,34 @@ export function useApplicationDigests(applications) {
   const runOne = useCallback(
     async (applicationId, { force = false } = {}) => {
       if (!applicationId) return;
+      if (inFlightIdsRef.current.has(applicationId)) return;
+      inFlightIdsRef.current.add(applicationId);
       markResearching(applicationId, true);
       try {
         const digest = await requestDigest(applicationId, { force });
         if (digest) setDigest(applicationId, digest);
       } catch (err) {
-        setDigest(applicationId, {
-          application_id: applicationId,
-          status: "failed",
-          markdown: "",
-          sources: [],
-          error: err?.message || "Research failed.",
-        });
+        // 1c C-6: MERGE the failure fields over whatever this id already
+        // held, never replace it. Blanking markdown/sources here used to
+        // remove the digest page from AppViewDialog's `pages` gate mid-view
+        // (it reads `markdown`) and made the cell read "Not researched
+        // yet" - byte-identical to never-researched - over research that
+        // still exists in the database. This is exactly what route.js's own
+        // catch already does for a route-recorded failure (carries
+        // markdown/sources/citation_outcome forward together); this is the
+        // same shape for a failure that never reached the route at all.
+        setDigestsById((prev) => ({
+          ...prev,
+          [applicationId]: {
+            ...(prev[applicationId] || {}),
+            application_id: applicationId,
+            status: "failed",
+            error: err?.message || "Research failed.",
+          },
+        }));
       } finally {
         markResearching(applicationId, false);
+        inFlightIdsRef.current.delete(applicationId);
       }
     },
     [markResearching, setDigest],
