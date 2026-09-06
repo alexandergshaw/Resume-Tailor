@@ -73,6 +73,30 @@ describe("buildDigestPrompt", () => {
     expect(buildDigestPrompt(posting)).toMatch(/not found/i);
   });
 
+  it("no longer instructs the model to author citation links itself (AC-F17)", () => {
+    // This is a STRING assertion only: it proves the old instruction text is
+    // gone, not that a model complies with anything. Real citations now come
+    // from the grounding API's own annotations (lib/llm/interactionCitations.js)
+    // via renderCitedMarkdown.js — this test does not touch that pipeline.
+    const prompt = buildDigestPrompt(posting);
+    expect(prompt).not.toMatch(/cite every factual claim/i);
+    expect(prompt.toLowerCase()).not.toContain("markdown link to the page");
+  });
+
+  it("tells the model to write plain prose with no citations, links or source list of its own (AC-F17)", () => {
+    // Also a string assertion only, per AC-F17: the renderer supplies all
+    // citation UI from the grounding API's own annotations, so the model is
+    // told not to author any citation-shaped text rather than told how to
+    // format one. citationResidue.js (untouched by this change) is the
+    // backstop if the model emits one anyway.
+    const prompt = buildDigestPrompt(posting);
+    expect(prompt).toMatch(/no citations of your own|do not cite/i);
+    expect(prompt).toMatch(/bracketed marker|\[1\]/);
+    expect(prompt).toMatch(/reference-style/i);
+    expect(prompt).toMatch(/raw url|bare url/i);
+    expect(prompt).toMatch(/source list|bibliography/i);
+  });
+
   it("does not throw on a sparse posting", () => {
     expect(() => buildDigestPrompt({})).not.toThrow();
     expect(() => buildDigestPrompt(null)).not.toThrow();

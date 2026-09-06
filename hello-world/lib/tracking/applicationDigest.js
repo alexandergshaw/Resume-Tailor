@@ -78,7 +78,7 @@ export function buildDigestPrompt(posting) {
     "",
     "Every section must cover only information that is not stated in the posting above — facts, context and signals that go beyond the posting, never a paraphrase of it.",
     'If you cannot find grounded, sourced information for a section, write "Not found" under that heading rather than guessing or inferring an answer.',
-    "Cite every factual claim as a markdown link to the page you found it on.",
+    "Write in plain prose with no citations of your own: no markdown links, no bracketed markers like [1], no reference-style link definitions, no raw URLs typed into the text, and no source list or bibliography at the end. The citation links shown to the reader are generated separately from Google Search's own results, not from anything you write here.",
   );
   return lines.join("\n");
 }
