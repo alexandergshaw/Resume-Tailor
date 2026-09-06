@@ -89,6 +89,11 @@ import { STATUS, excludeTrackingTabHiddenStatuses } from "../lib/applications/st
 import { selectAppliedToggleAction } from "../lib/applications/applicationDecisions";
 import { persistGeneratedDocuments } from "../lib/supabase/persistGeneration";
 import { normalizeInterviewValue } from "../lib/tracking/stages";
+import {
+  fetchFullPostingDescription,
+  tailorPostingFields,
+  truncatedDescriptionNotice,
+} from "@/lib/feed/postingDescription";
 
 // Sets one scope of a tailoring entry's per-scope edited flag ({ resume,
 // cover }) without disturbing the other, mirroring the same helper in
@@ -2548,10 +2553,21 @@ export default function Home() {
     if (!resumeFile) return "Please upload a resume file first.";
 
     const postingUrl = (posting.url || "").trim();
-    const postingText = (posting.description || posting.description_snippet || "").trim();
-    if (!postingUrl && !postingText) {
+    // The feed LIST query omits `raw_data` on purpose (it holds whole job
+    // descriptions and that query returns a page of postings at a time), so
+    // everything a posting object carries here is `description_snippet` -- a
+    // 400-character truncation. Fetch the stored full description on demand,
+    // one single-row read made only now that the user has actually clicked
+    // Tailor, so this path feeds the engine the same text the apply /
+    // auto-apply-queue / cron paths already use.
+    const snippetText = (posting.description || posting.description_snippet || "").trim();
+    if (!postingUrl && !snippetText) {
       return "This posting has no URL or description to tailor against.";
     }
+
+    const fullDescription = await fetchFullPostingDescription(posting);
+    const postingText = fullDescription.text || snippetText;
+    const postingTextIsFull = !!(fullDescription.full && fullDescription.text);
 
     const syntheticJobId = `feed-${posting.id}`;
     setTrackedJobs((prev) =>
@@ -2572,8 +2588,15 @@ export default function Home() {
 
     try {
       const formData = new FormData();
-      if (postingUrl) formData.append("jobPostingUrl", postingUrl);
-      else formData.append("jobPosting", postingText);
+      // Exactly one of the two: sending both makes the URL win for Gemini
+      // (lib/llm/tailorResume.js) and discard the full text we just fetched.
+      const { jobPosting, jobPostingUrl } = tailorPostingFields({
+        text: postingText,
+        full: postingTextIsFull,
+        url: postingUrl,
+      });
+      if (jobPostingUrl) formData.append("jobPostingUrl", jobPostingUrl);
+      if (jobPosting) formData.append("jobPosting", jobPosting);
       formData.append("additionalContext", additionalContext);
       formData.append("aggressiveness", String(aggressiveness));
       formData.append("engine", tailorEngine);
@@ -2620,12 +2643,25 @@ export default function Home() {
       const nextEmailSubject = typeof payload.emailSubject === "string" ? payload.emailSubject : "";
       const nextEmailResultLines = Array.isArray(payload.emailResultLines) ? payload.emailResultLines : [];
 
+      // Only reached when the full description was unavailable AND the server's
+      // own scrape of the posting URL came back empty too -- i.e. the engine
+      // genuinely never saw more than the 400-character preview. "" otherwise.
+      const truncationNotice = truncatedDescriptionNotice({
+        full: postingTextIsFull,
+        scrapedDescription: nextJobDescription,
+        reason: fullDescription.reason,
+      });
+      if (truncationNotice) console.warn("[handleTailorFeedPosting]", truncationNotice);
+
       const syntheticJob = {
         id: syntheticJobId,
         title: nextJobTitle || posting.title || "Untitled role",
         company: nextCompany || posting.company || "",
         url: postingUrl,
-        description: nextJobDescription || postingText,
+        // upsertPosition writes this straight into positions.description. The
+        // full text wins when we have it; otherwise the server's scrape beats
+        // the truncation, and the truncation is the last resort.
+        description: postingTextIsFull ? postingText : nextJobDescription || postingText,
       };
       setTrackedJobs((prev) =>
         prev.map((j) =>
@@ -2693,7 +2729,11 @@ export default function Home() {
         coverLetterDocxB64: nextCoverLetterDocxB64,
       });
 
-      return dlError || null;
+      // Both are surfaced through the same channel the download error already
+      // uses: LiveFeedTab renders whatever this returns in its Alert. A
+      // truncated tailor that reported nothing would be indistinguishable from
+      // a good one.
+      return [truncationNotice, dlError].filter(Boolean).join(" ") || null;
     } catch (err) {
       updateTailoringJob(syntheticJobId, { status: "error" });
       return err.message || "Unexpected error.";
