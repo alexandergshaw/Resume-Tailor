@@ -45,6 +45,17 @@
 // measured counter-example is in this repo: a host-only lookup welded a real
 // headline from one story onto an invented path on the same publisher, and
 // swapping the order of an array nobody controls changed which headline.
+//
+// THE STORED `title` IS A FOREIGN STRING AND WAS THE HOLE IN THAT RULE. Gemini's
+// legacy grounding metadata pairs a `vertexaisearch` REDIRECT uri with the
+// PUBLISHER'S BARE DOMAIN as its title, and this panel printed that title
+// verbatim - so an entry read "reuters.com" while its href went to a Google API
+// redirect, with the host line correctly suppressed and the false claim left
+// standing beside it. lib/tracking/citationLabel.js closes it with one rule
+// shared by every path that names a citation: a title that names a host is not
+// a name, so the only domain that can appear is the one derived from this
+// anchor's own href. Rows already carrying the mismatch are repaired HERE, on
+// read - see `toEntry`.
 
 import { useState } from "react";
 import Box from "@mui/material/Box";
@@ -53,6 +64,7 @@ import MarkdownPreview from "../experience/MarkdownPreview";
 import { formatRelative } from "@/lib/feed/liveFeedClient";
 import { safeExternalHref } from "@/lib/url/safeExternalHref";
 import { citationHost, nonPublisherHosts } from "@/lib/tracking/citationHref";
+import { citationLabel, citationTitle } from "@/lib/tracking/citationLabel";
 import { scanCitationResidue } from "@/lib/tracking/citationResidue";
 import { CITATION_BINDING, renderCitedMarkdown } from "@/lib/tracking/renderCitedMarkdown";
 import { triggerBlobDownload } from "@/lib/document/download";
@@ -174,44 +186,31 @@ const NOTICE_SX = { fontSize: 12.5, color: "var(--warning)", bgcolor: "var(--war
 // ------------------------------------------------------------------ helpers
 
 /**
- * A label short enough to be spoken, cut at a word boundary, never mid-word.
- *
- * The ellipsis is separated from the last word rather than glued to it, so a
- * reader (and a screen reader) meets a whole word and then the mark that says
- * "there was more", rather than a word that looks misspelled. That separation
- * is what DigestPanel.test.js's `/\S…$/` assertion pins.
- */
-function truncateLabel(value, max = 80) {
-  const text = String(value || "").trim();
-  if (text.length <= max) return text;
-  const cut = text.slice(0, max);
-  const space = cut.lastIndexOf(" ");
-  return `${(space > 20 ? cut.slice(0, space) : cut).trimEnd()} …`;
-}
-
-/**
  * One displayable source entry, derived ENTIRELY from its own record.
  *
  * `host` comes out of this entry's own url in the same expression that decides
  * whether the url may become an href at all, so there is no path by which a
  * host from somewhere else can be attached to it.
+ *
+ * `title` is whatever lib/tracking/citationLabel.js admits — the ONE rule,
+ * shared with the two write paths, so a record renders the same whichever
+ * produced it. THE REPAIR OF ALREADY-STORED ROWS HAPPENS HERE: every digest
+ * written on the legacy grounding surface stored a vertexaisearch REDIRECT
+ * beside the PUBLISHER'S BARE DOMAIN as its title, and this panel used to print
+ * that title verbatim - an entry reading "reuters.com" whose href went to a
+ * Google API redirect. Those rows are still in the column; the rule runs over
+ * whatever jsonb hands back, so they are repaired on read rather than left for
+ * a migration.
  */
 function toEntry(raw, n) {
   const url = raw && typeof raw === "object" && !Array.isArray(raw) ? raw.url : null;
-  const host = citationHost(url);
-  const rawTitle =
-    raw && typeof raw === "object" && typeof raw.title === "string" ? raw.title.trim() : "";
-  // When Google's title IS the bare domain - which its own published examples
-  // show is the common case - showing both renders "reuters.com reuters.com".
-  const titleIsHost = !!host && rawTitle.toLowerCase().replace(/^www\./, "") === host;
-  return { n, url, host, title: titleIsHost ? "" : rawTitle };
+  return { n, url, host: citationHost(url), title: citationTitle(raw?.title) };
 }
 
 /** The accessible name's label half: the entry's own title, else its own host. */
 function entryLabel(entry, hiddenHosts) {
-  if (entry.title) return truncateLabel(entry.title);
-  if (entry.host && !hiddenHosts.has(entry.host)) return entry.host;
-  return COPY.unnamed;
+  const { text, kind } = citationLabel({ url: entry.url, title: entry.title }, hiddenHosts);
+  return kind === "unnamed" ? COPY.unnamed : text;
 }
 
 // ------------------------------------------------------------------- pieces

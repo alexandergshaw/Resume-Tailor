@@ -76,6 +76,7 @@
 
 import { byteBoundaryMap, spanFor, spanRefusalReason } from "./citationSpans.js";
 import { citationHref } from "./citationHref.js";
+import { citationTitle } from "./citationLabel.js";
 import {
   removeResidue,
   scanCitationResidue,
@@ -314,7 +315,15 @@ export function buildCitedDigest(input) {
     }
 
     const entry = { url: href };
-    if (typeof source.title === "string") entry.title = source.title;
+    // The vendor's `title` is an unexamined string sitting next to an
+    // unexamined url, and on the legacy grounding surface it is the PUBLISHER'S
+    // BARE DOMAIN sitting next to a vertexaisearch REDIRECT. Storing the pair
+    // verbatim wrote a row that displays as one publisher and links to another,
+    // permanently. citationLabel.js is the one rule that decides what a
+    // citation may be called; a title it does not admit is simply not stored,
+    // and the entry is named by its own host at render.
+    const title = citationTitle(source.title);
+    if (title !== "") entry.title = title;
 
     const span = spanFor(raw, source, byteMap);
     if (span === null) {

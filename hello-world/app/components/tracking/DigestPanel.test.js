@@ -582,6 +582,86 @@ describe("the non-publisher host is never named as the source", () => {
 });
 
 // ============================================================================
+// A ROW ALREADY IN THE DATABASE CARRIES THE MISMATCH, so the repair has to
+// happen on READ.
+//
+// Every digest written on the legacy `models.generateContent` surface stored
+// `web.uri` (a vertexaisearch REDIRECT) beside `web.title` (the PUBLISHER'S
+// BARE DOMAIN). Those rows are still there. The panel used to print the title
+// verbatim, so the entry read "reuters.com" while its href went to a Google API
+// redirect -- a claim about who published this research that the link does not
+// support, and one the reader can only catch by hovering.
+//
+// Note the fixture: its host is NOT its title's domain. A fixture whose URL
+// host already equalled its title would exhibit no mismatch and prove nothing.
+describe("a stored redirect labelled with a publisher's domain is repaired on read", () => {
+  const STORED_MISMATCH = {
+    ...CITED,
+    sources: [{ url: REDIRECT_A, title: "reuters.com", start: 0, end: 25 }],
+    citation_outcome: outcomeFor(MD, { placed: 1 }),
+  };
+
+  it("never displays the publisher the href does not go to", async () => {
+    await render(STORED_MISMATCH);
+    expect(text()).not.toContain("reuters.com");
+  });
+
+  it("never speaks it either -- the accessible name is not a second channel", async () => {
+    await render(STORED_MISMATCH);
+    for (const a of anchors()) {
+      expect(a.getAttribute("aria-label") || "").not.toContain("reuters");
+      expect(a.getAttribute("title") || "").not.toContain("reuters");
+    }
+  });
+
+  it("keeps the link -- the rule changes what is said, never where it goes", async () => {
+    await render(STORED_MISMATCH);
+    expect(markers().map((a) => a.getAttribute("href"))).toEqual([REDIRECT_A]);
+  });
+
+  it("says plainly that it cannot name the source", async () => {
+    await render(STORED_MISMATCH);
+    const li = container.querySelector("[data-fn-group='cited'] li");
+    expect(li.textContent).toContain("Source (unnamed)");
+    expect(container.querySelector("[data-fn-nonpublisher]")).not.toBeNull();
+  });
+
+  it("NEGATIVE CONTROL: a real headline on the same redirect is still shown", async () => {
+    // Without this, "print nothing for a redirect" passes all four above.
+    await render({
+      ...STORED_MISMATCH,
+      sources: [{ url: REDIRECT_A, title: "Nimbus raises Series C", start: 0, end: 25 }],
+    });
+    expect(text()).toContain("Nimbus raises Series C");
+  });
+
+  it("refuses a lookalike domain rather than matching it by containment", async () => {
+    // reuters.com.evil.test CONTAINS reuters.com, so an implementation that
+    // compared by substring labels the lookalike with the real publisher.
+    const LOOKALIKE = "https://reuters.com.evil.test/story";
+    await render({
+      ...CITED,
+      sources: [{ url: LOOKALIKE, title: "reuters.com", start: 0, end: 25 }],
+      citation_outcome: outcomeFor(MD, { placed: 1 }),
+    });
+    expect(markers()[0].getAttribute("aria-label")).toBe("Source 1: reuters.com.evil.test");
+  });
+
+  it("drops a publisher domain welded to a URL the link control refuses", async () => {
+    // https://acme.com@evil.example/x renders as acme.com and navigates to
+    // evil.example. There is no host to back the claim, so the claim goes.
+    await render({
+      ...CITED,
+      sources: [{ url: "https://acme.com@evil.example/x", title: "acme.com" }],
+      citation_outcome: outcomeFor(MD, { placed: 0, annotations: 1 }),
+    });
+    expect(text()).not.toContain("acme.com");
+    expect(text()).not.toContain("evil.example");
+    expect(anchors()).toHaveLength(0);
+  });
+});
+
+// ============================================================================
 describe("entry composition", () => {
   it("renders the host once when the title IS the host", async () => {
     await render({

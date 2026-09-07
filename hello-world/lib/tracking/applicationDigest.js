@@ -18,8 +18,17 @@
 //     only survives if the search tool's own grounding metadata
 //     corroborates it — but checks by host via lib/llm/grounding.js's
 //     isGroundedHost rather than keeping a second host+path matcher.
+//
+//     What a surviving citation is CALLED is a different decision, and it
+//     is not made here: lib/tracking/citationLabel.js owns it, and
+//     app/components/tracking/DigestPanel.js derives its display label from
+//     the same function. Those were two rules once — this file's was
+//     host-only and ended at the raw URL as a source's NAME, the panel's was
+//     title-first and never printed one — so the same stored record rendered
+//     differently depending on which path produced it.
 
-import { isGroundedHost } from "@/lib/llm/grounding";
+import { isGroundedHost, pageIdentityKey } from "@/lib/llm/grounding";
+import { citationTitle } from "./citationLabel.js";
 
 // The digest's fixed section order — fixed so two rows are comparable at a
 // glance, and so buildDigestPrompt/parseDigestAnswer/the modal all agree on
@@ -91,23 +100,35 @@ function linkIsGrounded(url, grounded) {
   return isGroundedHost(url, grounded);
 }
 
-// The grounded entry (if any) whose host matches `url` — used only to pick a
-// nicer source title than the model's own link text, which the model can
-// phrase however it likes. Falls back to no title; the caller then falls
-// back further to the link's own text.
-function groundedTitleForHost(url, grounded) {
-  try {
-    const host = new URL(url).hostname.toLowerCase().replace(/^www\./, "");
-    for (const g of Array.isArray(grounded) ? grounded : []) {
-      try {
-        const gHost = new URL(g?.uri).hostname.toLowerCase().replace(/^www\./, "");
-        if (gHost === host) return String(g?.title || "").trim();
-      } catch {
-        // g.uri wasn't a parseable URL — not a match, keep looking
-      }
-    }
-  } catch {
-    // url wasn't parseable — no title to offer
+// The grounded entry for THIS PAGE (if any) — used only to pick a nicer source
+// title than the model's own link text, which the model can phrase however it
+// likes. Falls back to no title; the caller then falls back further to the
+// link's own text.
+//
+// SAME PAGE, NOT SAME HOST, and the difference is a defect this repo measured
+// rather than a preference. The previous version matched by HOST, so the first
+// grounded entry on `news.example.com` lent its real headline to any other
+// `news.example.com` URL the model wrote — including one it invented — and
+// re-ordering an array nobody controls changed which headline landed on which
+// link. lib/tracking/citationHref.js's SEC-F2 note names this function as the
+// measured counter-example for exactly that reason.
+//
+// `pageIdentityKey` is the shared, exported home for "the same page": it folds
+// what is spelling (`www.`, host case, a trailing dot, slash noise, parameter
+// order, tracking parameters, the fragment) and keeps what is identity (scheme,
+// host, port, path case, every real query parameter). Reusing it rather than
+// restating the folding is the point — a private second copy is how the two
+// halves come to disagree.
+//
+// The KEEP/DEMOTE decision above is deliberately left host-only (isGroundedHost)
+// and is unchanged: six features depend on that looseness, and "did the model
+// touch this site" is a different question from "may this page's headline be
+// printed as that page's name".
+function groundedTitleForPage(url, grounded) {
+  const key = pageIdentityKey(url);
+  if (!key) return "";
+  for (const g of Array.isArray(grounded) ? grounded : []) {
+    if (pageIdentityKey(g?.uri) === key) return String(g?.title || "").trim();
   }
   return "";
 }
@@ -129,8 +150,15 @@ export function parseDigestAnswer(rawText, { grounded } = {}) {
     const trimmedUrl = String(url || "").trim();
     if (trimmedUrl && linkIsGrounded(trimmedUrl, groundedList)) {
       if (!sourcesByUrl.has(trimmedUrl)) {
-        const title = groundedTitleForHost(trimmedUrl, groundedList) || String(text || "").trim() || trimmedUrl;
-        sourcesByUrl.set(trimmedUrl, { url: trimmedUrl, title });
+        // ONE rule for what a citation may be called (citationLabel.js), shared
+        // with the render path. The old chain ended at `|| trimmedUrl`, so an
+        // untitled source was stored under its own URL as its NAME — something
+        // the render path would never produce, and the clearest single symptom
+        // of the two paths having been two rules.
+        const title = citationTitle(groundedTitleForPage(trimmedUrl, groundedList) || text);
+        const entry = { url: trimmedUrl };
+        if (title !== "") entry.title = title;
+        sourcesByUrl.set(trimmedUrl, entry);
       }
       return whole;
     }

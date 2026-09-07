@@ -22,6 +22,7 @@ import {
   digestSummaryLine,
   selectAutoDigestTargets,
 } from "./applicationDigest.js";
+import { citationTitle } from "./citationLabel.js";
 
 const NOW = new Date("2026-08-17T15:30:00.000Z");
 const hoursAgo = (h) => new Date(NOW.getTime() - h * 3600e3).toISOString();
@@ -152,6 +153,95 @@ describe("parseDigestAnswer", () => {
     const { sources } = parseDigestAnswer(twice, { grounded: GROUNDED });
     const urls = sources.map((s) => s.url);
     expect(new Set(urls).size).toBe(urls.length);
+  });
+});
+
+// ===========================================================================
+// The label this path writes, and the one the render path derives, are ONE
+// rule now (lib/tracking/citationLabel.js).
+//
+// They used to be two, and they disagreed:
+//
+//   * HERE, host-only. `groundedTitleForHost` looked the link's HOST up in the
+//     grounded array and welded whichever entry it hit first onto this link --
+//     so re-ordering an array nobody controls changed which real headline was
+//     attached to which URL -- then fell back to the model's own link text and
+//     finally to the RAW URL as the source's name.
+//   * In DigestPanel, title-first: the entry's own title, else its own host,
+//     else "Source (unnamed)". Never a URL, never a foreign array.
+//
+// The same stored record therefore rendered differently depending on which path
+// produced it.
+
+describe("parseDigestAnswer -- the citation label", () => {
+  const SAME_HOST_DIFFERENT_PAGE = [
+    { uri: "https://news.example.com/acme-series-c", title: "Acme raises a Series C" },
+  ];
+
+  it("does not lend one page's headline to a different page on the same host", () => {
+    // THE host-only defect, as a fixture. Both URLs are news.example.com; only
+    // one of them is the page Google actually returned.
+    const md = "Raised a Series C. [Report](https://news.example.com/acme-hiring-freeze)";
+    const { sources } = parseDigestAnswer(md, { grounded: SAME_HOST_DIFFERENT_PAGE });
+    expect(sources).toHaveLength(1);
+    expect(sources[0].title).not.toBe("Acme raises a Series C");
+  });
+
+  it("NEGATIVE CONTROL: the SAME page still gets its own headline", () => {
+    // Without this, "never use a grounded title" passes the case above.
+    const md = "Raised a Series C. [Report](https://news.example.com/acme-series-c)";
+    const { sources } = parseDigestAnswer(md, { grounded: SAME_HOST_DIFFERENT_PAGE });
+    expect(sources[0].title).toBe("Acme raises a Series C");
+  });
+
+  it("folds www. on BOTH sides when matching the page, not one", () => {
+    const md = "Raised a Series C. [Report](https://www.news.example.com/acme-series-c/)";
+    const { sources } = parseDigestAnswer(md, { grounded: SAME_HOST_DIFFERENT_PAGE });
+    expect(sources[0].title).toBe("Acme raises a Series C");
+  });
+
+  it("never stores a raw URL as a source's name", () => {
+    // The old fallback chain ended at the URL itself, which the render path
+    // would then print as the source's name.
+    const md = "Acme builds robots. [](https://www.crunchbase.com/organization/acme)";
+    const { sources } = parseDigestAnswer(md, { grounded: [{ uri: GROUNDED[0].uri, title: "" }] });
+    expect(sources).toHaveLength(1);
+    expect(sources[0].title ?? "").not.toContain("://");
+    expect(sources[0].title ?? "").not.toContain("crunchbase.com/organization");
+  });
+
+  it("does not store a publisher domain as the name of a link that misses it", () => {
+    // The write-time half of the redirect/label mismatch: a grounded title that
+    // is a bare domain, on a URL that does not go there.
+    const REDIRECT = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AbC123";
+    const md = `Raised a Series C. [Reuters](${REDIRECT})`;
+    const { sources } = parseDigestAnswer(md, {
+      grounded: [{ uri: REDIRECT, title: "reuters.com" }],
+    });
+    expect(sources).toHaveLength(1);
+    expect(sources[0].url).toBe(REDIRECT);
+    expect(JSON.stringify(sources[0])).not.toContain("reuters.com");
+  });
+
+  it("agrees with the render path's rule, entry for entry", () => {
+    // The reconciliation itself, asserted rather than assumed: whatever this
+    // path stores is exactly what the shared rule admits for that same record.
+    const REDIRECT = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AbC123";
+    const md = [
+      "[Crunchbase](https://www.crunchbase.com/organization/acme)",
+      `[Reuters](${REDIRECT})`,
+      "[Report](https://news.example.com/acme-series-c)",
+    ].join("\n\n");
+    const grounded = [
+      ...GROUNDED,
+      { uri: REDIRECT, title: "reuters.com" },
+      { uri: "https://news.example.com/acme-series-c", title: "Acme raises a Series C" },
+    ];
+    const { sources } = parseDigestAnswer(md, { grounded });
+    expect(sources.length).toBeGreaterThan(0);
+    for (const source of sources) {
+      expect(source.title ?? "").toBe(citationTitle(source.title));
+    }
   });
 });
 

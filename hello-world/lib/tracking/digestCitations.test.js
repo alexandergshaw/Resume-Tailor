@@ -726,6 +726,75 @@ describe("buildCitedDigest -- totality", () => {
 });
 
 // ---------------------------------------------------------------------------
+// 8b. The stored label may not assert a publisher the stored URL does not reach
+// ---------------------------------------------------------------------------
+//
+// THE MISMATCH THIS SECTION EXISTS FOR, and why a fixture whose host equals its
+// title proves nothing about it. Gemini's legacy grounding metadata returns
+// `web.uri` as a `vertexaisearch.cloud.google.com` REDIRECT and `web.title` as
+// the PUBLISHER'S BARE DOMAIN. This module paired the two verbatim, so it wrote
+// a row whose label reads "reuters.com" and whose href goes to a Google API
+// redirect -- and a stored row keeps that mismatch permanently.
+//
+// The rule (lib/tracking/citationLabel.js) drops the unbacked claim and leaves
+// the URL alone: the redirect still reaches the publisher, and refusing the
+// citation would throw away a real source the model cited.
+
+const REDIRECT = "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AbC123";
+
+describe("buildCitedDigest -- the stored title may not name a publisher the url misses", () => {
+  it("does not store the publisher's domain as the name of a redirect", () => {
+    const sources = [citation(NON_ASCII, { uri: REDIRECT, title: "reuters.com", from: 0, to: 40 })];
+    const result = build({ sources });
+    expect(result.sources).toEqual([{ url: REDIRECT, start: 0, end: 40 }]);
+    expect(JSON.stringify(result.sources)).not.toContain("reuters.com");
+  });
+
+  it("NEGATIVE CONTROL: a real headline on the same redirect is stored intact", () => {
+    // Without this, "never store a title on a redirect" passes the case above.
+    const sources = [
+      citation(NON_ASCII, { uri: REDIRECT, title: "Nestlé raises in Zürich", from: 0, to: 40 }),
+    ];
+    const result = build({ sources });
+    expect(result.sources[0].title).toBe("Nestlé raises in Zürich");
+  });
+
+  it("NEGATIVE CONTROL: a domain title that IS this url's own host still names it once", () => {
+    // Backed, so it is not a false claim -- but it duplicates the host the
+    // panel already prints, so it is not stored as a title either.
+    const sources = [
+      citation(NON_ASCII, { uri: REUTERS, title: "www.reuters.com", from: 0, to: 40 }),
+    ];
+    const result = build({ sources });
+    expect(result.sources[0].title).toBeUndefined();
+    expect(result.sources[0].url).toBe(REUTERS);
+  });
+
+  it("refuses a lookalike domain rather than matching it by containment", () => {
+    const url = "https://reuters.com.evil.test/story";
+    const sources = [citation(NON_ASCII, { uri: url, title: "reuters.com", from: 0, to: 40 })];
+    const result = build({ sources });
+    expect(result.sources[0].title).toBeUndefined();
+    expect(result.outcome.counts.urlsUsable).toBe(1);
+  });
+
+  it("counts the citation exactly as before -- a dropped label is not a dropped source", () => {
+    // The narrowing chain must not move: the label rule changes what is SAID,
+    // and `urlsUsable`/`placed` are about what could be linked and placed.
+    const sources = [citation(NON_ASCII, { uri: REDIRECT, title: "reuters.com", from: 0, to: 40 })];
+    const { outcome } = build({ sources });
+    expect(outcome.counts).toEqual({
+      annotations: 1,
+      urlsUsable: 1,
+      spansUsable: 1,
+      splicesSafe: 1,
+      placed: 1,
+    });
+    expect(outcome.anomaly).toBe(null);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 9. The chain engine moved out; the VOCABULARY did not
 // ---------------------------------------------------------------------------
 //

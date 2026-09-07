@@ -44,8 +44,12 @@ export { safeExternalHref as citationHref } from "../url/safeExternalHref.js";
  * text, `title` and `aria-label` may contain a host, domain or publisher name
  * only if derived from that anchor's OWN href, in the same expression that
  * produces the href. No host lookup, ever. applicationDigest.js's
- * groundedTitleForHost is the measured counter-example - swapping the
- * grounded array changes which real headline is welded to an invented path.
+ * groundedTitleForHost WAS the measured counter-example - swapping the grounded
+ * array changed which real headline was welded to an invented path. It now
+ * matches by `pageIdentityKey`, so a headline may only name the page it came
+ * from, and citationLabel.js extends the same rule to the stored `title`: a
+ * title that names a host is not a name, because the only domain that may be
+ * displayed is the one THIS function derives from the anchor's own href.
  *
  * The gate in front of `new URL` is load-bearing rather than decorative:
  * `new URL("data://acme.com/x").hostname` is "acme.com", so an ungated
