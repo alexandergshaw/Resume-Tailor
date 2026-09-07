@@ -818,6 +818,14 @@ describe("ExperienceTab -- research report refetches the page list (chunk 9)", (
           }),
         );
       }
+      // Same carve-out, same reason, for the knowledge panel's own scope read
+      // (GET /api/experience/knowledge[?scopePageId=...]). It is a sibling of
+      // the page-list endpoint rather than a different prefix, so it has to be
+      // matched BEFORE the generic GET branch below or it would be counted as
+      // a page-list refetch and handed a pages payload.
+      if (String(url).startsWith("/api/experience/knowledge")) {
+        return Promise.resolve(jsonResponse(200, { summary: null, questions: [], hasMore: false }));
+      }
       if (method === "GET") {
         getCount += 1;
         const pages = getCount === 1 ? [PAGE_ROOT, PAGE_CHILD] : [PAGE_ROOT, PAGE_CHILD, PAGE_REPORT];

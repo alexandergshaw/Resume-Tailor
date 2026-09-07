@@ -15,6 +15,7 @@ import DeletePageDialog from "./DeletePageDialog";
 import MovePageDialog from "./MovePageDialog";
 import PageEditor from "./PageEditor";
 import AttachmentPanel from "./AttachmentPanel";
+import KnowledgePanel from "./KnowledgePanel";
 import BulkActionsBar from "./BulkActionsBar";
 import TechWatchPanel from "./TechWatchPanel";
 import MeetingPanel from "../../meeting/MeetingPanel";
@@ -661,6 +662,26 @@ export default function ExperienceTab({ askAiAbout, addChatAttachments }) {
                 </Typography>
               </Box>
             )}
+
+            {/* OUTSIDE the selectedPage ternary above, deliberately and at the
+                bottom of the column. Its scope is the root of the knowledge
+                base OR one page and its subtree, so an anchor inside the
+                selectedPage branch would mean the root scope never rendered a
+                panel at all. Below everything, because the panel generates its
+                summary unasked and content arriving ABOVE the editor moves the
+                editor out from under the user's cursor. And exactly ONE mount:
+                a second anchor is a second hook instance, a second
+                auto-generate trigger and a second paid model call for one
+                scope. `selectedId` is passed as an EXPLICIT scope prop - the
+                panel never infers its own scope. */}
+            <KnowledgePanel
+              scopePageId={selectedId}
+              pages={pages}
+              loading={loading}
+              signedOut={signedOut}
+              error={error}
+              onSelectPage={setSelectedId}
+            />
           </Box>
         </Stack>
       )}
