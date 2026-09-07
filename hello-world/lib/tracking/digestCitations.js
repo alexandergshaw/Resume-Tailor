@@ -86,6 +86,7 @@ import {
   markdownStamp,
   renderCitedMarkdown,
 } from "./renderCitedMarkdown.js";
+import { COUNTS_NOT_OBJECT, stageAnomaly, stageViolation } from "./stageCounts.js";
 
 export { CITATION_OUTCOME_VERSION };
 
@@ -109,6 +110,23 @@ const TRANSITIONS = Object.freeze([
   { stage: "placement", from: "splicesSafe", to: "placed" },
 ]);
 
+// THE ENGINE BELOW THESE TWO FUNCTIONS NOW LIVES IN ./stageCounts.js, and the
+// two constants above are all that stayed. The split is on purpose and it is
+// worth naming which half is which:
+//
+//   * The RULE — first breach only, zero rather than merely smaller, recorded
+//     never repaired — is one implementation, in stageCounts.js, because a
+//     second feature needing a chain could otherwise only hand-copy it, and
+//     two copies of one rule drift while both stay green.
+//   * The VOCABULARY — `CITATION_STAGES`, the process names in `TRANSITIONS`,
+//     the `searched` boolean head, and the "citation" label on the shape
+//     sentence — stays HERE, because every one of those strings is already
+//     stored verbatim in `application_digests.citation_outcome` and read back
+//     by app/api/application-digest/route.js. A shared primitive may not
+//     rename another feature's published data.
+//
+// Neither function's signature, return shape or sentences changed.
+
 /**
  * The reportable anomaly, or null. Pure, so the route can log exactly the
  * verdict that was stored rather than a second opinion about it.
@@ -117,23 +135,17 @@ const TRANSITIONS = Object.freeze([
  * Once a stage has eaten everything, every later zero is an honest
  * consequence, not a second finding.
  *
+ * `searched` is the boolean head of the chain and does NOT live in `counts`,
+ * so it is projected onto a copy of the counts as 1/0 rather than being read
+ * out of them — a copy, because this function must not touch a record the
+ * caller is about to store.
+ *
  * @param {{searched?: unknown, counts?: unknown}} [record]
  * @returns {{stage: string, from: string, to: string, inputCount: number, outputCount: number}|null}
  */
 export function citationCountsAnomaly(record) {
   const counts = record && typeof record.counts === "object" && record.counts ? record.counts : {};
-  const value = (name) => {
-    if (name === "searched") return record?.searched ? 1 : 0;
-    return Number.isInteger(counts[name]) ? counts[name] : 0;
-  };
-  for (const transition of TRANSITIONS) {
-    const inputCount = value(transition.from);
-    const outputCount = value(transition.to);
-    if (inputCount > 0 && outputCount === 0) {
-      return { ...transition, inputCount, outputCount };
-    }
-  }
-  return null;
+  return stageAnomaly({ ...counts, searched: record?.searched ? 1 : 0 }, TRANSITIONS);
 }
 
 /**
@@ -148,22 +160,11 @@ export function citationCountsAnomaly(record) {
  * @returns {string|null}
  */
 export function citationCountsViolation(counts) {
-  if (!counts || typeof counts !== "object" || Array.isArray(counts)) {
-    return "citation counts are missing or not an object";
-  }
-  for (const stage of CITATION_STAGES) {
-    if (!Number.isInteger(counts[stage]) || counts[stage] < 0) {
-      return `${stage} is not a non-negative integer`;
-    }
-  }
-  for (let i = 1; i < CITATION_STAGES.length; i += 1) {
-    const previous = CITATION_STAGES[i - 1];
-    const current = CITATION_STAGES[i];
-    if (counts[current] > counts[previous]) {
-      return `${current} (${counts[current]}) exceeds ${previous} (${counts[previous]})`;
-    }
-  }
-  return null;
+  const violation = stageViolation(counts, CITATION_STAGES);
+  // The one verdict this module labels for itself. Relabelled, never
+  // re-derived: the rule that produces it stays in the primitive, and the
+  // wording stays byte-identical to what is already in the column.
+  return violation === COUNTS_NOT_OBJECT ? `citation ${COUNTS_NOT_OBJECT}` : violation;
 }
 
 // One application of `removeResidue`, plus the index map it implies.

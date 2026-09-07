@@ -23,6 +23,8 @@ import {
   stripLinePrefixes,
   noAttachmentBytesNotice,
   buildKnowledgeBaseBlock,
+  contributesMaterial,
+  hasUsableId,
   ELISION_MARKER,
   MAX_LISTED_ATTACHMENTS,
 } from "./knowledgeBase.js";
@@ -677,5 +679,222 @@ describe("buildKnowledgeBaseBlock", () => {
       buildKnowledgeBaseBlock({ ...base, pages: [null, undefined, {}, { id: 5 }], query: null }),
     ).not.toThrow();
     expect(buildKnowledgeBaseBlock({ ...base, pages: null, query: null }).block).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The two admission predicates, as a PUBLIC seam
+// ---------------------------------------------------------------------------
+//
+// WHY THESE ARE EXPORTED, AND WHY THE ALTERNATIVE IS A DEFECT.
+// buildKnowledgeBaseBlock computes three exclusion reasons — failed
+// eligibility, no usable id, no material — and returns none of them: a caller
+// that wants to tell a user WHICH of their pages was left out, and why, has to
+// classify the pages itself. It can either be handed the same function objects
+// this module filters with, or write a second copy of the rules. A second copy
+// drifts, silently, and the drift is invisible because both copies are green
+// against their own tests.
+//
+// So the falsifier for the export is not "the function exists". It is that a
+// caller composing the exported predicates reaches EXACTLY the admission
+// verdict the builder reaches, page by page, over a fixture where the three
+// reasons are all live at once.
+//
+// THE FIXTURE IS PRODUCTION-SHAPED AND GENUINELY NESTED, deliberately, and it
+// is added BESIDE the flat `page()` helper above rather than replacing it. 29
+// of 52 page fixtures in this repo omit `parent_id`, including every fixture in
+// this file; lib/experience/tree.js coerces the missing key to null, so every
+// page becomes a root and every subtree collapses to a single page. A consumer
+// of these predicates that walks a subtree would pass a whole suite built on
+// that shape while collecting nothing. The nesting is asserted, not assumed.
+
+const KB_USER = "11111111-1111-4111-8111-111111111111";
+
+// A page as `listPages` actually returns one: every column the tree and the
+// staleness comparison read, none of them defaulted away.
+function realPage(id, title, body, extra = {}) {
+  return {
+    id,
+    user_id: KB_USER,
+    parent_id: null,
+    position: 0,
+    title,
+    body,
+    archived_at: null,
+    generated_kind: null,
+    generated_at: null,
+    attachments: [],
+    created_at: "2026-08-01T09:00:00.000Z",
+    updated_at: "2026-09-01T09:00:00.000Z",
+    ...extra,
+  };
+}
+
+// root
+//  ├─ area-a ─┬─ leaf-headings   (body is nothing but a `##` heading)
+//  │          ├─ leaf-filename   (one attachment, a bare file name)
+//  │          └─ leaf-notes      (one attachment carrying saved notes)
+//  ├─ area-b ─── leaf-archived   (archived_at set)
+//  ├─ area-c                     (blank id)
+//  └─ area-d                     (no id key at all)
+// area-b is itself a generated research page.
+function nestedKnowledgeBase() {
+  return [
+    realPage("root", "Payments platform", "Ledger sharding cut settlement latency using Kafka."),
+    realPage("area-a", "Settlement", "Settlement runs on Kafka with a sharded ledger.", {
+      parent_id: "root",
+      position: 0,
+    }),
+    realPage("leaf-headings", "Overview only", "## Overview\n\n## Next", {
+      parent_id: "area-a",
+      position: 0,
+    }),
+    realPage("leaf-filename", "Diagrams", "", {
+      parent_id: "area-a",
+      position: 1,
+      // The shape `withDerivedKind` produces: the stored row plus a derived
+      // `kind`. A bare file name and nothing to read.
+      attachments: [{ name: "architecture.pdf", kind: "pdf", notes: "", transcript: "" }],
+    }),
+    realPage("leaf-notes", "Runbook", "", {
+      parent_id: "area-a",
+      position: 2,
+      attachments: [
+        {
+          name: "runbook.pdf",
+          kind: "pdf",
+          notes: "Kafka consumer lag alarms page the on-call engineer.",
+        },
+      ],
+    }),
+    realPage("area-b", "Acme — company research", "Acme runs a Kafka ledger.", {
+      parent_id: "root",
+      position: 1,
+      generated_kind: "company_research",
+      generated_at: "2026-08-20T09:00:00.000Z",
+    }),
+    realPage("leaf-archived", "Old settlement notes", "Kafka ledger sharding, superseded.", {
+      parent_id: "area-b",
+      position: 0,
+      archived_at: "2026-08-25T09:00:00.000Z",
+    }),
+    realPage("   ", "Blank id", "Kafka ledger sharding notes.", { parent_id: "root", position: 2 }),
+    { ...realPage("unused", "No id key", "Kafka ledger sharding notes.", { parent_id: "root", position: 3 }), id: undefined },
+  ];
+}
+
+describe("hasUsableId / contributesMaterial as exported predicates", () => {
+  const kbBase = {
+    isEligible: isEligiblePage,
+    budget: 12000,
+    budgetLabel: "context budget",
+    attachmentNotice: noAttachmentBytesNotice("this answer"),
+    query: "kafka ledger settlement",
+  };
+
+  it("the fixture really is three levels deep, so a subtree walk over it cannot collapse", () => {
+    // Guards the whole section. If this fixture were flat — the shape every
+    // other fixture in this file has — every case below would still pass while
+    // proving nothing about a page that is not a root.
+    const pages = nestedKnowledgeBase();
+    const byId = new Map(pages.map((p) => [p.id, p]));
+    const depth = (p) => {
+      let d = 0;
+      let at = p;
+      while (at && at.parent_id && byId.has(at.parent_id)) {
+        at = byId.get(at.parent_id);
+        d += 1;
+      }
+      return d;
+    };
+    expect(Math.max(...pages.map(depth))).toBe(2);
+    expect(pages.filter((p) => depth(p) === 2).map((p) => p.id).sort()).toEqual([
+      "leaf-archived",
+      "leaf-filename",
+      "leaf-headings",
+      "leaf-notes",
+    ]);
+  });
+
+  it("exports both predicates as functions", () => {
+    expect(typeof hasUsableId).toBe("function");
+    expect(typeof contributesMaterial).toBe("function");
+  });
+
+  it("composes into EXACTLY the builder's admission set, over a budget big enough for all of it", () => {
+    // The binding that makes the export worth having. If either predicate were
+    // re-implemented rather than exported, this is the assertion that catches
+    // the first byte of drift.
+    const pages = nestedKnowledgeBase();
+    const admitted = pages
+      .filter(isEligiblePage)
+      .filter(hasUsableId)
+      .filter(contributesMaterial)
+      .map((p) => p.id);
+
+    const out = buildKnowledgeBaseBlock({ ...kbBase, pages });
+    expect(admitted.slice().sort()).toEqual(["area-a", "leaf-notes", "root"]);
+    expect(out.includedPageIds.slice().sort()).toEqual(admitted.slice().sort());
+    expect(out.droppedPageCount).toBe(0);
+  });
+
+  it("rejects, page by page, for the reason the builder rejects it for", () => {
+    const pages = nestedKnowledgeBase();
+    const by = (id) => pages.find((p) => (p.id ?? "unused") === id);
+
+    expect(isEligiblePage(by("area-b"))).toBe(false); // generated
+    expect(isEligiblePage(by("leaf-archived"))).toBe(false); // archived
+    expect(hasUsableId(by("   "))).toBe(false); // blank id
+    expect(hasUsableId(by("unused"))).toBe(false); // no id at all
+    expect(contributesMaterial(by("leaf-headings"))).toBe(false); // headings only
+    expect(contributesMaterial(by("leaf-filename"))).toBe(false); // a bare file name
+
+    // And every one of them is absent from the block the builder produced.
+    const out = buildKnowledgeBaseBlock({ ...kbBase, pages });
+    for (const id of ["area-b", "leaf-archived", "leaf-headings", "leaf-filename"]) {
+      expect(out.includedPageIds).not.toContain(id);
+      expect(out.block).not.toContain(`page id: ${id}`);
+    }
+  });
+
+  it("is the WHOLE material rule, not the body half of it", () => {
+    // The re-implementation an implementer reaches for is `!!page.body.trim()`.
+    // It admits a headings-only page and a bare-file-name page — both of which
+    // ship a real title and a real CITABLE page id with nothing readable behind
+    // them, into a prompt that demands page-id citations. These four cases are
+    // what tell that copy apart from the rule the builder actually enforces.
+    expect(contributesMaterial(realPage("h", "T", "## Overview"))).toBe(false);
+    expect(contributesMaterial(realPage("e", "T", "   \n\n  "))).toBe(false);
+    expect(
+      contributesMaterial(realPage("f", "T", "", { attachments: [{ name: "a.pdf", kind: "pdf" }] })),
+    ).toBe(false);
+    expect(contributesMaterial(realPage("p", "T", "Real prose about the ledger."))).toBe(true);
+  });
+
+  it("counts an attachment only when it carries something to READ", () => {
+    const withAttachment = (attachment) =>
+      contributesMaterial(realPage("a", "T", "", { attachments: [attachment] }));
+    expect(withAttachment({ name: "a.pdf", kind: "pdf", notes: "  " })).toBe(false);
+    expect(withAttachment({ name: "a.pdf", kind: "pdf", notes: "Saved notes." })).toBe(true);
+    expect(withAttachment({ name: "a.pdf", kind: "pdf", transcript: "Spoken words." })).toBe(true);
+    // Notes with no attachment line to hang them on are still nothing.
+    expect(withAttachment({ notes: "Saved notes." })).toBe(false);
+  });
+
+  it("refuses an id that is missing, blank, whitespace or not a string", () => {
+    expect(hasUsableId(realPage("root", "T", "prose"))).toBe(true);
+    expect(hasUsableId(realPage("", "T", "prose"))).toBe(false);
+    expect(hasUsableId(realPage("   ", "T", "prose"))).toBe(false);
+    expect(hasUsableId({ ...realPage("x", "T", "prose"), id: 5 })).toBe(false);
+    expect(hasUsableId({ ...realPage("x", "T", "prose"), id: null })).toBe(false);
+  });
+
+  it("neither predicate throws on junk, because the builder's totality depends on it", () => {
+    for (const junk of [null, undefined, 7, "x", [], {}]) {
+      expect(() => hasUsableId(junk)).not.toThrow();
+      expect(() => contributesMaterial(junk)).not.toThrow();
+      expect(hasUsableId(junk)).toBe(false);
+      expect(contributesMaterial(junk)).toBe(false);
+    }
   });
 });

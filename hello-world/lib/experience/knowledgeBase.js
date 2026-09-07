@@ -485,7 +485,26 @@ export function noAttachmentBytesNotice(surfaceLabel) {
   return `No attachment file contents were read for ${surfaceLabel} — only the file names and any saved notes above were seen.`;
 }
 
-function hasUsableId(page) {
+// EXPORTED, and the export is the point rather than a convenience.
+//
+// buildKnowledgeBaseBlock decides admission with three predicates — the
+// caller's `isEligible`, this one, and contributesMaterial below — and returns
+// NONE of the three verdicts. A caller that has to tell a user WHICH of their
+// pages was left out, and why, therefore has exactly two options: be handed
+// these same function objects, or write a second copy of the rules.
+//
+// A second copy is not a smaller version of this problem, it is a worse one.
+// Both copies would be green against their own tests while disagreeing about a
+// headings-only body or a bare file name, and the disagreement would surface
+// as a coverage notice that names a page the prompt actually contained (or
+// omits one it did not) — a false claim about what the model was shown, which
+// is the one kind of claim this module exists to keep honest.
+//
+// So: filter with THESE, never with a restatement of them. The classifier is
+// pinned to that in knowledgeBase.test.js by composing the exported predicates
+// and asserting the result equals the builder's own admission set, page by
+// page, over a nested production-shaped fixture.
+export function hasUsableId(page) {
   return !!page && typeof page === "object" && typeof page.id === "string" && page.id.trim() !== "";
 }
 
@@ -552,7 +571,12 @@ function hasUsableId(page) {
 // readable behind it. That is precisely the defect hasProseContent's own
 // comment describes, reached through the one door left open — so the same
 // rule is applied here, at the precondition, where it belongs.
-function contributesMaterial(page) {
+//
+// EXPORTED for the same reason hasUsableId above is, and this is the one of the
+// three whose re-implementation is most tempting and most wrong: `!!page.body`
+// is the copy an implementer reaches for, and it re-opens all three doors this
+// comment closes.
+export function contributesMaterial(page) {
   if (hasProseContent(str(page?.body).trim())) return true;
   const attachments = Array.isArray(page?.attachments) ? page.attachments : [];
   return attachments.some(

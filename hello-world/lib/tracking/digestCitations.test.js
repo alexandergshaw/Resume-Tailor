@@ -724,3 +724,126 @@ describe("buildCitedDigest -- totality", () => {
     expect(outcome.countsViolation).toBe(null);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 9. The chain engine moved out; the VOCABULARY did not
+// ---------------------------------------------------------------------------
+//
+// The monotone-chain engine these two functions used to hold privately now
+// lives in lib/tracking/stageCounts.js, parameterised by a stage list, because
+// a second feature needing a chain had no way to reuse it and would have
+// hand-copied it -- a second recogniser, the exact defect this area exists to
+// close.
+//
+// Every string and every field below is DATA ALREADY IN THE DATABASE:
+// `citation_outcome.countsViolation` and `citation_outcome.anomaly` are stored
+// verbatim on application_digests rows, and app/api/application-digest/route.js
+// logs the same verdict. The sections above assert these with
+// `stringContaining` and `not.toBe(null)`, which is enough to prove a violation
+// was detected and NOT enough to prove the sentence is unchanged -- so an
+// extraction could rewrite every message and leave this file green.
+//
+// These cases exist for exactly that gap. They were written and run GREEN
+// against the pre-extraction implementation, so they are a characterisation
+// pin, not a red-first specification: their whole job is to fail if the
+// refactor changed a byte of the published vocabulary.
+
+describe("citationCountsViolation -- the exact published sentences", () => {
+  it("keeps the 'citation' label on the not-an-object sentence", () => {
+    expect(citationCountsViolation(null)).toBe("citation counts are missing or not an object");
+    expect(citationCountsViolation(undefined)).toBe("citation counts are missing or not an object");
+    expect(citationCountsViolation([1, 2])).toBe("citation counts are missing or not an object");
+    expect(citationCountsViolation("nine")).toBe("citation counts are missing or not an object");
+  });
+
+  it("keeps the exact wording of the non-negative-integer sentence", () => {
+    const base = { annotations: 5, urlsUsable: 5, spansUsable: 5, splicesSafe: 5, placed: 5 };
+    expect(citationCountsViolation({ ...base, spansUsable: undefined })).toBe(
+      "spansUsable is not a non-negative integer"
+    );
+    expect(citationCountsViolation({ ...base, placed: "5" })).toBe(
+      "placed is not a non-negative integer"
+    );
+  });
+
+  it("keeps the exact wording of the exceeds sentence, with both numbers", () => {
+    const base = { annotations: 5, urlsUsable: 5, spansUsable: 5, splicesSafe: 5, placed: 5 };
+    expect(citationCountsViolation({ ...base, urlsUsable: 6 })).toBe(
+      "urlsUsable (6) exceeds annotations (5)"
+    );
+    expect(citationCountsViolation({ ...base, placed: 6 })).toBe(
+      "placed (6) exceeds splicesSafe (5)"
+    );
+  });
+});
+
+describe("citationCountsAnomaly -- the exact published record", () => {
+  it("keeps the boolean `searched` head of the chain, valued as one or zero", () => {
+    // `searched` is not a count and does not live in `counts`. The extraction
+    // must keep reading it off the record, or a model that searched and
+    // produced no annotations reports no anomaly -- the original defect.
+    expect(
+      citationCountsAnomaly({
+        searched: true,
+        counts: { annotations: 0, urlsUsable: 0, spansUsable: 0, splicesSafe: 0, placed: 0 },
+      })
+    ).toEqual({
+      stage: "extraction",
+      from: "searched",
+      to: "annotations",
+      inputCount: 1,
+      outputCount: 0,
+    });
+  });
+
+  it("keeps every process-stage name, at every position in the chain", () => {
+    const zeroed = { annotations: 0, urlsUsable: 0, spansUsable: 0, splicesSafe: 0, placed: 0 };
+    const at = (counts) => citationCountsAnomaly({ searched: true, counts })?.stage;
+    expect(at({ ...zeroed, annotations: 3 })).toBe("url-control");
+    expect(at({ ...zeroed, annotations: 3, urlsUsable: 3 })).toBe("span-conversion");
+    expect(at({ ...zeroed, annotations: 3, urlsUsable: 3, spansUsable: 3 })).toBe(
+      "insertion-safety"
+    );
+    expect(at({ ...zeroed, annotations: 3, urlsUsable: 3, spansUsable: 3, splicesSafe: 3 })).toBe(
+      "placement"
+    );
+  });
+
+  it("keeps its own field names and reports the first breach only", () => {
+    expect(
+      citationCountsAnomaly({
+        searched: true,
+        counts: { annotations: 4, urlsUsable: 0, spansUsable: 0, splicesSafe: 0, placed: 0 },
+      })
+    ).toEqual({
+      stage: "url-control",
+      from: "annotations",
+      to: "urlsUsable",
+      inputCount: 4,
+      outputCount: 0,
+    });
+  });
+
+  it("still tolerates a missing or malformed record, and keeps what each one means", () => {
+    // No record, or no `searched`, is a chain whose head is zero: a normal
+    // empty, not an anomaly.
+    expect(citationCountsAnomaly(undefined)).toBe(null);
+    expect(citationCountsAnomaly(null)).toBe(null);
+    expect(citationCountsAnomaly({})).toBe(null);
+    expect(citationCountsAnomaly({ searched: false, counts: "nine" })).toBe(null);
+
+    // But `searched: true` with counts we cannot read is NOT a normal empty --
+    // the model searched and this record can account for nothing, which is the
+    // original defect wearing a different hat. It must still name `extraction`.
+    for (const counts of [null, undefined, "nine", [1, 2]]) {
+      expect(citationCountsAnomaly({ searched: true, counts })?.stage).toBe("extraction");
+    }
+  });
+
+  it("does not mutate the record or its counts", () => {
+    const record = { searched: true, counts: { annotations: 4, urlsUsable: 0 } };
+    citationCountsAnomaly(record);
+    expect(record).toEqual({ searched: true, counts: { annotations: 4, urlsUsable: 0 } });
+    expect(Object.keys(record.counts)).toEqual(["annotations", "urlsUsable"]);
+  });
+});
