@@ -24,6 +24,23 @@
 // unconditional on the Gemini path and absent on the embedded one.
 import { COMPANY_FACTS_CLAUSE, KNOWLEDGE_BASE_CLAUSE } from "@/lib/copilot/practiceNotices";
 
+// The one sentence both engine branches below open with, so neither can state
+// the gate differently from the other — the same "one constant, two surfaces"
+// discipline KNOWLEDGE_BASE_CLAUSE exists for.
+//
+// It states the ACTUAL precondition for any room-question transfer, which the
+// previous wording ("If someone else in the room asks a question, …") did not:
+// shouldTreatAsRoomQuestion (lib/copilot/roomQuestions.js) returns false for
+// EVERY turn until `myTag` is known, and `myTag` is only ever written from the
+// dominant speaker tag of a completed answer (usePracticeAnswer.js's doneAnswer
+// -> answerMetricsInputs). So it takes both a diarizing speech provider and one
+// completed answer before anything said in the room can be sent anywhere. It
+// used to take neither: a tagged turn with no learned `myTag` was classified as
+// the room, which made the candidate's own thinking-out-loud the payload — the
+// exact opposite of what the sentence it replaced promised.
+const VOICE_GATE_CLAUSE =
+  "Nothing anyone says in the room is sent anywhere until the app can tell your voice from theirs, which needs a speech provider that labels speakers and one completed answer from you.";
+
 function roomQuestionDocsWord(hasResume, hasCoverLetter) {
   if (hasResume && hasCoverLetter) return "resume and cover letter";
   if (hasResume) return "resume";
@@ -76,12 +93,19 @@ export function roomQuestionPrivacyClause({
   hasCompany,
 }) {
   if (isEmbedded) {
-    return "If someone else in the room asks a question, it is detected and answered on this server too, with no AI provider involved. A question you type yourself skips detection and is drafted here the same way.";
+    // "detected ... on this server" was false on this engine and is now
+    // corrected: detectClient.js short-circuits to localDetection in the
+    // browser when the engine is embedded and never calls /api/copilot/detect
+    // at all, so nothing about the speech leaves the machine for the detect
+    // step. The DRAFT still does — answerClient.js has no embedded
+    // short-circuit, so /api/copilot/answer is posted on every engine. Both
+    // halves are traced on the wire in useRoomQuestions.ownSpeech.test.js.
+    return `${VOICE_GATE_CLAUSE} After that, if someone else in the room asks a question, it is detected in your browser and answered on this server, with no AI provider involved. A question you type yourself is not subject to that gate: it skips detection and is drafted here the same way.`;
   }
   const base =
-    "If someone else in the room asks a question, what they say is sent to Gemini to detect and draft a response, along with your prep context";
+    `${VOICE_GATE_CLAUSE} After that, what someone else in the room says is sent to Gemini to check whether it is a question and to draft a response, along with your prep context`;
   const typedClause =
-    " A question you type yourself skips the detect step and is sent to Gemini to draft a response the same way.";
+    " A question you type yourself is not subject to that gate: it skips the detect step and is sent to Gemini to draft a response right away.";
   // Every Gemini branch ends with the same knowledge-base sentence — the
   // payload does not depend on which documents were found. That sentence names
   // its own subject ("Drafting an answer also sends…"), which is what makes it
