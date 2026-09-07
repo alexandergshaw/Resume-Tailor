@@ -232,7 +232,7 @@ const UNWIRED_MODULES = [
   {
     file: "lib/experience/untrustedText.js",
     finding:
-      "neutralizeUntrustedText plus QUOTE_PREFIX -- prompt-injection neutralisation for untrusted page/attachment text -- imported by nothing but its own test. lib/experience/tailorContext.js's comments discuss it, but no module calls it, so no untrusted text is actually neutralised in production.",
+      "neutralizeUntrustedText -- the fence PLUS a re-paragrapher, for untrusted page/attachment text -- imported by nothing but its own test. Still unreachable, but the finding is now NARROWER than when this sweep first reported it: 36bfa73 split the fence half out to lib/llm/untrustedFence.js, which IS wired, at the job-posting slot in lib/llm/tailorResume.js. What remains unreachable here is the re-paragrapher, whose designed upstream (extractAttachmentText, above) is itself unwired -- so this module's own boundary still carries no traffic.",
   },
 ];
 
