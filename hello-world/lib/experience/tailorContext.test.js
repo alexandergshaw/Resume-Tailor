@@ -119,4 +119,76 @@ describe("buildTailorContextBlock", () => {
       expect(() => buildTailorContextBlock(input)).not.toThrow();
     }
   });
+
+  // A count alone ("2 project pages not included") tells the owner something
+  // was omitted and gives them no way to act on it — see this file's header
+  // and the caller (app/api/tailor/route.js), which is what actually shows
+  // this to a human. `droppedPages` is the identity destroyed at the moment
+  // `continue` fires in the budget loop above; these tests pin it back.
+  describe("droppedPages: naming what got left out", () => {
+    it("names the pages it dropped, not just how many", () => {
+      const pages = [
+        page({ id: "keep", title: "Keeper", body: "short body" }),
+        page({ id: "drop1", title: "Dropped One", body: "x".repeat(MAX_TAILOR_CONTEXT_CHARS) }),
+        page({ id: "drop2", title: "Dropped Two", body: "y".repeat(MAX_TAILOR_CONTEXT_CHARS) }),
+      ];
+      const { droppedPages, includedCount, truncated } = buildTailorContextBlock(pages);
+      expect(truncated).toBe(true);
+      expect(includedCount).toBe(1);
+      expect(droppedPages).toEqual(["Dropped One", "Dropped Two"]);
+    });
+
+    it("skips a too-big page but keeps a smaller one after it (not a prefix cutoff) and still names only the one actually skipped", () => {
+      // Pins the file header's own claim: "a page that would overflow the
+      // budget is skipped, and the loop continues" — so a smaller page after
+      // a skipped one can still be included. Naming the drop must not change
+      // this.
+      const pages = [
+        page({ id: "big", title: "Big Page", body: "x".repeat(MAX_TAILOR_CONTEXT_CHARS) }),
+        page({ id: "small", title: "Small Page", body: "short" }),
+      ];
+      const { block, droppedPages, includedCount } = buildTailorContextBlock(pages);
+      expect(block).toContain("Small Page");
+      expect(block).not.toContain("Big Page");
+      expect(includedCount).toBe(1);
+      expect(droppedPages).toEqual(["Big Page"]);
+    });
+
+    it("reports no dropped pages when nothing was truncated (positive control)", () => {
+      const { droppedPages, truncated } = buildTailorContextBlock([page()]);
+      expect(truncated).toBe(false);
+      expect(droppedPages).toEqual([]);
+    });
+
+    it("names a title-less dropped page with the same friendly placeholder the block itself uses — never blank, never a raw id", () => {
+      const pages = [
+        page({ id: "keep", title: "Keeper", body: "short" }),
+        page({ id: "no-title-drop", title: "", body: "z".repeat(MAX_TAILOR_CONTEXT_CHARS) }),
+      ];
+      const { droppedPages } = buildTailorContextBlock(pages);
+      expect(droppedPages).toEqual(["Untitled project"]);
+      expect(droppedPages[0]).not.toBe("");
+      expect(droppedPages[0]).not.toContain("no-title-drop");
+    });
+
+    it("cannot let a long list of long dropped-page titles overflow the block, however many characters they carry", () => {
+      // The subtlety this whole feature has to respect: the in-block notice
+      // is inside the reserved budget. If dropped-page NAMES ever entered the
+      // block's own notice, a long list of long titles could exceed
+      // NOTICE_RESERVE_CHARS and the defensive clamp would then silently
+      // truncate the block itself, costing real content. This proves that
+      // cannot happen regardless of how this module chose to expose names.
+      const pathologicalTitle = "Very long project title ".repeat(40); // ~1000 chars
+      const pages = [
+        page({ id: "keep", title: "Keeper", body: "short" }),
+        ...Array.from({ length: 50 }, (_, i) =>
+          page({ id: `drop${i}`, title: `${pathologicalTitle}${i}`, body: "x".repeat(MAX_TAILOR_CONTEXT_CHARS) }),
+        ),
+      ];
+      const { block, droppedPages, truncated } = buildTailorContextBlock(pages);
+      expect(block.length).toBeLessThanOrEqual(MAX_TAILOR_CONTEXT_CHARS);
+      expect(truncated).toBe(true);
+      expect(droppedPages.length).toBe(50);
+    });
+  });
 });

@@ -24,8 +24,18 @@
 // limit surfaces as a generic 500. This module must not become a sixth
 // silent slice: it stays within MAX_TAILOR_CONTEXT_CHARS, and whenever a
 // page had to be left out it says so both inside the returned content (what
-// the MODEL sees) and via the returned `truncated`/`includedCount` flags
-// (what the route's response warning needs).
+// the MODEL sees) and via the returned `truncated`/`includedCount`/
+// `droppedPages` values (what the route's response warning needs).
+//
+// `droppedPages` names names, not just a count: a notice that says
+// something was omitted without saying what tells the owner their résumé
+// may be missing a project and gives them no way to act on it. It is
+// deliberately NOT threaded into the in-block notice above — that notice is
+// assembled inside the same MAX_TAILOR_CONTEXT_CHARS budget it reserves
+// NOTICE_RESERVE_CHARS out of, and a long list of long page titles could
+// blow that reserve, triggering the defensive clamp below and silently
+// costing real page content. Naming stays confined to the return value the
+// route surfaces to the human; the model-facing notice stays a count.
 //
 // Whole pages only — never a page cut mid-sentence. A page trimmed midway
 // through reads to the model as a claim that stops partway through; a whole
@@ -84,14 +94,23 @@ function pluralize(count, noun) {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
-// buildTailorContextBlock(pages) -> { block, truncated, includedCount }.
+// buildTailorContextBlock(pages) -> { block, truncated, includedCount, droppedPages }.
 //
 // `block` is "" whenever there is nothing eligible to say — never a header
 // with nothing under it — so a caller with no eligible pages can splice this
 // in and get a byte-identical prompt to one that never called this function.
 //
 // `truncated` is true the moment any eligible page had to be left out to
-// stay within budget; `includedCount` is how many pages actually made it in.
+// stay within budget; `includedCount` is how many pages actually made it in;
+// `droppedPages` is the display name of every page that did NOT — same
+// order as they were considered in, i.e. the same order they were dropped.
+// A page with no usable title reports the same "Untitled project" placeholder
+// the block's own heading falls back to (see formatPage) — never an empty
+// string, never a raw id. Naming a dropped page never changes which pages
+// are included: this array is populated at the exact point a page is
+// skipped, alongside the pre-existing counter, and nothing about the
+// greedy in-order packing loop below is touched.
+//
 // Never throws: junk input (null/undefined/malformed rows) is simply
 // skipped rather than crashing the caller.
 export function buildTailorContextBlock(pagesInput) {
@@ -103,28 +122,28 @@ export function buildTailorContextBlock(pagesInput) {
     .filter((p) => p.title || p.body);
 
   if (pieces.length === 0) {
-    return { block: "", truncated: false, includedCount: 0 };
+    return { block: "", truncated: false, includedCount: 0, droppedPages: [] };
   }
 
   const budgetForPages = Math.max(0, MAX_TAILOR_CONTEXT_CHARS - NOTICE_RESERVE_CHARS);
 
   const included = [];
+  const droppedPages = [];
   let used = 0;
-  let droppedCount = 0;
 
   for (const piece of pieces) {
     const addLen = piece.text.length + (included.length > 0 ? SEPARATOR.length : 0);
     if (used + addLen > budgetForPages) {
-      droppedCount += 1;
+      droppedPages.push(piece.title || "Untitled project");
       continue;
     }
     included.push(piece.text);
     used += addLen;
   }
 
-  const truncated = droppedCount > 0;
+  const truncated = droppedPages.length > 0;
   const noticeBlock = truncated
-    ? `[Note: ${pluralize(droppedCount, "project page")} not included to fit the AI context budget.]`
+    ? `[Note: ${pluralize(droppedPages.length, "project page")} not included to fit the AI context budget.]`
     : "";
 
   let block = [included.join(SEPARATOR), noticeBlock].filter(Boolean).join("\n\n");
@@ -139,5 +158,5 @@ export function buildTailorContextBlock(pagesInput) {
     block = block.slice(0, MAX_TAILOR_CONTEXT_CHARS);
   }
 
-  return { block, truncated, includedCount: included.length };
+  return { block, truncated, includedCount: included.length, droppedPages };
 }

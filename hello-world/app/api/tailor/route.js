@@ -158,6 +158,26 @@ export function pickTailoredResume(clientLines, resumeResult) {
   };
 }
 
+// How many dropped project-page names get spelled out in the warning below
+// before the rest are folded into "and N more" — an owner who dropped five
+// pages should see all five, but one who dropped fifty needs a warning they
+// can actually read, not a sentence that sprawls across the screen. Mirrors
+// the cap-then-summarize pattern lib/chat/localAssistant.js's
+// summarizeApplications already uses for the same reason.
+const MAX_NAMED_DROPPED_PAGES = 10;
+
+// The one thing app/api/tailor/route.test.js's truncation test and every
+// caller of this response actually need answered: "which ones?". See
+// lib/experience/tailorContext.js's header for why the names live here, in
+// the response warning, rather than inside the prompt block's own notice.
+function formatDroppedProjectPagesWarning(droppedPages) {
+  const names = Array.isArray(droppedPages) ? droppedPages : [];
+  const shown = names.slice(0, MAX_NAMED_DROPPED_PAGES).map((name) => `“${name}”`);
+  const remaining = names.length - shown.length;
+  const list = remaining > 0 ? `${shown.join(", ")}, and ${remaining} more` : shown.join(", ");
+  return `Some of your project pages were too large to fit in the AI's context budget and were left out: ${list}.`;
+}
+
 function parseTemplateLines(rawTemplateLines) {
   if (!rawTemplateLines) {
     return [];
@@ -216,15 +236,18 @@ export async function POST(request) {
     // error, so the prompt those callers get is unaffected by this feature.
     let projectPagesBlock = "";
     let projectPagesTruncated = false;
+    let projectPagesDropped = [];
     if (userId && supabase) {
       try {
         const { pages } = await listPages(supabase, userId);
         const built = buildTailorContextBlock(Array.isArray(pages) ? pages : []);
         projectPagesBlock = built.block;
         projectPagesTruncated = built.truncated;
+        projectPagesDropped = built.droppedPages;
       } catch {
         projectPagesBlock = "";
         projectPagesTruncated = false;
+        projectPagesDropped = [];
       }
     }
     // Appended as one more contextDocuments entry rather than a new prompt
@@ -556,11 +579,11 @@ export async function POST(request) {
     const warnings = [...resumeWarnings, ...coverLetterAttributed, ...emailAttributed];
     // Real budget, not a silent slice: buildTailorContextBlock already says so
     // inside the prompt content itself (what the model sees); this is the
-    // same fact surfaced to the caller (what the response's warning needs).
+    // same fact surfaced to the caller (what the response's warning needs) —
+    // and, unlike the in-block notice, named: a warning that something was
+    // left out without saying what gives the owner no way to act on it.
     if (projectPagesTruncated) {
-      warnings.push(
-        "Some of your project pages were too large to fit in the AI's context budget and were left out.",
-      );
+      warnings.push(formatDroppedProjectPagesWarning(projectPagesDropped));
     }
 
     // Posting↔output match (embedded engine attaches report.match per document).

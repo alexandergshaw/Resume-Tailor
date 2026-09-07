@@ -188,6 +188,81 @@ describe("POST /api/tailor feeds project pages into the Gemini prompt", () => {
     expect(sentPrompt.toLowerCase()).toMatch(/not included/);
   });
 
+  // The owner saw "some of your project pages ... were left out" and asked
+  // "which ones?" — the app could not answer. These pin that the warning
+  // itself now names them (buildTailorContextBlock's own in-block notice
+  // stays a count — see tailorContext.js's header — but the warning surfaced
+  // to the human must not be).
+  it("names the specific pages it left out in the warning, not just how many", async () => {
+    signedIn("user-1");
+    listPages.mockResolvedValue({
+      pages: [
+        page({ id: "keep", title: "Keeper", body: "short body" }),
+        page({ id: "huge1", title: "Alpha Overflow", body: "x".repeat(25000) }),
+        page({ id: "huge2", title: "Beta Overflow", body: "y".repeat(25000) }),
+      ],
+      error: null,
+    });
+    const generateContent = mockGeminiOk();
+
+    const res = await POST(tailorRequest());
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    const warning = data.warnings.find((w) => /project page/i.test(w) && /left out/i.test(w));
+    expect(warning).toBeTruthy();
+    expect(warning).toContain("Alpha Overflow");
+    expect(warning).toContain("Beta Overflow");
+    // The included page's own name has no business in a warning about what
+    // was excluded.
+    expect(warning).not.toContain("Keeper");
+  });
+
+  it("stays readable when five pages are dropped — names every one", async () => {
+    signedIn("user-1");
+    const droppedTitles = ["Proj A", "Proj B", "Proj C", "Proj D", "Proj E"];
+    listPages.mockResolvedValue({
+      pages: [
+        page({ id: "keep", title: "Keeper", body: "short body" }),
+        ...droppedTitles.map((title, i) => page({ id: `huge${i}`, title, body: "x".repeat(25000) })),
+      ],
+      error: null,
+    });
+    const generateContent = mockGeminiOk();
+
+    const res = await POST(tailorRequest());
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    const warning = data.warnings.find((w) => /project page/i.test(w) && /left out/i.test(w));
+    expect(warning).toBeTruthy();
+    for (const title of droppedTitles) {
+      expect(warning).toContain(title);
+    }
+  });
+
+  it("does not let the warning sprawl when dozens of pages are dropped — caps the named list and counts the rest", async () => {
+    signedIn("user-1");
+    const droppedTitles = Array.from({ length: 15 }, (_, i) => `Overflow Project ${i}`);
+    listPages.mockResolvedValue({
+      pages: [
+        page({ id: "keep", title: "Keeper", body: "short body" }),
+        ...droppedTitles.map((title, i) => page({ id: `huge${i}`, title, body: "x".repeat(25000) })),
+      ],
+      error: null,
+    });
+    const generateContent = mockGeminiOk();
+
+    const res = await POST(tailorRequest());
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    const warning = data.warnings.find((w) => /project page/i.test(w) && /left out/i.test(w));
+    expect(warning).toBeTruthy();
+    // Not every one of the 15 names is spelled out verbatim...
+    expect(warning).not.toContain("Overflow Project 14");
+    // ...but the remainder is still accounted for, not silently dropped a
+    // second time.
+    expect(warning).toMatch(/\d+ more/);
+  });
+
   it("also grounds the cover letter in the project pages (contextDocuments is shared with tailorCoverLetter)", async () => {
     signedIn("user-1");
     listPages.mockResolvedValue({ pages: [page()], error: null });
