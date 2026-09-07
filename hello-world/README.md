@@ -32,7 +32,6 @@ app/
     AuthButton.js                Sign in / sign out (Supabase Google OAuth)
     GmailButton.js               Connect / disconnect Gmail OAuth2
     TrackingTab.js               Application tracking table
-    AutoTailorTab.js             Auto-tailor queue viewer
     ChatPanel.js                 AI chat drawer
     StatusBar.js                 Tracked-job chips toolbar
     ... (other dialogs)

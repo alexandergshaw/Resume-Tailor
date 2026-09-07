@@ -71,25 +71,31 @@
 // failure mode this sweep must avoid. So the census is split by a MEASURED
 // property, not by taste:
 //
-//   RULE TR-1 (299 symbols)  the export is unused by shipping code, but at
+//   RULE TR-1 (298 symbols)  the export is unused by shipping code, but at
 //       least one `.test.js` imports it BY NAME. This repo's dominant
 //       convention is to widen a module's export surface so a unit test can
 //       pin an internal helper or a threshold constant directly instead of
 //       through the public function. Such a symbol has a real consumer, so it
 //       is a deliberately widened surface rather than a lost feature. Covered
-//       by rule and COUNTED EXACTLY -- not enumerated, because 299 lines of
+//       by rule and COUNTED EXACTLY -- not enumerated, because 298 lines of
 //       boilerplate is how the 56 below would get lost. Raising that count is
 //       a review event: see the assertion's own comment.
 //
 //   ORPHAN_EXPORTS (56 symbols)  unused by shipping code AND imported by no
 //       test anywhere. Nothing in this repository reads these. Each carries
 //       its own line and its own stated reason. This is where `summaryViewFor`
-//       lands.
+//       lands. NOTE the boundary this bucket does NOT police: "unused" here
+//       means no OTHER module imports the name. A symbol its own module calls
+//       is still listed, and deleting one on the strength of this line alone
+//       is how live code gets removed -- read each entry's `why`, and grep,
+//       before cutting. docx.js#buildDocxFromUploadedTemplate is the worked
+//       example of exactly that near-miss.
 //
-//   ALLOWED_UNREACHABLE_MODULES (7) / UNWIRED_MODULES (3)  whole files no
-//       entry point can reach. The first seven are sweep and test
-//       infrastructure and are justified one by one. The last three are
-//       findings -- see the block comment above UNWIRED_MODULES.
+//   ALLOWED_UNREACHABLE_MODULES (7) / UNWIRED_MODULES (0)  whole files no
+//       entry point can reach. The seven are sweep and test infrastructure
+//       and are justified one by one. The findings bucket is empty because
+//       all three of its entries were reviewed and deleted -- see the block
+//       comment above UNWIRED_MODULES.
 //
 // Every entry in every bucket must carry a reason; the sweep asserts that, so
 // "add it to the list" is never the cheap way out. The two module buckets and
@@ -211,30 +217,31 @@ const ALLOWED_UNREACHABLE_MODULES = [
 
 // ---------------------------------------------------------------------------
 // LEDGER 2 -- FINDINGS. Whole modules, built and tested, that NOTHING SHIPPING
-// REACHES. This is the duplicateApplyLog shape, and there are three more of it.
+// REACHES. This is the duplicateApplyLog shape.
 //
 // These are deliberately NOT in the allow-list above: they carry a `finding`,
 // not a `why`, because there is no reason they should be unreachable -- only a
 // product decision nobody has made yet. Wiring them up or deleting them is out
 // of this sweep's scope; the sweep's job is to stop them being invisible.
+//
+// EMPTY, and empty is the RESOLVED state, not the untested one. The three that
+// stood here -- app/components/AutoTailorTab.js, lib/experience/attachmentText.js
+// and lib/experience/untrustedText.js -- were surfaced by this ledger, reviewed
+// by the owner, and DELETED along with their suites. That is the ledger doing
+// precisely what its own comment above promises: a finding held in a named
+// bucket until a human decides, then removed when they do.
+//
+// Two notes for whoever adds the next entry:
+//   - lib/llm/untrustedFence.js is NOT affected. 36bfa73 had already split the
+//     prompt-injection fence out of untrustedText.js into its own module, wired
+//     at the job-posting slot in lib/llm/tailorResume.js. untrustedText.js only
+//     re-exported QUOTE_PREFIX for its own test's benefit; nothing shipping
+//     reached the fence through it, so deleting it disarmed nothing.
+//   - The "a test file is not a caller" property this bucket used to
+//     demonstrate is now asserted against ALLOWED_UNREACHABLE_MODULES instead
+//     (see below), so an empty bucket here cannot make that test vacuous.
 // ---------------------------------------------------------------------------
-const UNWIRED_MODULES = [
-  {
-    file: "app/components/AutoTailorTab.js",
-    finding:
-      "A whole tab component -- default export AutoTailorTab, with its own jsdom render suite (AutoTailorTab.test.js) covering the View link and the Apply button's enabled state -- that NO file imports. app/page.js mentions it only inside a comment (page.js:1787). A user cannot reach this tab.",
-  },
-  {
-    file: "lib/experience/attachmentText.js",
-    finding:
-      "extractAttachmentText plus three byte/char limits, written TDD-first with a full suite, imported by nothing but its own test. Attachment text extraction is not wired into any route or component.",
-  },
-  {
-    file: "lib/experience/untrustedText.js",
-    finding:
-      "neutralizeUntrustedText -- the fence PLUS a re-paragrapher, for untrusted page/attachment text -- imported by nothing but its own test. Still unreachable, but the finding is now NARROWER than when this sweep first reported it: 36bfa73 split the fence half out to lib/llm/untrustedFence.js, which IS wired, at the job-posting slot in lib/llm/tailorResume.js. What remains unreachable here is the re-paragrapher, whose designed upstream (extractAttachmentText, above) is itself unwired -- so this module's own boundary still carries no traffic.",
-  },
-];
+const UNWIRED_MODULES = [];
 
 // ---------------------------------------------------------------------------
 // LEDGER 3 -- exported symbols in a REACHABLE module that neither shipping code
@@ -363,12 +370,17 @@ const ORPHAN_EXPORTS = [
   {
     file: "lib/document/docx.js",
     name: "buildDocxFromUploadedTemplate",
-    why: "declared and exported and never referenced anywhere, including inside docx.js -- and its name is exactly the operation the download-rebuild rule cares about, so this one deserves a human's eyes rather than a delete",
+    why: "CORRECTED, and left in place after a delete was proposed on the strength of the old wording. The previous line here read 'never referenced anywhere, including inside docx.js'; that was FALSE. resolveDocumentBlob calls it three times (docx.js:503, :509, :515) and resolveDocumentBlob is imported by StatusBar.js, TrackingTab.js and previewBlob.js -- so this is live code on the edited-download rebuild path, the exact operation the download-rebuild rule cares about. Only the `export` keyword is surplus: no OTHER module imports the name, which is all `unused-export` has ever meant. Do not delete this symbol",
   },
   {
     file: "lib/experience/knowledgeBase.js",
     name: "EXCERPT_HEADING_SUFFIX",
-    why: "declared and exported and not referenced even inside knowledgeBase.js -- vestigial; its neighbours ELISION_MARKER and SEPARATOR are both imported by tests, this one by nothing",
+    why: "declared and exported and not referenced even inside knowledgeBase.js -- vestigial; its neighbour ELISION_MARKER is imported by knowledgeBase.test.js, this one by nothing. (SEPARATOR used to belong in that same sentence; it has since joined this ledger itself -- see its own entry below.)",
+  },
+  {
+    file: "lib/experience/knowledgeBase.js",
+    name: "SEPARATOR",
+    why: "the \"──── PAGE BOUNDARY ────\" string this module joins included pages with, applied twice inside knowledgeBase.js (the budget's separator cost, and the join itself). MIGRATED here from rule TR-1's bucket: its one and only importer was lib/experience/untrustedText.test.js, which asserted the neutralizer quoted this exact structural token, and that test was deleted with its unreachable module. The constant is unchanged and still load-bearing internally -- only its outside reader is gone",
   },
   {
     file: "lib/experience/knowledgeBase.js",
@@ -386,9 +398,9 @@ const ORPHAN_EXPORTS = [
     why: "the term extractor rankPages uses internally; the ranking module's public surface is rankPages, and nothing imports the term list on its own",
   },
   {
-    file: "lib/feed/selectQueueCandidates.js",
-    name: "matchesIncludedCompany",
-    why: "declared and exported and not referenced even inside selectQueueCandidates.js -- vestigial, while the other nine predicates beside it are all used or test-imported; a human should check whether an include-company filter was dropped from the queue selection",
+    file: "lib/experience/tailorContext.js",
+    name: "SEPARATOR",
+    why: "the \"---\" string this module joins context pieces with, applied twice inside tailorContext.js (the budget's separator cost, and the join itself). MIGRATED here from rule TR-1's bucket for the same reason as knowledgeBase.js#SEPARATOR above: lib/experience/untrustedText.test.js was its only importer, aliased as TAILOR_SEPARATOR to prove the neutralizer defused a forged \"---\", and that suite went with its unreachable module",
   },
   {
     file: "lib/gmail/emailUtils.js",
@@ -494,11 +506,6 @@ const ORPHAN_EXPORTS = [
     file: "lib/supabase/materials.js",
     name: "safeMaterialName",
     why: "the storage-name sanitiser this module applies to its own uploads; a caller building a material path itself would want it, and none does",
-  },
-  {
-    file: "lib/supabase/upsertInterviewStage.js",
-    name: "deleteInterviewStage",
-    why: "declared and exported and referenced nowhere, including inside its own module -- a complete CRUD verb with no delete path in the UI. A human should decide whether interview stages are meant to be deletable",
   },
   {
     file: "lib/tailor/editRules.js",
@@ -705,21 +712,25 @@ describe("every module is reachable from something that ships, or is on a ledger
     // that they cannot quietly become "just how it is". Wiring one up (or
     // removing it) fails the exact match above, which is the prompt to delete
     // its line here.
-    expect(UNWIRED_MODULES.map((e) => e.file)).toEqual([
-      "app/components/AutoTailorTab.js",
-      "lib/experience/attachmentText.js",
-      "lib/experience/untrustedText.js",
-    ]);
+    //
+    // The bucket is EMPTY because all three findings were acted on -- deleted,
+    // not wired -- so the exact match above now proves the tree has no unwired
+    // module at all. See the block comment over UNWIRED_MODULES.
+    expect(UNWIRED_MODULES.map((e) => e.file)).toEqual([]);
     for (const entry of UNWIRED_MODULES) {
       expect(entry.finding.length, `${entry.file} is recorded as unwired with no description`).toBeGreaterThan(60);
     }
   });
 
   it("does not let a test file count as a caller", () => {
-    // The property the whole sweep rests on, asserted directly against the
-    // three findings: each has a green test suite importing it, and each is
-    // still unreachable.
-    for (const { file } of UNWIRED_MODULES) {
+    // The property the whole sweep rests on. It used to be asserted against
+    // UNWIRED_MODULES; that bucket is now empty, and a `for` over an empty
+    // array asserts nothing. So it is asserted against the allow-listed
+    // unreachable modules instead -- every one of them is a probe or harness
+    // that tests DO import, and each is still classified unreachable. Same
+    // property, on data that cannot empty out from under it.
+    expect(ALLOWED_UNREACHABLE_MODULES.length).toBeGreaterThan(0);
+    for (const { file } of ALLOWED_UNREACHABLE_MODULES) {
       expect(GRAPH.shipping.has(file)).toBe(false);
       const importers = [...TEST_IMPORTS.entries()]
         .filter(([key]) => key.startsWith(`${file}#`))
@@ -740,6 +751,26 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     for (const entry of ORPHAN_EXPORTS) {
       expect(entry.why.length, `${keyOf(entry)} is on the ledger with no real reason`).toBeGreaterThan(60);
     }
+    // 56 -> 56, and the SAME TOTAL HIDES TWO OPPOSITE MOVEMENTS. Do not read
+    // this as "nothing happened".
+    //
+    //   -2  selectQueueCandidates.js#matchesIncludedCompany and
+    //       upsertInterviewStage.js#deleteInterviewStage were acted on and
+    //       DELETED. Both were referenced nowhere -- not by shipping code, not
+    //       by a test, not even inside their own module -- which is what their
+    //       entries said and what a by-name and by-path grep of the whole repo
+    //       confirmed before the cut.
+    //   +2  knowledgeBase.js#SEPARATOR and tailorContext.js#SEPARATOR MIGRATED
+    //       IN from rule TR-1's bucket. Neither symbol changed. Their sole
+    //       importer was lib/experience/untrustedText.test.js, and deleting
+    //       that unreachable module's suite took the last outside reader of
+    //       both with it. This is the census working: a deletion elsewhere
+    //       demoted two exports, and the split moved even though the total
+    //       did not.
+    //
+    // The third symbol reviewed alongside the two deletions,
+    // docx.js#buildDocxFromUploadedTemplate, turned out to be LIVE and was
+    // kept (see its corrected entry above), so it still occupies a line here.
     expect(ORPHAN_EXPORTS).toHaveLength(56);
   });
 
@@ -760,12 +791,27 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // knew. The other two exports the desync hid (downloadMinimalistDocx,
     // resolveDocumentBlob) were hand-checked as genuinely reachable and land
     // in neither bucket, which is why this moves by exactly one.
-    expect(TEST_REFERENCED.length).toBe(300);
+    //
+    // 300 -> 298, and this number FELL, which is the direction the comment
+    // above never anticipated. Deleting the three unwired modules could not
+    // touch this bucket directly -- their own exports were filed as
+    // `unreachable-module` (exportGraph.js:412), never as `unused-export`.
+    // What moved it was the deleted TESTS: lib/experience/untrustedText.test.js
+    // was the only file in the repo importing knowledgeBase.js#SEPARATOR and
+    // tailorContext.js#SEPARATOR, so both exports lost their sole consumer and
+    // were demoted into the orphan ledger. Deleting a test can lower this
+    // count by demoting an export it alone kept alive; that is worth knowing
+    // before anyone reads a drop here as "we wired something up".
+    expect(TEST_REFERENCED.length).toBe(298);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
-    // 355 -> 356, carrying the same single export; ORPHANS is unchanged.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(356);
+    // 356 -> 354: exactly the two orphan symbols that were deleted
+    // (matchesIncludedCompany, deleteInterviewStage). The two SEPARATORs
+    // crossed from one half of the split to the other, which is invisible in
+    // this total by construction -- 300 + 56 and 298 + 56 differ by the two
+    // deletions alone.
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(354);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

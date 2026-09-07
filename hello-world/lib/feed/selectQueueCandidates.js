@@ -46,13 +46,6 @@ export function matchesNoExcludedCompany(posting, excludedCompaniesLower) {
   return !excludedCompaniesLower.some((c) => company.includes(c));
 }
 
-/** Company must be in the include list (by display name, case-insensitive). */
-export function matchesIncludedCompany(posting, includedCompaniesLower) {
-  if (includedCompaniesLower.length === 0) return true;
-  const company = (posting?.company || "").toLowerCase();
-  return includedCompaniesLower.includes(company);
-}
-
 /**
  * Experience cap: keep postings whose required years are unknown (null) or at
  * or below the cap. Prefers the persisted `min_years_required` column, falling

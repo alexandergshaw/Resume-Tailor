@@ -94,26 +94,3 @@ export async function getInterviewStages(supabase, applicationId) {
     return [];
   }
 }
-
-/**
- * Delete an interview stage
- * @param {Object} supabase - Supabase client
- * @param {string} stageId - Stage ID to delete
- * @returns {Promise<boolean>} - Success
- */
-export async function deleteInterviewStage(supabase, stageId) {
-  try {
-    const { error } = await supabase
-      .from("interview_stages")
-      .delete()
-      .eq("id", stageId);
-    if (error) {
-      console.error("[deleteInterviewStage] failed:", error);
-      return false;
-    }
-    return true;
-  } catch (err) {
-    console.error("[deleteInterviewStage] unexpected error:", err);
-    return false;
-  }
-}

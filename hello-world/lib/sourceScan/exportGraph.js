@@ -177,8 +177,11 @@ export function parseModuleSource(rawSrc) {
 
   // --- static `import` / `export` statements, anchored at a line start -----
   // `[^\S\n]*` rather than `[ \t]*` so that a leading BOM cannot hide a
-  // statement: lib/experience/untrustedText.js is checked in with one, and a
-  // BOM-prefixed `import` on line 1 would otherwise be invisible. U+FEFF is
+  // statement: app/components/experience/ExperienceTab.test.js is checked in
+  // with one, and a BOM-prefixed `import` on line 1 would otherwise be
+  // invisible. (The example used to be lib/experience/untrustedText.js, which
+  // has since been deleted as unreachable; ExperienceTab.test.js is now the
+  // only BOM-carrying source file in the tree, so it is the live one.) U+FEFF is
   // whitespace to JavaScript, and the class excludes only the newline.
   const stmt = /(^|\n)([^\S\n]*)(import|export)\b/g;
   let m;
