@@ -55,9 +55,50 @@ export const MAX_LISTED_ATTACHMENTS = 20;
 // the property is enforced rather than assumed (see assembleNotice below) and
 // meetingContext.test.js asserts the assembled notice against THIS constant
 // rather than a hardcoded 400, which would keep passing if this number moved.
+//
+// AND IT PAYS FOR NOTICE_JOIN, the blank line that attaches the notice to the
+// page blocks — see that constant. The reserve is what the notice costs the
+// budget, and the notice cannot appear without its join, so the join is part of
+// what it costs.
 export const NOTICE_RESERVE_CHARS = 400;
 
 const SEPARATOR = "\n\n---\n\n";
+
+// The blank line between the last page block and the notice, named because it
+// is SPENT in one place (the join at the end of buildMeetingContext) and
+// BUDGETED in another (assembleNotice), and it used to be spent without being
+// budgeted anywhere at all.
+//
+// THE DEFECT THIS CLOSES, because it is invisible from outside. `budgetForPages`
+// was MAX_MEETING_CONTEXT_CHARS minus the reserve exactly, the reserve was what
+// assembleNotice could spend on the notice ALONE, and these two chars were
+// spent by neither — so a body filling budgetForPages, plus a notice filling the
+// reserve, plus this join, came to MAX + 2 and the defensive clamp cut the
+// overflow off the TAIL, which is precisely where the notice sits. The reader
+// then got `…budget: “Rollout notes”.` with its closing bracket eaten: a
+// sentence that reads as a rendering failure while reporting the one thing the
+// reader most needs to trust. No test could see it, because `content.length <=
+// MAX` is true in the broken case too — the clamp made it true.
+//
+// CHARGED TO THE RESERVE, NOT TO THE PAGES, and that is the whole decision.
+// Subtracting it from `budgetForPages` (or, identically, growing
+// NOTICE_RESERVE_CHARS to 402) costs two characters of the user's own knowledge
+// base on EVERY read — including the overwhelming majority that drop nothing,
+// assemble no notice, and never spend this join at all. Charging it to the
+// reserve costs at most two characters off a dropped-page NAME, in the one
+// read where the notice is already at its longest, which is exactly the
+// trade-off assembleNotice's own comment below already commits to.
+//
+// WHY lib/experience/knowledgeBase.js NEEDS NO SUCH CONSTANT, though its
+// assembly is the same two-part shape with the same tail clamp: its notice is
+// deliberately count-only (names there would pollute the evidence base that
+// lib/copilot/roleTermsFlag.js judges drafted claims against — see that
+// module's `droppedPages` comment), so 400 chars of reserve hold a notice that
+// cannot pass ~76, and the 300-odd characters of permanent slack absorb its
+// join by accident. Its remedy is "the notice can never fill the reserve",
+// which is true there and false here BY DESIGN: this module's notice spends the
+// reserve down to its last character on purpose.
+const NOTICE_JOIN = "\n\n";
 
 // Separates a count sentence from the names that qualify it, e.g.
 // "2 pages not included to fit the meeting context budget: “Hiring plan”, …".
@@ -203,7 +244,8 @@ function pageDisplayName(page) {
 }
 
 // Adds names to the count sentences, spending at most NOTICE_RESERVE_CHARS on
-// the whole notice.
+// the whole notice AND the NOTICE_JOIN that attaches it — the join included,
+// because `content` cannot have one without the other.
 //
 // THE DECISION THIS ENCODES: the reserve does not move, the names do. The
 // reserve is carved out of `budgetForPages`, so growing it to fit a name list
@@ -223,7 +265,13 @@ function pageDisplayName(page) {
 // costs it the truth.
 function assembleNotice(fixed, counted) {
   const wrap = (sentences) => (sentences.length > 0 ? `[Note: ${sentences.join(" ")}]` : "");
-  let remaining = NOTICE_RESERVE_CHARS - wrap([...fixed, ...counted.map((entry) => `${entry.stem}.`)]).length;
+  // NOTICE_JOIN comes out FIRST, before the skeleton is even measured: the
+  // reserve buys the notice AND the blank line that attaches it, because
+  // `content` pays for both or for neither. See NOTICE_JOIN above.
+  let remaining =
+    NOTICE_RESERVE_CHARS -
+    NOTICE_JOIN.length -
+    wrap([...fixed, ...counted.map((entry) => `${entry.stem}.`)]).length;
   const sentences = counted.map((entry) => {
     const list = formatDroppedNames(entry.names, { budget: remaining - NAME_CLAUSE_JOIN.length - ".".length });
     if (!list) return `${entry.stem}.`;
@@ -277,6 +325,10 @@ export function buildMeetingContext(input) {
   const ranked = rankMeetingPages(restCandidates, queryText);
   const ordered = pinned ? [pinned, ...ranked] : ranked;
 
+  // The reserve, and nothing else. NOTICE_JOIN is deliberately NOT subtracted
+  // here — it is charged to the reserve inside assembleNotice instead, so a
+  // read that drops nothing (no notice, no join) still gets every character of
+  // this budget for the user's own pages. See NOTICE_JOIN.
   const budgetForPages = Math.max(0, MAX_MEETING_CONTEXT_CHARS - NOTICE_RESERVE_CHARS);
 
   const included = [];
@@ -347,7 +399,10 @@ export function buildMeetingContext(input) {
   const body = included.map((entry) => entry.text).join(SEPARATOR);
   const noticeBlock =
     fixedNotices.length > 0 || countedNotices.length > 0 ? assembleNotice(fixedNotices, countedNotices) : "";
-  let content = [body, noticeBlock].filter(Boolean).join("\n\n");
+  // NOTICE_JOIN, not a second literal "\n\n": this is the character cost
+  // assembleNotice has already subtracted from the reserve, and two literals
+  // are how the spender and the budgeter drift apart again.
+  let content = [body, noticeBlock].filter(Boolean).join(NOTICE_JOIN);
   if (!content) content = "No pages from the knowledge base were available for this meeting.";
 
   // Defensive final clamp, mirroring pageContext.js's own: the budgeting

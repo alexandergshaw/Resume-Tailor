@@ -408,6 +408,136 @@ describe("the budget", () => {
     expect(buildMeetingContext(call({ pages: [page({ id: "p-1" })] })).droppedPages).toEqual([]);
   });
 
+  // THE BOUNDARY THIS SUITE COULD NOT REACH UNTIL NOW.
+  //
+  // Every case above uses `big(id, n)` bodies that land wherever they land, so
+  // `used` is never anywhere near `budgetForPages` when the notice is
+  // assembled, and the two-part sum below never gets tested at all. "Stays
+  // inside the budget" was therefore green against a body of ~4000 characters
+  // against a budget of 8600 — it proved that the clamp exists, not that the
+  // budgeting under it is right, and the clamp cannot fail that assertion by
+  // construction. The defect is invisible from the outside for exactly that
+  // reason: `content.length <= MAX` is true in the broken case too, because the
+  // clamp made it true by eating the notice.
+  //
+  // What overflows is the "\n\n" that JOINS the page block to the notice. It is
+  // spent by the join at the end of buildMeetingContext and budgeted by nobody:
+  // `budgetForPages` is MAX minus the reserve exactly, and the reserve is what
+  // assembleNotice may spend on the notice ALONE. So a body that fills
+  // budgetForPages plus a notice that fills the reserve plus the join between
+  // them is MAX + 2 before the clamp, and the clamp cuts from the TAIL — where
+  // the notice lives. The user is then shown a sentence saying material was
+  // dropped, with its own closing eaten: "…“Rollout notes”." with no "]".
+  //
+  // lib/experience/knowledgeBase.js has the identical two-part shape and is
+  // safe, but NOT by a remedy that transfers here: its notice is count-only by
+  // deliberate design (names would pollute the roleTermsFlag evidence base), so
+  // 400 chars of reserve hold a ~76-char notice and the slack absorbs the join.
+  // This module's notice spends the reserve down to its last character on
+  // purpose, so it needs the join charged to the reserve explicitly.
+  describe("the join between the page block and the notice", () => {
+    const KEEP_ID = "p-keep";
+    const KEEP_TITLE = "Kept";
+    // What formatPageBlock emits for a page with a body and no attachments.
+    const keptHeading = `## ${KEEP_TITLE} (page id: ${KEEP_ID})`;
+    const BUDGET_FOR_PAGES = MAX_MEETING_CONTEXT_CHARS - NOTICE_RESERVE_CHARS;
+    const JOIN = "\n\n";
+
+    // A page whose whole block is exactly `blockLength` characters.
+    const keptBody = (blockLength) => "x".repeat(blockLength - keptHeading.length - JOIN.length);
+    const keptBlockText = (blockLength) => `${keptHeading}${JOIN}${keptBody(blockLength)}`;
+    const keptPage = (blockLength) =>
+      page({ id: KEEP_ID, title: KEEP_TITLE, position: 0, body: keptBody(blockLength) });
+
+    // A page that can never fit whatever budget is left, so it is always the
+    // one the loop stops at — its TITLE is the variable under study.
+    const dropPage = (title) =>
+      page({ id: "p-drop", title, position: 1, body: "y".repeat(MAX_MEETING_CONTEXT_CHARS) });
+
+    const build = (keptLength, title) =>
+      buildMeetingContext(
+        call({ topic: "", transcript: "", pages: [keptPage(keptLength), dropPage(title)] }),
+      );
+
+    const noticeOf = (content) => content.slice(content.lastIndexOf("[Note:"));
+
+    // The longest notice this module will ever assemble, found by MEASURING it
+    // against a body small enough that the clamp cannot fire, rather than by
+    // copying assembleNotice's own arithmetic into the test. A private copy of
+    // that sum is the classic way a boundary test keeps passing while silently
+    // testing a different boundary — and it is assembleNotice's arithmetic that
+    // is under suspicion here, so the test may not assume it.
+    const worst = (() => {
+      let best = { title: "", notice: "" };
+      for (let length = 1; length <= NOTICE_RESERVE_CHARS; length += 1) {
+        const title = "T".repeat(length);
+        const notice = noticeOf(build(4000, title).content);
+        if (notice.length > best.notice.length) best = { title, notice };
+      }
+      return best;
+    })();
+
+    it("cannot assemble a notice longer than the reserve set aside for it", () => {
+      // Self-check on the fixture above: `worst` really is a fully-named
+      // notice, not a bare count that happened to be the longest thing found.
+      expect(worst.notice).toContain("1 page not included to fit the meeting context budget: “");
+      expect(worst.notice.endsWith("”.]")).toBe(true);
+      expect(worst.notice.length).toBeLessThanOrEqual(NOTICE_RESERVE_CHARS);
+    });
+
+    it("leaves room for itself, so a full body and a full notice still fit", () => {
+      // THE ARITHMETIC, stated as the contract it should be. Three measured
+      // quantities, no constant copied out of the source: the largest body the
+      // packer will admit, the join the assembly spends, and the largest notice
+      // assembleNotice will produce. Their sum is what `content` is before the
+      // defensive clamp touches it, and it must not need the clamp at all.
+      const body = keptBlockText(BUDGET_FOR_PAGES);
+      expect(body.length).toBe(BUDGET_FOR_PAGES);
+      expect(body.length + JOIN.length + worst.notice.length).toBeLessThanOrEqual(
+        MAX_MEETING_CONTEXT_CHARS,
+      );
+    });
+
+    it("does not eat the closing of the sentence reporting the truncation", () => {
+      // The harm, not the count. A notice cut to `…“Rollout notes”.` with no
+      // "]" reads as a rendering failure, and a longer name list would be cut
+      // mid-name, mid-quote — the exact outcome assembleNotice's own comment
+      // says the rationing exists to prevent.
+      const { content } = build(BUDGET_FOR_PAGES, worst.title);
+      expect(content.endsWith("]")).toBe(true);
+      expect(content).not.toMatch(/“[^”]*$/);
+    });
+
+    it("delivers the whole notice it assembled, not a prefix of it", () => {
+      const { content } = build(BUDGET_FOR_PAGES, worst.title);
+      // The page block is whole and precedes the notice, as the clamp's own
+      // comment promises…
+      expect(content.slice(0, content.lastIndexOf("[Note:"))).toBe(
+        `${keptBlockText(BUDGET_FOR_PAGES)}${JOIN}`,
+      );
+      // …and the notice arrived intact rather than as whatever survived.
+      expect(noticeOf(content)).toBe(worst.notice);
+      expect(content.length).toBeLessThanOrEqual(MAX_MEETING_CONTEXT_CHARS);
+    });
+
+    it("charges the join to the reserve, never to the user's own pages", () => {
+      // The wrong fix, pinned out. Paying for the join by shrinking
+      // `budgetForPages` (or by growing NOTICE_RESERVE_CHARS, which is the same
+      // subtraction wearing a different name) costs two characters of the
+      // user's own knowledge base on EVERY read, including the overwhelming
+      // majority that drop nothing and assemble no notice and so never spend
+      // the join at all. A page block of exactly MAX minus the reserve is still
+      // admitted whole, and nothing is reported as dropped.
+      const result = buildMeetingContext(
+        call({ topic: "", transcript: "", pages: [keptPage(BUDGET_FOR_PAGES)] }),
+      );
+      expect(result.includedPageIds).toEqual([KEEP_ID]);
+      expect(result.droppedPageCount).toBe(0);
+      expect(result.content).not.toContain("[Note:");
+      expect(result.content.length).toBe(BUDGET_FOR_PAGES);
+    });
+  });
+
   it("reports which pages actually made it, for the attribution check", () => {
     // `includedPageIds` is what normalizeInsights uses to downgrade a page
     // claim the model was never shown. If this ever over-reports, that guard
