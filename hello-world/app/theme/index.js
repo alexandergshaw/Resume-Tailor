@@ -102,7 +102,66 @@ export function makeTheme(mode = "light") {
         },
       },
       MuiToggleButton: {
-        styleOverrides: { root: { textTransform: "none" } },
+        styleOverrides: {
+          root: {
+            textTransform: "none",
+            // SC 1.4.11. MUI draws a ToggleButton's border from
+            // `palette.divider`, which is `--border` — a 1.28:1 hairline. A
+            // ToggleButton has no fill of its own, so that border is the ONLY
+            // thing saying "this is a control", and 1.28:1 is not enough.
+            //
+            // `palette.divider` itself is deliberately NOT raised: it also
+            // colours every <Divider>, every `<DialogContent dividers>` seam
+            // and the `borderColor: "divider"` sx sites, and a decorative
+            // separator is not a user interface component — SC 1.4.11 exempts
+            // it. Darkening all of those to fix a toggle would be a worse
+            // outcome than fixing the toggle. So the CONTROL is moved to the
+            // palette's accessible line colour and the separator is left alone.
+            //
+            // `borderColor` (not `border`) so the width/style MUI set stay
+            // theirs, and on `root` rather than a variant because the border
+            // is one colour for resting AND selected — MUI's `.Mui-selected`
+            // rule changes only text and background. Two higher-specificity
+            // MUI rules still outrank this on purpose: `.Mui-disabled` (a
+            // disabled control is exempt from 1.4.11) and
+            // ToggleButtonGroup's `borderLeft: 1px solid transparent` on
+            // grouped buttons (the seam that stops adjacent borders doubling).
+            borderColor: t["border-control"],
+          },
+        },
+      },
+      MuiChip: {
+        // SC 1.4.11, but only for the chips that ARE controls.
+        //
+        // An outlined Chip is a control when it is clickable or deletable —
+        // MUI renders those as a ButtonBase and stamps them `.MuiChip-clickable`
+        // / `.MuiChip-deletable`, so the two cases really are distinguishable
+        // here. A static outlined Chip is a LABEL: it has no behaviour, its
+        // outline is decoration, and SC 1.4.11 exempts decoration. It keeps
+        // MUI's own grey.
+        //
+        // Scoped to `.MuiChip-colorDefault` as well. A coloured outlined chip
+        // draws its border from `alpha(palette[color].main, 0.7)`, which does
+        // not clear 3:1 in light mode (success 2.82:1, warning 2.73:1); no
+        // INTERACTIVE one exists in the app today, and repainting a future one
+        // grey would hide the problem rather than fix it. Leaving it out means
+        // ./controlBorderContrast.test.js — which derives the colours it
+        // measures from source — fails the day one is added, and gets a real
+        // answer. Same discipline as OUTLINED_BUTTON_COLORS above.
+        //
+        // Class-name selectors rather than an import of `chipClasses`: this
+        // module is pulled into the SERVER bundle by app/layout.js (for
+        // `themeCssText`), and importing @mui/material/Chip there would drag
+        // the whole component in for one string. The names are MUI's public
+        // override API, and the test above mounts a real Chip and measures the
+        // colour that comes out — so a rename cannot pass silently either way.
+        styleOverrides: {
+          outlined: {
+            "&.MuiChip-colorDefault.MuiChip-clickable, &.MuiChip-colorDefault.MuiChip-deletable": {
+              borderColor: t["border-control"],
+            },
+          },
+        },
       },
       MuiTab: {
         styleOverrides: { root: { textTransform: "none" } },

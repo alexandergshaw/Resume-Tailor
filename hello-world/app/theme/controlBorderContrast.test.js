@@ -25,6 +25,14 @@
 //      `getComputedStyle(button).getPropertyValue('--variant-outlinedBorder')`
 //      DOES return the declared value. So the button is measured through the
 //      custom property that feeds its border, not through `borderColor`.
+//   3. ToggleButton and Chip are on the FIRST side of that split, measured
+//      again before the ToggleButton/Chip block below was written: MUI writes
+//      both as plain declarations (`border: 1px solid <literal>`), no `var()`
+//      indirection, and `getComputedStyle(el).borderTopColor` returns the real
+//      colour. `--variant-outlinedBorder` is the empty string on both. Because
+//      that could silently change under a future MUI, the "really being
+//      measured" describe below re-proves it on every run rather than trusting
+//      this comment.
 //
 // WHAT THIS FILE ESTABLISHES
 //   * For the RESTING state of every outlined <Button> colour the app actually
@@ -33,15 +41,41 @@
 //     `.main` gradient, in both colour modes -- four grounds in total.
 //   * That the app's own `sx` overrides, which sit at a higher specificity than
 //     the theme and would otherwise silently escape it, clear 3:1 too.
+//   * The same, for a ToggleButton (resting, selected, and first-in-group) and
+//     for every colour of INTERACTIVE outlined Chip the app actually renders.
+//   * That the premise of the outlined-Paper exemption below still holds: no
+//     `<Paper variant="outlined">` in the app is a control.
+//
+// WHERE THE `divider` LINE WAS AND WAS NOT DRAWN
+//   SC 1.4.11 governs "user interface components", and exempts pure decoration.
+//   A <Divider> hairline and a container's outline are decoration; a toggle's
+//   border and a deletable chip's border are the only thing that says "this is
+//   a control". So `palette.divider` was deliberately LEFT at `--border`
+//   (1.28:1) -- raising it would darken all 16 <Divider>s, the 10 dialogs using
+//   `<DialogContent dividers>` and the 4 `borderColor: "divider"` sx sites for
+//   no accessibility gain -- and the CONTROLS were pointed at `--border-control`
+//   instead, in the theme, per component:
+//     * ToggleButton  -> a control in every one of its 13 uses. Fixed.
+//     * outlined Chip -> a control ONLY when clickable or deletable, and MUI
+//       marks exactly those with `.MuiChip-clickable` / `.MuiChip-deletable`,
+//       so the fix is scoped to them. A static outlined Chip is a label, not a
+//       control, and keeps MUI's own grey. (Its border is NOT `divider`: MUI 9
+//       draws it from `grey[400]`/`grey[700]`, measured at 1.76:1 / 2.44:1.)
+//     * outlined Paper -> a container, not a control; the app's single use is
+//       a read-only queue-detail panel. EXEMPT, and left at 1.28:1. The
+//       exemption rests on it not being interactive, which is what the last
+//       describe in this file checks.
 //
 // WHAT IT DOES NOT ESTABLISH
 //   * Nothing about hover, focus, error or disabled borders. Those are separate
 //     MUI rules at a higher specificity; they were left untouched, and a
 //     :hover cascade cannot be driven from jsdom anyway.
-//   * Nothing about controls whose border comes from `palette.divider`
-//     (ToggleButton, outlined Chip, outlined Paper). Those measure 1.28:1 and
-//     are a real defect, but changing `divider` moves every Divider in the app
-//     and was deliberately left out of this change's blast radius.
+//   * Nothing about a COLOURED interactive outlined Chip. There is none in the
+//     app today, and the colours measured below are derived from source rather
+//     than listed -- so the day someone adds `color="warning"` to a deletable
+//     chip, it starts being measured here and fails (2.73:1 in light) instead
+//     of being quietly restyled. The theme's Chip fix is scoped to
+//     `.MuiChip-colorDefault` for exactly that reason.
 //   * Nothing about a real browser's rendering. jsdom's cascade is a stand-in;
 //     the `var()` gap in fact 2 above is a known divergence from one.
 
@@ -55,6 +89,9 @@ import { createRoot } from "react-dom/client";
 import { ThemeProvider } from "@mui/material/styles";
 import TextField from "@mui/material/TextField";
 import Button from "@mui/material/Button";
+import Chip from "@mui/material/Chip";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import { tokens, MODES } from "./tokens.js";
 import { makeTheme } from "./index.js";
 
@@ -354,4 +391,252 @@ describe("SC 1.4.11 — `sx` overrides that outrank the theme", () => {
       expect(failures, `outlined-button borders below 3:1 in ${mode}:\n${failures.join("\n")}`).toEqual([]);
     });
   }
+});
+
+// ==========================================================================
+// ToggleButton and Chip: the controls MUI draws from a LINE colour rather than
+// from their own palette colour.
+// ==========================================================================
+
+// Read the top border specifically, not the `borderColor` shorthand. A
+// ToggleButton inside a horizontal ToggleButtonGroup has its LEFT border set
+// to `transparent` on purpose (the previous button's right border serves as
+// the seam), so `borderColor` comes back as a four-value string with a
+// meaningless component in it. The top edge always carries the control's real
+// boundary colour. Same channel the OutlinedInput above is measured through.
+async function measureBorderTopColor(mode, surface) {
+  const { host, cleanup } = await renderUnderTheme(mode, surface.element());
+  try {
+    const node = host.querySelector(surface.selector);
+    expect(node, `${surface.name}: nothing matched ${surface.selector}`).toBeTruthy();
+    return getComputedStyle(node).borderTopColor;
+  } finally {
+    cleanup();
+  }
+}
+
+// --------------------------------------------------------------------------
+// Which Chips does the app actually render, and which of them are CONTROLS?
+//
+// Derived from source for the same reason the outlined-Button colours are: a
+// listed set goes stale silently. `onDelete`/`onClick`/`clickable` are what
+// make MUI render a Chip as a ButtonBase and stamp it `.MuiChip-clickable` /
+// `.MuiChip-deletable`; Autocomplete's `getTagProps` spread supplies an
+// `onDelete`, so it counts too. The predicate errs toward calling a chip
+// interactive -- a false positive only adds a surface to measure.
+// --------------------------------------------------------------------------
+
+const CHIP_INTERACTIVE = /onDelete\s*=|onClick\s*=|getTagProps|\bclickable\b/;
+
+function chipTagsIn(source, file) {
+  return openingTags(source, "Chip").map((tag) => ({
+    file,
+    line: tag.line,
+    variant: (/variant\s*=\s*"(\w+)"/.exec(tag.props) || [, "filled"])[1],
+    // MUI's default when `color` is omitted.
+    color: (/color\s*=\s*"(\w+)"/.exec(tag.props) || [, "default"])[1],
+    // `color={expr}` — a colour decided at runtime, which no static read can
+    // resolve to something renderable here.
+    dynamicColor: /color\s*=\s*\{/.test(tag.props),
+    interactive: CHIP_INTERACTIVE.test(tag.props),
+  }));
+}
+
+function chipTags() {
+  const out = [];
+  for (const file of sourceFiles()) {
+    out.push(
+      ...chipTagsIn(readFileSync(file, "utf8"), file.slice(APP_DIR.length + 1).replace(/\\/g, "/"))
+    );
+  }
+  return out;
+}
+
+const INTERACTIVE_OUTLINED_CHIPS = chipTags().filter((t) => t.variant === "outlined" && t.interactive);
+const INTERACTIVE_OUTLINED_CHIP_COLORS = [
+  ...new Set(INTERACTIVE_OUTLINED_CHIPS.filter((t) => !t.dynamicColor).map((t) => t.color)),
+].sort();
+
+const noop = () => {};
+
+// Every control surface measured below. A ToggleButton is measured standalone
+// AND as the first button of a horizontal group, because the group's own
+// stylesheet targets its children at a HIGHER specificity than the theme's
+// component override and could swallow the fix without the standalone case
+// noticing.
+const CONTROL_SURFACES = [
+  {
+    name: "ToggleButton (resting)",
+    selector: "button",
+    element: () => createElement(ToggleButton, { value: "measured" }, "Ground truth"),
+  },
+  {
+    name: "ToggleButton (selected)",
+    selector: "button",
+    element: () => createElement(ToggleButton, { value: "measured", selected: true }, "Ground truth"),
+  },
+  {
+    name: "ToggleButton (first in a horizontal group)",
+    selector: ".MuiToggleButtonGroup-firstButton",
+    element: () =>
+      createElement(
+        ToggleButtonGroup,
+        { value: "measured", exclusive: true },
+        createElement(ToggleButton, { value: "measured" }, "Ground truth"),
+        createElement(ToggleButton, { value: "other" }, "Other")
+      ),
+  },
+  ...INTERACTIVE_OUTLINED_CHIP_COLORS.flatMap((color) => [
+    {
+      name: `outlined Chip color="${color}" (deletable)`,
+      selector: ".MuiChip-root",
+      element: () =>
+        createElement(Chip, { variant: "outlined", color, label: "Ground truth", onDelete: noop }),
+    },
+    {
+      name: `outlined Chip color="${color}" (clickable)`,
+      selector: ".MuiChip-root",
+      element: () =>
+        createElement(Chip, { variant: "outlined", color, label: "Ground truth", onClick: noop }),
+    },
+  ]),
+];
+
+describe("the Chip enumeration reads real tags", () => {
+  it("pulls variant, colour and interactivity out of an opening tag", () => {
+    const source = [
+      `<Chip variant="outlined" label="a" onDelete={fn} />`,
+      `<Chip label="b" />`,
+      `<Chip variant="outlined" color="success" sx={{ w: x > y }} label="c" />`,
+      `<Chip variant="outlined" color={dynamic} label="d" onClick={fn} />`,
+      `<ChipsInput label="not a Chip" />`,
+    ].join("\n");
+    expect(
+      chipTagsIn(source, "synthetic.js").map((t) => [t.variant, t.color, t.dynamicColor, t.interactive])
+    ).toEqual([
+      ["outlined", "default", false, true],
+      ["filled", "default", false, false],
+      ["outlined", "success", false, false],
+      ["outlined", "default", true, true],
+    ]);
+  });
+
+  it("found interactive outlined chips in the app to measure", () => {
+    expect(INTERACTIVE_OUTLINED_CHIPS.length).toBeGreaterThan(0);
+    expect(INTERACTIVE_OUTLINED_CHIP_COLORS.length).toBeGreaterThan(0);
+  });
+
+  it("has no interactive outlined chip whose colour is decided at runtime", () => {
+    // Such a chip cannot be rendered here at the colour it will really have,
+    // so it would escape the measurement entirely. Give it a literal `color=`
+    // (or split the branches) so this file can see it.
+    const dynamic = INTERACTIVE_OUTLINED_CHIPS.filter((t) => t.dynamicColor).map(
+      (t) => `${t.file}:${t.line}`
+    );
+    expect(dynamic, `unmeasurable interactive outlined chips:\n${dynamic.join("\n")}`).toEqual([]);
+  });
+});
+
+describe("SC 1.4.11 — ToggleButton and interactive outlined Chip borders", () => {
+  it("has surfaces to measure", () => {
+    expect(CONTROL_SURFACES.length).toBeGreaterThanOrEqual(5);
+  });
+
+  for (const surface of CONTROL_SURFACES) {
+    for (const mode of MODES) {
+      for (const ground of groundsFor(mode)) {
+        it(`${surface.name} clears 3:1 in ${mode} on --${ground.name}`, async () => {
+          const rendered = await measureBorderTopColor(mode, surface);
+          const ratio = contrastOnGround(rendered, ground.hex);
+          expect(
+            ratio,
+            `${surface.name} border ${rendered} on --${ground.name} ${ground.hex} = ${ratio.toFixed(2)}:1`
+          ).toBeGreaterThanOrEqual(WCAG_NON_TEXT_MINIMUM);
+        });
+      }
+    }
+  }
+});
+
+describe("the borders above are really being measured", () => {
+  // The failure mode this guards is the one documented at the top of the file:
+  // if MUI moves either component behind `var(--something)`, jsdom stops
+  // resolving it and `borderTopColor` collapses to a constant `rgb(0, 0, 0)`
+  // — which would sail through the light-mode assertions above at 20:1 and
+  // prove nothing. A theme colour that genuinely comes from the cascade
+  // differs between the two modes; an unresolved `var()` cannot.
+  for (const surface of CONTROL_SURFACES) {
+    it(`${surface.name}'s border comes from the live cascade`, async () => {
+      const light = await measureBorderTopColor("light", surface);
+      const dark = await measureBorderTopColor("dark", surface);
+      expect(light, `${surface.name}: no border colour resolved at all`).not.toBe("");
+      expect(light, `${surface.name}: jsdom handed back an unresolved var()`).not.toMatch(/var\(/);
+      expect(
+        light,
+        `${surface.name} measured the SAME colour in light and dark (${light}). ` +
+          `Either the border stopped coming from a mode-dependent token, or jsdom ` +
+          `is reporting an unresolved var() constant — in which case every ratio ` +
+          `above is meaningless.`
+      ).not.toBe(dark);
+      // And the value is something the maths can actually read.
+      expect(() => parseColor(light)).not.toThrow();
+      expect(() => parseColor(dark)).not.toThrow();
+    });
+  }
+});
+
+// ==========================================================================
+// The outlined-Paper exemption.
+//
+// `<Paper variant="outlined">` keeps `palette.divider` and measures 1.28:1.
+// That is deliberate: SC 1.4.11 applies to "user interface components", and a
+// panel that only holds read-only content is not one — its outline is
+// decoration, which the SC explicitly exempts. The whole exemption rests on
+// that premise, so the premise is what gets asserted: the moment an outlined
+// Paper becomes clickable, focusable or role="button", it IS a control and
+// this fails, forcing a real ruling instead of an inherited one.
+// ==========================================================================
+
+const PAPER_INTERACTIVE = /onClick\s*=|onKeyDown\s*=|onKeyUp\s*=|role\s*=\s*"button"|component\s*=\s*"button"|tabIndex/;
+
+function outlinedPaperTagsIn(source, file) {
+  return openingTags(source, "Paper")
+    .filter((tag) => /variant\s*=\s*"outlined"/.test(tag.props))
+    .map((tag) => ({ file, line: tag.line, interactive: PAPER_INTERACTIVE.test(tag.props) }));
+}
+
+function outlinedPaperTags() {
+  const out = [];
+  for (const file of sourceFiles()) {
+    out.push(
+      ...outlinedPaperTagsIn(readFileSync(file, "utf8"), file.slice(APP_DIR.length + 1).replace(/\\/g, "/"))
+    );
+  }
+  return out;
+}
+
+describe("the outlined-Paper exemption's premise", () => {
+  it("spots an interactive outlined Paper when there is one", () => {
+    const source = [
+      `<Paper variant="outlined" sx={{ p: 2 }}>static</Paper>`,
+      `<Paper variant="outlined" onClick={fn}>a control</Paper>`,
+      `<Paper elevation={1} onClick={fn}>not outlined</Paper>`,
+    ].join("\n");
+    expect(outlinedPaperTagsIn(source, "synthetic.js").map((t) => t.interactive)).toEqual([false, true]);
+  });
+
+  it("found outlined Papers in the app to check", () => {
+    expect(outlinedPaperTags().length).toBeGreaterThan(0);
+  });
+
+  it("none of the app's outlined Papers is a control", () => {
+    const controls = outlinedPaperTags()
+      .filter((t) => t.interactive)
+      .map((t) => `${t.file}:${t.line}`);
+    expect(
+      controls,
+      `outlined Paper is exempt from SC 1.4.11 only while it is a container. ` +
+        `These are controls and need a 3:1 boundary:\n${controls.join("\n")}`
+    ).toEqual([]);
+  });
 });
