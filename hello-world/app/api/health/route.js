@@ -48,15 +48,21 @@ export const runtime = "nodejs";
 //   a pass-through, so it stays named rather than papered over by a comment
 //   that says "no call".
 //
-//   It is also not this file's alone, and the honest count is TWO, not one:
-//   the `middleware.js` matcher covers `/api/*`, and `updateSession` builds
-//   its own SSR client and calls `auth.getUser()` at
-//   lib/supabase/middleware.js:34 — BEFORE the `isApiRoute` early return on
-//   :41 that is what "never gates /api/*" above actually means. So every
-//   request here has already paid that cost once before this file runs, on
-//   the same cookie, and the route's own call is the second. Collapsing the
-//   two would be a change to middleware for every route in the app, not
-//   something this endpoint can do for itself.
+//   It is also not this file's alone: the `middleware.js` matcher covers
+//   `/api/*`, and `updateSession` calls `auth.getUser()` BEFORE its
+//   `isApiRoute` early return — which is what "never gates /api/*" above
+//   actually means, and is deliberate, because that call is what refreshes
+//   an expiring session and writes the rotated cookie onto the response.
+//   See lib/supabase/middleware.js's own header, which carries the measured
+//   table and the reasons NOT to hoist that early return.
+//
+//   So the cost here is per-cookie, and stating it as a flat "two" would
+//   overstate it. Measured: a request with NO cookie, or an unrelated one,
+//   pays ZERO in middleware — the route's own call is the only one. A
+//   forged unexpired `sb-*-auth-token` pays one there and one here, two in
+//   total; once it expires, the refresh grant makes it three. Collapsing
+//   any of that would be a change to middleware for every route in the app,
+//   not something this endpoint can do for itself.
 //
 // TIER 2 — a signed-in user, or the `CRON_SECRET` bearer:  the deployment
 //   diagnostics, as ONE BOOLEAN PER ITEM. Never a value, never a prefix,
