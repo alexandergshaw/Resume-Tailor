@@ -1,9 +1,25 @@
 -- Professional Experience: attachment extraction results — the plain text
 -- pulled out of an attachment's bytes at ingest time, plus the bookkeeping
 -- the app needs to report that honestly without re-reading the file from
--- storage on every request. See lib/experience/attachmentText.js for the
--- extractor itself, and lib/experience/untrustedText.js for what neutralizes
--- this column's contents before any of it reaches a model prompt.
+-- storage on every request.
+--
+-- CURRENT STATUS — READ THIS BEFORE ACTING ON ANYTHING BELOW. The two modules
+-- this header used to point at, lib/experience/attachmentText.js (the
+-- extractor) and lib/experience/untrustedText.js (the neutralizer), have both
+-- been DELETED as unreachable in commit 6e55e7d. As of that commit NO code in
+-- this repo names any of the five columns added at the bottom of this file:
+-- nothing writes them and nothing reads their values. They are still fetched
+-- incidentally, because lib/supabase/experienceAttachments.js selects `*`, but
+-- every row reads back at its declared default ('' / 'pending' / 0 / null) and
+-- no caller looks at the result.
+--
+-- These columns are LEFT IN PLACE deliberately. Dropping a column destroys
+-- whatever data is already in it and is the database owner's decision, never a
+-- side effect of deleting JavaScript — and this migration has already run, so
+-- its statements are history and must not be rewritten in place regardless.
+-- The rest of this header is preserved as the design record of what these
+-- columns are for, and is written in the present tense of the feature that
+-- created them.
 --
 -- THIS MUST BE A NEW MIGRATION, NOT AN EDIT TO
 -- 20260812010000_experience_attachments.sql. That file's own header comment
@@ -24,18 +40,21 @@
 --
 -- Column-by-column:
 --   extracted_text  — the extracted plain text itself, capped at ingest time
---                      by lib/experience/attachmentText.js's
---                      MAX_EXTRACTED_CHARS. Stored UNTOUCHED — NOT
---                      pre-neutralized. neutralizeUntrustedText
---                      (lib/experience/untrustedText.js) runs at PROMPT-BUILD
---                      time, in every consumer that reads this column, not at
---                      write time — a column name that already sounds "safe"
---                      is exactly the kind of thing a future third consumer
---                      would trust without calling the neutralizer itself.
+--                      by the extractor's own MAX_EXTRACTED_CHARS. Stored
+--                      UNTOUCHED — NOT pre-neutralized. Neutralization ran at
+--                      PROMPT-BUILD time, in every consumer that read this
+--                      column, not at write time — a column name that already
+--                      sounds "safe" is exactly the kind of thing a future
+--                      consumer would trust without neutralizing it itself.
+--                      That rule still binds anything that starts reading this
+--                      column again: fence it where the prompt is built (the
+--                      surviving control is lib/llm/untrustedFence.js), not
+--                      here, and not at write time.
 --   extract_status  — one of pending | ok | empty | unsupported | too_large |
---                      failed (see lib/experience/attachmentText.js's own
---                      header for what each one means and which of them this
---                      module actually returns). There is no `running`
+--                      failed. The extractor's own header documented what each
+--                      one meant and which of them it actually returned; that
+--                      file is gone, so this list is now the only surviving
+--                      record of the vocabulary. There is no `running`
 --                      status and no claim/lock protocol around this column:
 --                      the governing AC's REVISION 1 explicitly reversed an
 --                      earlier draft that had one, stated explicitly so
@@ -63,11 +82,15 @@
 --                      has. Lets a future backfill surface "extracted 3 days
 --                      ago" without a second table to track it in.
 --   extract_reason  — a short human-readable explanation for a `failed` (or
---                      `too_large`) row — why mammoth or unpdf could not read
---                      these particular bytes. Free text, not an error code:
---                      nothing in this codebase parses it back out (mirrors
---                      lib/experience/attachmentText.js's own `reason`
---                      field) — it exists for a person debugging one row.
+--                      `too_large`) row — why the document reader could not
+--                      read these particular bytes. The extractor read .docx
+--                      via mammoth (still a dependency, still used by the
+--                      tailor path) and .pdf via unpdf, which was removed from
+--                      package.json once deleting the extractor left it with
+--                      no importer. Free text, not an error code: nothing in
+--                      this codebase parses it back out — it mirrored the
+--                      extractor's own `reason` field, and it exists for a
+--                      person debugging one row.
 --
 -- EVERY DEFAULT BELOW IS NON-VOLATILE — a plain literal ('' or 0), or no
 -- default at all for the nullable timestamptz — which is what lets Postgres

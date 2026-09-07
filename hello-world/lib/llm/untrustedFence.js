@@ -36,8 +36,10 @@
 // ---------------------------------------------------------------------------
 // WHY A FENCE AND NOT A FILTER
 // ---------------------------------------------------------------------------
-// The long form of this argument is in lib/experience/untrustedText.js's
-// header, which reached the same conclusion for attachment text. The short
+// This argument was first worked out for a different untrusted source — the
+// text extracted from a user's uploaded attachments — and reached the same
+// conclusion there. That module has since been deleted, so the long form is
+// reproduced here rather than cited. The short
 // form: a blocklist of dangerous shapes is unbounded (every structural line any
 // caller adds later silently joins the set a hostile posting can forge, with no
 // test failing to say so), and deleting the offending lines would be worse than
@@ -48,14 +50,19 @@
 // documents:", or whatever heading gets invented next.
 //
 // ---------------------------------------------------------------------------
-// WHY THIS IS A SEPARATE FUNCTION FROM neutralizeUntrustedText
+// WHY FENCING IS ITS OWN FUNCTION, AND MUST STAY THAT WAY
 // ---------------------------------------------------------------------------
-// lib/experience/untrustedText.js bundles this fence with a RE-PARAGRAPHER
-// (MAX_BLOCK_CHARS = 1200, hardSplitIfNeeded) calibrated against
-// lib/experience/knowledgeBase.js's per-page attachment budget — machinery that
-// exists because excerptForQuery SKIPS an oversized block outright. No such
-// budget exists on the tailor path, and that half is actively harmful here:
-// measured on a real job description it emitted
+// Fencing is one transformation. RE-PARAGRAPHING — hard-splitting text at a
+// fixed block size — is a different one, and the two must not be bundled back
+// into a single "neutralize everything" call. The repo has already run that
+// experiment and it cost keywords.
+//
+// The earlier neutralizer for attachment text bundled this fence with a hard
+// splitter at 1200 characters, calibrated against
+// lib/experience/knowledgeBase.js's per-page attachment budget — machinery
+// that exists there because excerptForQuery SKIPS an oversized block outright.
+// No such budget exists on the tailor path, and that half is actively harmful
+// here: measured on a real job description it emitted
 //
 //     "...distributed systems for lo\n\n> gistics at global scale..."
 //
@@ -67,9 +74,15 @@
 // "Kuber\n\n> netes" is one the tailorer can never match, which is a quality
 // regression on the app's core feature paid for nothing.
 //
-// So the fence is exported on its own and untrustedText.js consumes it rather
-// than keeping a second copy — one control, in one place, with the block-budget
-// machinery left on the only path that has a block budget.
+// So the fence is exported on its own: one control, in one place, usable by
+// any prompt builder regardless of whether that path has a block budget. It is
+// a pure per-line prefix and depends on nothing about block size, which is
+// what makes it separable at all. A caller that genuinely needs a block budget
+// owns that splitting ITSELF rather than folding it back in here — and must
+// fence FIRST, then split, re-prefixing any seam it introduces. Fencing last
+// cannot restore the property: once a split has already put a fragment of the
+// posting at the start of its own line, the damage to the keyword is done and
+// a later prefix pass only quotes the wreckage.
 //
 // ---------------------------------------------------------------------------
 // WHAT THIS FUNCTION DOES, EXACTLY
@@ -90,8 +103,8 @@
 //
 // Blank lines are left blank rather than quoted. A line with no visible
 // characters has no heading to forge, and preserving the posting's paragraph
-// breaks keeps it readable to the model (and lets untrustedText.js's
-// re-paragrapher keep finding its block boundaries).
+// breaks keeps it readable to the model (and leaves the block boundaries
+// intact for any caller that later needs to paragraph the text itself).
 //
 // ---------------------------------------------------------------------------
 // WHAT THIS DOES NOT BUY. READ THIS BEFORE TRUSTING IT.
@@ -129,9 +142,11 @@
 export const QUOTE_PREFIX = "> ";
 
 // Every code point a model or a markdown renderer treats as ending a line, not
-// just LF: LF, VT, FF, CR, NEL, LINE SEPARATOR, PARAGRAPH SEPARATOR. Same set,
-// and the same reasoning, as lib/experience/untrustedText.js used before this
-// module took the fence over. Splitting on CRLF/LF alone leaves each of the
+// just LF: LF, VT, FF, CR, NEL, LINE SEPARATOR, PARAGRAPH SEPARATOR. This is
+// the same set, and the same reasoning, the earlier attachment-text
+// neutralizer used before the fence became a module of its own; it is
+// reproduced in full here so the set survives that module's deletion and is
+// not re-derived from LF alone. Splitting on CRLF/LF alone leaves each of the
 // others an ordinary character in the MIDDLE of what this function considers
 // one line — so a forged heading placed after one is unquoted in effect, while
 // every renderer and the model see it at the start of its own line.

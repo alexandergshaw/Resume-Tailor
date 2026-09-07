@@ -2,7 +2,7 @@
 //
 // The render tests in hrefSafety.render.test.js mount four components. There
 // are fourteen non-literal href sites in app/, and mounting the rest
-// (TrackingTab, ScreenshotTab, AutoApplyQueueTab, AutoTailorTab, ...) means
+// (TrackingTab, ScreenshotTab, AutoApplyQueueTab, ...) means
 // standing up page.js-sized prop trees for a one-line property. Reading the
 // source is the right test here because the property IS the shape of the
 // source: "no href in this app takes a non-literal value that has not passed

@@ -18,9 +18,10 @@
 // "Saturate the resume with the posting's required and preferred keywords".
 // So a control that damages the posting's tokens damages the product.
 //
-// lib/experience/untrustedText.js's neutralizeUntrustedText is the wrong tool
-// for exactly that reason. It bundles the fence with a RE-PARAGRAPHER built
-// for lib/experience/knowledgeBase.js's 1200-char attachment block budget, a
+// A bundled "neutralize everything" helper is the wrong tool for exactly that
+// reason. The repo had one, for attachment text, and it has since been deleted
+// as unreachable: it bundled the fence with a RE-PARAGRAPHER built for
+// lib/experience/knowledgeBase.js's 1200-char attachment block budget, a
 // budget that does not exist on this path. Measured on a real job description
 // it emitted "...distributed systems for lo\n\n> gistics at global scale..." —
 // it walks code points with no word-boundary awareness, so "logistics" arrived
@@ -140,7 +141,7 @@ describe("TOKEN SURVIVAL — the posting's words reach the model exactly as writ
   });
 
   it("never splits a long line, however long — no block budget lives on this path", () => {
-    // lib/experience/untrustedText.js hard-splits at MAX_BLOCK_CHARS (1200)
+    // The deleted attachment-text neutralizer hard-split at 1200 characters
     // because knowledgeBase.js's excerptForQuery skips oversized blocks. The
     // tailor prompt has no such budget, and a posting IS routinely one long
     // line (a scraped SPA, a PDF text layer). Splitting here would guillotine

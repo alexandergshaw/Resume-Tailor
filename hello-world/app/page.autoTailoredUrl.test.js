@@ -1,18 +1,28 @@
-// LIVE DEFECT under test: `applications.application_url` is a per-user
+// DEFECT originally under test: `applications.application_url` is a per-user
 // override of the shared `positions.url`. TrackingTab.js and
 // useApplicationDialogs.js already honour it (`app.application_url ||
-// pos.url`), and AutoApplyQueueTab.js / AutoTailorTab.js were just fixed to
-// match -- but the two page.js data paths that feed those tabs never select
-// or forward the column, so the override never arrives:
+// pos.url`), and AutoApplyQueueTab.js was fixed to match -- but the two
+// page.js data paths below never selected or forwarded the column, so the
+// override never arrived:
 //
-//   1. `loadAutoTailored()` (feeds `autoTailoredPostings`, which
-//      AutoTailorTab.js reads) selects `positions ( ... url )` but not the
-//      application's own `application_url`.
-//   2. `applyAutoTailoredRow(row)` -- the "Apply" button's actual onClick,
-//      wired directly in AutoTailorTab.js's props, not read from anything
-//      that component itself computes -- reads `row?.positions?.url` raw.
-//      Even once (1) is fixed, the click path stays wrong until this reads
-//      the override too.
+//   1. `loadAutoTailored()` (feeds `autoTailoredPostings`) selected
+//      `positions ( ... url )` but not the application's own
+//      `application_url`.
+//   2. `applyAutoTailoredRow(row)` -- the "Apply" action for an auto-tailored
+//      row -- read `row?.positions?.url` raw. Even once (1) is fixed, the
+//      click path stays wrong until this reads the override too.
+//
+// STATUS NOTE, and the reason this file is worth keeping. The component these
+// two functions fed, app/components/AutoTailorTab.js, has since been DELETED
+// as unreachable (commit 6e55e7d). Both functions still exist in page.js and
+// both are still correct, but nothing renders their output today:
+// `autoTailoredPostings` now feeds only the unread-count memo and the
+// mark-as-seen effect, and `applyAutoTailoredRow` has no call site at all.
+// This suite is currently their ONLY consumer of any kind, which makes it the
+// surviving record of why they are shaped the way they are. If page.js's
+// auto-tailor block is ever removed wholesale, delete this file in the same
+// change -- do not "repair" it against a page.js that no longer has these
+// functions, and do not delete the functions while leaving this file behind.
 //
 // WHY SOURCE-SCANNING: `app/page.js` is a single un-exported "use client"
 // component (`export default function Home()`); neither function is
