@@ -12,8 +12,88 @@
 // kept and never silently dropped along with the sentence it was attached
 // to. See lib/experience/researchReport.test.js for the full behavioral
 // contract this file exists to satisfy.
+//
+// WHAT A SURVIVING CITATION IS CALLED IS A SEPARATE DECISION, AND IT IS NOT
+// MADE HERE. lib/tracking/citationLabel.js owns it, for every surface in this
+// repo: a title that names a host is not a name, and the only domain that may
+// appear as a citation's label is the one `citationHost` derives from that
+// citation's OWN href. This file used to answer the question itself, in one
+// expression — `- [${g.title || g.uri}](${g.uri})` — and answered it wrongly
+// twice over. Gemini's legacy grounding metadata returns `web.uri` as a
+// `vertexaisearch.cloud.google.com` REDIRECT proxy and `web.title` as the
+// PUBLISHER'S BARE DOMAIN, so pairing them verbatim wrote a Sources line
+// reading "reuters.com" whose href reaches a Google API redirect — a claim
+// about who published this research that the link does not support, stored
+// permanently in experience_pages.body and catchable only by hovering. And its
+// final fallback stored the raw URL as a source's NAME, which a URL is not.
+//
+// That was the same defect commit 7075a12 fixed in lib/tracking/, and this was
+// its other half: the module the defect was first named against, left standing
+// because it lives outside that directory. There is now ONE rule, imported by
+// both, rather than a tracking rule and an experience rule that drift.
+//
+// The href is untouched on every path below. What changed is what is SAID
+// about a citation, never where the link goes — refusing the citation outright
+// would discard a source the search really visited.
+
+import { citationLabel, citationTitle } from "../tracking/citationLabel.js";
+import { nonPublisherHosts } from "../tracking/citationHref.js";
 
 const LINK_RE = /\[([^\]]*)\]\(((?:[^()]|\([^()]*\))*)\)/g;
+
+// The copy THIS surface shows for a citation that may not be named. It belongs
+// here rather than in citationLabel.js, which returns `kind: "unnamed"` with an
+// empty string precisely so each surface can spell the state in its own words.
+// The wording matches DigestPanel's, because a reader who meets both should not
+// have to learn two names for the same fact.
+const UNNAMED_SOURCE = "Source (unnamed)";
+
+// THE ONE THING THIS SURFACE NEEDS THAT THE DIGEST PANEL DOES NOT, and it is an
+// encoding step for the medium rather than a second opinion about names.
+//
+// The panel puts a label into a React text node, where a "]" is a character.
+// This module puts it into MARKDOWN, and lib/experience/markdown.js's link
+// branch takes the FIRST "]" after "[" with no escape handling — a backslash
+// does not help, because `indexOf("]")` finds the escaped one just the same.
+// So a "]" inside a label closes our anchor early and the remainder of the
+// label can open somebody else's: a vendor title of
+// `Analysis ](https://evil.example/x) and more` renders as a live link to
+// evil.example sitting in the user's stored report. Brackets are removed AFTER
+// the rule has decided the label, so this can only ever narrow what is shown.
+//
+// An IPv6 host arrives from `citationHost` bracketed ("[2001:db8::1]") and
+// loses its brackets here. That is a cosmetic loss on a string still derived
+// from the citation's own href, and the alternative is a broken link.
+function markdownSafeLabel(text) {
+  return text.replace(/[[\]]/g, "").trim();
+}
+
+/**
+ * The one name a citation in this report may be given.
+ *
+ * The DECISION is `citationLabel`'s, imported whole: the entry's own admissible
+ * title, else the host derived from its OWN href and not suppressed as a
+ * non-publisher, else nothing. Nothing here re-decides it, and there is
+ * deliberately no title-versus-host comparison to get wrong — a title naming
+ * the citation's own host is redundant with that host, so a match and a
+ * mismatch have the same correct outcome.
+ *
+ * Two adjustments, both applied AFTER the rule, neither a relaxation:
+ *   - an admitted title is used UNCAPPED. `citationLabel`'s 80-character cut is
+ *     for a label a screen reader speaks; this string is STORED markdown that
+ *     the reader sees in full, and citationLabel.js says as much itself.
+ *   - brackets are stripped — see `markdownSafeLabel`. A label left empty by
+ *     either step falls to the unnamed copy rather than to an empty anchor.
+ *
+ * @param {{url: unknown, title: unknown}} record
+ * @param {Set<string>} hiddenHosts
+ * @returns {string}
+ */
+function sourceLabel(record, hiddenHosts) {
+  const { text, kind } = citationLabel(record, hiddenHosts);
+  const label = markdownSafeLabel(kind === "title" ? citationTitle(record.title) : text);
+  return label === "" ? UNNAMED_SOURCE : label;
+}
 
 // http(s) only. A dangerous scheme (javascript:, data:, …) must never reach
 // the rendered report even if it somehow arrived via groundingMetadata —
@@ -127,10 +207,35 @@ export function reconcileCitations({ markdown, groundedSources } = {}) {
   const groundedKeys = new Set(safeGrounded.map((g) => normalizeKey(g.uri)).filter(Boolean));
   const isGrounded = safeGrounded.length > 0;
 
+  // Computed ONCE over every source this report can name, because
+  // nonPublisherHosts' clause (b) — a host byte-identical across every entry of
+  // a multi-entry set is a redirector by construction — needs the whole set to
+  // decide. The titles handed to it are the ADMITTED ones, exactly as
+  // DigestPanel hands it `entry.title`, so the two surfaces suppress the same
+  // hosts for the same data. Clause (a) is what fires on the legacy grounding
+  // surface, where every uri is a vertexaisearch redirect: naming Google as the
+  // publisher of a candidate's research is the harm that rule exists to stop.
+  const hiddenHosts = nonPublisherHosts(
+    safeGrounded.map((g) => ({ href: g.uri, title: citationTitle(g.title) }))
+  );
+
   const dropped = [];
   const body = src.replace(LINK_RE, (whole, text, url) => {
     const key = isGrounded ? normalizeKey(url) : null;
-    if (key && groundedKeys.has(key)) return whole;
+    if (key && groundedKeys.has(key)) {
+      // THE SECOND PLACE A LABEL MEETS A URL, and it is not a lesser one. A
+      // citation only survives here if its url matched a grounded key, and on
+      // the legacy grounding surface every grounded key IS a vertexaisearch
+      // redirect — so a surviving inline link's href is a redirect while its
+      // label is model prose free to name any publisher it likes. Same anchor,
+      // same false claim as a Sources line, so the same one rule decides it.
+      //
+      // `whole` is no longer returned, but the url is re-emitted from its own
+      // capture byte-for-byte, and a label the rule admits comes back
+      // unchanged — which is why the honest case is byte-identical output and
+      // only the mismatched one changes.
+      return `[${sourceLabel({ url, title: text }, hiddenHosts)}](${url})`;
+    }
     dropped.push(String(url).trim());
     return text;
   });
@@ -141,7 +246,14 @@ export function reconcileCitations({ markdown, groundedSources } = {}) {
       "**Not grounded** — live search returned no verifiable sources for this report, so none of its claims are confirmed. Treat it as a starting point only, and verify anything you plan to act on.";
     out = body.trim() ? `${body.trim()}\n\n${notice}` : notice;
   } else {
-    const sourceLines = safeGrounded.map((g) => `- [${g.title || g.uri}](${g.uri})`);
+    // The first place a label meets a URL. The old chain ended at `|| g.uri`,
+    // so an untitled source was written into the report under its own URL as
+    // its NAME — the clearest single symptom of this module having had a rule
+    // of its own. There is no fourth fallback now: title, else own host, else
+    // the unnamed copy.
+    const sourceLines = safeGrounded.map(
+      (g) => `- [${sourceLabel({ url: g.uri, title: g.title }, hiddenHosts)}](${g.uri})`
+    );
     out = `${body.trimEnd()}\n\n## Sources\n${sourceLines.join("\n")}`;
   }
 
