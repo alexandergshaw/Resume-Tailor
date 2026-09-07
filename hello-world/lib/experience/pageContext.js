@@ -47,6 +47,11 @@ export const MAX_CONTEXT_CHARS = 12000;
 // copy of the number would keep passing if this one moved. Naming the dropped
 // items made that property load-bearing: a count-only sentence could never
 // approach 300, a name list can pass it without trying.
+//
+// AND IT PAYS FOR THE BLOCK_JOIN THAT ATTACHES THE NOTICE — see that constant.
+// The reserve is what the notice costs the budget, and the notice cannot appear
+// in `content` without the blank line that attaches it, so that blank line is
+// part of what it costs.
 export const NOTICE_RESERVE_CHARS = 300;
 
 // How many child pages / attachments get listed by name before the rest are
@@ -70,6 +75,61 @@ export const MAX_LISTED_ATTACHMENTS = 60;
 // should not be hunting for two different things - and it must never be an
 // empty string (`“”` reads as "a page called nothing") or a raw id.
 const UNTITLED_CHILD_PAGE = "Untitled page";
+
+// The blank line between two top-level blocks of `content` — head, body block,
+// notice — named because it is SPENT in one place (the join at the end of
+// buildPageContext) and BUDGETED in two others, and one of the two used to be
+// missing entirely.
+//
+// EACH BLOCK PAYS FOR THE JOIN THAT ATTACHES IT, which is the whole rule, and
+// the only one that stays right for a join over a VARIABLE number of blocks.
+// `content` is a three-part join, so it spends this separator twice when all
+// three blocks are present, once when two are, and not at all for the head
+// alone. Charging a fixed count to any single block therefore has to be wrong
+// in one direction or the other. Charging each block for its own attachment is
+// exact in every shape: `budgetForBody` subtracts one (the join to the head,
+// which the body cannot appear without), NOTICE_RESERVE_CHARS covers one (the
+// join to whatever precedes the notice, likewise), and a call that assembles no
+// notice spends no second join and is charged for none.
+//
+// THE DEFECT THIS CLOSES, because it is invisible from outside. `budgetForBody`
+// subtracted ONE "\n\n" while the three-part join above spends TWO — under a
+// comment that said the joins "cost 2 chars each", plural, which is what makes
+// this an arithmetic slip rather than a design choice. So a body filling
+// budgetForBody, plus a notice filling NOTICE_RESERVE_CHARS, plus both joins,
+// came to MAX_CONTEXT_CHARS + 2, and the defensive clamp cut the overflow off
+// the TAIL — precisely where the notice sits. The reader got
+// `…shortened to fit the AI context budget` with its own ".]" eaten: a sentence
+// that reads as a rendering failure while reporting the one thing the reader
+// most needs to trust. No test could see it, because `content.length <= MAX` is
+// true in the broken case too — the clamp made it true.
+//
+// CHARGED TO THE RESERVE, NOT TO THE BODY, and that is the decision rather than
+// the arithmetic. Subtracting a second join from `budgetForBody` (or,
+// identically, growing NOTICE_RESERVE_CHARS to 302) costs two characters of the
+// user's own page on EVERY call — including the overwhelming majority that drop
+// nothing, assemble no notice, and never spend this join at all. Charging it to
+// the reserve costs at most two characters off a dropped-page NAME, in the one
+// call where the notice is already at its longest, which is exactly the
+// trade-off assembleNotice's own comment below already commits to.
+//
+// WHY THE WORST CASE IS NOT THE ONE lib/meeting/meetingContext.js FIXED, though
+// the shape and the remedy are the same: there the overflow needs a TRUNCATED
+// body. Here a truncated body adds a second clause to the notice, which eats
+// the room the name list needed — so the two- and three-clause notices stay
+// inside the budget on their own. What overflows here is a one-clause notice
+// beside a body of EXACTLY budgetForBody, which is not truncated at all. See
+// pageContext.test.js, which measures both boundaries rather than assuming
+// either.
+//
+// WHY lib/experience/knowledgeBase.js NEEDS NO SUCH CONSTANT, though its
+// assembly is the same shape with the same tail clamp: its notice is count-only
+// by deliberate design, so its reserve holds a notice that cannot come close to
+// filling it, and the permanent slack absorbs its join by accident. That remedy
+// — "the notice can never fill the reserve" — is true there and false here BY
+// DESIGN: assembleNotice below spends this reserve down to its last character
+// on purpose.
+const BLOCK_JOIN = "\n\n";
 
 // Separates a count clause from the names that qualify it, e.g.
 // "2 sub-pages not included: “Rollout plan”, “Risks”".
@@ -257,7 +317,11 @@ function wrapNotice(clauses) {
 // the attachment list with nothing but its count - deterministic, and the
 // count is the part the reader cannot do without.
 function assembleNotice(entries) {
-  let remaining = NOTICE_RESERVE_CHARS - wrapNotice(entries.map((entry) => entry.text)).length;
+  // BLOCK_JOIN comes out FIRST, before the skeleton is even measured: the
+  // reserve buys the notice AND the blank line that attaches it to whatever
+  // precedes it, because `content` pays for both or for neither. See BLOCK_JOIN.
+  let remaining =
+    NOTICE_RESERVE_CHARS - BLOCK_JOIN.length - wrapNotice(entries.map((entry) => entry.text)).length;
   const clauses = entries.map((entry) => {
     if (entry.names.length === 0) return entry.text;
     const list = formatDroppedNames(entry.names, { budget: remaining - NAME_CLAUSE_JOIN.length });
@@ -327,11 +391,16 @@ export function buildPageContext(input) {
 
   // What's left for the body once the head (never cut, see above) and a
   // reserve for the notice (written last, only if actually needed) are both
-  // accounted for. The "\n\n" joins below cost 2 chars each; "Body:\n"
-  // costs 6 - budgeted here rather than discovered after the fact.
+  // accounted for, plus the body block's own two costs: the "Body:\n" label,
+  // and the ONE BLOCK_JOIN that attaches this block to the head. The join to
+  // the NOTICE is not subtracted here - it is charged to NOTICE_RESERVE_CHARS
+  // inside assembleNotice instead, so a call that drops nothing (no notice, no
+  // second join) still gets every character of this budget for the user's own
+  // page. See BLOCK_JOIN for why each block pays for its own attachment, and
+  // for the off-by-one this replaced.
   const budgetForBody = Math.max(
     0,
-    MAX_CONTEXT_CHARS - head.length - NOTICE_RESERVE_CHARS - "\n\n".length - "Body:\n".length,
+    MAX_CONTEXT_CHARS - head.length - NOTICE_RESERVE_CHARS - BLOCK_JOIN.length - "Body:\n".length,
   );
 
   const bodyTruncated = body.length > budgetForBody;
@@ -355,7 +424,10 @@ export function buildPageContext(input) {
 
   const bodyBlock = bodyText ? `Body:\n${bodyText}` : "";
 
-  let content = [head, bodyBlock, noticeBlock].filter(Boolean).join("\n\n");
+  // BLOCK_JOIN, not a bare "\n\n" literal: this is the character cost that
+  // budgetForBody and assembleNotice have each already subtracted once, and two
+  // literals are how the spender and the budgeters drift apart again.
+  let content = [head, bodyBlock, noticeBlock].filter(Boolean).join(BLOCK_JOIN);
 
   // Defensive final clamp: the budgeting above is designed to always hold,
   // but if some future change to the head/notice shapes ever overshoots it

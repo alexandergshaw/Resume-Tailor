@@ -504,6 +504,174 @@ describe("naming what was left out", () => {
   });
 });
 
+// THE BOUNDARY THIS SUITE COULD NOT REACH UNTIL NOW.
+//
+// `content` is a THREE-part join — head, body block, notice — and that join
+// spends "\n\n" TWICE when all three blocks are present. `budgetForBody`
+// subtracted it ONCE. The comment directly above that expression said the
+// joins "cost 2 chars each" — plural — while the arithmetic beneath it
+// subtracted one. So a body filling the budget exactly, plus a notice filling
+// NOTICE_RESERVE_CHARS exactly, plus both joins, came to MAX_CONTEXT_CHARS + 2,
+// and the defensive clamp cut the overflow off the TAIL, which is precisely
+// where the notice lives. The reader was handed
+//
+//   [Note: 1 sub-page not included: “…” - content was shortened to fit the AI context budget
+//
+// with its ".]" eaten: a sentence that reads as a rendering failure while
+// reporting the one thing the reader most needs to trust.
+//
+// WHY NO TEST SAW IT. "stays within the budget" above asserts
+// `content.length <= MAX_CONTEXT_CHARS`, which is TRUE in the broken case —
+// the clamp is what makes it true. That assertion cannot fail by construction,
+// so it proves the clamp exists, not that the budgeting under it is right. And
+// every other case in this file uses a body that lands nowhere near the
+// budget, so the sum was never exercised at all.
+//
+// WHY THE FIXTURE MEASURES RATHER THAN CALCULATES. It is buildPageContext's and
+// assembleNotice's own arithmetic that is under suspicion here, so this test may
+// not re-derive either one: a private copy of the sum under audit keeps passing
+// for exactly as long as it stays wrong in the same way, and it would then be
+// auditing itself. Both quantities are PROBED instead — the largest body the
+// module accepts whole, and the longest notice it will actually emit — and the
+// contract is stated over what came back.
+//
+// THE WORST CASE IS NOT THE SHAPE THE SIBLING FOUND, which is the whole reason
+// it has to be measured rather than assumed. lib/meeting/meetingContext.js
+// overflows when its body is TRUNCATED. Here a truncated body adds a SECOND
+// clause ("the body was truncated…") to the notice, and that clause eats the
+// room the name list needed — so the two- and three-clause notices top out
+// below the reserve and stay inside the budget. The shape that overflows is a
+// one-clause notice beside a body of EXACTLY the budget, which is not truncated
+// at all: only then can a single sub-page name spend the reserve down to its
+// last character while all three blocks are present.
+describe("the joins between the blocks of `content`", () => {
+  const BLOCK_JOIN = "\n\n";
+
+  // Sixty short titles: a head that is small, and — because the cap is a
+  // PREFIX cut — completely unmoved by the length of the 61st title the sweep
+  // below varies. A head that grew with the variable under study would make
+  // the sweep measure two things at once and land on neither boundary.
+  const KEPT = Array.from({ length: MAX_LISTED_CHILD_PAGES }, (_, i) => ({
+    id: `c${i}`,
+    title: `S${i + 1}`,
+  }));
+
+  // `dropTitleLength: null` drops nothing at all — the control shape.
+  const build = ({ dropTitleLength, bodyLength }) =>
+    buildPageContext({
+      page: page({ body: "x".repeat(bodyLength) }),
+      childPages:
+        dropTitleLength === null ? KEPT : [...KEPT, { id: "c-drop", title: "T".repeat(dropTitleLength) }],
+    });
+
+  const noticeOf = (content) => content.slice(content.lastIndexOf("[Note:"));
+
+  // MEASURED, not computed: the largest body this module takes whole. Nothing
+  // else is dropped in these probes, so `truncated` is true if and only if the
+  // BODY was cut — which makes the returned flag an exact oracle for the body
+  // budget without this test ever reading the expression that sets it.
+  const maxUntruncatedBody = (() => {
+    let low = 0;
+    let high = MAX_CONTEXT_CHARS;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (build({ dropTitleLength: null, bodyLength: mid }).truncated) high = mid - 1;
+      else low = mid;
+    }
+    return low;
+  })();
+
+  // MEASURED, not computed: the longest notice this module will actually
+  // assemble, swept against a body far too small for the clamp to fire — so
+  // what comes back is what assembleNotice BUILT, not what survived the tail
+  // cut. Same clause set as the boundary case below (one dropped sub-page, an
+  // untruncated body), so the notice found here is the notice that case gets.
+  const worst = (() => {
+    let best = { titleLength: 0, notice: "" };
+    for (let length = 1; length <= NOTICE_RESERVE_CHARS * 2; length += 1) {
+      const notice = noticeOf(build({ dropTitleLength: length, bodyLength: 10 }).content);
+      if (notice.length > best.notice.length) best = { titleLength: length, notice };
+    }
+    return best;
+  })();
+
+  it("probes a real cliff on both axes, not the edge of its own sweep", () => {
+    // Self-check on the two measurements above, so a fixture that silently
+    // stopped finding the boundary cannot quietly pass the tests that use it.
+    //
+    // The notice axis: `worst` is a FULLY NAMED notice at the top of the
+    // reserve, and one character of title more tips formatDroppedNames into
+    // returning "" — the sentence falls back to its bare count. That cliff is
+    // what makes `worst` the true maximum rather than the end of the range.
+    expect(worst.notice).toContain("1 sub-page not included: “");
+    expect(worst.notice.endsWith("budget.]")).toBe(true);
+    expect(worst.notice.length).toBeLessThanOrEqual(NOTICE_RESERVE_CHARS);
+
+    const beyond = noticeOf(build({ dropTitleLength: worst.titleLength + 1, bodyLength: 10 }).content);
+    expect(beyond).toContain("1 sub-page not included");
+    expect(beyond).not.toContain("“");
+
+    // The body axis: one character either side of the measured budget.
+    expect(build({ dropTitleLength: null, bodyLength: maxUntruncatedBody }).truncated).toBe(false);
+    expect(build({ dropTitleLength: null, bodyLength: maxUntruncatedBody + 1 }).truncated).toBe(true);
+  });
+
+  it("leaves room for its own joins, so a full body and a full notice still fit", () => {
+    // THE ARITHMETIC, stated as the contract it should be, out of quantities
+    // this test MEASURED rather than copied: the largest `content` the module
+    // emits with no notice at all, the "\n\n" that attaches one, and the
+    // longest notice it can assemble. Their sum is what `content` is BEFORE
+    // the defensive clamp touches it — and it must not need the clamp at all.
+    const whole = build({ dropTitleLength: null, bodyLength: maxUntruncatedBody });
+    expect(whole.content).not.toContain("[Note:");
+    expect(whole.content.length + BLOCK_JOIN.length + worst.notice.length).toBeLessThanOrEqual(
+      MAX_CONTEXT_CHARS,
+    );
+  });
+
+  it("does not eat the closing of the sentence reporting the truncation", () => {
+    // The harm, not the count. A notice cut to "…to fit the AI context budget"
+    // with no ".]" reads as a rendering failure, and two characters further in
+    // the cut would land mid-name, mid-quote — the exact outcome
+    // assembleNotice's own comment says the rationing exists to prevent.
+    const { content } = build({ dropTitleLength: worst.titleLength, bodyLength: maxUntruncatedBody });
+    expect(content.endsWith("]")).toBe(true);
+    expect(content).not.toMatch(/“[^”]*$/);
+  });
+
+  it("delivers the whole notice it assembled, not a prefix of it", () => {
+    const whole = build({ dropTitleLength: null, bodyLength: maxUntruncatedBody });
+    const { content } = build({ dropTitleLength: worst.titleLength, bodyLength: maxUntruncatedBody });
+
+    // The head and the body are whole and precede the notice, exactly as the
+    // clamp's own comment promises…
+    expect(content.slice(0, content.lastIndexOf("[Note:"))).toBe(`${whole.content}${BLOCK_JOIN}`);
+    // …and the notice arrived as assembled, rather than as whatever survived.
+    expect(noticeOf(content)).toBe(worst.notice);
+    // Green in the broken case too — the clamp made it true. Kept as the
+    // standing record of why this defect was invisible for so long.
+    expect(content.length).toBeLessThanOrEqual(MAX_CONTEXT_CHARS);
+  });
+
+  it("charges the join to the reserve, never to the user's own page body", () => {
+    // THE WRONG FIX, PINNED OUT. Paying for the second join by shrinking
+    // `budgetForBody` — or by raising NOTICE_RESERVE_CHARS, which is the same
+    // subtraction wearing a different name — costs two characters of the
+    // user's own page on EVERY call, including the overwhelming majority that
+    // drop nothing, assemble no notice, and never spend that join at all.
+    //
+    // Stated over the two EXPORTED constants and nothing else: when the body
+    // pays for the join that attaches IT and for nothing else, the largest
+    // notice-free `content` is MAX_CONTEXT_CHARS minus the reserve exactly,
+    // whatever the head happens to be.
+    const body = "x".repeat(maxUntruncatedBody);
+    const whole = buildPageContext({ page: page({ body }), childPages: KEPT });
+    expect(whole.truncated).toBe(false);
+    expect(whole.content.endsWith(body)).toBe(true);
+    expect(whole.content.length).toBe(MAX_CONTEXT_CHARS - NOTICE_RESERVE_CHARS);
+  });
+});
+
 // Two helpers became public exports so the meeting copilot can build its own
 // multi-page context without re-implementing the attachment-honesty rules.
 //
