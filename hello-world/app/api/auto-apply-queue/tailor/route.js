@@ -12,8 +12,9 @@ import { STATUS, APPLIED_OR_LATER_STATUSES } from "@/lib/applications/statusVoca
 // already at any of interviewing/offer/accepted/etc. is "already in the
 // pipeline" and must not be re-tailored and re-queued. The set used to be
 // `["auto_queued", "applied"]` — two of eleven statuses — so a row at
-// "interviewing" or "offer" was NOT treated as tracked, and the rocket would
-// re-tailor and re-queue a job the user already has an offer on.
+// "interviewing" or "offer" was NOT treated as tracked, and a caller of this
+// route would re-tailor and re-queue a job the user already has an offer on.
+// (The caller then was the Live Feed's rocket button; see the note on POST.)
 const DEDUP_STATUSES = [STATUS.AUTO_QUEUED, ...APPLIED_OR_LATER_STATUSES];
 
 export const runtime = "nodejs";
@@ -22,11 +23,28 @@ export const maxDuration = 300;
 const FEED_SELECT =
   "id, dedup_key, source, source_posting_id, title, company, location, remote_type, employment_type, salary_min, salary_max, description_snippet, min_years_required, url, tags, posted_at, raw_data";
 
-// Manually run the cron's tailor-and-queue pipeline for a single feed posting,
-// triggered by the "Auto-apply" button on a Live Feed card. Authenticates the
-// user via the SSR client, then performs privileged writes with the admin
-// client — always scoped to the authenticated user's id (never trusting a body
-// user id).
+// Run the cron's tailor-and-queue pipeline for a SINGLE posting: tailor a
+// resume and a cover letter for it and park the result in the auto-apply
+// queue, through the same `tailorAndQueueOne` helper the cron itself uses
+// (app/api/cron/tailor/route.js) — so a job queued here is indistinguishable
+// from one the cron queued.
+//
+// NO IN-APP CALLER TODAY. This was the Live Feed card's "Auto-apply" button
+// (`handleAutoApply` in app/components/LiveFeedTab.js) until commit 572b77c
+// replaced that button with "Auto-fill", which copies an autofill bookmarklet
+// and never touches this route. Nothing under app/, extension/ or vercel.json
+// posts here now; it is reachable only by a direct authenticated request. Left
+// in place rather than deleted because it is the only single-posting entry
+// point into the queue pipeline, and its behaviour is pinned by route.test.js.
+//
+// Authenticates the user via the SSR client (401 otherwise), then performs the
+// privileged reads and writes with the admin client — always scoped to the
+// authenticated user's id, never a user id taken from the body.
+//
+// The posting is resolved from `body.postingId` (read back out of
+// `feed_postings`) or, failing that, an inline `body.posting` object; neither
+// is a 400. A stored resume at `${user.id}/resume` is required (400 without
+// one); the cover letter is best-effort.
 export async function POST(request) {
   const supabase = await createClient();
   const {
@@ -76,10 +94,11 @@ export async function POST(request) {
     );
   }
 
-  // Don't create duplicates — if this posting is already queued or already
-  // applied, report it as such. A row left at an earlier status (e.g.
-  // "tracking" from a half-finished run) is intentionally NOT treated as a
-  // duplicate so re-running recovers it into the queue.
+  // Don't create duplicates — if this posting is already queued or at any
+  // applied-or-later status (the full set is DEDUP_STATUSES above, not just
+  // "applied"), report it as such. A row left at an earlier, pre-apply status
+  // (e.g. "tracking" from a half-finished run) is intentionally NOT treated as
+  // a duplicate so re-running recovers it into the queue.
   const externalId = postingExternalId(posting);
   if (externalId) {
     const tracked = await loadAlreadyTrackedExternalIds(admin, user.id, [externalId], DEDUP_STATUSES);
