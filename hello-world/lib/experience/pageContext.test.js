@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   buildPageContext,
   MAX_CONTEXT_CHARS,
+  MAX_LISTED_CHILD_PAGES,
+  MAX_LISTED_ATTACHMENTS,
+  NOTICE_RESERVE_CHARS,
   formatAttachment,
   attachmentKindLabel,
 } from "./pageContext.js";
@@ -302,6 +305,202 @@ describe("a zip attachment is inventory only", () => {
     const { content } = buildPageContext({ page: page(), breadcrumb: [], childPages: [], attachments: [zip] });
     const line = content.split("\n").find((l) => l.includes("project-export.zip"));
     expect(line).toContain("archive");
+  });
+});
+
+// WHICH ones, not how many.
+//
+// Both lists above stop at 60 and report a bare integer. That integer is the
+// whole of what the reader gets: "3 sub-pages not included" tells someone that
+// the assistant is answering about a project with a hole in it, and gives them
+// no way to find out where the hole is. The identity is not even hard to
+// recover here — both caps are a PREFIX CUT, so the dropped items are exactly
+// the tail of the list that was already in hand; it simply was not returned.
+//
+// The fix follows lib/experience/tailorContext.js's, which closed the same
+// defect for the tailoring prompt after the owner's own words forced it ("i
+// need to know exactly which ones were left out"). Two differences from that
+// precedent, both deliberate:
+//
+//  - There, the names go to the ROUTE's response warning and the model-facing
+//    notice stays a count. Here there is no such second surface: the only
+//    reader of this string is the model that is about to answer questions
+//    about the page (app/components/experience/ExperienceTab.js hands
+//    `content` straight to the chat, and ChatPanel renders only the `label`).
+//    So the names go into the notice itself — otherwise nothing anywhere ever
+//    learns them — AND are returned alongside, so that component can surface
+//    them to the human without re-deriving a set it does not own.
+//  - Because they go into the notice, they compete with the very budget the
+//    notice is describing. NOTICE_RESERVE_CHARS is a FIXED number sized for a
+//    count-only sentence, and the defensive final clamp at the end of
+//    buildPageContext cuts from the tail — where the notice lives. So the
+//    names are rationed inside the reserve and the reserve never moves; see
+//    lib/experience/droppedNames.js for that rule and the last test here for
+//    what it looks like at the boundary.
+describe("naming what was left out", () => {
+  const children = (n, title = (i) => `Sub-page ${i + 1}`) =>
+    Array.from({ length: n }, (_, i) => ({ id: `c${i}`, title: title(i) }));
+
+  it("names the sub-pages it dropped, and not the ones it kept", () => {
+    // The mutant this kills first: returning the INCLUDED names. They are the
+    // same length of array, they are all real page titles, and every "does it
+    // name something" assertion passes on them — while telling the reader the
+    // exact opposite of the truth.
+    const { content, droppedChildPages } = buildPageContext({
+      page: page(),
+      childPages: children(MAX_LISTED_CHILD_PAGES + 2),
+    });
+
+    expect(droppedChildPages).toEqual([
+      `Sub-page ${MAX_LISTED_CHILD_PAGES + 1}`,
+      `Sub-page ${MAX_LISTED_CHILD_PAGES + 2}`,
+    ]);
+    expect(content).toContain(
+      `2 sub-pages not included: “Sub-page ${MAX_LISTED_CHILD_PAGES + 1}”, “Sub-page ${MAX_LISTED_CHILD_PAGES + 2}”`,
+    );
+    // The kept ones are listed above as inventory and must NOT also appear in
+    // the "left out" sentence.
+    expect(content.slice(content.lastIndexOf("[Note:"))).not.toContain("“Sub-page 1”");
+  });
+
+  it("pins the cap on both sides", () => {
+    // Off-by-one at the cap is the other mutant that reads perfectly: exactly
+    // 60 children must produce no notice at all, and the 61st must be the one
+    // named — never the 60th, which really was included.
+    const exactly = buildPageContext({ page: page(), childPages: children(MAX_LISTED_CHILD_PAGES) });
+    expect(exactly.droppedChildPages).toEqual([]);
+    expect(exactly.truncated).toBe(false);
+    expect(exactly.content).not.toContain("not included");
+
+    const oneMore = buildPageContext({ page: page(), childPages: children(MAX_LISTED_CHILD_PAGES + 1) });
+    expect(oneMore.droppedChildPages).toEqual([`Sub-page ${MAX_LISTED_CHILD_PAGES + 1}`]);
+    expect(oneMore.truncated).toBe(true);
+    expect(oneMore.content).toContain(`1 sub-page not included: “Sub-page ${MAX_LISTED_CHILD_PAGES + 1}”`);
+    expect(oneMore.content).toContain(`- Sub-page ${MAX_LISTED_CHILD_PAGES}`);
+  });
+
+  it("calls an untitled dropped sub-page what the list above already calls it", () => {
+    // The tree creates pages titled "", and people write the body before
+    // naming one — so a nameless page is ordinary, not a fixture. It must not
+    // reach the sentence as an empty string (`“”`) or as its raw id, and it
+    // must use the SAME word the inventory line above it uses, or the reader
+    // is looking for two different things.
+    const list = [...children(MAX_LISTED_CHILD_PAGES), { id: "c-blank", title: "   " }];
+    const { content, droppedChildPages } = buildPageContext({ page: page(), childPages: list });
+
+    expect(droppedChildPages).toEqual(["Untitled page"]);
+    expect(content).toContain("1 sub-page not included: “Untitled page”");
+    expect(content).not.toContain("“”");
+    expect(content).not.toContain("c-blank");
+  });
+
+  it("names the attachments it dropped", () => {
+    const many = Array.from({ length: MAX_LISTED_ATTACHMENTS + 3 }, (_, i) =>
+      attachment({ id: `a${i}`, name: `file-${i}.pdf`, kind: "pdf" }),
+    );
+    const { content, droppedAttachments } = buildPageContext({ page: page(), attachments: many });
+
+    expect(droppedAttachments).toEqual([
+      `file-${MAX_LISTED_ATTACHMENTS}.pdf`,
+      `file-${MAX_LISTED_ATTACHMENTS + 1}.pdf`,
+      `file-${MAX_LISTED_ATTACHMENTS + 2}.pdf`,
+    ]);
+    expect(content).toContain(
+      `3 attachments not included: “file-${MAX_LISTED_ATTACHMENTS}.pdf”, “file-${MAX_LISTED_ATTACHMENTS + 1}.pdf”, “file-${MAX_LISTED_ATTACHMENTS + 2}.pdf”`,
+    );
+    expect(content).toContain(`- file-${MAX_LISTED_ATTACHMENTS - 1}.pdf (PDF)`);
+    expect(content).not.toContain(`- file-${MAX_LISTED_ATTACHMENTS}.pdf (PDF)`);
+  });
+
+  it("neither counts nor names a row that was never going to be listed", () => {
+    // formatAttachment refuses anything without a usable name (see its own
+    // guard). Counting such a row as "an attachment not included" would
+    // report a file the user does not have, and NAMING it would force an
+    // "Untitled file" that is worse still — the very line that guard exists
+    // to stop being minted. So the cap now applies to the attachments that
+    // would really have produced a line, which also makes the count and the
+    // names describe one single set by construction.
+    const junk = [null, {}, { name: "  " }, "spec.pdf"];
+    const real = Array.from({ length: MAX_LISTED_ATTACHMENTS }, (_, i) =>
+      attachment({ id: `a${i}`, name: `file-${i}.pdf`, kind: "pdf" }),
+    );
+    const { content, droppedAttachments, truncated } = buildPageContext({
+      page: page(),
+      attachments: [...junk, ...real],
+    });
+
+    expect(droppedAttachments).toEqual([]);
+    expect(truncated).toBe(false);
+    expect(content).not.toContain("Untitled file");
+    // And every real file still made it — the junk did not eat four slots.
+    expect(content).toContain(`- file-${MAX_LISTED_ATTACHMENTS - 1}.pdf (PDF)`);
+  });
+
+  it("keeps both counts and both name lists in one notice", () => {
+    const { content, truncated } = buildPageContext({
+      page: page({ body: "x".repeat(MAX_CONTEXT_CHARS * 3) }),
+      childPages: children(MAX_LISTED_CHILD_PAGES + 1),
+      attachments: Array.from({ length: MAX_LISTED_ATTACHMENTS + 1 }, (_, i) =>
+        attachment({ id: `a${i}`, name: `file-${i}.pdf`, kind: "pdf" }),
+      ),
+    });
+    expect(truncated).toBe(true);
+    expect(content).toContain("the body was truncated");
+    expect(content).toContain(`1 sub-page not included: “Sub-page ${MAX_LISTED_CHILD_PAGES + 1}”`);
+    expect(content).toContain(`1 attachment not included: “file-${MAX_LISTED_ATTACHMENTS}.pdf”`);
+  });
+
+  it("shrinks the name list rather than blowing the notice reserve", () => {
+    // THE TRAP THIS FILE'S OWN HEADER NAMES. A notice that grows with the
+    // number of names is competing for the reserve carved out to hold it, and
+    // the defensive clamp at the end of buildPageContext cuts from the tail —
+    // so the sentence explaining the truncation is the first thing a long list
+    // would destroy, mid-name, mid-quote.
+    //
+    // The reserve does not move. The NAMES do: they are handed back to the
+    // "and N more" tally until the whole notice fits.
+    const long = (i) => `Sub-page ${i + 1} — the quarterly rollout notes`;
+    const { content } = buildPageContext({
+      page: page({ body: "x".repeat(MAX_CONTEXT_CHARS * 3) }),
+      childPages: children(MAX_LISTED_CHILD_PAGES + 10, long),
+    });
+
+    const notice = content.slice(content.lastIndexOf("[Note:"));
+    expect(content.length).toBeLessThanOrEqual(MAX_CONTEXT_CHARS);
+    expect(notice.length).toBeLessThanOrEqual(NOTICE_RESERVE_CHARS);
+    // Intact: the closing bracket survived, and no name was cut mid-quote.
+    expect(notice.endsWith("]")).toBe(true);
+    expect(notice).not.toMatch(/“[^”]*$/);
+    // The count is never what gets sacrificed — that is the number the reader
+    // needs even when the names could not all fit.
+    expect(notice).toContain("10 sub-pages not included:");
+    expect(notice).toMatch(/and \d+ more/);
+  });
+
+  it("keeps the bare count when not one name can fit", () => {
+    // The degenerate end of the same rule: a single title longer than the
+    // whole reserve leaves nothing to say, and the notice falls back to
+    // exactly what it says today rather than printing a fragment of a title.
+    const { content } = buildPageContext({
+      page: page(),
+      childPages: [
+        ...children(MAX_LISTED_CHILD_PAGES),
+        { id: "c-huge", title: "T".repeat(NOTICE_RESERVE_CHARS * 2) },
+      ],
+    });
+    const notice = content.slice(content.lastIndexOf("[Note:"));
+    expect(notice).toContain("1 sub-page not included");
+    expect(notice).not.toContain("1 sub-page not included:");
+    expect(notice.length).toBeLessThanOrEqual(NOTICE_RESERVE_CHARS);
+    expect(notice.endsWith("]")).toBe(true);
+  });
+
+  it("returns empty name lists, never undefined, when nothing was dropped", () => {
+    // A caller that renders `droppedChildPages.length` must not have to guard
+    // for the ordinary case.
+    const result = buildPageContext({ page: page() });
+    expect(result.droppedChildPages).toEqual([]);
+    expect(result.droppedAttachments).toEqual([]);
   });
 });
 

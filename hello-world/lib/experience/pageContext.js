@@ -14,6 +14,23 @@
 // attachment inventory, then as much of the body as still fits), and any
 // shortfall is written into the content itself as a plain-English notice -
 // never a bare slice.
+//
+// AND NEVER A BARE COUNT EITHER, which is the second half of the same rule and
+// the half this file used to fail. Both lists below stop at 60 and the notice
+// reported an integer - "3 sub-pages not included" - which tells the reader
+// that the model is answering about a project with a hole in it and gives them
+// no way to learn where the hole is. Both caps are a PREFIX CUT, so the dropped
+// items are exactly the tail of a list already in hand; the identity was never
+// hard to recover, it simply was not returned. It is now, both in the notice
+// (the model is the only reader of this string - see buildPageContext's own
+// comment) and in the returned `droppedChildPages`/`droppedAttachments`, so
+// app/components/experience/ExperienceTab.js can surface it to the human
+// without re-deriving a set it does not own. See lib/experience/tailorContext.js
+// for the same fix on the tailoring prompt, and lib/experience/droppedNames.js
+// for why the names have to be rationed inside NOTICE_RESERVE_CHARS rather than
+// allowed to grow it.
+
+import { formatDroppedNames } from "./droppedNames.js";
 
 export const MAX_CONTEXT_CHARS = 12000;
 
@@ -23,7 +40,14 @@ export const MAX_CONTEXT_CHARS = 12000;
 // length must be pre-budgeted rather than fought over with the body. Sized
 // generously above the worst realistic notice string (see the three phrases
 // assembled below) so the notice is never itself the thing that gets cut.
-const NOTICE_RESERVE_CHARS = 300;
+//
+// EXPORTED so pageContext.test.js can assert the assembled notice fits inside
+// it rather than hardcoding 300 a second time - the property that matters is
+// "the notice never exceeds its own reserve", and a test carrying a private
+// copy of the number would keep passing if this one moved. Naming the dropped
+// items made that property load-bearing: a count-only sentence could never
+// approach 300, a name list can pass it without trying.
+export const NOTICE_RESERVE_CHARS = 300;
 
 // How many child pages / attachments get listed by name before the rest are
 // summarized as "N more not included". Keeps the head (the part that must
@@ -32,8 +56,24 @@ const NOTICE_RESERVE_CHARS = 300;
 // cut" below) bounded, so a page with an unreasonable number of children or
 // attachments cannot itself starve the whole budget the way an unbounded
 // body could.
-const MAX_LISTED_CHILD_PAGES = 60;
-const MAX_LISTED_ATTACHMENTS = 60;
+//
+// Exported for the same reason as the reserve above: the tests that pin what
+// happens at the 60th and 61st entry have to be written against the real cap,
+// or an off-by-one here silently becomes an off-by-one there too.
+export const MAX_LISTED_CHILD_PAGES = 60;
+export const MAX_LISTED_ATTACHMENTS = 60;
+
+// The display name a dropped item takes when it has none of its own. The tree
+// creates pages titled "", and people write a body before naming it, so a
+// nameless child page is ordinary rather than a fixture. It must match what
+// formatChildPages already writes on the line ABOVE the notice - the reader
+// should not be hunting for two different things - and it must never be an
+// empty string (`“”` reads as "a page called nothing") or a raw id.
+const UNTITLED_CHILD_PAGE = "Untitled page";
+
+// Separates a count clause from the names that qualify it, e.g.
+// "2 sub-pages not included: “Rollout plan”, “Risks”".
+const NAME_CLAUSE_JOIN = ": ";
 
 // Per-entry safety cap on a single note/transcript field. Not exercised by
 // the gate test's fixtures (all short strings), but without it one
@@ -62,16 +102,22 @@ function formatBreadcrumb(breadcrumb) {
   return parts.join(" / ");
 }
 
+// A prefix cut, so `droppedNames` is exactly the tail - derived from the SAME
+// `list` and the SAME cap that decided `shown`, in the one expression, so the
+// two can never describe different sets. The display name is computed by the
+// same rule the shown lines use (title, else UNTITLED_CHILD_PAGE), minus the
+// per-field clip: the clip exists to stop one long title eating the inventory's
+// share of the budget, and the names are budgeted separately (see the notice
+// assembly in buildPageContext), while `droppedChildPages` is structured data
+// for a caller to render rather than prose and should carry the real title.
 function formatChildPages(childPages) {
   const list = (Array.isArray(childPages) ? childPages : []).filter(Boolean);
-  if (list.length === 0) return { text: "", dropped: 0 };
+  if (list.length === 0) return { text: "", dropped: 0, droppedNames: [] };
   const shown = list.slice(0, MAX_LISTED_CHILD_PAGES);
-  const dropped = list.length - shown.length;
-  const lines = shown.map((entry) => {
-    const title = str(entry?.title).trim() || "Untitled page";
-    return `- ${clip(title, MAX_FIELD_CHARS)}`;
-  });
-  return { text: lines.join("\n"), dropped };
+  const nameOf = (entry) => str(entry?.title).trim() || UNTITLED_CHILD_PAGE;
+  const droppedNames = list.slice(MAX_LISTED_CHILD_PAGES).map(nameOf);
+  const lines = shown.map((entry) => `- ${clip(nameOf(entry), MAX_FIELD_CHARS)}`);
+  return { text: lines.join("\n"), dropped: droppedNames.length, droppedNames };
 }
 
 export function attachmentKindLabel(kind) {
@@ -152,28 +198,78 @@ export function formatAttachment(attachment) {
   return notes ? `- ${name} (${label}) - notes: ${notes}` : `- ${name} (${label})`;
 }
 
+// THE FILTER MOVED IN FRONT OF THE CAP, and that is a behaviour change made on
+// purpose. This used to slice 60 raw rows and only then drop the ones
+// formatAttachment refuses (its own guard returns "" for anything without a
+// usable name, which the object-shape filter does not catch) - so `dropped`
+// counted junk rows as "attachments not included", and 60 junk rows ahead of
+// five real ones produced an EMPTY inventory with five real files reported as
+// dropped.
+//
+// Naming them is what forced the question: a row with no name cannot be named
+// honestly. Calling it "Untitled file" would mint exactly the phantom
+// inventory line formatAttachment's guard exists to prevent, one sentence
+// lower down; leaving it blank would print `“”`. The only honest answer is
+// that a row which would never have been listed is not an attachment the
+// budget left out. So the cap now applies to the attachments that really
+// produce a line, which makes the count and the names describe one single set
+// by construction, and makes "60" mean 60 listed files rather than 60 rows of
+// which an unknown number vanish. Every line formatAttachment returns has a
+// non-blank name (it returns "" otherwise), so the names below need no
+// fallback at all.
 function formatAttachments(attachments) {
-  const list = (Array.isArray(attachments) ? attachments : []).filter(
-    (entry) => entry && typeof entry === "object",
-  );
-  if (list.length === 0) return { text: "", dropped: 0 };
-  const shown = list.slice(0, MAX_LISTED_ATTACHMENTS);
-  const dropped = list.length - shown.length;
-  // .filter(Boolean): formatAttachment's own guard (see its comment) now
-  // returns "" for an object that isn't a usable attachment - e.g. one with
-  // a missing/blank name, which the object-shape filter above does not
-  // catch. Without dropping those here, one bad row would still pass this
-  // module's own honesty rules but leave a blank line sitting inside an
-  // otherwise-real inventory.
-  return { text: shown.map(formatAttachment).filter(Boolean).join("\n"), dropped };
+  const entries = (Array.isArray(attachments) ? attachments : [])
+    .filter((entry) => entry && typeof entry === "object")
+    .map((entry) => ({ line: formatAttachment(entry), name: str(entry.name).trim() }))
+    .filter((entry) => entry.line !== "");
+  if (entries.length === 0) return { text: "", dropped: 0, droppedNames: [] };
+  const shown = entries.slice(0, MAX_LISTED_ATTACHMENTS);
+  const droppedNames = entries.slice(MAX_LISTED_ATTACHMENTS).map((entry) => entry.name);
+  return { text: shown.map((entry) => entry.line).join("\n"), dropped: droppedNames.length, droppedNames };
 }
 
 function pluralize(count, noun) {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
+// Wraps the clause list in the exact sentence this module has always emitted.
+// Kept as one function so the SKELETON (the same clauses with no names) and
+// the finished notice are measured through identical code - measuring them
+// differently is how a reserve calculation silently goes stale.
+function wrapNotice(clauses) {
+  return `[Note: ${clauses.join("; ")} - content was shortened to fit the AI context budget.]`;
+}
+
+// Adds the names to each count clause, spending at most NOTICE_RESERVE_CHARS on
+// the whole notice.
+//
+// THE RULE, stated once here and again in lib/experience/droppedNames.js: the
+// reserve never moves, the names do. The reserve was carved out of the BODY's
+// budget, so growing it would be paid for in the user's own page content on
+// every call, including the ones that drop nothing at all - and the defensive
+// clamp at the end of buildPageContext cuts from the tail, which is where this
+// notice lives, so an unrationed name list would end up truncating the very
+// sentence that reports the truncation.
+//
+// The counts are never what gets sacrificed: they are written first, into the
+// skeleton, and whatever the reserve has left over is what the names get.
+// Clauses take from that remainder IN ORDER, so a long sub-page list can leave
+// the attachment list with nothing but its count - deterministic, and the
+// count is the part the reader cannot do without.
+function assembleNotice(entries) {
+  let remaining = NOTICE_RESERVE_CHARS - wrapNotice(entries.map((entry) => entry.text)).length;
+  const clauses = entries.map((entry) => {
+    if (entry.names.length === 0) return entry.text;
+    const list = formatDroppedNames(entry.names, { budget: remaining - NAME_CLAUSE_JOIN.length });
+    if (!list) return entry.text;
+    remaining -= NAME_CLAUSE_JOIN.length + list.length;
+    return `${entry.text}${NAME_CLAUSE_JOIN}${list}`;
+  });
+  return wrapNotice(clauses);
+}
+
 // buildPageContext({ page, breadcrumb, childPages, attachments }) ->
-// { label, content, truncated }.
+// { label, content, truncated, droppedChildPages, droppedAttachments }.
 //
 // `label` is what the chat opener names ("I need help with <label>: ") -
 // always just the page title.
@@ -187,6 +283,24 @@ function pluralize(count, noun) {
 // `truncated` is true the moment ANY of the body, the child-page list, or
 // the attachment list had to drop something to fit - never inferred from
 // content.length alone, so a caller can act on it directly.
+//
+// `droppedChildPages` / `droppedAttachments` are the DISPLAY NAMES of what
+// each list left out, in the order they appear on the page, always arrays and
+// never undefined so a caller can read `.length` without a guard. A child page
+// with no title reports the same "Untitled page" the inventory line above it
+// uses; an attachment with no usable name is neither counted nor named,
+// because it would never have been listed at all (see formatAttachments).
+//
+// WHY THE NAMES ARE ALSO IN THE NOTICE, unlike lib/experience/tailorContext.js,
+// which keeps its model-facing notice a count and hands the names to its route
+// instead. There, a human reads the route's warning. Here there is no such
+// second reader today: app/components/experience/ExperienceTab.js destructures
+// `{ label, content }` and hands `content` to the chat, where ChatPanel renders
+// only the `label` - so a name that is not in `content` is a name nobody, model
+// or human, ever sees. The return values exist so that component can surface
+// them properly (it is owned by another pass), and the notice carries them in
+// the meantime, rationed inside NOTICE_RESERVE_CHARS by assembleNotice above so
+// that carrying them can never cost the page any content.
 export function buildPageContext(input) {
   const src = input && typeof input === "object" ? input : {};
   const page = src.page && typeof src.page === "object" ? src.page : {};
@@ -194,8 +308,16 @@ export function buildPageContext(input) {
   const body = str(page.body);
 
   const breadcrumbText = formatBreadcrumb(src.breadcrumb);
-  const { text: childText, dropped: childDropped } = formatChildPages(src.childPages);
-  const { text: attachmentText, dropped: attachmentDropped } = formatAttachments(src.attachments);
+  const {
+    text: childText,
+    dropped: childDropped,
+    droppedNames: droppedChildPages,
+  } = formatChildPages(src.childPages);
+  const {
+    text: attachmentText,
+    dropped: attachmentDropped,
+    droppedNames: droppedAttachments,
+  } = formatAttachments(src.attachments);
 
   const headLines = [`Project: ${title}`];
   if (breadcrumbText) headLines.push(`Path: ${breadcrumbText}`);
@@ -215,15 +337,21 @@ export function buildPageContext(input) {
   const bodyTruncated = body.length > budgetForBody;
   const bodyText = bodyTruncated ? body.slice(0, budgetForBody) : body;
 
+  // `names` is empty for the body clause because a truncated body is one
+  // thing, not a list of them - the notice already names it ("the body").
   const notices = [];
-  if (bodyTruncated) notices.push("the body was truncated to fit the AI context budget");
-  if (childDropped > 0) notices.push(`${pluralize(childDropped, "sub-page")} not included`);
-  if (attachmentDropped > 0) notices.push(`${pluralize(attachmentDropped, "attachment")} not included`);
+  if (bodyTruncated) {
+    notices.push({ text: "the body was truncated to fit the AI context budget", names: [] });
+  }
+  if (childDropped > 0) {
+    notices.push({ text: `${pluralize(childDropped, "sub-page")} not included`, names: droppedChildPages });
+  }
+  if (attachmentDropped > 0) {
+    notices.push({ text: `${pluralize(attachmentDropped, "attachment")} not included`, names: droppedAttachments });
+  }
 
   const truncated = notices.length > 0;
-  const noticeBlock = truncated
-    ? `[Note: ${notices.join("; ")} - content was shortened to fit the AI context budget.]`
-    : "";
+  const noticeBlock = truncated ? assembleNotice(notices) : "";
 
   const bodyBlock = bodyText ? `Body:\n${bodyText}` : "";
 
@@ -241,5 +369,5 @@ export function buildPageContext(input) {
     content = content.slice(0, MAX_CONTEXT_CHARS);
   }
 
-  return { label: title, content, truncated };
+  return { label: title, content, truncated, droppedChildPages, droppedAttachments };
 }

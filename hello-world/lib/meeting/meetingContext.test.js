@@ -23,6 +23,7 @@ import {
   buildMeetingContext,
   MAX_LISTED_ATTACHMENTS,
   MAX_MEETING_CONTEXT_CHARS,
+  NOTICE_RESERVE_CHARS,
   stripSpeakerLabels,
 } from "./meetingContext.js";
 
@@ -89,8 +90,18 @@ describe("the attachment honesty claim", () => {
     }));
     const { content } = buildMeetingContext(call({ pages: [page({ attachments: many })] }));
 
-    expect(content).toContain(`file-${MAX_LISTED_ATTACHMENTS - 1}.pdf`);
-    expect(content).not.toContain(`file-${MAX_LISTED_ATTACHMENTS}.pdf`);
+    // Scoped to the INVENTORY (everything ahead of the notice) rather than to
+    // the whole string, and narrowed deliberately rather than weakened. The
+    // cap is a claim about the file LIST, and the 21st file name is now a
+    // legitimate part of the notice below it — as the name of a file that was
+    // NOT listed, which is the whole point of this pass. Asserted against the
+    // whole string, this test would have made naming the dropped files
+    // impossible while proving nothing extra: an implementation that dropped
+    // the slice still fails, because the 21st line would then be in the
+    // inventory.
+    const inventory = content.slice(0, content.lastIndexOf("[Note:"));
+    expect(inventory).toContain(`- file-${MAX_LISTED_ATTACHMENTS - 1}.pdf`);
+    expect(inventory).not.toContain(`- file-${MAX_LISTED_ATTACHMENTS}.pdf`);
     expect(content).toContain("5 attachments not listed");
   });
 
@@ -272,6 +283,129 @@ describe("the budget", () => {
     const result = buildMeetingContext(call({ pages: [page({ id: "p-1" })] }));
     expect(result.droppedPageCount).toBe(0);
     expect(result.content).not.toMatch(/not included/i);
+  });
+
+  it("names the pages it did not get, not just how many", () => {
+    // "2 pages not included" tells the user their live copilot is answering
+    // from a knowledge base with a hole in it and gives them no way to learn
+    // where. The identity is perfectly determined — this loop STOPS rather
+    // than skips (see the test above and the loop's own comment), so the
+    // dropped set is exactly the tail of the ranked order — it simply was not
+    // returned.
+    //
+    // The mutant this kills first: naming `included` instead. Same shape, same
+    // real titles, every "does it name anything" assertion green, and the
+    // reader is told the opposite of the truth.
+    const result = buildMeetingContext(
+      call({ pages: [big("p-1", 200), big("p-2", 4000), big("p-3", 10)] }),
+    );
+    expect(result.droppedPages).toEqual(["Page p-2", "Page p-3"]);
+    expect(result.droppedPageCount).toBe(result.droppedPages.length);
+    expect(result.content).toContain(
+      "2 pages not included to fit the meeting context budget: “Page p-2”, “Page p-3”.",
+    );
+    // p-1 was included; it must not also be listed as left out.
+    expect(result.content.slice(result.content.lastIndexOf("[Note:"))).not.toContain("“Page p-1”");
+  });
+
+  it("calls an untitled dropped page what the page block above already calls it", () => {
+    // formatPageBlock falls back to "Untitled page" for a heading; the notice
+    // must use the same word rather than an empty pair of quotes or the raw
+    // id, or the reader is hunting for two different things.
+    const result = buildMeetingContext(
+      call({
+        topic: "",
+        transcript: "",
+        pages: [
+          big("p-1", 1700),
+          page({ id: "p-blank", title: "   ", body: "notes ".repeat(40), position: 1 }),
+        ],
+      }),
+    );
+    expect(result.droppedPages).toEqual(["Untitled page"]);
+    expect(result.content).toContain(
+      "1 page not included to fit the meeting context budget: “Untitled page”.",
+    );
+    expect(result.content).not.toContain("“”");
+    expect(result.content).not.toContain("p-blank");
+  });
+
+  it("names the attachments it did not list", () => {
+    const many = Array.from({ length: MAX_LISTED_ATTACHMENTS + 5 }, (_, i) => ({
+      name: `file-${i}.pdf`,
+      kind: "pdf",
+    }));
+    const { content } = buildMeetingContext(call({ pages: [page({ attachments: many })] }));
+
+    const named = Array.from({ length: 5 }, (_, i) => `“file-${MAX_LISTED_ATTACHMENTS + i}.pdf”`).join(", ");
+    expect(content).toContain(
+      `5 attachments not listed to fit the meeting context budget: ${named}.`,
+    );
+    // Off-by-one at the cap, pinned: the last LISTED file is not in the
+    // sentence, and the first unlisted one is.
+    expect(content.slice(content.lastIndexOf("[Note:"))).not.toContain(
+      `“file-${MAX_LISTED_ATTACHMENTS - 1}.pdf”`,
+    );
+  });
+
+  it("shrinks the name list rather than blowing the notice reserve", () => {
+    // The trap: the notice is itself text, and it competes for the reserve
+    // carved out to hold it. NOTICE_RESERVE_CHARS is a fixed number sized for
+    // count-only sentences; a name list is not fixed. And the defensive clamp
+    // at the end of buildMeetingContext cuts from the TAIL, which is exactly
+    // where the notice sits — so a long list would destroy the sentence
+    // explaining the truncation, mid-name, mid-quote.
+    //
+    // The decision, pinned here: the reserve does not move (it was carved out
+    // of the page budget, and growing it costs real knowledge base). The NAMES
+    // are what shrink, back into the "and N more" tally.
+    const wordy = Array.from({ length: 40 }, (_, i) =>
+      page({
+        id: `p-${i}`,
+        position: i + 1,
+        title: `Quarterly rollout notes for the payments platform, page ${i}`,
+        body: "notes",
+      }),
+    );
+    const result = buildMeetingContext(
+      call({ topic: "", transcript: "", pages: [big("p-keep", 1700), ...wordy] }),
+    );
+
+    expect(result.droppedPageCount).toBe(40);
+    const notice = result.content.slice(result.content.lastIndexOf("[Note:"));
+    expect(result.content.length).toBeLessThanOrEqual(MAX_MEETING_CONTEXT_CHARS);
+    expect(notice.length).toBeLessThanOrEqual(NOTICE_RESERVE_CHARS);
+    expect(notice.endsWith("]")).toBe(true);
+    // No name cut mid-quote, and the COUNT — the number the reader needs even
+    // when the names could not all fit — is never what gets sacrificed.
+    expect(notice).not.toMatch(/“[^”]*$/);
+    expect(notice).toContain("40 pages not included to fit the meeting context budget:");
+    expect(notice).toMatch(/and \d+ more/);
+  });
+
+  it("keeps the bare count when not one name can fit", () => {
+    // The degenerate end of the same rule. One title longer than the whole
+    // reserve leaves nothing sayable, so the notice falls back to exactly the
+    // sentence it prints today rather than a fragment of a title.
+    const result = buildMeetingContext(
+      call({
+        topic: "",
+        transcript: "",
+        pages: [
+          big("p-keep", 1700),
+          page({ id: "p-huge", position: 1, title: "T".repeat(NOTICE_RESERVE_CHARS * 2), body: "notes" }),
+        ],
+      }),
+    );
+    const notice = result.content.slice(result.content.lastIndexOf("[Note:"));
+    expect(notice).toContain("1 page not included to fit the meeting context budget.");
+    expect(notice).not.toContain("budget:");
+    expect(notice.length).toBeLessThanOrEqual(NOTICE_RESERVE_CHARS);
+    expect(notice.endsWith("]")).toBe(true);
+  });
+
+  it("returns an empty name list, never undefined, when the whole base fits", () => {
+    expect(buildMeetingContext(call({ pages: [page({ id: "p-1" })] })).droppedPages).toEqual([]);
   });
 
   it("reports which pages actually made it, for the attribution check", () => {

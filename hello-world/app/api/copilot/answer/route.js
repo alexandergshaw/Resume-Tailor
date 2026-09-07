@@ -499,6 +499,24 @@ export async function POST(request) {
       attachmentNotice: noAttachmentBytesNotice("this answer"),
     });
 
+    // `kb.droppedPageCount`/`kb.truncated` are deliberately NOT surfaced to
+    // the candidate, while every other budgeted context builder in this repo
+    // now names what it left out (lib/experience/tailorContext.js,
+    // pageContext.js, lib/meeting/meetingContext.js). Three reasons: what is
+    // dropped here is the LEAST RELEVANT material for this question (the
+    // builder ranks, then stops) rather than an arbitrary casualty of size;
+    // the set is recomputed per question, so a notice would flicker on and off
+    // between answers read mid-interview in one glance; and there is no remedy
+    // at that moment — unlike the tailoring warning, nobody can split a page
+    // with an interviewer waiting. Decisively: buildKnowledgeBaseBlock returns
+    // a COUNT and no identity, so a notice here could only re-commit the
+    // defect ("left out — you can never learn which"), and `kb.includedPages`
+    // is not a substitute, since naming what was included says nothing about
+    // what was not. `droppedPages` belongs in that builder's own return value,
+    // beside the loop that discards them, exactly where tailorContext.js put
+    // it. None of this concerns `selectBestStory` below, which picks ONE page
+    // on purpose and already reports that honestly via `matched`/`pageSources`.
+
     // The embedded engine's own story picker (lib/copilot/projectStories.js's
     // selectBestStory), selected ONCE here and handed down to every
     // consumer below — the structural fix for D7's asymmetry (ARCH §3.6/§4e):

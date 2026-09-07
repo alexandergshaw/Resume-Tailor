@@ -27,6 +27,7 @@
 
 import { formatAttachment } from "@/lib/experience/pageContext.js";
 import { rankPagesByRelevance } from "@/lib/experience/knowledgeBase.js";
+import { formatDroppedNames } from "@/lib/experience/droppedNames.js";
 import { MEETING_LABELS } from "./insightContract.js";
 
 export const MAX_MEETING_CONTEXT_CHARS = 9000;
@@ -46,9 +47,26 @@ export const MAX_LISTED_ATTACHMENTS = 20;
 // sized — sized generously above the worst realistic combined notice length
 // so the notices themselves are never what gets cut. Mirrors the same
 // pattern in lib/experience/pageContext.js and lib/copilot/projectStories.js.
-const NOTICE_RESERVE_CHARS = 400;
+//
+// EXPORTED now that the two count sentences also carry NAMES. "Sized
+// generously above the worst realistic notice" was a safe claim about
+// count-only sentences — three fixed strings and three integers — and it stops
+// being one the moment a sentence can grow with the length of a page title. So
+// the property is enforced rather than assumed (see assembleNotice below) and
+// meetingContext.test.js asserts the assembled notice against THIS constant
+// rather than a hardcoded 400, which would keep passing if this number moved.
+export const NOTICE_RESERVE_CHARS = 400;
 
 const SEPARATOR = "\n\n---\n\n";
+
+// Separates a count sentence from the names that qualify it, e.g.
+// "2 pages not included to fit the meeting context budget: “Hiring plan”, …".
+const NAME_CLAUSE_JOIN = ": ";
+
+// What a page with no title of its own is called — in the heading
+// formatPageBlock writes AND in the notice, from one constant, so the reader is
+// never hunting for two different names for the same page.
+const UNTITLED_PAGE = "Untitled page";
 
 // The exact sentence meetingContext.test.js's "the attachment honesty claim"
 // block and app/api/meeting/insights/route.test.js's "tells the model
@@ -146,29 +164,77 @@ export const rankMeetingPages = rankPagesByRelevance;
 // lib/copilot/projectStories.js gives: a page trimmed mid-sentence reads as
 // a claim that stops partway through.
 function formatPageBlock(page) {
-  const title = str(page.title).trim() || "Untitled page";
+  const title = pageDisplayName(page);
   const body = str(page.body).trim();
   // formatAttachment stays the ONLY thing that turns an attachment row into
   // a line — it is the enforcement point for "name/kind/notes/transcript and
   // nothing else", so a raw row's storage_path or signed url can never reach
   // a prompt no matter what shape the caller fetched.
-  const all = (Array.isArray(page.attachments) ? page.attachments : []).map(formatAttachment).filter(Boolean);
-  const attachmentLines = all.slice(0, MAX_LISTED_ATTACHMENTS);
-  const droppedAttachmentCount = all.length - attachmentLines.length;
+  //
+  // The row's own `name` is carried ALONGSIDE the line rather than parsed back
+  // out of it, so naming the attachments this cap left out never becomes a
+  // second, drifting reader of formatAttachment's output format. A line is
+  // non-empty only when the row had a usable name (formatAttachment's guard),
+  // so every name here is non-blank by construction and needs no fallback.
+  const entries = (Array.isArray(page.attachments) ? page.attachments : [])
+    .map((attachment) => ({ line: formatAttachment(attachment), name: str(attachment?.name).trim() }))
+    .filter((entry) => entry.line !== "");
+  const attachmentLines = entries.slice(0, MAX_LISTED_ATTACHMENTS).map((entry) => entry.line);
+  const droppedAttachmentNames = entries.slice(MAX_LISTED_ATTACHMENTS).map((entry) => entry.name);
 
   const parts = [`## ${title} (page id: ${page.id})`];
   if (attachmentLines.length > 0) parts.push(`Attachments:\n${attachmentLines.join("\n")}`);
   if (body) parts.push(body);
 
+  // No separate droppedAttachmentCount: the caller reads
+  // `droppedAttachmentNames.length`, so the count and the names are one fact
+  // rather than two that can disagree.
   return {
     text: parts.join("\n\n"),
     hasAttachments: attachmentLines.length > 0,
-    droppedAttachmentCount,
+    droppedAttachmentNames,
   };
 }
 
+// One page's display name, used by the heading above and by the dropped-page
+// notice below — never two spellings of the same fallback.
+function pageDisplayName(page) {
+  return str(page?.title).trim() || UNTITLED_PAGE;
+}
+
+// Adds names to the count sentences, spending at most NOTICE_RESERVE_CHARS on
+// the whole notice.
+//
+// THE DECISION THIS ENCODES: the reserve does not move, the names do. The
+// reserve is carved out of `budgetForPages`, so growing it to fit a name list
+// would be paid for in the user's own knowledge base on every read — including
+// the reads that drop nothing — and the defensive clamp at the end of
+// buildMeetingContext cuts from the TAIL, which is exactly where this notice
+// sits. An unrationed list would therefore end up truncating the sentence that
+// reports the truncation, mid-name, mid-quote.
+//
+// So the counts are written first, into a skeleton, and the names get only
+// what the reserve has left over. When even one name will not fit,
+// formatDroppedNames returns "" and the sentence stays exactly the one this
+// module printed before names existed. `fixed` (the attachment-honesty
+// sentence) is passed through untouched and stays FIRST for the reason
+// lib/experience/knowledgeBase.js states about its own copy: a clamp eats the
+// tail, and losing a count costs the model a number while losing that sentence
+// costs it the truth.
+function assembleNotice(fixed, counted) {
+  const wrap = (sentences) => (sentences.length > 0 ? `[Note: ${sentences.join(" ")}]` : "");
+  let remaining = NOTICE_RESERVE_CHARS - wrap([...fixed, ...counted.map((entry) => `${entry.stem}.`)]).length;
+  const sentences = counted.map((entry) => {
+    const list = formatDroppedNames(entry.names, { budget: remaining - NAME_CLAUSE_JOIN.length - ".".length });
+    if (!list) return `${entry.stem}.`;
+    remaining -= NAME_CLAUSE_JOIN.length + list.length;
+    return `${entry.stem}${NAME_CLAUSE_JOIN}${list}.`;
+  });
+  return wrap([...fixed, ...sentences]);
+}
+
 // buildMeetingContext({ pages, topic, transcript, pinnedPageId }) ->
-// { content, includedPageIds, droppedPageCount, truncated }.
+// { content, includedPageIds, droppedPageCount, droppedPages, truncated }.
 //
 // Ranking: `pinnedPageId` (the page open when the meeting started — the one
 // relevance signal that is not a guess) always sorts first; everything else
@@ -215,44 +281,72 @@ export function buildMeetingContext(input) {
 
   const included = [];
   let used = 0;
-  for (const page of ordered) {
+  // Where the packing loop gave up, tracked explicitly rather than inferred
+  // afterwards from `ordered.length - included.length`. It is the same number
+  // today, but only BECAUSE this loop stops rather than skips — and the whole
+  // point of naming the dropped pages is that the names and the count describe
+  // one identical set. An index the loop itself sets cannot disagree with the
+  // loop, whatever a later change does to it.
+  let stopIndex = ordered.length;
+  for (let index = 0; index < ordered.length; index += 1) {
+    const page = ordered[index];
     const block = formatPageBlock(page);
     const addLen = block.text.length + (included.length > 0 ? SEPARATOR.length : 0);
     // Stop, don't skip — see this function's own comment above on why a
     // relevance-ranked list cannot skip-and-continue, and on
     // lib/experience/knowledgeBase.js agreeing.
-    if (used + addLen > budgetForPages) break;
+    if (used + addLen > budgetForPages) {
+      stopIndex = index;
+      break;
+    }
     included.push({ id: page.id, ...block });
     used += addLen;
   }
 
   const includedPageIds = included.map((entry) => entry.id);
-  const droppedPageCount = ordered.length - included.length;
+  // The pages this read did NOT get, BY NAME — the fix this pass exists for.
+  // "2 pages not included to fit the meeting context budget" told a user that
+  // their live copilot was answering from an incomplete knowledge base and
+  // gave them no way to learn which part was missing, even though the identity
+  // was sitting right here in `ordered` at the moment it was discarded.
+  const droppedPages = ordered.slice(stopIndex).map(pageDisplayName);
+  const droppedPageCount = droppedPages.length;
   const anyAttachmentsShown = included.some((entry) => entry.hasAttachments);
 
-  const notices = [];
   // Present whenever an attachment is listed AT ALL in what's actually
   // included this read — never conditioned on WHICH kind of attachment it
   // is, and never omitted just because every attachment present happens to
   // be one pageContext.js would have disclaimed anyway (that would make the
   // notice correct only by accident and let it silently vanish the moment a
   // read holds only decks). See this file's header comment for the failure
-  // this exists to prevent.
-  if (anyAttachmentsShown) notices.push(NO_ATTACHMENT_BYTES_NOTICE);
+  // this exists to prevent. Never carries names — it is a claim about the
+  // whole call, not a list — so it is passed to assembleNotice as fixed text.
+  const fixedNotices = anyAttachmentsShown ? [NO_ATTACHMENT_BYTES_NOTICE] : [];
+
   // Same principle one level down: an inventory silently cut at
   // MAX_LISTED_ATTACHMENTS is a model reading a partial file list and
   // believing it complete. Worded "not listed" rather than "not included" so
   // it cannot be confused with the dropped-PAGE sentence below.
-  const droppedAttachmentCount = included.reduce((total, entry) => total + entry.droppedAttachmentCount, 0);
+  const droppedAttachmentNames = included.flatMap((entry) => entry.droppedAttachmentNames);
+  const droppedAttachmentCount = droppedAttachmentNames.length;
+
+  const countedNotices = [];
   if (droppedAttachmentCount > 0) {
-    notices.push(`${pluralize(droppedAttachmentCount, "attachment")} not listed to fit the meeting context budget.`);
+    countedNotices.push({
+      stem: `${pluralize(droppedAttachmentCount, "attachment")} not listed to fit the meeting context budget`,
+      names: droppedAttachmentNames,
+    });
   }
   if (droppedPageCount > 0) {
-    notices.push(`${pluralize(droppedPageCount, "page")} not included to fit the meeting context budget.`);
+    countedNotices.push({
+      stem: `${pluralize(droppedPageCount, "page")} not included to fit the meeting context budget`,
+      names: droppedPages,
+    });
   }
 
   const body = included.map((entry) => entry.text).join(SEPARATOR);
-  const noticeBlock = notices.length > 0 ? `[Note: ${notices.join(" ")}]` : "";
+  const noticeBlock =
+    fixedNotices.length > 0 || countedNotices.length > 0 ? assembleNotice(fixedNotices, countedNotices) : "";
   let content = [body, noticeBlock].filter(Boolean).join("\n\n");
   if (!content) content = "No pages from the knowledge base were available for this meeting.";
 
@@ -270,6 +364,13 @@ export function buildMeetingContext(input) {
     content,
     includedPageIds,
     droppedPageCount,
+    // The display names behind that count, ranked-order, always an array.
+    // app/api/meeting/insights/route.js renders them into the `context.notice`
+    // a human reads — the same division of labour lib/experience/
+    // tailorContext.js and app/api/tailor/route.js already use: the builder
+    // knows the names, the route writes the sentence, and the prompt block's
+    // own notice is budgeted separately from both.
+    droppedPages,
     truncated: droppedPageCount > 0,
   };
 }

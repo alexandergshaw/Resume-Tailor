@@ -7,6 +7,7 @@ import { listPages } from "@/lib/supabase/experiencePages";
 import { listAttachmentsByPage } from "@/lib/supabase/experienceAttachments";
 import { withDerivedKind } from "@/lib/experience/attachments";
 import { buildMeetingContext } from "@/lib/meeting/meetingContext";
+import { formatDroppedNames } from "@/lib/experience/droppedNames";
 import { localInsights } from "@/lib/meeting/insightsLocal";
 import { normalizeTopic, normalizeInsights } from "@/lib/meeting/insightContract";
 
@@ -56,9 +57,30 @@ function buildPrompt({ contextContent, transcript, topic }) {
   return parts.join("\n");
 }
 
-function droppedPageNotice(droppedPageCount) {
+// The sentence a HUMAN reads about what their knowledge base did not
+// contribute to this read — and, until this pass, a bare integer: "1 page not
+// included to fit the meeting context budget." That tells someone their live
+// copilot is working from material with a hole in it and gives them no way to
+// learn where the hole is.
+//
+// Same arrangement as app/api/tailor/route.js's
+// formatDroppedProjectPagesWarning, which closed the identical defect for the
+// tailoring prompt after the owner's own words forced it ("i need to know
+// exactly which ones were left out"): the BUILDER knows the names
+// (buildMeetingContext's `droppedPages`), the ROUTE writes the sentence, and
+// the prompt block's own model-facing notice is budgeted separately from both.
+// The list format comes from lib/experience/droppedNames.js rather than being
+// written out a second time here — a hand-copied list is how the same fix
+// ships correct on one surface and subtly different on the next.
+//
+// No character budget: unlike the notice inside the prompt block, this string
+// is a JSON field with nothing to crowd out. The 10-name cap still applies, so
+// a user with fifty dropped pages gets a sentence they can read.
+function droppedPageNotice(droppedPageCount, droppedPages) {
   if (droppedPageCount <= 0) return "";
-  return `${droppedPageCount} page${droppedPageCount === 1 ? "" : "s"} not included to fit the meeting context budget.`;
+  const stem = `${droppedPageCount} page${droppedPageCount === 1 ? "" : "s"} not included to fit the meeting context budget`;
+  const names = formatDroppedNames(droppedPages);
+  return names ? `${stem}: ${names}.` : `${stem}.`;
 }
 
 // The transcript the client sends is a WINDOW of recent turns, and the
@@ -135,7 +157,11 @@ export async function POST(request) {
       includedPageCount: meetingContext.includedPageIds.length,
       droppedPageCount: meetingContext.droppedPageCount,
       truncated: meetingContext.truncated,
-      notice: droppedPageNotice(meetingContext.droppedPageCount),
+      notice: droppedPageNotice(meetingContext.droppedPageCount, meetingContext.droppedPages),
+      // The same names as a list, so a client renders its own markup rather
+      // than parsing the sentence above out of a string. Always an array,
+      // never undefined, so a caller can read `.length` without a guard.
+      droppedPages: meetingContext.droppedPages,
     };
 
     // THE WIRE SHAPE, in one place so both engines cannot drift apart:

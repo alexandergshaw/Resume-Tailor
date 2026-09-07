@@ -121,11 +121,20 @@ describe("POST /api/meeting/insights — embedded engine", () => {
     expect(typeof json.topicChanged).toBe("boolean");
     expect(["low", "medium", "high"]).toContain(json.topicConfidence);
     expect(Array.isArray(json.insights)).toBe(true);
+    // `droppedPages` joined this object alongside `notice`, and this exact-key
+    // assertion was widened deliberately rather than loosened: the rule it
+    // protects is that the context meta describes the PROMPT BUDGET and
+    // nothing else, not that its key set is frozen (the same reasoning
+    // app/api/copilot/answer/route.js records for its own key-set
+    // assertions). A client must be able to render its own list without
+    // parsing the sentence, and an empty array — never undefined — is what
+    // lets it do that without a guard.
     expect(json.context).toEqual({
       includedPageCount: 1,
       droppedPageCount: 0,
       truncated: false,
       notice: "",
+      droppedPages: [],
     });
     expect(json.degraded).toBeUndefined();
   });
@@ -174,6 +183,50 @@ describe("POST /api/meeting/insights — embedded engine", () => {
     expect(dropped).toBeDefined();
     expect(dropped.source).toEqual({ kind: "page", pageId: "page-b", pageTitle: "Rollout notes" });
     expect(json.insights.every((i) => i.source.kind !== "model")).toBe(true);
+  });
+
+  it("tells the caller WHICH page did not fit, not only that one did not", async () => {
+    // The defect this closes, at the surface a human actually reads. The
+    // route already shipped a `notice` — "1 page not included to fit the
+    // meeting context budget." — which is precisely the sentence that tells
+    // someone their live copilot is answering from an incomplete knowledge
+    // base and gives them no way to find out which part is missing.
+    //
+    // This is the same fix lib/experience/tailorContext.js made for the
+    // tailoring prompt, arranged the same way: the BUILDER returns the display
+    // names, the ROUTE renders them for the human, and the model-facing notice
+    // inside the prompt keeps its own separately-budgeted copy.
+    mockUser("user-1");
+    // Empty topic AND transcript on purpose: with no query the ranking scores
+    // every page zero and falls through to `position`, so which page is
+    // dropped is decided by the BUDGET alone and this fixture cannot go stale
+    // behind a ranking change.
+    const bigPage = page({
+      id: "page-a",
+      title: "Payments migration master doc",
+      body: "filler ".repeat(1200),
+    });
+    const droppedPage = page({
+      id: "page-b",
+      title: "Rollout notes",
+      body: "detail ".repeat(20),
+      position: 1,
+    });
+    listPages.mockResolvedValue({ pages: [bigPage, droppedPage], error: null });
+
+    const res = await POST(jsonRequest({ transcript: "", topic: "", engine: "embedded" }));
+    const json = await res.json();
+
+    // Guards the fixture: if these bodies ever stopped overflowing the budget
+    // the assertions below would pass vacuously.
+    expect(json.context.includedPageCount).toBe(1);
+    expect(json.context.droppedPageCount).toBe(1);
+    expect(json.context.droppedPages).toEqual(["Rollout notes"]);
+    expect(json.context.notice).toBe(
+      "1 page not included to fit the meeting context budget: “Rollout notes”.",
+    );
+    // The mutant that reads perfectly: naming the INCLUDED page instead.
+    expect(json.context.notice).not.toContain("Payments migration master doc");
   });
 });
 
