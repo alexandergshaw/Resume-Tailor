@@ -560,45 +560,34 @@ function isReachableExport(graph, file, name) {
 // So the rejected statements are enumerated rather than trusted. Anything the
 // codeMask check throws away must be on this list with a reason.
 //
-// THIS IS A LIVE FINDING, not a hypothetical. lib/document/docx.js:358 is
+// THIS LEDGER IS NOW EMPTY, AND THE HISTORY IS WHY IT STAYS HERE.
+//
+// It used to carry three entries. lib/document/docx.js:358 is
 //
 //     return `<w:p>…${runProps ? `<w:rPr>${runProps}</w:rPr>` : ""}…</w:p>`;
 //
 // -- a template literal NESTED inside another template literal's `${…}` hole.
-// lib/sourceScan/tokenizeSource.js's header names exactly this shape as its one
-// KNOWN LIMIT and asserts "There is no such shape in this app today". That
-// sentence is now false. The tokenizer treats a template as opaque between two
-// backticks, so it closes the outer template on the INNER one's opening
-// backtick and every backtick pairing inverts for the rest of the file:
-// roughly lines 361-521 of docx.js are blanked out of `codeMask`.
+// lib/sourceScan/tokenizeSource.js's header named exactly this shape as its
+// one KNOWN LIMIT and asserted "There is no such shape in this app today".
+// That sentence was false when it was written: a census over all 1107 .js
+// files found 55 nested templates across 44 files. Because the tokenizer
+// treated a template as opaque between two backticks, it closed the outer
+// template on the INNER one's opening backtick, every pairing inverted, and
+// 2454 characters across lines 358-518 of docx.js were blanked out of
+// `codeMask` -- silently, which is how it survived. Three real top-level
+// exports (buildMinimalistDocx, downloadMinimalistDocx, resolveDocumentBlob)
+// were invisible to this scan, and windowOpenSafety.sweep.test.js -- reading
+// the same view -- was blind to the same region and would have reported
+// CLEAN on any navigation planted there.
 //
-// Measured consequences, none of them fixed here (tokenizeSource.js is a shared
-// production module and out of this sweep's scope to change):
-//   * three real top-level exports of docx.js are invisible to THIS scan --
-//     buildMinimalistDocx, downloadMinimalistDocx, resolveDocumentBlob;
-//   * app/components/windowOpenSafety.sweep.test.js scans lib/ through the same
-//     `codeMask` view, so it is blind to that same region. Checked by hand
-//     today: the region holds `URL.createObjectURL(blob)` and `link.href = url`
-//     for a download anchor, and no window.open / location.assign / router.push
-//     -- so no real navigation site is hidden right now. A future one would be.
+// tokenizeSource.js now models `${}` holes with a real stack, so all three
+// are visible and this list is empty. It is KEPT, empty, because the test
+// below turns it into a live guard: anything the codeMask confirmation ever
+// throws away again must be added here WITH A REASON, by a human, instead of
+// vanishing. An empty ledger is the assertion "the scanner has no blind spot
+// today" -- and unlike the sentence that started all this, it can fail.
 // ---------------------------------------------------------------------------
-const DESYNCED_STATEMENTS = [
-  {
-    file: "lib/document/docx.js",
-    name: "buildMinimalistDocx",
-    why: "hidden by the docx.js:358 nested-template desync described above; by hand, only two tests import it, so it belongs in rule TR-1's bucket and the count below is one short of the truth",
-  },
-  {
-    file: "lib/document/docx.js",
-    name: "downloadMinimalistDocx",
-    why: "hidden by the same desync; by hand it is genuinely reachable -- app/hooks/useProfileEntries.js:4 imports it -- so nothing is being missed except the scanner's own view of it",
-  },
-  {
-    file: "lib/document/docx.js",
-    name: "resolveDocumentBlob",
-    why: "hidden by the same desync; by hand it is genuinely reachable from app/components/StatusBar.js, app/components/TrackingTab.js and lib/document/previewBlob.js",
-  },
-];
+const DESYNCED_STATEMENTS = [];
 
 /** Line-start import/export tokens the codeMask confirmation threw away. */
 function rejectedStatements(files) {
@@ -632,15 +621,21 @@ describe("the scanner's blind spot is enumerated, not trusted", () => {
     }
   });
 
-  it("names the shape that causes it, so a fix has something to aim at", () => {
-    // If docx.js:358 is ever rewritten without the nested template, this test
-    // fails and the whole ledger above should go with it.
+  it("reads the shape that used to defeat it, and sees straight through it now", () => {
+    // The regression test for the fix. docx.js:358 still carries the nested
+    // template (so this is a real fixture, not a hypothetical), and all three
+    // exports the desync used to hide are now visible as real code.
     const src = readFileSync(path.join(ROOT, "lib/document/docx.js"), "utf8");
     expect(src).toMatch(/\$\{runProps \? `<w:rPr>\$\{runProps\}<\/w:rPr>` : ""\}/);
-    // And the limit is still documented as non-existent in the shared
-    // tokenizer, which is the sentence a fix should also correct.
-    const tok = readFileSync(path.join(ROOT, "lib/sourceScan/tokenizeSource.js"), "utf8");
-    expect(tok).toContain("KNOWN LIMIT");
+    const { codeMask } = tokenizeSource(src);
+    for (const name of ["buildMinimalistDocx", "downloadMinimalistDocx", "resolveDocumentBlob"]) {
+      expect(codeMask, `${name} is invisible to the scanner again`).toContain(
+        `export async function ${name}`,
+      );
+    }
+    // And the tokenizer refuses to hand back a view it could not parse,
+    // rather than blanking a region and letting this sweep report clean.
+    expect(() => tokenizeSource("const a = `never closed;\n")).toThrow();
   });
 });
 
@@ -757,15 +752,20 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // check the new export is a helper being pinned, not a feature that was
     // built and never connected, then update the number.
     //
-    // 299 is what the scanner CAN SEE. The true figure is 300: docx.js's
-    // buildMinimalistDocx belongs here too and is invisible to the scan --
-    // see DESYNCED_STATEMENTS at the top of this file for why, and for the
-    // hand check that the other two hidden exports are genuinely reachable.
-    expect(TEST_REFERENCED.length).toBe(299);
+    // 299 -> 300, and NOT because the tree grew. This number was pinned at
+    // 299 while the comment beside it said "the true figure is 300:
+    // docx.js's buildMinimalistDocx belongs here too and is invisible to the
+    // scan". Fixing tokenizeSource.js's nested-template desync made that one
+    // export visible, so the scanner now counts what the comment already
+    // knew. The other two exports the desync hid (downloadMinimalistDocx,
+    // resolveDocumentBlob) were hand-checked as genuinely reachable and land
+    // in neither bucket, which is why this moves by exactly one.
+    expect(TEST_REFERENCED.length).toBe(300);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(355);
+    // 355 -> 356, carrying the same single export; ORPHANS is unchanged.
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(356);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {
