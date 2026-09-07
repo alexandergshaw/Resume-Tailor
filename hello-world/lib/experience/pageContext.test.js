@@ -672,6 +672,174 @@ describe("the joins between the blocks of `content`", () => {
   });
 });
 
+// THE HEAD HAD NO BUDGET OF ITS OWN — the silent truncation, committed by the
+// one module in this repo whose entire purpose is to never commit one.
+//
+// MAX_LISTED_CHILD_PAGES and MAX_LISTED_ATTACHMENTS cap how MANY lines the head
+// may carry. MAX_FIELD_CHARS caps how long EACH line may be. Nothing capped
+// what the head COSTS. 60 sub-pages of 300 characters each is 60 lines, none of
+// them over-long, and a head of ~18800 characters — so `budgetForBody` floored
+// at zero, no list hit its count cap, no notice was assembled, and the
+// defensive final clamp at the end of buildPageContext cut the overflow off the
+// tail. Measured, on the code this block was written against:
+//
+//   content.length  12000    (exactly the cap — the clamp made it so)
+//   truncated       false    (a false statement about what happened)
+//   notice          absent   (nothing was told to anyone)
+//   sub-pages       40 of 60 survived, the 40th cut mid-title
+//
+// Twenty pages of the user's own project destroyed, the caller told nothing was
+// cut, and the one sentence that exists to report a loss never assembled at
+// all. The clamp cannot be the remedy: the notice lives in the TAIL, so the
+// clamp destroys the very sentence that would report the loss.
+//
+// WHY THE EXISTING SUITE WAS GREEN, and the trap for anything written after
+// this. "stays within the budget" asserts `content.length <= MAX_CONTEXT_CHARS`
+// — TRUE in the broken case, because the clamp is what makes it true. Every
+// assertion below is therefore about the NOTICE ARRIVING and the FLAG BEING
+// HONEST. Not one of them is satisfied by a short string.
+//
+// AND THE FIXTURE IS NOT THE SIBLING'S. lib/meeting/meetingContext.js and
+// lib/experience/knowledgeBase.js both measure every byte of every page block
+// against their budget before admitting it, so neither has a head at all; a
+// fixture copied from either would never reach this path. The shape that
+// reaches it is specific to this module: a head built unconditionally, then
+// subtracted from a body budget that floors at zero.
+describe("a head that alone overruns the whole budget", () => {
+  // 60 sub-pages, each title ~312 characters: under MAX_FIELD_CHARS (600) per
+  // line and exactly at the count cap, so NEITHER existing cap fires and the
+  // head is nonetheless ~18800 characters.
+  const heavyChildren = (n) =>
+    Array.from({ length: n }, (_, i) => ({ id: `c${i}`, title: `Sub-page ${i + 1} ${"z".repeat(300)}` }));
+
+  // An empty body is what isolates the defect to the head. A body of any length
+  // is itself reported ("the body was truncated…") the moment budgetForBody
+  // floors at zero, which sets `truncated` for a reason that has nothing to do
+  // with the sub-pages — and would mask the flag assertion below.
+  const build = (over) => buildPageContext({ page: page({ body: "" }), ...over });
+
+  it("tells the caller, rather than reporting that nothing was cut", () => {
+    const result = build({ childPages: heavyChildren(MAX_LISTED_CHILD_PAGES) });
+
+    // The flag is a contract with the caller. In the measured case it said
+    // `false` while twenty sub-pages were destroyed.
+    expect(result.truncated).toBe(true);
+    // And the names were there to be handed over — the head cap, like the count
+    // cap, is a PREFIX cut, so what it dropped is exactly the tail of a list
+    // already in hand.
+    expect(result.droppedChildPages.length).toBeGreaterThan(0);
+    expect(result.content).toContain("[Note:");
+    expect(result.content).toContain("sub-pages not included");
+  });
+
+  it("accounts for every sub-page it was given, as listed or as named", () => {
+    // THE ACCOUNTING IDENTITY, and the reason this is stated as a sum rather
+    // than as "no line was cut in half". A first draft of this test asserted
+    // only that every surviving line was intact — and it passed on the BROKEN
+    // code, because with these particular title lengths the clamp happened to
+    // land on a line boundary. Whether a silent cut lands mid-title or between
+    // two titles is luck; that it happened at all is the defect. So the
+    // contract is the one thing luck cannot satisfy: shown + named = given.
+    //
+    // Measured on the broken code: 38 shown, 0 named, 60 given.
+    const children = heavyChildren(MAX_LISTED_CHILD_PAGES);
+    const { content, droppedChildPages } = build({ childPages: children });
+    const intact = new Set(children.map((entry) => `- ${entry.title}`));
+    const listed = content.split("\n").filter((line) => line.startsWith("- Sub-page "));
+
+    expect(listed.length).toBeGreaterThan(0);
+    expect(listed.length + droppedChildPages.length).toBe(children.length);
+    // And nothing survived half-eaten, which the clamp cannot promise.
+    for (const line of listed) expect(intact.has(line)).toBe(true);
+  });
+
+  it("delivers the notice whole, never as whatever survived the clamp", () => {
+    // The harm the clamp does to the one sentence that reports harm. Asserted
+    // on the closing bracket and on no dangling open quote, exactly as the
+    // block above does for the join defect — a notice cut mid-name reads as a
+    // rendering failure while reporting the thing the reader most needs.
+    const { content } = build({ childPages: heavyChildren(MAX_LISTED_CHILD_PAGES) });
+    const notice = content.slice(content.lastIndexOf("[Note:"));
+
+    expect(notice.endsWith("budget.]")).toBe(true);
+    expect(notice).not.toMatch(/“[^”]*$/);
+    expect(notice.length).toBeLessThanOrEqual(NOTICE_RESERVE_CHARS);
+  });
+
+  it("names what the head budget dropped, rationed like every other name list", () => {
+    // Two lists, each modest per line, that overrun the head only together —
+    // and short enough that a NAME can actually fit the reserve. A single
+    // over-running list cannot demonstrate this: to overrun the head at 60
+    // lines a line must exceed ~195 characters, and a name that long cannot fit
+    // inside NOTICE_RESERVE_CHARS beside its own count clause, so that shape
+    // legitimately falls back to the bare count.
+    const children = Array.from({ length: MAX_LISTED_CHILD_PAGES }, (_, i) => ({
+      id: `c${i}`,
+      title: `Sub-page ${i + 1} ${"z".repeat(105)}`,
+    }));
+    const attachments = Array.from({ length: MAX_LISTED_ATTACHMENTS }, (_, i) =>
+      attachment({ id: `a${i}`, name: `file-${i}-${"z".repeat(100)}.pdf`, kind: "pdf" }),
+    );
+    const { content, truncated, droppedChildPages, droppedAttachments } = build({ childPages: children, attachments });
+    const notice = content.slice(content.lastIndexOf("[Note:"));
+
+    expect(truncated).toBe(true);
+    // NEITHER list is annihilated by the other: both keep lines and both report
+    // what they lost. A head packed strictly in render order would spend the
+    // whole budget on sub-pages and leave the inventory empty and unmentioned.
+    expect(droppedChildPages.length).toBeGreaterThan(0);
+    expect(droppedAttachments.length).toBeGreaterThan(0);
+    expect(content).toContain("- Sub-page 1 ");
+    expect(content).toContain("- file-0-");
+    // Both counts survive — the count is the part the reader cannot do without
+    // — and at least one real name made it through the rationing.
+    expect(notice).toContain("sub-pages not included");
+    expect(notice).toContain("attachments not included");
+    expect(notice).toContain("“");
+    expect(notice.length).toBeLessThanOrEqual(NOTICE_RESERVE_CHARS);
+  });
+
+  it("is not blown open by one enormous title or breadcrumb either", () => {
+    // The same hole through a different door. The page's own title and its
+    // breadcrumb were the only free-text fields in this module that MAX_FIELD_CHARS
+    // never clipped, so either one alone could carry the head past the budget
+    // and take the whole inventory down with it via the clamp.
+    const { content } = build({
+      page: page({ title: "T".repeat(MAX_CONTEXT_CHARS * 2), body: "" }),
+      breadcrumb: ["B".repeat(MAX_CONTEXT_CHARS * 2)],
+      childPages: [{ id: "c1", title: "Rollout plan" }],
+    });
+
+    expect(content.length).toBeLessThanOrEqual(MAX_CONTEXT_CHARS);
+    // The lower-priority inventory still arrived, and the loss on the identity
+    // line is visible where it happened rather than silent — a title IS its own
+    // name, so the ellipsis is the whole of what can honestly be said about it.
+    expect(content).toContain("- Rollout plan");
+    expect(content).toContain("…");
+  });
+
+  it("leaves an ordinary page untouched", () => {
+    // Positive control, green before this change and after it. A head budget
+    // that fired on pages it has no business touching would satisfy every
+    // assertion above while costing every real user content they were entitled
+    // to. Nothing here is near any cap.
+    const result = buildPageContext({
+      page: page(),
+      breadcrumb: ["Work", "Platform", "Payments migration"],
+      childPages: [{ id: "c1", title: "Rollout plan" }],
+      attachments: [attachment({ name: "topology.png", notes: "before the migration" })],
+    });
+
+    expect(result.truncated).toBe(false);
+    expect(result.content).not.toContain("[Note:");
+    expect(result.content).toContain("Payments migration");
+    expect(result.content).toContain("Work / Platform / Payments migration");
+    expect(result.content).toContain("- Rollout plan");
+    expect(result.content).toContain("- topology.png (image) - notes: before the migration");
+    expect(result.content).toContain("We moved billing off the legacy processor.");
+  });
+});
+
 // Two helpers became public exports so the meeting copilot can build its own
 // multi-page context without re-implementing the attachment-honesty rules.
 //

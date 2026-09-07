@@ -15,6 +15,19 @@
 // shortfall is written into the content itself as a plain-English notice -
 // never a bare slice.
 //
+// AND THE MODULE COMMITTED IT ITSELF, which is the part worth reading before
+// changing anything below. The head (title, breadcrumb, sub-pages, attachments)
+// was built unconditionally and only then subtracted from the body's budget, so
+// nothing anywhere capped what the head COST - only how many lines it held and
+// how long each line was. Sixty sub-pages of three hundred characters each broke
+// no cap and produced a head of ~18800 characters; the body budget floored at
+// zero, no notice was assembled, and the defensive clamp at the bottom of this
+// file cut the overflow off the tail. Measured: content exactly 12000 chars,
+// `truncated: false`, no notice, twenty sub-pages destroyed - the caller told in
+// so many words that nothing had been cut. See MAX_HEAD_CHARS and capListLines
+// for the bound that closes it, and note the shape of the failure: every
+// individual rule was obeyed and the total was still unbounded.
+//
 // AND NEVER A BARE COUNT EITHER, which is the second half of the same rule and
 // the half this file used to fail. Both lists below stop at 60 and the notice
 // reported an integer - "3 sub-pages not included" - which tells the reader
@@ -55,12 +68,16 @@ export const MAX_CONTEXT_CHARS = 12000;
 export const NOTICE_RESERVE_CHARS = 300;
 
 // How many child pages / attachments get listed by name before the rest are
-// summarized as "N more not included". Keeps the head (the part that must
-// NEVER be cut, per "keeps the title and breadcrumb even when the body must
-// be cut" and "keeps the attachment inventory even when the body must be
-// cut" below) bounded, so a page with an unreasonable number of children or
-// attachments cannot itself starve the whole budget the way an unbounded
-// body could.
+// summarized as "N more not included". A cap on how much of a list a reader can
+// usefully take in - sixty names is already more than anyone reads.
+//
+// NOT A BUDGET, and this comment used to claim it was one. It said these caps
+// "keep the head bounded, so a page with an unreasonable number of children or
+// attachments cannot itself starve the whole budget the way an unbounded body
+// could". That was false, and the falsehood was the defect: sixty is a bound on
+// LINES, MAX_FIELD_CHARS is a bound on each line, and sixty times six hundred is
+// three times the whole context budget. What actually bounds the head is
+// MAX_HEAD_CHARS, applied alongside these caps by capListLines below.
 //
 // Exported for the same reason as the reserve above: the tests that pin what
 // happens at the 60th and 61st entry have to be written against the real cap,
@@ -135,6 +152,44 @@ const BLOCK_JOIN = "\n\n";
 // "2 sub-pages not included: “Rollout plan”, “Risks”".
 const NAME_CLAUSE_JOIN = ": ";
 
+// The newline between two lines WITHIN one list (sub-pages, attachments), as
+// distinct from BLOCK_JOIN between top-level blocks. Named for the same reason:
+// capListLines budgets it and the join inside capListLines spends it.
+const LINE_JOIN = "\n";
+
+// The most the head may cost, and the constant whose absence WAS the defect -
+// see capListLines above for the measurement.
+//
+// WHY MAX - RESERVE RATHER THAN MAX. It makes the notice unconditionally
+// affordable: a head at its cap plus BLOCK_JOIN plus a notice spending the whole
+// reserve comes to exactly MAX_CONTEXT_CHARS, so the sentence reporting a loss
+// can never itself be the thing a clamp eats. That is the guarantee "reserve for
+// the notice before building the head" was after, obtained here as a consequence
+// of bounding the head rather than as a second mechanism.
+//
+// AND IT MAKES THE THREE BUILDERS AGREE. lib/meeting/meetingContext.js's
+// `budgetForPages` and lib/experience/knowledgeBase.js's are both exactly their
+// own budget minus their own reserve; both measure every byte of every block
+// against it before admitting the block, which is why neither has a head that
+// can escape. This module now states the same invariant: head plus body block
+// plus their join never exceeds MAX_CONTEXT_CHARS - NOTICE_RESERVE_CHARS, which
+// is the quantity pageContext.test.js's "charges the join to the reserve" case
+// already pins from the body's side.
+//
+// THE PRICE, stated rather than hidden: a head between this cap and
+// MAX_CONTEXT_CHARS now drops (and NAMES) a line it could physically have held,
+// on a page that would otherwise have lost nothing. That band is 300 characters
+// wide and only a head already an order of magnitude past anything real reaches
+// it. It is the same trade the body has always made - NOTICE_RESERVE_CHARS is
+// subtracted from `budgetForBody` on every call including the ones that drop
+// nothing - applied one level up, and it buys the guarantee above.
+const MAX_HEAD_CHARS = MAX_CONTEXT_CHARS - NOTICE_RESERVE_CHARS;
+
+// The two list headings, named because their length is BUDGETED (as part of the
+// head's fixed overhead) in one place and SPENT in another.
+const CHILD_HEADING = "Sub-pages:\n";
+const ATTACHMENT_HEADING = "Attachments:\n";
+
 // Per-entry safety cap on a single note/transcript field. Not exercised by
 // the gate test's fixtures (all short strings), but without it one
 // pathologically long note could alone consume the whole attachment-list
@@ -162,22 +217,25 @@ function formatBreadcrumb(breadcrumb) {
   return parts.join(" / ");
 }
 
-// A prefix cut, so `droppedNames` is exactly the tail - derived from the SAME
-// `list` and the SAME cap that decided `shown`, in the one expression, so the
-// two can never describe different sets. The display name is computed by the
-// same rule the shown lines use (title, else UNTITLED_CHILD_PAGE), minus the
-// per-field clip: the clip exists to stop one long title eating the inventory's
-// share of the budget, and the names are budgeted separately (see the notice
-// assembly in buildPageContext), while `droppedChildPages` is structured data
-// for a caller to render rather than prose and should carry the real title.
-function formatChildPages(childPages) {
-  const list = (Array.isArray(childPages) ? childPages : []).filter(Boolean);
-  if (list.length === 0) return { text: "", dropped: 0, droppedNames: [] };
-  const shown = list.slice(0, MAX_LISTED_CHILD_PAGES);
-  const nameOf = (entry) => str(entry?.title).trim() || UNTITLED_CHILD_PAGE;
-  const droppedNames = list.slice(MAX_LISTED_CHILD_PAGES).map(nameOf);
-  const lines = shown.map((entry) => `- ${clip(nameOf(entry), MAX_FIELD_CHARS)}`);
-  return { text: lines.join("\n"), dropped: droppedNames.length, droppedNames };
+// One candidate line per child page, with the display name carried ALONGSIDE
+// the line rather than parsed back out of it (the shape lib/meeting/
+// meetingContext.js's formatPageBlock already uses for the same reason). The
+// name is computed by the same rule the line uses (title, else
+// UNTITLED_CHILD_PAGE) minus the per-field clip: the clip exists to stop one
+// long title eating the inventory's share of the budget, and the names are
+// budgeted separately (see the notice assembly in buildPageContext), while
+// `droppedChildPages` is structured data for a caller to render rather than
+// prose and should carry the real title.
+//
+// UNCAPPED, deliberately - both caps now live in capListLines below, so that
+// the count cap and the character cap are applied in ONE pass and the dropped
+// tail they produce is one set rather than two that could describe different
+// items.
+function childPageEntries(childPages) {
+  return (Array.isArray(childPages) ? childPages : []).filter(Boolean).map((entry) => {
+    const name = str(entry?.title).trim() || UNTITLED_CHILD_PAGE;
+    return { line: `- ${clip(name, MAX_FIELD_CHARS)}`, name };
+  });
 }
 
 export function attachmentKindLabel(kind) {
@@ -277,15 +335,61 @@ export function formatAttachment(attachment) {
 // which an unknown number vanish. Every line formatAttachment returns has a
 // non-blank name (it returns "" otherwise), so the names below need no
 // fallback at all.
-function formatAttachments(attachments) {
-  const entries = (Array.isArray(attachments) ? attachments : [])
+function attachmentEntries(attachments) {
+  return (Array.isArray(attachments) ? attachments : [])
     .filter((entry) => entry && typeof entry === "object")
     .map((entry) => ({ line: formatAttachment(entry), name: str(entry.name).trim() }))
     .filter((entry) => entry.line !== "");
-  if (entries.length === 0) return { text: "", dropped: 0, droppedNames: [] };
-  const shown = entries.slice(0, MAX_LISTED_ATTACHMENTS);
-  const droppedNames = entries.slice(MAX_LISTED_ATTACHMENTS).map((entry) => entry.name);
-  return { text: shown.map((entry) => entry.line).join("\n"), dropped: droppedNames.length, droppedNames };
+}
+
+// THE CAP THAT WAS MISSING, and the defect it closes.
+//
+// MAX_LISTED_CHILD_PAGES / MAX_LISTED_ATTACHMENTS bound how MANY lines a list
+// contributes. MAX_FIELD_CHARS bounds how long EACH line may be. Nothing bounded
+// what a list COSTS - so sixty sub-pages of three hundred characters each was
+// sixty lines, none of them over-long, and a head of ~18800 characters. The head
+// is not cut internally by design, `budgetForBody` merely floored at zero, no
+// list reached its count cap, so NO NOTICE WAS ASSEMBLED AT ALL - and the
+// defensive clamp at the end of buildPageContext cut the overflow off the tail.
+// Measured: content exactly 12000, `truncated: false`, no notice, twenty of the
+// user's sub-pages destroyed. A silent truncation, committed by the module whose
+// header says silent truncation "is the actual defect this module exists to
+// prevent".
+//
+// The clamp could never have been the remedy: the notice lives in the TAIL, so
+// clamping destroys the very sentence that would report the loss.
+//
+// BOTH CAPS IN ONE PASS, which is what makes the dropped tail a single set. This
+// is lib/experience/knowledgeBase.js's capAttachmentLines - "by BOTH count and
+// total characters, whichever binds first" - reused as a shape rather than
+// imported, because that one caps a single list against a per-page constant
+// while this one shares a budget between two lists. Both caps remain PREFIX
+// cuts, so their union is still a prefix cut and `dropped` is still exactly the
+// tail of the list that was already in hand.
+function capListLines(entries, maxCount, budget) {
+  const shown = [];
+  let used = 0;
+  for (const entry of entries) {
+    if (shown.length >= maxCount) break;
+    const addLen = entry.line.length + (shown.length > 0 ? LINE_JOIN.length : 0);
+    if (used + addLen > budget) break;
+    shown.push(entry);
+    used += addLen;
+  }
+  return {
+    text: shown.map((entry) => entry.line).join(LINE_JOIN),
+    used,
+    droppedNames: entries.slice(shown.length).map((entry) => entry.name),
+  };
+}
+
+// What a list would cost if only its COUNT cap applied - the number capListLines
+// would spend given unlimited budget. Used to decide the split between the two
+// lists below, so a list that wants little is never handed half regardless.
+function listCost(entries, maxCount) {
+  return entries
+    .slice(0, maxCount)
+    .reduce((sum, entry, index) => sum + entry.line.length + (index > 0 ? LINE_JOIN.length : 0), 0);
 }
 
 function pluralize(count, noun) {
@@ -339,10 +443,10 @@ function assembleNotice(entries) {
 // always just the page title.
 //
 // `content` is the pinned-context body: title, breadcrumb, child-page
-// titles, and the attachment inventory (the "head" - never truncated
-// internally beyond MAX_LISTED_* above) followed by as much of the page
-// body as the remaining budget allows, followed by a notice naming
-// whatever was left out, if anything was.
+// titles, and the attachment inventory (the "head", bounded by MAX_LISTED_*
+// AND by MAX_HEAD_CHARS, and never cut mid-line by either) followed by as
+// much of the page body as the remaining budget allows, followed by a notice
+// naming whatever was left out, if anything was.
 //
 // `truncated` is true the moment ANY of the body, the child-page list, or
 // the attachment list had to drop something to fit - never inferred from
@@ -371,23 +475,68 @@ export function buildPageContext(input) {
   const title = str(page.title).trim() || "Untitled page";
   const body = str(page.body);
 
-  const breadcrumbText = formatBreadcrumb(src.breadcrumb);
-  const {
-    text: childText,
-    dropped: childDropped,
-    droppedNames: droppedChildPages,
-  } = formatChildPages(src.childPages);
-  const {
-    text: attachmentText,
-    dropped: attachmentDropped,
-    droppedNames: droppedAttachments,
-  } = formatAttachments(src.attachments);
+  // CLIPPED, where they never used to be. These two were the only free-text
+  // fields in this module MAX_FIELD_CHARS did not reach, so either one alone
+  // could carry the head past the budget and take the whole inventory down with
+  // it through the clamp - the same silent truncation capListLines describes,
+  // through a different door. Clipping bounds the identity lines at ~1200
+  // characters, which is what lets the list budget below be a real number rather
+  // than a hope.
+  //
+  // NOT ALSO ON `label`, which is the full title: `label` is the caller's own
+  // one-line opener, not part of this budget, and shortening it would change a
+  // separate contract to fix this one. A clipped title loses its tail to a
+  // VISIBLE "…" rather than to a silent slice, and it earns no notice clause
+  // because a title IS its own name - there is nothing to name it by that the
+  // reader is not already looking at. This is exactly what the module already
+  // does to every attachment note and every child-page title.
+  const headTitle = clip(title, MAX_FIELD_CHARS);
+  const breadcrumbText = clip(formatBreadcrumb(src.breadcrumb), MAX_FIELD_CHARS);
 
-  const headLines = [`Project: ${title}`];
-  if (breadcrumbText) headLines.push(`Path: ${breadcrumbText}`);
-  if (childText) headLines.push(`Sub-pages:\n${childText}`);
-  if (attachmentText) headLines.push(`Attachments:\n${attachmentText}`);
-  const head = headLines.join("\n\n");
+  const childEntries = childPageEntries(src.childPages);
+  const attachmentCandidates = attachmentEntries(src.attachments);
+
+  const identityLines = [`Project: ${headTitle}`];
+  if (breadcrumbText) identityLines.push(`Path: ${breadcrumbText}`);
+
+  // The head's fixed overhead: the identity lines (highest priority of all -
+  // "keeps the title and breadcrumb even when the body must be cut") plus each
+  // list's own heading and the BLOCK_JOIN that attaches it. Charged whenever a
+  // list has any CANDIDATE, which slightly over-reserves in the one case where
+  // the budget then admits none of them - the head simply comes in a few
+  // characters under its cap, which is the safe direction.
+  const listOverhead =
+    (childEntries.length > 0 ? BLOCK_JOIN.length + CHILD_HEADING.length : 0) +
+    (attachmentCandidates.length > 0 ? BLOCK_JOIN.length + ATTACHMENT_HEADING.length : 0);
+  const listBudget = Math.max(0, MAX_HEAD_CHARS - identityLines.join(BLOCK_JOIN).length - listOverhead);
+
+  // NEITHER LIST MAY ANNIHILATE THE OTHER, which is the one decision here that
+  // is not forced by arithmetic. Packing the head in render order (sub-pages,
+  // then attachments) is simpler and would still be HONEST - everything dropped
+  // is named - but it lets a long sub-page list spend the entire budget and
+  // leave the attachment inventory empty, and this module's own header ranks
+  // that inventory ABOVE the body, not below the sub-page list. So attachments
+  // are costed first and guaranteed at least half; sub-pages get everything
+  // attachments do not want, and attachments then get everything sub-pages did
+  // not use. Neither list is ever handed less than its share, and neither is
+  // ever handed a share it has no use for. Same reasoning MAX_FIELD_CHARS gives
+  // one level down about one note crowding out every other attachment's line.
+  const attachmentShare = Math.min(
+    listCost(attachmentCandidates, MAX_LISTED_ATTACHMENTS),
+    Math.floor(listBudget / 2),
+  );
+  const child = capListLines(childEntries, MAX_LISTED_CHILD_PAGES, listBudget - attachmentShare);
+  const attachments = capListLines(attachmentCandidates, MAX_LISTED_ATTACHMENTS, listBudget - child.used);
+
+  const droppedChildPages = child.droppedNames;
+  const droppedAttachments = attachments.droppedNames;
+  const childDropped = droppedChildPages.length;
+  const attachmentDropped = droppedAttachments.length;
+
+  const headLines = [...identityLines];
+  if (child.text) headLines.push(`${CHILD_HEADING}${child.text}`);
+  if (attachments.text) headLines.push(`${ATTACHMENT_HEADING}${attachments.text}`);
+  const head = headLines.join(BLOCK_JOIN);
 
   // What's left for the body once the head (never cut, see above) and a
   // reserve for the notice (written last, only if actually needed) are both
@@ -432,11 +581,22 @@ export function buildPageContext(input) {
   // Defensive final clamp: the budgeting above is designed to always hold,
   // but if some future change to the head/notice shapes ever overshoots it
   // anyway, the hard contract (content never exceeds MAX_CONTEXT_CHARS) must
-  // still hold rather than silently breaking it. Cuts only from the very
-  // end - the head and the body both already precede the notice in
-  // `content`, so a tail cut can only ever remove notice text, never the
-  // title/breadcrumb/attachment inventory the earlier truncation tests
-  // depend on.
+  // still hold rather than silently breaking it.
+  //
+  // ITS OWN COMMENT USED TO BE FALSE, which is worth keeping on the record here
+  // because it is what made the defect invisible. It promised a tail cut "can
+  // only ever remove notice text, never the title/breadcrumb/attachment
+  // inventory" - true only while the head fits, which nothing enforced. With an
+  // unbounded head this line cut the inventory itself, mid-title, on a call that
+  // had assembled no notice to remove and reported `truncated: false`.
+  //
+  // Now it is genuinely unreachable rather than merely intended to be: the head
+  // is capped at MAX_CONTEXT_CHARS - NOTICE_RESERVE_CHARS, the body block is
+  // budgeted out of what the head leaves, and the notice is rationed inside the
+  // reserve that pays for its own join - so the three blocks and their two joins
+  // sum to at most MAX_CONTEXT_CHARS by construction. Kept anyway, for the
+  // reason it was written: a future change to any of those three shapes should
+  // break the budget loudly in a test, not silently in a user's prompt.
   if (content.length > MAX_CONTEXT_CHARS) {
     content = content.slice(0, MAX_CONTEXT_CHARS);
   }
