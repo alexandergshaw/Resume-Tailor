@@ -508,14 +508,24 @@ export async function POST(request) {
     // the set is recomputed per question, so a notice would flicker on and off
     // between answers read mid-interview in one glance; and there is no remedy
     // at that moment — unlike the tailoring warning, nobody can split a page
-    // with an interviewer waiting. Decisively: buildKnowledgeBaseBlock returns
-    // a COUNT and no identity, so a notice here could only re-commit the
-    // defect ("left out — you can never learn which"), and `kb.includedPages`
-    // is not a substitute, since naming what was included says nothing about
-    // what was not. `droppedPages` belongs in that builder's own return value,
-    // beside the loop that discards them, exactly where tailorContext.js put
-    // it. None of this concerns `selectBestStory` below, which picks ONE page
-    // on purpose and already reports that honestly via `matched`/`pageSources`.
+    // with an interviewer waiting. A fourth reason was added when the builder
+    // gained `kb.droppedPages`: `kb.block` is the material
+    // lib/copilot/roleTermsFlag.js judges a drafted claim against, so a dropped
+    // page's TITLE reaching this response — or that block — would let its terms
+    // read as backed evidence for a page the model never saw.
+    //
+    // THE ONE REASON THAT NO LONGER APPLIES, recorded rather than deleted
+    // because it used to be the decisive one: this comment said
+    // buildKnowledgeBaseBlock "returns a COUNT and no identity, so a notice here
+    // could only re-commit the defect", and asked for `droppedPages` in that
+    // builder's own return value beside the loop that discards them. It is
+    // there now. The identity gap is closed and the three reasons above still
+    // stand on their own, so the ruling is unchanged — a future reader looking
+    // at `kb.droppedPages` and wondering why nothing renders it is looking at a
+    // decision, not an oversight. `kb.includedPages` was never a substitute
+    // either: naming what was included says nothing about what was not. None of
+    // this concerns `selectBestStory` below, which picks ONE page on purpose and
+    // already reports that honestly via `matched`/`pageSources`.
 
     // The embedded engine's own story picker (lib/copilot/projectStories.js's
     // selectBestStory), selected ONCE here and handed down to every

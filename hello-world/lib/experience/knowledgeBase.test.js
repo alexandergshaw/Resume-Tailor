@@ -27,6 +27,8 @@ import {
   hasUsableId,
   ELISION_MARKER,
   MAX_LISTED_ATTACHMENTS,
+  MIN_PAGE_CHARS,
+  NOTICE_RESERVE_CHARS,
 } from "./knowledgeBase.js";
 import { significantTerms, isEligiblePage } from "@/lib/copilot/projectStories.js";
 
@@ -679,6 +681,322 @@ describe("buildKnowledgeBaseBlock", () => {
       buildKnowledgeBaseBlock({ ...base, pages: [null, undefined, {}, { id: 5 }], query: null }),
     ).not.toThrow();
     expect(buildKnowledgeBaseBlock({ ...base, pages: null, query: null }).block).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// droppedPages — the identity this builder used to destroy
+// ---------------------------------------------------------------------------
+//
+// THE OWNER'S OWN WORDS, on the count-only version of exactly this defect:
+// "there is that note that Some of your project pages were too large to fit in
+// the AI's context budget and were left out. i need to know exactly which ones
+// were left out". lib/experience/tailorContext.js, pageContext.js and
+// lib/meeting/meetingContext.js each answered that question for their own
+// surface; this builder was the last one still returning an integer and
+// throwing the identity away at a `break`, a `continue` and a `.slice()`.
+//
+// THREE FACTS, AND ONLY ONE OF THEM IS "DROPPED". A page here can be
+//   included whole      — its text is in the block, byte for byte;
+//   included EXCERPTED  — part of its body is in the block, its id is citable,
+//                         and the heading says so in words. Already identified
+//                         by `includedPages[].excerpted`; it is NOT dropped,
+//                         and a return value that said so would tell a user
+//                         their page was left out while the model was reading
+//                         a third of it;
+//   dropped             — nothing of it reached the block at all.
+// `droppedPages` is that last bucket and exactly that bucket: one undivided
+// list, because every member carries the same claim to the reader ("not
+// included to fit the budget") and the same non-remedy. The mechanism that
+// discarded it — the MIN_PAGE_CHARS floor on what is left, a body no honest
+// excerpt could fit, or an attachment-only page skipped past — is internal,
+// unstable across ranking changes, and changes nothing about what the user is
+// owed. What is NOT in it, deliberately: a page that failed eligibility, had no
+// usable id, or brought no material. The budget is not why those were left out,
+// they were never counted into `droppedPageCount` either, and the whole point of
+// naming a set is that the names and the count describe ONE set.
+//
+// AND THE NAMES DO NOT GO IN `block`, which is where this builder must diverge
+// from its three siblings and the reason has nothing to do with the notice
+// reserve. `block` is handed to lib/copilot/roleTermsFlag.js's
+// geminiRoleTermsFlag as the material a drafted claim is judged against, so a
+// dropped page's title inside the notice makes its terms count as BACKED by a
+// page the model never saw — the honesty flag going quiet exactly when the
+// budget has made it most necessary. See "keeps them OUT of the block" below;
+// the first draft of this change did splice them in, and turned
+// route.roleTermsUnbacked.test.js's own fixture self-check red.
+describe("buildKnowledgeBaseBlock: naming what the budget left out", () => {
+  const LABEL = "interview copilot's context budget";
+  const nameBase = {
+    isEligible: isEligiblePage,
+    budget: 4000,
+    budgetLabel: LABEL,
+    attachmentNotice: noAttachmentBytesNotice("this answer"),
+  };
+  // An empty query scores every page 0, so BM25's stable sort leaves `position`
+  // order untouched — which makes "ranked order" a fixture the arithmetic below
+  // can be reasoned about, rather than a scoring result a future ranker change
+  // could silently reorder underneath these cases.
+  const inPositionOrder = { query: "" };
+  const noticeOf = (block) => block.slice(block.lastIndexOf("[Note:"));
+
+  // included: p1 whole. p2 is one unbroken 600-character run, so no block of it
+  // can fit a per-page share and it yields nothing — packing stops there, and
+  // p3 goes with it.
+  const stoppedPacking = () =>
+    buildKnowledgeBaseBlock({
+      ...nameBase,
+      ...inPositionOrder,
+      budget: 1000,
+      pages: [
+        page("p1", "Payments migration", "a".repeat(300), { position: 0 }),
+        page("p2", "Ledger sharding", "b".repeat(600), { position: 1 }),
+        page("p3", "Ledger footnote", "kafka", { position: 2 }),
+      ],
+    });
+
+  it("names the pages it left out, in ranked order, and never the ones it kept", () => {
+    // The mutant this kills first: naming `included` instead of the remainder.
+    // Same shape, same real titles, every "does it name anything" assertion
+    // green, and the reader is told the exact opposite of the truth.
+    const out = stoppedPacking();
+    expect(out.includedPageIds).toEqual(["p1"]);
+    expect(out.droppedPages).toEqual(["Ledger sharding", "Ledger footnote"]);
+    expect(out.droppedPageCount).toBe(out.droppedPages.length);
+    expect(out.droppedPages).not.toContain("Payments migration");
+  });
+
+  it("keeps them OUT of the block, whose notice stays the count it always was", () => {
+    // THE ONE PLACE THIS BUILDER MUST DIVERGE FROM ITS THREE SIBLINGS.
+    // pageContext.js and lib/meeting/meetingContext.js splice their names into
+    // their own model-facing notice, rationed inside NOTICE_RESERVE_CHARS by
+    // droppedNames.js. A first draft did the same here and was wrong, for a
+    // reason that only exists on this surface: `block` is not only the prompt,
+    // it is the EVIDENCE BASE. app/api/copilot/answer/route.js hands it to
+    // lib/copilot/roleTermsFlag.js's geminiRoleTermsFlag as `pagesBlock`, and
+    // that is the material `unsupportedRoleTerms` judges a drafted claim
+    // against — so a dropped page's title in the notice makes its terms count
+    // as BACKED, by a page the model was never shown. The honesty flag stops
+    // firing exactly when the budget has made it most necessary.
+    //
+    // Measured, not argued: route.roleTermsUnbacked.test.js's own fixture
+    // self-check asserts `kb.block` does not contain "Workday" for a page the
+    // budget pushed out, and the named-notice draft turned it red. The names go
+    // in the RETURN VALUE, which no honesty check reads — tailorContext.js's
+    // split, reached here by a different road.
+    const out = stoppedPacking();
+    const notice = noticeOf(out.block);
+    expect(notice).toBe(`[Note: 2 pages not included to fit the ${LABEL}.]`);
+    expect(out.block).not.toContain("Ledger sharding");
+    expect(out.block).not.toContain("Ledger footnote");
+    // No quotation mark anywhere in the notice: not a name, and not half of one.
+    expect(notice).not.toContain("“");
+  });
+
+  it("costs the user's own page budget nothing, because the notice never grew", () => {
+    // The reserve is carved out of `budgetForPages` on EVERY call, including the
+    // ones that drop nothing, so a notice that grew with the names would be paid
+    // for in real knowledge base by everyone. Forty dropped pages with titles
+    // longer than the whole reserve, and the notice is still one short sentence.
+    const out = buildKnowledgeBaseBlock({
+      ...nameBase,
+      ...inPositionOrder,
+      pages: [
+        page("keep", "Keeper", "k".repeat(3400), { position: 0 }),
+        ...Array.from({ length: 40 }, (_, i) =>
+          page(`d-${i}`, `${"T".repeat(NOTICE_RESERVE_CHARS)}${i}`, "notes", { position: i + 1 }),
+        ),
+      ],
+    });
+    const notice = noticeOf(out.block);
+    expect(out.droppedPageCount).toBe(40);
+    expect(out.droppedPages).toHaveLength(40);
+    expect(notice).toBe(`[Note: 40 pages not included to fit the ${LABEL}.]`);
+    expect(notice.length).toBeLessThanOrEqual(NOTICE_RESERVE_CHARS);
+    expect(out.block.length).toBeLessThanOrEqual(nameBase.budget);
+    // The clamp never reached the notice: it still closes.
+    expect(out.block.endsWith(".]")).toBe(true);
+    // And the identity survives in full, un-rationed, where nothing reads it as
+    // evidence — every one of the forty, at full length.
+    expect(out.droppedPages[0].length).toBe(NOTICE_RESERVE_CHARS + 1);
+  });
+
+  it("calls an untitled dropped page what its own heading would have called it", () => {
+    // One constant, so a caller rendering this list and a reader looking at a
+    // page heading are never hunting for two different names for one page — and
+    // never handed an empty string, which would say the page is called nothing
+    // at all, or a raw uuid, which says nothing to a human.
+    const out = buildKnowledgeBaseBlock({
+      ...nameBase,
+      ...inPositionOrder,
+      budget: 1000,
+      pages: [
+        page("p1", "Payments migration", "a".repeat(300), { position: 0 }),
+        page("p2", "   ", "b".repeat(600), { position: 1 }),
+      ],
+    });
+    expect(out.droppedPages).toEqual(["Untitled project"]);
+    expect(out.droppedPages[0]).not.toBe("");
+    expect(out.droppedPages[0]).not.toContain("p2");
+    // The same word the heading of an untitled page would have carried.
+    expect(
+      buildKnowledgeBaseBlock({ ...nameBase, ...inPositionOrder, pages: [page("p2", "   ", "kafka")] }).block,
+    ).toContain("## Untitled project (page id: p2)");
+  });
+
+  it("reports an EXCERPTED page as included-but-cut, never as dropped", () => {
+    // The conflation this exists to prevent: an excerpted page's material IS in
+    // the prompt and its id IS citable, so calling it "not included to fit the
+    // budget" is a false claim about what the model was shown — the one kind of
+    // claim this module exists to keep honest. The identity of a cut page is
+    // already available, and it is `includedPages[].excerpted`, not a second
+    // list that could disagree with it.
+    const out = buildKnowledgeBaseBlock({
+      ...nameBase,
+      pages: [page("long", "Long", longBodyWithTailMatch()), page("short", "Short", "kafka settlement latency")],
+      query: "kafka settlement latency",
+      budget: 900,
+    });
+    expect(out.includedPages).toContainEqual({ id: "long", title: "Long", excerpted: true });
+    expect(out.truncated).toBe(true);
+    expect(out.droppedPages).toEqual([]);
+    expect(out.droppedPageCount).toBe(0);
+    expect(out.block).not.toContain("not included to fit");
+  });
+
+  it("keeps an excerpted page out of the list even when a real drop happens too", () => {
+    // The case above has nothing dropped at all, so an implementation that put
+    // every excerpted page in the list would fail it — but so would one that
+    // simply returned []. Here "cut" is excerpted and "gone" is genuinely
+    // dropped, which separates the two.
+    const out = buildKnowledgeBaseBlock({
+      ...nameBase,
+      ...inPositionOrder,
+      budget: 1200,
+      pages: [
+        page("cut", "Long", longBodyWithTailMatch(), { position: 0 }),
+        page("gone", "Ledger sharding", "w".repeat(900), { position: 1 }),
+      ],
+    });
+    expect(out.includedPages).toContainEqual({ id: "cut", title: "Long", excerpted: true });
+    expect(out.droppedPages).toEqual(["Ledger sharding"]);
+    expect(out.droppedPageCount).toBe(1);
+  });
+
+  it("names a page the loop skipped PAST as well as the one it stopped on", () => {
+    // The `!bodyFull` exception to the STOP rule: a page kept by
+    // contributesMaterial for its attachment notes alone can never be rescued by
+    // an excerpt, so the loop continues past it instead of sacrificing every
+    // page behind it. A dropped-set inferred from a single stop index would
+    // therefore name the wrong pages here — p3 is included and sits BEHIND the
+    // page that was dropped.
+    const out = buildKnowledgeBaseBlock({
+      ...nameBase,
+      ...inPositionOrder,
+      budget: 1000,
+      pages: [
+        page("p1", "Alpha ledger", "a".repeat(200), { position: 0 }),
+        page("p2", "Runbook", "", {
+          position: 1,
+          attachments: [{ name: "runbook.pdf", kind: "pdf", notes: "n".repeat(400) }],
+        }),
+        page("p3", "Ledger footnote", "c".repeat(100), { position: 2 }),
+      ],
+    });
+    expect(out.includedPageIds).toEqual(["p1", "p3"]);
+    expect(out.droppedPages).toEqual(["Runbook"]);
+    expect(out.droppedPageCount).toBe(1);
+    expect(noticeOf(out.block)).toBe(`[Note: 1 page not included to fit the ${LABEL}.]`);
+  });
+
+  it("attempts a page when exactly MIN_PAGE_CHARS of budget is left, and drops nothing", () => {
+    // The floor is on what REMAINS, not on how big a page is, and it is
+    // strictly-less-than. Written against the exported constants rather than
+    // 400/200, so an off-by-one there cannot become an off-by-one here too:
+    // after p1 the packer has exactly MIN_PAGE_CHARS left, p2 fits inside it,
+    // and `remaining <= MIN_PAGE_CHARS` would drop a page that fits.
+    const head = "## Alpha (page id: p1)";
+    const body = "a".repeat(178);
+    const budget = NOTICE_RESERVE_CHARS + head.length + "\n\n".length + body.length + MIN_PAGE_CHARS;
+    const out = buildKnowledgeBaseBlock({
+      ...nameBase,
+      ...inPositionOrder,
+      budget,
+      pages: [
+        page("p1", "Alpha", body, { position: 0 }),
+        page("p2", "Beta", "b".repeat(100), { position: 1 }),
+      ],
+    });
+    expect(out.block).toContain(head);
+    expect(out.includedPageIds).toEqual(["p1", "p2"]);
+    expect(out.droppedPages).toEqual([]);
+    expect(out.droppedPageCount).toBe(0);
+  });
+
+  it("never names a page the BUDGET did not drop", () => {
+    // An ineligible page, a page with no usable id and an empty stub are all
+    // excluded before packing starts, are deliberately absent from
+    // droppedPageCount ("the budget is not why it was left out"), and must be
+    // absent from the names for the same reason — otherwise the sentence claims
+    // a budget failure that never happened, and the count and the list stop
+    // describing one set.
+    const out = buildKnowledgeBaseBlock({
+      ...nameBase,
+      pages: [
+        page("real", "Payments migration", "- Sharded the ledger by tenant"),
+        page("generated", "Research: payments", "kafka ledger", { generated_kind: "research" }),
+        page("stub", "Draft page I never wrote", "   "),
+        { title: "No id at all", body: "kafka ledger tenant", archived_at: null, generated_kind: null },
+      ],
+      query: "ledger tenant",
+    });
+    expect(out.includedPageIds).toEqual(["real"]);
+    expect(out.droppedPages).toEqual([]);
+    expect(out.droppedPageCount).toBe(0);
+    expect(out.block).not.toContain("not included to fit");
+  });
+
+  it("keeps the count and the names describing one identical set, at every budget", () => {
+    const pages = Array.from({ length: 12 }, (_, i) =>
+      page(`p${i}`, `Page ${i}`, `kafka settlement ${"y".repeat(300)}`, { position: i }),
+    );
+    for (const budget of [500, 800, 1200, 2000, 3000, 6000, 12000]) {
+      const out = buildKnowledgeBaseBlock({ ...nameBase, pages, query: "kafka settlement", budget });
+      expect(out.droppedPageCount).toBe(out.droppedPages.length);
+      expect(out.droppedPages.length + out.includedPages.length).toBe(pages.length);
+      const kept = out.includedPages.map((p) => p.title);
+      for (const name of out.droppedPages) expect(kept).not.toContain(name);
+    }
+  });
+
+  it("returns an empty name list, never undefined, whatever it is handed", () => {
+    expect(buildKnowledgeBaseBlock(null).droppedPages).toEqual([]);
+    expect(buildKnowledgeBaseBlock({}).droppedPages).toEqual([]);
+    expect(
+      buildKnowledgeBaseBlock({ ...nameBase, pages: [null, undefined, {}, { id: 5 }], query: null }).droppedPages,
+    ).toEqual([]);
+    expect(
+      buildKnowledgeBaseBlock({ ...nameBase, pages: [page("p1", "T", "kafka")], query: "kafka" }).droppedPages,
+    ).toEqual([]);
+  });
+
+  it("still names every page when NOTHING could be included at all", () => {
+    // The early return had its own copy of the result object, so it is its own
+    // case: a caller whose whole knowledge base was dropped needs the names
+    // most, and gets an empty block with no notice in it to carry them.
+    const out = buildKnowledgeBaseBlock({
+      ...nameBase,
+      ...inPositionOrder,
+      budget: 500,
+      pages: [
+        page("p1", "Payments migration", `kafka ${"z".repeat(1200)}`, { position: 0 }),
+        page("p2", "Ledger sharding", `kafka ${"z".repeat(1200)}`, { position: 1 }),
+      ],
+    });
+    expect(out.block).toBe("");
+    expect(out.includedPages).toEqual([]);
+    expect(out.droppedPageCount).toBe(2);
+    expect(out.droppedPages).toEqual(["Payments migration", "Ledger sharding"]);
   });
 });
 

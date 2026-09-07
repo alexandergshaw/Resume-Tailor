@@ -35,6 +35,12 @@
 // lib/meeting/insightsLocal.js and app/api/meeting/insights/route.js — all
 // server-side. That "smallest import, nothing else" constraint is
 // load-bearing for FOUR consumers now, not one.
+//
+// NOT imported, though three sibling builders do: lib/experience/droppedNames.js,
+// the shared "…: “A”, “B”, and 3 more" formatter. Its callers splice those names
+// into their own model-facing notice; this module returns them and puts NOTHING
+// new in `block`, because `block` is also this route's evidence base — see
+// `droppedPages` on buildKnowledgeBaseBlock for the false negative that causes.
 
 import { formatAttachment } from "./pageContext.js";
 import { significantTerms, overlapScore } from "@/lib/copilot/projectStories.js";
@@ -124,10 +130,32 @@ export const EXCERPT_SHARE_DIVISOR = 3;
 // already use (ARCH §7.4). Without a reserve, the notices — the honesty
 // apparatus telling the model what it was NOT shown — are exactly what a
 // defensive final clamp would eat first, because they are assembled last.
-const NOTICE_RESERVE_CHARS = 400;
+//
+// STILL SIZED FOR COUNT-ONLY SENTENCES, and that is now a decision rather than
+// an accident. lib/experience/pageContext.js and lib/meeting/meetingContext.js
+// had to ration NAMES inside their reserve when their notices started carrying
+// them; this one never grew — see `droppedPages` on buildKnowledgeBaseBlock —
+// so the three fixed strings and three integers it was sized against are still
+// all it ever holds, and the user's page budget pays nothing for this fix.
+//
+// EXPORTED so a test can compute a packing boundary from the real number. It is
+// subtracted from the caller's budget before packing starts, so "the packer has
+// exactly MIN_PAGE_CHARS left after page one" is a statement about BOTH
+// constants, and a test carrying a private copy of 400 would keep passing —
+// silently testing a different boundary — the day either one moved.
+export const NOTICE_RESERVE_CHARS = 400;
+
+// What a page with no title is called — in the heading the packing loop writes
+// AND in `droppedPages`, from one constant, so a reader is never hunting for
+// two names for one page.
+const UNTITLED_PAGE = "Untitled project";
 
 function str(value) {
   return typeof value === "string" ? value : "";
+}
+
+function pageDisplayName(page) {
+  return str(page?.title).trim() || UNTITLED_PAGE;
 }
 
 function pluralize(count, singular, plural) {
@@ -639,7 +667,41 @@ function capAttachmentLines(lines) {
 
 // buildKnowledgeBaseBlock({ pages, query, isEligible, budget, budgetLabel,
 // attachmentNotice }) -> { block, includedPages, includedPageIds,
-// droppedPageCount, truncated }.
+// droppedPageCount, droppedPages, truncated }.
+//
+// `droppedPages` is the DISPLAY NAME of every page the budget left out, ranked
+// order, always an array — the fix this pass exists for, and the last of the four
+// budgeted context builders to get it. The owner's words on the count-only
+// version are quoted in lib/experience/tailorContext.js's header; the identity
+// was never hard to recover, it sat in `ranked` as the loop discarded it. WHAT
+// IT IS AND IS NOT — why an EXCERPTED page is not in it, why the mechanism of a
+// drop is not distinguished, and why a page excluded before packing is absent —
+// is argued case by case in knowledgeBase.test.js's "naming what the budget left
+// out" preamble, where the contracts live.
+//
+// AND IT GOES NOWHERE NEAR `block`, which is where this builder differs from its
+// three siblings. pageContext.js and lib/meeting/meetingContext.js splice their
+// names into their own model-facing notice; a first draft of this change did the
+// same here, rationed inside NOTICE_RESERVE_CHARS by droppedNames.js exactly as
+// they do, and it was WRONG for a reason specific to this surface:
+//
+//   `block` is not only the prompt, it is the EVIDENCE BASE. The route hands it
+//   to lib/copilot/roleTermsFlag.js's geminiRoleTermsFlag as `pagesBlock`, and
+//   that is the material `unsupportedRoleTerms` checks a drafted claim against.
+//   So a dropped page's title inside the notice makes its terms count as BACKED
+//   — by a page the model was never shown. The honesty flag stops firing
+//   precisely when the budget has made it most necessary.
+//
+// Not hypothetical: route.roleTermsUnbacked.test.js's own self-check asserts
+// `expect(kb.block).not.toContain("Workday")` for a page the budget pushed out,
+// and the named-notice draft turned it red. The names therefore ride the RETURN
+// VALUE only — lib/experience/tailorContext.js's split, reached here by a second
+// road — and `block` stays byte-identical to what it was before this change.
+//
+// Tracked by the loop as it discards, never inferred from `ranked.length -
+// included.length`: the same number today, but only because of what this loop
+// happens to do, and a list the loop writes cannot disagree with the loop. The
+// `!bodyFull` exception below is why a single stop index would not do.
 //
 // `isEligible` is REQUIRED, with no default (ARC §3.1.6) — this is what
 // preserves AC-7.3/A4 STRUCTURALLY: the interview copilot passes
@@ -711,16 +773,24 @@ export function buildKnowledgeBaseBlock(input) {
   const budgetForPages = Math.max(0, budget - NOTICE_RESERVE_CHARS);
 
   const included = [];
+  // Pushed at each of the three points that discard a page — see the doc comment
+  // on why the loop, not arithmetic over its result, is what knows. forEach, not
+  // push(...spread): `ranked` is unbounded and this function may never throw.
+  const droppedPages = [];
+  const dropRest = (from) => ranked.slice(from).forEach((p) => droppedPages.push(pageDisplayName(p)));
   let used = 0;
 
   for (let pageIndex = 0; pageIndex < ranked.length; pageIndex += 1) {
     const page = ranked[pageIndex];
     const remaining = budgetForPages - used;
     // Bypassed for the very first candidate — see this function's own doc
-    // comment above.
-    if (included.length > 0 && remaining < MIN_PAGE_CHARS) break;
+    // comment above. This page and every page behind it are lost to the budget.
+    if (included.length > 0 && remaining < MIN_PAGE_CHARS) {
+      dropRest(pageIndex);
+      break;
+    }
 
-    const title = str(page.title).trim() || "Untitled project";
+    const title = pageDisplayName(page);
     const id = str(page.id).trim();
     const headingBase = `## ${title} (page id: ${id})`;
 
@@ -833,14 +903,19 @@ export function buildKnowledgeBaseBlock(input) {
     // hold — which is the comparison ARCH §4b's STOP rule exists to protect.
     // Breaking instead would sacrifice every page behind it to a page that
     // could contribute no prose whatsoever.
+    //
+    // Either way this page is lost to the budget and is named: the continue and
+    // the break differ only in what becomes of the pages BEHIND it.
+    droppedPages.push(title);
     if (!bodyFull) continue;
+    dropRest(pageIndex + 1);
     break;
   }
 
-  const droppedPageCount = ranked.length - included.length;
+  const droppedPageCount = droppedPages.length;
 
   if (included.length === 0) {
-    return { block: "", includedPages: [], includedPageIds: [], droppedPageCount, truncated: droppedPageCount > 0 };
+    return { block: "", includedPages: [], includedPageIds: [], droppedPageCount, droppedPages, truncated: droppedPageCount > 0 };
   }
 
   const body = included.map((p) => p.text).join(SEPARATOR);
@@ -858,6 +933,10 @@ export function buildKnowledgeBaseBlock(input) {
   // a number; this one costs it the truth.
   if (anyAttachmentShown) notices.push(attachmentNotice);
   if (droppedPageCount > 0) {
+    // A COUNT, still — deliberately, and not for want of the names, which this
+    // function now returns. See `droppedPages` in the doc comment above: a title
+    // spliced in here becomes evidence in lib/copilot/roleTermsFlag.js's
+    // material for a page the model was never shown.
     notices.push(`${pluralize(droppedPageCount, "page", "pages")} not included to fit the ${budgetLabel}.`);
   }
   if (attachmentNotListedTotal > 0) {
@@ -882,6 +961,14 @@ export function buildKnowledgeBaseBlock(input) {
     includedPages: included.map((p) => ({ id: p.id, title: p.title, excerpted: p.excerpted })),
     includedPageIds: included.map((p) => p.id),
     droppedPageCount,
+    // The names behind that count, ranked order, always an array — the division
+    // of labour tailorContext.js and lib/meeting/meetingContext.js use: the
+    // builder knows the names, a route decides whether a HUMAN sees them, and
+    // the model-facing notice is budgeted separately from both (here, not at
+    // all). app/api/copilot/answer/route.js shows the candidate neither, for the
+    // three reasons in its own comment; app/api/experience/knowledge/route.js
+    // spreads this whole object into a disclosure a human does read.
+    droppedPages,
     truncated: droppedPageCount > 0 || included.some((p) => p.excerpted),
   };
 }
