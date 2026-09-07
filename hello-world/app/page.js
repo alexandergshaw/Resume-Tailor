@@ -79,11 +79,10 @@ import DescriptionIcon from "@mui/icons-material/Description";
 import { GREENHOUSE_COMPANIES, COMPANY_CATEGORIES } from "../lib/greenhouse/companies";
 import { createClient } from "../lib/supabase/client";
 import { upsertPosition } from "../lib/supabase/upsertPosition";
-import { upsertApplication, getPositionId } from "../lib/supabase/upsertApplication";
+import { upsertApplication } from "../lib/supabase/upsertApplication";
 import {
   writeApplicationStatus,
   loadAppliedOrLaterExternalIds,
-  deleteUntrackedApplication,
 } from "../lib/supabase/applicationStatusWriter";
 import { STATUS, excludeTrackingTabHiddenStatuses } from "../lib/applications/statusVocabulary";
 import { selectAppliedToggleAction } from "../lib/applications/applicationDecisions";
@@ -96,6 +95,7 @@ import {
 } from "@/lib/feed/postingDescription";
 // Duplicate-application flag (W3B); state/logic in the hook (line ceiling).
 import { useDuplicateApplyCheck } from "./hooks/useDuplicateApplyCheck";
+import { useUntrackChip } from "./hooks/useUntrackChip";
 import { visuallyHidden } from "@/lib/copilot/answerStatus";
 
 // Sets one scope of a tailoring entry's per-scope edited flag ({ resume,
@@ -1637,6 +1637,13 @@ export default function Home() {
       return interviewSort.dir === "asc" ? cmp : -cmp;
     });
 
+  // The dock's untrack, for every route into it. `handleUntrackJob` used to
+  // live here and bail out early whenever the DELETE was refused — which is
+  // what made the chips' "Remove" a control that looked like it worked and
+  // did nothing. See lib/applications/untrackChip.js for why the row's fate
+  // and the chip's fate are now separate answers.
+  const untrackChip = useUntrackChip({ currentUser, trackedJobs, setTrackedJobs });
+
   const dupeApply = useDuplicateApplyCheck({
     applicationData,
     applicationError,
@@ -1783,10 +1790,11 @@ export default function Home() {
   // the Interviewing tab.
   async function applyAutoTailoredRow(row) {
     // `application_url` is a per-user override of the shared `positions.url`
-    // -- same precedence TrackingTab.js, AutoApplyQueueTab.js and
-    // AutoTailorTab.js already apply. Now that loadAutoTailored (above)
-    // selects it, it must win here too, or the Apply button stays wrong even
-    // though the View link and the Apply button's enabled state are fixed.
+    // -- the same precedence TrackingTab.js and AutoApplyQueueTab.js apply.
+    // Now that loadAutoTailored (above) selects it, it must win here too, or
+    // the Apply button stays wrong even though the View link and the Apply
+    // button's enabled state are fixed. Pinned by
+    // app/page.autoTailoredUrl.test.js, which reads this function's source.
     const url = row?.application_url || row?.positions?.url;
     // Open a positioned blank popup synchronously, before the awaited download,
     // so Chrome grants popup-window placement (it downgrades to a tab if
@@ -1900,7 +1908,7 @@ export default function Home() {
     // Lifted out of the optimistic setState updater and awaited (StrictMode
     // double-invokes an updater in development, which would have fired the
     // DELETE twice — see 3-plan-dataloss.md PART 6 / G-20).
-    await handleUntrackJob(jobId);
+    await untrackChip.handleUntrackJob(jobId);
   }
 
   function handleToolbarScroll() {
@@ -1955,28 +1963,6 @@ export default function Home() {
         await upsertApplication(supabase, { userId: currentUser.id, positionId, status: "tracking" });
       }
     }
-  }
-
-  async function handleUntrackJob(jobId) {
-    // The optimistic chip removal is deferred until the delete reports
-    // whether it actually ran (R9) — dropping the chip unconditionally, as
-    // this used to, is how a row this guard refused (still carrying a real
-    // applied_at, or already past "tracking") lost its only visible trace:
-    // see test/repro/appliedStatusDataLoss.test.js REPRO D2/D5.
-    let refused = false;
-    if (currentUser) {
-      const supabase = createClient();
-      const positionId = await getPositionId(supabase, jobId);
-      if (positionId) {
-        const { deleted } = await deleteUntrackedApplication(supabase, {
-          userId: currentUser.id,
-          positionId,
-        });
-        refused = !deleted;
-      }
-    }
-    if (refused) return;
-    setTrackedJobs((prev) => prev.filter((j) => j.id !== jobId));
   }
 
   function handleRegenerateSyntheticJob(job, scope = "both") {
@@ -3160,6 +3146,13 @@ export default function Home() {
         {dupeApply.dupeNotice?.announcement ? <span key={dupeApply.dupeAnnounceSeq}>{dupeApply.dupeNotice.announcement}</span> : null}
       </Box>
 
+      {/* The untrack notice's live region, mounted here for the SAME reason
+          (StatusBar.js's empty-dock early return), and kept separate from the
+          duplicate one so the two never overwrite each other's announcement. */}
+      <Box component="span" data-untrack-flag="live" role="status" aria-live="polite" sx={visuallyHidden}>
+        {untrackChip.untrackNotice?.announcement ? <span key={untrackChip.untrackAnnounceSeq}>{untrackChip.untrackNotice.announcement}</span> : null}
+      </Box>
+
       <StatusBar
         trackedJobs={trackedJobs}
         setTrackedJobs={setTrackedJobs}
@@ -3183,7 +3176,7 @@ export default function Home() {
         onRegenerate={onRegenerateChipJob}
         handleToggleApplied={handleToggleApplied}
         handleIgnoreJob={handleIgnoreJob}
-        handleUntrackJob={handleUntrackJob}
+        handleUntrackJob={untrackChip.handleUntrackJob}
         openResumePreview={preview.openResumePreview}
         openCompanyResearch={research.openCompanyResearch}
         appliedByExternalId={appliedByExternalId}
@@ -3192,6 +3185,8 @@ export default function Home() {
         onOpenApplications={dupeApply.onOpenApplications}
         onDupeDismiss={dupeApply.onDupeDismiss}
         onDupeDownloadLog={dupeApply.onDupeDownloadLog}
+        untrackNotice={untrackChip.untrackNotice}
+        onUntrackNoticeDismiss={untrackChip.dismissUntrackNotice}
       />
 
       <DocumentPreviewMount

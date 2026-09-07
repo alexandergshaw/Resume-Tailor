@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import Popover from "@mui/material/Popover";
@@ -12,9 +12,11 @@ import SettingsIcon from "@mui/icons-material/Settings";
 import LightModeIcon from "@mui/icons-material/LightMode";
 import DarkModeIcon from "@mui/icons-material/DarkMode";
 import { useColorMode } from "@/app/theme/colorMode";
+import { installActivityInstrumentation } from "@/lib/activityLog/activityInstrumentation.js";
 import GmailButton from "./GmailButton";
 import DriveButton from "./DriveButton";
 import AccountSection from "./AccountSection";
+import ActivityLogButton from "./ActivityLogButton";
 
 // Section wrapper: an uppercase label above its control(s).
 function Section({ label, children }) {
@@ -62,6 +64,17 @@ export default function SettingsMenu() {
   const [anchorEl, setAnchorEl] = useState(null);
   const open = Boolean(anchorEl);
 
+  // The session-wide activity log starts recording HERE, not in the Admin
+  // tools section below. This component is rendered by AppHeader, which the
+  // root layout mounts on every route, so this is the earliest client code in
+  // the app; the section below lives inside a MUI Popover with no
+  // `keepMounted`, so it does not exist in the DOM until somebody opens
+  // Settings. Installing there would mean the log started recording at the
+  // moment a user went looking for it and was empty for everything before --
+  // which is the one session where they needed it. The returned cleanup
+  // restores every wrapped global, so a remount leaves no residue.
+  useEffect(() => installActivityInstrumentation(), []);
+
   return (
     <>
       <Tooltip title="Settings">
@@ -108,6 +121,10 @@ export default function SettingsMenu() {
           <Divider />
           <Section label="Account">
             <AccountSection />
+          </Section>
+          <Divider />
+          <Section label="Admin tools">
+            <ActivityLogButton />
           </Section>
         </Box>
       </Popover>

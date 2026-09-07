@@ -78,6 +78,20 @@ export default function StatusBar({
   // appears only alongside a banner could never report the case it is for. It
   // is also outside the banner so dismissing the banner cannot take it away.
   onDupeDownloadLog = null,
+  // The chip-untrack notice. `lib/applications/untrackChip.js`'s
+  // `presentUntrackOutcome(...)` output, verbatim, or `null` -- this
+  // component renders that shape and decides NOTHING about copy or tone
+  // itself, exactly as it does for `dupeNotice` above.
+  //
+  // It exists because "Remove" used to be a control that looked like it
+  // worked and did nothing: `deleteUntrackedApplication` refuses every row
+  // that is not a dateless `tracking` row, and app/page.js turned that
+  // refusal into an early return, so a tailored or applied chip stayed put
+  // and no one was told why. The chip now always goes; this is where the
+  // other half of the truth -- what happened to the saved application --
+  // gets said. `null` for a real delete, which needs no notice at all.
+  untrackNotice = null,
+  onUntrackNoticeDismiss,
 }) {
   const isMobile = useIsMobile();
   // On phones the bar defaults to the roomier vertical list.
@@ -101,6 +115,57 @@ export default function StatusBar({
     </button>
   ) : null;
 
+  // A plain `<div>`, never an MUI `<Alert>`, for the same reason the
+  // duplicate banner below is one (1e's C-2 ruling) -- see its comment.
+  //
+  // DEFINED ABOVE THE EMPTY-DOCK EARLY RETURN, deliberately. Removing the
+  // LAST chip is exactly when this notice matters most, and that is also the
+  // moment `trackedJobs` becomes empty; a banner computed below the return
+  // (as `dupeBanner` is -- harmless there, since a duplicate verdict implies
+  // a tracked job) would be destroyed by the very action that raises it.
+  const untrackBanner = untrackNotice ? (
+    <div
+      className={styles.dupFlag}
+      data-untrack-flag="banner"
+      data-untrack-tone={untrackNotice.tone}
+      data-untrack-job={untrackNotice.jobId || undefined}
+    >
+      <div className={styles.dupFlagSignal}>
+        {untrackNotice.tone === "warning" ? (
+          <ReportProblemOutlinedIcon className={styles.dupFlagGlyph} fontSize="small" />
+        ) : (
+          <InfoOutlinedIcon className={styles.dupFlagGlyph} fontSize="small" />
+        )}
+        <span className={styles.dupFlagKicker}>{untrackNotice.kicker}</span>
+        <span className={styles.dupFlagSentence}>{untrackNotice.sentence}</span>
+      </div>
+      <div className={styles.dupFlagActions}>
+        {/* Offered only when the row is one the Tracking tab will actually
+            list. `searchSeed` is the presentation module's own value,
+            forwarded verbatim and never recomputed here; an empty string is
+            its way of saying "do not send them there". */}
+        {untrackNotice.searchSeed ? (
+          <button
+            type="button"
+            className={styles.dupFlagAction}
+            data-untrack-action="open-applications"
+            onClick={() => onOpenApplications?.(untrackNotice.searchSeed)}
+          >
+            Open in Tracking
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className={`${styles.dupFlagAction} ${styles.dupFlagActionQuiet}`}
+          data-untrack-action="dismiss"
+          onClick={() => onUntrackNoticeDismiss?.()}
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+  ) : null;
+
   // THIS EARLY RETURN IS WHAT "SURVIVES CLEAR" ACTUALLY MEANS ON THIS SURFACE.
   // "Clear all" below is `setTrackedJobs([])` and nothing else -- it resets no
   // duplicate-apply state anywhere -- but it empties `trackedJobs`, and this
@@ -109,8 +174,19 @@ export default function StatusBar({
   // survive, even though the log's own data was never touched. The dock now
   // outlives the job chips whenever there is a log to reach, and shows only the
   // one control, rather than an otherwise-empty toolbar of dead affordances.
+  //
+  // The untrack notice rides the same exemption, for the same reason: it is
+  // raised BY a removal, and removing the last chip empties this list.
   if (trackedJobs.length === 0) {
-    return dupeLogButton ? <div className={styles.floatingToolbar}>{dupeLogButton}</div> : null;
+    if (!untrackBanner && !dupeLogButton) return null;
+    // With no banner this is byte-identical to what the log-only dock
+    // rendered before the notice existed (no `style` at all).
+    return (
+      <div className={styles.floatingToolbar} style={untrackBanner ? { flexWrap: "wrap" } : undefined}>
+        {untrackBanner}
+        {dupeLogButton}
+      </div>
+    );
   }
 
   const vertical = expanded || isMobile;
@@ -370,10 +446,12 @@ export default function StatusBar({
   // is added ONLY while a banner is present -- one conditional, never
   // touching the no-notice render.
   const dockBaseStyle = vertical ? { flexDirection: "column", alignItems: "stretch", gap: 8 } : undefined;
-  const dockStyle = dupeNotice ? { ...(dockBaseStyle || {}), flexWrap: "wrap" } : dockBaseStyle;
+  const dockStyle =
+    dupeNotice || untrackNotice ? { ...(dockBaseStyle || {}), flexWrap: "wrap" } : dockBaseStyle;
 
   return (
     <div className={styles.floatingToolbar} onWheel={vertical ? undefined : handleToolbarWheel} style={dockStyle}>
+      {untrackBanner}
       {dupeBanner}
       <div style={{ display: "flex", alignItems: "center", gap: 12, width: vertical ? "100%" : "auto" }}>
         <span className={styles.toolbarLabel}>Generated ({trackedJobs.length})</span>

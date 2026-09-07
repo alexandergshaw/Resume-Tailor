@@ -802,7 +802,34 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // were demoted into the orphan ledger. Deleting a test can lower this
     // count by demoting an export it alone kept alive; that is worth knowing
     // before anyone reads a drop here as "we wired something up".
-    expect(TEST_REFERENCED.length).toBe(298);
+    //
+    // 298 -> 303, and every one of the five is a widened surface, not a lost
+    // feature. Four belong to the session-wide activity log
+    // (lib/activityLog/), whose five modules ARE all reached from shipping
+    // code -- app/layout.js -> AppHeader -> SettingsMenu -> ActivityLogButton
+    // and SettingsMenu -> activityInstrumentation -- so none of them is on
+    // either module ledger; these are the four symbols beside that live path
+    // that only a test asks for:
+    //
+    //   activityRedaction.js#REDACTED       the marker string the planted-
+    //       secret suite asserts against, rather than re-spelling "[redacted]"
+    //       in eight places.
+    //   appActivityLog.js#createActivityLog the pure factory. The singleton
+    //       beside it (recordActivity/attachActivitySection/
+    //       activityLogSnapshot) is what ships; the factory exists so the
+    //       recorder can be tested with an injected clock and without touching
+    //       a module-level global, which is this repo's own reason for the
+    //       `now = Date.now` idiom.
+    //   appActivityLog.js#ACTIVITY_LOG_SCHEMA and #MAX_ACTIVITY_SECTIONS
+    //       constants the suites pin directly instead of hard-coding 1 and 16.
+    //       (MAX_ACTIVITY_EVENTS beside them is NOT here: activityLogDocument.js
+    //       imports it to print the cap in the drop notice.)
+    //
+    // The fifth, lib/applications/untrackChip.js#isHiddenFromTracking, is not
+    // this feature's: it arrived with the untrack-chip work landing in the same
+    // tree (app/hooks/useUntrackChip.js, app/components/StatusBar.js) and is
+    // counted here only because this number is a whole-tree census.
+    expect(TEST_REFERENCED.length).toBe(303);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
@@ -811,7 +838,13 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // crossed from one half of the split to the other, which is invisible in
     // this total by construction -- 300 + 56 and 298 + 56 differ by the two
     // deletions alone.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(354);
+    // 354 -> 359: exactly the five above, with ORPHAN_EXPORTS unmoved at 56.
+    // The activity log deliberately contributes ZERO orphans -- two constants
+    // it started with (MAX_ACTIVITY_FIELD_CHARS, truncateField in
+    // activityRedaction.js) were caught by this very assertion on their first
+    // run and un-exported, because both are applied inside that module and read
+    // nowhere else.
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(359);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

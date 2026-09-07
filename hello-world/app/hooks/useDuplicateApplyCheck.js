@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { evaluatePriorApplications, mergeVerdicts } from "@/lib/duplicateApply/duplicateApplyVerdict.js";
 import { presentVerdict, orderVerdicts, dismissalFingerprint } from "@/lib/duplicateApply/verdictPresentation.js";
 import { buildDupeLogRecord } from "@/lib/duplicateApply/duplicateApplyLog.js";
@@ -10,6 +10,7 @@ import {
   duplicateApplyLogFileName,
 } from "@/lib/duplicateApply/duplicateApplyLogDocument.js";
 import { triggerBlobDownload } from "@/lib/document/download.js";
+import { attachActivitySection, recordActivity } from "@/lib/activityLog/appActivityLog.js";
 import { TRACKING_TAB_HIDDEN_STATUSES, STATUS_LABELS } from "@/lib/applications/statusVocabulary";
 
 // The duplicate-application flag's state and single call site
@@ -79,6 +80,29 @@ export function useDuplicateApplyCheck({
   const dupeLogDroppedRef = useRef(0);
   const [dupeLogCount, setDupeLogCount] = useState(0);
 
+  // AGGREGATION, NOT DUPLICATION. This ledger already renders itself perfectly
+  // well (renderDuplicateApplyLog, below); the session-wide activity log does
+  // not re-record any of it, it FOLDS THIS IN. One call, one line, no props
+  // through app/page.js -- `render` is a closure over the refs above, so it is
+  // evaluated when the user clicks Download in Settings and can never be a
+  // stale copy of what this hook held at mount. The empty dependency list is
+  // correct: refs are stable, and re-attaching on every render would replace
+  // the section with an identical one on every keystroke. Detaching on unmount
+  // is what stops a remount showing this feature twice.
+  useEffect(
+    () =>
+      attachActivitySection("duplicate-apply", {
+        title: "Duplicate-application checks",
+        render: () =>
+          renderDuplicateApplyLog({
+            entries: dupeLogRef.current,
+            startedAt: dupeLogStartedAtRef.current,
+            dropped: dupeLogDroppedRef.current,
+          }),
+      }),
+    [],
+  );
+
   // Every append goes through here, and every append is stamped with a time
   // THIS hook read -- the lib modules are pure and synchronous by contract
   // (duplicateApplyLog.js's C-19 posture) and must never read a clock
@@ -87,7 +111,21 @@ export function useDuplicateApplyCheck({
     try {
       const at = Date.now();
       if (dupeLogStartedAtRef.current === null) dupeLogStartedAtRef.current = at;
-      dupeLogRef.current.push({ kind, at, record: buildDupeLogRecord({ verdict, jobId, entryPoint }) });
+      const record = buildDupeLogRecord({ verdict, jobId, entryPoint });
+      dupeLogRef.current.push({ kind, at, record });
+      // …and one line in the session-wide timeline. This is NOT the same
+      // information twice: the folded section carries this feature's full
+      // record, but only an entry in the app-wide stream puts the check in
+      // ORDER against the network calls and errors that surrounded it, which
+      // is the single question that stream exists to answer. Closed-vocabulary
+      // fields only -- the exact values buildDupeLogRecord has already
+      // validated against its own sets -- so this door cannot reopen anything
+      // duplicateApplyLog.js's MUST-NOT list closed.
+      recordActivity("act", `duplicate-check.${kind}`, {
+        samePosition: record.samePosition.verdict,
+        company: record.company.verdict,
+        entryPoint: record.entryPoint,
+      });
       // FIFO, oldest first: a long session's TAIL is where the user noticed
       // something was wrong (lib/copilot/sessionLog.js's own reasoning).
       while (dupeLogRef.current.length > MAX_DUPE_LOG_ENTRIES) {

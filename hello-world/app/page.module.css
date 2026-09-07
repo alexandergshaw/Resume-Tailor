@@ -555,6 +555,25 @@
 [data-dupe-severity="unavailable"]   .dupFlagKicker,
 [data-dupe-severity="unavailable"]   .dupFlagGlyph { color: #7a8faf; }
 
+/* The chip-untrack notice reuses .dupFlag's layout but carries its OWN tone
+   attribute rather than borrowing `data-dupe-severity`: the two notices are
+   unrelated, and a shared attribute would make either one's palette
+   impossible to change without silently repainting the other. Colours are
+   the SAME two already measured against this dock (#fde68a and #7a8faf), so
+   nothing new needs a contrast ruling.
+
+   NO `.dupFlagSentence` WEIGHT RULE HERE, deliberately. The severity-weight
+   channel above is pinned to exactly one `.dupFlagSentence` font-weight
+   override in this whole file (app/page.module.dupFlag.test.js, "channel
+   2"), and a second one would break that invariant for a banner that does
+   not need it: this notice's colour-independent channels are the glyph SHAPE
+   (warning triangle vs. info circle) and the kicker WORD, which differs per
+   tone -- see lib/applications/untrackChip.js. */
+[data-untrack-tone="warning"] .dupFlagKicker,
+[data-untrack-tone="warning"] .dupFlagGlyph    { color: #fde68a; }
+[data-untrack-tone="info"]    .dupFlagKicker,
+[data-untrack-tone="info"]    .dupFlagGlyph    { color: #7a8faf; }
+
 .dupFlagEvidence {
   list-style: none;
   display: flex;
