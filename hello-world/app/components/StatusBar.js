@@ -63,13 +63,55 @@ export default function StatusBar({
   dupeNotice = null,
   onDupeDismiss,
   onOpenApplications,
+  // Wave 4: the duplicate-check log's download control (the standing
+  // feature-logs rule -- every feature that can carry a log gets one, plus a
+  // clearly visible download button, one shared primitive, a single .md,
+  // surviving Clear). `null` until the hook has actually recorded something,
+  // which is the ONLY thing that decides whether this control renders.
+  //
+  // WHY IT IS NOT IN THE BANNER, which is the obvious place for it. The banner
+  // renders only when `dupeNotice` is non-null, and `presentVerdict` returns
+  // null for every verdict that raises nothing -- including a genuine `clear`,
+  // a load that never finished and a check that threw. Those three are exactly
+  // the states duplicateApplyLog.js says the log exists to make legible ("a log
+  // that records only successes cannot explain a failure"), so a control that
+  // appears only alongside a banner could never report the case it is for. It
+  // is also outside the banner so dismissing the banner cannot take it away.
+  onDupeDownloadLog = null,
 }) {
   const isMobile = useIsMobile();
   // On phones the bar defaults to the roomier vertical list.
   const [expanded, setExpanded] = useState(false);
   const [menu, setMenu] = useState({ anchorEl: null, jobId: null });
 
-  if (trackedJobs.length === 0) return null;
+  // A plain button in the dock, never a MenuItem under "More actions" (that
+  // menu is per-job, and this log is per-session) and never an icon-only
+  // control: "clearly visible" and "one click with good defaults" are both
+  // standing rules here. No MUI Tooltip either -- a Tooltip supplies an
+  // aria-label that REPLACES the visible text as the accessible name, so the
+  // name a screen reader announces would stop matching the name on screen.
+  const dupeLogButton = onDupeDownloadLog ? (
+    <button
+      type="button"
+      className={styles.toolbarClear}
+      data-dupe-action="download-log"
+      onClick={() => onDupeDownloadLog()}
+    >
+      Download duplicate-check log
+    </button>
+  ) : null;
+
+  // THIS EARLY RETURN IS WHAT "SURVIVES CLEAR" ACTUALLY MEANS ON THIS SURFACE.
+  // "Clear all" below is `setTrackedJobs([])` and nothing else -- it resets no
+  // duplicate-apply state anywhere -- but it empties `trackedJobs`, and this
+  // return then unmounts the whole dock. So a log control nested in here would
+  // be destroyed by exactly the action the standing rule says the log must
+  // survive, even though the log's own data was never touched. The dock now
+  // outlives the job chips whenever there is a log to reach, and shows only the
+  // one control, rather than an otherwise-empty toolbar of dead affordances.
+  if (trackedJobs.length === 0) {
+    return dupeLogButton ? <div className={styles.floatingToolbar}>{dupeLogButton}</div> : null;
+  }
 
   const vertical = expanded || isMobile;
 
@@ -335,6 +377,11 @@ export default function StatusBar({
       {dupeBanner}
       <div style={{ display: "flex", alignItems: "center", gap: 12, width: vertical ? "100%" : "auto" }}>
         <span className={styles.toolbarLabel}>Generated ({trackedJobs.length})</span>
+        {/* In the header row, which renders in BOTH the horizontal and the
+            vertical dock and never scrolls -- the job chips sit in their own
+            overflow container, so a control placed among them would be one
+            arrow-click away from invisible. */}
+        {dupeLogButton}
         <button
           type="button"
           className={styles.toolbarClear}

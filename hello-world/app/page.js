@@ -3187,11 +3187,11 @@ export default function Home() {
         openResumePreview={preview.openResumePreview}
         openCompanyResearch={research.openCompanyResearch}
         appliedByExternalId={appliedByExternalId}
-        // StatusBar.js's (Wave 3A) banner props; `onDupeDownloadLog` is
-        // Wave 4 and not wired yet -- no log instance exists for it.
+        // Wave 3A's banner props + Wave 4's log control (see StatusBar.js).
         dupeNotice={dupeApply.dupeNotice}
         onOpenApplications={dupeApply.onOpenApplications}
         onDupeDismiss={dupeApply.onDupeDismiss}
+        onDupeDownloadLog={dupeApply.onDupeDownloadLog}
       />
 
       <DocumentPreviewMount
