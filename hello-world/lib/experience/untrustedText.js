@@ -1,11 +1,26 @@
 ﻿// neutralizeUntrustedText(text) -> string. See untrustedText.test.js's header
 // comment for the full argument; this file's comments cover the mechanism.
 //
+// CORRECTION FIRST, because this header used to open with a false claim and
+// the claim mattered. It said attachment text "is the first UNTRUSTED text this
+// repo has ever put into a model prompt." It is not, and it never was.
+// lib/llm/tailorResume.js has interpolated `Job posting:\n${jobPosting}` — a
+// job description written by a stranger — into the model prompt on the app's
+// CORE feature since 1a83a4e (2026-05-24), and app/api/tailor/route.js has
+// scraped an arbitrary, caller-supplied URL into that same string since
+// 402e306 (2026-05-26). Both predate this module by roughly three months.
+// Believing the false version is what let that boundary sit undefended while
+// this file was written for a boundary that is not even wired up yet: the
+// fence below existed, was tested, and was reachable from nothing. The fence
+// itself now lives in lib/llm/untrustedFence.js and is applied at the job
+// posting slot; this module consumes that same export rather than keeping a
+// second copy.
+//
 // WHAT THIS IS FOR. Text pulled out of an attachment (lib/experience/
-// attachmentText.js) is the first UNTRUSTED text this repo has ever put into
-// a model prompt. Everything else lib/experience/** hands to a prompt is the
-// user's own writing, typed into their own editor, and reaches the prompt
-// byte-exact on purpose. A PDF or .docx someone else wrote does not get that
+// attachmentText.js) is untrusted for the same reason a job posting is:
+// somebody else wrote it. Everything else lib/experience/** hands to a prompt
+// is the user's own writing, typed into their own editor, and reaches the
+// prompt byte-exact on purpose. A PDF or .docx someone else wrote does not get that
 // guarantee — the prompts it lands in (lib/experience/knowledgeBase.js's
 // interview context, lib/experience/tailorContext.js's résumé context) are
 // assembled out of STRUCTURAL lines that carry meaning to the model reading
@@ -87,15 +102,17 @@
 // this is what keeps the chunk boundaries chosen on a second pass identical
 // to the ones chosen on the first, rather than drifting on every re-run.
 
-// The prefix itself. Deliberately a plain markdown blockquote marker rather
-// than something exotic: it needs no explanation to a model reading the
-// prompt (a "> " line already reads as quoted material in the same way it
-// would in an email or a markdown renderer), and — the property every other
-// line of this file's reasoning depends on — none of this repo's own
-// structural lines begin with it (asserted directly in
-// untrustedText.test.js's first test, against every FORGERIES entry plus
-// SEPARATOR and ELISION_MARKER).
-export const QUOTE_PREFIX = "> ";
+// THE FENCE ITSELF IS NOT DEFINED HERE. It is lib/llm/untrustedFence.js's
+// single job — the marker, the line-terminator set, the per-line application,
+// and the idempotence rule — because the job-posting boundary needs exactly
+// that half and none of the block-budget machinery below. Two copies of a
+// security control drift; this module imports the one control instead.
+//
+// QUOTE_PREFIX is re-exported so this module's own contract (and its test) is
+// unchanged by where the constant now lives.
+import { QUOTE_PREFIX, fenceUntrustedText } from "@/lib/llm/untrustedFence";
+
+export { QUOTE_PREFIX };
 
 // The ceiling one emitted block (a run of lines joined by a single "\n", with
 // no blank line inside it) may reach, INCLUDING the QUOTE_PREFIX overhead on
@@ -106,30 +123,20 @@ export const QUOTE_PREFIX = "> ";
 // oversized — the entire point of normalizing in the first place.
 const MAX_BLOCK_CHARS = 1200;
 
-// Every code point a markdown renderer or a model treats as ending a line,
-// not just the two this regex used to split on. lib/experience/attachments.js's
-// FORBIDDEN_RANGES (its :271-279) enumerates U+2028 (LINE SEPARATOR) and
-// U+2029 (PARAGRAPH SEPARATOR) as characters a file name may never contain,
-// for the same underlying reason this regex exists here: both render as
-// hard line breaks in browsers and in the markdown this text lands in, even
-// though neither is the ASCII newline. A bare carriage return on its own
-// (old Mac line endings, and something a PDF text layer can absolutely
-// contain by itself), U+0085 (NEL), U+000B (VT) and U+000C (FF) round out
-// the set — every one of these starts a new visual line to a renderer or a
-// model reading the prompt, so every one of them must start a new LOGICAL
-// line here too. Splitting on CRLF/LF alone (the previous behaviour) left
-// every one of these six code points as an ordinary character in the
-// MIDDLE of what this module considered one line — so a bare carriage
-// return placed before a forged "──── PAGE BOUNDARY ────" produced ONE
-// quoted output line by this module's own accounting, while every real
-// renderer (and the model) sees the forged separator sitting at the start
-// of its own line, unquoted in effect. .txt/.log/.csv/.md/.json files reach
-// this function with these bytes completely unmodified, so this was a live
-// prompt-injection vector, not a theoretical one. The escape-sequence form
-// is used below (rather than typing the literal characters) so this file
-// carries no literal invisible characters — the same reasoning
-// lib/experience/attachments.js states for FORBIDDEN_RANGES.
-const LINE_TERMINATOR_RE = /\r\n|\r|\u2028|\u2029|\u0085|\u000B|\u000C|\n/;
+// THE LINE-TERMINATOR SET MOVED WITH THE FENCE, and this file no longer
+// carries a copy. It was here because a markdown renderer and a model treat a
+// bare CR (old Mac line endings, and something a PDF text layer can absolutely
+// contain), U+2028, U+2029, U+0085, U+000B and U+000C as ending a line, so a
+// module that splits on CRLF/LF alone leaves each of them an ordinary character
+// in the MIDDLE of what it considers one line -- and a forged page-boundary
+// separator placed after one is then unquoted in effect, at exactly the position
+// every real renderer treats as the start of a line. .txt/.log/.csv/.md/.json
+// files reach this function with those bytes unmodified, so it was a live
+// vector, not a theoretical one. That reasoning is unchanged; it now lives once,
+// in lib/llm/untrustedFence.js, and this module gets it by calling
+// fenceUntrustedText FIRST (see neutralizeUntrustedText below), which both
+// applies the prefix and normalises every one of those terminators to a plain
+// "\n" -- leaving the re-paragrapher underneath free to split on "\n" alone.
 
 function str(value) {
   return typeof value === "string" ? value : "";
@@ -146,10 +153,6 @@ function str(value) {
 // its own budget in this same unit for the reason explained there.
 function effectiveLength(line) {
   return line.startsWith(QUOTE_PREFIX) ? line.length : QUOTE_PREFIX.length + line.length;
-}
-
-function quoteLine(line) {
-  return line.startsWith(QUOTE_PREFIX) ? line : `${QUOTE_PREFIX}${line}`;
 }
 
 // Total length of a bucket (an in-progress run of lines destined to become
@@ -241,7 +244,10 @@ function hardSplitIfNeeded(line) {
 // and the reconstructed separators are what make the chunk boundaries land
 // on real block boundaries downstream).
 function toParagraphs(text) {
-  const lines = text.split(LINE_TERMINATOR_RE);
+  // "\n" alone is correct here ONLY because this runs on text that has
+  // already been through fenceUntrustedText, which normalises all seven line
+  // terminators to "\n". Do not call this on raw input.
+  const lines = text.split("\n");
   const paragraphs = [];
   let current = [];
   for (const line of lines) {
@@ -266,9 +272,16 @@ function toParagraphs(text) {
 // Non-string input is treated as empty text rather than rejected, matching
 // every other function in this directory's own `str()` convention.
 export function neutralizeUntrustedText(input) {
+  // THE FENCE RUNS FIRST, AND UNCONDITIONALLY. Ordering it ahead of the
+  // block-sizing pass is deliberate: the security control then cannot be
+  // skipped, narrowed or mis-sequenced by a formatting bug underneath it, and
+  // everything below gets to work on text whose line terminators are already
+  // normalised to "\n". The re-paragrapher's own hard splits stay safe because
+  // fenceUntrustedText is idempotent — an already-prefixed first piece is left
+  // alone, and only the pieces broken off after it need the prefix added.
   let text;
   try {
-    text = str(input);
+    text = fenceUntrustedText(str(input));
   } catch {
     return "";
   }
@@ -308,10 +321,12 @@ export function neutralizeUntrustedText(input) {
 
   if (chunks.length === 0) return "";
 
-  // Every line quoted, unconditionally (idempotently — quoteLine is a no-op
-  // on a line that already carries the prefix); lines within one chunk joined
-  // by a single "\n" (they are one block, one paragraph); chunks joined by a
-  // real blank line, so a real splitBlocks() call downstream sees exactly as
-  // many blocks as this function decided on, no more and no fewer.
-  return chunks.map((bucket) => bucket.map(quoteLine).join("\n")).join("\n\n");
+  // Every line quoted, unconditionally and idempotently — the same
+  // fenceUntrustedText call as the first pass, which is a no-op on the lines
+  // it already prefixed and adds the prefix to the tail pieces
+  // hardSplitIfNeeded broke off. Lines within one chunk are joined by a single
+  // "\n" (they are one block, one paragraph); chunks are joined by a real
+  // blank line, so a real splitBlocks() call downstream sees exactly as many
+  // blocks as this function decided on, no more and no fewer.
+  return chunks.map((bucket) => fenceUntrustedText(bucket.join("\n"))).join("\n\n");
 }
