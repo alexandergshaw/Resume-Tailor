@@ -40,6 +40,7 @@ import { createRoot } from "react-dom/client";
 
 import InterviewTypePicker from "./InterviewTypePicker.js";
 import { getInterviewType, setInterviewType, __resetInterviewTypeForTests } from "./useInterviewType.js";
+import { atWidth } from "@/app/theme/computedStyleAtWidth";
 
 // Deliberately NOT `fileURLToPath(new URL(rel, import.meta.url))` — under
 // `@vitest-environment jsdom` the global `URL` is jsdom's own class, not
@@ -114,77 +115,15 @@ describe("InterviewTypePicker — mobile sx (§C.7): additive, never a replaceme
 });
 
 // ---------------------------------------------------------------------------
-// The computed-cascade harness.
-//
-// jsdom 29's `getComputedStyle` runs a REAL cascade: it parses every
-// stylesheet in the document (emotion's included), matches selectors, computes
-// specificity with `@bramus/specificity`, and resolves a tie in favour of the
-// LATER rule — which is exactly the browser behaviour this measurement is
-// about (`node_modules/jsdom/lib/jsdom/living/css/helpers/computed-style.js`,
-// `handleProperty`).
-//
-// The one thing it does NOT do is evaluate media FEATURES: `evaluateMediaList`
-// (`living/css/MediaList-impl.js`) returns true only for an empty list or the
-// bare media types `all`/`screen`, so EVERY `@media (min-width:Npx)` block is
-// skipped. That matters more than it sounds, because MUI wraps BOTH halves of
-// a responsive `sx` value in one — the `xs` branch goes inside
-// `@media (min-width:0px)`, not at the top level. Measure without accounting
-// for that and no `sx` rule applies at all, at any width.
-//
-// So a width is emulated by rewriting the condition of every media rule that
-// WOULD match at that width to `all`, and leaving every other one to evaluate
-// false, as it should. Nothing is moved or re-inserted: each rule keeps its
-// position in its sheet and its selector keeps its specificity, so the
-// insertion order the tie turns on stays the page's own. The rewrite is
-// reverted afterwards, so these cases do not depend on each other's order.
-//
-// THE CACHE BUST IS NOT OPTIONAL, and leaving it out is the trap this
-// harness has to close for whoever copies it next. jsdom memoises one
-// computed style per element (`Document-impl.js:208`'s `_styleCache`) and
-// invalidates it on `insertRule`/`deleteRule`/`replace` (`CSSStyleSheet-impl.js:41`,
-// `:50`, `:88`, `:115`), on a style element being parsed or removed
-// (`helpers/stylesheets.js:56`, `:114`) and on node insertion
-// (`Node-impl.js:243`, `:249`) — and on NOTHING ELSE. A `media.mediaText`
-// write goes through `MediaList-impl.js`, which touches no cache at all, so
-// the rewrite above is invisible to any element whose style has already been
-// read once. That is not hypothetical: run this harness against a component
-// that reads its own computed style (`TranscriptView.js:111` does) and it
-// reports the pre-rewrite value as if it were the measurement — a fabricated
-// failure, which is worse than no harness at all, because it costs the next
-// reader a day and then their trust in the harness on the day it is right.
-//
-// An inserted-and-immediately-deleted empty rule is the cheap invalidation:
-// two calls, no rule survives, nothing in the cascade moves. It runs after
-// the rewrite AND after the restore, so no call can leave a stale entry
-// behind for the next one. `bustsStyleCache` below proves it does its job by
-// warming the cache deliberately first.
-function bustStyleCache() {
-  // Any sheet with an owner node will do — the clear is document-wide.
-  // Emotion's are all `<style>` elements, so they qualify.
-  const sheet = document.styleSheets[0];
-  sheet.insertRule(".jsdom-cache-bust{}", sheet.cssRules.length);
-  sheet.deleteRule(sheet.cssRules.length - 1);
-}
-
-function measuredAt(width, container, selector) {
-  const restore = [];
-  for (const sheet of Array.from(document.styleSheets)) {
-    let rules;
-    try {
-      rules = Array.from(sheet.cssRules);
-    } catch {
-      continue; // a cross-origin sheet has no cssRules; there are none here
-    }
-    for (const rule of rules) {
-      if (rule.constructor.name !== "CSSMediaRule") continue;
-      const min = /^\(min-width:\s*(\d+(?:\.\d+)?)px\)$/.exec((rule.conditionText || "").trim());
-      if (!min || Number(min[1]) > width) continue;
-      restore.push([rule, rule.media.mediaText]);
-      rule.media.mediaText = "all";
-    }
-  }
-  bustStyleCache();
-  try {
+// The computed-cascade harness. MOVED to `app/theme/computedStyleAtWidth.js`
+// (the `atWidth` import above) so a second file measuring a different
+// constant under the same media-feature-blind-jsdom constraint does not have
+// to re-derive -- or, worse, re-implement without the cache-bust -- the trap
+// that module's own header comment documents at length. Read it there for
+// the full mechanics (why a width has to be emulated by rewriting media
+// conditions to `all`, and why the style-cache bust is not optional).
+const measuredAt = (width, container, selector) =>
+  atWidth(width, () => {
     const style = window.getComputedStyle(container.querySelector(selector));
     return {
       minHeight: style.minHeight,
@@ -192,11 +131,7 @@ function measuredAt(width, container, selector) {
       boxSizing: style.boxSizing,
       alignItems: style.alignItems,
     };
-  } finally {
-    for (const [rule, mediaText] of restore) rule.media.mediaText = mediaText;
-    bustStyleCache();
-  }
-}
+  });
 
 describe("InterviewTypePicker — computed cascade: the 44px floor is actually REACHED", () => {
   // Each case still mounts its own picker: the cache bust makes a second read

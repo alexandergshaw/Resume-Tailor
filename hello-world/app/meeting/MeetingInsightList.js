@@ -29,18 +29,29 @@ import Typography from "@mui/material/Typography";
 import { INSIGHT_KINDS } from "@/lib/meeting/insightContract";
 import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
-// Inlined for the same reason MeetingTranscript.js inlines its own copy:
-// one small, stable style object is a smaller dependency than importing
-// lib/copilot/answerStatus.js's `visuallyHidden` export into a
-// meeting-feature file for it.
+// Every length below carries an explicit unit, and that is load-bearing, not
+// stylistic: MUI's `sx` reinterprets a bare number rather than treating it as
+// plain CSS. `width`/`height` run through the sizing transform, where a
+// number in 0..1 means a PERCENTAGE, and `margin` runs through the 8px
+// spacing scale — so `width: 1, height: 1, margin: -1` does not render a 1px
+// box nudged 1px, it renders `width: 100%; height: 100%; margin: -8px`, a
+// full-size overlay per insight card that stays invisible only because
+// `clip`/`overflow` still work (see lib/copilot/answerStatus.js's own
+// `visuallyHidden` comment for the full measurement). This object is kept
+// local rather than importing that shared export: importing it here would
+// drop this file's copy from lib/copilot/visuallyHiddenUnits.sweep.test.js's
+// census of hand-written clip-rects, and that sweep exists specifically
+// because this file's PREVIOUS unitless copy shipped invisibly past a units
+// test on the shared export alone. Matched byte-for-byte against
+// answerStatus.js's `visuallyHidden` so both copies stay provably identical.
 const visuallyHidden = {
   position: "absolute",
-  width: 1,
-  height: 1,
+  width: "1px",
+  height: "1px",
   padding: 0,
-  margin: -1,
+  margin: "-1px",
   overflow: "hidden",
-  clip: "rect(0, 0, 0, 0)",
+  clip: "rect(0 0 0 0)",
   whiteSpace: "nowrap",
   border: 0,
 };

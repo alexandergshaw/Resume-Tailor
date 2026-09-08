@@ -51,11 +51,18 @@ export default defineConfig({
     //
     // as a docblock on its first line. That is a per-file override and does
     // not affect any other file. `jsdom` is a devDependency for exactly
-    // this; `app/copilot/useCopilotDashboard.wiring.test.js` is the worked
-    // example, and it exists because a composition defect (two correct,
-    // separately-tested halves wired together wrong) is invisible to pure
-    // unit tests by construction — inverting the line that joined them left
-    // all 2856 other tests green.
+    // this; `app/copilot/practice/useRoomQuestions.ownSpeech.test.js` is the
+    // worked example, and it exists because a composition defect (two
+    // correct, separately-tested halves wired together wrong) is invisible
+    // to pure unit tests by construction: the decision rule has its own
+    // pure test (`lib/copilot/roomQuestions.test.js`), and only mounting the
+    // hook shows what actually reaches `global.fetch`.
+    //
+    // This comment used to name
+    // `app/copilot/useCopilotDashboard.wiring.test.js` — deleted in c06f9c3
+    // with the retired prediction pair. Its stated
+    // replacement is `app/copilot/useCopilotDashboard.noSpeculation.test.js`,
+    // a second worked example of the same idiom.
     //
     // Reach for it only for that: wiring and effects that no pure function
     // can express. Extracting the DECISION into `lib/` remains the first

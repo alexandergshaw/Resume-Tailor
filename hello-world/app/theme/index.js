@@ -70,6 +70,39 @@ export function makeTheme(mode = "light") {
       fontFamily: 'var(--font-manrope), "Segoe UI", Arial, sans-serif',
     },
     components: {
+      // SC 2.4.7 (Focus Visible). MUI's ButtonBase resets `outline: 0` on
+      // every control it renders, and `disableElevation` above overrides
+      // Button's only remaining focus visual (`boxShadow`) to `none`, so
+      // without this the app has no visible keyboard focus indicator at all.
+      // Keyed on MUI's OWN `.Mui-focusVisible` class rather than `&:focus`
+      // (rings on every mouse click too) or `&:focus-visible` (unreliable on
+      // the six ButtonBase roots that are not a native `<button>`:
+      // TableSortLabel <span>, MenuItem <li>, ListItemButton <div>,
+      // Chip <div>, Checkbox/Switch <span>) — every one of those still carries
+      // `.MuiButtonBase-root`, so this single rule reaches all eleven control
+      // types. Matches the app's existing canonical ring
+      // (knowledgePanelStyles.FOCUS_SX): 2px solid, 2px offset. The offset
+      // keeps the ring clear of a filled button's own background, where an
+      // accent-on-accent ring would sit at ~1:1 contrast.
+      //
+      // Four longhands, never the `outline` shorthand: jsdom does not
+      // implement the shorthand and reads it back as `none`. `t.accent`
+      // (already resolved to a real hex above), never `var(--accent)`: jsdom
+      // does not resolve `var()`, and this app already uses real token
+      // values here for the same reason (see MuiOutlinedInput below). No new
+      // colour, radius or shadow is introduced — this reuses `--accent`.
+      MuiButtonBase: {
+        styleOverrides: {
+          root: {
+            "&.Mui-focusVisible": {
+              outlineStyle: "solid",
+              outlineWidth: "2px",
+              outlineColor: t.accent,
+              outlineOffset: "2px",
+            },
+          },
+        },
+      },
       // Buttons: no ALL-CAPS and no drop shadow by default — the app's
       // convention, previously repeated as `textTransform: "none"` in ~76 spots.
       MuiButton: {
@@ -164,7 +197,25 @@ export function makeTheme(mode = "light") {
         },
       },
       MuiTab: {
-        styleOverrides: { root: { textTransform: "none" } },
+        styleOverrides: {
+          root: {
+            textTransform: "none",
+            // SC 2.4.7, Tab-specific override of the MuiButtonBase ring above.
+            // `Tabs.js`'s own TabsRoot (`overflow: 'hidden'`, :74) and
+            // TabsScroller (`overflowX`/`overflowY: 'hidden'`, :118 fixed /
+            // :215-216 scrollable) clip anything painted outside a tab's
+            // border box -- and neither NavTabs.js nor DocumentPreviewDialog,
+            // LibraryEditor or login/page.js leaves vertical padding in that
+            // chain to absorb the +2px..+4px band an OUTWARD ring occupies.
+            // The result is a ring whose top and bottom edges are clipped
+            // away entirely on every Tab in the app. An INSET ring is drawn
+            // INSIDE the border box, so no ancestor's `overflow: hidden` can
+            // ever clip it. Tab backgrounds here are transparent, so there is
+            // no accent-on-accent contrast case the outward offset (see
+            // MuiButtonBase above) exists to avoid.
+            "&.Mui-focusVisible": { outlineOffset: "-2px" },
+          },
+        },
       },
       MuiDialog: {
         // Dialogs never exceed the viewport on small screens; individual

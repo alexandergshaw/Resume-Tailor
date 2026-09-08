@@ -11,11 +11,7 @@ import Button from "@mui/material/Button";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import { writePlainText } from "@/lib/clipboard/plainText";
 import { copyOutcome, disabledOutcome } from "./copyOutcome";
-
-// The exact literal used at DriveActions.js (x2) and DriveOverwriteDialog.js's
-// TOUCH_SX -- retyped rather than imported, since that constant is module-
-// local there and not exported.
-const TOUCH_TARGET_SX = { xs: "44px", sm: "36px" };
+import { TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 
 export default function CopyDocumentControl({ getText, copyState, scopeLabel, accessibleName, variant, mode, onOutcome, label = "Copy text" }) {
   // O-7: a monotonic counter, not a `useState` (which would re-render mid-
@@ -71,7 +67,7 @@ export default function CopyDocumentControl({ getText, copyState, scopeLabel, ac
       onMouseDown={(e) => e.preventDefault()}
       onClick={handleClick}
       sx={{
-        minHeight: TOUCH_TARGET_SX,
+        ...TOUCH_TARGET_SX,
         "&:focus-visible": { outline: "2px solid var(--accent)", outlineOffset: "2px" },
         ...(disabled ? { opacity: 0.5 } : null),
       }}

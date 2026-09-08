@@ -75,7 +75,10 @@ export function useTypeAnnouncements({
       );
       setTypeAmbientAtSet(`${cueText}|${briefText}`);
     },
-    [mode, redraftCurrentAnswer, cueText, briefText],
+    // answerCacheRef/draftGenRef are refs and setStaleTypeChangeAt is a
+    // useState setter — all stable identities that never change across
+    // renders, so listing them here is behaviour-neutral.
+    [mode, redraftCurrentAnswer, answerCacheRef, draftGenRef, setStaleTypeChangeAt, cueText, briefText],
   );
   useInterviewTypeChange(onInterviewTypeChanged);
 
@@ -87,8 +90,8 @@ export function useTypeAnnouncements({
   // silent, like the live/local row above (stable callbacks below — F5).
   useLiveCodeLanguageChange({
     canRedraft: mode === "live",
-    clearAnswerCache: useCallback(() => answerCacheRef.current.clear(), []),
-    bumpDraftGeneration: useCallback(() => { draftGenRef.current += 1; }, []),
+    clearAnswerCache: useCallback(() => answerCacheRef.current.clear(), [answerCacheRef]),
+    bumpDraftGeneration: useCallback(() => { draftGenRef.current += 1; }, [draftGenRef]),
     redraftCurrentAnswer,
     onForeignChange: useCallback(
       (text) => {

@@ -421,7 +421,10 @@ export default function CopilotClient() {
       resetTypeAnnouncements();
       setMode(val);
     },
-    [stop, sessionRef],
+    // resetTypeAnnouncements is a useCallback(fn, []) returned by
+    // useTypeAnnouncements — stable for the component's lifetime, but ESLint
+    // can't see across the hook boundary, hence listing it explicitly.
+    [stop, sessionRef, resetTypeAnnouncements],
   );
 
   const shareInstructions = shareInstructionsFor(source);

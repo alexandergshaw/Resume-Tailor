@@ -338,13 +338,34 @@ describe("DriveOverwriteDialog -- accessible structure (AC-A8)", () => {
   });
 });
 
-describe("DriveOverwriteDialog -- touch targets (AC-M3, source-level guard for the sx-bare-number trap)", () => {
-  it("uses explicit '44px' strings for the in-flight touch-target size, never a bare 44", async () => {
+describe("DriveOverwriteDialog -- touch targets (AC-M3, now via the shared contract)", () => {
+  // This case used to assert the literal `"44px"` string was present in this
+  // file's own source. R-299 (the responsive-contract move) deleted that
+  // literal along with the module-local `TOUCH_SX` it lived in -- sizing now
+  // comes from `@/app/theme/mobileSx`'s TOUCH_TARGET_SX, so `"44px"` no
+  // longer appears here at all, and asserting it would just be wrong. What
+  // AC-M3 actually needs -- "every action button is a touch target, and
+  // never small enough to shrink under one" -- is the two assertions below
+  // instead: this file gets its sizing from the shared contract (so
+  // TOUCH_TARGET_SX's own test, app/theme/mobileSx.test.js, is the sizing
+  // oracle), and it never passes `size="small"`, which is the one prop that
+  // could shrink these buttons out from under that contract's `sm` branch
+  // now that `sm` is `"auto"` rather than a `"36px"` floor (see mobileSx.js's
+  // own header comment on why `auto`, not a floor, is the correct "off"
+  // value).
+  it("sizes its buttons from the shared mobileSx contract, and never passes size=\"small\"", async () => {
     const src = readFileSync(join(HERE, "DriveOverwriteDialog.js"), "utf8");
-    expect(src).toContain('"44px"');
-    // Guards the repo's own recorded trap (answerStatus.js:69-80): a bare
-    // number in `sx` is a multiplier/fraction, not a pixel value.
-    expect(/minHeight:\s*\{[^}]*xs:\s*44[^p]/.test(src)).toBe(false);
+    expect(src).toMatch(
+      /import\s*\{[^}]*TOUCH_TARGET_SX[^}]*\}\s*from\s*"@\/app\/theme\/mobileSx"/,
+    );
+    // The AC-M3 guarantee this file used to encode as an inert 36px
+    // min-height floor -- see mobileSx.js's own header and R-299's regression
+    // case for why that floor was never reached and asserting it directly,
+    // at the source-text level, is the stronger (and honest) guard.
+    expect(src).not.toContain('size="small"');
+    // This file should declare no touch geometry of its own any more --
+    // sizing is entirely the shared contract's job now.
+    expect(src).not.toMatch(/minHeight:\s*\{/);
   });
 });
 

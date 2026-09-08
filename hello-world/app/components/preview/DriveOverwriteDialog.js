@@ -10,6 +10,7 @@ import {
   overwriteDocLabel,
   DRIVE_OVERWRITE_DISMISS_LABEL,
 } from "@/lib/drive/driveMessages";
+import { TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 
 /**
  * The foreign-edit conflict prompt (`UX.md` rev 2 §5, `AC.md` AC-S15/S16/
@@ -40,11 +41,13 @@ import {
  * improvising." Flagged in the wave report rather than guessed at.
  */
 
-// Touch targets for every action, not just some: 44px at `xs`, never
-// `size="small"` (MUI small is 30px) — AC-M3. Units are explicit strings,
-// never bare numbers, which `sx` reinterprets as multipliers/fractions
-// (the repo's own recorded scar, `lib/copilot/answerStatus.js:69-80`).
-const TOUCH_SX = { minHeight: { xs: "44px", sm: "36px" }, textTransform: "none" };
+// Touch targets for every action, not just some: 44px at `xs`, never the
+// small MUI button size (30px) — AC-M3. Sizing now comes from the shared
+// contract, `@/app/theme/mobileSx`'s TOUCH_TARGET_SX, rather than a
+// module-local copy; the never-small prohibition is guarded directly by this
+// file's own test (a source-text assertion for the `size` prop) instead of
+// by a min-height floor that would only matter if a caller ever shrank one
+// of these buttons that way.
 
 /**
  * @param {object} props
@@ -178,10 +181,10 @@ export default function DriveOverwriteDialog({ docNames, onSaveAsNew, onOverwrit
             different thing from AC-S18's prose listing (which names
             Overwrite before Save-as-new and is explicitly NOT a DOM-order
             requirement, per UX.md §12 note 6). */}
-        <Button variant="outlined" onClick={onSaveAsNew} sx={TOUCH_SX}>
+        <Button variant="outlined" onClick={onSaveAsNew} sx={TOUCH_TARGET_SX}>
           {saveAsNewLabel}
         </Button>
-        <Button variant="text" color="error" onClick={onOverwrite} sx={TOUCH_SX}>
+        <Button variant="text" color="error" onClick={onOverwrite} sx={TOUCH_TARGET_SX}>
           {overwriteLabel}
         </Button>
         {/* The third action, deliberately NOT one of AC-S18's original "two
@@ -190,7 +193,7 @@ export default function DriveOverwriteDialog({ docNames, onSaveAsNew, onOverwrit
             (UX.md §5.4, AC-S16). Every dismissal route -- this button,
             Escape, and (by the caller unmounting this component) Close or a
             backdrop click -- writes nothing. */}
-        <Button variant="text" onClick={onDismiss} sx={{ ...TOUCH_SX, color: "var(--text-muted)" }}>
+        <Button variant="text" onClick={onDismiss} sx={{ ...TOUCH_TARGET_SX, color: "var(--text-secondary)" }}>
           {DRIVE_OVERWRITE_DISMISS_LABEL}
         </Button>
       </Box>

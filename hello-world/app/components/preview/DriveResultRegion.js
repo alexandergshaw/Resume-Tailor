@@ -15,6 +15,7 @@ import {
 } from "@/lib/drive/driveMessages";
 import DriveOverwriteDialog from "./DriveOverwriteDialog";
 import { safeExternalHref } from "@/lib/url/safeExternalHref";
+import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 
 /**
  * Where Drive save/download outcomes are reported (`UX.md` rev 2 §3/§6,
@@ -123,8 +124,8 @@ const CONTAINER_SX = {
 };
 
 const LINK_SX = {
-  overflowWrap: "anywhere",
-  minHeight: { xs: "44px", sm: "auto" },
+  ...BREAK_LONG_WORDS_SX,
+  ...TOUCH_TARGET_SX,
   display: "inline-flex",
   alignItems: "center",
 };

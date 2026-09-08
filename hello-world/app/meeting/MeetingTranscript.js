@@ -27,19 +27,25 @@ import Typography from "@mui/material/Typography";
 import { meetingSpeakerLabel } from "@/lib/meeting/insightContract";
 import { speakerAttributionNotice } from "@/lib/meeting/meetingNotices";
 
-// Inlined rather than imported from lib/copilot/answerStatus.js's own
-// `visuallyHidden` export: that export is one small, stable object literal,
-// and pulling it in would make this meeting-feature file depend on a
-// copilot-feature module for a single style constant. Small and
-// self-contained beats a cross-feature import here.
+// Every length below carries an explicit unit, for the same reason
+// MeetingInsightList.js's own copy of this object states in full: MUI's `sx`
+// does not read these as plain CSS. A bare `width: 1`/`height: 1` is a
+// PERCENTAGE (any number in 0..1) and a bare `margin: -1` is the 8px spacing
+// scale, not a pixel, so the unitless version of this object rendered a
+// full-size overlay rather than a 1px clip-rect — invisible only because
+// `clip`/`overflow` kept doing their job. Kept local rather than imported
+// from lib/copilot/answerStatus.js's `visuallyHidden` so this file stays one
+// of the sites lib/copilot/visuallyHiddenUnits.sweep.test.js can find and
+// check on its own — an import here would erase the very copy that sweep
+// was written to catch. Matched byte-for-byte against that shared export.
 const visuallyHidden = {
   position: "absolute",
-  width: 1,
-  height: 1,
+  width: "1px",
+  height: "1px",
   padding: 0,
-  margin: -1,
+  margin: "-1px",
   overflow: "hidden",
-  clip: "rect(0, 0, 0, 0)",
+  clip: "rect(0 0 0 0)",
   whiteSpace: "nowrap",
   border: 0,
 };

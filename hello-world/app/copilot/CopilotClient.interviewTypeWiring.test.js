@@ -133,6 +133,30 @@ function invalidateLiveAnswersCall(src) {
   return callExpression(handler, "invalidateLiveAnswers(");
 }
 
+// The dependency array a stable `useCallback` handler is registered with,
+// split into its individual element names: the LAST bracketed group in the
+// handler's extent, which both legal registration shapes above end with
+// (`..., [deps])` or `..., [deps]))`, either one optionally trailing-comma'd
+// — this project's formatter emits `[deps],\n)`).
+//
+// Scoped to the ARRAY, never to the handler as a whole — the mirror image of
+// the loophole `invalidateLiveAnswersCall` exists to close. `cueText` and
+// `briefText` are also read in the handler's BODY (the ambient stamp), so a
+// handler-wide `/\bcueText\b/` would stay green with the dependency array
+// emptied, which is the exact defect the assertion below is here to catch.
+// Returning names rather than the raw text is what keeps that assertion
+// tight: an element must BE the dependency, not merely contain its letters.
+function dependencyNames(handler) {
+  if (handler === null) return null;
+  const array = handler.match(/(\[[^[\]]*\])[\s,)]*$/);
+  if (array === null) return null;
+  return array[1]
+    .slice(1, -1)
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+}
+
 describe("CopilotClient reads the shared interview type", () => {
   it("imports the store hook itself from app/copilot/", () => {
     // useInterviewType (the read/write pair CopilotClient still uses directly
@@ -732,7 +756,32 @@ describe("CopilotClient.js's own mechanism matches the model above (step-9c-iii,
     // the guard is the SAME one: a stale-closure defense on whichever
     // variables actually carry the live cue/brief text at the moment the
     // handler runs.
-    expect(handler).toMatch(/\[\s*mode\s*,\s*redraftCurrentAnswer\s*,\s*cueText\s*,\s*briefText\s*\]/);
+    //
+    // PRESENCE of each required dependency, asserted one at a time — NOT the
+    // array's exact source text, which is what this assertion used to pin. A
+    // stale closure is caused by a MISSING dependency; an extra one cannot
+    // cause it, and can only re-create the handler more often. That is
+    // over-invalidation — a different property, which this test's own name
+    // does not claim, which nothing on this surface is harmed by, and which
+    // `react-hooks/exhaustive-deps` at the 0-warnings gate actively pushes
+    // AGAINST here: after the wave-2 extraction the rule requires the
+    // passed-in `answerCacheRef`/`draftGenRef`/`setStaleTypeChangeAt`
+    // identities be listed, all three stable (two refs and a `useState`
+    // setter), so adding them is behaviour-neutral. docs/REGRESSION.md
+    // already records the same growth for the four arrays the useLiveSession
+    // move produced. The exact-match text failed that edit as though it were
+    // a regression while proving nothing the loop below does not, so it goes;
+    // the four names it required stay required, and ORDER — which React does
+    // not read — does not.
+    //
+    // Widened exactly this far and no further: a substring match over the
+    // whole handler, or over the array's raw text, would each be satisfied by
+    // something that is not a dependency at all (see `dependencyNames`).
+    const deps = dependencyNames(handler);
+    expect(deps).not.toBe(null);
+    for (const dep of ["mode", "redraftCurrentAnswer", "cueText", "briefText"]) {
+      expect(deps, `missing dependency: ${dep}`).toContain(dep);
+    }
     // The other half of the guard: those parameters must actually BE
     // cueAnnouncement.text/briefLiveText, not some other stand-in — checked
     // at CLIENT's call site into the hook, which is the one place those two

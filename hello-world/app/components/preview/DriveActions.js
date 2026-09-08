@@ -6,6 +6,7 @@ import CircularProgress from "@mui/material/CircularProgress";
 import CloudUploadIcon from "@mui/icons-material/CloudUpload";
 import CloudDownloadIcon from "@mui/icons-material/CloudDownload";
 import { saveControlLabel, DRIVE_DOWNLOAD_LABEL } from "@/lib/drive/driveMessages";
+import { TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 
 // The two Drive controls that live directly in the modal's `DialogActions`
 // (AC-K4) -- "Save … to Drive" and "Download from Drive". This is a
@@ -165,7 +166,7 @@ export default function DriveActions({
           aria-busy={isSaving || isConsentPending ? "true" : undefined}
           startIcon={isSaving || isConsentPending ? <CircularProgress size={14} /> : <CloudUploadIcon />}
           variant="outlined"
-          sx={{ textTransform: "none", minHeight: { xs: "44px", sm: "36px" } }}
+          sx={TOUCH_TARGET_SX}
         >
           {saveLabel}
         </Button>
@@ -179,7 +180,7 @@ export default function DriveActions({
           aria-describedby={downloadBlockedBySave ? saveLabelId : undefined}
           startIcon={isExporting ? <CircularProgress size={14} /> : <CloudDownloadIcon />}
           variant="text"
-          sx={{ textTransform: "none", minHeight: { xs: "44px", sm: "36px" } }}
+          sx={TOUCH_TARGET_SX}
         >
           {downloadLabel}
         </Button>

@@ -220,7 +220,7 @@ describe("MicPicker - the 44px tap target", () => {
     // under test here is genuinely the shape of the source: the rule exists in
     // one shared place and both pickers use it.
     const read = (rel) => readFileSync(path.join(process.cwd(), rel), "utf8");
-    const mobileSx = read("app/copilot/mobileSx.js");
+    const mobileSx = read("app/theme/mobileSx.js");
     expect(mobileSx, "the rule is still a private copy inside RolePicker").toContain(
       "TOUCH_NATIVE_SELECT_SX",
     );
