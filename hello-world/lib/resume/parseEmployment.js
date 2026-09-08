@@ -27,8 +27,39 @@ const LOCATION_RE =
   /\b([A-Z][A-Za-z.'\- ]+,\s*[A-Z]{2}\b(?:\s*\d{5})?|Remote|Hybrid|On-?site)\b/;
 
 // Words that strongly signal a job title (used to disambiguate title vs company).
-const TITLE_KEYWORDS =
-  /(engineer|developer|manager|director|analyst|designer|scientist|consultant|intern(?:ship)?|lead|architect|administrator|specialist|coordinator|associate|officer|president|founder|owner|technician|teacher|professor|instructor|nurse|accountant|recruiter|strategist|marketer|writer|editor|producer|supervisor|representative|clerk|assistant|advisor|adviser|principal|head|vp|cto|ceo|cfo|coo|programmer|administrative|operations|sales|support)/i;
+// The alternation is held as a string so the anchored TITLE_KEYWORDS_RE below
+// can be built from the SAME vocabulary rather than a second copy of it — a
+// re-typed job-noun list one module over is exactly what drifts.
+const TITLE_KEYWORDS_BODY =
+  "engineer|developer|manager|director|analyst|designer|scientist|consultant|intern(?:ship)?|lead|architect|administrator|specialist|coordinator|associate|officer|president|founder|owner|technician|teacher|professor|instructor|nurse|accountant|recruiter|strategist|marketer|writer|editor|producer|supervisor|representative|clerk|assistant|advisor|adviser|principal|head|vp|cto|ceo|cfo|coo|programmer|administrative|operations|sales|support";
+const TITLE_KEYWORDS = new RegExp(`(${TITLE_KEYWORDS_BODY})`, "i");
+
+// The same 48-word vocabulary, WORD-ANCHORED, for callers asking "does this
+// text NAME a job?" rather than "does a job word occur anywhere inside it?".
+// parseHeader below wants the second (it is disambiguating title from company
+// inside an already-parsed segment); a header CLASSIFIER wants the first, and
+// unanchored it misreads "Overhead" as `head` and "Headcount" as `Head`.
+//
+// The `(?:s|ing)?` tail is load-bearing, not decoration: a bare \b…\b would
+// stop matching *Engineering*, *Engineers*, *Managers* and *Designers* — the
+// ordinary plural and gerund forms of the same nouns — and would cost real
+// employment headers. Exported for lib/copilot/materialQuote.js, which owns
+// the header predicate and deliberately declares no vocabulary of its own.
+export const TITLE_KEYWORDS_RE = new RegExp(`\\b(?:${TITLE_KEYWORDS_BODY})(?:s|ing)?\\b`, "i");
+
+// A single date token sitting at the END of a line, set off from the text in
+// front of it the way a résumé header sets one off: a pipe, an opening bracket,
+// a comma/semicolon/colon, a tab, an en/em dash surrounded by spaces, or a run
+// of two or more spaces. A trailing bracket is allowed to close it.
+//
+// This is the SAME DATE_TOKEN / PRESENT vocabulary as DATE_RANGE_RE above — no
+// new date pattern is declared anywhere for it. It exists because a real header
+// may carry one date rather than a range ("Backend Developer, Tyrell — 2020"),
+// which no range regex can reach.
+const TERMINAL_DATE_TOKEN_RE = new RegExp(
+  `(?:[|(\\[,;:\\t]|\\s[–—]\\s|\\s{2,})\\s*(${DATE_TOKEN}|${PRESENT})\\s*[)\\]]?\\s*$`,
+  "i",
+);
 
 const SECTION_HEADING_RE =
   /^\s*(?:work\s+|professional\s+|relevant\s+)?(?:experience|employment(?:\s+history)?|work\s+history|career(?:\s+history)?)\s*:?\s*$/i;
@@ -57,6 +88,51 @@ export function extractDateRange(line) {
   if (!m) return null;
   const end = PRESENT_RE.test(m[2].trim()) ? "Present" : tidyDate(m[2]);
   return { start: tidyDate(m[1]), end, matched: m[0] };
+}
+
+// WHERE a line's date sits, as CHARACTER OFFSETS into that line — the thing
+// extractDateRange above deliberately does not report, because its five
+// callers all want the date STRINGS and nothing else.
+//
+// Why this is a separate export rather than a widened return. A caller asking
+// "is the date TERMINAL?" has to slice the line around the date, and
+// extractDateRange's shape cannot answer that: it carries no `index`, and its
+// `end` is a STRING. `line.slice(range.end)` therefore coerces via
+// ToIntegerOrInfinity — "2021" becomes the integer 2021, which is past the end
+// of any ordinary line, so the slice silently returns "" and a "the date is
+// terminal" test passes for free on every bare-year end date; "Present"
+// becomes NaN -> 0 and the same slice returns the WHOLE line. Both readings
+// are nonsense and neither fails loudly, so the offsets are exported instead
+// of being recovered by the caller.
+//
+// Returns { start, end, matched, via } or null. `via` is "range" when
+// DATE_RANGE_RE found it and "token" when the terminal single-date branch did,
+// so a caller reasoning about terminality knows which rule applied.
+//
+// A RESIDUAL, recorded rather than hidden: when a line carries TWO date
+// ranges, the leftmost is located, so "the date is terminal" is judged against
+// the wrong one. DATE_RANGE_RE is non-global, so `match` returns the leftmost
+// occurrence and `m.index` is exact.
+export function headerDateSpan(line) {
+  const s = String(line == null ? "" : line);
+  if (!s.trim()) return null;
+
+  const range = s.match(DATE_RANGE_RE);
+  if (range && typeof range.index === "number") {
+    return { start: range.index, end: range.index + range[0].length, matched: range[0], via: "range" };
+  }
+
+  const token = s.match(TERMINAL_DATE_TOKEN_RE);
+  if (token && typeof token.index === "number") {
+    // The capture is the date itself; the match also spans its set-off
+    // punctuation and any closing bracket, so locate the capture inside it
+    // rather than reporting the wider match as the date.
+    const start = s.indexOf(token[1], token.index);
+    if (start < 0) return null;
+    return { start, end: start + token[1].length, matched: token[1], via: "token" };
+  }
+
+  return null;
 }
 
 function isLongProse(line) {

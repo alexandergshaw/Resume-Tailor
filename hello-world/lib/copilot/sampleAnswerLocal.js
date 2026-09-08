@@ -23,12 +23,12 @@
 // used by answerLocal.js.
 
 import {
-  ACHIEVEMENT_VERBS,
+  LEADING_ACHIEVEMENT_VERB_RE,
   MOTIVATION_LINE_RE,
   combineMaterial,
   deriveAnswerFromPoints,
+  groundingClause,
   literallyMentioned,
-  pastWorkExperienceLine,
   profileHeadline,
   profileMetric,
   profileSkills,
@@ -40,6 +40,7 @@ import { classifyQuestionType } from "./questionType.js";
 import { normalizeInterviewType, interviewType as interviewTypeDescriptor } from "./interviewTypes.js";
 import { pick } from "@/lib/text/phrasing";
 import { starPointsFromStory } from "./projectStories.js";
+import { MAX_POINT_WORDS, pointWordCount } from "./pointLength.js";
 
 // A short interview format (a recruiter phone screen) gets the crispest cut
 // of the narrative rather than the full one — see draftSampleAnswerLocal.
@@ -54,14 +55,19 @@ const CRISP_SENTENCE_COUNT = 2;
 // here rather than re-derived, and reused by draftAnswerLocal's own
 // grounding over submitted documents (AC-H4.19).
 
+// The scaffold prose a mined clause is composed into, in words. Every one of
+// the four mined-clause carriers below is at most this, so the ceiling
+// groundingClause applies is a ceiling on the RENDERED bullet rather than on
+// the quote inside it. `firstPersonExperienceClause` prepends "I ", and that
+// word counts.
+const MINED_CARRIER_FIXED_WORDS = 2;
+
 // Resume bullets are written verb-initial ("Led a team...", "Reduced
 // p99..."); relevantExperienceLine lowercases that leading word so the
 // phrase reads mid-sentence in a bullet point, but spoken as its own
-// sentence that reads as a subject-less fragment. Reuses answerLocal.js's
-// ACHIEVEMENT_VERBS to detect the shape and prefix "I " so it reads as a
-// grammatical first-person clause.
-const LEADING_ACHIEVEMENT_VERB_RE = new RegExp(`^${ACHIEVEMENT_VERBS.source}`, "i");
-
+// sentence that reads as a subject-less fragment. LEADING_ACHIEVEMENT_VERB_RE
+// (answerLocal.js, beside the ACHIEVEMENT_VERBS it is built from) detects the
+// shape; "I " is prefixed so it reads as a grammatical first-person clause.
 function firstPersonExperienceClause(line) {
   const t = String(line || "").trim();
   return t && LEADING_ACHIEVEMENT_VERB_RE.test(t) ? `I ${t}` : "";
@@ -101,6 +107,33 @@ function sentence(text) {
   return /[.!?]$/.test(capped) ? capped : `${capped}.`;
 }
 
+// WHERE the candidate was, as a clause they could say out loud, for the two
+// beats that open on their most recent role (the behavioral Situation and the
+// general shape's experience beat).
+//
+// The title and the company come from profileHeadline, which reads them out of
+// an employment header — NOT through cleanLine — so unlike a mined résumé
+// bullet they carry no 140-character bound, and no amount of fixed prose can
+// guarantee the composed beat stays inside the ceiling. A real header can run
+// to nine words of title and employer on its own. So the beat names the title
+// only while naming it fits, and drops back to the company alone when it does
+// not: a bullet that names one true thing is better than one that names two
+// and runs past the point where anyone skims it.
+//
+// `label` is the STAR label the caller will prefix, counted here because it is
+// part of the rendered bullet.
+function roleClause(headline, label = "") {
+  if (!headline.company) return "";
+  const fixed = label ? pointWordCount(label) : 0;
+  const withTitle = headline.title ? `I was ${headline.title} at ${headline.company}` : "";
+  if (withTitle && fixed + pointWordCount(withTitle) <= MAX_POINT_WORDS) return withTitle;
+  return `I was at ${headline.company}`;
+}
+
+function situationClause(headline) {
+  return roleClause(headline, "Situation:") || "I can point to a specific example here";
+}
+
 // AC-H9.32: for the behavioral/leadership shape, each point carries its STAR
 // label, matching the exact convention POINTS_SYSTEM already uses in
 // app/api/copilot/answer/route.js. Every point below is built from the same
@@ -125,7 +158,10 @@ function behavioralAnswer({ headline, expRef, seed, story }) {
     // Every beat here — Situation from the page's own title, Action/Result
     // from its own bullets — is literally the page's text, so all of them
     // are page-derived (ARCH §3.6).
-    if (storyPoints) return { points: storyPoints, pageIndices: storyPoints.map((_, i) => i) };
+    if (storyPoints) {
+      const all = storyPoints.map((_, i) => i);
+      return { points: storyPoints, pageIndices: all, groundedIndices: all };
+    }
   }
 
   // The line only counts as an anchor once it's actually speakable in first
@@ -140,35 +176,22 @@ function behavioralAnswer({ headline, expRef, seed, story }) {
       points: [
         `Situation: ${sentence(
           pick(seed, [
-            "I don't have a specific story pulled from my materials for this one",
-            "nothing specific from my background is on file to point to here",
+            "I don't have a specific story on file for this one",
+            "nothing specific from my background is on file here",
           ]),
         )}`,
-        `Action: ${sentence(
-          "in general, when I run into a situation like that, I take ownership of the problem and keep the people it affects informed",
-        )}`,
-        `Result: ${sentence("I don't consider it finished until there's a result I can point to")}`,
+        `Action: ${sentence("I take ownership of the problem and keep people informed")}`,
+        `Result: ${sentence("I don't finish until I have a result to point to")}`,
       ],
       pageIndices: [],
+      groundedIndices: [],
     };
   }
 
   const points = [];
-  points.push(
-    `Situation: ${sentence(
-      headline.company
-        ? headline.title
-          ? `as ${headline.title} at ${headline.company}, I ran into a situation that put this to the test`
-          : `at ${headline.company}, I ran into a situation that put this to the test`
-        : "I can point to a specific example here",
-    )}`,
-  );
+  points.push(`Situation: ${sentence(situationClause(headline))}`);
 
-  points.push(
-    `Task: ${sentence(
-      "I made it my job to own the outcome, not just contribute to it, so I got clear on what success looked like before I started",
-    )}`,
-  );
+  points.push(`Task: ${sentence("I owned the outcome, not just my part of it")}`);
 
   // A result may only be spoken alongside the text it came from (BUG-2): a
   // resume bullet with its own embedded number already states its own
@@ -177,25 +200,28 @@ function behavioralAnswer({ headline, expRef, seed, story }) {
   // Action point otherwise. A metric mined from a different line — a
   // different story — is never spoken here at all.
   const expRefHasMetric = Boolean(expRef) && Boolean(profileMetric(expRef));
+  const groundedIndices = [];
 
   if (firstPersonExpRef && !expRefHasMetric) {
     points.push(`Action: ${sentence(firstPersonExpRef)}`);
+    groundedIndices.push(points.length - 1);
   }
 
   if (firstPersonExpRef && expRefHasMetric) {
     points.push(`Result: ${sentence(firstPersonExpRef)}`);
+    groundedIndices.push(points.length - 1);
   }
 
-  return { points, pageIndices: [] };
+  return { points, pageIndices: [], groundedIndices };
 }
 
 function technicalAnswer({ skills, expRef, seed, story }) {
   const parts = [
     sentence(
       pick(seed, [
-        "I'd start by clarifying the requirements and constraints, then sketch my approach before diving into details",
-        "I'd restate the problem and pin down the constraints first, then walk through my approach out loud",
-        "I'd ask a clarifying question or two, state my assumptions, and then lay out my approach",
+        "I'd start by clarifying the requirements and constraints",
+        "I'd restate the problem and pin down the constraints first",
+        "I'd ask a clarifying question, then state my assumptions",
       ]),
     ),
   ];
@@ -209,25 +235,31 @@ function technicalAnswer({ skills, expRef, seed, story }) {
   // no-op — falls through to `expRef` exactly as before — for every caller
   // that predates project pages as a source (AC-3.6's byte-identity guard).
   const pageClause = story?.bullets?.[0] || "";
-  const groundingClause = pageClause || expRef;
+  const groundedClause = pageClause || expRef;
   const pageIndices = [];
+  const groundedIndices = [];
 
-  if (groundingClause) {
-    parts.push(sentence(`that's close to work I've actually done — ${groundingClause}`));
+  if (groundedClause) {
+    // The carrier this beat used to open with — "that's close to work I've
+    // actually done — <quote>" — was eight fixed words in front of a sentence
+    // that already said the same thing, and it opened on a demonstrative whose
+    // antecedent is the interview question rather than anything in the line,
+    // so read by itself with its label covered up it did not stand up. The
+    // clause speaks for itself, in first person where the line allows it — the
+    // same two-word wrap the behavioral and general shapes already use.
+    parts.push(sentence(firstPersonExperienceClause(groundedClause) || groundedClause));
+    groundedIndices.push(parts.length - 1);
     if (pageClause) pageIndices.push(parts.length - 1);
   } else if (skills.length) {
-    parts.push(sentence(`I'd ground it in my hands-on experience with ${skills.slice(0, 3).join(", ")}`));
+    parts.push(sentence(`I'd ground it in my experience with ${skills.slice(0, 3).join(", ")}`));
+    groundedIndices.push(parts.length - 1);
   }
 
-  parts.push(
-    sentence(
-      "I'd call out the trade-offs explicitly — time versus space, or simplicity versus scale — and explain which one I'm optimizing for and why",
-    ),
-  );
+  parts.push(sentence("I'd call out the trade-offs and say which one I'm optimizing for"));
 
-  parts.push(sentence("finally, I'd say how I'd test it and handle the edge cases before calling it done"));
+  parts.push(sentence("finally, I'd say how I'd test it and handle edge cases"));
 
-  return { points: parts, pageIndices };
+  return { points: parts, pageIndices, groundedIndices };
 }
 
 function generalAnswer({ headline, skills, expRef, pastWorkExpRef, motivationRef, seed, story }) {
@@ -236,17 +268,25 @@ function generalAnswer({ headline, skills, expRef, pastWorkExpRef, motivationRef
   // shape above. Falls through to nothing (pageClause === "") whenever
   // `story` is null/unmatched, which is the existing byte-identical path.
   const pageClause = story?.bullets?.[0] || "";
-  const hasAnchor = Boolean(expRef) || Boolean(headline.company) || skills.length > 0 || Boolean(pageClause);
+  // `motivationRef` counts as an anchor in its own right. It used to be
+  // covered incidentally, because `expRef` was unfiltered and a cover letter's
+  // "I am applying for this role because..." opener out-scores a real
+  // accomplishment on keyword overlap — so the shape had "material" only by
+  // way of the very line it is forbidden to quote as experience. Now that
+  // expRef is past-work-filtered, a candidate whose only file is a cover
+  // letter would otherwise be told nothing is on file while the sentence they
+  // wrote about why they want the job sits right there.
+  const hasAnchor =
+    Boolean(expRef) || Boolean(headline.company) || skills.length > 0 || Boolean(pageClause) || Boolean(motivationRef);
 
   if (!hasAnchor) {
     return {
       points: [
-        sentence(
-          "I don't have specific résumé details on file for this one, but broadly, I look for roles where I can apply what I know and keep growing",
-        ),
-        sentence("and I'd want to talk through the specifics with you rather than speak in generalities"),
+        sentence("I don't have specific résumé details on file for this one"),
+        sentence("I'd rather talk through the specifics with you than generalise"),
       ],
       pageIndices: [],
+      groundedIndices: [],
     };
   }
 
@@ -267,35 +307,34 @@ function generalAnswer({ headline, skills, expRef, pastWorkExpRef, motivationRef
 
   const parts = [];
   const pageIndices = [];
+  const groundedIndices = [];
   if (firstPersonPageClause) {
     parts.push(sentence(firstPersonPageClause));
     pageIndices.push(parts.length - 1);
+    groundedIndices.push(parts.length - 1);
   } else if (firstPersonExpRef) {
     parts.push(sentence(firstPersonExpRef));
+    groundedIndices.push(parts.length - 1);
   } else if (headline.company) {
-    parts.push(
-      sentence(
-        headline.title
-          ? `my most relevant experience is from ${headline.company}, where I worked as ${headline.title}`
-          : `my most relevant experience is from ${headline.company}`,
-      ),
-    );
+    parts.push(sentence(roleClause(headline)));
   }
 
   if (skills.length) {
     parts.push(sentence(`the strengths I'd bring are ${skills.slice(0, 3).join(", ")}`));
+    groundedIndices.push(parts.length - 1);
   }
 
   // When the material has a genuine motivation line, close on it framed as
   // motivation (BUG-5) instead of the generic closing — it's real content
   // the candidate wrote, it just belongs here, not as the experience quote.
   if (motivationRef) {
-    parts.push(sentence(`what draws me to this role is that ${motivationReason(motivationRef)}`));
+    parts.push(sentence(`I'm drawn here because ${motivationReason(motivationRef)}`));
+    groundedIndices.push(parts.length - 1);
   } else {
     parts.push(
       sentence(
         pick(seed, [
-          "and that combination is exactly why I think this role is a strong fit for me",
+          "and that combination is why I think I'd fit this role",
           "and that's the background I'd bring to this specific role",
           "and it's why I'm genuinely excited about this opportunity",
         ]),
@@ -303,7 +342,7 @@ function generalAnswer({ headline, skills, expRef, pastWorkExpRef, motivationRef
     );
   }
 
-  return { points: parts, pageIndices };
+  return { points: parts, pageIndices, groundedIndices };
 }
 
 // AC-H9.35: draft the sample answer as bullet points, grounded only in the
@@ -361,28 +400,43 @@ export function draftSampleAnswerLocal({
   // dropped.
   const skills = profileSkills(material, 12).filter((s) => literallyMentioned(s, material));
   const headline = profileHeadline(material);
-  const expRef = usableExperienceLine(relevantExperienceLine(material, q));
   const seed = q || material;
+
+  // The example each shape may quote, chosen once, the same way live mode
+  // chooses its own (groundingClause, answerLocal.js): employment headers
+  // demoted behind real accomplishments, and the ceiling applied as a
+  // preference over the accomplishments only.
+  //
+  // TWO variants, because the shapes differ in what they can SPEAK, not in
+  // what counts as good material: the behavioral and general shapes say their
+  // example in the first person, so a line that is not achievement-verb-initial
+  // cannot be spoken by them at all and must not be selected for them. The
+  // technical shape quotes it as written and has no such restriction.
+  const commonSelection = { ceiling: MAX_POINT_WORDS, fixedWords: MINED_CARRIER_FIXED_WORDS };
+  const expRef = groundingClause(material, q, commonSelection);
+  const firstPersonRef = groundingClause(material, q, { ...commonSelection, firstPerson: true });
 
   let rawResult;
   if (type === "behavioral") {
-    // The behavioral/STAR shape needs its example to actually be past work
-    // (BUG-4), which the shared relevantExperienceLine doesn't guarantee.
-    const behavioralExpRef = pastWorkExperienceLine(material, q);
-    rawResult = behavioralAnswer({ headline, expRef: behavioralExpRef, seed, story: effectiveStory });
+    rawResult = behavioralAnswer({ headline, expRef: firstPersonRef, seed, story: effectiveStory });
   } else if (type === "technical") {
+    // This beat used to receive the UNFILTERED experience line where the
+    // behavioral and general shapes below received a past-work-filtered one,
+    // so a cover letter's "I am applying for this role because..." opener —
+    // which out-scores a real accomplishment on keyword overlap alone — was
+    // quoted back as an example of work the candidate had done, on material
+    // that had real accomplishments on file alongside it.
     rawResult = technicalAnswer({ skills, expRef, seed, story: effectiveStory });
   } else {
     // The general shape's experience beat needs the same past-work guarantee
     // (BUG-5), plus a genuine motivation line, if the material has one, to
     // frame the closing beat with instead of the generic pick().
-    const generalExpRef = pastWorkExperienceLine(material, q);
     const generalMotivationRef = motivationLine(material, q);
     rawResult = generalAnswer({
       headline,
       skills,
       expRef,
-      pastWorkExpRef: generalExpRef,
+      pastWorkExpRef: firstPersonRef,
       motivationRef: generalMotivationRef,
       seed,
       story: effectiveStory,
@@ -390,8 +444,9 @@ export function draftSampleAnswerLocal({
   }
 
   const pageIndexSet = new Set(rawResult.pageIndices);
+  const groundedIndexSet = new Set(rawResult.groundedIndices || []);
   const usableEntries = rawResult.points
-    .map((p, i) => ({ point: p, fromPage: pageIndexSet.has(i) }))
+    .map((p, i) => ({ point: p, fromPage: pageIndexSet.has(i), grounded: groundedIndexSet.has(i) }))
     .filter((entry) => typeof entry.point === "string" && entry.point.trim());
 
   // A short-format interview (a recruiter phone screen) gets the crispest
@@ -402,8 +457,25 @@ export function draftSampleAnswerLocal({
   // both the blank-entry filter and this crisp cut, rather than recomputed
   // against a post-filter index — the same ordering hazard answerPoints.js's
   // answerLines already guards against for its own positional pairing.
-  const finalEntries =
-    descriptor.lengthTarget.maxWords <= CRISP_MAX_WORDS ? usableEntries.slice(0, CRISP_SENTENCE_COUNT) : usableEntries;
+  //
+  // THE CUT KEEPS THE EXAMPLE. Taking the first two beats and stopping used to
+  // hand a recruiter phone screen the two beats that contain no material — the
+  // scene-setter and the generic ownership statement — and drop the only
+  // sentence quoting anything the candidate actually did. That is exactly
+  // backwards for the format the cut exists to serve, and it broke the
+  // guarantee every other path here keeps: that a cell whose material offers a
+  // line the shape can speak produces an answer containing at least one
+  // grounded point. So when the plain cut would keep no grounded beat and one
+  // exists further down, it takes the last kept slot. Order is preserved —
+  // the example still comes after the beat that sets it up.
+  let finalEntries = usableEntries;
+  if (descriptor.lengthTarget.maxWords <= CRISP_MAX_WORDS) {
+    finalEntries = usableEntries.slice(0, CRISP_SENTENCE_COUNT);
+    if (finalEntries.length && !finalEntries.some((entry) => entry.grounded)) {
+      const example = usableEntries.find((entry) => entry.grounded);
+      if (example) finalEntries = [...finalEntries.slice(0, -1), example];
+    }
+  }
 
   const points = finalEntries.map((entry) => entry.point);
   const pageSources = finalEntries.map((entry) =>

@@ -5,6 +5,7 @@ import { pinnedQuestionEntry } from "@/lib/copilot/currentQuestion";
 import { dashboardCopy } from "@/lib/copilot/dashboardCopy";
 import CurrentQuestionPanel from "./CurrentQuestionPanel";
 import StatsRow from "./StatsRow";
+import AskAiBox from "./AskAiBox";
 import { band, useStickyTop } from "../useStickyTop";
 
 // ARCH-sticky §2.1/§3.3/§3.5. "The question is always visible wherever I am
@@ -69,6 +70,14 @@ export default function StickyQuestionStrip({
   // pins `copy.noQuestion` over SessionSetup/PracticeControls the moment a
   // live session with no question yet reaches this strip (AC 20/44).
   statsOnly = false,
+  // ARCH-ask-ai. Passed straight through to AskAiBox below and used by
+  // nothing else here. Both default to "" — the ask box degrades to "no
+  // application selected" (the route then answers from the knowledge base
+  // alone) and to the server's own engine resolution, which are the correct
+  // readings for a caller that has neither, not a broken state. Neither one
+  // is read by this component, so neither can change what the strip renders.
+  applicationId = "",
+  engine = "",
 }) {
   const { stripRef, stickyTop, statsHosted, measured } = useStickyTop();
   // ARCH-stats-in-strip r3 §2.4: the row's own visibility rule, and the
@@ -203,6 +212,32 @@ export default function StickyQuestionStrip({
           view (AC 2), and the cap itself is never debited for it (`band()`
           is untouched). */}
       {showStats ? <StatsRow pace={pace} fillers={fillers} /> : null}
+      {/* ARCH-ask-ai. The ask-AI box, a DIRECT CHILD here like the stats row
+          and for the identical reason: inside the capped scroller above it
+          would scroll away with the question, and a field the candidate has
+          to hunt for is worse than no field. Rendered UNCONDITIONALLY — no
+          ternary, no `&&` — because all three things it answers from (this
+          application's tracking row, the résumé/cover letter submitted for
+          it, and the knowledge base) exist before any question is detected,
+          and the minutes before an interview are exactly when a candidate
+          uses it. Its own height cost, and the proof that it cannot flip the
+          strip out of `position: sticky`, are measured in AskAiBox.js's own
+          header; the short version is that useStickyTop.js's two predicates
+          read the viewport, the header and the strip's WIDTH, never the
+          strip's height, so `stickyTop` is bit-identical with and without it.
+
+          KNOWN LIMITATION, ROUTED TO THE OWNER AND DELIBERATELY NOT PAPERED
+          OVER HERE. This is a child of the strip, so it inherits the strip's
+          reachability: the `statsOnly && measured && !showStats` early return
+          above renders `null`, and both clients gate the whole strip on their
+          own `mountStrip` predicate (a question, a held question, or a live
+          session with a measured reading). In every one of those states the
+          ask box does not exist either — including the pre-session state it
+          is most wanted in. Fixing that means mounting it as a SIBLING of
+          this strip in CopilotClient.js/PracticeClient.js rather than a
+          child, which is outside this change's file scope; AskAiBox.test.js
+          pins the limitation so it cannot be mistaken for working. */}
+      <AskAiBox applicationId={applicationId} engine={engine} />
     </Box>
   );
 }

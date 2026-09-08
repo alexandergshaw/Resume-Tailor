@@ -163,10 +163,17 @@ describe("draftSampleAnswerLocal motivation-line framing (BUG-4/BUG-5)", () => {
     expect(answer).not.toContain("Senior Software Engineer role");
     // With no genuine past-work anchor in the material, the honest fallback
     // is used instead of inventing a situation — still STAR-labeled.
+    //
+    // The fallback's PROSE is shortened by AC-B.10 (a ceiling of 12 words on
+    // every ungrounded practice string; these three were 13, 24 and 14). The
+    // property is unchanged and is what the three assertions above plus this
+    // one still pin: three beats, STAR-labeled, admitting there is no story on
+    // file rather than inventing one, and quoting nothing from the cover
+    // letter. Each replacement is <= 12 words and passes AC-S.7.
     expect(points).toEqual([
-      "Situation: I don't have a specific story pulled from my materials for this one.",
-      "Action: In general, when I run into a situation like that, I take ownership of the problem and keep the people it affects informed.",
-      "Result: I don't consider it finished until there's a result I can point to.",
+      "Situation: I don't have a specific story on file for this one.",
+      "Action: I take ownership of the problem and keep people informed.",
+      "Result: I don't finish until I have a result to point to.",
     ]);
   });
 
@@ -189,8 +196,19 @@ describe("draftSampleAnswerLocal motivation-line framing (BUG-4/BUG-5)", () => {
     });
     // Only the reason clause after "because" is spoken, framed as motivation
     // — never the "I am applying for..." lead-in quoted verbatim.
-    expect(points).toEqual(["What draws me to this role is that I want to grow my career in cloud infrastructure."]);
-    expect(answer).toBe("What draws me to this role is that I want to grow my career in cloud infrastructure.");
+    //
+    // The FRAMING PROSE is shortened from "What draws me to this role is that"
+    // (8 words) to "I'm drawn here because" (4) by AC-B.18's carrier 8. That
+    // beat is GROUNDED — its reason clause is a >=4-token run of the
+    // candidate's own motivation line — so AC-B.10's ungrounded census cannot
+    // see it and it needed its own criterion; answerCarriers.test.js asserts
+    // the pre-rewrite string is gone. Every property this case exists for is
+    // untouched: exactly one point, the reason clause spoken in full, framed
+    // as motivation rather than as experience, and the "applying" lead-in
+    // never quoted.
+    expect(points).toEqual(["I'm drawn here because I want to grow my career in cloud infrastructure."]);
+    expect(answer).toBe("I'm drawn here because I want to grow my career in cloud infrastructure.");
+    expect(answer).toContain("I want to grow my career in cloud infrastructure");
     expect(answer).not.toContain("applying");
   });
 });
@@ -205,15 +223,17 @@ describe("draftSampleAnswerLocal with no real material", () => {
       interviewType: "behavioral",
     });
     expect(type).toBe("behavioral");
+    // AC-B.10's rewrite of the three ungrounded fallback strings; the property
+    // — an honest three-beat STAR fallback rather than an invented situation —
+    // is unchanged. See the identical fallback asserted above.
     expect(points).toEqual([
-      "Situation: I don't have a specific story pulled from my materials for this one.",
-      "Action: In general, when I run into a situation like that, I take ownership of the problem and keep the people it affects informed.",
-      "Result: I don't consider it finished until there's a result I can point to.",
+      "Situation: I don't have a specific story on file for this one.",
+      "Action: I take ownership of the problem and keep people informed.",
+      "Result: I don't finish until I have a result to point to.",
     ]);
     expect(answer).toBe(
-      "I don't have a specific story pulled from my materials for this one. In general, when I run " +
-        "into a situation like that, I take ownership of the problem and keep the people it affects " +
-        "informed. I don't consider it finished until there's a result I can point to.",
+      "I don't have a specific story on file for this one. I take ownership of the problem and keep " +
+        "people informed. I don't finish until I have a result to point to.",
     );
   });
 
@@ -226,14 +246,19 @@ describe("draftSampleAnswerLocal with no real material", () => {
       interviewType: "general",
     });
     expect(type).toBe("general");
+    // AC-B.10's rewrite of the general shape's no-anchor fallback (26 and 16
+    // words, both ungrounded, both over the 12-word ceiling). The second beat
+    // additionally opened on "And", which fails AC-S.7's S2 — a bullet whose
+    // first token is a coordinator is a fragment of the bullet above it, and
+    // these are read aloud out of order. The property is unchanged: two beats,
+    // admitting nothing is on file, offering to talk specifics instead.
     expect(points).toEqual([
-      "I don't have specific résumé details on file for this one, but broadly, I look for roles where I can apply what I know and keep growing.",
-      "And I'd want to talk through the specifics with you rather than speak in generalities.",
+      "I don't have specific résumé details on file for this one.",
+      "I'd rather talk through the specifics with you than generalise.",
     ]);
     expect(answer).toBe(
-      "I don't have specific résumé details on file for this one, but broadly, I look for roles where I " +
-        "can apply what I know and keep growing. And I'd want to talk through the specifics with you " +
-        "rather than speak in generalities.",
+      "I don't have specific résumé details on file for this one. I'd rather talk through the " +
+        "specifics with you than generalise.",
     );
   });
 });
@@ -275,10 +300,24 @@ describe("draftSampleAnswerLocal technical/system-design shape", () => {
       interviewType: "system-design",
     });
     expect(type).toBe("technical");
-    expect(answer).toContain(
-      "I'd ask a clarifying question or two, state my assumptions, and then lay out my approach.",
-    );
-    expect(answer).toContain("That's close to work I've actually done");
+    // Two AC-B.10/AC-B.4 rewrites land in this one assertion block, and the
+    // property both times is routing, not prose — this case exists to prove a
+    // system-design interviewType still pushes a general question to the
+    // TECHNICAL shape, and that the grounding fixes did not change that.
+    //
+    //  * the opener is one of three ungrounded scaffold strings, cut from 15
+    //    words to 8 by AC-B.10's ceiling.
+    //  * the "That's close to work I've actually done — " carrier is REMOVED
+    //    by AC-B.4, not shortened: eight fixed words in front of a sentence
+    //    that already said the same thing, opening on a demonstrative whose
+    //    antecedent is the interview question rather than anything in the
+    //    line, so it failed AC-S.7 read by itself. The quote it wrapped is
+    //    what carried the meaning, and that is asserted directly now — a
+    //    stronger check than the carrier was, since the carrier could have
+    //    shipped with no quote behind it.
+    expect(answer).toContain("I'd ask a clarifying question, then state my assumptions.");
+    expect(answer).toContain("I led a team of six engineers, cutting deployment time by 40%.");
+    expect(answer).not.toContain("That's close to work I've actually done");
     expect(answer).not.toContain("Microsoft Teams");
     expect(answer).not.toContain("applying");
   });
@@ -389,14 +428,31 @@ describe("draftSampleAnswerLocal length shaping", () => {
       resume: RESUME,
       interviewType: "phone-screen",
     });
+    // TWO changes here, and the second is a behaviour change, not a rewrite.
+    //
+    //  * the prose: AC-B.18's carrier 6 cuts the Situation beat (18 words on
+    //    this fixture) and AC-B.10 cuts the Task beat (24 words).
+    //  * WHICH BEATS SURVIVE THE CUT. Taking the first two beats and stopping
+    //    handed a recruiter phone screen the two beats containing no material
+    //    — the scene-setter and the generic ownership line — and dropped the
+    //    only sentence quoting anything the candidate actually did. AC-S.6 /
+    //    R-333 requires the accomplishment to be quoted on ALL 56 cells of a
+    //    material that offers one, phone-screen cells included
+    //    (answerSelection.test.js pins that count), so the cut now keeps the
+    //    grounded beat in the last slot. Order is preserved.
+    //
+    // The property this case names — trimmed to a crisp TWO points, STAR
+    // labels kept — is unchanged, and both labels are re-asserted below so a
+    // regression that dropped them cannot hide behind the new prose.
     expect(points).toEqual([
-      "Situation: As Senior Software Engineer at Initech, I ran into a situation that put this to the test.",
-      "Task: I made it my job to own the outcome, not just contribute to it, so I got clear on what success looked like before I started.",
+      "Situation: I was Senior Software Engineer at Initech.",
+      "Result: I led a team of six engineers, cutting deployment time by 40%.",
     ]);
+    expect(points).toHaveLength(2);
+    expect(points.every((p) => /^(Situation|Task|Action|Result): /.test(p))).toBe(true);
     expect(answer).toBe(
-      "As Senior Software Engineer at Initech, I ran into a situation that put this to the test. I made " +
-        "it my job to own the outcome, not just contribute to it, so I got clear on what success looked " +
-        "like before I started.",
+      "I was Senior Software Engineer at Initech. I led a team of six engineers, cutting deployment " +
+        "time by 40%.",
     );
   });
 });

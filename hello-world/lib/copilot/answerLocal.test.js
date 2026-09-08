@@ -141,7 +141,22 @@ describe("draftAnswerLocal", () => {
     expect(type).toBe("general");
     expect(points.length).toBeGreaterThanOrEqual(3);
     // Anchored in a concrete example (the real accomplishment, or the company).
-    expect(points[0]).toMatch(/concrete example/i);
+    //
+    // The carrier prose is now "Anchor it — e.g. <example>." rather than
+    // "Anchor your answer in a concrete example — e.g. <example>."
+    // AC-B.5/R-334 requires exactly that: measured over the whole embedded
+    // corpus, live's long tail was the coaching sentence in FRONT of the
+    // example, not the example, and cutting the four carriers costs zero
+    // grounding. pointLength.corpus.test.js asserts the old string is gone.
+    //
+    // The property is the anchoring beat itself, and it is now pinned harder
+    // than the old substring did: the first point must BE the anchor beat AND
+    // must carry the real accomplishment, not merely mention the words
+    // "concrete example" while the accomplishment sits somewhere else.
+    // ("concrete example" survives verbatim on the UNGROUNDED arms, which
+    // AC-B.13 leaves alone — pinned in pointLength.corpus.test.js.)
+    expect(points[0]).toMatch(/^Anchor it — e\.g\. /);
+    expect(points[0]).toMatch(/Acme|platform|latency/);
     expect(points.join(" ")).toMatch(/Acme|platform|latency/);
   });
 
@@ -182,7 +197,10 @@ describe("draftAnswerLocal", () => {
       profile: PROFILE,
     });
     expect(type).toBe("general");
-    expect(points[0]).toMatch(/concrete example/i);
+    // The general shape's anchor beat, post-AC-B.5. The property here is that
+    // omitting interviewType still routes to the GENERAL shape and still
+    // anchors — not which words the carrier uses. See the sibling case above.
+    expect(points[0]).toMatch(/^Anchor it — e\.g\. /);
   });
 
   it("pushes a general question toward a technical scaffold for a technical-flavored interview type", () => {

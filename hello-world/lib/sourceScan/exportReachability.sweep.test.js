@@ -358,15 +358,13 @@ describe("every module is reachable from something that ships, or is on a ledger
     // its line here.
     //
     // The three ORIGINAL findings were all acted on -- deleted, not wired. The
-    // two entries here now are the shared rate limiter and its store, written
-    // ahead of their callers on purpose (see their `finding` text). They are
-    // the one case this bucket was designed for: not "how it is", but a dated
-    // claim that a specific consumer is coming. Wiring either one fails the
-    // exact match above, which is the prompt to delete its line.
-    expect(UNWIRED_MODULES.map((e) => e.file)).toEqual([
-      "lib/rateLimit/index.js",
-      "lib/rateLimit/memoryStore.js",
-    ]);
+    // two that replaced them, the shared rate limiter and its store, were acted
+    // on the other way: WIRED. app/api/copilot/ask/route.js imports
+    // createRateLimiter/identify/rateLimitHeaders at module scope, which made
+    // both modules reachable from shipping code and failed the exact match
+    // above until their lines were deleted -- the prompt working as designed,
+    // in the direction this bucket was actually built for.
+    expect(UNWIRED_MODULES.map((e) => e.file)).toEqual([]);
     for (const entry of UNWIRED_MODULES) {
       expect(entry.finding.length, `${entry.file} is recorded as unwired with no description`).toBeGreaterThan(60);
     }
@@ -421,7 +419,16 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // The third symbol reviewed alongside the two deletions,
     // docx.js#buildDocxFromUploadedTemplate, turned out to be LIVE and was
     // kept (see its corrected entry above), so it still occupies a line here.
-    expect(ORPHAN_EXPORTS).toHaveLength(56);
+    // 56 -> 64: the bullet-truncation chunk's eight, all added with reasons.
+    // SEVEN of them are read by a test and are here only because that read goes
+    // through a dynamic `await load()` this static index cannot follow -- so
+    // unlike every entry above them, "nothing in this repository reads these"
+    // is NOT true of the seven, and the bucket's headline claim is weaker for
+    // them than for the rest. That is stated on each entry rather than left for
+    // someone to discover by deleting one. The eighth,
+    // answerLocal.js#groundingCandidates, is the ordinary shape: read inside its
+    // own module, with the `export` keyword the only surplus part.
+    expect(ORPHAN_EXPORTS).toHaveLength(64);
   });
 
   it("[RULE TR-1] counts the exports whose only consumer is a test, exactly", () => {
@@ -479,7 +486,40 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // this feature's: it arrived with the untrack-chip work landing in the same
     // tree (app/hooks/useUntrackChip.js, app/components/StatusBar.js) and is
     // counted here only because this number is a whole-tree census.
-    expect(TEST_REFERENCED.length).toBe(303);
+    //
+    // 303 -> 304, and the ONE symbol is
+    // lib/rateLimit/index.js#clientIpFromHeaders. It is not a new export and it
+    // did not change: it moved BUCKETS. While lib/rateLimit was unwired, every
+    // one of its exports was classified `unreachable-module` and reported by
+    // the module ledger above instead of here (exportGraph.js:412). Wiring the
+    // limiter into app/api/copilot/ask/route.js -- the event that emptied
+    // UNWIRED_MODULES two cases up -- made the module reachable, which
+    // reclassified all four of its exports as ordinary `unused-export`
+    // candidates, and this is the one of the four that no shipping code asks
+    // for. The check this comment's own instructions ask for was made: it is a
+    // HELPER BEING PINNED, not a feature built and never connected --
+    // `identify()` applies it on every call (index.js:265), and the reason it
+    // is exported is that four cases in rateLimit.test.js drive the
+    // forged-x-forwarded-for defence directly (rotating the attacker-controlled
+    // left-hand entries, and the too-short-chain refusal), which cannot be
+    // reached through `identify` alone. The other three -- createRateLimiter,
+    // identify, rateLimitHeaders -- are all imported by the route and land in
+    // neither bucket.
+    //
+    // ORPHANS is unchanged at 56, and nothing from the ask feature itself
+    // appears in either half: every export of app/api/copilot/ask/route.js,
+    // lib/copilot/askContext.js, askPrompt.js, askLocal.js, askTracking.js and
+    // app/copilot/dashboard/AskAiBox.js is consumed by shipping code.
+    // UNCHANGED at 304 across the bullet-truncation chunk, and that is worth a
+    // sentence because the chunk DID add eight test-only exports. They landed in
+    // the ORPHAN half instead, for two different reasons, both recorded on that
+    // ledger: six are read through a DYNAMIC `await load()` in
+    // lib/copilot/pointLength.test.js (a deliberate pattern so those cases could
+    // fail before the module existed), and this index is built from STATIC
+    // imports only, so the edge is real but invisible here. The eighth,
+    // answerLocal.js#groundingCandidates, is called inside its own module.
+    // Neither is a bucket move of the kind this number tracks.
+    expect(TEST_REFERENCED.length).toBe(304);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
@@ -494,7 +534,20 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // activityRedaction.js) were caught by this very assertion on their first
     // run and un-exported, because both are applied inside that module and read
     // nowhere else.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(359);
+    // 359 -> 360: the single reclassified clientIpFromHeaders described above,
+    // with ORPHAN_EXPORTS again unmoved at 56 -- 304 + 56. This total moving by
+    // exactly one, in step with TEST_REFERENCED and with the orphan half
+    // frozen, is what says the change was a bucket move rather than a new
+    // export surface.
+    // 360 -> 368: the bullet-truncation chunk's eight, ALL of them in the orphan
+    // half -- 304 + 64. Note which way this went, because the first reading of
+    // it was wrong: the eight look like rule TR-1's shape (a widened surface a
+    // suite pins directly) and they were briefly recorded as such, but TR-1's
+    // index follows STATIC imports only and seven of the eight are read through
+    // a dynamic `await load()`. The census reported them as orphans, which is
+    // what this file's numbers actually say; the enumerated ledger is what
+    // carries the truth that a test does read them.
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(368);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

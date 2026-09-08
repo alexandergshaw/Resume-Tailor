@@ -50,3 +50,73 @@ a {
   color: inherit;
   text-decoration: none;
 }
+
+/*
+ * Skip links (app/components/SkipLink.js) — the app's first tab stop.
+ *
+ * Plain CSS rather than `sx` on purpose: SkipLink renders OUTSIDE
+ * <Providers> in the root layout so it can be <body>'s first child, which
+ * means no MUI theme and no emotion are available to it.
+ *
+ * Hidden by being moved off the top of the viewport, NOT by `display: none`,
+ * `visibility: hidden` or a clip-rect: the first two would remove it from the
+ * tab order entirely (defeating the whole point), and a clip-rect would have
+ * to be un-clipped on focus. `position: fixed` rather than `absolute` so the
+ * revealed link is in view no matter how far the page has been scrolled when
+ * it is focused.
+ *
+ * The reveal is on bare `:focus`, deliberately departing from this repo's
+ * ":focus-visible, never bare :focus" rule (recorded at DigestPanel.js:128).
+ * That rule exists to stop a ring being painted for MOUSE users. Here the
+ * control is off-screen at rest, so no mouse user can reach it by accident,
+ * and matching only `:focus-visible` would risk a focused-but-invisible link
+ * in any case where the heuristic does not fire. The RING itself still uses
+ * `:focus-visible` below, with the canonical values from
+ * app/components/experience/knowledgePanelStyles.js's FOCUS_SX (2px solid
+ * var(--accent), 2px offset) rather than a second, competing focus style.
+ *
+ * No `min-height` touch floor from app/theme/mobileSx.js here, and that is a
+ * ruling rather than an oversight: every constant in that module is keyed to
+ * `xs` for FINGERS, and this control is unreachable by touch — it only ever
+ * appears in response to keyboard focus. Its box is comfortably past 44px
+ * from padding alone (14px top + 14px bottom + a ~19px line box), so nothing
+ * is being traded away.
+ */
+.skip-links {
+  /* Children are `position: fixed`, so this element has no in-flow content
+     and collapses to a zero-height flex item of <body>. It exists to group
+     the links into one named landmark, not to lay anything out. */
+  position: relative;
+  z-index: 1300;
+}
+
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  /* Clear of AppHeader's own `z-index: 1100` and the dock's 1000, so the
+     revealed link is never painted underneath either. */
+  z-index: 1300;
+  /* Off the top of the viewport at rest. `calc` off its own height keeps this
+     correct if the text ever wraps. */
+  transform: translateY(calc(-100% - 16px));
+  display: inline-block;
+  padding: 14px 20px;
+  border: 1px solid var(--border-control);
+  border-radius: 8px;
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-weight: 700;
+  font-size: 0.95rem;
+  text-decoration: none;
+  box-shadow: var(--shadow-soft);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+.skip-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

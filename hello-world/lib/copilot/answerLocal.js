@@ -13,6 +13,16 @@ import { defaultLibraryData } from "@/lib/llm/engines/tailor-lite/library/defaul
 import { parseEmploymentHistory } from "@/lib/resume/parseEmployment";
 import { pick } from "@/lib/text/phrasing";
 import { INTERVIEW_SCAFFOLDING } from "./projectStories.js";
+import { isEmploymentHeaderLine } from "./materialQuote.js";
+import { pointWordCount } from "./pointLength.js";
+
+// MODULE-CYCLE DISCIPLINE. pointLength.js imports ACHIEVEMENT_VERBS from this
+// file (its stands-alone predicate must reuse the tree's own verb list, not
+// declare a second one) and materialQuote.js imports pointLength.js, so the
+// two imports above close an ES module cycle. It is safe only while no module
+// in it reads an imported binding at TOP LEVEL — every use of
+// isEmploymentHeaderLine and pointWordCount below is inside a function body,
+// and both of those files keep the same discipline.
 
 const SKILL_CATEGORIES = ["technology", "tool_platform", "domain"];
 const MAX_POINTS = 5;
@@ -329,6 +339,80 @@ export function usableExperienceLine(line) {
   return line && !line.endsWith("…") ? line : "";
 }
 
+// Résumé bullets are written verb-initial ("Led a team...", "Reduced p99..."),
+// and cleanLine lowercases that leading word so the phrase reads mid-sentence
+// inside a talking point. Spoken as its own sentence it then reads as a
+// subject-less fragment, so a caller building one prefixes "I ". Declared
+// beside ACHIEVEMENT_VERBS rather than in the caller because BOTH drafters now
+// need it: sampleAnswerLocal.js to speak a clause in first person, and the
+// candidate selection below to know whether a shape can speak a line at all.
+export const LEADING_ACHIEVEMENT_VERB_RE = new RegExp(`^${ACHIEVEMENT_VERBS.source}`, "i");
+
+// How many ranked lines the grounding selection below considers. One is not
+// enough: rankedExperienceLines scores a line on question overlap plus a
+// "signal" bit that a DATE RANGE satisfies, so on an ordinary résumé the
+// position header out-ranks every accomplishment underneath it and a
+// single-line search returns a job title (see isEmploymentHeaderLine's doc
+// comment for the full mechanism). Ordering happens HERE, at the consumer —
+// rankedExperienceLines itself is deliberately left alone, because its
+// ordering is pinned by its own regression case.
+const GROUNDING_CANDIDATE_POOL = 8;
+
+// The lines a shape may actually quote, split into the two groups AC-B.12's
+// ordering rule ranges over.
+//
+// `fits` — usable, real past work, and speakable in first person when the
+// shape needs that — carries NO length term. Length is a PREFERENCE applied
+// afterwards, never an admission test, because a length-only filter on a
+// résumé whose every bullet is long returns nothing and the answer then says
+// the candidate has nothing on file while their résumé is open.
+//
+// An employment header is DEMOTED rather than removed. The classifier cannot
+// be made perfect — a verb-initial, title-cased, multi-segment accomplishment
+// that names a job is indistinguishable from "<title>, <employer> | <dates>"
+// by structure alone — so a false positive must cost a line its RANK, not its
+// existence. Where the demoted group is the only group, it still ships.
+export function groundingCandidates(material, question, { firstPerson = false } = {}) {
+  const preferred = [];
+  const demoted = [];
+  for (const line of rankedExperienceLines(material, question, GROUNDING_CANDIDATE_POOL)) {
+    if (!usableExperienceLine(line)) continue;
+    if (!isPastWorkLine(line)) continue;
+    if (firstPerson && !LEADING_ACHIEVEMENT_VERB_RE.test(line)) continue;
+    (isEmploymentHeaderLine(line) ? demoted : preferred).push(line);
+  }
+  return { preferred, demoted };
+}
+
+/**
+ * The one line a shape quotes as its concrete example, chosen the same way by
+ * both drafters so the two engines can never disagree about what the
+ * candidate's best available material is.
+ *
+ * `ceiling` (with `fixedWords`, the scaffold prose the clause is composed
+ * into) is a TIE-BREAK, not a gate: the highest-ranked candidate whose
+ * composed point measures within it wins, and when none does the
+ * highest-ranked candidate ships WHOLE and over the ceiling. Nothing is ever
+ * truncated — an example that visibly stops mid-thought is not something a
+ * candidate can say out loud.
+ *
+ * THE ONE PLACE THE CEILING MAY NOT RANGE: the demoted group. Letting a
+ * length preference reach past a real accomplishment to a shorter job title is
+ * how a 12-word position header comes to be presented as work the candidate
+ * did. The cost of confining it is real and is paid on every cell of a
+ * material whose accomplishment the classifier misreads — that answer ships
+ * two to six words longer than it needed to — and that is the cheaper of the
+ * two failures: a longer correct answer against a wrong one.
+ */
+export function groundingClause(material, question, { firstPerson = false, ceiling = 0, fixedWords = 0 } = {}) {
+  const { preferred, demoted } = groundingCandidates(material, question, { firstPerson });
+  if (ceiling > 0) {
+    const withinCeiling = preferred.find((line) => fixedWords + pointWordCount(line) <= ceiling);
+    if (withinCeiling) return withinCeiling;
+  }
+  return preferred[0] || demoted[0] || "";
+}
+
 // The concrete example a caller may cite as evidence of past work — never a
 // motivation statement. relevantExperienceLine only ever returns its single
 // top-scoring line, so when that line reads as motivation rather than past
@@ -374,22 +458,47 @@ export function deriveAnswerFromPoints(points) {
 // this function is what that branch's embedded engine gets it from). This
 // comment used to say live mode never surfaced it; the route was updated and
 // the comment was not.
+// THE FOUR GROUNDING CARRIERS, and why their fixed prose is as short as it is.
+//
+// A live talking point is read in the two seconds between hearing a question
+// and starting to talk. Measured over the whole embedded corpus, the four
+// beats that carry a concrete example were the only long lines live had: the
+// tail (p95 21, max 25, 153 lines of 20+ words) was made almost entirely of
+// the coaching sentence sitting in FRONT of the example, not of the example
+// itself. Cutting each carrier to a short imperative plus "e.g." takes the max
+// to 20 and the 20-plus tail to 27 lines, at a measured cost of ZERO grounding
+// — the carrier is template prose and was never part of what makes a point
+// grounded.
+//
+// The instruction SURVIVES, in reduced form ("Describe it", "Ground it",
+// "Anchor it"), rather than being deleted: live mode's whole job is telling
+// the candidate what to do next, and a beat that reads "Action: e.g. <quote>"
+// is not a shorter instruction, it is no instruction. "Describe it" rather
+// than a bare noun phrase like "Your steps" for the same reason — the latter
+// has no verb, and a bullet read aloud with its bold label covered up must
+// still be a sentence.
+//
+// ONLY THE GROUNDED ARM OF EACH IS CUT. The ungrounded arm of each carrier
+// is unchanged, because with no example to carry the instruction IS the point,
+// and live's 24 ungrounded scaffold strings are already short.
 function behavioralPoints({ headline, metric, hint, expRef, seed, story }) {
   const situation = headline.company
-    ? `a specific project at ${headline.company}${headline.title ? ` as ${headline.title}` : ""}`
+    ? `${headline.company}${headline.title ? `, ${headline.title}` : ""}`
     : "one specific, relevant project";
   const opener = pick(seed, ["Set the scene briefly", "Frame the context in a sentence", "Open with where and when"]);
   // AC-5.1: a matched project page's own bullet is preferred over the
   // résumé/profile expRef for the concrete "e.g." clause — the same
   // preference order sampleAnswerLocal.js's shapes use.
   const pageClause = story?.bullets?.[0] || "";
-  const groundingClause = pageClause || expRef;
+  const example = pageClause || expRef;
   // Prefer a real accomplishment as the Action example; fall back to the skills hint.
-  const actionTail = groundingClause ? ` — e.g. ${groundingClause}` : hint ? ` (${hint})` : "";
+  const action = example
+    ? `Action: Describe it — e.g. ${example}.`
+    : `Action: Walk through the concrete steps you took${hint ? ` (${hint})` : ""}.`;
   const points = [
     `Situation: ${opener} — ${situation}.`,
     "Task: State the goal you personally owned and why it mattered.",
-    `Action: Walk through the concrete steps you took${actionTail}.`,
+    action,
     `Result: Close with a measurable outcome${metric ? ` — e.g. ${metric}` : " (a metric or clear impact)"}.`,
   ];
   return { points, pageIndices: pageClause ? [2] : [] };
@@ -403,7 +512,7 @@ function technicalPoints({ question, skills, hint, expRef, seed, story }) {
   const pageClause = story?.bullets?.[0] || "";
   const groundingText = pageClause || expRef;
   const grounding = groundingText
-    ? `Ground it in real work you've done — e.g. ${groundingText}.`
+    ? `Ground it — e.g. ${groundingText}.`
     : matched.length
       ? `Ground it in your hands-on experience with ${matched.slice(0, 3).join(", ")}.`
       : hint
@@ -430,7 +539,7 @@ function generalPoints({ headline, skills, expRef, seed, story }) {
   const pageClause = story?.bullets?.[0] || "";
   const groundingText = pageClause || expRef;
   const anchor = groundingText
-    ? `Anchor your answer in a concrete example — e.g. ${groundingText}.`
+    ? `Anchor it — e.g. ${groundingText}.`
     : headline.company
       ? `Anchor your answer in a concrete example from ${headline.company}.`
       : "Anchor your answer in one concrete example, not generalities.";
@@ -491,13 +600,27 @@ export function draftAnswerLocal({ question, profile = "", resume = "", coverLet
     const material = combineMaterial(profile, resume, coverLetter);
     skills = profileSkills(material, WIDE_SKILL_POOL).filter((s) => literallyMentioned(s, material));
     headline = profileHeadline(material);
-    expRef = pastWorkExperienceLine(material, q);
+    expRef = groundingClause(material, q);
     metric = expRef ? profileMetric(expRef) : "";
   } else {
-    skills = profileSkills(profile);
+    // The no-documents branch used to differ from the branch above in three
+    // ways that were all defects rather than decisions, and all three are
+    // closed here:
+    //
+    //   * a mined SKILL was spoken without checking the candidate had
+    //     actually written it, so a taxonomy inference ("team" canonicalised
+    //     to the product "Microsoft Teams") shipped as a claimed skill;
+    //   * the METRIC was mined from the whole profile while the example was
+    //     mined from one line, so the app could state that the outcome of the
+    //     story on line A was the figure on line B;
+    //   * the EXAMPLE was the only relevantExperienceLine call in the tree not
+    //     wrapped in usableExperienceLine, so a profile line past cleanLine's
+    //     140-character clamp was quoted with a mid-word ellipsis in it —
+    //     which is never something a person would say out loud.
+    skills = profileSkills(profile).filter((s) => literallyMentioned(s, profile));
     headline = profileHeadline(profile);
-    metric = profileMetric(profile);
-    expRef = relevantExperienceLine(profile, q);
+    expRef = groundingClause(profile, q);
+    metric = expRef ? profileMetric(expRef) : "";
   }
 
   const hint = skillHint(q, skills);

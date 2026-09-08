@@ -180,7 +180,14 @@ function LoginForm() {
   const isMfa = step === "mfa";
 
   return (
+    // AppHeader hides itself on /login, so without this the route has NO
+    // landmark of any kind — and layout.js's skip link still renders here.
+    // `tabIndex={-1}` makes it a valid skip-link target without adding a tab
+    // stop. See app/components/SkipLink.js.
     <Box
+      component="main"
+      id="main-content"
+      tabIndex={-1}
       sx={{
         minHeight: "100vh",
         display: "flex",

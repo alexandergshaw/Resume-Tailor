@@ -217,9 +217,24 @@ describe("every non-literal href in app/ passes through the URL gate", () => {
     expect(src).toMatch(/href=\{href\}/);
   });
 
-  it("leaves hard-coded literal hrefs alone, and they are all same-origin paths", () => {
+  it("leaves hard-coded literal hrefs alone: same-origin paths, or same-document fragments", () => {
+    // WIDENED (deliberately, once) when the skip link landed: `href="#main-content"`
+    // is a literal, and a fragment is same-DOCUMENT -- it cannot navigate off-origin
+    // at all, so it satisfies this case's stated intent. The rule simply predated
+    // the app having any in-page anchor. Three ways of dodging this assertion were
+    // considered and rejected rather than taken: `href="/#main-content"` forces a
+    // navigation to `/` from every other route; `href={"#main-content"}` merely
+    // reclassifies the site as an EXPRESSION and fails the gate above instead; and
+    // spreading `{...props}` so no `href=` token appears would evade a security
+    // sweep by obfuscation and quietly drop every future skip-link-shaped href out
+    // of this census.
+    //
+    // A BARE "#" is still rejected. It is inert as navigation and is the classic
+    // shape of a link standing in for a button with a JS click handler -- which is
+    // a real keyboard/AT defect, not a same-origin one, and nothing here needs it.
     for (const site of SITES.filter((s) => s.kind === "literal")) {
-      expect(site.value.startsWith("/")).toBe(true);
+      const ok = site.value.startsWith("/") || /^#.+/.test(site.value);
+      expect(ok, `${site.file} -> href="${site.value}" is neither a same-origin path nor a fragment`).toBe(true);
     }
   });
 

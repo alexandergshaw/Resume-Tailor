@@ -2833,7 +2833,7 @@ export default function Home() {
 
   return (
     <div className={styles.page}>
-      <main className={styles.main}>
+      <main className={styles.main} id="main-content" tabIndex={-1}>
         <Box
           sx={{
             display: "flex",

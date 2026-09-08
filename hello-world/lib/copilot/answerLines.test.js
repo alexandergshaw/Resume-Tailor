@@ -25,8 +25,28 @@ describe("answerLines", () => {
   it("keeps the sentence behind every cue", () => {
     const lines = answerLines(CUES, POINTS);
     expect(lines).toHaveLength(3);
-    expect(lines.map((l) => l.cue)).toEqual(CUES);
+    // THE PROPERTY THIS CASE EXISTS FOR — the sentence is never discarded —
+    // is unchanged and is this assertion.
     expect(lines.map((l) => l.point)).toEqual(POINTS);
+
+    // The cue no longer survives VERBATIM on every line, and AC-C.1 is why:
+    // a cue whose normalised tokens are a contiguous run of its own point is
+    // duplication, not a cue, so it is dropped and its position inside the
+    // point is reported as `emphasis` instead. Cues 0 and 1 are exactly that
+    // ("Product curriculum lead" against "...as a Product Curriculum Lead
+    // building..."); cue 2 is a real paraphrase ("Faculty and engineering"
+    // against "...faculty stakeholders and engineering teams") and keeps its
+    // cue, which is what proves the drop is selective rather than blanket.
+    //
+    // What must NOT weaken is the POSITIONAL PAIRING this case pins: cue i
+    // belongs to point i. Asserted below on whichever field each line carries,
+    // so a re-pairing bug is still caught on all three lines.
+    expect(lines.map((l) => l.cue)).toEqual(["", "", "Faculty and engineering"]);
+    expect(lines.map((l) => (l.emphasis ? l.point.slice(l.emphasis.start, l.emphasis.end) : null))).toEqual([
+      "Product Curriculum Lead",
+      "SQL and REST APIs",
+      null,
+    ]);
   });
 
   it("falls back to the sentence alone when a draft carries no cues", () => {

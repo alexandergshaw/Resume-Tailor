@@ -25,19 +25,44 @@ import { BREAK_LONG_WORDS_SX } from "./mobileSx";
 // cues weren't usable for this line (see answerLines's doc for the exact
 // rules); `point` is the full speakable sentence and is never empty.
 //
-// Two renderings, chosen per line rather than once for the whole list,
-// because `cue` is decided per-line by answerLines (an all-or-nothing
-// pairing can still leave every cue blank for a whole draft):
+// THREE renderings, chosen per line rather than once for the whole list,
+// because `cue` and `emphasis` are decided per-line by answerLines (an
+// all-or-nothing pairing can still leave every cue blank for a whole draft):
 //
-//   - With a cue: the cue (with its label, if any) in `<strong>`, an em
-//     dash, then the point — the cue is what's skimmed first, `<strong>`
-//     is semantic emphasis (not a styled span) so a screen reader's rendering
-//     agrees with the visual one, and the dash keeps the two readable as one
-//     clause rather than two unrelated fragments.
-//   - Without a cue: the label (if any) followed by the point, exactly the
+//   - With an `emphasis` span: the label (if any) at its own weight, then the
+//     point ONCE, with `point.slice(start, end)` wrapped in a single
+//     `<strong>`. No cue, no em dash. This is the ordinary case now: the cue
+//     was a verbatim fragment of the sentence behind it, so rendering both
+//     printed the same words twice —
+//
+//       before  **Built and scaled a payments platform** — I built and scaled
+//               a payments platform.
+//       after   I **built and scaled a payments platform**.
+//
+//     The bolded characters come from the POINT, so a cue whose first letter
+//     answerCues.js's `tidy` capitalised renders in the point's own case.
+//   - With a cue and no span: the cue (with its label, if any) in `<strong>`,
+//     an em dash, then the point — byte-identical to what this component has
+//     always rendered. A genuinely paraphrasing cue, which is what the Gemini
+//     path supplies, has no run to locate and lands here.
+//   - With neither: the label (if any) followed by the point, exactly the
 //     bare string every one of the four call sites rendered before this
 //     component existed for a draft that carries no cues — this must not
 //     regress that rendering.
+//
+// WHY THE STAR LABEL LEAVES THE BOLD. The cue branch wraps `{label}: {cue}`,
+// so today the label is INSIDE the emphasis. The emphasised run now sits
+// inside the sentence, and exactly one `<strong>` per line is the rule (two
+// would announce two emphasised runs to a screen reader where the design means
+// one), so the label cannot stay in it. It keeps a weight of its own instead —
+// answerCues.js calls the label "the navigation", and it is how a candidate
+// mid-interview finds the Result beat without reading four sentences. That
+// weight is `fontWeight: 600` on the label's own element rather than a second
+// `<strong>`: semantically it is not emphasis, it is a caption.
+//
+// A malformed span renders as though there were none rather than as a
+// half-sliced sentence, because the one thing worse than an unemphasised
+// bullet is a bullet whose words are missing or doubled.
 //
 // Both branches keep the cue and its point inside ONE `<li>`, in reading
 // order, so a screen reader announces them as a single item rather than two
@@ -76,17 +101,39 @@ import { BREAK_LONG_WORDS_SX } from "./mobileSx";
 // clears the bar in dark. The existing muted uses elsewhere under app/copilot
 // are a pre-existing problem, not licence to add another to the one surface
 // whose entire job is to make an answer trustworthy.
+// The emphasis span answerLines reported, but only once it is actually usable
+// against THIS point: two integers inside the string, in order. Anything else
+// falls back to the unemphasised render.
+function usableSpan(emphasis, point) {
+  if (!emphasis) return null;
+  const { start, end } = emphasis;
+  if (!Number.isInteger(start) || !Number.isInteger(end)) return null;
+  if (start < 0 || end <= start || end > String(point || "").length) return null;
+  return { start, end };
+}
+
 export default function AnswerLines({ lines }) {
   return (
     <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
-      {lines.map((line, i) => (
+      {lines.map((line, i) => {
+        const span = usableSpan(line.emphasis, line.point);
+        return (
         <Typography
           key={i}
           component="li"
           variant="body2"
           sx={{ mb: 0.5, color: "var(--text-primary)", ...BREAK_LONG_WORDS_SX }}
         >
-          {line.cue ? (
+          {span ? (
+            <>
+              {line.label ? (
+                <Box component="span" sx={{ fontWeight: 600 }}>{`${line.label}: `}</Box>
+              ) : null}
+              {line.point.slice(0, span.start)}
+              <strong>{line.point.slice(span.start, span.end)}</strong>
+              {line.point.slice(span.end)}
+            </>
+          ) : line.cue ? (
             <>
               <strong>
                 {line.label ? `${line.label}: ` : ""}
@@ -111,7 +158,8 @@ export default function AnswerLines({ lines }) {
             </Typography>
           ) : null}
         </Typography>
-      ))}
+        );
+      })}
     </Box>
   );
 }

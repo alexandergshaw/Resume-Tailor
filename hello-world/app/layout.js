@@ -2,6 +2,7 @@ import "./globals.css";
 import { Manrope, Source_Serif_4 } from "next/font/google";
 import Providers from "@/app/components/Providers";
 import AppHeader from "@/app/components/AppHeader";
+import SkipLink from "@/app/components/SkipLink";
 import { themeCssText, noFlashScript } from "@/app/theme";
 
 const manrope = Manrope({
@@ -32,6 +33,12 @@ export default function RootLayout({ children }) {
         <script dangerouslySetInnerHTML={{ __html: noFlashScript }} />
       </head>
       <body className={`${manrope.variable} ${sourceSerif.variable}`}>
+        {/* FIRST child of <body>, and deliberately outside <Providers>: this
+            is the document's first tab stop (WCAG 2.4.1), and it needs no MUI
+            theme. It must NOT move inside <AppHeader> — the back control's own
+            tests pin that control as the header's first child and first
+            focusable. See app/components/SkipLink.js. */}
+        <SkipLink />
         <Providers>
           <AppHeader />
           {children}

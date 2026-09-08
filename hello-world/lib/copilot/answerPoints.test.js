@@ -250,10 +250,37 @@ describe("answerLines — a terse point mid-draft no longer takes every other li
     const lines = answerLines(cues, POINTS);
 
     expect(lines).toHaveLength(3);
-    expect(lines[0].cue).toBe("Led the migration of our billing");
-    expect(lines[1].cue).toBe("");
     expect(lines[1].point).toBe("I did.");
-    expect(lines[2].cue).toBe("Cut reconciliation time from three days");
+
+    // READ THIS BEFORE CHANGING ANY ASSERTION BELOW.
+    //
+    // AC-C.1 drops a cue whose normalised tokens are a contiguous run of its
+    // own point and reports the run's position as `emphasis` instead. Every
+    // cue deriveCues produces IS such a run by construction — deriveCues
+    // shortens a point to its own leading words — so after this chunk `cue` is
+    // "" on all three lines here.
+    //
+    // THAT MAKES `cue` USELESS AS THIS CASE'S WITNESS, and blindly relaxing
+    // the two assertions to `toBe("")` would have turned this case into a
+    // green test defending the exact defect it was written for. Executed at
+    // 1515a16 against the ORIGINAL defect (deriveCues dropping the blank
+    // instead of holding its place, so cues.length 2 !== points.length 3 and
+    // answerLines' all-or-nothing rule blanks every cue):
+    //
+    //   fixed      cue [ "",  "",  "" ]   emphasis [ {0,32}, null, {0,39} ]
+    //   REGRESSED  cue [ "",  "",  "" ]   emphasis [  null,  null,  null  ]
+    //
+    // `cue` is identical under both. `emphasis` is not. So the property — a
+    // blank cue HOLDS ITS POSITION, and only the terse line loses its cue
+    // while lines 0 and 2 keep what they earned — is re-pinned on `emphasis`,
+    // which is now the field that carries it.
+    expect(lines.map((l) => l.emphasis && l.point.slice(l.emphasis.start, l.emphasis.end))).toEqual([
+      "Led the migration of our billing",
+      null,
+      "Cut reconciliation time from three days",
+    ]);
+    expect(lines[1].emphasis, "the terse line alone loses its cue").toBeNull();
+    expect(lines.map((l) => l.cue)).toEqual(["", "", ""]);
   });
 
   it("pins deriveCues and answerLines together end to end, so the two modules cannot each pass in isolation while failing as a pair", () => {
@@ -268,12 +295,21 @@ describe("answerLines — a terse point mid-draft no longer takes every other li
 
     expect(lines).toHaveLength(3);
     expect(lines[0].label).toBe("Situation");
-    expect(lines[0].cue).toBe("Led the migration of our billing");
     expect(lines[1].label).toBe("");
-    expect(lines[1].cue).toBe("");
     expect(lines[1].point).toBe("I did.");
     expect(lines[2].label).toBe("Result");
-    expect(lines[2].cue).toBe("Cut reconciliation time from three days");
+    // The end-to-end half of the pairing, on `emphasis` rather than `cue`:
+    // after AC-C.1 every deriveCues cue is a contiguous run of its own point
+    // and is dropped, so `cue` reads ["", "", ""] under the FIX and under the
+    // original blank-dropping DEFECT alike and can no longer witness this.
+    // See the sibling case above for the executed side-by-side. The deriveCues
+    // half of the property is still pinned directly, at :291-292.
+    expect(lines.map((l) => l.cue)).toEqual(["", "", ""]);
+    expect(lines.map((l) => l.emphasis && l.point.slice(l.emphasis.start, l.emphasis.end))).toEqual([
+      "Led the migration of our billing",
+      null,
+      "Cut reconciliation time from three days",
+    ]);
     expect(lines.map((l) => l.point)).toEqual([
       "Led the migration of our billing platform to a new provider.",
       "I did.",

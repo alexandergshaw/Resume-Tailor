@@ -66,6 +66,12 @@
 // five data files into the client. It is the same list byte for byte:
 // defaults.js's own `stopwords` field is this exact import.
 import stopwords from "@/lib/llm/engines/tailor-lite/data/stopwords.json";
+// Imported, not restated: the floor a page title has to clear before it can be
+// spoken as a STAR beat lives with every other bullet gate. Referenced only
+// inside starPointsFromStory below — this module sits inside the answerLocal /
+// pointLength import cycle, and a top-level read of either binding would throw
+// depending on which module the cycle is entered through.
+import { MIN_TITLE_WORDS, pointWordCount } from "./pointLength.js";
 
 // Consulted by the MATCH DECISION in selectBestStory only — never by
 // significantTerms or overlapScore, which lib/meeting/** shares (R-257).
@@ -400,6 +406,15 @@ export function starPointsFromStory(story) {
   // nothing. Giving the citation a readable name must not put words in the
   // candidate's mouth, so the two uses part company here.
   if (!story || !story.title || story.title === UNTITLED_PROJECT_TITLE) return null;
+  // A one-word title is refused for the same reason, one step further: a
+  // Situation beat built from it ("Situation: API.") is a label plus a noun,
+  // not a sentence the candidate could say out loud, and padding it into one
+  // would put words in their mouth that the page does not contain — every
+  // point this function returns is marked page-derived by its caller, so an
+  // invented sentence would ship carrying the page citation. The caller
+  // already handles null by falling back to its own résumé-grounded draft, so
+  // this creates no new code path.
+  if (pointWordCount(story.title) < MIN_TITLE_WORDS) return null;
   if (!Array.isArray(story.bullets) || story.bullets.length === 0) return null;
   const points = [`Situation: ${toSentence(story.title)}`, `Action: ${toSentence(story.bullets[0])}`];
   const result = resultBeatFor(story);

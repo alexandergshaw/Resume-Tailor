@@ -32,6 +32,7 @@
 // see the callers for confirmation this is safe.
 
 import { STAR_LABEL_RE } from "./answerLocal.js";
+import { pointWordCount } from "./pointLength.js";
 
 export function cleanAnswerPoints(points) {
   return (Array.isArray(points) ? points : [])
@@ -120,6 +121,36 @@ export function cleanAnswerPoints(points) {
 // Every existing two-argument call site keeps working unchanged: an absent
 // `pageSources` never satisfies the length gate, so every line's
 // `pageSource` is simply `null`.
+//
+// `emphasis` — `{ start, end }` or `null` — is the FOURTH field, and it is
+// what closes the duplication this module's cue rules did not have a rule for.
+// resolveLineCue below already drops a cue IDENTICAL to its point and one no
+// shorter than it; it had no rule for a cue that is a verbatim FRAGMENT of its
+// point, which is the case that actually occurs — measured over the whole
+// embedded corpus, 3,137 of 3,137 cued lines carry their cue's tokens as a
+// contiguous run inside their own point, and ZERO cues anywhere add a word the
+// point does not already contain. Every cued line therefore renders its own
+// words twice, which is where the long rendered lines came from.
+//
+// So a cue whose normalised tokens ARE such a run is dropped, and the run's
+// position is reported instead: `emphasis` carries CHARACTER OFFSETS into
+// `point` (not into the raw point, which still carries its STAR label)
+// delimiting the run TIGHTLY — from the first character of its first token to
+// the last character of its last. Tight rather than word-wise because widening
+// to whole whitespace words drags the punctuation that follows the run into
+// the emphasis: a bolded trailing comma on 394 lines and a bolded trailing
+// colon on 30 more.
+//
+// `cue` and `emphasis` are MUTUALLY EXCLUSIVE by construction — there is never
+// more than one thing for the render layer to emphasise. A genuinely
+// paraphrasing cue (which is what the Gemini path supplies) has no run to
+// locate, keeps its `cue`, and renders exactly as it does today.
+//
+// A run equal to the WHOLE point is not emphasis, it is the identity case
+// wearing different punctuation ("Cut CI time in-half" against "Cut CI time in
+// half" — four whitespace words against five, so the length rule lets it
+// through while the token run covers everything). That drops the cue with NO
+// span rather than rendering an entire bolded line.
 export function answerLines(cues, points, pageSources = []) {
   const cleanPoints = cleanAnswerPoints(points);
   if (!cleanPoints.length) return [];
@@ -161,14 +192,57 @@ export function answerLines(cues, points, pageSources = []) {
       const label = pointLabelMatch ? pointLabelMatch[1] : "";
       const point = pointLabelMatch ? rawPoint.slice(pointLabelMatch[0].length).trim() : rawPoint;
 
+      const resolvedCue = paired ? resolveLineCue(rawCues[i], point) : "";
+      const run = resolvedCue ? locateCueRun(resolvedCue, point) : null;
+
       return {
         label,
-        cue: paired ? resolveLineCue(rawCues[i], point) : "",
+        cue: run ? "" : resolvedCue,
         point,
         pageSource: pageSourcesPaired ? resolvePageSource(rawPageSources[i]) : null,
+        emphasis: run ? run.span : null,
       };
     })
     .filter((line) => line.point);
+}
+
+// Maximal alphanumeric runs of `text`, each with its own character offsets
+// into that same string. Tokenising the ORIGINAL rather than a lowercased copy
+// keeps the offsets exact; only the comparison is case-folded.
+function emphasisTokens(text) {
+  const s = String(text || "");
+  const out = [];
+  let start = -1;
+  for (let i = 0; i <= s.length; i += 1) {
+    const alnum = i < s.length && /[A-Za-z0-9]/.test(s[i]);
+    if (alnum && start === -1) start = i;
+    else if (!alnum && start !== -1) {
+      out.push({ t: s.slice(start, i).toLowerCase(), start, end: i });
+      start = -1;
+    }
+  }
+  return out;
+}
+
+// Where a cue's tokens sit inside its own point, if they sit there at all.
+//
+// Returns `null` when the cue is not a contiguous run of the point (a real
+// paraphrase — keep the cue and render it in front, as today);
+// `{ span: null }` when the run IS the whole point (drop the cue, emphasise
+// nothing — a fully bolded line is not emphasis); and `{ span: {start, end} }`
+// otherwise, the TIGHT character range the render layer wraps in `<strong>`.
+function locateCueRun(cue, point) {
+  const cueTokens = emphasisTokens(cue);
+  const pointTokens = emphasisTokens(point);
+  if (!cueTokens.length || !pointTokens.length) return null;
+  if (cueTokens.length > pointTokens.length) return null;
+
+  for (let i = 0; i + cueTokens.length <= pointTokens.length; i += 1) {
+    if (!cueTokens.every((tok, j) => pointTokens[i + j].t === tok.t)) continue;
+    if (cueTokens.length === pointTokens.length) return { span: null };
+    return { span: { start: pointTokens[i].start, end: pointTokens[i + cueTokens.length - 1].end } };
+  }
+  return null;
 }
 
 // A single pageSources[i] entry, vetted before it is trusted as a
@@ -195,14 +269,15 @@ function resolveLineCue(rawCue, point) {
   const cue = cueLabelMatch ? rawCue.slice(cueLabelMatch[0].length).trim() : rawCue;
   if (!cue) return "";
   if (normalizeForComparison(cue) === normalizeForComparison(point)) return "";
-  if (wordCount(cue) >= wordCount(point)) return "";
+  // pointWordCount is the module-local `wordCount` this file used to declare,
+  // moved to pointLength.js so the ONE definition of "how many words is this?"
+  // is shared with every gate that compares against it (AC-D.1). It is still a
+  // WHITESPACE word count, which is why it can disagree with the normalised
+  // TOKEN run locateCueRun looks for — see AC-C.3's punctuation case above.
+  if (pointWordCount(cue) >= pointWordCount(point)) return "";
   return cue;
 }
 
 function normalizeForComparison(text) {
   return String(text || "").trim().toLowerCase().replace(/[.,;:!?…]+$/u, "");
-}
-
-function wordCount(text) {
-  return String(text || "").trim().split(/\s+/).filter(Boolean).length;
 }

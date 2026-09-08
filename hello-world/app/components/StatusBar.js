@@ -26,6 +26,26 @@ function editedForScope(entry, scope) {
   return !!e;
 }
 
+// The dock is `position: fixed; bottom: 0` (page.module.css `.floatingToolbar`)
+// so it is permanently on screen, but app/page.js mounts it LAST in the DOM,
+// after `</main>`. Its per-job controls therefore sit behind every focusable in
+// the active tab — roughly 230 Tab presses with 20 tracked applications. These
+// three attributes are the target half of the fix; the link half is the second
+// entry in app/components/SkipLink.js, which is gated on this `id` actually
+// being in the document so it can never outlive the dock.
+//
+// A `<section>` with an accessible name is natively a `region` landmark (no
+// explicit `role` needed), which also makes the dock reachable by landmark
+// navigation without using the skip link at all. `tabIndex: -1` lets the
+// fragment target take the caret — Safari and Firefox will not focus a
+// non-focusable target — while staying out of sequential traversal, so the
+// dock still costs no extra tab stop.
+//
+// Spread onto BOTH returns below: the empty-dock early return is a second,
+// separate element, and giving the landmark only to the main return would
+// leave the link dangling in exactly the state "Clear all" produces.
+const DOCK_LANDMARK = { id: "job-dock", "aria-label": "Generated jobs", tabIndex: -1 };
+
 export default function StatusBar({
   trackedJobs,
   setTrackedJobs,
@@ -217,10 +237,15 @@ export default function StatusBar({
     // log-only dock rendered before the notice existed (no `style` at all).
     return (
       <>
-        <div className={styles.floatingToolbar} ref={dockRef} style={untrackBanner ? { flexWrap: "wrap" } : undefined}>
+        <section
+          {...DOCK_LANDMARK}
+          className={styles.floatingToolbar}
+          ref={dockRef}
+          style={untrackBanner ? { flexWrap: "wrap" } : undefined}
+        >
           {untrackBanner}
           {dupeLogButton}
-        </div>
+        </section>
         {dockSpacer}
       </>
     );
@@ -495,7 +520,7 @@ export default function StatusBar({
 
   return (
     <>
-    <div className={styles.floatingToolbar} ref={dockRef} onWheel={vertical ? undefined : handleToolbarWheel} style={dockStyle}>
+    <section {...DOCK_LANDMARK} className={styles.floatingToolbar} ref={dockRef} onWheel={vertical ? undefined : handleToolbarWheel} style={dockStyle}>
       {untrackBanner}
       {dupeBanner}
       {/* AC-6/M-4: `flexWrap` + a PIXEL `rowGap` -- this is a plain `<div>`
@@ -698,7 +723,7 @@ export default function StatusBar({
             ].filter(Boolean)
           : null}
       </Menu>
-    </div>
+    </section>
     {dockSpacer}
     </>
   );

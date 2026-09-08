@@ -90,18 +90,17 @@ export const ALLOWED_UNREACHABLE_MODULES = [
 //     (see the sweep test), so an empty bucket here cannot make that test
 //     vacuous.
 // ---------------------------------------------------------------------------
-export const UNWIRED_MODULES = [
-  {
-    file: "lib/rateLimit/index.js",
-    finding:
-      "The shared rate limiter, written deliberately ahead of its callers because there is no rate limiting anywhere under app/api/ and two queued model-calling endpoints (the copilot ask-AI box and the sub-bullet expansion route) would otherwise each invent their own bound. It is unwired ON PURPOSE and only for as long as neither of those has landed: the first route to import createRateLimiter fails the exact match above, which is the prompt to delete this entry. If both features are abandoned, this module should be deleted rather than allow-listed -- an unreachable security control protects nothing.",
-  },
-  {
-    file: "lib/rateLimit/memoryStore.js",
-    finding:
-      "The in-process store behind lib/rateLimit/index.js, unreachable for exactly the same reason and on the same terms. Worth stating separately because it carries a limit its own header records: a per-instance counter bounds a caller to limit x instanceCount, not limit, so on a serverless fleet it converts an unbounded loop against a paid endpoint into a bounded one without being a fleet-wide guarantee. Its two-operation interface exists so a Redis-backed store can replace it without touching a caller.",
-  },
-];
+// EMPTY AGAIN, and empty is once more the RESOLVED state. The two entries that
+// stood here -- lib/rateLimit/index.js and lib/rateLimit/memoryStore.js -- were
+// the one case this bucket was designed for: not "how it is", but a dated claim
+// that a specific consumer was coming. That consumer landed.
+// app/api/copilot/ask/route.js now imports createRateLimiter/identify/
+// rateLimitHeaders at module scope and memoryStore.js is reached through it, so
+// both are reachable from shipping code and the exact match above is what
+// required these lines to go. That is the ledger doing exactly what its own
+// comment promises: a finding held in a named bucket until it is acted on, then
+// removed when it is.
+export const UNWIRED_MODULES = [];
 
 // ---------------------------------------------------------------------------
 // LEDGER 3 -- exported symbols in a REACHABLE module that neither shipping code
@@ -391,6 +390,56 @@ export const ORPHAN_EXPORTS = [
     file: "lib/url/safeRedirectPath.js",
     name: "default",
     why: "same default-alias-for-symmetry shape as safeExternalHref.js; the named export is what the auth callback route imports",
+  },
+
+  // --- the bullet-truncation chunk's measurement surface -------------------
+  // The seven below are NOT unread. They are read by lib/copilot/pointLength.test.js
+  // and materialQuote.test.js through a DYNAMIC `const { x } = await load()`,
+  // a deliberate pattern that let those cases fail before the modules existed.
+  // The test-import index above is built from STATIC imports only, so the edge
+  // is real and this scanner cannot see it -- which is why they land here and
+  // not in rule TR-1's bucket. Making the tests import statically would move
+  // all seven; that is a test-authoring choice, not a finding, and it is left
+  // to whoever next touches those files.
+  {
+    file: "lib/copilot/pointLength.js",
+    name: "standsAlone",
+    why: "the executable form of the 'sufficient to stand on their own' acceptance gate. It has NO shipping caller by design: the drafters were rewritten so their output satisfies it and the corpus sweep runs the predicate to prove they still do, so a runtime caller would mean the answer path re-checks itself instead of being correct by construction",
+  },
+  {
+    file: "lib/copilot/pointLength.js",
+    name: "MIN_POINT_WORDS",
+    why: "the two-word floor the corpus sweep and the unit suites pin directly rather than re-spelling the literal 2 in a dozen assertions; the drafters reach the same floor through the composed predicates that consume it inside this module",
+  },
+  {
+    file: "lib/copilot/pointLength.js",
+    name: "ANAPHOR_OPENERS",
+    why: "one of the four closed word classes standsAlone's S2 conjunct is built from, exported so a suite can assert membership of the enumerated set instead of trusting a size annotation -- the spec's own stated count disagreed with its enumeration, which is exactly the drift this pins",
+  },
+  {
+    file: "lib/copilot/pointLength.js",
+    name: "COORDINATOR_OPENERS",
+    why: "the second closed class behind S2; a point opening on a coordinator reads correctly in sequence and wrongly when read out of order, which is the failure the gate exists to catch, so the set itself is asserted rather than only its effect",
+  },
+  {
+    file: "lib/copilot/pointLength.js",
+    name: "FUNCTION_HEADS",
+    why: "the closed class behind S3's bare-noun-phrase test; its size is underdetermined by behaviour (two differently-sized sets reproduce every corpus number), so the suite asserts the members the predicate provably needs and the content words it must never contain",
+  },
+  {
+    file: "lib/copilot/pointLength.js",
+    name: "FINITE_FORMS",
+    why: "the finite-verb class S3 uses to tell a predicated clause from a noun phrase; enumerated rather than counted for the same reason as ANAPHOR_OPENERS, and pinned so a possessive apostrophe-s cannot be silently read as a finite verb",
+  },
+  {
+    file: "lib/copilot/materialQuote.js",
+    name: "materialQuote",
+    why: "the verbatim quoting entry point, exercised through the dynamic loader in its own suite and reached in shipping code via the drafters' quoting path rather than by a direct import of this name; it is deliberately the only quoting implementation so no drafter re-derives one",
+  },
+  {
+    file: "lib/copilot/answerLocal.js",
+    name: "groundingCandidates",
+    why: "used inside its own module at answerLocal.js:408, where the ordering it returns decides whether a misread employment header outranks a real accomplishment; exported so that ordering can be asserted directly instead of inferred from the composed clause, so the `export` keyword is the only surplus part",
   },
 ];
 

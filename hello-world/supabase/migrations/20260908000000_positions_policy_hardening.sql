@@ -1,0 +1,288 @@
+-- ===========================================================================
+-- positions: remove user write access, and stop anonymous reads of the
+-- catalogue
+-- ===========================================================================
+-- This migration changes POLICY AND PRIVILEGE ONLY. It creates no table, adds
+-- no column, and touches no row of data. It is the deferred second half of
+-- commit 68c7dde ("move catalogue writes behind an authorizing server route"),
+-- whose own header in app/api/positions/route.js names this file's work as
+-- step 3 of a three-step sequence and explains why it could not ship at the
+-- same time as the code.
+--
+-- ===========================================================================
+-- THE DEFECT, AS MEASURED AGAINST THE LIVE DATABASE
+-- ===========================================================================
+-- `select * from pg_policies where tablename = 'positions'` returns, today:
+--
+--   policyname                      cmd     roles     qual                            with_check
+--   positions_select_all            SELECT  {public}  true                            null
+--   positions_insert_authenticated  INSERT  {public}  null                            (auth.role() = 'authenticated')
+--   positions_update_authenticated  UPDATE  {public}  (auth.role() = 'authenticated') null
+--
+-- and pg_class reports relrowsecurity = true, relforcerowsecurity = false.
+--
+-- `positions_update_authenticated` has a USING expression and NO WITH CHECK.
+-- PostgreSQL then reuses USING as the WITH CHECK. From the PostgreSQL 17
+-- documentation for CREATE POLICY, verbatim:
+--
+--   "For policies that can have both USING and WITH CHECK expressions (ALL
+--    and UPDATE), if no WITH CHECK expression is defined, then the USING
+--    expression will be used both to determine which rows are visible (normal
+--    USING case) and which new rows will be allowed to be added (WITH CHECK
+--    case)."
+--
+-- and, on the same page, "If only a USING clause is specified, then that
+-- clause will be used for both USING and WITH CHECK cases." Table 297,
+-- "Policies Applied by Command Type", says the same thing structurally: for an
+-- UPDATE, an UPDATE policy's USING clause filters the existing row and its
+-- WITH CHECK clause checks the new row.
+--
+-- So the effective policy for an UPDATE on `positions` is
+-- `auth.role() = 'authenticated'` on BOTH the old row and the new row. That
+-- expression references no column of this table at all. The consequence is not
+-- a narrow one: ANY AUTHENTICATED USER MAY UPDATE ANY ROW OF `positions` TO
+-- ANY VALUE. `positions` has no user_id -- it is the shared catalogue of
+-- scraped postings -- so "any row" means every posting belonging to every
+-- user of the application.
+--
+-- ===========================================================================
+-- WHY "JUST ADD A WITH CHECK" IS NOT THE FIX
+-- ===========================================================================
+-- The obvious repair -- appending `with check (auth.role() = 'authenticated')`
+-- to the existing policy -- fixes NOTHING. It writes out explicitly the exact
+-- expression Postgres was already applying implicitly, so the resulting policy
+-- is byte-for-byte equivalent in behaviour to today's. The problem was never
+-- the missing clause; it is that the expression constrains the CALLER's role
+-- and says nothing about the ROW's content.
+--
+-- Nor can a better expression be written. A row-ownership check needs a column
+-- naming the owner, and `positions` deliberately has none: one posting is
+-- pointed at by many users' `applications` rows, which is the whole reason the
+-- table is shared. There is no predicate over this table's columns that means
+-- "this row is yours". That is why the fix below REMOVES user write access
+-- rather than constraining it -- the same posture recommended for the glossary
+-- table, and strictly stronger than any WITH CHECK could be here.
+--
+-- ===========================================================================
+-- WHY THIS IS A SECURITY DEFECT AND NOT ONLY AN INTEGRITY ONE
+-- ===========================================================================
+-- `positions.description` is scraped third-party text that is fed to the model
+-- during tailoring and interview preparation. It is the same class of
+-- untrusted input that commit 32a0626 fenced in app/api/chat/route.js. Under
+-- today's policies one account can rewrite the description, url, company and
+-- raw_data of a posting that a DIFFERENT account's application points at --
+-- which is a cross-tenant write of attacker-chosen text into another user's
+-- model context, plus an attacker-chosen `url` shown to that user as the link
+-- to apply. The integrity damage (a blanked or overwritten posting) is the
+-- visible half; the prompt-injection and phishing surface is the half that
+-- does not announce itself.
+--
+-- ===========================================================================
+-- THE WRITE-SURFACE CENSUS THAT MAKES DROPPING THE POLICIES SAFE
+-- ===========================================================================
+-- Every `from("positions")` in app/ and lib/ was enumerated. Nine files touch
+-- the table; exactly two of them WRITE, and both hold a service-role client:
+--
+--   lib/supabase/writePosition.js -- the only writer. `.insert()` and two
+--     `.update()`s. Documented SERVER ONLY; its callers are
+--     app/api/positions/route.js (createAdminClient), lib/feed/tailorAndQueue.js
+--     (the cron's `admin` client), app/api/feed/apply/route.js
+--     (createAdminClient), and lib/supabase/upsertPosition.js's server branch.
+--   app/api/test-positions/route.js -- two `.delete()` calls cleaning up its
+--     own fixture rows, under a service-role client, behind a
+--     `NODE_ENV !== "development"` 404 guard.
+--
+-- The other seven are reads: app/hooks/useDocumentPreview.js,
+-- app/api/auto-apply-queue/route.js, lib/feed/tailorAndQueue.js,
+-- lib/supabase/upsertApplication.js, lib/supabase/driveDocuments.js, plus two
+-- test files. All run with a session.
+--
+-- THE ONE CASE THAT LOOKS LIKE A USER-SESSION WRITE AND IS NOT. Seven call
+-- sites pass a browser client into `upsertPosition(supabase, job)` --
+-- app/page.js (five), app/hooks/useManualTailor.js,
+-- app/hooks/useApplicationDialogs.js. Every one of those modules is
+-- `"use client"`, and `upsertPosition` branches on
+-- `typeof window !== "undefined"` to POST /api/positions, DISCARDING the client
+-- it was handed. The user-scoped client never reaches the table.
+--
+-- That holds even under server-side rendering of those client components,
+-- which is the case worth stating because it is the one a reader will worry
+-- about. lib/supabase/client.js builds the client with `createBrowserClient`,
+-- which reads its session from `document.cookie`; with no document there is no
+-- session, so such a client authenticates as `anon`, not `authenticated`.
+-- Today's `positions_insert_authenticated` ALREADY denies it. There is
+-- therefore no currently-working user-session write to `positions` anywhere,
+-- and dropping the two policies below removes no capability that functions
+-- today.
+--
+-- ===========================================================================
+-- RULING ON THE ANONYMOUS SELECT
+-- ===========================================================================
+-- `positions_select_all` is `using (true)` for role `{public}`. In PostgreSQL
+-- `public` means every role, `anon` included -- and `{public}` here is almost
+-- certainly not a decision at all but the default: CREATE POLICY applies to
+-- PUBLIC when the TO clause is omitted, and this policy predates the
+-- migrations directory.
+--
+-- RULING: narrow it to `authenticated`, and revoke anon's privileges on the
+-- table. Reasons, in order of weight:
+--
+--   1. IT COSTS NOTHING. No code path reads `positions` without a session --
+--      see the census above; every reader either runs on the service-role
+--      client or behind a `getUser()` gate that 401s. The one endpoint that
+--      might look public, app/api/auto-apply-queue/route.js, returns 401
+--      before it queries. Narrowing therefore breaks no feature.
+--   2. THIS REPO ALREADY HAS A DELIBERATELY PUBLIC TABLE, AND IT IS NOT THIS
+--      ONE. 20260609000000_live_feed.sql:36 says of `feed_postings`: "Anyone
+--      (including anonymous) may read the feed", and 20260609010000_feed_grants.sql
+--      backs that with an explicit `grant select ... to anon, authenticated`.
+--      No migration has ever granted `anon` anything on `positions`:
+--      20260610010000_positions_grants.sql grants only to `authenticated` and
+--      `service_role`. The repo's expressed intent for THIS table has always
+--      been authenticated-only; the `{public}` role on the policy is drift, not
+--      design.
+--   3. raw_data IS AN UNAUDITED THIRD-PARTY BLOB. It stores the upstream
+--      Greenhouse / JSearch API response whole. Its contents are chosen by a
+--      third party and are not constrained by this schema, so "job listings
+--      are public information" -- true of title, company and description --
+--      is not an argument that has been checked against what that column
+--      actually holds. Exposing it to unauthenticated callers is a decision
+--      nobody has made deliberately.
+--   4. The publishable key ships in the client bundle by design, so
+--      "readable by anon" means "readable by anyone on the internet", which
+--      makes the scraped catalogue a free bulk-export target.
+--
+-- WHAT THIS RULING DOES NOT CLAIM: whether `anon` can read `positions` TODAY
+-- depends on a table-level privilege this migration cannot observe. RLS is
+-- necessary but not sufficient -- PostgREST also needs a SELECT grant, and no
+-- migration gives anon one. If Supabase's default privileges granted it when
+-- the table was created outside this directory, then this migration closes a
+-- live anonymous read of the entire catalogue; if they did not, the revoke
+-- below is a harmless no-op that pins the intent so it cannot drift back.
+-- Both statements are written so that either state is correct on completion.
+-- If the owner ever DOES want a public job board, the reversal is one policy:
+-- `create policy ... for select to anon, authenticated using (true)` plus a
+-- matching grant -- made deliberately, with raw_data reviewed or excluded via
+-- a view first.
+--
+-- ===========================================================================
+-- DEPLOY ORDERING -- THE CODE HAD TO SHIP FIRST, AND IT DID
+-- ===========================================================================
+-- app/api/positions/route.js states the required sequence: (1) ship the route
+-- and the client rewiring, (2) let old browser sessions drain, (3) only then
+-- tighten the policy. This is the inverse of the usual schema-first ordering,
+-- because a stale tab still running the pre-68c7dde bundle writes to
+-- `positions` directly and a tightened policy denies it.
+--
+-- Step 1 landed in commit 68c7dde on 2026-09-05. This migration is step 3. The
+-- owner should confirm that a full session-expiry window has passed since that
+-- deploy actually reached production before merging -- the commit date bounds
+-- when it COULD have shipped, not when it did.
+--
+-- ===========================================================================
+-- IDEMPOTENCY AND TRANSACTIONALITY
+-- ===========================================================================
+-- Every statement below is safe to re-run against a database in any state:
+-- `enable row level security` is idempotent, `drop policy if exists` tolerates
+-- an absent policy, each `create policy` is preceded by its own drop, and
+-- `revoke` / `grant` are idempotent by definition. Re-running this file is a
+-- no-op.
+--
+-- There is deliberately NO explicit `begin;` / `commit;` here, and that is a
+-- considered choice rather than an omission. The Supabase CLI sends each
+-- migration file to the server as a single simple-query batch, which Postgres
+-- executes in one implicit transaction -- so this file is already atomic, and
+-- no partial application is possible. Adding an explicit `begin;` inside a
+-- batch that is already in a transaction raises a "there is already a
+-- transaction in progress" warning, and the matching `commit;` would then
+-- close the CLI's own transaction early, which is a real hazard rather than
+-- extra safety. No other migration in this directory uses explicit transaction
+-- control either (grepped: zero occurrences of a top-level begin/commit
+-- across all 25 files), so this follows established practice here.
+--
+-- Roles are referenced unguarded (`authenticated`, `anon`, `service_role`)
+-- because Supabase's platform bootstrap creates all three in every project,
+-- local stacks included, and because this directory already does exactly that
+-- -- 20260609010000_feed_grants.sql:12 issues `grant select ... to anon,
+-- authenticated` with no guard and has applied cleanly.
+--
+-- Applied by .github/workflows/supabase-migrations.yml, which runs
+-- `supabase db push` on merges to main touching this directory. A failure here
+-- would block every later migration in the directory behind it, so nothing
+-- below may depend on an object this file did not verify exists: the only
+-- table named is `public.positions`, which is confirmed present in production
+-- (it carries the three live policies quoted above) even though no migration
+-- in this directory ever created it.
+
+-- ---------------------------------------------------------------------------
+-- Belt and braces. RLS is already enabled on this table (pg_class reports
+-- relrowsecurity = true), but every policy statement below is only meaningful
+-- while it stays that way -- with RLS off, policies are inert and the table is
+-- wide open to anyone holding a grant. Restating it costs nothing and removes
+-- the assumption.
+-- ---------------------------------------------------------------------------
+alter table public.positions enable row level security;
+
+-- ---------------------------------------------------------------------------
+-- Drop the two permissive write policies. Nothing replaces them.
+--
+-- With RLS enabled and NO policy for a command, that command is denied for
+-- every role that does not bypass RLS -- which is the strongest posture
+-- available and the one the write-surface census above shows is correct.
+--
+-- No `for insert ... to service_role` policy is added in their place, and that
+-- absence is deliberate: service_role holds BYPASSRLS, so a policy naming it
+-- would never be consulted. Writing one would imply a constraint that does not
+-- exist and invite a later reader to "fix" the real writer to satisfy it.
+-- ---------------------------------------------------------------------------
+drop policy if exists "positions_insert_authenticated" on public.positions;
+drop policy if exists "positions_update_authenticated" on public.positions;
+
+-- ---------------------------------------------------------------------------
+-- Replace the world-readable SELECT policy with an authenticated-only one.
+--
+-- Renamed rather than redefined in place, so the change is visible in
+-- pg_policies at a glance and the old name cannot linger alongside the new
+-- one. `using (true)` is retained on purpose: `positions` is a genuinely
+-- shared catalogue with no owner column, and every signed-in user legitimately
+-- reads rows that other users' applications also point at.
+-- ---------------------------------------------------------------------------
+drop policy if exists "positions_select_all" on public.positions;
+drop policy if exists "positions_select_authenticated" on public.positions;
+create policy "positions_select_authenticated" on public.positions
+  for select to authenticated using (true);
+
+-- ---------------------------------------------------------------------------
+-- Privileges, the second and independent lever.
+--
+-- RLS and GRANTs are separate gates and PostgREST needs both. Removing the
+-- write policies above is sufficient on its own, but 20260610010000_positions_grants.sql
+-- still grants `insert, update` to `authenticated`, and leaving that in place
+-- would leave the repo asserting two contradictory intents about the same
+-- table. These statements make the privilege layer say what the policy layer
+-- now says.
+--
+-- `delete` is included in the revoke though it was never granted: revoking a
+-- privilege that was never held is a no-op, and naming it here means a future
+-- `grant all` cannot quietly reintroduce it.
+--
+-- service_role's `grant all` is restated so this file is a complete statement
+-- of the table's intended privileges; it is unchanged from
+-- 20260610010000_positions_grants.sql.
+-- ---------------------------------------------------------------------------
+revoke insert, update, delete on table public.positions from authenticated;
+revoke all on table public.positions from anon;
+grant select on table public.positions to authenticated;
+grant all on table public.positions to service_role;
+
+comment on table public.positions is
+  'Shared catalogue of scraped job postings. NO user_id: one row is referenced
+   by many users'' applications rows, so no row-ownership predicate can be
+   written over this table and none should be attempted. WRITES ARE
+   SERVICE-ROLE ONLY, enforced by the absence of any INSERT/UPDATE/DELETE
+   policy rather than by a WITH CHECK -- see
+   20260908000000_positions_policy_hardening.sql for why a WITH CHECK cannot
+   work here. The only writer is lib/supabase/writePosition.js, reached
+   through app/api/positions/route.js, which authenticates every caller and,
+   for edits, additionally requires the caller to hold an application on the
+   position. Reads are open to any authenticated user and closed to anon.';

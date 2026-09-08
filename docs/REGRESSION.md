@@ -5247,3 +5247,167 @@ MUT      (useEffect)       muts: [ {has:true, h:12,    txt:""},
 Step 6 must reproduce step 5 exactly, three times over: recovery is not a one-shot latch. Measured: three consecutive collapse/recover cycles on one page load, each recovering to the same 56.16px strip in a single mutation, with an empty browser error log throughout.
 
 **Two harness notes for whoever re-runs this.** CDP viewport emulation (devtools device toolbar, `Emulation.setDeviceMetricsOverride`) changes `document.documentElement.clientHeight` **without dispatching `window.resize`** -- measured, twice, in two separate sessions -- so step 5 needs the event fired explicitly after the emulated resize; a real window drag or a device rotation does fire it. And a Chrome tab that is not being rendered (a hidden devtools panel, a background tab) runs no `requestAnimationFrame` callbacks and delivers no `ResizeObserver` notifications at all, so the observer-driven half of the recovery path cannot be exercised there -- only the `resize`-listener half. Geometry reads (`getBoundingClientRect`, `getComputedStyle`) are unaffected and stay accurate.
+
+### R-322 | area: copilot-answers | parallel-safe: yes | automatable: yes
+
+**Summary:** The cue is never repeated. Every bulleted line used to print its own words twice — a bold few-word "cue" in front of a sentence that already contained those exact words. Measured over the embedded engine's whole corpus before the fix: **3,137 of 3,137** cued lines carried their cue's normalised tokens as a contiguous run inside their own point, and **zero** cues anywhere added a word the point did not already contain. The bold is now a span INSIDE the sentence rather than a copy in front of it.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run --no-file-parallelism lib/copilot/answerPoints.cueEmphasis.test.js`.
+2. In the app, with the embedded engine selected, draft a live answer for any question with a résumé attached.
+
+**Expected:** No bulleted line shows the same words twice. The bold text at the front of each line is part of that line's own sentence, and the sentence is not restated after it — there is no `**X** — X` shape and no em dash joining a cue to its point. Recorded: median rendered line **18 → 11** words in live mode, **23 → 16** in practice from this change alone.
+
+### R-323 | area: copilot-answers | parallel-safe: yes | automatable: yes
+
+**Summary:** Practice mode's sample-answer bullets are short, and short for a reason that is stated rather than enforced by truncation: no bullet is ever clipped, so a bullet over the ceiling is a whole line of the candidate's own material that had no shorter sibling.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run --no-file-parallelism lib/copilot/answerCarriers.test.js`.
+2. Draft practice sample answers with a résumé attached, for a behavioral, a technical and a general question.
+
+**Expected:** R-322's check holds in practice mode too. No sample-answer bullet runs past **12 words** UNLESS the candidate's material offers nothing shorter, or the bullet is quoted from a matched project page — and in both of those cases the bullet is a WHOLE line, never one ending in `…`. Every bullet is still a complete sentence that stands on its own. Recorded: practice median rendered **23 → 11**, maximum **27 → 20**, and the maximum is the exempt page bullet.
+
+### R-324 | area: copilot-answers | parallel-safe: yes | automatable: yes
+
+**Summary:** Emphasis survives the cue removal, including on STAR-labelled lines, where the label leaves the bold and keeps a weight of its own. **1,823** rendered lines (live **1,112**) carry no STAR label and DO carry a cue, so a pure drop with no replacement span would have left them with no emphasis at all.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run --no-file-parallelism app/copilot/AnswerLines.emphasis.test.js`.
+2. Draft a live general or technical answer (no STAR labels) and read the bullets.
+3. Draft a practice behavioral answer (STAR labels) and read the bullets.
+4. Find a bullet whose whole sentence is six words or fewer.
+
+**Expected:** In step 2 each bullet still has bold text at its front and that bold text is **part of** the sentence. In step 3 the `Situation:` / `Task:` / `Action:` / `Result:` label is still visibly heavier than the surrounding text but is **not** inside the bold span — that span is now the cue's words inside the sentence (**1,314** lines change this way). In step 4 the bullet shows no bold at all. **No bold span begins or ends in the middle of a word, and no bold span ends on a comma or a colon.**
+
+### R-325 | area: copilot-answers | parallel-safe: yes | automatable: yes
+
+**Summary:** No bullet quotes a job title as an example of work. `rankedExperienceLines` scores a line on question overlap plus a "signal" bit that a DATE RANGE satisfies, so a CV position header out-ranked every accomplishment bullet beneath it. Measured before the fix on the flagship material: the position header was quoted on **23 of 56** practice cells and **49 of 56** live ones.
+
+**Steps:**
+1. Attach a résumé whose Experience section opens `Senior Engineer, Acme Payments | 2019 - Present` followed by ordinary accomplishment bullets. Ask *"Tell me about yourself."* in **both** modes.
+2. Repeat with the top line as `Senior Engineer, Acme Payments — 2019` (a single terminal date rather than a range).
+3. Repeat with the top line as `Engineer, Acme | 2019 - 2021` — a one-word title and a one-word employer.
+4. Repeat with `Managed Engineering, Design and Product Teams, 2019 - 2021` as the résumé's **only** accomplishment line.
+
+**Expected:** In steps 1–3 the concrete example is an accomplishment bullet, never the position header, in both modes. Step 3 is the shape a substring-matching classifier misses; step 2 is the shape a range-only date regex misses. In step 4 the line **is still quoted** — the classifier misreads it as a header, and demotion rather than deletion is why it survives as the only thing on file.
+
+### R-326 | area: copilot-answers | parallel-safe: yes | automatable: yes
+
+**Summary:** A cover letter is never quoted as work. The practice technical shape was the one path that passed an UNFILTERED experience line where the behavioral and general shapes passed a past-work-filtered one, so a motivation sentence — which out-scores a real accomplishment on keyword overlap alone — was quoted back as something the candidate had done.
+
+**Steps:**
+1. Attach a cover letter reading *"I am applying for this role because I want to work on developer tooling."* and nothing else. Select interview type **technical** and draft a practice sample answer.
+2. Repeat with two real accomplishment lines in the same cover letter alongside that sentence.
+
+**Expected:** No bullet presents the motivation sentence as an example of past work in either case. Step 2 is the worse of the two — real accomplishments are on file and the motivation line was quoted anyway. The sentence may still appear in the general shape's CLOSING beat, framed as motivation (`I'm drawn here because …`), which is where it belongs.
+
+### R-327 | area: copilot-answers | parallel-safe: yes | automatable: yes
+
+**Summary:** Live's metric is never borrowed from another line. In the no-documents branch the metric was mined from the whole profile while the example was mined from one line, so the app could state that the outcome of the story on line A was the figure on line B.
+
+**Steps:**
+1. With **no** résumé and **no** cover letter attached, set a profile containing a story on one line and an unrelated quantified figure on another.
+2. Draft a live answer for a behavioral question.
+
+**Expected:** The `Result:` bullet does not present that figure as the outcome of that story. Either the figure comes from the same line the example does, or the beat falls back to *"(a metric or clear impact)"*.
+
+### R-328 | area: copilot-answers | parallel-safe: yes | automatable: yes
+
+**Summary:** No bullet ends in `….`. One `relevantExperienceLine` call in the tree was not wrapped in `usableExperienceLine`, so a profile line past `cleanLine`'s 140-character clamp was quoted with a mid-word ellipsis in it. Measured before the fix: **56 points**, 12.5% of live's cells, and live's worst rendered line was **29 words**.
+
+**Steps:**
+1. With **no** documents attached, set a profile whose top line runs past 140 characters.
+2. Draft live answers across several interview types.
+
+**Expected:** No live bullet shows a mid-word ellipsis. A quote that visibly stops mid-word is never something a person would say out loud, so the beat drops the example rather than clipping it.
+
+### R-329 | area: copilot-answers | parallel-safe: yes | automatable: yes
+
+**Summary:** A one-word project page title does not become a Situation beat. `Situation: API.` is a label plus a noun, not a sentence, and padding it into one would put words in the candidate's mouth that the page does not contain — every point that producer returns is marked page-derived, so an invented sentence would ship carrying the page citation.
+
+**Steps:**
+1. Create a project page titled with a single word, with at least one bullet, and make it the best match for a behavioral question.
+2. Draft a practice sample answer.
+
+**Expected:** The answer is the résumé-grounded one, not `Situation: <word>.`, and it is not empty. A two-word title is still accepted — the floor is a minimum, not a ban.
+
+### R-330 | area: copilot-answers | parallel-safe: yes | automatable: yes
+
+**Summary:** The spoken answer still matches the bullets. The prose read back on the practice sample answer is derived from the points and never generated separately, so it cannot drift from what the bullets say.
+
+**Steps:**
+1. Draft a practice sample answer and compare the spoken prose with the bullets, word for word.
+
+**Expected:** Word-for-word identical. **It is SHORTER than before this change in both modes, and that is intended** — the derivation is unchanged, the points are shorter.
+
+### R-331 | area: copilot-answers | parallel-safe: no | automatable: no
+
+**Summary:** A model-written cue still shows. The cue-duplication rule fires only when a cue's normalised tokens are a verbatim contiguous run of its own point, so a cue that genuinely paraphrases survives untouched — which is the shape the Gemini path supplies. **Manual: this case needs the live service and cannot be automated.**
+
+**Steps:**
+1. With the Gemini engine selected, draft an answer whose cues genuinely paraphrase their bullets.
+2. Construct (or wait for) a model cue differing from its bullet only by punctuation — `"Cut CI time in-half"` against `"Cut CI time in half"`.
+
+**Expected:** In step 1 the cue is still rendered in front of its bullet, in the old two-part form: label and cue inside one `<strong>`, an em dash, then the sentence. In step 2 the whole bullet does **not** render in bold — a run covering the entire point is treated as the identity case and the cue is dropped with no span.
+
+### R-332 | area: copilot-answers | parallel-safe: yes | automatable: yes
+
+**Summary:** A skill the candidate never wrote is never claimed. The no-documents mining branch did not filter mined skills through `literallyMentioned` where the has-documents branch did, so a taxonomy inference — "team" canonicalised to the product **Microsoft Teams** — shipped as a claimed skill. Measured before the fix: 6 live cells.
+
+**Steps:**
+1. With a **profile only** — no résumé, no cover letter — whose text contains the word "teams" and never contains "Microsoft", ask *"Tell me about yourself."* in live mode across several interview types.
+
+**Expected:** No bullet names **Microsoft Teams**, or any other skill whose canonical name does not literally occur in the profile.
+
+### R-333 | area: copilot-answers | parallel-safe: yes | automatable: yes
+
+**Summary:** A résumé with no short bullets still gets a real example. A length rule applied as an admission test returns nothing on such a résumé, and the answer then states that nothing is on file while the candidate's résumé is open. Measured: under a hard ceiling this material grounds **0 of 56** practice cells; with the ceiling applied as a preference and a fallback, **56 of 56**.
+
+**Steps:**
+1. Attach a résumé that is a position header plus ONE accomplishment line longer than 12 words, plus a skills line.
+2. Draft practice sample answers across all interview types and questions.
+
+**Expected:** The bullet quotes **that accomplishment line**, whole, never the position header, and **no bullet says nothing is on file**. Recorded: 56 of 56 cells, on all three shapes. The bullet is over the 12-word ceiling and that is correct — the ceiling is a tie-break between candidates, not an admission test.
+
+### R-334 | area: copilot-answers | parallel-safe: yes | automatable: yes
+
+**Summary:** Live's bullets are short. Attributing every live rendered line to its producer showed the long tail was made of four grounding CARRIERS — the coaching sentence in front of the example, not the example — at 9 to 13 fixed words each. Cutting them to a short imperative plus "e.g." costs **zero** grounding, because the carrier is template prose and was never part of what makes a point grounded.
+
+**Steps:**
+1. With a résumé attached, draft live answers for a behavioral, a technical and a general question.
+
+**Expected:** Each bullet that carries a concrete example reads as a short instruction followed by the example — `Action: Describe it — e.g. …`, `Ground it — e.g. …`, `Anchor it — e.g. …` — never the old full-sentence preamble. The Situation beat names the company and title directly rather than saying *"a specific project at X as Y"*, **and still reads as an instruction, not as a bare company-and-title**. Recorded: live's longest bullet **25 → 20** words; bullets of 20 or more words **153 → 27** of 1,976; **typical bullet length does not change (median 11 before and after) — this is a tail cut, not a shortening of the typical line**; and the number of bullets grounded in the candidate's own material does not change (**280 of 448** cells). The UNGROUNDED arm of each carrier is deliberately unchanged — with no example to carry, the instruction is the point.
+
+### R-335 | area: copilot-answers | parallel-safe: yes | automatable: yes
+
+**Summary:** A matched project page is still quoted and still cited. The page bullet is exempt from both the past-work filter and the length ceiling: it is the single most relevant thing the candidate has, a page they wrote that matched this question, and it is true by construction because the drafter read it itself. It is also what sets both modes' tails, and nothing bounds it beyond `cleanLine`'s 140 characters.
+
+**Steps:**
+1. Create a project page whose FIRST bullet is 15 words and does NOT start with an achievement verb — e.g. *"the reconciliation ledger we rebuilt now closes the books in under an hour every night"*.
+2. Draft answers in **both** modes for a general and a technical question that the page matches.
+
+**Expected:** The bullet is quoted **whole**, never truncated, and the line *"From your <page title> page."* still renders underneath it. It must survive both the past-work filter (it is not verb-initial, so an unguarded filter drops it) and the 12-word ceiling (it composes to more than 12, so an unguarded ceiling deselects it). Recorded: it is what sets both tails — practice **20** words on the general shape, live **20** on the behavioral. Note that a producer building a SENTENCE out of the bullet capitalises its first letter, so a check for the bullet inside a point has to be case-insensitive.
+
+### R-336 | area: copilot-answers | parallel-safe: yes | automatable: yes
+
+**Summary:** A misread accomplishment loses its place in the queue, not its place in the answer — and the rule's COST is pinned as well as its benefit. The header classifier cannot be made correct: a verb-initial, title-cased, multi-segment accomplishment that names a job is indistinguishable from `<title>, <employer> | <dates>` by structure alone, and is misread on **8 of 8** and **4 of 5** held-out sets built to find it. **THREE halves, all required.**
+
+**Steps:**
+1. Attach a résumé whose only work line is LONGER than the ceiling and whose position header is shorter. Ask a technical question in practice mode.
+2. Remove the work line entirely, leaving only the header and a skills line. Ask the same technical question.
+3. Put the long work line back and replace the header with `Owned Sales Engineering, Support and Onboarding | 2019 - 2022` — a real accomplishment the classifier misreads as a header. Ask the same question across all 56 (question, interview type) pairs.
+
+**Expected:** (i) the bullet quotes the **work line**, over the ceiling, and never the header. (ii) the bullet now quotes the **header**, because it is all there is — demotion, not deletion, is what keeps it reachable, and the alternative is telling the candidate nothing is on file while their résumé is open. (iii) the bullet quotes the **work line** (14 words, over the ceiling), **not** the 12-word misread line, on all 56 cells.
+
+**(iii) is where this design LOSES two words per cell**, and it is recorded here so that a future change back to an unconfined ordering rule shows up as a diff rather than as a silent improvement in the grounding table. The grounding metric cannot arbitrate it: the source set is filtered with the SAME classifier that orders the candidate list, so the cell that ships the misread accomplishment records as ungrounded BY DEFINITION. An ordering rule that lets the length preference reach past a real accomplishment to a shorter job title passes (ii), fails (i) on 23 of 56 cells, and fails (iii) on 56 of 56.
+
+### R-337 | area: copilot-answers | parallel-safe: yes | automatable: yes
+
+**Summary:** Every bullet stands on its own with its bold label covered up. A bullet here is read aloud, under pressure, out of order, next to three siblings, with a label in front of it that is navigation rather than content — so it has to survive being read by itself, without the bullet above it and with nothing on screen to resolve a pronoun against. This is a STRUCTURAL gate, not a judgement of prose: it cannot see interior anaphora, free relatives, or whether a sentence reads well.
+
+**Steps:**
+1. Draft answers in **both** modes for a behavioral, a technical and a general question with a résumé attached.
+2. Read each bullet with the STAR label hidden.
+
+**Expected:** Each one is a complete sentence: it **starts with a capital and ends with a full stop**, it **does not open with `And` / `But` / `So`** (which would make it a fragment of the bullet above), it **does not open with `It` / `This` / `That` / `They`** (which would have nothing to refer to), and it **is not a bare noun phrase** — `Action: Your steps — e.g. …` and `Situation: Acme Payments, Senior Engineer.` are both failures of this case, and neither may ship. Recorded: live **1,976 of 1,976**; practice **1,155 of 1,317** before this change, with exactly **three** known exceptions after it — a page-title Situation beat (`Situation: <page title>.`, 27 points) and two general-shape closing beats that open on `And` (12 and 5 points), 44 points in all. **A fourth exception is a regression.** Closing the remaining three needs a referent model and a predicated Situation beat for the page-story producer, both of which are their own work.
