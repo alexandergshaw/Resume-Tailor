@@ -54,6 +54,21 @@ export const PRACTICE_COPY = {
   noPoints: "No sample answer has been drafted for this question yet.",
 };
 
+// ARCH-stats-in-strip r3 §2.3: the wpm/filler label -> display-text maps,
+// moved here from app/copilot/dashboard/CopilotDashboard.js so StatsRow.js
+// (the sticky strip's own reading, ARCH-stats-in-strip r3) and
+// CopilotDashboard's DeliveryPanel import the SAME lookup rather than each
+// keeping its own copy — two copies is exactly how the strip and the
+// dashboard would come to call the same wpm figure two different things.
+// The COLOR maps stay in CopilotDashboard.js: they are read only there
+// (§2.5 — the strip carries the threshold in the word alone, never color,
+// because `--warning` fails contrast on the strip's canvas ground).
+export const PACE_LABEL_TEXT = { slow: "Slow", conversational: "Conversational", rushed: "Rushed" };
+// `noticeable`/`heavy` deliberately share a label family with pace's
+// `slow`/`rushed` — the LABEL TEXT is what tells them apart, never color
+// alone (WCAG 1.4.1), same reasoning PACE_LABEL_TEXT's siting comment gives.
+export const FILLER_LABEL_TEXT = { clean: "Clean", noticeable: "Some filler", heavy: "Heavy filler" };
+
 // ARCH-sticky §2.7: the runtime merge. Called by BOTH
 // app/copilot/dashboard/CopilotDashboard.js (for its own remaining panels'
 // copy) and app/copilot/dashboard/StickyQuestionStrip.js (for the relocated

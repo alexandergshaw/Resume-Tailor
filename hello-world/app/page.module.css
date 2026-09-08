@@ -317,6 +317,16 @@
   gap: 14px;
   padding: 10px 20px;
   box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.3);
+  /* B-2: a duplicate-application banner (rendered first) plus a full chip
+     list can exceed the viewport, and being `position: fixed; bottom: 0`,
+     the overflow leaves via the TOP edge — taking the banner with it. `vh`
+     is declared first as the fallback, `dvh` after: iOS Safari resolves
+     `vh` against the LARGE viewport (URL bar collapsed), which is taller
+     than what is actually visible, so a browser without `dvh` still gets a
+     cap and one that has it gets the accurate one. */
+  max-height: 70vh;
+  max-height: 70dvh;
+  overflow-y: auto;
 }
 
 .toolbarLabel {
@@ -383,6 +393,10 @@
   font-size: 0.82rem;
   white-space: nowrap;
   flex-shrink: 0;
+  /* B-5 backstop: even with .toolbarChipCompany fixed below, any other
+     nowrap child could still escape the chip's box. The chip is the
+     boundary that actually clips. */
+  overflow: hidden;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
@@ -420,6 +434,19 @@
 .toolbarChipCompany {
   color: #7a8faf;
   font-size: 0.76rem;
+  /* B-5: unlike its sibling .toolbarChipTitle, this had no way to shrink --
+     its intrinsic minimum was its full text width, which pushed
+     .toolbarChipActions (flex-shrink: 0) past the right edge, where the
+     app-wide horizontal overflow rule (globals.css) clipped the "..."
+     button away with no scrollbar. A zeroed-out min width is what lets a
+     flex item shrink below its content width at all. Do not spell that
+     declaration's own name+colon in this comment, and do not put literal
+     braces in it either -- page.module.dock.test.js reads this file as
+     plain text with a naive regex/brace-matcher and cannot tell a comment
+     from a live rule. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .toolbarChipBadge {
@@ -517,7 +544,10 @@
    #c0d0ee/#1c2333 10.09 · #7a8faf/#1c2333 4.77 · #fde68a/#1c2333 12.61 */
 
 .dupFlag {
-  order: -1;
+  /* AC-8/m-2: NO `order` here. It moves pixels, not focus or reading order
+     (WCAG 2.4.3 / 1.3.2) — StatusBar.js already renders this banner as the
+     dock's first DOM child, which is what actually puts it first for every
+     modality. */
   width: 100%;
   display: flex;
   flex-direction: column;
@@ -620,6 +650,18 @@
 
 @media (max-width: 640px) {
   .dupFlagAction { min-height: 44px; }       /* MOBILE_TAP_MIN */
+  /* B-4/M-6: on a phone, .toolbarChipBtn is the ONLY route to Download /
+     Regenerate / Mark applied / Open posting / Remove — the arrows and the
+     drag-preview affordance are all behind `!vertical`. Both axes: its
+     content is a single "…" glyph, so a height-only floor still leaves it
+     ~23px wide (fails WCAG 2.5.8 AA's 24x24 floor on the other axis). */
+  .toolbarChipBtn {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  /* .toolbarClear carries the DESTRUCTIVE "Clear all" (and the duplicate-
+     check log download button, which reuses this class). */
+  .toolbarClear { min-height: 44px; }
 }
 @media (min-width: 641px) {
   .dupFlagActions { padding-right: 100px; }  /* keep clear of the FAB — V-1.6 */

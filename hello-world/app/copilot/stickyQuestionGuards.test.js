@@ -56,7 +56,17 @@ describe("G-2: the relocated question panel carries no live region", () => {
   // silent specifically for the screen-reader user. The two live regions
   // the copilot page owns (CurrentAnswerPanel's and SpeakerBar's) do not
   // move and are not in scope here.
-  const files = ["./dashboard/CurrentQuestionPanel.js", "./dashboard/panelShells.js"];
+  // ARCH-stats-in-strip r3 §2.4 / AC 31: StatsRow.js joins the list. The row
+  // is mounted for the WHOLE session and its text then changes on every tick
+  // of the clients' 1s ticker, so a live region there would re-announce a wpm
+  // figure every second — over the interviewer, mid-answer. It is the exact
+  // inverse of the failure the two files above are guarded for (announcing
+  // nothing) and it is guarded by the same scan.
+  const files = [
+    "./dashboard/CurrentQuestionPanel.js",
+    "./dashboard/panelShells.js",
+    "./dashboard/StatsRow.js",
+  ];
 
   for (const rel of files) {
     it(`${rel} declares no aria-live, role=status/alert or visuallyHidden`, () => {
@@ -164,7 +174,7 @@ describe("G-5: the cap and the hosting predicate cannot drift apart", () => {
     expect(mod.band("vh")["@media (max-height: 519px)"].maxHeight).toBe(BAND_519_VH);
   });
 
-  it("keeps the five cap constants module-local, and the predicate reads the same literals", () => {
+  it("keeps the eight cap constants module-local, and the predicate reads the same literals", () => {
     const src = sourceOf("./useStickyTop.js");
 
     // MAJOR-2: exporting STRIP_FLOOR_PX / STRIP_FLOOR_REM /
@@ -186,6 +196,14 @@ describe("G-5: the cap and the hosting predicate cannot drift apart", () => {
       "STRIP_GUTTER_PX",
       "STRIP_BANDS",
       "STRIP_MAX_SHARE",
+      // ARCH-stats-in-strip r3 §2.2 — THREE new ones, counted, because in a
+      // guard whose whole point is that an unlisted name is an unenforced
+      // name, a miscount IS the failure mode. Same module-local ruling and
+      // same reason: exporting them would move
+      // exportReachability.sweep.test.js:476/:491.
+      "STATS_FLOOR_PX",
+      "STATS_FLOOR_REM",
+      "STATS_MIN_STRIP_REM",
     ]) {
       expect(src, `${name} must not be exported`).not.toMatch(
         new RegExp(`export\\s+(const|let|function)\\s+${name}\\b`),
@@ -205,6 +223,21 @@ describe("G-5: the cap and the hosting predicate cannot drift apart", () => {
     // to make impossible.
     expect(src.match(/\b4\.25\b/g) || []).toHaveLength(1);
     expect(src.match(/\b0\.60\b/g) || []).toHaveLength(1);
+
+    // ARCH-stats-in-strip r3 AC 11. The reservation rem and the width
+    // threshold get the same treatment, and for a sharper reason: 2.51 is
+    // rounded UP from a measured 2.5025 and 10.5 is a CHOICE inside a measured
+    // interval (9.688, 10.500], so a second copy of either would not look
+    // wrong on inspection — it would just quietly stop agreeing with the row
+    // the predicate is deciding about.
+    //
+    // NOTE FOR THE IMPLEMENTER: `\b10\.5\b` matches inside prose, so the
+    // comments in useStickyTop.js must not repeat either numeral in digits.
+    // Write "the measured interval" or "ten and a half rem", not "10.5".
+    expect(src.match(/\b2\.51\b/g) || [], "2.51 must appear exactly once: in STATS_FLOOR_REM").toHaveLength(1);
+    expect(src.match(/\b10\.5\b/g) || [], "10.5 must appear exactly once: in STATS_MIN_STRIP_REM").toHaveLength(
+      1,
+    );
 
     // And the predicate is written in terms of the constants, not in terms
     // of numbers that happen to match them today.

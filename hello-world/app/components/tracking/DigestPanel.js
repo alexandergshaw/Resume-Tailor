@@ -68,6 +68,7 @@ import { citationLabel, citationTitle } from "@/lib/tracking/citationLabel";
 import { scanCitationResidue } from "@/lib/tracking/citationResidue";
 import { CITATION_BINDING, renderCitedMarkdown } from "@/lib/tracking/renderCitedMarkdown";
 import { triggerBlobDownload } from "@/lib/document/download";
+import { TOUCH_TARGET_SX, BREAK_LONG_WORDS_SX } from "@/app/theme/mobileSx";
 
 // ---------------------------------------------------------------- the copy
 // Every string a user reads on this surface. Forbidden vocabulary, because a
@@ -160,7 +161,38 @@ const PANEL_SX = {
 // WCAG 1.4.1 wants 3:1, so the brackets ARE the non-colour affordance. No
 // resting underline - it is painted against the raised element's own baseline
 // and lands mid-x-height, reading as a stray rule rather than a link.
+// AC-T9/AC-T9.1: `min-width`/`min-height` are ignored on a non-replaced
+// INLINE box (CSS Sizing 3), which is what this marker was before this fix --
+// declaring a floor on it would have looked like a fix and changed nothing.
+// `display: inline-flex` takes it out of that rule, and `boxSizing:
+// "border-box"` keeps the padding INSIDE the 24x24 floor rather than adding
+// on top of it, so the rendered target is close to 24x24 rather than
+// ~34x34. WCAG 2.5.8 AA's 24, not this repo's usual 44 -- see this file's
+// own module header and the AC's own writeup for why: it is a superscript
+// footnote inside flowing prose, and the standard's inline exception applies.
+//
+// THE LINE-SPACING COST, MEASURED, NOT DEDUCED. Naively adding a 24px-tall
+// inline-flex box to an element with `vertical-align: super` grows the
+// height of every line that contains one (confirmed in a real Chromium
+// layout: a paragraph's line grew from 21px to ~26.7px with no
+// compensation). `margin-block: -6px` was the smallest negative offset that
+// measured back to the UNCHANGED 21px line height in that same harness
+// (0px, -4px still grew the line; -6px and beyond all read exactly 0px of
+// growth) while the marker's own `getBoundingClientRect()` stayed the full
+// 24x24 -- negative margin shrinks an inline box's contribution to the line
+// box without shrinking the box that is actually painted and hit-tested.
+// This is the same family of technique as this module's own TOUCH_PILL_SX
+// (an absolutely-positioned overlay that also does not participate in
+// layout), applied here via a negative margin because the marker itself, not
+// a pseudo-element, is what AC-T9.1 measures.
 const MARKER_SX = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  boxSizing: "border-box",
+  minWidth: 24,
+  minHeight: 24,
+  marginBlock: "-6px",
   fontSize: "0.75em",
   lineHeight: 0,
   verticalAlign: "super",
@@ -179,7 +211,13 @@ const SECTION_HEADING_SX = { fontSize: 12, fontWeight: 700, mb: 0.5 };
 const GROUP_HEADING_SX = { fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", mb: 0.5 };
 const CAPTION_SX = { fontSize: 11.5, color: "var(--text-secondary)", mb: 1 };
 const LIST_SX = { m: 0, pl: 2.5, display: "flex", flexDirection: "column", rowGap: 1 };
-const ITEM_SX = { fontSize: 13, fontVariantNumeric: "tabular-nums", "&::marker": { fontWeight: 600, fontVariantNumeric: "tabular-nums" } };
+// AC-T8: a source whose url was refused by safeExternalHref renders NO
+// anchor at all (by design), so it never reaches PANEL_SX's
+// `a:not([data-citation-marker])` rule and its `overflowWrap: "anywhere"`.
+// Granted directly on the list item's own box instead, so a long unbroken
+// title wraps rather than being deleted by app/globals.css's
+// `html { overflow-x: hidden }`.
+const ITEM_SX = { fontSize: 13, fontVariantNumeric: "tabular-nums", ...BREAK_LONG_WORDS_SX, "&::marker": { fontWeight: 600, fontVariantNumeric: "tabular-nums" } };
 const HOST_SX = { fontSize: 11.5, color: "var(--text-secondary)" };
 const NOTICE_SX = { fontSize: 12.5, color: "var(--warning)", bgcolor: "var(--warning-soft)", p: 1, borderRadius: 1, mb: 1.5 };
 
@@ -592,7 +630,7 @@ export default function DigestPanel({ digest, nowTs, researching = false, onRese
 
       <Box sx={{ mt: 1, display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
         {researching ? (
-          <Button size="small" aria-disabled="true" onClick={() => {}} sx={{ opacity: 0.6, "&:focus-visible": FOCUS_SX }}>
+          <Button size="small" aria-disabled="true" onClick={() => {}} sx={{ ...TOUCH_TARGET_SX, opacity: 0.6, "&:focus-visible": FOCUS_SX }}>
             Researching…
           </Button>
         ) : confirming ? (
@@ -623,7 +661,7 @@ export default function DigestPanel({ digest, nowTs, researching = false, onRese
               size="small"
               autoFocus
               onClick={() => setConfirming(false)}
-              sx={{ "&:focus-visible": FOCUS_SX }}
+              sx={{ ...TOUCH_TARGET_SX, "&:focus-visible": FOCUS_SX }}
             >
               Keep what I have
             </Button>
@@ -634,7 +672,7 @@ export default function DigestPanel({ digest, nowTs, researching = false, onRese
                 setConfirming(false);
                 if (onResearchAgain) onResearchAgain(digest.application_id);
               }}
-              sx={{ "&:focus-visible": FOCUS_SX }}
+              sx={{ ...TOUCH_TARGET_SX, "&:focus-visible": FOCUS_SX }}
             >
               Replace research
             </Button>
@@ -643,7 +681,7 @@ export default function DigestPanel({ digest, nowTs, researching = false, onRese
           <Button
             size="small"
             onClick={() => setConfirming(true)}
-            sx={{ "&:focus-visible": FOCUS_SX }}
+            sx={{ ...TOUCH_TARGET_SX, "&:focus-visible": FOCUS_SX }}
           >
             Research again
           </Button>
@@ -656,7 +694,7 @@ export default function DigestPanel({ digest, nowTs, researching = false, onRese
               `company-research-log-${digest.application_id || "row"}.md`
             )
           }
-          sx={{ "&:focus-visible": FOCUS_SX }}
+          sx={{ ...TOUCH_TARGET_SX, "&:focus-visible": FOCUS_SX }}
         >
           Download research log
         </Button>

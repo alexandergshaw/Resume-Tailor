@@ -10,6 +10,7 @@ import TextField from "@mui/material/TextField";
 import Tooltip from "@mui/material/Tooltip";
 
 import styles from "../../page.module.css";
+import { TOUCH_ICON_SX, BREAK_LONG_WORDS_SX } from "@/app/theme/mobileSx";
 
 const DownloadIcon = (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></svg>
@@ -124,7 +125,7 @@ export default function ProfileListSection({ ctl, config, renderCopyButton, impo
                   size="small"
                   disabled={!hasAny}
                   onClick={(e) => { e.stopPropagation(); downloadDocx(); }}
-                  sx={{ p: 0.5, color: "var(--text-secondary)" }}
+                  sx={{ ...TOUCH_ICON_SX, p: 0.5, color: "var(--text-secondary)" }}
                   aria-label={downloadTitle}
                 >
                   {DownloadIcon}
@@ -137,7 +138,7 @@ export default function ProfileListSection({ ctl, config, renderCopyButton, impo
                   size="small"
                   disabled={!hasAny}
                   onClick={(e) => { e.stopPropagation(); copyAll(); }}
-                  sx={{ p: 0.5, color: allCopied ? "var(--success)" : "var(--text-secondary)" }}
+                  sx={{ ...TOUCH_ICON_SX, p: 0.5, color: allCopied ? "var(--success)" : "var(--text-secondary)" }}
                   aria-label={copyAllTitle}
                 >
                   {allCopied ? CheckIcon : CopyIcon}
@@ -241,8 +242,16 @@ export default function ProfileListSection({ ctl, config, renderCopyButton, impo
                     gap: 1,
                   }}
                 >
-                  <Box sx={{ fontWeight: 600, fontSize: "0.9rem" }}>{headerLabel(entry)}</Box>
-                  <Box sx={{ display: "flex", gap: 0.75 }}>
+                  {/* AC-T12: a flex item's automatic minimum size is its
+                      min-content -- the single longest unbreakable token --
+                      so without `minWidth: 0` a long unbroken headerLabel
+                      (a company or school name) refused to shrink and pushed
+                      Copy/Remove out of the card, where
+                      `html { overflow-x: hidden }` deletes them rather than
+                      leaving them merely off-screen. BREAK_LONG_WORDS_SX lets
+                      the label itself break instead of just shrinking. */}
+                  <Box sx={{ fontWeight: 600, fontSize: "0.9rem", minWidth: 0, ...BREAK_LONG_WORDS_SX }}>{headerLabel(entry)}</Box>
+                  <Box sx={{ display: "flex", gap: 0.75, flexShrink: 0, flexWrap: "wrap" }}>
                     <Button
                       size="small"
                       variant="outlined"

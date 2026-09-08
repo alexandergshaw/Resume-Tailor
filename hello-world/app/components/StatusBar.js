@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import Menu from "@mui/material/Menu";
 import MenuItem from "@mui/material/MenuItem";
 import Divider from "@mui/material/Divider";
@@ -98,6 +98,38 @@ export default function StatusBar({
   const [expanded, setExpanded] = useState(false);
   const [menu, setMenu] = useState({ anchorEl: null, jobId: null });
 
+  // AC-1 (B-1): `.floatingToolbar` is `position: fixed`, so it reserves NO
+  // space in flow -- every tab's last screenful sits permanently underneath
+  // it. The fix is a flow spacer, rendered as this component's OWN sibling
+  // to the fixed dock (never a child of it -- a child of `position: fixed`
+  // is out of flow too and reserves nothing), sized from a REAL measurement
+  // rather than a hardcoded guess: one chip is ~84px, a duplicate banner
+  // plus a full list is ~672px, and only `ResizeObserver` re-measures as
+  // that changes. A callback ref (not a plain `useRef`) is what re-attaches
+  // the observer across the two DOM shapes this component can return -- the
+  // trackedJobs===0 early-return dock below and the full dock further down
+  // share this same ref, state and spacer.
+  //
+  // Rejected: a `--dock-h` custom property on `.page`. It would trip
+  // app/theme/themeSystem.test.js's "every var(--token) is a defined theme
+  // token" sweep, it touches the whole app's layout class instead of just
+  // this component, and it would cost app/page.js lines it does not have to
+  // spare (3206/1000).
+  const [dockHeight, setDockHeight] = useState(0);
+  const dockObserverRef = useRef(null);
+  const dockRef = useCallback((node) => {
+    dockObserverRef.current?.disconnect();
+    dockObserverRef.current = null;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) setDockHeight(entry.contentRect.height);
+    });
+    ro.observe(node);
+    dockObserverRef.current = ro;
+  }, []);
+  const dockSpacer = <div data-dock-spacer aria-hidden="true" style={{ height: dockHeight }} />;
+
   // A plain button in the dock, never a MenuItem under "More actions" (that
   // menu is per-job, and this log is per-session) and never an icon-only
   // control: "clearly visible" and "one click with good defaults" are both
@@ -179,17 +211,29 @@ export default function StatusBar({
   // raised BY a removal, and removing the last chip empties this list.
   if (trackedJobs.length === 0) {
     if (!untrackBanner && !dupeLogButton) return null;
-    // With no banner this is byte-identical to what the log-only dock
-    // rendered before the notice existed (no `style` at all).
+    // This dock is `position: fixed` too (same class), so it needs the same
+    // B-1 spacer as the main return below -- AC-1 pins this explicitly.
+    // With no banner the dock itself is otherwise byte-identical to what the
+    // log-only dock rendered before the notice existed (no `style` at all).
     return (
-      <div className={styles.floatingToolbar} style={untrackBanner ? { flexWrap: "wrap" } : undefined}>
-        {untrackBanner}
-        {dupeLogButton}
-      </div>
+      <>
+        <div className={styles.floatingToolbar} ref={dockRef} style={untrackBanner ? { flexWrap: "wrap" } : undefined}>
+          {untrackBanner}
+          {dupeLogButton}
+        </div>
+        {dockSpacer}
+      </>
     );
   }
 
   const vertical = expanded || isMobile;
+  // AC-3 (B-3): `vertical` still means "lay the dock out as a column" (mobile
+  // always, or desktop's own "Expand list"). Separately, on a phone the dock
+  // now STARTS COLLAPSED -- the chip list itself is withheld until the user
+  // opens it, so the dock does not cover 23-82% of a 375x812 screen before
+  // anyone has done anything. Desktop is unaffected: its horizontal strip
+  // already always showed its chips, and "Expand list" there always has.
+  const chipListOpen = isMobile ? expanded : true;
 
   function jobFlags(job) {
     const tailoring = tailoringMap[job.id] || {};
@@ -450,23 +494,36 @@ export default function StatusBar({
     dupeNotice || untrackNotice ? { ...(dockBaseStyle || {}), flexWrap: "wrap" } : dockBaseStyle;
 
   return (
-    <div className={styles.floatingToolbar} onWheel={vertical ? undefined : handleToolbarWheel} style={dockStyle}>
+    <>
+    <div className={styles.floatingToolbar} ref={dockRef} onWheel={vertical ? undefined : handleToolbarWheel} style={dockStyle}>
       {untrackBanner}
       {dupeBanner}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, width: vertical ? "100%" : "auto" }}>
+      {/* AC-6/M-4: `flexWrap` + a PIXEL `rowGap` -- this is a plain `<div>`
+          with an inline `style`, not `WRAP_ROW_SX` (whose `rowGap: 1` is
+          MUI's spacing transform, i.e. 8px through `sx`; serialised straight
+          onto a raw style object it would be the literal 1px). Without
+          wrap, "Download duplicate-check log" alone (~205px of uppercase
+          0.75rem text) plus the label plus two flex-shrink:0 buttons
+          overflow, and `html { overflow-x: hidden }` clips the row. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", rowGap: "8px", width: vertical ? "100%" : "auto" }}>
         <span className={styles.toolbarLabel}>Generated ({trackedJobs.length})</span>
         {/* In the header row, which renders in BOTH the horizontal and the
             vertical dock and never scrolls -- the job chips sit in their own
             overflow container, so a control placed among them would be one
             arrow-click away from invisible. */}
         {dupeLogButton}
+        {/* AC-3/B-3: visible on mobile too -- it is the ONLY way to shrink
+            the dock back down that isn't the destructive "Clear all". Kept a
+            native <button type="button">: the app-wide focus ring ships as
+            a MuiButtonBase `.Mui-focusVisible` theme rule plus native-
+            element styling, so a `<div role="button">` would silently have
+            no focus indicator. */}
         <button
           type="button"
           className={styles.toolbarClear}
           onClick={() => setExpanded((v) => !v)}
-          aria-label={vertical ? "Collapse list" : "Expand list"}
-          title={vertical ? "Collapse" : "Expand"}
-          style={isMobile ? { display: "none" } : undefined}
+          aria-label={expanded ? "Collapse list" : "Expand list"}
+          title={expanded ? "Collapse" : "Expand"}
         >
           {expanded ? "▾ Collapse" : "▸ Expand"}
         </button>
@@ -489,18 +546,17 @@ export default function StatusBar({
       </div>
 
       {vertical ? (
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
-            maxHeight: "50vh",
-            overflowY: "auto",
-            width: "100%",
-          }}
-        >
-          {trackedJobs.map((job) => renderChip(job))}
-        </div>
+        chipListOpen ? (
+          // AC-2/AC-7 corollary: no `maxHeight`/`overflowY` here any more --
+          // `.floatingToolbar` is now the ONE scroll container (a `dvh`-
+          // capped `max-height` plus `overflow-y: auto`, in page.module.css).
+          // Two nested scrollers would also let this inner one steal the
+          // page-scroll swipe on a phone, which is the exact reason already
+          // written down in app/theme/mobileSx.js's `PHONE_PANE_SX` comment.
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%" }}>
+            {trackedJobs.map((job) => renderChip(job))}
+          </div>
+        ) : null
       ) : (
         <>
           <div className={styles.toolbarItems} ref={toolbarScrollRef} onScroll={handleToolbarScroll}>
@@ -643,5 +699,7 @@ export default function StatusBar({
           : null}
       </Menu>
     </div>
+    {dockSpacer}
+    </>
   );
 }

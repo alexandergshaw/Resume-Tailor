@@ -36,6 +36,7 @@ import ModeSwitch from "./ModeSwitch";
 import { usePrepContext } from "./usePrepContext";
 import { useApplicationDocs } from "./useApplicationDocs";
 import { useCopilotDashboard } from "./useCopilotDashboard";
+import { useLastSampleAt, useDeliveryReadings } from "./useDeliveryReadings";
 import { useLiveSession } from "./useLiveSession";
 import { useCaptureSetup } from "./useCaptureSetup";
 import { useCompanyBrief } from "./useCompanyBrief";
@@ -298,8 +299,11 @@ export default function CopilotClient() {
   };
 
   // AC-I2/AC-N1: live mode's dashboard — talking pace and verbal-filler
-  // reading, backing LiveHearingStrip's delivery strip below.
-  const { pace, fillers, recordSpeechSample, resetForSession } = useCopilotDashboard();
+  // reading, backing LiveHearingStrip's delivery strip below. useLastSampleAt
+  // (useDeliveryReadings.js) adds the wall-clock §2.7 needs without widening
+  // useCopilotDashboard's own pinned return surface.
+  const { pace, fillers, recordSpeechSample, resetForSession, lastSampleAt } =
+    useLastSampleAt(useCopilotDashboard());
 
   // AC-T1.18/E4: declines (and reports it) when no posting is selected at
   // all, the same way pinCurrentQuestion declines with no question yet
@@ -525,7 +529,16 @@ export default function CopilotClient() {
   // That test is the only end-to-end jsdom proof that `held`, `pinnedId`,
   // `newerQuestionCount` and `onReleasePin` are actually threaded to the
   // strip. Remove this clause only together with that test's mount strategy.
-  const mountStrip = questions.length > 0 || held;
+  //
+  // ARCH-stats-in-strip r3 §2.4/§2.6: `|| (live && anyMeasured)` is the
+  // THIRD mount reason — a live session with no question yet still has
+  // readings worth pinning. `anyMeasured` is an OR, never an AND (filler can
+  // measure when pace can't) and never object truthiness (both hooks always
+  // return an object, so `!!(pace || fillers)` is a constant `true`).
+  const anyMeasured = !!(pace?.measured || fillers?.measured);
+  const mountStrip = questions.length > 0 || held || (live && anyMeasured);
+  // §2.7: the SAME adjusted objects go to both the strip and CopilotDashboard.
+  const { paceForDisplay, fillersForDisplay } = useDeliveryReadings(pace, fillers, lastSampleAt, now);
 
   return (
     <Box sx={{ maxWidth: 1180, mx: "auto", p: { xs: 1.5, sm: 3 } }}>
@@ -629,7 +642,8 @@ export default function CopilotClient() {
               wrapper (not inside it) for the same reason LiveHearingStrip
               is: a sticky sibling can only occlude what follows it, and
               SessionSetup/the Start button must never be one of those
-              things. */}
+              things. `sessionLive={live}` is the row's OWN gate (§2.4) —
+              never this strip's `live` prop. */}
           {mountStrip ? (
             <StickyQuestionStrip
               questions={questions}
@@ -638,6 +652,10 @@ export default function CopilotClient() {
               live={live}
               newerQuestionCount={pinnedNewerCount}
               onReleasePin={unpinQuestion}
+              pace={paceForDisplay}
+              fillers={fillersForDisplay}
+              sessionLive={live}
+              statsOnly={!(questions.length > 0 || held)}
             />
           ) : null}
 
@@ -885,8 +903,8 @@ export default function CopilotClient() {
                 <CopilotDashboard
                   questions={questions}
                   pinnedId={pinnedId}
-                  pace={pace}
-                  fillers={fillers}
+                  pace={paceForDisplay}
+                  fillers={fillersForDisplay}
                   staleTypeChangeAt={staleTypeChangeAt}
                 />
               </Box>

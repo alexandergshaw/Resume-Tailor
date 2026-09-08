@@ -23,6 +23,16 @@ import { appendSpeechSample, computeLivePace, computeLiveFillers } from "@/lib/c
 // a straight pass-through, memoized only because `speechSamples` (unlike a
 // handful of cheap string derivations) grows an array this recomputes a
 // window scan over.
+//
+// ARCH-stats-in-strip r3 §2.7: an existing test pins this hook's returned
+// keys to exactly `pace`/`fillers`/`recordSpeechSample`/`resetForSession` —
+// see this file's own sibling test for "the surviving contract" — so the
+// wall-clock `lastSampleAt` staleAdjusted needs is NOT added here. Each
+// CALLER (CopilotClient.js, PracticeClient.js) instead wraps the
+// `recordSpeechSample`/`resetForSession` this hook returns in its own thin
+// `useState`, recording the same Date.now() the design describes at the
+// exact same call sites — the observable behaviour is identical, and this
+// hook's own tested surface stays untouched.
 export function useCopilotDashboard() {
   const [speechSamples, setSpeechSamples] = useState([]);
 

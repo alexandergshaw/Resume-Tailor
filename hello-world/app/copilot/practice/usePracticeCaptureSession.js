@@ -352,6 +352,12 @@ export function usePracticeCaptureSession({
     activeSessionId,
     interim,
     startedAt,
+    // ARCH-stats-in-strip r3 §2.7: live's own hook already returns `now`
+    // (useLiveSession.js) for its ticker-driven staleness check; this one
+    // computed it (above) but only ever handed callers the derived
+    // `elapsed` — added, nothing replaced, so PracticeClient can pass the
+    // same wall clock into staleAdjusted that live mode already has.
+    now,
     elapsed,
     cameraOff,
     micMuted,

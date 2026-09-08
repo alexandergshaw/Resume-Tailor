@@ -17,6 +17,7 @@ import { useApplicationDocs } from "../useApplicationDocs";
 import CopilotDashboard, { PRACTICE_COPY } from "../dashboard/CopilotDashboard";
 import StickyQuestionStrip from "../dashboard/StickyQuestionStrip";
 import { useCopilotDashboard } from "../useCopilotDashboard";
+import { useLastSampleAt, useDeliveryReadings } from "../useDeliveryReadings";
 import PracticeSetup from "./PracticeSetup";
 import PracticeControls from "./PracticeControls";
 import QuestionCard from "./QuestionCard";
@@ -357,16 +358,14 @@ export default function PracticeClient({
   // second, diverging implementation. The hook now only tracks the delivery
   // strip (pace/fillers, driven by recordSpeechSample) and its own session
   // reset, so it takes no arguments at all.
-  const {
-    pace,
-    fillers,
-    recordSpeechSample,
-    // AC-J2.10: usePracticeAnswer above already returns its own
-    // `resetForSession` (destructured near the top of this component) — the
-    // dashboard hook's own reset is renamed at this destructuring site so
-    // the two can never shadow one another, and start() below calls BOTH.
-    resetForSession: resetDashboardForSession,
-  } = useCopilotDashboard();
+  // AC-J2.10: usePracticeAnswer above already returns its own
+  // `resetForSession` (destructured near the top of this component) — the
+  // dashboard hook's own reset is renamed here so the two can never shadow
+  // one another, and start() below calls BOTH. useLastSampleAt
+  // (useDeliveryReadings.js) adds the wall-clock §2.7 needs without
+  // widening useCopilotDashboard's own pinned return surface.
+  const { pace, fillers, recordSpeechSample, resetForSession: resetDashboardForSession, lastSampleAt } =
+    useLastSampleAt(useCopilotDashboard());
 
   // "Next question": advanceAsked (usePracticeQuestions) does the
   // question-side half — see its own doc for the dedupe rule. Order matters
@@ -503,6 +502,10 @@ export default function PracticeClient({
     activeSessionId,
     interim,
     startedAt,
+    // ARCH-stats-in-strip r3 §2.7: the same 1s wall clock live mode's
+    // useLiveSession already returns — staleAdjusted's other input,
+    // alongside lastSampleAt above.
+    now,
     elapsed,
     cameraOff,
     micMuted,
@@ -661,6 +664,19 @@ export default function PracticeClient({
   // width phones-and-small-tablets belongs to.
   const isTablet = useIsTablet();
 
+  // ARCH-stats-in-strip r3 §2.4/§2.6: the same third mount reason live mode
+  // has, for the same cause — a running session with no question yet still
+  // has readings worth pinning above PracticeControls. `anyMeasured` is an
+  // OR over the two per-reading flags, never an AND (computeLiveFillers does
+  // not require spanSec > 0 the way computeLivePace does) and never object
+  // truthiness (both hooks always return an object, so `!!(pace || fillers)`
+  // is a constant `true`).
+  const anyMeasured = !!(pace?.measured || fillers?.measured);
+  const mountStrip = dashboardQuestions.length > 0 || (running && anyMeasured);
+  // §2.7: the SAME adjusted objects go to both the strip below and
+  // CopilotDashboard further down (AC 30) — see useDeliveryReadings.js.
+  const { paceForDisplay, fillersForDisplay } = useDeliveryReadings(pace, fillers, lastSampleAt, now);
+
   return (
     <Box>
       <PracticeSetup
@@ -711,9 +727,20 @@ export default function PracticeClient({
           component that holds Start, just above this. A direct child of this
           page-spanning Box, so its sticky containing block covers the whole
           practice page and PracticeControls scrolls off the top exactly as
-          it does today (strictly no worse than today). */}
-      {dashboardQuestions.length > 0 ? (
-        <StickyQuestionStrip questions={dashboardQuestions} copy={PRACTICE_COPY} />
+          it does today (strictly no worse than today).
+          ARCH-stats-in-strip r3: `sessionLive={running}` — NOT this strip's
+          own `live` prop, whose default of `true` would leave the row up
+          after Stop (§2.4) — and `statsOnly` names the state `mountStrip`'s
+          second disjunct exists for: a running session with no question yet. */}
+      {mountStrip ? (
+        <StickyQuestionStrip
+          questions={dashboardQuestions}
+          copy={PRACTICE_COPY}
+          pace={paceForDisplay}
+          fillers={fillersForDisplay}
+          sessionLive={running}
+          statsOnly={!(dashboardQuestions.length > 0)}
+        />
       ) : null}
 
       {/* Shown once at least one answer has been analyzed (AC-C4-6), and
@@ -769,8 +796,8 @@ export default function PracticeClient({
               <CopilotDashboard
                 questions={dashboardQuestions}
                 copy={PRACTICE_COPY}
-                pace={pace}
-                fillers={fillers}
+                pace={paceForDisplay}
+                fillers={fillersForDisplay}
                 // AC-J2.3: gated behind the SAME useSampleAnswer instance
                 // QuestionCard's own sample-answer panel uses below, so
                 // revealing the answer in either place reveals it in both —

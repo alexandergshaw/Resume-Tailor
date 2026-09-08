@@ -11,7 +11,7 @@ import Typography from "@mui/material/Typography";
 import { answerLines } from "@/lib/copilot/answerPoints";
 import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus";
 import { pinnedQuestionEntry } from "@/lib/copilot/currentQuestion";
-import { dashboardCopy } from "@/lib/copilot/dashboardCopy";
+import { dashboardCopy, PACE_LABEL_TEXT, FILLER_LABEL_TEXT } from "@/lib/copilot/dashboardCopy";
 import AnswerAids from "../AnswerAids";
 import AnswerLines from "../AnswerLines";
 import { RealPanel } from "./panelShells";
@@ -54,19 +54,22 @@ import { TOUCH_TARGET_SX } from "../mobileSx";
 // `copy` prop below, and only where a live-mode sentence would be untrue in
 // practice mode ("the interviewer has not asked this" when there is no
 // interviewer).
-const PACE_LABEL_TEXT = { slow: "Slow", conversational: "Conversational", rushed: "Rushed" };
+// ARCH-stats-in-strip r3 §2.3: PACE_LABEL_TEXT/FILLER_LABEL_TEXT moved to
+// lib/copilot/dashboardCopy.js (imported above) so StatsRow.js's strip
+// reading and this file's DeliveryPanel share one lookup — see that
+// module's own comment on the two maps for why they moved and the COLOR
+// maps below did not.
 const PACE_LABEL_COLOR = {
   slow: "var(--warning)",
   conversational: "var(--success)",
   rushed: "var(--warning)",
 };
-// Filler-rate reading beside pace, same shape as PACE_LABEL_TEXT/COLOR above
-// so the two readings in DeliveryPanel (below) are visually one family of
-// thing rather than two differently-designed widgets bolted together.
-// `noticeable` and `heavy` deliberately share a color with each other (and
-// with pace's `slow`/`rushed`) — the LABEL TEXT is what tells them apart,
-// never color alone (WCAG 1.4.1), same reasoning as PACE_LABEL_COLOR.
-const FILLER_LABEL_TEXT = { clean: "Clean", noticeable: "Some filler", heavy: "Heavy filler" };
+// Filler-rate COLOR reading beside pace, same shape as PACE_LABEL_COLOR
+// above so the two readings in DeliveryPanel (below) are visually one
+// family of thing rather than two differently-designed widgets bolted
+// together. `noticeable` and `heavy` deliberately share a color with each
+// other (and with pace's `slow`/`rushed`) — the LABEL TEXT (imported above)
+// is what tells them apart, never color alone (WCAG 1.4.1).
 const FILLER_LABEL_COLOR = {
   clean: "var(--success)",
   noticeable: "var(--warning)",

@@ -166,7 +166,11 @@ describe("POST /api/chat (Gemini path): the applications block is byte-identical
     return generateContent;
   }
 
-  async function systemInstructionFor(body) {
+  // Returns the exact object handed to the SDK (`{ model, contents, config }`)
+  // -- never an intermediate function's return value. Recorded lesson
+  // (MEMORY: gemini-tools-nesting): an injected fake cannot see the layer
+  // that drops your argument, so every assertion below reads the wire.
+  async function wireFor(body) {
     const spy = geminiHarness();
     const res = await POST(
       jsonRequest({
@@ -177,16 +181,58 @@ describe("POST /api/chat (Gemini path): the applications block is byte-identical
     );
     expect(res.status).toBe(200);
     expect(spy).toHaveBeenCalledTimes(1);
-    return spy.mock.calls[0][0].config.systemInstruction;
+    return spy.mock.calls[0][0];
   }
 
-  it("[golden-applications] the whole systemInstruction is byte-for-byte what the pre-change tree produced", async () => {
+  // Every text-bearing part on the wire, tagged with the role of the content
+  // it belongs to. Mirrors route.promptInjection.test.js's own `textParts`.
+  function contentsTextParts(wire) {
+    return (wire?.contents ?? []).flatMap((c) =>
+      (c?.parts ?? [])
+        .filter((p) => typeof p?.text === "string")
+        .map((p) => ({ role: c.role, text: p.text })),
+    );
+  }
+
+  // AC-9 (implementer's note in AC-chat-injection.md): `buildContextBlock`'s
+  // rendering used to be concatenated onto `SYSTEM_PROMPT` under this exact
+  // sentinel line (route.js, pre-fix). The renderer itself (labels, order,
+  // separators, truncation) did not change -- only its DESTINATION did, from
+  // `config.systemInstruction` to a wrapped, delimited part on the latest
+  // user turn (route.js's `wrapUntrustedContext`). This sentinel still
+  // prefixes that relocated block verbatim, so it is what every case below
+  // uses to find it -- without asserting anything about the wrapper's own
+  // wording, which is route.promptInjection.test.js's job (AC-4/AC-5), not
+  // this file's.
+  const CONTEXT_INTRO = "Context about this user (do not repeat verbatim; use to personalize answers):";
+
+  function dataBlockFor(wire) {
+    const hits = contentsTextParts(wire).filter((p) => p.text.includes(CONTEXT_INTRO));
+    expect(hits, "expected exactly one user-turn part carrying the relocated context block").toHaveLength(1);
+    expect(hits[0].role).toBe("user");
+    return hits[0].text;
+  }
+
+  it("[golden-applications] the system instruction is the constant prompt, and the applications block reaches the model byte-for-byte in the relocated user-turn data block", async () => {
     // FROZEN LITERAL. Captured on 2026-09-03 from the UNMODIFIED tree -- before
     // any of the caps, `truncate`, or the applications block moved out of
     // route.js -- by running this exact case against a deliberately wrong
     // expectation and pasting the printed actual. That provenance is the whole
     // value of the pin: a golden captured AFTER the extraction only proves the
     // extraction agrees with itself.
+    //
+    // REPOINTED (security fix, AC-chat-injection.md AC-9): this literal used
+    // to be asserted whole against `config.systemInstruction`. The untrusted
+    // context block that made up its second half no longer lives there --
+    // see route.js's `wrapUntrustedContext` -- so the literal is now SPLIT at
+    // the exact sentinel line the pre-fix code used to join the two halves
+    // with (`CONTEXT_MARKER` below), and each half is asserted where it
+    // actually lands now: the first half against `config.systemInstruction`
+    // (now a constant, never varying with request content -- the fix's core
+    // property), the second half as a substring of the relocated data block.
+    // The literal itself, and its hash, are UNCHANGED -- this still proves the
+    // exact same bytes the pre-change tree produced still reach the model,
+    // just at their new, safe destination.
     //
     // What it catches: a lost or reworded label, a changed line prefix or
     // separator INSIDE the applications block, a `.trim()` slipped into
@@ -212,8 +258,28 @@ describe("POST /api/chat (Gemini path): the applications block is byte-identical
     expect(sha256(GOLDEN_SYSTEM_INSTRUCTION)).toBe(
       "f2c4b8d2506669af12c65e8ae88d51290e4ccb4cd8358ebadffc4a310e57f3f1",
     );
-    const systemInstruction = await systemInstructionFor({ applications: GOLDEN_APPLICATIONS });
-    expect(systemInstruction).toBe(GOLDEN_SYSTEM_INSTRUCTION);
+
+    // Split the (unchanged) golden literal at the exact sentinel the pre-fix
+    // code used to join SYSTEM_PROMPT and the context block with -- this
+    // computes the two expected halves FROM the frozen literal rather than
+    // retyping them, so there is no second place for them to drift from it.
+    const CONTEXT_MARKER = "\n\nContext about this user (do not repeat verbatim; use to personalize answers):\n";
+    const markerAt = GOLDEN_SYSTEM_INSTRUCTION.indexOf(CONTEXT_MARKER);
+    expect(markerAt).toBeGreaterThan(-1);
+    const expectedSystemPrompt = GOLDEN_SYSTEM_INSTRUCTION.slice(0, markerAt);
+    const expectedContextPayload = GOLDEN_SYSTEM_INSTRUCTION.slice(markerAt + 2); // drop the leading "\n\n" only
+
+    const wire = await wireFor({ applications: GOLDEN_APPLICATIONS });
+
+    // AC-1: the system instruction no longer varies with request content --
+    // it is exactly the SYSTEM_PROMPT half of the old golden, byte for byte.
+    expect(wire.config.systemInstruction).toBe(expectedSystemPrompt);
+
+    // The relocated half: the exact same applications rendering the
+    // pre-change tree produced -- same labels, same separators, same
+    // truncation -- still reaches the model, just in the user turn instead
+    // of the system instruction (AC-2/AC-3).
+    expect(dataBlockFor(wire)).toContain(expectedContextPayload);
   });
 
   it("[golden-five-section] every section, in order, with the separator between them", async () => {
@@ -270,72 +336,113 @@ describe("POST /api/chat (Gemini path): the applications block is byte-identical
     );
     expect(res.status).toBe(200);
     expect(spy).toHaveBeenCalledTimes(1);
-    const systemInstruction = spy.mock.calls[0][0].config.systemInstruction;
+    const wire = spy.mock.calls[0][0];
 
-    expect(systemInstruction).toBe(GOLDEN_FIVE_SECTION);
+    // REPOINTED (security fix, AC-9): same split as [golden-applications]
+    // above -- the SYSTEM_PROMPT half stays on `config.systemInstruction`
+    // (now constant), and the context half is asserted against the
+    // relocated user-turn data block instead. The frozen literal and its
+    // hash are unchanged.
+    const CONTEXT_MARKER = "\n\nContext about this user (do not repeat verbatim; use to personalize answers):\n";
+    const markerAt = GOLDEN_FIVE_SECTION.indexOf(CONTEXT_MARKER);
+    expect(markerAt).toBeGreaterThan(-1);
+    const expectedSystemPrompt = GOLDEN_FIVE_SECTION.slice(0, markerAt);
+    const expectedContextPayload = GOLDEN_FIVE_SECTION.slice(markerAt + 2);
 
-    // Legibility, not extra coverage: when the whole-string equality above
+    expect(wire.config.systemInstruction).toBe(expectedSystemPrompt);
+    const dataBlock = dataBlockFor(wire);
+    expect(dataBlock).toContain(expectedContextPayload);
+
+    // Legibility, not extra coverage: when the whole-string containment above
     // fails, these say WHICH property broke instead of handing the reader a
     // 3 KB diff. Order first...
-    const at = (marker) => systemInstruction.indexOf(marker);
+    const at = (marker) => dataBlock.indexOf(marker);
     expect(at("PINNED-SECTION-MARKER")).toBeGreaterThan(-1);
     expect(at("PINNED-SECTION-MARKER")).toBeLessThan(at("FETCHED-SECTION-MARKER"));
     expect(at("FETCHED-SECTION-MARKER")).toBeLessThan(at("ATTACHED-SECTION-MARKER"));
     expect(at("ATTACHED-SECTION-MARKER")).toBeLessThan(at("RESUME-SECTION-MARKER"));
     expect(at("RESUME-SECTION-MARKER")).toBeLessThan(at("--- USER'S APPLICATIONS ---"));
     // ...then the separator between sections: a blank line, not one newline.
-    expect(systemInstruction).toContain("\n\n--- FETCHED URLS (");
-    expect(systemInstruction).toContain("\n\n--- USER-ATTACHED FILES (");
-    expect(systemInstruction).toContain("\n\n--- USER'S UPLOADED RESUME ---");
-    expect(systemInstruction).toContain("\n\n--- USER'S APPLICATIONS ---");
+    expect(dataBlock).toContain("\n\n--- FETCHED URLS (");
+    expect(dataBlock).toContain("\n\n--- USER-ATTACHED FILES (");
+    expect(dataBlock).toContain("\n\n--- USER'S UPLOADED RESUME ---");
+    expect(dataBlock).toContain("\n\n--- USER'S APPLICATIONS ---");
     // ...and each argument landed in its own parameter slot: the label the
     // renderer only ever prints for THAT section carries that section's text.
-    expect(systemInstruction).toContain("[PINNED-LABEL-MARKER]\nPINNED-SECTION-MARKER");
-    expect(systemInstruction).toContain("[FETCHED-TITLE-MARKER — https://example.com/posting]\nFETCHED-SECTION-MARKER");
-    expect(systemInstruction).toContain("[ATTACHED-NAME-MARKER.md]\nATTACHED-SECTION-MARKER");
+    expect(dataBlock).toContain("[PINNED-LABEL-MARKER]\nPINNED-SECTION-MARKER");
+    expect(dataBlock).toContain("[FETCHED-TITLE-MARKER — https://example.com/posting]\nFETCHED-SECTION-MARKER");
+    expect(dataBlock).toContain("[ATTACHED-NAME-MARKER.md]\nATTACHED-SECTION-MARKER");
   });
 
-  it("[R08] a resume and ZERO applications: the instruction ends at the resume, with no trailing separator", async () => {
+  it("[R08] a resume and ZERO applications: the context block ends at the resume, with no trailing separator", async () => {
     // The case that makes the extracted renderer's `null` return load-bearing.
     // route.js today only pushes the applications section when the array is
     // non-empty; an extraction that pushes unconditionally --
     // `parts.push(renderApplicationsSection(applications))` -- appends a null,
     // and `[resume, null].join("\n\n")` leaves a TRAILING BLANK SEPARATOR on
-    // every Gemini system instruction sent by a user who has uploaded a resume
-    // and tracks no applications. That is a real, shipped, user-affecting
-    // change to the model's input, and every other Gemini case in this file
-    // passes a non-empty applications array, so nothing else here can see it.
+    // every context block sent for a user who has uploaded a resume and
+    // tracks no applications. That is a real, shipped, user-affecting change
+    // to the model's input, and every other Gemini case in this file passes a
+    // non-empty applications array, so nothing else here can see it.
     //
-    // Asserting the string ENDS at the resume sentinel is the whole test: a
-    // trailing "\n\n" (or a literal "null") breaks `endsWith` immediately.
-    const systemInstruction = await systemInstructionFor({
+    // REPOINTED (security fix, AC-9): the block now lives in the user-turn
+    // data block, which the fix wraps in a fixed closing tag -- so the block
+    // no longer literally ENDS the string on the wire. The property under
+    // test is unchanged (nothing but the wrapper's own, constant closing
+    // boundary may follow the resume text): checked here as "no blank-line
+    // separator, and no applications header, follow the resume sentinel",
+    // which is exactly what a reintroduced trailing "\n\n" (or a literal
+    // "null") would produce and the fixed wrapper never does.
+    const wire = await wireFor({
       resumeText: "RESUME-SECTION-MARKER\nAlex Shaw — Data Engineer · Zürich",
       applications: [],
     });
+    const dataBlock = dataBlockFor(wire);
+    const resumeEnding = "RESUME-SECTION-MARKER\nAlex Shaw — Data Engineer · Zürich";
+    const resumeAt = dataBlock.indexOf(resumeEnding);
+    expect(resumeAt).toBeGreaterThan(-1);
+    const remainder = dataBlock.slice(resumeAt + resumeEnding.length);
 
-    expect(systemInstruction.endsWith("RESUME-SECTION-MARKER\nAlex Shaw — Data Engineer · Zürich")).toBe(true);
+    // No trailing blank-line separator and no applications header -- the
+    // wrapper's own (single-newline) closing boundary is the only thing
+    // allowed to follow the resume text now.
+    expect(remainder).not.toMatch(/\n\n/);
+    expect(remainder).not.toContain("--- USER'S APPLICATIONS ---");
     // PAIRED POSITIVE CONTROL: the resume section really is in there -- an
     // "ends with the resume" assertion is otherwise satisfiable by a build
     // that dropped every section but this one.
-    expect(systemInstruction).toContain("--- USER'S UPLOADED RESUME ---");
-    // ABSENCE: no empty applications header, and no trailing whitespace.
-    expect(systemInstruction).not.toContain("--- USER'S APPLICATIONS ---");
-    expect(systemInstruction).not.toMatch(/\s$/);
+    expect(dataBlock).toContain("--- USER'S UPLOADED RESUME ---");
+    // ABSENCE: no empty applications header anywhere in the block.
+    expect(dataBlock).not.toContain("--- USER'S APPLICATIONS ---");
+    // No trailing whitespace between the resume text and the remainder
+    // (the remainder itself is either empty or the wrapper's own close tag,
+    // never bare whitespace).
+    expect(remainder).not.toMatch(/^\s+$/);
   });
 
   it("[R08 control] the same fixture WITH one application still renders both sections, in order", async () => {
     // The other half of the pair: [R08] asserts an absence, so this proves the
     // applications section is still reachable from the same code path and that
     // the separator between resume and applications is exactly one blank line.
-    const systemInstruction = await systemInstructionFor({
+    const wire = await wireFor({
       resumeText: "RESUME-SECTION-MARKER\nAlex Shaw — Data Engineer · Zürich",
       applications: [{ company: "Northwind Analytics" }],
     });
+    const dataBlock = dataBlockFor(wire);
 
-    expect(systemInstruction).toContain(
+    expect(dataBlock).toContain(
       "RESUME-SECTION-MARKER\nAlex Shaw — Data Engineer · Zürich\n\n--- USER'S APPLICATIONS ---\nApplication 1:\n  Company: Northwind Analytics",
     );
-    expect(systemInstruction.endsWith("  Company: Northwind Analytics")).toBe(true);
+    // REPOINTED (AC-9): the block no longer ends the wire string (the
+    // wrapper's closing tag now follows it), so "nothing else follows in the
+    // payload" is checked the same way [R08] checks it -- via the remainder
+    // after the last expected line, rather than via `.endsWith` on the whole
+    // part.
+    const companyLine = "  Company: Northwind Analytics";
+    const companyAt = dataBlock.indexOf(companyLine);
+    expect(companyAt).toBeGreaterThan(-1);
+    const remainder = dataBlock.slice(companyAt + companyLine.length);
+    expect(remainder).not.toMatch(/\n\n/);
   });
 
   it("[cap] a JD of MAX_JD_CHARS+1 and a resume of MAX_TAILORED_CHARS+1 MULTIBYTE characters keep 1500/2000 characters and the ellipsis", async () => {
@@ -350,22 +457,23 @@ describe("POST /api/chat (Gemini path): the applications block is byte-identical
     expect(new TextEncoder().encode(jd).length).not.toBe(jd.length);
     expect(new TextEncoder().encode(resume).length).not.toBe(resume.length);
 
-    const systemInstruction = await systemInstructionFor({
+    const wire = await wireFor({
       applications: [{ company: "Helvetica Systems", jobDescription: jd, tailoredResume: resume }],
     });
+    const dataBlock = dataBlockFor(wire);
 
-    expect(systemInstruction).toContain(`  Job Description: ${jd.slice(0, 1500)}…`);
-    expect(systemInstruction).toContain(`  Tailored Resume: ${resume.slice(0, 2000)}…`);
+    expect(dataBlock).toContain(`  Job Description: ${jd.slice(0, 1500)}…`);
+    expect(dataBlock).toContain(`  Tailored Resume: ${resume.slice(0, 2000)}…`);
     // PAIRED POSITIVE CONTROL: the block is really there and really carries the
     // posting text -- an assertion about what was truncated is also satisfied
     // by a renderer that emitted nothing at all.
-    expect(systemInstruction).toContain("--- USER'S APPLICATIONS ---");
-    expect(systemInstruction).toContain("  Company: Helvetica Systems");
+    expect(dataBlock).toContain("--- USER'S APPLICATIONS ---");
+    expect(dataBlock).toContain("  Company: Helvetica Systems");
     // ABSENCE: the 1501st character never reaches the model. (A byte-based
     // bound fails the two `toContain`s above instead -- it keeps ~1311
     // characters, which `truncate` then leaves un-ellipsised because 1311 is
     // under the cap, so the JD line is short AND loses its "…".)
-    expect(systemInstruction).not.toContain(jd.slice(0, 1501));
+    expect(dataBlock).not.toContain(jd.slice(0, 1501));
   });
 
   it("[slice] only the first MAX_APPLICATIONS applications are rendered, in order", async () => {
@@ -375,15 +483,16 @@ describe("POST /api/chat (Gemini path): the applications block is byte-identical
       status: "applied",
     }));
 
-    const systemInstruction = await systemInstructionFor({ applications });
+    const wire = await wireFor({ applications });
+    const dataBlock = dataBlockFor(wire);
 
-    expect(systemInstruction.match(/^Application \d+:$/gm)).toHaveLength(25);
+    expect(dataBlock.match(/^Application \d+:$/gm)).toHaveLength(25);
     // PAIRED POSITIVE CONTROL for the absence below: the ones that ARE rendered.
-    expect(systemInstruction).toContain("  Company: Company 000");
-    expect(systemInstruction).toContain("  Company: Company 024");
+    expect(dataBlock).toContain("  Company: Company 000");
+    expect(dataBlock).toContain("  Company: Company 024");
     // The 26th is beyond the slice.
-    expect(systemInstruction).not.toContain("  Company: Company 025");
+    expect(dataBlock).not.toContain("  Company: Company 025");
     // Order is part of the contract: 000 renders before 024.
-    expect(systemInstruction.indexOf("Company 000")).toBeLessThan(systemInstruction.indexOf("Company 024"));
+    expect(dataBlock.indexOf("Company 000")).toBeLessThan(dataBlock.indexOf("Company 024"));
   });
 });

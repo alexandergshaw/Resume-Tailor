@@ -23,7 +23,7 @@ import TabHeader from "./TabHeader";
 import EmptyState from "./EmptyState";
 import styles from "../page.module.css";
 import { useIsTablet } from "../hooks/useResponsive";
-import { TOUCH_ICON_SX, TOUCH_FIELD_SX, TOUCH_NATIVE_SELECT_SX } from "@/app/theme/mobileSx";
+import { TOUCH_ICON_SX, TOUCH_FIELD_SX, TOUCH_NATIVE_SELECT_SX, TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 import {
   STAGE_TYPE_LABELS,
   createStageDialogState,
@@ -35,6 +35,7 @@ import AddCommunicationDialog from "./AddCommunicationDialog";
 import EditAppDialog from "./EditAppDialog";
 import AddAppDialog from "./AddAppDialog";
 import AppViewDialog from "./AppViewDialog";
+import ApplicationCard from "./tracking/ApplicationCard";
 import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 // AC-K4: options for the compact (<900px) card layout's sort control, which
@@ -144,7 +145,7 @@ export default function TrackingTab({
             aria-disabled="true"
             aria-describedby={captionId}
             onClick={() => {}}
-            sx={{ p: 0, minWidth: 0, fontSize: 11, opacity: 0.6, cursor: "default" }}
+            sx={{ ...TOUCH_TARGET_SX, p: 0, minWidth: 0, fontSize: 11, opacity: 0.6, cursor: "default" }}
           >
             Researching…
           </Button>
@@ -171,6 +172,7 @@ export default function TrackingTab({
               size="small"
               onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "digest" })}
               sx={{
+                ...TOUCH_TARGET_SX,
                 p: 0,
                 minWidth: 0,
                 fontSize: 12,
@@ -194,7 +196,7 @@ export default function TrackingTab({
           {/* researchOne is always passed by app/page.js (see useApplicationDigests) —
               call it directly so a future wiring regression throws instead of
               silently no-opping the button. */}
-          <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }} onClick={() => researchOne(app.id)}>
+          <Button size="small" sx={{ ...TOUCH_TARGET_SX, p: 0, minWidth: 0, fontSize: 11 }} onClick={() => researchOne(app.id)}>
             Retry
           </Button>
         </Box>
@@ -208,6 +210,7 @@ export default function TrackingTab({
           size="small"
           onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "digest" })}
           sx={{
+            ...TOUCH_TARGET_SX,
             p: 0,
             minWidth: 0,
             fontSize: 12,
@@ -228,7 +231,7 @@ export default function TrackingTab({
       // researchOne is always passed by app/page.js (see useApplicationDigests) —
       // call it directly so a future wiring regression throws instead of
       // silently no-opping the button.
-      <Button size="small" variant="outlined" sx={{ fontSize: 11 }} onClick={() => researchOne(app.id)}>
+      <Button size="small" variant="outlined" sx={{ ...TOUCH_TARGET_SX, fontSize: 11 }} onClick={() => researchOne(app.id)}>
         Research
       </Button>
     );
@@ -409,142 +412,32 @@ export default function TrackingTab({
               </TextField>
               {visibleApplicationData.map((app) => {
                 const idx = applicationData.findIndex((candidate) => candidate.id === app.id);
-                const pos = app.positions;
-                // `positions` is a SHARED catalogue - no user_id column, and
-                // positions_update_authenticated lets any signed-in account
-                // overwrite any row - so `pos.url` is a value another user
-                // controls. Refused URLs render no anchor at all, not a dead
-                // one; see lib/url/safeExternalHref.js.
-                const postingHref = safeExternalHref(app.application_url || pos?.url);
-                const resume = app.generated_resumes;
-                const stages = applicationStages[app.id] || [];
-                const emailClassification = emailClassificationsByAppId[app.id] ?? null;
-                const EMAIL_CHIP_STYLES = {
-                  confirmation: { label: "Applied", color: "var(--accent-hover)", bg: "var(--accent-soft)" },
-                  interview:    { label: "Interview", color: "var(--success)", bg: "var(--success-soft)" },
-                  rejection:    { label: "Rejected", color: "var(--danger-hover)", bg: "var(--danger-soft)" },
-                };
-                const emailChip = emailClassification ? EMAIL_CHIP_STYLES[emailClassification] : null;
-                const canDownloadResume = !!resume?.content && !!resumeFile && isDocxResume(resumeFile);
+                // The row body itself (touch targets, wrapping, stage chip,
+                // eight actions) lives in ApplicationCard.js -- extracted so
+                // this file stays under its 1000-line cap. See that
+                // component's own header comment for why the extraction is
+                // invisible to this file's tests.
                 return (
-                  <Box
+                  <ApplicationCard
                     key={app.id}
-                    data-app-id={app.id}
-                    sx={{
-                      border: "1px solid var(--border)",
-                      borderRadius: 2,
-                      p: 1.75,
-                      backgroundColor: "var(--bg-surface)",
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 1.25,
-                      ...(highlightedAppId === app.id && {
-                        outline: "2px solid var(--accent)",
-                        outlineOffset: "-2px",
-                        backgroundColor: "var(--accent-soft)",
-                      }),
-                    }}
-                  >
-                    <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 1 }}>
-                      <Box sx={{ minWidth: 0 }}>
-                        <Box sx={{ fontWeight: 700, fontSize: "1rem", lineHeight: 1.25 }}>{pos?.company || "—"}</Box>
-                        <Box sx={{ color: "var(--text-secondary)", fontSize: "0.9rem", mt: 0.25 }}>{pos?.title || "—"}</Box>
-                        {pos?.posted_at && (
-                          <Box sx={{ fontSize: "0.7rem", color: "var(--text-secondary)", mt: 0.25 }}>
-                            Posted {new Date(pos.posted_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
-                          </Box>
-                        )}
-                      </Box>
-                      {emailChip && (
-                        <Box sx={{ fontSize: "0.72rem", fontWeight: 700, color: emailChip.color, bgcolor: emailChip.bg, px: 0.75, py: 0.25, borderRadius: 1, flexShrink: 0, letterSpacing: "0.03em" }}>
-                          {emailChip.label}
-                        </Box>
-                      )}
-                    </Box>
-
-                    <Box sx={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
-                      Applied: {app.applied_at ? new Date(app.applied_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—"}
-                    </Box>
-
-                    {/* Company & role research - card layout's version of the
-                        desktop table's digest column; the table alone would
-                        make this invisible on a phone. */}
-                    <Box sx={{ fontSize: "0.8rem" }}>{renderDigestCell(app, idx)}</Box>
-
-                    {stages.length > 0 && (
-                      <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
-                        {stages.map((stage) => {
-                          const stageLabel = `${stage.stage_name || STAGE_TYPE_LABELS[stage.stage_type] || stage.stage_type}${stage.outcome && stage.outcome !== "pending" ? ` · ${stage.outcome}` : ""}`;
-                          return (
-                            <Chip
-                              key={stage.id}
-                              label={stageLabel}
-                              size="small"
-                              variant="outlined"
-                              onClick={() => {
-                                setStageError("");
-                                setStageDialog(createStageDialogState({
-                                  open: true,
-                                  applicationId: app.id,
-                                  stageId: stage.id,
-                                  stageName: stage.stage_name || "",
-                                  stageType: stage.stage_type || "phone_screen",
-                                  scheduledAt: formatDateTimeLocalInputValue(stage.scheduled_at),
-                                  durationMinutes: stage.duration_minutes ? String(stage.duration_minutes) : "",
-                                  outcome: stage.outcome || "pending",
-                                  interviewerNames: (stage.interviewer_names || []).join(", "),
-                                  notes: stage.notes || "",
-                                }));
-                              }}
-                            />
-                          );
-                        })}
-                      </Box>
-                    )}
-
-                    <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
-                      {pos?.description && (
-                        <Button size="small" variant="outlined" onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "jd" })}>JD</Button>
-                      )}
-                      {resume?.content && (
-                        <Button size="small" variant="outlined" onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "resume" })}>Resume</Button>
-                      )}
-                      {canDownloadResume && (
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          startIcon={<DescriptionIcon fontSize="small" />}
-                          onClick={async () => {
-                            const lines = Array.isArray(resume.content_lines) && resume.content_lines.length > 0
-                              ? resume.content_lines
-                              : (resume.content || "").split("\n");
-                            const err = await downloadDocxFiles({ jobTitle: pos?.title || "resume", company: pos?.company, result: resume.content, resultLines: lines, coverLetterResultLines: [], docxPath: resume.docx_path || "" });
-                            if (err) window.alert(err);
-                          }}
-                        >
-                          Download
-                        </Button>
-                      )}
-                      <Button size="small" variant="outlined" onClick={() => openCommsInAppDialog(app, idx)}>Comms</Button>
-                      {postingHref && (
-                        <Button size="small" variant="outlined" href={postingHref} target="_blank" rel="noopener noreferrer">Posting ↗</Button>
-                      )}
-                    </Box>
-
-                    <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap", borderTop: "1px solid var(--border)", pt: 1 }}>
-                      <Button
-                        size="small"
-                        onClick={() => askAiAbout({
-                          label: `${pos?.company || "Application"}${pos?.title ? ` — ${pos.title}` : ""}`,
-                          content: buildApplicationContextString(app),
-                        })}
-                      >
-                        Ask AI
-                      </Button>
-                      <Button size="small" onClick={() => openEditApplicationDialog(app)}>Edit</Button>
-                      <Button size="small" color="error" onClick={() => handleDeleteApplication(app)}>Delete</Button>
-                    </Box>
-                  </Box>
+                    app={app}
+                    idx={idx}
+                    applicationStages={applicationStages}
+                    emailClassificationsByAppId={emailClassificationsByAppId}
+                    resumeFile={resumeFile}
+                    isDocxResume={isDocxResume}
+                    highlightedAppId={highlightedAppId}
+                    renderDigestCell={renderDigestCell}
+                    setAppDialog={setAppDialog}
+                    setStageError={setStageError}
+                    setStageDialog={setStageDialog}
+                    openCommsInAppDialog={openCommsInAppDialog}
+                    askAiAbout={askAiAbout}
+                    buildApplicationContextString={buildApplicationContextString}
+                    openEditApplicationDialog={openEditApplicationDialog}
+                    handleDeleteApplication={handleDeleteApplication}
+                    downloadDocxFiles={downloadDocxFiles}
+                  />
                 );
               })}
             </Box>
