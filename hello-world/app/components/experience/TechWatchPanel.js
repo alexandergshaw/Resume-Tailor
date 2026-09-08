@@ -7,6 +7,7 @@ import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
+import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "@/app/theme/mobileSx";
 import { bucketByHour, summarize, formatHourLabel } from "@/lib/techwatch/hourBuckets.js";
 import { formatRelative } from "@/lib/feed/liveFeedClient.js";
 // Mocked by TechWatchPanel.test.js via `vi.mock("../../hooks/useTechWatch", ...)` -
@@ -198,7 +199,7 @@ export default function TechWatchPanel({ now = new Date() }) {
           onClick={toggleExpanded}
           aria-expanded={expanded}
           size="small"
-          sx={{ textTransform: "none" }}
+          sx={{ textTransform: "none", ...TOUCH_TARGET_SX }}
         >
           {expanded ? "Hide" : "Show"} Tech watch
         </Button>
@@ -218,14 +219,14 @@ export default function TechWatchPanel({ now = new Date() }) {
             {` — as of ${formatRelative(lastLoadedAt, now.getTime())}.`}
           </Typography>
 
-          <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: "wrap" }}>
+          <Stack direction="row" spacing={1} sx={{ mt: 1, ...WRAP_ROW_SX }}>
             {WINDOW_OPTIONS.map((opt) => (
               <Button
                 key={opt.hours}
                 variant={windowHours === opt.hours ? "contained" : "outlined"}
                 size="small"
                 onClick={() => setWindowHours(opt.hours)}
-                sx={{ textTransform: "none" }}
+                sx={{ textTransform: "none", ...TOUCH_TARGET_SX }}
               >
                 {opt.label}
               </Button>
@@ -239,7 +240,7 @@ export default function TechWatchPanel({ now = new Date() }) {
                 if (loading) return;
                 reload();
               }}
-              sx={{ textTransform: "none", ...(loading ? DISABLED_LOOK_SX : {}) }}
+              sx={{ textTransform: "none", ...TOUCH_TARGET_SX, ...(loading ? DISABLED_LOOK_SX : {}) }}
             >
               Refresh
             </Button>
@@ -259,8 +260,13 @@ export default function TechWatchPanel({ now = new Date() }) {
           {failedSources.length > 0 ? (
             <Box sx={{ mt: 1 }}>
               <Typography sx={{ fontWeight: 600, fontSize: 12.5 }}>Sources we could not reach</Typography>
+              {/* `s.error` is a transport message from an external feed and
+                  routinely carries the full request URL - one unbroken token
+                  that `html { overflow-x: hidden }` clips away rather than
+                  scrolls to. Same reasoning as TechWatchItemCard's `affected`
+                  line; not phone-scoped, for the same reason. */}
               {failedSources.map((s) => (
-                <Typography key={s.id} sx={{ fontSize: 12.5, color: "var(--text-secondary)" }}>
+                <Typography key={s.id} sx={{ fontSize: 12.5, color: "var(--text-secondary)", ...BREAK_LONG_WORDS_SX }}>
                   {`${s.label}: could not be reached${s.error ? ` (${s.error})` : ""}.`}
                 </Typography>
               ))}

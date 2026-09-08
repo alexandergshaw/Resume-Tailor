@@ -12,6 +12,7 @@ import Select from "@mui/material/Select";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
+import { TOUCH_FIELD_SX, TOUCH_ICON_SX, TOUCH_NATIVE_SELECT_SX, WRAP_ROW_SX } from "@/app/theme/mobileSx";
 import { useIsMobile } from "../../hooks/useResponsive";
 import { api } from "../library/libraryApi";
 import { runWithConcurrency } from "../../../lib/tailor/runWithConcurrency";
@@ -325,7 +326,16 @@ export default function ImportToLibraryDialog({ open, onClose, fragments }) {
             No accomplishment lines were found in the selected pages.
           </Typography>
         ) : (
-          <Stack spacing={1.5} sx={{ maxHeight: 420, overflow: "auto", pr: 1 }}>
+          // No inner scroller on a phone. This dialog is already fullScreen
+          // there, so a 420px scroller inside it is a second scroll
+          // container: it steals the page-scroll swipe from the dialog body
+          // and hides its own rows from find-in-page. Above `sm` the bounded,
+          // internally-scrolling list is unchanged - `none` and `visible` are
+          // each property's own initial value.
+          <Stack
+            spacing={1.5}
+            sx={{ maxHeight: { xs: "none", sm: 420 }, overflow: { xs: "visible", sm: "auto" }, pr: 1 }}
+          >
             {entries.map((entry) => {
               const result = results?.[entry.key];
               const edit = rowEdits[entry.key] || { text: entry.fragment.text, slotName: DEFAULT_SLOT };
@@ -343,7 +353,7 @@ export default function ImportToLibraryDialog({ open, onClose, fragments }) {
                     checked={selected.has(entry.key)}
                     onChange={() => toggle(entry.key)}
                     disabled={importing}
-                    sx={{ p: 0.5, mt: 0.25 }}
+                    sx={{ p: 0.5, mt: 0.25, ...TOUCH_ICON_SX }}
                   />
                   <Box sx={{ flex: 1, minWidth: 0 }}>
                     <TextField
@@ -356,7 +366,11 @@ export default function ImportToLibraryDialog({ open, onClose, fragments }) {
                       slotProps={{ htmlInput: { "aria-label": "Fragment text" } }}
                       sx={{ mb: 0.75 }}
                     />
-                    <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.5 }}>
+                    {/* Wraps so the full-width phone select drops onto its own
+                        line under the "Slot:" label instead of overflowing
+                        the row. Inert above `sm`, where the select is back to
+                        its 200px minimum and the pair fits inline. */}
+                    <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.5, ...WRAP_ROW_SX }}>
                       <Typography variant="caption" color="text.secondary">
                         Slot:
                       </Typography>
@@ -368,7 +382,26 @@ export default function ImportToLibraryDialog({ open, onClose, fragments }) {
                         onChange={(e) => updateSlot(entry.key, e.target.value)}
                         disabled={importing || skeleton.options.length === 0}
                         inputProps={{ "aria-label": "Slot" }}
-                        sx={{ fontSize: 13, minWidth: 200 }}
+                        // `native` means this really is a `<select>`, so the
+                        // sub-16px font size triggers iOS Safari's focus zoom
+                        // exactly the way a text input does - one of the two
+                        // counter-examples to TOUCH_FIELD_SX's "every input
+                        // in this app already computes to 16px" note (the
+                        // other is PageTreeItem's rename field).
+                        //
+                        // TOUCH_NATIVE_SELECT_SX is paired with
+                        // TOUCH_FIELD_SX, never instead of it: the first
+                        // stretches the `<select>` to fill its root, the
+                        // second raises the root itself. Without both, a tap
+                        // in the top or bottom band of the visible control
+                        // lands on a div (measured under R-235; see that
+                        // constant's own comment).
+                        sx={{
+                          fontSize: { xs: 16, sm: 13 },
+                          minWidth: { xs: "100%", sm: 200 },
+                          ...TOUCH_FIELD_SX,
+                          ...TOUCH_NATIVE_SELECT_SX,
+                        }}
                       >
                         {skeleton.options.length > 0 ? (
                           skeleton.options.map((o) => (

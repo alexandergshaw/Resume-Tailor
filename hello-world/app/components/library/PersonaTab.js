@@ -16,6 +16,7 @@ import EditIcon from "@mui/icons-material/Edit";
 import AddIcon from "@mui/icons-material/Add";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import { TOUCH_FIELD_SX, TOUCH_ICON_SX, TOUCH_MUI_SELECT_SX, TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 import { api } from "./libraryApi";
 import ChipsInput from "./ChipsInput";
 import { PERSONA_VALUE_FIELDS } from "./schemas";
@@ -159,7 +160,22 @@ export default function PersonaTab({ personas = [], focusAreas = [], onChanged }
 
       {formOpen ? (
         // Add/Edit form
-        <Box sx={{ border: "1px solid var(--border)", borderRadius: 1.5, p: 2, mb: 2 }}>
+        // Touch floors on the form CONTAINER: both constants are
+        // descendant-selector fragments, so one spread covers the name field,
+        // the headline role, every secondary override, every custom key, the
+        // chips input and both Selects -- and any field added to this form
+        // later. See EditDialog.js for the same pattern and why the two
+        // Select constants are used together.
+        <Box
+          sx={{
+            border: "1px solid var(--border)",
+            borderRadius: 1.5,
+            p: 2,
+            mb: 2,
+            ...TOUCH_FIELD_SX,
+            ...TOUCH_MUI_SELECT_SX,
+          }}
+        >
           <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
             {editingId ? "Edit Persona" : "Add Persona"}
           </Typography>
@@ -191,7 +207,7 @@ export default function PersonaTab({ personas = [], focusAreas = [], onChanged }
                 onClick={() => setShowMore((s) => !s)}
                 startIcon={showMore ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
                 size="small"
-                sx={{ textTransform: "none", pl: 0 }}
+                sx={{ textTransform: "none", pl: 0, ...TOUCH_TARGET_SX }}
               >
                 {showMore ? "Fewer identity overrides" : "More identity overrides"}
                 {!showMore && hasAdvanced ? " (in use)" : ""}
@@ -222,6 +238,7 @@ export default function PersonaTab({ personas = [], focusAreas = [], onChanged }
                       />
                       <IconButton
                         aria-label="remove"
+                        sx={TOUCH_ICON_SX}
                         onClick={() => setEditingValues((v) => { const n = { ...v }; delete n[k]; return n; })}
                       >
                         <DeleteIcon fontSize="small" />
@@ -238,6 +255,7 @@ export default function PersonaTab({ personas = [], focusAreas = [], onChanged }
                       size="small"
                     />
                     <Button
+                      sx={TOUCH_TARGET_SX}
                       onClick={() => {
                         if (newKey && !(newKey in editingValues)) {
                           setEditingValues((v) => ({ ...v, [newKey]: "" }));
@@ -313,14 +331,14 @@ export default function PersonaTab({ personas = [], focusAreas = [], onChanged }
               disableElevation
               onClick={save}
               disabled={saving}
-              sx={{ textTransform: "none", borderRadius: 1.5 }}
+              sx={{ textTransform: "none", borderRadius: 1.5, ...TOUCH_TARGET_SX }}
             >
               {saving ? "Saving…" : "Save"}
             </Button>
             <Button
               onClick={cancelEdit}
               disabled={saving}
-              sx={{ textTransform: "none" }}
+              sx={{ textTransform: "none", ...TOUCH_TARGET_SX }}
             >
               Cancel
             </Button>
@@ -337,7 +355,14 @@ export default function PersonaTab({ personas = [], focusAreas = [], onChanged }
               size="small"
               disableElevation
               onClick={startAdd}
-              sx={{ flexShrink: 0, alignSelf: "center", whiteSpace: "nowrap", textTransform: "none", borderRadius: 1.5 }}
+              sx={{
+                flexShrink: 0,
+                alignSelf: "center",
+                whiteSpace: "nowrap",
+                textTransform: "none",
+                borderRadius: 1.5,
+                ...TOUCH_TARGET_SX,
+              }}
             >
               Add
             </Button>
@@ -361,10 +386,10 @@ export default function PersonaTab({ personas = [], focusAreas = [], onChanged }
                       </Typography>
                     </Box>
                     <Box sx={{ whiteSpace: "nowrap" }}>
-                      <IconButton size="small" onClick={() => startEdit(persona)} aria-label="edit">
+                      <IconButton size="small" sx={TOUCH_ICON_SX} onClick={() => startEdit(persona)} aria-label="edit">
                         <EditIcon fontSize="small" />
                       </IconButton>
-                      <IconButton size="small" onClick={() => remove(persona)} aria-label="delete">
+                      <IconButton size="small" sx={TOUCH_ICON_SX} onClick={() => remove(persona)} aria-label="delete">
                         <DeleteIcon fontSize="small" />
                       </IconButton>
                     </Box>

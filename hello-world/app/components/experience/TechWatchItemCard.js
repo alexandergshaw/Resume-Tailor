@@ -4,6 +4,7 @@ import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
+import { BREAK_LONG_WORDS_SX } from "@/app/theme/mobileSx";
 import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 // One briefing item, addressable on its own via `data-techwatch-item` (AC-9
@@ -98,8 +99,18 @@ export default function TechWatchItemCard({ item }) {
 
       <Typography sx={{ fontSize: 12, color: "var(--text-secondary)", mt: 0.25 }}>{reportedLine}</Typography>
 
+      {/* A version range is feed-sourced and routinely ONE unbroken token
+          (">=1.2.3-alpha.4+build.567,<2.0.0"), in a monospace face that makes
+          it wider still. Nothing upstream bounds its length, and
+          `html { overflow-x: hidden }` clips the excess rather than
+          scrolling to it - i.e. deletes it. Not phone-scoped: an unbroken
+          token can overflow a narrow container at any breakpoint.
+          knowledgePanelStyles.js and MarkdownPreview.js already do this;
+          these two lines were the gaps in an otherwise-correct pattern. */}
       {item.affected ? (
-        <Typography sx={{ fontSize: 12.5, mt: 0.5, fontFamily: "monospace" }}>{item.affected}</Typography>
+        <Typography sx={{ fontSize: 12.5, mt: 0.5, fontFamily: "monospace", ...BREAK_LONG_WORDS_SX }}>
+          {item.affected}
+        </Typography>
       ) : null}
 
       <LabeledField label="Root cause" value={item.rootCause} />

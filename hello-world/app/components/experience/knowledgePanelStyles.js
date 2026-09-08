@@ -1,5 +1,7 @@
 "use client";
 
+import { TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
+
 // The knowledge panel's measured style constants, plus the one render helper
 // its three components share.
 //
@@ -62,9 +64,18 @@ export const FOCUS_SX = {
 
 // Every button in the panel. `textTransform: "none"` matches every other
 // control in this directory; the border is pinned rather than inherited.
+//
+// The 44px phone floor lives HERE rather than at each call site, because all
+// three of this feature's components (KnowledgePanel, KnowledgeQuestionBox,
+// KnowledgeHistory) style every button through this one constant -- so one
+// spread covers them all and there is nowhere for a fourth button to be added
+// without it. `size="small"` buttons are ~30.75px tall, well under the floor;
+// TOUCH_TARGET_SX's `sm` branch is `auto`, min-height's own initial value, so
+// nothing above the phone breakpoint moves.
 export const BTN_SX = {
   textTransform: "none",
   borderColor: "var(--border-control)",
+  ...TOUCH_TARGET_SX,
   "&:focus-visible": FOCUS_SX,
 };
 

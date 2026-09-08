@@ -276,6 +276,36 @@ export default function PageEditor({ page, onChange, onAskAi }) {
           // No onKeyDown here, deliberately: the native <textarea> already
           // moves focus on Tab. Intercepting it to insert a tab character
           // would trap keyboard users inside the field.
+          //
+          // BOUNDED ON A PHONE. MUI's multiline textarea auto-grows without
+          // limit, so a 400-line project page became one ~9000px field and
+          // everything ExperienceTab renders under this editor - the
+          // attachments panel, the knowledge panel - was pushed unreachably
+          // far down. At rest twelve rows are already ~293px against a usable
+          // band of roughly 400px once a soft keyboard is up.
+          //
+          // `dvh`, not `rem` and not `vh`. A rem-based cap scales with the
+          // very text it caps, so it stops being a cap the moment the reader
+          // raises their font size; `vh` on iOS Safari is the LARGE viewport
+          // height (URL bar collapsed), so a pane sized to it overflows
+          // whenever the bar is expanded. `dvh` tracks the viewport that
+          // actually exists.
+          //
+          // Written as `{ xs, sm }` rather than a `maxRows` prop on purpose:
+          // `maxRows={{ xs: 10, sm: undefined }}` is not a responsive value at
+          // all - maxRows is a plain number prop - and `sm: undefined` would
+          // not switch anything off even in `sx`. Both branches below carry a
+          // real value, and `none` is max-height's own initial value.
+          //
+          // `overflowY: auto` is required alongside it: a max-height with the
+          // textarea's overflow left alone would clip the tail of a long page
+          // rather than letting the user scroll to it.
+          sx={{
+            "& textarea": {
+              maxHeight: { xs: "45dvh", sm: "none" },
+              overflowY: { xs: "auto", sm: "visible" },
+            },
+          }}
         />
       ) : (
         // Switching modes swaps the ENTIRE content area for this, while

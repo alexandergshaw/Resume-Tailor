@@ -38,7 +38,6 @@ app/
   api/
     tailor/                      POST — Gemini resume tailoring
     greenhouse/                  GET — Greenhouse jobs API proxy + Redis cache
-    applied/                     GET / POST / DELETE — applied job IDs
     jobs/                        Job search orchestration
     saved-searches/              CRUD for saved search configurations
     user-prefs/                  Redis-backed UI preferences (hideAppliedJobs, etc.)
@@ -117,7 +116,14 @@ The `KV_REST_API_URL` and `KV_REST_API_TOKEN` variables are injected automatical
 ## Supabase Setup
 
 1. Create a project at [supabase.com](https://supabase.com).
-2. Run the following SQL in **SQL Editor** to create the applied jobs table:
+2. Run the following SQL in **SQL Editor** to create the `applied_jobs` table.
+
+   **Keep this table even though no feature writes to it any more.** Applied state
+   moved to the `applications` table long ago (`STATUS.APPLIED` / `applied_at`), and
+   the `/api/applied` route that used to own `applied_jobs` was deleted once it was
+   proven to have no caller. The table itself is still load-bearing: `/api/health`
+   probes it as its admin-database liveness check (`app/api/health/route.js:267`,
+   pinned by `app/api/health/route.test.js:336-341`). Dropping it breaks health.
 
 ```sql
 create table applied_jobs (

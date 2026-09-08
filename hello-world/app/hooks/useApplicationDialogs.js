@@ -10,7 +10,7 @@ import { isDocxResume, isTextResume, buildTemplateLinesForUpload } from "../../l
 import { STAGE_TYPE_LABELS, createStageDialogState } from "../../lib/tracking/stages";
 import { setApplicationStatusByUser, deleteApplicationForUser } from "../../lib/supabase/applicationStatusWriter";
 import { buildEditApplicationPayload } from "../../lib/applications/applicationDecisions";
-import { STATUS, STATUS_LABELS, isAppliedOrLater } from "../../lib/applications/statusVocabulary";
+import { STATUS, STATUS_LABELS, isAppliedOrLater, classifyStatus } from "../../lib/applications/statusVocabulary";
 
 // Uploads a resume file and points one application row at the newly saved
 // generation. Module-level (not a closure inside the hook below) because it
@@ -531,6 +531,23 @@ export function useApplicationDialogs({
     const role = addAppDialog.role.trim();
     if (!company || !role) {
       setAddAppError("Company and Role are required.");
+      return;
+    }
+    // Refuse before any IO, exactly like `writeApplicationStatus`'s C0 guard
+    // (lib/supabase/applicationStatusWriter.js) -- this is the one write path
+    // into `applications` that does not already inherit it (the other three
+    // go through that writer, directly or via upsertApplication.js). Reusing
+    // that guard's own `classifyStatus` rather than re-typing a membership
+    // check keeps this in the same "one home" vocabulary AC-3a requires; a
+    // full swap to `writeApplicationStatus` itself is NOT done here -- that
+    // function's signature (`{userId, positionId, status}`) has no way to
+    // carry this dialog's `application_url` or a caller-typed historical
+    // `applied_at`, which every existing caller of it also lacks (see
+    // upsertApplication.js's docblock: signature frozen, no such fields
+    // anywhere upstream) -- so forcing this insert through it would silently
+    // drop data this dialog exists to capture.
+    if (classifyStatus(addAppDialog.status) === "unknown") {
+      setAddAppError(`"${addAppDialog.status}" is not a valid application status.`);
       return;
     }
     setAddAppSaving(true);

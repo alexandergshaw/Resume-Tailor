@@ -90,7 +90,18 @@ export const ALLOWED_UNREACHABLE_MODULES = [
 //     (see the sweep test), so an empty bucket here cannot make that test
 //     vacuous.
 // ---------------------------------------------------------------------------
-export const UNWIRED_MODULES = [];
+export const UNWIRED_MODULES = [
+  {
+    file: "lib/rateLimit/index.js",
+    finding:
+      "The shared rate limiter, written deliberately ahead of its callers because there is no rate limiting anywhere under app/api/ and two queued model-calling endpoints (the copilot ask-AI box and the sub-bullet expansion route) would otherwise each invent their own bound. It is unwired ON PURPOSE and only for as long as neither of those has landed: the first route to import createRateLimiter fails the exact match above, which is the prompt to delete this entry. If both features are abandoned, this module should be deleted rather than allow-listed -- an unreachable security control protects nothing.",
+  },
+  {
+    file: "lib/rateLimit/memoryStore.js",
+    finding:
+      "The in-process store behind lib/rateLimit/index.js, unreachable for exactly the same reason and on the same terms. Worth stating separately because it carries a limit its own header records: a per-instance counter bounds a caller to limit x instanceCount, not limit, so on a serverless fleet it converts an unbounded loop against a paid endpoint into a bounded one without being a fleet-wide guarantee. Its two-operation interface exists so a Redis-backed store can replace it without touching a caller.",
+  },
+];
 
 // ---------------------------------------------------------------------------
 // LEDGER 3 -- exported symbols in a REACHABLE module that neither shipping code

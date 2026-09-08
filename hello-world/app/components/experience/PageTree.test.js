@@ -312,6 +312,20 @@ describe("row action buttons", () => {
   // computed style; it reads the actual CSS text MUI/emotion injected into
   // <style> tags, which is the real mechanism regardless of what jsdom's
   // layout engine can or can't compute.
+  //
+  // INSTRUMENT REPAIR, not a relaxation. The claim is unchanged and the
+  // coverage is strictly wider. `opacity` became a RESPONSIVE value when the
+  // actions were made permanently visible on phones (touch has no hover), and
+  // MUI compiles both branches of a responsive `sx` value into `@media`
+  // blocks - the `xs` branch into `@media (min-width:0px)`, not the top
+  // level. So the old single, non-global regex, which only ever looked at the
+  // ONE un-nested `.css-xxx{...}` body, stopped being able to see the
+  // declaration at all: it read an unrelated rule body and reported "no
+  // opacity", which is a broken instrument reporting a false negative about
+  // the mechanism, not evidence the mechanism was gone. Reading EVERY rule
+  // emitted for the class fixes that, and it also lets the ban on
+  // `visibility: hidden` cover all of them rather than only the first - which
+  // is the part that actually protects the accessibility tree.
   it("hides the actions box with a mechanism that keeps it in the accessibility tree, not visibility:hidden", async () => {
     await render(baseProps({ selectedId: "a2" }));
     const actionsBox = itemFor("a2").querySelector(".page-tree-item-actions");
@@ -319,14 +333,23 @@ describe("row action buttons", () => {
 
     const cssText = [...document.head.querySelectorAll("style")].map((s) => s.textContent).join("\n");
 
-    // The box's OWN generated class carries its resting (unrevealed) style.
+    // Every rule emitted for the box's OWN generated class, media-nested ones
+    // included - together these are its resting (unrevealed) style.
     const ownClass = [...actionsBox.classList].find((c) => c.startsWith("css-") && !c.includes("Mui"));
     expect(ownClass).toBeTruthy();
-    const restRuleMatch = new RegExp(`\\.${ownClass}\\{([^}]*)\\}`).exec(cssText);
-    expect(restRuleMatch).not.toBeNull();
-    const restRule = restRuleMatch[1];
-    expect(restRule).not.toMatch(/visibility\s*:\s*hidden/);
-    expect(restRule).toMatch(/opacity\s*:\s*0/);
+    const ownRules = [...cssText.matchAll(new RegExp(`\\.${ownClass}\\{([^}]*)\\}`, "g"))].map((m) => m[1]);
+    expect(ownRules.length).toBeGreaterThan(0);
+
+    // NOT ONE of them may hide the box from assistive tech.
+    for (const rule of ownRules) expect(rule).not.toMatch(/visibility\s*:\s*hidden/);
+    for (const rule of ownRules) expect(rule).not.toMatch(/display\s*:\s*none/);
+
+    // Above `sm` it rests hidden, by opacity...
+    expect(ownRules.some((r) => /opacity\s*:\s*0/.test(r))).toBe(true);
+    // ...and on a phone, where there is no hover to reveal it with, it rests
+    // VISIBLE instead. Both branches must be present: a single-branch value
+    // here would mean one of the two surfaces lost its row actions.
+    expect(ownRules.some((r) => /opacity\s*:\s*1/.test(r))).toBe(true);
 
     // The hover/focus-within reveal rules must still exist and target this
     // same class by name, restoring full visibility for sighted mouse and

@@ -11,6 +11,7 @@ import Typography from "@mui/material/Typography";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
+import { TOUCH_ICON_SX } from "@/app/theme/mobileSx";
 import { useIsMobile } from "../../hooks/useResponsive";
 import { api } from "./libraryApi";
 import EditDialog from "./EditDialog";
@@ -83,10 +84,14 @@ export default function EntityTab({ title, description, rows, schema, endpoint, 
     }
   };
 
+  // Shared by the phone card and the desktop table row, so the touch floor
+  // reaches both from one place. `size="small"` gives ~30px; the contract
+  // grows the box on phones only and is `auto` above `sm`, which is what the
+  // desktop table's tight rows still want.
   const actions = (row) => (
     <Box sx={{ whiteSpace: "nowrap" }}>
-      <IconButton size="small" onClick={() => openEdit(row)} aria-label="edit"><EditIcon fontSize="small" /></IconButton>
-      <IconButton size="small" onClick={() => remove(row)} aria-label="delete"><DeleteIcon fontSize="small" /></IconButton>
+      <IconButton size="small" sx={TOUCH_ICON_SX} onClick={() => openEdit(row)} aria-label="edit"><EditIcon fontSize="small" /></IconButton>
+      <IconButton size="small" sx={TOUCH_ICON_SX} onClick={() => remove(row)} aria-label="delete"><DeleteIcon fontSize="small" /></IconButton>
     </Box>
   );
 

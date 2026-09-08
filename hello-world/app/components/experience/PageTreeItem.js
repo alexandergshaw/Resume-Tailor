@@ -12,6 +12,8 @@ import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import DeleteIcon from "@mui/icons-material/Delete";
 import DriveFileMoveOutlinedIcon from "@mui/icons-material/DriveFileMoveOutlined";
 import EditIcon from "@mui/icons-material/Edit";
+import { TOUCH_ICON_SX, WRAP_ROW_SX } from "@/app/theme/mobileSx";
+import { indentAtDepth, TREE_INDENT } from "@/lib/experience/treeIndent";
 
 // A stable empty-Set default for `selectedPageIds` - a literal `new Set()`
 // as a default parameter value would still be a NEW object every render,
@@ -79,6 +81,13 @@ export default function PageTreeItem({
       data-page-id={node.id}
       aria-label={node.title}
       aria-selected={isSelected ? "true" : "false"}
+      // EXPLICIT, even though nested role="group" elements already imply it.
+      // Below `sm` the visual indent stops growing after
+      // PHONE_INDENT_MAX_DEPTH levels (see lib/experience/treeIndent.js), so
+      // the left edge no longer tells a sighted user how deep a row is. This
+      // is the channel that still does, and it is 1-based per the ARIA spec:
+      // a root treeitem is level 1.
+      aria-level={depth + 1}
       {...(hasChildren ? { "aria-expanded": isExpanded ? "true" : "false" } : {})}
       tabIndex={node.id === activeId ? 0 : -1}
       draggable={!isRenaming}
@@ -123,8 +132,23 @@ export default function PageTreeItem({
         sx={{
           display: "flex",
           alignItems: "center",
+          // The row WRAPS. On a phone the four action buttons are 44px each,
+          // which cannot share a ~200px line with a page title, so they take
+          // the next line instead (see the actions Box's own `width` below).
+          // Above `sm` nothing wraps - the actions are back at their ~30px
+          // natural size and `rowGap` only ever applies to lines that do
+          // wrap - so this is inert there.
+          //
+          // ORDER MATTERS: `gap` is the shorthand and would reset `rowGap`
+          // back to 4px if it came after the spread, quietly making half of
+          // WRAP_ROW_SX inert. Declared first, it sets the COLUMN gap and
+          // WRAP_ROW_SX's `rowGap` then wins for the wrapped line.
           gap: 0.5,
-          pl: depth * 1.5 + 0.5,
+          ...WRAP_ROW_SX,
+          // Capped below `sm`, unchanged above it. See
+          // lib/experience/treeIndent.js for why an unbounded drill-down
+          // cannot keep an unbounded indent on a 375px screen.
+          pl: indentAtDepth(depth, TREE_INDENT),
           pr: 0.5,
           py: 0.5,
           borderRadius: 1,
@@ -177,7 +201,11 @@ export default function PageTreeItem({
             tabIndex={node.id === activeId ? 0 : -1}
             onChange={() => onToggleSelect(node.id)}
             slotProps={{ input: { "aria-label": `Select ${node.title}` } }}
-            sx={{ p: 0.5 }}
+            // `p: 0.5` alone gives a 28x28 target (a 20px small icon plus 4px
+            // of padding a side). The shared contract's floor grows the box
+            // on phones without touching the icon, the padding or the radius,
+            // and is `auto` - min-height's own initial value - above `sm`.
+            sx={{ p: 0.5, ...TOUCH_ICON_SX }}
           />
         </Box>
 
@@ -224,7 +252,14 @@ export default function PageTreeItem({
               }
               commitFromInput();
             }}
-            sx={{ fontSize: 13.5, flex: 1, minWidth: 0, "& input": { py: 0 } }}
+            // 16px on phones. Below 16px iOS Safari zooms the whole viewport
+            // when an input takes focus and does not zoom back out, and this
+            // is the app's ONLY rename path. Above `sm` the original 13.5px
+            // is unchanged. (app/theme/mobileSx.js's TOUCH_FIELD_SX comment
+            // asserts "every input in this app already computes to 16px" -
+            // this InputBase was one of the two counter-examples it did not
+            // cover; the other is ImportToLibraryDialog's native select.)
+            sx={{ fontSize: { xs: 16, sm: 13.5 }, flex: 1, minWidth: 0, "& input": { py: 0 } }}
           />
         ) : (
           <Typography
@@ -245,7 +280,29 @@ export default function PageTreeItem({
         {!isRenaming && (
           <Box
             className="page-tree-item-actions"
-            sx={{ opacity: 0, pointerEvents: "none", display: "flex", flexShrink: 0 }}
+            sx={{
+              // TOUCH HAS NO HOVER. Below `sm` these are always visible and
+              // always clickable: the reveal-on-hover rules on the row above
+              // are unreachable on a phone, and `pointerEvents: "none"` at
+              // rest meant the first tap in the strip passed THROUGH to the
+              // row's own onClick. Rename and Delete have no other entry
+              // point anywhere in this app, so at rest they were a two-tap
+              // sequence with no affordance before the first tap.
+              //
+              // Above `sm` the shipped hover behaviour is unchanged: `0` /
+              // `"none"` are the same values this element always had, and the
+              // row's `:hover`/`:focus-within` rules (specificity (0,3,0))
+              // still beat this element's own `sx` (0,1,0) to reveal them.
+              opacity: { xs: 1, sm: 0 },
+              pointerEvents: { xs: "auto", sm: "none" },
+              display: "flex",
+              flexShrink: 0,
+              // Four 44px targets do not fit beside a title in ~200px, so on
+              // a phone the strip takes the whole next line of the wrapped
+              // row and sits at its trailing edge, out of the title's way.
+              width: { xs: "100%", sm: "auto" },
+              justifyContent: { xs: "flex-end", sm: "flex-start" },
+            }}
           >
             {/* Hidden with opacity, not `visibility: hidden` - the latter
                 removes the buttons from the accessibility tree entirely, so a
@@ -271,6 +328,7 @@ export default function PageTreeItem({
             <Tooltip title={`Add sub-page to ${node.title}`}>
               <IconButton
                 size="small"
+                sx={TOUCH_ICON_SX}
                 tabIndex={node.id === activeId ? 0 : -1}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -283,6 +341,7 @@ export default function PageTreeItem({
             <Tooltip title={`Rename ${node.title}`}>
               <IconButton
                 size="small"
+                sx={TOUCH_ICON_SX}
                 tabIndex={node.id === activeId ? 0 : -1}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -295,6 +354,7 @@ export default function PageTreeItem({
             <Tooltip title={`Delete ${node.title}`}>
               <IconButton
                 size="small"
+                sx={TOUCH_ICON_SX}
                 tabIndex={node.id === activeId ? 0 : -1}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -310,6 +370,7 @@ export default function PageTreeItem({
             <Tooltip title={`Move ${node.title}`}>
               <IconButton
                 size="small"
+                sx={TOUCH_ICON_SX}
                 tabIndex={node.id === activeId ? 0 : -1}
                 aria-label={`Move ${node.title}`}
                 onClick={(event) => {

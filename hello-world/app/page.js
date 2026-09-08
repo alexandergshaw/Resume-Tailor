@@ -21,6 +21,7 @@ import DocumentPreviewMount from "./components/DocumentPreviewMount";
 import CompanyResearchDialog from "./components/CompanyResearchDialog";
 import LibraryUpdateDialog from "./components/LibraryUpdateDialog";
 import SlotReviewDialog from "./components/SlotReviewDialog";
+import { useSurfaceNav } from "./hooks/useSurfaceNav";
 import {
   buildJobContextString,
   buildApplicationContextString as buildApplicationContextStringBase,
@@ -198,6 +199,7 @@ export default function Home() {
   const [highlightedAppId, setHighlightedAppId] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [mainTab, setMainTab] = useState("applying");
+  const nav = useSurfaceNav({ mainTab, setMainTab, activeSection, setActiveSection });
   const [applicationData, setApplicationData] = useState([]);
   const [applicationLoading, setApplicationLoading] = useState(false);
   const [applicationError, setApplicationError] = useState(null);
@@ -1653,7 +1655,7 @@ export default function Home() {
     applicationLoadedOnce,
     appliedByExternalId,
     trackedJobs,
-    setMainTab,
+    setMainTab: nav.goMainTab,
     setInterviewSearch,
   });
 
@@ -1887,7 +1889,7 @@ export default function Home() {
     const action = selectAppliedToggleAction(appliedByExternalId, jobId);
     if (action === "refuse-unknown") return; // the map hasn't loaded yet; do nothing rather than guess.
     if (action === "open-tracking") {
-      setMainTab("interviewing");
+      nav.goMainTab("interviewing");
       return;
     }
 
@@ -1998,6 +2000,9 @@ export default function Home() {
   // out, empty scan, network) — learning must never interrupt the edit flow.
   async function handleDocumentEdited({ jobId, addedText }) {
     const fingerprint = `edit:${jobId}:${editFingerprint(addedText)}`;
+    // Marked BEFORE the fetch runs -- this is the in-flight guard against a
+    // duplicate concurrent scan of the same edit, not a decision. A failed or
+    // empty scan below un-marks it again so a network blip never burns it.
     if (libraryPromptSeenRef.current.has(fingerprint)) return;
     libraryPromptSeenRef.current.add(fingerprint);
     try {
@@ -2006,17 +2011,25 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ posting: addedText }),
       });
-      if (!res.ok) return;
+      if (!res.ok) {
+        libraryPromptSeenRef.current.delete(fingerprint);
+        return;
+      }
       const data = await res.json().catch(() => null);
-      if (!data?.buzzwords?.length) return;
+      if (!data?.buzzwords?.length) {
+        libraryPromptSeenRef.current.delete(fingerprint);
+        return;
+      }
       setLibraryPrompt({
         promptId: `edit-${Date.now()}`,
         jobId,
+        dedupeKey: fingerprint,
         match: null,
         suggestions: { ...data, buzzwords: annotateAndRank(data.buzzwords) },
         source: "edit",
       });
     } catch {
+      libraryPromptSeenRef.current.delete(fingerprint);
       // best-effort only
     }
   }
@@ -2080,6 +2093,7 @@ export default function Home() {
     setLibraryPrompt({
       promptId: `match-${jobId}`,
       jobId,
+      dedupeKey: jobId,
       match: payload.match || null,
       suggestions: {
         ...payload.librarySuggestions,
@@ -2087,6 +2101,18 @@ export default function Home() {
       },
       source: "match",
     });
+  }
+
+  // Dismissal (Escape, backdrop click, or the dialog's own "Not now") is NOT
+  // a decision -- only a successful commit is. Un-marking the dedupe key here
+  // is what makes a dismissed prompt able to come back for the same job/edit,
+  // instead of the old show-time mark silently costing the user their
+  // suggestions forever. "manual" prompts (explicit "Scan posting") carry no
+  // dedupeKey and are simply cleared.
+  function dismissLibraryPrompt() {
+    const key = libraryPrompt?.dedupeKey;
+    if (key) libraryPromptSeenRef.current.delete(key);
+    setLibraryPrompt(null);
   }
 
   // The user approved some suggested buzzwords: commit them to the per-user
@@ -2361,7 +2387,7 @@ export default function Home() {
       // (they would otherwise have no downloaded files as a visual cue).
       setApplicationsRefreshKey((k) => k + 1);
       if (skipDownload) {
-        setMainTab("applying");
+        nav.goMainTab("applying");
       }
     }
   }
@@ -2829,7 +2855,7 @@ export default function Home() {
         <NavTabs
           size="main"
           value={mainTab}
-          onChange={setMainTab}
+          onChange={nav.goMainTab}
           tabs={[
             { value: "applying", label: "Materials" },
             { value: "manualApplying", label: "Manual Applying" },
@@ -2886,7 +2912,7 @@ export default function Home() {
         <NavTabs
           size="section"
           value={activeSection}
-          onChange={setActiveSection}
+          onChange={nav.goSection}
           tabs={[
             { value: "url", label: "Posting URL" },
             { value: "manual", label: "Job Description" },
@@ -3133,8 +3159,8 @@ export default function Home() {
         getDownloadFileNameForTitle={getDownloadFileNameForTitle}
         askAiAbout={chat.askAiAbout}
         buildJobContextString={buildJobContextString}
-        setMainTab={setMainTab}
-        setActiveSection={setActiveSection}
+        setMainTab={nav.goMainTab}
+        setActiveSection={nav.goSection}
         setHighlightedJobId={setHighlightedJobId}
         downloadResumeForChipJob={downloadResumeForChipJob}
         onRegenerate={onRegenerateChipJob}
@@ -3198,7 +3224,7 @@ export default function Home() {
       <LibraryUpdateDialog
         key={libraryPrompt?.promptId || "library-prompt-idle"}
         prompt={libraryPrompt}
-        onClose={() => setLibraryPrompt(null)}
+        onClose={dismissLibraryPrompt}
         onCommit={commitLibrarySuggestions}
       />
     </div>

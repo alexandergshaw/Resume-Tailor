@@ -8,7 +8,9 @@ import CircularProgress from "@mui/material/CircularProgress";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import AddIcon from "@mui/icons-material/Add";
+import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import NavigateNextIcon from "@mui/icons-material/NavigateNext";
+import { TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 import TabHeader from "../TabHeader";
 import PageTree from "./PageTree";
 import DeletePageDialog from "./DeletePageDialog";
@@ -19,6 +21,7 @@ import KnowledgePanel from "./KnowledgePanel";
 import BulkActionsBar from "./BulkActionsBar";
 import TechWatchPanel from "./TechWatchPanel";
 import MeetingPanel from "../../meeting/MeetingPanel";
+import { useIsMobile } from "../../hooks/useResponsive";
 import { useExperiencePages } from "../../hooks/useExperiencePages";
 import { toggleSelected, selectionSummary } from "../../../lib/experience/bulkSelection";
 import { buildPageContext } from "../../../lib/experience/pageContext";
@@ -126,6 +129,9 @@ function queryTreeItem(root, id) {
 // future change to that call site drops these props, Ask AI must fail
 // loudly the moment it's pressed, not silently do nothing.
 export default function ExperienceTab({ askAiAbout, addChatAttachments }) {
+  // Below `sm` this tab is a SINGLE-PANE ROUTER rather than a stack of both
+  // panes - see `showTree`/`showDetail` below the render for the whole rule.
+  const isMobile = useIsMobile();
   const {
     pages,
     tree,
@@ -348,7 +354,17 @@ export default function ExperienceTab({ askAiAbout, addChatAttachments }) {
     if (result.ok && result.page) {
       if (parentId) setExpandedIds((prev) => new Set(prev).add(parentId));
       setSelectedId(result.page.id);
-      setRenamingId(result.page.id);
+      // The inline rename is a TREE affordance, and on a phone selecting the
+      // new page has just routed the tree off screen (see the single-pane
+      // rule below), so there is nothing for it to open on. Asking for it
+      // anyway is not merely inert: the input mounts for the instant the tree
+      // is still there, grabs focus and pops the soft keyboard, and
+      // `renamingId` then sits set until something happens to blur it - so
+      // pressing "All pages" would land the user back on a list with a
+      // focused, text-selected input they never asked for. The phone rename
+      // surface is PageEditor's own Title field, which the new page's editor
+      // is already showing.
+      if (!isMobile) setRenamingId(result.page.id);
       announce(`Created "${result.page.title}"`);
     }
   }
@@ -472,6 +488,54 @@ export default function ExperienceTab({ askAiAbout, addChatAttachments }) {
     if (files.length > 0) await addChatAttachments(files);
   }
 
+  // Leaves the phone detail pane and goes back to the list, putting focus
+  // back on the row that was open rather than stranding it at document.body -
+  // the same `focusRequest` machinery a delete or a move already uses, which
+  // waits for the tree to actually exist in the DOM before it fires.
+  function handleBackToList() {
+    const leaving = selectedId;
+    setSelectedId(null);
+    if (leaving) setFocusRequest({ type: "page", pageId: leaving });
+  }
+
+  // THE SINGLE-PANE RULE, in one place.
+  //
+  // At `md` and up nothing changes: tree beside editor, both always mounted.
+  // Below `sm` the two panes swap on `selectedId` - the tree when nothing is
+  // open, the page (plus an explicit way back) when something is. The defect
+  // this replaces: `direction={{ xs: "column", md: "row" }}` stacked the WHOLE
+  // tree above the WHOLE editor, so selecting a row changed something
+  // hundreds of pixels below the fold with no scroll-into-view, no
+  // announcement and no back affordance.
+  //
+  // `showDetail` is true on desktop even with nothing selected, because that
+  // is where the "Select a page, or create one" placeholder lives. On a phone
+  // that placeholder would be redundant - the tree IS the thing to pick from -
+  // so the detail column then renders only the knowledge panel, which must
+  // still mount exactly once in either state (see its own anchor comment
+  // below).
+  const singlePane = isMobile;
+  const showTree = !singlePane || !selectedPage;
+  const showDetail = !singlePane || !!selectedPage;
+
+  // Built once and placed at ONE of two anchors - never rendered twice: its
+  // disabled actions point at caption elements by fixed module-level id, so a
+  // second copy would duplicate those ids in the document.
+  const bulkBar = (
+    <BulkActionsBar
+      pages={pages}
+      selectedIds={selectedPageIds}
+      onDeleteSelected={handleBulkDelete}
+      onMoveSelected={handleBulkMove}
+      // Research report (chunk 9) creates its new child pages entirely
+      // server-side - this is the only way this tab's own `pages` state
+      // (and therefore the tree) learns about them, the same reload()
+      // already used on mount and by the create/edit dialogs elsewhere in
+      // this file.
+      onPagesChanged={reload}
+    />
+  );
+
   if (loading) {
     return (
       <Box sx={{ p: 4, textAlign: "center" }}>
@@ -538,22 +602,15 @@ export default function ExperienceTab({ askAiAbout, addChatAttachments }) {
         </Alert>
       ) : null}
 
-      {/* Rendered ahead of the sidebar tree entirely (not nested inside its
-          box) so it sits early in DOM/tab order - reachable without tabbing
-          through any tree row - and vanishes on its own once nothing is
-          checked (BulkActionsBar returns null for an empty selection). */}
-      <BulkActionsBar
-        pages={pages}
-        selectedIds={selectedPageIds}
-        onDeleteSelected={handleBulkDelete}
-        onMoveSelected={handleBulkMove}
-        // Research report (chunk 9) creates its new child pages entirely
-        // server-side - this is the only way this tab's own `pages` state
-        // (and therefore the tree) learns about them, the same reload()
-        // already used on mount and by the create/edit dialogs elsewhere in
-        // this file.
-        onPagesChanged={reload}
-      />
+      {/* On DESKTOP this keeps its shipped position: ahead of everything
+          else, so it sits early in DOM/tab order - reachable without tabbing
+          through any tree row - and vanishing on its own once nothing is
+          checked (BulkActionsBar returns null for an empty selection).
+          On a PHONE it moves to immediately above the sidebar tree instead
+          (see `bulkBar` below). It is the same single element either way:
+          rendering it twice would duplicate the caption element ids its
+          disabled actions point at via aria-describedby. */}
+      {!singlePane ? bulkBar : null}
 
       {/* Sits outside the empty-project-pages branch below on purpose - the
           briefing falls back to a default watchlist with no pages at all,
@@ -586,39 +643,63 @@ export default function ExperienceTab({ askAiAbout, addChatAttachments }) {
         </Box>
       ) : (
         <Stack direction={{ xs: "column", md: "row" }} spacing={2.5} sx={{ alignItems: "flex-start" }}>
-          <Box
-            ref={sidebarRef}
-            sx={{
-              width: { xs: "100%", md: 280 },
-              flexShrink: 0,
-              border: "1px solid var(--border)",
-              borderRadius: 1.5,
-              p: 1,
-            }}
-          >
-            <PageTree
-              tree={tree}
-              selectedId={selectedId}
-              expandedIds={expandedIds}
-              onSelect={setSelectedId}
-              onToggle={toggleExpanded}
-              renamingId={renamingId}
-              onRenameStart={setRenamingId}
-              onRenameCommit={handleRenameCommit}
-              onRenameCancel={() => setRenamingId(null)}
-              onCreateChild={handleCreate}
-              onDeleteRequest={setDeleteTargetId}
-              onMoveRequest={setMoveTargetId}
-              onMove={handleMove}
-              selectedPageIds={selectedPageIds}
-              onToggleSelect={toggleSelect}
-              onClearSelection={clearSelection}
-            />
-          </Box>
+          {/* THE PHONE ANCHOR for the bulk bar: immediately before the tree
+              pane, so ticking a checkbox makes the bar appear right beside
+              the checkboxes rather than above TechWatchPanel and MeetingPanel
+              far off the top of the screen. Still ahead of every tree row in
+              DOM/tab order, which is the property the desktop anchor's own
+              comment asks for. */}
+          {singlePane && showTree ? bulkBar : null}
 
-          <Box sx={{ flex: 1, minWidth: 0 }}>
-            {selectedPage ? (
+          {showTree ? (
+            <Box
+              ref={sidebarRef}
+              sx={{
+                width: { xs: "100%", md: 280 },
+                flexShrink: 0,
+                border: "1px solid var(--border)",
+                borderRadius: 1.5,
+                p: 1,
+              }}
+            >
+              <PageTree
+                tree={tree}
+                selectedId={selectedId}
+                expandedIds={expandedIds}
+                onSelect={setSelectedId}
+                onToggle={toggleExpanded}
+                renamingId={renamingId}
+                onRenameStart={setRenamingId}
+                onRenameCommit={handleRenameCommit}
+                onRenameCancel={() => setRenamingId(null)}
+                onCreateChild={handleCreate}
+                onDeleteRequest={setDeleteTargetId}
+                onMoveRequest={setMoveTargetId}
+                onMove={handleMove}
+                selectedPageIds={selectedPageIds}
+                onToggleSelect={toggleSelect}
+                onClearSelection={clearSelection}
+              />
+            </Box>
+          ) : null}
+
+          <Box sx={{ flex: 1, minWidth: 0, width: { xs: "100%", md: "auto" } }}>
+            {showDetail && selectedPage ? (
               <>
+                {/* The phone router's only new control. Rendered ABOVE the
+                    breadcrumb so it is the first thing in the detail pane,
+                    and named in words rather than by a bare glyph. */}
+                {singlePane ? (
+                  <Button
+                    startIcon={<ArrowBackIcon sx={{ fontSize: 18 }} />}
+                    size="small"
+                    onClick={handleBackToList}
+                    sx={{ textTransform: "none", mb: 1, ...TOUCH_TARGET_SX }}
+                  >
+                    All pages
+                  </Button>
+                ) : null}
+
                 {crumbs.length > 1 && (
                   <Stack direction="row" spacing={0.5} sx={{ alignItems: "center", flexWrap: "wrap", mb: 1.5 }}>
                     {crumbs.map((crumb, i) => (
@@ -655,13 +736,19 @@ export default function ExperienceTab({ askAiAbout, addChatAttachments }) {
                   <AttachmentPanel pageId={selectedPage.id} />
                 </Box>
               </>
-            ) : (
+            ) : null}
+
+            {/* The desktop placeholder only. On a phone the tree is showing
+                instead of this column's content, so "Select a page" would be
+                telling the user to do the thing they are already looking
+                at. */}
+            {showDetail && !selectedPage ? (
               <Box sx={{ border: "1px dashed var(--border)", borderRadius: 1.5, py: 6, textAlign: "center" }}>
                 <Typography variant="body2" color="text.secondary">
                   Select a page, or create one, to get started.
                 </Typography>
               </Box>
-            )}
+            ) : null}
 
             {/* OUTSIDE the selectedPage ternary above, deliberately and at the
                 bottom of the column. Its scope is the root of the knowledge

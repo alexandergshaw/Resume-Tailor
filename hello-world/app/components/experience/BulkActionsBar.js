@@ -11,6 +11,9 @@ import List from "@mui/material/List";
 import ListItemButton from "@mui/material/ListItemButton";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
+import { TOUCH_TARGET_SX, WRAP_ROW_SX } from "@/app/theme/mobileSx";
+import { indentAtDepth, MOVE_INDENT } from "@/lib/experience/treeIndent";
+import { useIsMobile } from "../../hooks/useResponsive";
 import FormDialog from "../FormDialog";
 import { selectionSummary, bulkMoveTargets } from "../../../lib/experience/bulkSelection";
 import { runWithConcurrency } from "../../../lib/tailor/runWithConcurrency";
@@ -142,6 +145,7 @@ function deckFileName(selectedPages) {
 // component only creates its own local per-click state - it does not (and
 // cannot, without holding the page list itself) update `pages` in place.
 export default function BulkActionsBar({ pages, selectedIds, onDeleteSelected, onMoveSelected, onPagesChanged }) {
+  const isMobile = useIsMobile();
   const [dialog, setDialog] = useState(null); // null | "delete" | "move"
   const [busy, setBusy] = useState(false);
   const [dialogError, setDialogError] = useState("");
@@ -407,12 +411,24 @@ export default function BulkActionsBar({ pages, selectedIds, onDeleteSelected, o
           {summary.selected} selected
         </Typography>
 
-        <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", rowGap: 1 }}>
+        {/* SIX BUTTONS, NOT TWO PLUS AN OVERFLOW MENU. The mobile audit
+            proposed folding four of these behind a `Menu` on phones; that is
+            refused here. This project's standing UX directive is one action
+            with good defaults over a nested menu, and an overflow menu adds a
+            tap to four of six actions that are not themselves desktop-only
+            (Delete / Move / Research / PowerPoint / Add to library are all
+            things you would do from a phone). What actually made this strip
+            unusable was that the bar rendered ~1500px above the checkbox that
+            summons it - fixed in ExperienceTab.js by rendering it directly
+            above the tree on phones. Given that, a wrapping strip of 44px
+            buttons is a legible few rows, and every action stays one tap
+            away. */}
+        <Stack direction="row" spacing={1} sx={WRAP_ROW_SX}>
           <Button
             variant="outlined"
             size="small"
             onClick={() => setDialog("delete")}
-            sx={{ textTransform: "none" }}
+            sx={{ textTransform: "none", ...TOUCH_TARGET_SX }}
           >
             Delete selected
           </Button>
@@ -426,7 +442,7 @@ export default function BulkActionsBar({ pages, selectedIds, onDeleteSelected, o
               if (moveBlocked) return;
               setDialog("move");
             }}
-            sx={{ textTransform: "none", ...(moveBlocked ? DISABLED_LOOK_SX : {}) }}
+            sx={{ textTransform: "none", ...TOUCH_TARGET_SX, ...(moveBlocked ? DISABLED_LOOK_SX : {}) }}
           >
             Move selected
           </Button>
@@ -440,7 +456,7 @@ export default function BulkActionsBar({ pages, selectedIds, onDeleteSelected, o
               if (researchRunning) return;
               handleResearchSelected();
             }}
-            sx={{ textTransform: "none", ...(researchRunning ? DISABLED_LOOK_SX : {}) }}
+            sx={{ textTransform: "none", ...TOUCH_TARGET_SX, ...(researchRunning ? DISABLED_LOOK_SX : {}) }}
           >
             Research report
           </Button>
@@ -454,7 +470,7 @@ export default function BulkActionsBar({ pages, selectedIds, onDeleteSelected, o
               if (deckRunning) return;
               generateDeck();
             }}
-            sx={{ textTransform: "none", ...(deckRunning ? DISABLED_LOOK_SX : {}) }}
+            sx={{ textTransform: "none", ...TOUCH_TARGET_SX, ...(deckRunning ? DISABLED_LOOK_SX : {}) }}
           >
             PowerPoint
           </Button>
@@ -475,7 +491,7 @@ export default function BulkActionsBar({ pages, selectedIds, onDeleteSelected, o
               if (libraryBlocked) return;
               setLibraryOpen(true);
             }}
-            sx={{ textTransform: "none", ...(libraryBlocked ? DISABLED_LOOK_SX : {}) }}
+            sx={{ textTransform: "none", ...TOUCH_TARGET_SX, ...(libraryBlocked ? DISABLED_LOOK_SX : {}) }}
           >
             Add to library
           </Button>
@@ -495,7 +511,7 @@ export default function BulkActionsBar({ pages, selectedIds, onDeleteSelected, o
               if (templateBusy) return;
               openTemplatePicker();
             }}
-            sx={{ textTransform: "none", minWidth: 0, fontSize: 12.5, color: "var(--text-secondary)" }}
+            sx={{ textTransform: "none", minWidth: 0, fontSize: 12.5, color: "var(--text-secondary)", ...TOUCH_TARGET_SX }}
           >
             {templateBusy ? "Uploading template…" : "Template"}
           </Button>
@@ -575,7 +591,11 @@ export default function BulkActionsBar({ pages, selectedIds, onDeleteSelected, o
         {`Delete ${summary.total} page${summary.total === 1 ? "" : "s"}? This cannot be undone.`}
       </FormDialog>
 
-      <Dialog open={dialog === "move"} onClose={closeDialog} maxWidth="xs" fullWidth>
+      {/* Same treatment as MovePageDialog, and for the same reason - see that
+          file. These two dialogs are deliberately separate components (one
+          takes a single `page`, this one a whole selection) but they must not
+          disagree about how a destination list behaves on a phone. */}
+      <Dialog open={dialog === "move"} onClose={closeDialog} maxWidth="xs" fullWidth fullScreen={isMobile}>
         <DialogTitle>{`Move ${summary.selected} page${summary.selected === 1 ? "" : "s"}`}</DialogTitle>
         <DialogContent dividers sx={{ p: 0 }}>
           {targets.length === 0 ? (
@@ -588,7 +608,7 @@ export default function BulkActionsBar({ pages, selectedIds, onDeleteSelected, o
                 <ListItemButton
                   key={target.id ?? "top-level"}
                   onClick={() => chooseMoveDestination(target.id)}
-                  sx={{ pl: 2 + target.depth * 2, py: 0.75 }}
+                  sx={{ pl: indentAtDepth(target.depth, MOVE_INDENT), py: 0.75, ...TOUCH_TARGET_SX }}
                 >
                   <Typography variant="body2" sx={{ fontSize: 13.5 }}>
                     {target.label}

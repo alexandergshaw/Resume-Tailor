@@ -11,7 +11,11 @@ import Divider from "@mui/material/Divider";
 import Paper from "@mui/material/Paper";
 import Collapse from "@mui/material/Collapse";
 import Snackbar from "@mui/material/Snackbar";
+import TextField from "@mui/material/TextField";
 import TabHeader from "./TabHeader";
+import FormDialog from "./FormDialog";
+import { useIsMobile } from "../hooks/useResponsive";
+import { TOUCH_FIELD_SX, TOUCH_ICON_SX, TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 import styles from "../page.module.css";
 import JobFilterControls from "./JobFilterControls";
 import SavedSearchStrip from "./SavedSearchStrip";
@@ -32,17 +36,15 @@ import {
   STALE_THRESHOLD_MS,
   DEFAULT_FILTERS,
   DEFAULT_ADVANCED,
-  REMOTE_LABELS,
-  SINCE_LABELS,
   loadFilters,
   loadAdvanced,
-  companyName,
   loadPanelOpen,
   buildQueryString,
   formatRelative,
   sourceHealthFailureCount,
   freshnessLabel,
 } from "@/lib/feed/liveFeedClient";
+import { buildFilterChips, countActiveFilters } from "@/lib/feed/filterChips";
 
 export default function LiveFeedTab({
   currentUser,
@@ -79,9 +81,19 @@ export default function LiveFeedTab({
   const [autofillProfile, setAutofillProfile] = useState({});
   const [autofillDialogOpen, setAutofillDialogOpen] = useState(false);
   const [snackbar, setSnackbar] = useState("");
+  // Naming a saved search used to go through `window.prompt()`, which several
+  // mobile in-app browsers (Instagram / Facebook / LinkedIn webviews) suppress
+  // outright: it returns null, `if (!name) return` fires, and the save is lost
+  // with no error and no feedback. These two hold the in-page replacement.
+  const [saveNameOpen, setSaveNameOpen] = useState(false);
+  const [saveName, setSaveName] = useState("");
   // Ticking "now" used for relative-time labels and staleness, kept in state so
   // render stays pure (no Date.now() calls during render).
   const [nowTs, setNowTs] = useState(0);
+
+  // Below `sm` the filter panel becomes a full-screen sheet instead of an
+  // inline Collapse -- see the render for the reasoning.
+  const isMobile = useIsMobile();
 
   // The combined filter object sent to the API (quick + advanced).
   const activeFilters = useMemo(
@@ -454,17 +466,28 @@ export default function LiveFeedTab({
     [savedSearches, unviewedCounts],
   );
 
+  // Step 1 of saving a search: open the naming dialog, pre-filled with the
+  // same default the prompt used to offer, so the common case stays a single
+  // tap rather than a typing job on a phone keyboard.
+  const openSaveDialog = useCallback(() => {
+    // Same guard the single-step version ran BEFORE prompting, kept in the
+    // same position: without it the dialog opens on a surface where Save can
+    // only be a no-op.
+    if (typeof setSavedSearches !== "function") return;
+    setSaveName(
+      (advanced.jobKeywords || []).join(" ").trim() ||
+        (advanced.selectedCategories || [])[0] ||
+        "Untitled search",
+    );
+    setSaveNameOpen(true);
+  }, [advanced, setSavedSearches]);
+
+  // Step 2: commit whatever name the field was left holding.
   const saveCurrentSearch = useCallback(async () => {
     if (typeof setSavedSearches !== "function") return;
-    const defaultName =
-      (advanced.jobKeywords || []).join(" ").trim() ||
-      (advanced.selectedCategories || [])[0] ||
-      "Untitled search";
-    const name =
-      typeof window !== "undefined"
-        ? window.prompt("Name this saved search:", defaultName)?.trim()
-        : "";
+    const name = saveName.trim();
     if (!name) return;
+    setSaveNameOpen(false);
 
     const payload = {
       name,
@@ -524,106 +547,42 @@ export default function LiveFeedTab({
     };
     setSavedSearches((prev) => [localEntry, ...prev]);
     setActiveSavedSearchId(localEntry.id);
-  }, [advanced, currentUser, setSavedSearches]);
+  }, [advanced, currentUser, saveName, setSavedSearches]);
 
   // Count of active filters for the summary / toggle badge.
-  const activeFilterCount = useMemo(() => {
-    let n = 0;
-    if (advanced.jobKeywords?.length) n += 1;
-    if (advanced.maxYearsExp && advanced.maxYearsExp !== "any") n += 1;
-    if (advanced.selectedCategories?.length) n += 1;
-    if (advanced.selectedCompanies?.length) n += 1;
-    if (advanced.excludedCompanies?.length) n += 1;
-    if (advanced.excludedTitleKeywords?.length) n += 1;
-    if (filters.q) n += 1;
-    if (filters.location) n += 1;
-    if (filters.remote) n += 1;
-    if (filters.since) n += 1;
-    return n;
-  }, [advanced, filters]);
+  const activeFilterCount = useMemo(
+    () => countActiveFilters({ filters, advanced }),
+    [advanced, filters],
+  );
 
-  // Removable summary chips for each currently-applied filter.
-  const activeFilterChips = useMemo(() => {
-    const chips = [];
-    if (filters.q) {
-      chips.push({ key: "q", label: `“${filters.q}”`, onDelete: () => updateFilter("q", "") });
-    }
-    if (filters.location) {
-      chips.push({ key: "location", label: filters.location, onDelete: () => updateFilter("location", "") });
-    }
-    if (filters.remote) {
-      chips.push({
-        key: "remote",
-        label: REMOTE_LABELS[filters.remote] || filters.remote,
-        onDelete: () => updateFilter("remote", ""),
-      });
-    }
-    if (filters.since) {
-      chips.push({
-        key: "since",
-        label: SINCE_LABELS[filters.since] || `Since ${filters.since}d`,
-        onDelete: () => updateFilter("since", ""),
-      });
-    }
-    if (advanced.maxYearsExp && advanced.maxYearsExp !== "any") {
-      chips.push({
-        key: "maxYears",
-        label: `≤ ${advanced.maxYearsExp} yrs`,
-        onDelete: () => setMaxYearsExp("any"),
-      });
-    }
-    (advanced.jobKeywords || []).forEach((kw) => {
-      chips.push({
-        key: `kw:${kw}`,
-        label: kw,
-        onDelete: () => setJobKeywords((advanced.jobKeywords || []).filter((k) => k !== kw)),
-      });
-    });
-    (advanced.selectedCategories || []).forEach((cat) => {
-      chips.push({
-        key: `cat:${cat}`,
-        label: cat,
-        onDelete: () => setSelectedCategories((advanced.selectedCategories || []).filter((c) => c !== cat)),
-      });
-    });
-    (advanced.selectedCompanies || []).forEach((co) => {
-      const name = companyName(co);
-      chips.push({
-        key: `co:${name}`,
-        label: name,
-        onDelete: () =>
-          setSelectedCompanies((advanced.selectedCompanies || []).filter((c) => companyName(c) !== name)),
-      });
-    });
-    (advanced.excludedCompanies || []).forEach((co) => {
-      const name = companyName(co);
-      chips.push({
-        key: `exco:${name}`,
-        label: `Exclude: ${name}`,
-        onDelete: () =>
-          setExcludedCompanies((advanced.excludedCompanies || []).filter((c) => companyName(c) !== name)),
-      });
-    });
-    (advanced.excludedTitleKeywords || []).forEach((kw) => {
-      chips.push({
-        key: `exkw:${kw}`,
-        label: `Exclude: ${kw}`,
-        onDelete: () =>
-          setExcludedTitleKeywords((advanced.excludedTitleKeywords || []).filter((k) => k !== kw)),
-      });
-    });
-    return chips;
-  }, [
-    filters,
-    advanced,
-    updateFilter,
-    setMaxYearsExp,
-    setJobKeywords,
-    setSelectedCategories,
-    setSelectedCompanies,
-    setExcludedCompanies,
-    setExcludedTitleKeywords,
-  ]);
+  // Removable summary chips for each currently-applied filter. The shaping is
+  // a pure function (lib/feed/filterChips.js) so it can be unit tested without
+  // mounting this tab, which owns four fetches and two intervals.
+  const activeFilterChips = useMemo(
+    () =>
+      buildFilterChips({
+        filters,
+        advanced,
+        updateFilter,
+        setMaxYearsExp,
+        setJobKeywords,
+        setSelectedCategories,
+        setSelectedCompanies,
+        setExcludedCompanies,
+        setExcludedTitleKeywords,
+      }),
+    [
+      filters,
+      advanced,
+      updateFilter,
+      setMaxYearsExp,
+      setJobKeywords,
+      setSelectedCategories,
+      setSelectedCompanies,
+      setExcludedCompanies,
+      setExcludedTitleKeywords,
+    ],
+  );
 
   const isStale = useMemo(() => {
     if (!lastUpdatedAt || !nowTs) return false;
@@ -645,6 +604,96 @@ export default function LiveFeedTab({
     relativeLabel: lastUpdatedLabel,
   });
   const sourceFailureCount = sourceHealthFailureCount(sourceHealth);
+  const closeAdvanced = () => setAdvancedOpen(false);
+
+  // The filter panel's contents, rendered into ONE of two containers.
+  //
+  // Desktop keeps what it always was: an inline <Collapse> under the toolbar.
+  // On a phone that container IS the defect. Into the ~303px content box this
+  // surface actually gets at 375px (`.page` + `.main` padding and border,
+  // app/page.module.css:1-16) the panel stacks a saved-search strip, an
+  // email-alert card per search, the filter chips, five search fields and six
+  // full-width Autocompletes -- thousands of pixels, in normal flow, ABOVE the
+  // list. Opening Filters therefore pushed the feed entirely off screen, with
+  // no "done" affordance and no way back but scrolling up to the toggle.
+  //
+  // FormDialog is the app's shared sheet scaffold: already `fullScreen` below
+  // `sm`, its content (not its Paper) is the scroll region, and it supplies the
+  // close control a phone dialog needs having no backdrop pixel and no Escape
+  // key. Reusing it portals the panel out of the tab's flow, so it can no
+  // longer displace anything, and "Show results" is the explicit way back the
+  // inline version never had. Filters apply live, so that action only
+  // dismisses -- there is no separate apply step to get wrong.
+  const filterPanel = (
+    <>
+      {/* Saved searches section */}
+      <Typography
+        variant="overline"
+        color="text.secondary"
+        sx={{ display: "block", letterSpacing: 0.6, mb: 1 }}
+      >
+        Saved searches
+      </Typography>
+      <SavedSearchStrip
+        savedSearches={savedSearchesWithCounts}
+        activeSavedSearchId={activeSavedSearchId}
+        saveCurrentSearch={openSaveDialog}
+        applySavedSearch={applySavedSearch}
+        deleteSavedSearch={deleteSavedSearch}
+        saveLabel="current feed search"
+      />
+
+      <FeedEmailAlerts
+        currentUser={currentUser}
+        setSavedSearchAutoTailor={setSavedSearchAutoTailor}
+        savedSearches={savedSearches}
+      />
+
+      <Divider sx={{ my: 2 }} />
+
+      {/* Active filter summary chips */}
+      <FeedFilterSummary chips={activeFilterChips} onClearAll={clearAllFilters} />
+
+      {/* Search section */}
+      <Typography
+        variant="overline"
+        color="text.secondary"
+        sx={{ display: "block", letterSpacing: 0.6, mb: 1 }}
+      >
+        Search
+      </Typography>
+      <FeedSearchFields filters={filters} updateFilter={updateFilter} />
+
+      <Divider sx={{ my: 2 }} />
+
+      {/* Refine section */}
+      <Typography
+        variant="overline"
+        color="text.secondary"
+        sx={{ display: "block", letterSpacing: 0.6, mb: 1 }}
+      >
+        Refine
+      </Typography>
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+        <JobFilterControls
+          jobKeywords={advanced.jobKeywords}
+          setJobKeywords={setJobKeywords}
+          maxYearsExp={advanced.maxYearsExp}
+          setMaxYearsExp={setMaxYearsExp}
+          selectedCategories={advanced.selectedCategories}
+          setSelectedCategories={setSelectedCategories}
+          selectedCompanies={advanced.selectedCompanies}
+          setSelectedCompanies={setSelectedCompanies}
+          excludedCompanies={advanced.excludedCompanies}
+          setExcludedCompanies={setExcludedCompanies}
+          excludedTitleKeywords={advanced.excludedTitleKeywords}
+          setExcludedTitleKeywords={setExcludedTitleKeywords}
+          GREENHOUSE_COMPANIES={GREENHOUSE_COMPANIES}
+          COMPANY_CATEGORIES={COMPANY_CATEGORIES}
+        />
+      </Box>
+    </>
+  );
 
   return (
     <section className={styles.tabPanel}>
@@ -671,85 +720,37 @@ export default function LiveFeedTab({
         }
       />
 
-      {/* Collapsible advanced filters + saved searches (ported from Job Search) */}
-      <Collapse in={advancedOpen} unmountOnExit>
-        <Paper
-          variant="outlined"
-          sx={{
-            p: { xs: 1.5, sm: 2 },
-            mb: 2,
-            borderRadius: 2,
-            bgcolor: "background.paper",
-          }}
+      {/* Advanced filters + saved searches (ported from Job Search). Inline
+          Collapse on a desktop; a full-screen sheet on a phone -- see the
+          `filterPanel` definition above for why. */}
+      {isMobile ? (
+        <FormDialog
+          open={advancedOpen}
+          onClose={closeAdvanced}
+          title="Filters"
+          actions={
+            <Button
+              fullWidth
+              variant="contained"
+              onClick={closeAdvanced}
+              sx={TOUCH_TARGET_SX}
+            >
+              Show results
+            </Button>
+          }
         >
-          {/* Saved searches section */}
-          <Typography
-            variant="overline"
-            color="text.secondary"
-            sx={{ display: "block", letterSpacing: 0.6, mb: 1 }}
+          {filterPanel}
+        </FormDialog>
+      ) : (
+        <Collapse in={advancedOpen} unmountOnExit>
+          <Paper
+            variant="outlined"
+            sx={{ p: 2, mb: 2, borderRadius: 2, bgcolor: "background.paper" }}
           >
-            Saved searches
-          </Typography>
-          <SavedSearchStrip
-            savedSearches={savedSearchesWithCounts}
-            activeSavedSearchId={activeSavedSearchId}
-            saveCurrentSearch={saveCurrentSearch}
-            applySavedSearch={applySavedSearch}
-            deleteSavedSearch={deleteSavedSearch}
-            saveLabel="current feed search"
-          />
-
-          <FeedEmailAlerts
-            currentUser={currentUser}
-            setSavedSearchAutoTailor={setSavedSearchAutoTailor}
-            savedSearches={savedSearches}
-          />
-
-          <Divider sx={{ my: 2 }} />
-
-          {/* Active filter summary chips */}
-          <FeedFilterSummary chips={activeFilterChips} onClearAll={clearAllFilters} />
-
-          {/* Search section */}
-          <Typography
-            variant="overline"
-            color="text.secondary"
-            sx={{ display: "block", letterSpacing: 0.6, mb: 1 }}
-          >
-            Search
-          </Typography>
-          <FeedSearchFields filters={filters} updateFilter={updateFilter} />
-
-          <Divider sx={{ my: 2 }} />
-
-          {/* Refine section */}
-          <Typography
-            variant="overline"
-            color="text.secondary"
-            sx={{ display: "block", letterSpacing: 0.6, mb: 1 }}
-          >
-            Refine
-          </Typography>
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-            <JobFilterControls
-              jobKeywords={advanced.jobKeywords}
-              setJobKeywords={setJobKeywords}
-              maxYearsExp={advanced.maxYearsExp}
-              setMaxYearsExp={setMaxYearsExp}
-              selectedCategories={advanced.selectedCategories}
-              setSelectedCategories={setSelectedCategories}
-              selectedCompanies={advanced.selectedCompanies}
-              setSelectedCompanies={setSelectedCompanies}
-              excludedCompanies={advanced.excludedCompanies}
-              setExcludedCompanies={setExcludedCompanies}
-              excludedTitleKeywords={advanced.excludedTitleKeywords}
-              setExcludedTitleKeywords={setExcludedTitleKeywords}
-              GREENHOUSE_COMPANIES={GREENHOUSE_COMPANIES}
-              COMPANY_CATEGORIES={COMPANY_CATEGORIES}
-            />
-          </Box>
-        </Paper>
-      </Collapse>
+            {filterPanel}
+          </Paper>
+        </Collapse>
+      )}
 
       {view === "queue" ? (
         <AutoApplyQueueTab
@@ -774,7 +775,14 @@ export default function LiveFeedTab({
       )}
 
       {error && (
-        <Alert severity="error" sx={{ mb: 1 }} onClose={() => setError("")}>
+        // MUI's Alert dismiss is an `IconButton size="small"` -- padding 5
+        // around a 20px icon, a 30x30 target sitting inline with body text.
+        <Alert
+          severity="error"
+          sx={{ mb: 1 }}
+          onClose={() => setError("")}
+          slotProps={{ closeButton: { sx: TOUCH_ICON_SX } }}
+        >
           {error}
         </Alert>
       )}
@@ -827,6 +835,9 @@ export default function LiveFeedTab({
                 onClick={() => loadPage(activeFilters, { append: true })}
                 disabled={loadingMore}
                 startIcon={loadingMore ? <CircularProgress size={16} /> : null}
+                // A default-size MUI Button is 36.5px tall, and this is the
+                // control a phone user hits repeatedly to walk the feed.
+                sx={TOUCH_TARGET_SX}
               >
                 {loadingMore ? "Loading…" : "Load more"}
               </Button>
@@ -843,12 +854,39 @@ export default function LiveFeedTab({
         profile={autofillProfile}
         onSaved={setAutofillProfile}
       />
+      {/* Replaces window.prompt(): suppressed outright in several mobile in-app
+          browsers, where it returns null and the save vanished silently. */}
+      <FormDialog
+        open={saveNameOpen}
+        onClose={() => setSaveNameOpen(false)}
+        title="Name this saved search"
+        onSubmit={saveCurrentSearch}
+        submitDisabled={!saveName.trim()}
+      >
+        <TextField
+          autoFocus
+          fullWidth
+          size="small"
+          label="Search name"
+          value={saveName}
+          onChange={(e) => setSaveName(e.target.value)}
+          sx={TOUCH_FIELD_SX}
+        />
+      </FormDialog>
       <Snackbar
         open={!!snackbar}
         autoHideDuration={6000}
         onClose={() => setSnackbar("")}
         message={snackbar}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+        // MUI pins a bottom-anchored Snackbar to `bottom: 8` below `sm`
+        // (Snackbar.js:66-71) at `zIndex: 1400`, landing it on top of both the
+        // tracking dock (`fixed; bottom: 0; z-index: 1000`, page.module.css:307)
+        // and the chat FAB (resting at `bottom: 24`, 56px tall = 24-80px). 96
+        // clears the FAB. `sm: 24` is MUI's OWN value above the breakpoint, not
+        // a plausible-looking "off" switch -- an `xs`-only value would apply at
+        // every width, since MUI compiles it to `@media (min-width:0px)`.
+        sx={{ bottom: { xs: 96, sm: 24 } }}
       />
     </section>
   );

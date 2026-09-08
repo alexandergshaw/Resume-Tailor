@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import BackButton from "./BackButton";
 import EngineSelect from "./EngineSelect";
 import SettingsMenu from "./SettingsMenu";
 
@@ -28,6 +29,7 @@ export default function AppHeader() {
         flexWrap: "wrap",
       }}
     >
+      <BackButton />
       <span
         style={{
           marginRight: "auto",

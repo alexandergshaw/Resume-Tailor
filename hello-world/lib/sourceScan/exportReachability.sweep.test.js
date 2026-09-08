@@ -357,10 +357,16 @@ describe("every module is reachable from something that ships, or is on a ledger
     // removing it) fails the exact match above, which is the prompt to delete
     // its line here.
     //
-    // The bucket is EMPTY because all three findings were acted on -- deleted,
-    // not wired -- so the exact match above now proves the tree has no unwired
-    // module at all. See the block comment over UNWIRED_MODULES.
-    expect(UNWIRED_MODULES.map((e) => e.file)).toEqual([]);
+    // The three ORIGINAL findings were all acted on -- deleted, not wired. The
+    // two entries here now are the shared rate limiter and its store, written
+    // ahead of their callers on purpose (see their `finding` text). They are
+    // the one case this bucket was designed for: not "how it is", but a dated
+    // claim that a specific consumer is coming. Wiring either one fails the
+    // exact match above, which is the prompt to delete its line.
+    expect(UNWIRED_MODULES.map((e) => e.file)).toEqual([
+      "lib/rateLimit/index.js",
+      "lib/rateLimit/memoryStore.js",
+    ]);
     for (const entry of UNWIRED_MODULES) {
       expect(entry.finding.length, `${entry.file} is recorded as unwired with no description`).toBeGreaterThan(60);
     }

@@ -11,6 +11,7 @@ import MenuItem from "@mui/material/MenuItem";
 import Stack from "@mui/material/Stack";
 import Switch from "@mui/material/Switch";
 import TextField from "@mui/material/TextField";
+import { TOUCH_FIELD_SX, TOUCH_MUI_SELECT_SX, TOUCH_SWITCH_SX } from "@/app/theme/mobileSx";
 import { useIsMobile } from "../../hooks/useResponsive";
 import ChipsInput from "./ChipsInput";
 
@@ -57,7 +58,21 @@ export default function EditDialog({ open, title, schema, draft, setDraft, onClo
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm" fullScreen={isMobile}>
       <DialogTitle>{title}</DialogTitle>
       <DialogContent>
-        <Stack spacing={2} sx={{ mt: 1 }}>
+        {/* The touch floors go on the CONTAINER, not on each FieldInput
+            branch. All three constants are descendant-selector fragments
+            (`& .MuiInputBase-root`, `& .MuiSelect-select.MuiSelect-select`,
+            `& .MuiSwitch-switchBase::after`), so one spread here reaches
+            every field this schema-driven dialog can render -- including a
+            field type added to FieldInput later, which is exactly the case a
+            per-branch spread would miss.
+
+            The two Select constants are used TOGETHER, never one instead of
+            the other: TOUCH_FIELD_SX raises the InputBase root (what the user
+            sees), TOUCH_MUI_SELECT_SX stretches the display element inside it
+            so the top and bottom bands are not a dead zone over a div. From
+            here the doubled class resolves to (0,3,0), which is what that
+            constant needs to beat MUI's own (0,2,0) rule. */}
+        <Stack spacing={2} sx={{ mt: 1, ...TOUCH_FIELD_SX, ...TOUCH_MUI_SELECT_SX, ...TOUCH_SWITCH_SX }}>
           {error ? <Alert severity="error">{error}</Alert> : null}
           {schema.map((field) => (
             <FieldInput

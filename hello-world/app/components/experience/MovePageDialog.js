@@ -9,6 +9,9 @@ import DialogTitle from "@mui/material/DialogTitle";
 import List from "@mui/material/List";
 import ListItemButton from "@mui/material/ListItemButton";
 import Typography from "@mui/material/Typography";
+import { TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
+import { indentAtDepth, MOVE_INDENT } from "@/lib/experience/treeIndent";
+import { useIsMobile } from "../../hooks/useResponsive";
 import { moveTargets } from "../../../lib/experience/moveTargets";
 
 // The keyboard- and screen-reader-reachable route to re-parenting a page -
@@ -20,6 +23,7 @@ import { moveTargets } from "../../../lib/experience/moveTargets";
 // place that actually performs a move - this dialog just offers a way to
 // choose the destination without a pointer.
 export default function MovePageDialog({ open, pages, page, onClose, onMove }) {
+  const isMobile = useIsMobile();
   const targets = page ? moveTargets(pages || [], page.id) : [];
 
   function choose(targetId) {
@@ -29,7 +33,12 @@ export default function MovePageDialog({ open, pages, page, onClose, onMove }) {
   }
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+    // fullScreen on a phone: a `maxWidth="xs"` paper is 375 - 64 = 311px at
+    // 375, and after DialogContent's own padding the label column at depth 5
+    // is under 200px. This dialog is the keyboard/screen-reader route to
+    // re-parenting (drag is pointer-only), so it is also the route that must
+    // survive the narrowest viewport.
+    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth fullScreen={isMobile}>
       <DialogTitle>{page ? `Move “${page.title}”` : "Move page"}</DialogTitle>
       <DialogContent dividers sx={{ p: 0 }}>
         {targets.length === 0 ? (
@@ -42,7 +51,12 @@ export default function MovePageDialog({ open, pages, page, onClose, onMove }) {
               <ListItemButton
                 key={target.id ?? "top-level"}
                 onClick={() => choose(target.id)}
-                sx={{ pl: 2 + target.depth * 2, py: 0.75 }}
+                // Same capped-indent ruling as the tree itself, at this
+                // list's own step - see lib/experience/treeIndent.js. Each
+                // row's label is a full breadcrumb path, so a flattened
+                // indent costs nothing here: the path text still says where
+                // the destination sits.
+                sx={{ pl: indentAtDepth(target.depth, MOVE_INDENT), py: 0.75, ...TOUCH_TARGET_SX }}
               >
                 <Typography variant="body2" sx={{ fontSize: 13.5 }}>
                   {target.label}

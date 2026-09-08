@@ -19,7 +19,28 @@ export default function TabHeader({ title, description, actions, sx }) {
         ) : null}
       </Box>
       {actions ? (
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", flexShrink: 0 }}>{actions}</Box>
+        // On a phone the actions row takes a line of its own and is allowed to
+        // shrink and wrap inside it. `flexShrink: 0` alone pinned this row at its
+        // content width, and since app/globals.css sets `html { overflow-x: hidden }`
+        // anything past the right edge was clipped and unreachable rather than
+        // scrollable -- on the feed that put "Filters", and so the whole mobile
+        // filter sheet, out of reach at 375px. `minWidth: 0` is required alongside
+        // flexShrink because a flex item's default `min-width: auto` floors it at
+        // max-content. Desktop is unchanged: it keeps `flexShrink: 0` and sits
+        // beside the title, which TabHeader.mobile.test.js guards in both directions.
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+            flexWrap: "wrap",
+            flexShrink: { xs: 1, sm: 0 },
+            minWidth: 0,
+            width: { xs: "100%", sm: "auto" },
+          }}
+        >
+          {actions}
+        </Box>
       ) : null}
     </Box>
   );

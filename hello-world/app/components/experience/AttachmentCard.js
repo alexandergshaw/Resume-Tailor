@@ -28,6 +28,7 @@ import FolderZipIcon from "@mui/icons-material/FolderZip";
 import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
 import SlideshowIcon from "@mui/icons-material/Slideshow";
 import TableChartIcon from "@mui/icons-material/TableChart";
+import { TOUCH_FIELD_SX, TOUCH_ICON_SX, TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 
 const KIND_LABEL = {
   image: "Image",
@@ -38,6 +39,25 @@ const KIND_LABEL = {
   sheet: "Spreadsheet",
   archive: "Archive",
   other: "File",
+};
+
+// The image/video preview. `width: 1` is 100% OF ITS BOX (a bare number at or
+// below 1 is a multiplier in `sx`), which is 96px above `sm` and the full card
+// width on a phone.
+//
+// The height cap exists only on the phone branch, where the box got wide: a
+// phone camera shoots portrait, so an unbounded 9:16 capture at ~311px wide is
+// ~550px tall and pushes the notes field - the only part of a video the
+// tailoring engine ever reads - off the bottom of the screen. `objectFit:
+// "contain"` is what makes the cap safe: without it the browser would squash
+// the frame to fit rather than letterbox it. Both `sm` branches are the
+// property's own initial value, so the 96px column above `sm` is unchanged.
+const MEDIA_SX = {
+  width: 1,
+  borderRadius: 1,
+  display: "block",
+  maxHeight: { xs: 220, sm: "none" },
+  objectFit: { xs: "contain", sm: "fill" },
 };
 
 function formatBytes(bytes) {
@@ -68,14 +88,30 @@ export default function AttachmentCard({
   return (
     <Card variant="outlined">
       <CardContent>
-        <Stack direction="row" spacing={2} sx={{ alignItems: "flex-start" }}>
-          <Box sx={{ width: 96, flexShrink: 0 }}>
+        {/* COLUMN on a phone. As a row this spent 96 (thumbnail) + ~30 + ~30
+            (two icon buttons) + three 16px gaps = ~204px of a ~237px card
+            interior at 375, leaving the filename, the kind/size line, the
+            notes field and up to three error Alerts about 33px between them.
+            At 320 the fixed items exceed the interior outright and
+            `html { overflow-x: hidden }` deletes the excess rather than
+            offering it. Above `sm` the shipped row is unchanged. */}
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={2} sx={{ alignItems: "flex-start" }}>
+          {/* FULL WIDTH on a phone, the shipped 96px column above `sm`.
+              Nothing sits beside the media once the card is a column, so the
+              96px that was stealing width from the content no longer buys
+              anything - and 56px (the narrower thumbnail this fix first used)
+              would be actively worse: a `<video controls>` at 56px has no
+              room for its own play button, and shooting a demo on a phone and
+              describing it here is the most phone-first action on this
+              surface. The img/video inside is `width: 1` (100% of THIS box),
+              so both follow it without a breakpoint of their own. */}
+          <Box sx={{ width: { xs: "100%", sm: 96 }, flexShrink: 0 }}>
             {attachment.kind === "image" && attachment.url && (
               <Box
                 component="img"
                 src={attachment.url}
                 alt={attachment.notes || attachment.name}
-                sx={{ width: 1, borderRadius: 1, display: "block" }}
+                sx={{ ...MEDIA_SX }}
               />
             )}
             {attachment.kind === "video" && attachment.url && (
@@ -84,7 +120,7 @@ export default function AttachmentCard({
                 controls
                 src={attachment.url}
                 aria-label={attachment.notes || attachment.name}
-                sx={{ width: 1, borderRadius: 1, display: "block" }}
+                sx={{ ...MEDIA_SX }}
               />
             )}
             {/* Slides/sheet/archive get their own icon, distinct from each other and
@@ -103,7 +139,12 @@ export default function AttachmentCard({
               <InsertDriveFileIcon fontSize="large" color="action" />
             )}
           </Box>
-          <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+          {/* `alignItems: "flex-start"` on the Stack makes a COLUMN child
+              shrink to its content, so this needs an explicit full width on a
+              phone or the notes field would size itself to the filename. In
+              the `sm` row it is a flex item again and `auto` is its own
+              initial value. */}
+          <Box sx={{ flexGrow: 1, minWidth: 0, width: { xs: "100%", sm: "auto" } }}>
             <Typography variant="body2" sx={{ fontWeight: 600, wordBreak: "break-word" }}>
               {attachment.name}
             </Typography>
@@ -134,6 +175,11 @@ export default function AttachmentCard({
               value={attachment.notes || ""}
               onChange={(event) => onNotesInput(attachment.id, event.target.value)}
               onBlur={(event) => onSaveNotes(attachment.id, attachment.name, event.target.value)}
+              // For a VIDEO attachment this field is the only description the
+              // tailoring engine ever sees (video bytes are never forwarded -
+              // see AttachmentPanel.js), and uploading from a camera roll is
+              // a phone-first action. It has to be comfortably tappable.
+              sx={TOUCH_FIELD_SX}
             />
             {notesErrorText && (
               <Alert
@@ -148,6 +194,7 @@ export default function AttachmentCard({
                   <Button
                     color="inherit"
                     size="small"
+                    sx={TOUCH_TARGET_SX}
                     onClick={() => onRetryNotes(attachment.id, attachment.name, attachment.notes || "")}
                   >
                     Retry
@@ -162,7 +209,7 @@ export default function AttachmentCard({
                 severity="error"
                 sx={{ mt: 0.5 }}
                 action={
-                  <Button color="inherit" size="small" onClick={() => onRetryDelete(attachment)}>
+                  <Button color="inherit" size="small" sx={TOUCH_TARGET_SX} onClick={() => onRetryDelete(attachment)}>
                     Retry
                   </Button>
                 }
@@ -178,7 +225,7 @@ export default function AttachmentCard({
                   // onRetryDownload, not onDownload — same download, but see
                   // onRetryNotes just above for why the Retry path alone
                   // moves focus.
-                  <Button color="inherit" size="small" onClick={() => onRetryDownload(attachment)}>
+                  <Button color="inherit" size="small" sx={TOUCH_TARGET_SX} onClick={() => onRetryDownload(attachment)}>
                     Retry
                   </Button>
                 }
@@ -187,28 +234,45 @@ export default function AttachmentCard({
               </Alert>
             )}
           </Box>
-          <IconButton
-            ref={downloadButtonRef}
-            aria-label={`Download ${attachment.name}`}
-            onClick={() => onDownload(attachment)}
-            size="small"
-            // Never disabled and never pulled out of the tab order —
-            // see downloadingRef's own comment: the button that
-            // vanishes from tab order the moment it's used is a bug
-            // this repo has already shipped once. aria-busy plus the
-            // spinner below is the whole in-flight signal.
-            aria-busy={downloading ? "true" : undefined}
+          {/* The two buttons share a wrapper rather than being two direct
+              Stack children, so that in the phone COLUMN they form one
+              trailing-aligned row under the notes field instead of two
+              full-width rows of their own. In the `sm` row the wrapper's own
+              16px gap reproduces exactly the `spacing={2}` these two used to
+              get from the Stack, so desktop geometry is unchanged. */}
+          <Box
+            sx={{
+              display: "flex",
+              flexShrink: 0,
+              gap: 2,
+              alignSelf: { xs: "flex-end", sm: "flex-start" },
+            }}
           >
-            {downloading ? <CircularProgress size={16} /> : <DownloadIcon fontSize="small" />}
-          </IconButton>
-          <IconButton
-            ref={deleteButtonRef}
-            aria-label={`Delete ${attachment.name}`}
-            onClick={() => onDelete(attachment)}
-            size="small"
-          >
-            <DeleteIcon fontSize="small" />
-          </IconButton>
+            <IconButton
+              ref={downloadButtonRef}
+              aria-label={`Download ${attachment.name}`}
+              onClick={() => onDownload(attachment)}
+              size="small"
+              sx={TOUCH_ICON_SX}
+              // Never disabled and never pulled out of the tab order —
+              // see downloadingRef's own comment: the button that
+              // vanishes from tab order the moment it's used is a bug
+              // this repo has already shipped once. aria-busy plus the
+              // spinner below is the whole in-flight signal.
+              aria-busy={downloading ? "true" : undefined}
+            >
+              {downloading ? <CircularProgress size={16} /> : <DownloadIcon fontSize="small" />}
+            </IconButton>
+            <IconButton
+              ref={deleteButtonRef}
+              aria-label={`Delete ${attachment.name}`}
+              onClick={() => onDelete(attachment)}
+              size="small"
+              sx={TOUCH_ICON_SX}
+            >
+              <DeleteIcon fontSize="small" />
+            </IconButton>
+          </Box>
         </Stack>
       </CardContent>
     </Card>
