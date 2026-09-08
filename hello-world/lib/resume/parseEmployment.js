@@ -205,7 +205,30 @@ function parseHeader(headerLines) {
   const titleIdx = parts.findIndex((p) => TITLE_KEYWORDS.test(p));
   if (titleIdx >= 0) {
     title = parts[titleIdx];
-    company = parts.filter((_, i) => i !== titleIdx)[0] || "";
+    // The employer is the first remaining part that does NOT itself name a job.
+    //
+    // Taking the first remaining part outright was a real defect: a header very
+    // commonly reads "Title, Department, Company", so that part is the
+    // DEPARTMENT, and callers go on to state it as the employer -- measured on
+    // the longHeadline corpus material, 24 practice cells told the candidate to
+    // say "I was at Developer Platform and Release Infrastructure" when the
+    // employer was Northwind. Saying a false employer out loud is the worst
+    // error this product can make; the interviewer is the one person certain to
+    // know better.
+    //
+    // TITLE_KEYWORDS_RE, not TITLE_KEYWORDS, and the difference is load-bearing
+    // in BOTH directions. Anchored, it rejects "Developer Platform and Release
+    // Infrastructure" (a whole-word `Developer`) while keeping "Overhead Door
+    // Company", which the unanchored form would throw away for the `head` inside
+    // "Overhead" -- costing a candidate a real employer. The unanchored form is
+    // still correct for titleIdx above, which asks "does a job word occur in
+    // here?" rather than "does this NAME a job?".
+    //
+    // When every remaining part names a job, the header carries no employer, so
+    // company stays "". That is deliberate: roleClause then omits the employer
+    // clause entirely, and naming nothing is strictly better than naming a team.
+    const rest = parts.filter((_, i) => i !== titleIdx);
+    company = rest.find((p) => !TITLE_KEYWORDS_RE.test(p)) || "";
   } else {
     [title = "", company = ""] = parts;
   }

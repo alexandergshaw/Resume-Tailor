@@ -37,6 +37,13 @@ import {
   resolveInterviewerSource,
 } from "@/lib/copilot/captureSupport.js";
 import { readEngine } from "@/app/settings/engine.js";
+// The app-wide responsive contract, imported rather than re-derived. This
+// directory previously had none of it — no commit under app/meeting ever
+// mentioned mobile — which is how three mouse-sized controls and an
+// unwrappable control row shipped to a surface that renders for every user,
+// including a brand-new one on a phone (ExperienceTab.js:627 mounts this panel
+// outside the empty-state branch).
+import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "@/app/theme/mobileSx";
 
 // Mirrors app/copilot/useCaptureSetup.js's own SOURCE_STORAGE_KEY exactly —
 // duplicated rather than imported, the same call meetingNotices.js already
@@ -330,27 +337,40 @@ export default function MeetingPanel({ pageId, onMeetingSaved }) {
           disclosure, so both notices are shown whether or not a meeting is
           currently running — never gated behind Start, and never a dialog
           Start has to clear first. */}
+      {/* Both notices interpolate values this panel does not control — a
+          provider name from the token route and an engine slug from
+          localStorage. `overflowWrap: anywhere` (not `break-word`, which does
+          not feed intrinsic min-content sizing) is what keeps a long unbroken
+          one of either from forcing this block wider than the screen, where
+          `html { overflow-x: hidden }` would DELETE the overflow rather than
+          let it scroll. */}
       <Stack spacing={0.5} sx={{ mb: 2 }}>
-        <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
+        <Typography variant="body2" sx={{ color: "var(--text-secondary)", ...BREAK_LONG_WORDS_SX }}>
           {recordingConsentNotice(source, providerName)}
         </Typography>
-        <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
+        <Typography variant="body2" sx={{ color: "var(--text-secondary)", ...BREAK_LONG_WORDS_SX }}>
           {engineCaveatNotice(engine, providerName)}
         </Typography>
       </Stack>
 
       {!running ? (
-        <Button variant="contained" onClick={handleStart} aria-label="Start a meeting">
+        <Button variant="contained" onClick={handleStart} aria-label="Start a meeting" sx={TOUCH_TARGET_SX}>
           Start a meeting
         </Button>
       ) : (
         <Box>
-          <Stack direction="row" spacing={2} sx={{ mb: 2, alignItems: "center" }}>
+          {/* WRAP_ROW_SX rather than a bare `direction="row"`: "Saving this
+              meeting…" appears BESIDE Stop rather than replacing it, so this
+              row grows by a spinner plus a sentence at the exact moment it is
+              busiest. Wrapping is not phone-scoped — a row should wrap
+              wherever it does not fit. */}
+          <Stack direction="row" spacing={2} sx={{ mb: 2, alignItems: "center", ...WRAP_ROW_SX }}>
             {!stopped ? (
               <Button
                 variant="outlined"
                 onClick={handleStop}
                 aria-label="Stop the meeting and save it as a page"
+                sx={TOUCH_TARGET_SX}
               >
                 Stop
               </Button>
@@ -374,7 +394,13 @@ export default function MeetingPanel({ pageId, onMeetingSaved }) {
               severity="error"
               sx={{ mb: 2 }}
               action={
-                <Button color="inherit" size="small" onClick={handleRetry} aria-label="Retry saving this meeting">
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={handleRetry}
+                  aria-label="Retry saving this meeting"
+                  sx={TOUCH_TARGET_SX}
+                >
                   Retry
                 </Button>
               }

@@ -97,6 +97,46 @@ import { BUZZWORD_CATEGORIES } from "./postingBuzzwords.js";
 // already generous for one. Chosen over a larger number specifically so the
 // question can never out-weigh the context/profile/résumé/pages budgets that
 // sit below it in the same prompt.
+//
+// RE-AUDITED (this export now governs THREE consumers, not one, and they
+// disagree about what "over the cap" means):
+//   app/api/copilot/answer/route.js  TRUNCATES — silently slices the tail,
+//                        mid-word, wherever the cap lands. Correct there
+//                        because the question is machine-transcribed
+//                        interviewer speech nobody typed; losing a tail that
+//                        should never be reached anyway is the honest degrade.
+//   app/api/chat/route.js  also TRUNCATES the latest typed turn, on the same
+//                        "still answer something" theory. That route's own
+//                        suite (route.promptInjection.test.js:61-63) already
+//                        concedes 2000 "may prove too tight for typed chat"
+//                        and keeps AC-6 as a standing, pre-approved allowance
+//                        to raise this export if that ever bites, with its
+//                        cases written relative to the export for exactly
+//                        that reason.
+//   app/api/copilot/ask/route.js  REJECTS outright (400, "too long, shorten
+//                        it") instead of truncating, because there a PERSON
+//                        typed the question and is watching for the answer to
+//                        what they actually asked (route.js:125-130) —
+//                        silently answering a shorter question than the one
+//                        asked would be worse than saying no.
+// The ask route is the one this audit was actually about, and for it 2000 is
+// right, not merely tolerable: it already stitches the tracked application's
+// own job posting into context automatically (askContext.js:94-95, off
+// `tracking.description`), so a legitimate question never needs to restate
+// it. A caller who pastes a whole job description into the question field
+// instead of asking about it is misusing the field, and hitting this cap is a
+// reliable signal of exactly that, not of an honest question that ran long —
+// 2000 characters (250-400 words) is already generous for anything a person
+// would type into a single-line "ask about this application" box.
+//
+// The chat route's typed-chat case is the one genuinely open question — a
+// pasted job description there has nowhere else to go — but it is already
+// covered by AC-6 above, and NOT safe to resolve by bumping this export alone:
+// two out-of-scope tests hard-code today's value instead of importing it
+// (app/copilot/dashboard/AskAiBox.test.js:132, `toBe("2000")`, and
+// app/api/copilot/ask/route.test.js:196, `"k".repeat(2001)`), so raising it
+// means updating those two alongside it. That is a coordinated change for
+// whoever owns the chat route's typed-chat UX, not a same-file tweak here.
 export const MAX_QUESTION_CHARS = 2000;
 
 // AC-4.2: caps how many terms are ever handed forward to a prompt or a

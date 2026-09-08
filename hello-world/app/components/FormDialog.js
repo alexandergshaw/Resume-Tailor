@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useId, useRef, useState } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Dialog from "@mui/material/Dialog";
@@ -36,6 +37,9 @@ export default function FormDialog({
   actions,
 }) {
   const isMobile = useIsMobile();
+  // Labels the title text ALONE (see the id split below `DialogTitle` for
+  // why) -- stable for the component instance's lifetime, SSR-safe.
+  const titleId = useId();
 
   // A busy save must still be escapable -- only the submit itself stays
   // blocked (see handleSubmit). `allowCloseWhileBusy` used to gate this and
@@ -43,7 +47,48 @@ export default function FormDialog({
   // inescapable trap on a fullScreen phone (no backdrop, no Escape key). The
   // gate is gone rather than defaulted differently so nothing can bring the
   // trap back.
+  //
+  // But an UNCONDITIONAL close creates a different trap of its own. Every
+  // real caller's own `onClose` reacts to Escape/backdrop/Cancel by setting
+  // its `open` state to false regardless of `busy` (AddAppDialog.js,
+  // EditAppDialog.js, StageDialog.js, AddCommunicationDialog.js,
+  // experience/BulkActionsBar.js's bulk-delete confirm all do this). That is
+  // right for a save that SUCCEEDS after the user leaves. It is wrong for
+  // one that FAILS: the caller's async handler still calls its own
+  // `setXError(message)` once the request settles, but by then this dialog
+  // has already unmounted, so that error's only display (the FieldError
+  // below, fed by `error`) never shows. The user sees nothing and believes
+  // the save went through.
+  //
+  // `closedWhileBusyRef` remembers a close requested while `busy`; if `busy`
+  // later clears with a non-empty `error` -- the failure the exit outran --
+  // `reopenForError` brings the dialog back so that failure is not silently
+  // lost. A successful save clears `error` before it finishes (every real
+  // caller does), so a completed save never re-triggers this. This does NOT
+  // reintroduce a busy lock: Escape/backdrop/Cancel still close the dialog
+  // the instant they fire, exactly as before -- only a FAILURE that arrives
+  // afterward brings it back.
+  const closedWhileBusyRef = useRef(false);
+  const [reopenForError, setReopenForError] = useState(false);
+
+  useEffect(() => {
+    // A genuine open (the parent, not this reopen mechanism, set `open`
+    // true) always supersedes a stale reopen from a previous cycle -- see
+    // `requestClose` below, which is the path that actually clears
+    // `reopenForError` once the user dismisses it.
+    if (open) {
+      closedWhileBusyRef.current = false;
+      return;
+    }
+    if (!busy && error && closedWhileBusyRef.current) {
+      closedWhileBusyRef.current = false;
+      setReopenForError(true);
+    }
+  }, [open, busy, error]);
+
   const requestClose = () => {
+    if (busy) closedWhileBusyRef.current = true;
+    setReopenForError(false);
     onClose?.();
   };
 
@@ -53,8 +98,27 @@ export default function FormDialog({
     onSubmit?.();
   };
 
+  const effectiveOpen = open || reopenForError;
+
   return (
-    <Dialog open={open} onClose={requestClose} maxWidth={maxWidth} fullWidth={fullWidth} fullScreen={isMobile}>
+    <Dialog
+      open={effectiveOpen}
+      onClose={requestClose}
+      maxWidth={maxWidth}
+      fullWidth={fullWidth}
+      fullScreen={isMobile}
+      // Overrides MUI's own auto-generated `aria-labelledby` (Dialog.js's
+      // `useId(ariaLabelledbyProp)`), which otherwise points at whatever
+      // element ends up with `id={titleId}` -- DialogTitle itself, per
+      // DialogTitle.js. That element also holds the close IconButton on a
+      // phone (same title bar), so its "name from content" pulls in that
+      // button's OWN accessible name too: "Add application" + "Close". This
+      // points at the dedicated span around JUST the title text instead (see
+      // below), and is blank when there is no title to label by (DialogTitle
+      // then holds only the close button, which is correctly nameless on its
+      // own -- there is nothing here to build a dialog name FROM).
+      aria-labelledby={title != null ? titleId : ""}
+    >
       {/* This wrapper sits between the Paper and title/content/actions, so it
           must keep being the Paper's flex column itself -- a plain block here
           gives DialogContent's own `flex:1 1 auto` nothing to grow against,
@@ -85,10 +149,21 @@ export default function FormDialog({
           // empty-heading rule), not a real title. `.MuiDialogTitle-root`'s
           // class and styling are unaffected either way; only the tag changes.
           <DialogTitle
+            // Deliberately NOT `titleId`: MUI's DialogContext would hand this
+            // element that same id by default (Dialog's own `aria-labelledby`
+            // and DialogTitle's `id` both resolve from the SAME context
+            // value), which would put the close IconButton right back inside
+            // the labelled element below. An explicit, different id here
+            // breaks that link; nothing points at this one.
+            id={`${titleId}-bar`}
             component={title != null ? "h2" : "div"}
             sx={{ position: "relative", pr: isMobile ? 7 : undefined }}
           >
-            {title}
+            {/* The dialog's `aria-labelledby` (above) points at ONLY this
+                span, not the whole title bar -- so the close button below,
+                whose own name comes from `aria-label` rather than visible
+                text, is never pulled into the dialog's computed name. */}
+            {title != null ? <Box component="span" id={titleId}>{title}</Box> : null}
             {/* fullScreen (phone) leaves no backdrop pixel to tap and no
                 Escape key, so this is the only pointer-reachable exit. */}
             {isMobile ? (

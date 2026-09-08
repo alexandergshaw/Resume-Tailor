@@ -28,6 +28,12 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { INSIGHT_KINDS } from "@/lib/meeting/insightContract";
 import { safeExternalHref } from "@/lib/url/safeExternalHref";
+// The app-wide responsive contract. Every control below was `size="small"`
+// (~30.75px) against this app's 44px touch floor, and this list is the
+// densest control surface in the meeting view: one "Find sources" and one
+// "Retry" PER CARD, so the shortfall multiplies with the length of the
+// meeting rather than being a fixed handful of controls.
+import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "@/app/theme/mobileSx";
 
 // Every length below carries an explicit unit, and that is load-bearing, not
 // stylistic: MUI's `sx` reinterprets a bare number rather than treating it as
@@ -128,8 +134,12 @@ function ReferenceControl({ insight, referenceState, onFindReferences }) {
   const label = loading
     ? `Find sources for: ${insight.text} (finding sources…)`
     : `Find sources for: ${insight.text}`;
+  // WRAP_ROW_SX: the button's own visible text grows from "Find sources" to
+  // "Finding sources…" in place AND a spinner appears beside it, so this row
+  // is at its widest exactly while it is busy — inside a card already
+  // narrowed by CardContent's padding.
   return (
-    <Stack direction="row" spacing={1} sx={{ alignItems: "center", mt: 1 }}>
+    <Stack direction="row" spacing={1} sx={{ alignItems: "center", mt: 1, ...WRAP_ROW_SX }}>
       {/* Never disabled while rendered — a loading fetch must not remove
           this control from the tab order, the same rule this file's own
           Nudge button already follows (see its header comment below). */}
@@ -139,6 +149,7 @@ function ReferenceControl({ insight, referenceState, onFindReferences }) {
         onClick={() => onFindReferences(insight)}
         aria-label={label}
         aria-busy={loading}
+        sx={TOUCH_TARGET_SX}
       >
         {loading ? "Finding sources…" : "Find sources"}
       </Button>
@@ -182,6 +193,7 @@ function ReferenceResults({ insight, referenceState, onRetry }) {
               size="small"
               onClick={onRetry}
               aria-label={`Retry finding sources for: ${insight.text}`}
+              sx={TOUCH_TARGET_SX}
             >
               Retry
             </Button>
@@ -201,7 +213,13 @@ function ReferenceResults({ insight, referenceState, onRetry }) {
             // a destination there is no longer any way to reach.
             const refHref = safeExternalHref(ref.url);
             return (
-            <Typography key={`${refHref || "unlinked"}-${index}`} variant="body2" sx={{ wordBreak: "break-word" }}>
+            // `overflowWrap: anywhere` rather than `wordBreak: break-word`:
+            // a reference title is model output and its host is a real
+            // domain, so this is the single most likely place in the meeting
+            // view for a long unbroken token to arrive. Only `anywhere` feeds
+            // intrinsic min-content sizing, which is what actually stops the
+            // card being forced wider than the screen.
+            <Typography key={`${refHref || "unlinked"}-${index}`} variant="body2" sx={BREAK_LONG_WORDS_SX}>
               {refHref ? (
               <a href={refHref} target="_blank" rel="noopener noreferrer">
                 {ref.title}
@@ -292,7 +310,7 @@ function InsightCard({ insight, referenceState, onFindReferences }) {
             mb: 0.5,
           }}
         />
-        <Typography sx={{ color: "var(--text-primary)", wordBreak: "break-word" }}>{insight.text}</Typography>
+        <Typography sx={{ color: "var(--text-primary)", ...BREAK_LONG_WORDS_SX }}>{insight.text}</Typography>
         {/* Attribution is the whole point of this card existing as
             something other than a plain bullet list — see this file's own
             header comment. Rendered ONLY when attributionText found
@@ -368,8 +386,13 @@ export default function MeetingInsightList({
 
   return (
     <Box>
-      <Stack direction="row" spacing={1} sx={{ alignItems: "baseline", mb: 1, flexWrap: "wrap" }}>
-        <Typography variant="subtitle2" sx={{ color: "var(--text-primary)" }}>
+      {/* Already wrapped; WRAP_ROW_SX additionally supplies the row-gap a
+          hand-written `flexWrap: "wrap"` leaves out, so the "(just changed)"
+          marker does not sit flush against the heading once it wraps under
+          it — and puts this row on the shared contract rather than its own
+          half of it. */}
+      <Stack direction="row" spacing={1} sx={{ alignItems: "baseline", mb: 1, ...WRAP_ROW_SX }}>
+        <Typography variant="subtitle2" sx={{ color: "var(--text-primary)", ...BREAK_LONG_WORDS_SX }}>
           Topic: {hasTopic ? topic : "Not yet identified"}
         </Typography>
         {/* Text, not colour, is what marks a recent change — satisfies the
@@ -412,7 +435,7 @@ export default function MeetingInsightList({
           severity="error"
           sx={{ mb: 1.5 }}
           action={
-            <Button color="inherit" size="small" onClick={onRetry}>
+            <Button color="inherit" size="small" onClick={onRetry} sx={TOUCH_TARGET_SX}>
               Retry
             </Button>
           }
@@ -460,7 +483,13 @@ export default function MeetingInsightList({
           its own explanation (this button) is the only thing on screen
           explaining what it does. */}
       {nudgeable ? (
-        <Button size="small" variant="outlined" onClick={() => onNudge()} aria-label="Ask for a fresh insight now">
+        <Button
+          size="small"
+          variant="outlined"
+          onClick={() => onNudge()}
+          aria-label="Ask for a fresh insight now"
+          sx={TOUCH_TARGET_SX}
+        >
           Nudge
         </Button>
       ) : null}

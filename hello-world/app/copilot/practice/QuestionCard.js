@@ -92,7 +92,11 @@ export default function QuestionCard({
         {loading ? (
           <Box sx={{ flex: 1, display: "flex", alignItems: "center", py: 0.5 }}>
             <CircularProgress size={20} sx={{ mr: 1.5 }} />
-            <Typography sx={{ color: "var(--text-muted)" }}>
+            {/* WCAG 1.4.3: --text-secondary (6.67:1), not --text-muted
+                (3.90:1) — this is normal body1 text on the card's own
+                --bg-surface background, where --text-muted fails 4.5:1
+                (see QuestionCard.contrast.test.js). */}
+            <Typography sx={{ color: "var(--text-secondary)" }}>
               Getting your next question…
             </Typography>
           </Box>
@@ -172,7 +176,9 @@ export default function QuestionCard({
         ) : settling ? (
           <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
             <CircularProgress size={16} />
-            <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>
+            {/* WCAG 1.4.3: --text-secondary, not --text-muted — see the
+                loading branch above for the measured ratios. */}
+            <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
               Finishing up your answer…
             </Typography>
           </Stack>

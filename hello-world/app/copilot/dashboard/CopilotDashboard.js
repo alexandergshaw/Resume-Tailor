@@ -307,7 +307,12 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
         {currentAnswerRegionText}
       </Box>
       {!current ? (
-        <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>
+        // WCAG 1.4.3: `var(--text-secondary)` (6.67:1), never
+        // `var(--text-muted)` (3.90:1) — this is normal body2 text on the
+        // same `--bg-soft` RealPanel fill the caption comment below already
+        // measures this against; `--text-muted` fails 4.5:1 there (see
+        // app/copilot/dashboard/CopilotDashboard.contrast.test.js).
+        <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
           {copy.noCurrentAnswer}
         </Typography>
       ) : answerHidden ? (
@@ -337,7 +342,9 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
           {current.status === "loading" ? (
             <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
               <CircularProgress size={16} sx={{ flexShrink: 0 }} />
-              <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>
+              {/* WCAG 1.4.3: --text-secondary, not --text-muted — see the
+                  `!current` branch above for the measured ratios. */}
+              <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
                 Drafting…
               </Typography>
             </Stack>
@@ -359,7 +366,9 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
               <AnswerAids buzzwords={current.buzzwords} anchor={current.anchor} idealProject={current.idealProject} />
             </>
           ) : (
-            <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>
+            // WCAG 1.4.3: --text-secondary, not --text-muted — see the
+            // `!current` branch above for the measured ratios.
+            <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
               {copy.noPoints}
             </Typography>
           )}
@@ -395,7 +404,10 @@ function ReadingSlot({ label, valueText, measuredCopy }) {
     // this is what keeps the strip's height and layout fixed as a reading
     // arrives mid-answer (no reflow when speed or filler rate flips from
     // unmeasured to measured).
-    <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>
+    // WCAG 1.4.3: --text-secondary, not --text-muted — this renders on
+    // DeliveryPanel's own `--bg-soft` fill below, where --text-muted fails
+    // 4.5:1 (see app/copilot/dashboard/CopilotDashboard.contrast.test.js).
+    <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
       {measuredCopy}
     </Typography>
   );

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Link from "@mui/material/Link";
@@ -133,6 +132,7 @@ export default function AutofillProfileDialog({ open, onClose, profile, onSaved 
       onClose={onClose}
       title="Autofill profile"
       contentSx={{ display: "flex", flexDirection: "column", gap: 2, pt: 2 }}
+      error={error}
       busy={saving}
       onSubmit={handleSave}
       submitLabel="Save"
@@ -142,8 +142,6 @@ export default function AutofillProfileDialog({ open, onClose, profile, onSaved 
           posting page. Drag the button below to your bookmarks bar once; then on any posting click
           a card&apos;s <strong>Auto Fill</strong> to open it and copy the same bookmarklet.
         </Typography>
-
-        {error && <Alert severity="error" onClose={() => setError("")}>{error}</Alert>}
 
         <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 1.5 }}>
           {AUTOFILL_FIELDS.map((f) => (

@@ -724,12 +724,12 @@ describe("normalizeMetrics — paceLabel whitelist", () => {
   });
 });
 
-// R-127: normalizeMetrics must independently RE-DERIVE plausibility from the
+// R-128: normalizeMetrics must independently RE-DERIVE plausibility from the
 // numeric wordsPerMinute it just normalized, never trust a client-supplied
 // `paceIsPlausible` field — a client that lies (or one from before this
 // field existed, which never sends it at all) must not be able to assert an
 // impossible wpm as ground truth to the critique prompt.
-describe("normalizeMetrics — paceIsPlausible (R-127)", () => {
+describe("normalizeMetrics — paceIsPlausible (R-128)", () => {
   it("is true for an ordinary, physically-possible wpm", () => {
     expect(normalizeMetrics({ wordsPerMinute: 150 }).paceIsPlausible).toBe(true);
   });
@@ -759,11 +759,11 @@ describe("normalizeMetrics — paceIsPlausible (R-127)", () => {
   });
 });
 
-// R-127: computeAnswerMetrics is the client-side, honest-client copy of the
+// R-128: computeAnswerMetrics is the client-side, honest-client copy of the
 // same rule — proves the two independent computations (client and server)
 // agree, and that the flag never depends on speechDurationSec/wordCount in
 // a way that could fabricate a false positive from an unmeasured answer.
-describe("computeAnswerMetrics — paceIsPlausible (R-127)", () => {
+describe("computeAnswerMetrics — paceIsPlausible (R-128)", () => {
   it("is true for a normal pace and false for a doubled-transcript-shaped pace", () => {
     // 40 words over 20s = 120 wpm — ordinary.
     const normal = computeAnswerMetrics({ text: Array(40).fill("word").join(" "), durationMs: 20000, speechDurationMs: 20000 });
@@ -796,12 +796,12 @@ describe("computeAnswerMetrics — paceIsPlausible (R-127)", () => {
   });
 });
 
-// R-127: when the pace is implausible, buildDeliveryNotes must say so as a
+// R-128: when the pace is implausible, buildDeliveryNotes must say so as a
 // DATA problem, never cite the number as ground truth the way the normal
 // pace note does — that citation is exactly what handed the Gemini prompt
 // "367 wpm, rushed" as fact under BASE_SYSTEM's "treat those numbers as
 // ground truth" instruction (app/api/copilot/critique/route.js).
-describe("buildDeliveryNotes — implausible pace is reported as a measurement fault, not a delivery fact (R-127)", () => {
+describe("buildDeliveryNotes — implausible pace is reported as a measurement fault, not a delivery fact (R-128)", () => {
   it("does not emit the normal 'You spoke for... words per minute' sentence when paceIsPlausible is false", () => {
     const notes = notesFor({ wordCount: 196, speechDurationSec: 32, wordsPerMinute: 367, paceLabel: "rushed" });
     expect(notes[0]).not.toContain("words per minute");
@@ -821,14 +821,14 @@ describe("buildDeliveryNotes — implausible pace is reported as a measurement f
   });
 });
 
-// R-127: the whole point of a FLAG instead of a clamp is that a measurement
+// R-128: the whole point of a FLAG instead of a clamp is that a measurement
 // fault stops being REPORTED as a delivery fault without any SCORE moving —
 // computePaceScore/computeDeliveryScore key off paceLabel alone and were
 // never touched by this fix. Proven by holding paceLabel (and therefore the
 // pace sub-score) fixed while flipping only wordsPerMinute/paceIsPlausible
 // across the ceiling, and confirming critiqueAnswerLocal's overall score is
 // byte-identical either way.
-describe("critiqueAnswerLocal — an implausible wpm does not move the score (R-127)", () => {
+describe("critiqueAnswerLocal — an implausible wpm does not move the score (R-128)", () => {
   it("scores identically whether wordsPerMinute is a plausible 165 or an implausible 900, given the same paceLabel", () => {
     const inputs = (wordsPerMinute) => ({
       question: "Tell me about a time you led a project.",

@@ -11,12 +11,33 @@
 // scrolling transcript, but simplified: this meeting has no diarization
 // correction UI (that component's `onAssignUser` machinery exists only for
 // the in-person interview flow's speaker-reassignment feature, which this
-// surface has no equivalent of), and no page-scroll-vs-pane-scroll split
-// (that split exists there to serve app/copilot/mobileSx.js's PHONE_PANE_SX,
-// which is a copilot-specific layout contract this file has no reason to
-// import). What carries over is the one property that actually matters for
-// a live, fast-moving transcript: auto-follow the newest line while the
-// reader hasn't scrolled away to re-read something earlier.
+// surface has no equivalent of). What carries over is the one property that
+// actually matters for a live, fast-moving transcript: auto-follow the newest
+// line while the reader hasn't scrolled away to re-read something earlier.
+//
+// It ALSO carries over the page-scroll-vs-pane-scroll split, which this file
+// used to reject in this very comment: PHONE_PANE_SX was described as "a
+// copilot-specific layout contract this file has no reason to import". That
+// was wrong twice over. It is not copilot-specific — it now lives in
+// app/theme/mobileSx.js as the app-wide contract, imported by every surface
+// that has had a phone pass. And the reason to import it is the one this file
+// had no phone in view to see: without it this pane is a 420px nested touch
+// scroller inside a page scroll, on a screen 812px tall that also carries two
+// consent notices, the Stop row and the whole insight list. See that export's
+// own doc for the two independent failures it exists to prevent.
+//
+// The split below is not optional decoration on top of that import. Read
+// `PHONE_PANE_SX`'s effect on this component precisely: below `md` it sets
+// `overflowY: visible` and removes the height cap, so this element STOPS
+// BEING A SCROLL CONTAINER. The instant that happens `onScroll` can never
+// fire, so `stickRef` is frozen at its initial `true` and auto-follow runs on
+// every arriving turn no matter where the reader is — which on a phone means
+// a reader who scrolled UP to re-read something is dragged back to the bottom
+// by the next line of speech. `pageStickRef` is the page-scroll equivalent of
+// `stickRef` for that regime; the two are genuinely disjoint (only one of them
+// does anything on a given render) and BOTH are required for auto-follow to
+// behave at every width. Adopting the pane contract without it would trade a
+// scroll-trap for a scroll-yank.
 
 import { useEffect, useRef } from "react";
 import Box from "@mui/material/Box";
@@ -26,6 +47,17 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { meetingSpeakerLabel } from "@/lib/meeting/insightContract";
 import { speakerAttributionNotice } from "@/lib/meeting/meetingNotices";
+import {
+  BREAK_LONG_WORDS_SX,
+  PHONE_PANE_SX,
+  TOUCH_TARGET_SX,
+  WRAP_ROW_SX,
+} from "@/app/theme/mobileSx";
+
+// How close to the bottom still counts as "following along". Matches
+// TranscriptView.js's own threshold, and is applied to the page and to the
+// pane by the two sticky checks below so the two regimes behave identically.
+const STICK_SLACK_PX = 48;
 
 // Every length below carries an explicit unit, for the same reason
 // MeetingInsightList.js's own copy of this object states in full: MUI's `sx`
@@ -76,7 +108,7 @@ function FinalTurnRow({ turn, rowRef }) {
   return (
     <Box ref={rowRef} sx={{ pt: 0.75 }}>
       {label || clock ? (
-        <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.25 }}>
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.25, ...WRAP_ROW_SX }}>
           {label ? (
             <Chip
               size="small"
@@ -85,6 +117,13 @@ function FinalTurnRow({ turn, rowRef }) {
                 height: 20,
                 fontSize: 11,
                 fontWeight: 700,
+                // MUI's Chip root is `overflow: hidden` + `text-overflow:
+                // ellipsis`, so a chip squeezed as a flex item truncates its
+                // own label rather than the row wrapping. Latent with today's
+                // two-word vocabulary ("You"/"Others"); pinned so it stays
+                // that way rather than being rediscovered as "PREDI…" the way
+                // CopilotDashboard.js documents.
+                flexShrink: 0,
                 color: turn.speaker === "them" ? "var(--accent-contrast)" : "var(--text-secondary)",
                 background: turn.speaker === "them" ? "var(--accent)" : "var(--bg-soft)",
                 border: turn.speaker === "them" ? "none" : "1px solid var(--border)",
@@ -98,7 +137,12 @@ function FinalTurnRow({ turn, rowRef }) {
           ) : null}
         </Stack>
       ) : null}
-      <Typography sx={{ pl: 0.25, color: "var(--text-primary)", wordBreak: "break-word" }}>
+      {/* `overflowWrap: anywhere`, not the `wordBreak: break-word` this was:
+          only `anywhere` also feeds intrinsic min-content sizing, which is
+          what stops a dictated URL or an email address forcing this pane
+          wider than the screen. Transcribed speech is exactly where such a
+          token arrives unannounced. */}
+      <Typography sx={{ pl: 0.25, color: "var(--text-primary)", ...BREAK_LONG_WORDS_SX }}>
         {turn.text}
       </Typography>
     </Box>
@@ -137,7 +181,7 @@ function InterimRow({ speaker, text, rowRef }) {
       ) : null}
       <Typography
         data-interim="true"
-        sx={{ pl: 0.25, color: "var(--text-muted)", fontStyle: "italic", wordBreak: "break-word" }}
+        sx={{ pl: 0.25, color: "var(--text-muted)", fontStyle: "italic", ...BREAK_LONG_WORDS_SX }}
       >
         <Box component="span" sx={visuallyHidden}>
           Still speaking:{" "}
@@ -154,7 +198,15 @@ export default function MeetingTranscript({ turns, interims, source }) {
   const activeInterims = SPEAKER_KEYS.filter((key) => typeof interimMap[key] === "string" && interimMap[key]);
 
   const scrollRef = useRef(null);
+  // Tracks whether THIS PANE is scrolled near its own bottom. Meaningful only
+  // at `md` and up, where PHONE_PANE_SX's `overflowY: auto` branch makes the
+  // pane a scroll container again; below `md` `onScroll` never fires and this
+  // ref is frozen — see this file's header.
   const stickRef = useRef(true);
+  // The page-scroll equivalent, for the regime below `md` where the PAGE is
+  // the single scroller. Do not delete this thinking `stickRef` covers it:
+  // the two regimes are disjoint and each ref is inert in the other's.
+  const pageStickRef = useRef(true);
   const newestRef = useRef(null);
 
   const hasContent = finalTurns.length > 0 || activeInterims.length > 0;
@@ -165,20 +217,53 @@ export default function MeetingTranscript({ turns, interims, source }) {
   // stable across renders when it's a fresh expression written inline.
   const activeInterimsKey = activeInterims.join("|");
 
+  // Mirrors `onScroll` below one-for-one, but for the PAGE rather than this
+  // pane. Attached unconditionally — it is cheap, and the regime can change
+  // under a resize that crosses `md` — but only ever consulted from the
+  // page-scroll branch of the effect below.
+  useEffect(() => {
+    const onPageScroll = () => {
+      const doc = document.documentElement;
+      pageStickRef.current =
+        doc.scrollHeight - window.scrollY - window.innerHeight < STICK_SLACK_PX;
+    };
+    window.addEventListener("scroll", onPageScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onPageScroll);
+  }, []);
+
   // Auto-follow the newest line, the same "stick unless the reader has
   // scrolled away" contract TranscriptView.js uses — new turns in a live
   // meeting must not require the reader to keep manually scrolling down,
   // but a reader who scrolled UP to re-read something earlier must not be
   // yanked back to the bottom by the next arriving line either.
+  //
+  // WHICH ref gates that depends on which regime is live, and that is read
+  // off the ELEMENT rather than re-deriving PHONE_PANE_SX's `md` breakpoint
+  // in JS (where it could silently drift from the CSS). Computed `overflowY`
+  // is the exact property the contract flips between the two regimes, so it
+  // cannot go stale the way comparing `scrollHeight`/`clientHeight` would:
+  // early in a meeting the transcript is short enough not to have overflowed
+  // its `minHeight: 340` even at >= md, and that comparison alone cannot tell
+  // "not scrolled yet" apart from "not a scroller at all".
+  //
+  // `scrollIntoView({ block: "nearest" })` serves BOTH regimes, which is why
+  // there is one call rather than two: it is a no-op once the row is already
+  // fully visible, so a transcript updating faster than anyone can read never
+  // jerks the viewport on every turn — it moves only when the newest row has
+  // actually gone out of view.
   useEffect(() => {
-    if (!stickRef.current) return;
-    newestRef.current?.scrollIntoView({ block: "nearest" });
+    const el = scrollRef.current;
+    if (!el) return;
+    const isOwnScroller = getComputedStyle(el).overflowY !== "visible";
+    if (isOwnScroller ? stickRef.current : pageStickRef.current) {
+      newestRef.current?.scrollIntoView({ block: "nearest" });
+    }
   }, [finalTurns.length, activeInterimsKey]);
 
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
-    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_SLACK_PX;
   };
 
   // "Newest turns must be reachable without hunting" — the AC this button
@@ -188,8 +273,15 @@ export default function MeetingTranscript({ turns, interims, source }) {
   // order whenever there is any content at all (never conditionally
   // disabled while explanatory text about it is on screen — the
   // accessibility rule this brief calls out by name).
+  //
+  // BOTH sticky refs are re-armed, not just `stickRef`. Pressing this control
+  // is the user saying "follow along again", and which ref actually gates
+  // that depends on a regime this handler has no reason to branch on — arming
+  // only the pane's would leave the button working once on a phone and then
+  // never following the next turn.
   const jumpToLatest = () => {
     stickRef.current = true;
+    pageStickRef.current = true;
     newestRef.current?.scrollIntoView({ block: "nearest" });
   };
 
@@ -226,18 +318,31 @@ export default function MeetingTranscript({ turns, interims, source }) {
 
       {hasContent ? (
         <Box sx={{ mb: 1, textAlign: "right" }}>
-          <Button size="small" onClick={jumpToLatest} aria-label="Jump to the latest turn">
+          <Button
+            size="small"
+            onClick={jumpToLatest}
+            aria-label="Jump to the latest turn"
+            sx={TOUCH_TARGET_SX}
+          >
             Jump to latest
           </Button>
         </Box>
       ) : null}
 
+      {/* `data-transcript-pane` exists so this element is addressable by the
+          mobile suite, which has to read back which scroll regime the pane is
+          actually in. Nothing renders off it. */}
       <Box
         ref={scrollRef}
         onScroll={onScroll}
+        data-transcript-pane="true"
         sx={{
-          maxHeight: 420,
-          overflowY: "auto",
+          // Replaces a hard `maxHeight: 420, overflowY: "auto"` — see this
+          // file's header. Below `md` the page becomes the single scroller;
+          // at `md` and up this is a bounded, internally-scrolling pane
+          // again, on the contract's shared values rather than this file's
+          // own.
+          ...PHONE_PANE_SX,
           p: 2,
           borderRadius: 2,
           border: "1px solid var(--border)",
