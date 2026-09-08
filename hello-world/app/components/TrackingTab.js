@@ -3,6 +3,7 @@
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import IconButton from "@mui/material/IconButton";
 import TextField from "@mui/material/TextField";
 import Chip from "@mui/material/Chip";
 import Tooltip from "@mui/material/Tooltip";
@@ -22,6 +23,7 @@ import TabHeader from "./TabHeader";
 import EmptyState from "./EmptyState";
 import styles from "../page.module.css";
 import { useIsTablet } from "../hooks/useResponsive";
+import { TOUCH_ICON_SX, TOUCH_FIELD_SX, TOUCH_NATIVE_SELECT_SX } from "@/app/theme/mobileSx";
 import {
   STAGE_TYPE_LABELS,
   createStageDialogState,
@@ -35,6 +37,22 @@ import AddAppDialog from "./AddAppDialog";
 import AppViewDialog from "./AppViewDialog";
 import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
+// AC-K4: options for the compact (<900px) card layout's sort control, which
+// covers the same four fields as the desktop table's TableSortLabels plus
+// both directions. Module scope: the list is fixed, so there's no reason to
+// rebuild it on every render.
+const SORT_FIELD_OPTIONS = [
+  { value: "", label: "Default order" },
+  { value: "company:asc", label: "Company (A to Z)" },
+  { value: "company:desc", label: "Company (Z to A)" },
+  { value: "title:asc", label: "Role (A to Z)" },
+  { value: "title:desc", label: "Role (Z to A)" },
+  { value: "status:asc", label: "Status (A to Z)" },
+  { value: "status:desc", label: "Status (Z to A)" },
+  { value: "applied_at:asc", label: "Applied (oldest first)" },
+  { value: "applied_at:desc", label: "Applied (newest first)" },
+];
+
 export default function TrackingTab({
   currentUser,
   applicationLoading,
@@ -45,6 +63,7 @@ export default function TrackingTab({
   interviewSearch,
   setInterviewSearch,
   interviewSort,
+  setInterviewSort,
   companyColWidth,
   roleColWidth,
   resumeFile,
@@ -214,6 +233,89 @@ export default function TrackingTab({
       </Button>
     );
   }
+
+  // AC-K2: the desktop-only (>=900px) download affordance for a row's
+  // tailored resume. Used to be a hand-rolled `<span role="button" tabIndex
+  // ={0}>` with no key handler at all -- Tab reached it, a screen reader
+  // announced "button", and Enter/Space did nothing. A real IconButton gets
+  // Enter/Space from the browser for free and carries `.MuiButtonBase-root`,
+  // so it inherits the app-wide focus ring. The unavailable case is exposed
+  // programmatically via `aria-disabled`, NOT the `disabled` attribute --
+  // `app/components/ChatPanel.js`'s Send button states this repo's rule in
+  // writing: `disabled` sets `tabindex="-1"`, which removes the control from
+  // the tab order and takes the `aria-label`/tooltip explaining WHY it's
+  // unavailable out of reach of the exact users who need it read aloud. The
+  // `onClick`/`onDragStart` guards below already no-op when unavailable, so
+  // `aria-disabled` costs nothing functionally and the `opacity` styling
+  // below stands in for the `.Mui-disabled` look `disabled` would otherwise
+  // have supplied. Dragging the resolved .docx straight into an ATS upload
+  // field is why `onDragStart` and `draggable` stay -- MUI's button roots
+  // carry both fine. The <900px card branch (renderDigestCell's caller
+  // above) already renders a real `<Button>Download</Button>` and is
+  // untouched by this.
+  function renderDownloadControl(pos, resume) {
+    const downloadUnavailable = !resumeFile || !isDocxResume(resumeFile);
+    const downloadTitle = !resumeFile
+      ? "Upload your source resume (.docx) to enable downloads."
+      : !isDocxResume(resumeFile)
+      ? "Source resume must be a .docx file to download."
+      : "Download or drag to upload tailored .docx";
+    const lines = Array.isArray(resume.content_lines) && resume.content_lines.length > 0
+      ? resume.content_lines
+      : (resume.content || "").split("\n");
+    return (
+      <Tooltip title={downloadTitle}>
+        <span>
+          <IconButton
+            size="small"
+            aria-label={downloadTitle}
+            aria-disabled={downloadUnavailable}
+            draggable={!downloadUnavailable}
+            onDragStart={async (e) => {
+              if (downloadUnavailable) return;
+              try {
+                const blob = await resolveDocumentBlob({
+                  docxPath: resume.docx_path || "",
+                  edited: false,
+                  text: resume.content,
+                  lines,
+                  uploadedTemplate: resumeFile,
+                });
+                if (!blob) return;
+                const file = new File([blob], getDownloadFileNameForTitle(pos?.title, pos?.company), { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+                e.dataTransfer.clearData();
+                e.dataTransfer.effectAllowed = "copy";
+                e.dataTransfer.setData("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "");
+                e.dataTransfer.items.add(file);
+              } catch {}
+            }}
+            onClick={async () => {
+              if (downloadUnavailable) return;
+              const err = await downloadDocxFiles({
+                jobTitle: pos?.title || "resume",
+                company: pos?.company,
+                result: resume.content,
+                resultLines: lines,
+                coverLetterResultLines: [],
+                docxPath: resume.docx_path || "",
+              });
+              if (err) window.alert(err);
+            }}
+            sx={{
+              ...TOUCH_ICON_SX,
+              // `disabled` is deliberately not used here (see the comment
+              // above) -- this stands in for the `.Mui-disabled` dimming it
+              // would otherwise have supplied, without taking the tab stop.
+              ...(downloadUnavailable ? { opacity: 0.5, pointerEvents: "none" } : null),
+            }}
+          >
+            <DescriptionIcon fontSize="small" color="primary" />
+          </IconButton>
+        </span>
+      </Tooltip>
+    );
+  }
+
   return (
     <section className={styles.tabPanel}>
       <TabHeader
@@ -262,6 +364,49 @@ export default function TrackingTab({
         <>
           {isCompact ? (
             <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+              {/* AC-K4: the desktop TableSortLabels above live only in the
+                  <TableHead> this branch replaces wholesale below 900px -- a
+                  laptop with devtools open included, not just a phone -- so
+                  without an equivalent here sorting is unreachable at that
+                  width. A native <select> (not MUI's own Select) is
+                  deliberate: same reasoning as RolePicker.js -- the UA's own
+                  control gets the focus ring and Enter/Space/arrow-key
+                  activation for free, and its accessible name can never
+                  drift from the option that's actually selected the way
+                  MUI's non-native Select can (see that file's own comment).
+                  "Default order" (value "") is a real option, not a
+                  placeholder -- choosing it resets the sort, which is this
+                  layout's only route back to fetch order once the user has
+                  sorted (the desktop 3-state cycle has one: a third click on
+                  the same TableSortLabel clears it via toggleInterviewSort).
+                  `inputLabel: { shrink: true }` is required unconditionally
+                  for the same reason MicPicker.js's comment gives: a native
+                  select has no genuinely blank state for the floating label
+                  to sit on top of -- "Default order" is always showing, even
+                  at `value: ""` -- so without it the label renders on top of
+                  that text instead of shrinking above the field. */}
+              <TextField
+                select
+                size="small"
+                label="Sort by"
+                value={interviewSort.field ? `${interviewSort.field}:${interviewSort.dir}` : ""}
+                onChange={(e) => {
+                  if (typeof setInterviewSort !== "function") return;
+                  const raw = e.target.value;
+                  if (!raw) {
+                    setInterviewSort({ field: null, dir: "asc" });
+                    return;
+                  }
+                  const [field, dir] = raw.split(":");
+                  setInterviewSort({ field, dir });
+                }}
+                slotProps={{ select: { native: true }, inputLabel: { shrink: true } }}
+                sx={{ alignSelf: "flex-start", minWidth: 200, ...TOUCH_FIELD_SX, ...TOUCH_NATIVE_SELECT_SX }}
+              >
+                {SORT_FIELD_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </TextField>
               {visibleApplicationData.map((app) => {
                 const idx = applicationData.findIndex((candidate) => candidate.id === app.id);
                 const pos = app.positions;
@@ -695,59 +840,7 @@ export default function TrackingTab({
                               <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }} onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "resume" })}>
                                 View full
                               </Button>
-                              <Tooltip title="Download or drag to upload tailored DOCX">
-                                <span
-                                  style={{ display: "inline-flex", alignItems: "center", cursor: (!resumeFile || !isDocxResume(resumeFile)) ? "not-allowed" : "pointer", opacity: (!resumeFile || !isDocxResume(resumeFile)) ? 0.5 : 1 }}
-                                  tabIndex={0}
-                                  role="button"
-                                  onClick={async (e) => {
-                                    if (!resumeFile || !isDocxResume(resumeFile)) return;
-                                    const lines = Array.isArray(resume.content_lines) && resume.content_lines.length > 0
-                                      ? resume.content_lines
-                                      : (resume.content || "").split("\n");
-                                    const err = await downloadDocxFiles({
-                                      jobTitle: pos?.title || "resume",
-                                      company: pos?.company,
-                                      result: resume.content,
-                                      resultLines: lines,
-                                      coverLetterResultLines: [],
-                                      docxPath: resume.docx_path || "",
-                                    });
-                                    if (err) window.alert(err);
-                                  }}
-                                  draggable={!!resumeFile && isDocxResume(resumeFile)}
-                                  onDragStart={async (e) => {
-                                    if (!resumeFile || !isDocxResume(resumeFile)) return;
-                                    try {
-                                      const lines = Array.isArray(resume.content_lines) && resume.content_lines.length > 0
-                                        ? resume.content_lines
-                                        : (resume.content || "").split("\n");
-                                      const blob = await resolveDocumentBlob({
-                                        docxPath: resume.docx_path || "",
-                                        edited: false,
-                                        text: resume.content,
-                                        lines,
-                                        uploadedTemplate: resumeFile,
-                                      });
-                                      if (!blob) return;
-                                      const file = new File([blob], getDownloadFileNameForTitle(pos?.title, pos?.company), { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
-                                      e.dataTransfer.clearData();
-                                      e.dataTransfer.effectAllowed = "copy";
-                                      e.dataTransfer.setData("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "");
-                                      e.dataTransfer.items.add(file);
-                                    } catch {}
-                                  }}
-                                  title={
-                                    !resumeFile
-                                      ? "Upload your source resume (.docx) to enable downloads."
-                                      : !isDocxResume(resumeFile)
-                                      ? "Source resume must be a .docx file to download."
-                                      : "Download or drag tailored .docx"
-                                  }
-                                >
-                                  <DescriptionIcon fontSize="small" color="primary" />
-                                </span>
-                              </Tooltip>
+                              {renderDownloadControl(pos, resume)}
                             </Box>
                           </Box>
                         ) : "—"}

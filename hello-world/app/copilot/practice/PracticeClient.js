@@ -15,6 +15,7 @@ import ManualQuestion from "../ManualQuestion";
 import CameraPreview from "./CameraPreview";
 import { useApplicationDocs } from "../useApplicationDocs";
 import CopilotDashboard, { PRACTICE_COPY } from "../dashboard/CopilotDashboard";
+import StickyQuestionStrip from "../dashboard/StickyQuestionStrip";
 import { useCopilotDashboard } from "../useCopilotDashboard";
 import PracticeSetup from "./PracticeSetup";
 import PracticeControls from "./PracticeControls";
@@ -702,6 +703,18 @@ export default function PracticeClient({
         onDownloadLog={sessionLog.downloadLog}
         downloadLogEnabled={sessionLog.hasLog}
       />
+
+      {/* ARCH-sticky §2.4/§3.5: mounted once a question exists, same
+          predicate `dashboardQuestions` itself already uses (`if
+          (!currentQuestionText) return [];` above) — so a pre-session mount
+          never pins PRACTICE_COPY.noQuestion over PracticeControls, the
+          component that holds Start, just above this. A direct child of this
+          page-spanning Box, so its sticky containing block covers the whole
+          practice page and PracticeControls scrolls off the top exactly as
+          it does today (strictly no worse than today). */}
+      {dashboardQuestions.length > 0 ? (
+        <StickyQuestionStrip questions={dashboardQuestions} copy={PRACTICE_COPY} />
+      ) : null}
 
       {/* Shown once at least one answer has been analyzed (AC-C4-6), and
           rendered independent of the review panel below so it stays

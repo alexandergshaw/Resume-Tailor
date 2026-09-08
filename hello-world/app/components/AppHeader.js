@@ -13,6 +13,7 @@ export default function AppHeader() {
 
   return (
     <header
+      data-app-header="" // ARCH-sticky §3.4/G-3: the query useStickyTop.js measures this header by
       style={{
         position: "sticky",
         top: 0,

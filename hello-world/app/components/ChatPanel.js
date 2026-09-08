@@ -4,11 +4,14 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import Avatar from "@mui/material/Avatar";
+import IconButton from "@mui/material/IconButton";
+import CloseIcon from "@mui/icons-material/Close";
 import TextField from "@mui/material/TextField";
 import { useIsMobile } from "../hooks/useResponsive";
 import { useChatErrorAnnouncementSeq } from "../hooks/useChat";
 import { useEngine } from "../settings/engine";
 import { revokeAttachmentPreview } from "../../lib/chat/chatbot";
+import { TOUCH_ICON_SX } from "@/app/theme/mobileSx";
 
 const EMBEDDED_TOOLTIP =
   "Embedded engine: replies are generated on-device from your pinned posting, resume, and applications — no AI, works offline. Switch to Gemini in the top bar for open-ended chat.";
@@ -41,6 +44,8 @@ export default function ChatPanel({
   chatInput,
   setChatInput,
   sendChatMessage,
+  onClose,
+  returnFocusRef,
 }) {
   // On phones the resizable floating panel becomes a near-full-width bottom
   // sheet (and the pixel-drag resize handle is hidden) for usable chatting.
@@ -58,9 +63,33 @@ export default function ChatPanel({
   // MUI's `.Mui-disabled` now that the `disabled` attribute is gone (see the
   // button below).
   const sendUnavailable = chatSending || !chatInput.trim();
+  // AC-K1.4/AC-K1.6: closing the panel unmounts the control that was just
+  // activated (the close button, or whichever element had focus when Escape
+  // fired) -- without an explicit restore, focus falls to <body> and a
+  // keyboard user loses their place in a ~200-stop page. `onClose` and
+  // `returnFocusRef` both come from page.js, which hoists `setChatOpen`
+  // and holds the ref to the AI Help launcher (ChatFab.js) that reopens it.
+  const closeAndReturnFocus = () => {
+    onClose?.();
+    returnFocusRef?.current?.focus();
+  };
   return (
     <Box
       ref={chatPanelRef}
+      // AC-K1.5: Escape dismisses the panel from ANYWHERE inside it,
+      // including the composer, which already owns Enter (below). A
+      // `keydown` here catches the bubbled event from every descendant --
+      // the composer's own handler only intercepts "Enter", so Escape is
+      // never swallowed before it reaches this far. `stopPropagation` mirrors
+      // DriveOverwriteDialog.js's Escape handler: nothing else in this app
+      // currently listens for Escape at an ancestor of this fixed overlay,
+      // but MUI Dialog/Menu/Popover own Escape at their own root the same
+      // way, and this keeps the panel from ever double-firing into one.
+      onKeyDown={(e) => {
+        if (e.key !== "Escape") return;
+        e.stopPropagation();
+        closeAndReturnFocus();
+      }}
       onDragOver={(e) => { e.preventDefault(); setChatDragActive(true); }}
       onDragEnter={(e) => { e.preventDefault(); setChatDragActive(true); }}
       onDragLeave={(e) => {
@@ -169,31 +198,46 @@ export default function ChatPanel({
             />
           ) : null}
         </Box>
-        {chatMessages.length > 0 || chatAttachedFiles.length > 0 ? (
-          <Button
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.25 }}>
+          {chatMessages.length > 0 || chatAttachedFiles.length > 0 ? (
+            <Button
+              size="small"
+              onClick={() => {
+                setChatMessages([]);
+                setChatError("");
+                // The bulk-attach path (ExperienceTab.js) can leave chips in the
+                // tray with zero messages sent -- Clear has to be the way out of
+                // that unsendable payload too, not just a thread reset.
+                // M6: revoke every discarded chip's preview blob URL before the
+                // tray is emptied, or each one leaks for the page's life.
+                chatAttachedFiles.forEach(revokeAttachmentPreview);
+                setChatAttachedFiles([]);
+                // M5: without this, a stale "...is too large..." refusal from a
+                // bulk add keeps pointing at files Clear just removed.
+                // Optional call: `setChatAttachError` is a prop, and some
+                // callers (older tests, callers that never surface the refusal
+                // banner) may not pass one.
+                setChatAttachError?.("");
+              }}
+              sx={{ textTransform: "none", fontSize: "0.8rem", color: "var(--text-secondary)" }}
+            >
+              Clear
+            </Button>
+          ) : null}
+          {/* AC-K1.4: the panel's only close control before this fix was the
+              AI Help launcher's own toggle (mouse/touch-only, see ChatFab.js)
+              and useChat.js's outside-click listener -- neither reachable by
+              keyboard. A real IconButton gets Enter/Space from the browser
+              for free and `.MuiButtonBase-root` for the app-wide focus ring. */}
+          <IconButton
+            aria-label="Close"
             size="small"
-            onClick={() => {
-              setChatMessages([]);
-              setChatError("");
-              // The bulk-attach path (ExperienceTab.js) can leave chips in the
-              // tray with zero messages sent -- Clear has to be the way out of
-              // that unsendable payload too, not just a thread reset.
-              // M6: revoke every discarded chip's preview blob URL before the
-              // tray is emptied, or each one leaks for the page's life.
-              chatAttachedFiles.forEach(revokeAttachmentPreview);
-              setChatAttachedFiles([]);
-              // M5: without this, a stale "...is too large..." refusal from a
-              // bulk add keeps pointing at files Clear just removed.
-              // Optional call: `setChatAttachError` is a prop, and some
-              // callers (older tests, callers that never surface the refusal
-              // banner) may not pass one.
-              setChatAttachError?.("");
-            }}
-            sx={{ textTransform: "none", fontSize: "0.8rem", color: "var(--text-secondary)" }}
+            onClick={closeAndReturnFocus}
+            sx={{ color: "var(--text-secondary)", ...TOUCH_ICON_SX }}
           >
-            Clear
-          </Button>
-        ) : null}
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </Box>
       </Box>
 
       {chatPinnedContext ? (

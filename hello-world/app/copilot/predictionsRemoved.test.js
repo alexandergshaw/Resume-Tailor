@@ -153,11 +153,48 @@ const FILES = [
       /anticipat/i,
       /coming next/i,
     ],
+    // MAJOR-7/ARCH-sticky pin 10: `currentQuestionTitle` and
+    // `chipLabel="Unconfirmed"` left THIS file when CurrentQuestionPanel
+    // moved into its own module (mounted from a sticky strip instead of
+    // this component's own grid) — see the two entries just below, which
+    // are where those keeps now live, each under the SAME banned list so
+    // the vocabulary ban follows the feature to wherever it actually is.
+    keep: [/deliveryTitle/, /latestQuestionEntry/],
+  },
+  {
+    rel: "lib/copilot/dashboardCopy.js",
+    banned: [
+      /predict/i,
+      /predraft/i,
+      /pre-draft/i,
+      /togglePredictions/,
+      /look[- ]?ahead/i,
+      /upcoming/i,
+      /anticipat/i,
+      /coming next/i,
+    ],
+    // `currentQuestionTitle` moved here (ARCH-sticky §2.7/§3.1) along with
+    // LIVE_COPY/PRACTICE_COPY themselves.
+    keep: [/currentQuestionTitle/],
+  },
+  {
+    rel: "app/copilot/dashboard/CurrentQuestionPanel.js",
+    banned: [
+      /predict/i,
+      /predraft/i,
+      /pre-draft/i,
+      /togglePredictions/,
+      /look[- ]?ahead/i,
+      /upcoming/i,
+      /anticipat/i,
+      /coming next/i,
+    ],
     // `chipLabel="Unconfirmed"` rather than the bare word: deleting the
-    // whole provisional branch still leaves "Unconfirmed" in three of
-    // AccentPanel's surrounding comments, so the loose form passed against
-    // a mutant that had removed the branch entirely.
-    keep: [/currentQuestionTitle/, /deliveryTitle/, /chipLabel="Unconfirmed"/, /latestQuestionEntry/],
+    // whole provisional branch still leaves "Unconfirmed" in this file's own
+    // surrounding comments, so the loose form passed against a mutant that
+    // had removed the branch entirely. Moved here with the panel itself
+    // (ARCH-sticky §2.1) — this is now the ONLY place that renders it.
+    keep: [/chipLabel="Unconfirmed"/],
   },
   {
     // The two client-module bans are what stop the removal being defeated

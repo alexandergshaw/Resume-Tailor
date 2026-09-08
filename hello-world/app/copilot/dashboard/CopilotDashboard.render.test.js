@@ -103,12 +103,15 @@ const GONE = [
 ];
 
 describe("the copilot dashboard renders no predicted question or answer", () => {
-  it("live mode: shows the current question, its answer and the delivery strip, and nothing predicted", async () => {
+  it("live mode: shows the current answer and the delivery strip, and nothing predicted", async () => {
     await render(baseProps());
 
-    // Positive control: the panels that must survive.
-    expect(text()).toContain(LIVE_COPY.currentQuestionTitle);
-    expect(text()).toContain(QUESTION);
+    // Positive control: the panels that must survive. ARCH-sticky §2.1: the
+    // current-QUESTION panel (and QUESTION itself) moved OUT of this
+    // component into the sticky strip mounted beside it — see
+    // app/copilot/dashboard/StickyQuestionStrip.test.js for that panel's own
+    // coverage, which is where this file's old question-panel assertions
+    // moved to.
     expect(text()).toContain(LIVE_COPY.currentAnswerTitle);
     expect(text()).toContain(LIVE_COPY.deliveryTitle);
 
@@ -120,7 +123,6 @@ describe("the copilot dashboard renders no predicted question or answer", () => 
     await render(baseProps({ copy: PRACTICE_COPY, answerHidden: true, onRevealAnswer: () => {} }));
 
     expect(text()).toContain(PRACTICE_COPY.title);
-    expect(text()).toContain(PRACTICE_COPY.currentQuestionTitle);
     expect(text()).toContain("Show sample answer");
 
     for (const phrase of GONE) expect(text()).not.toContain(phrase);
@@ -173,20 +175,11 @@ describe("the copilot dashboard renders no predicted question or answer", () => 
 });
 
 describe("what the removal must not have taken with it", () => {
-  it('[R-166] a provisional entry still gets the accent card and its "Unconfirmed" chip', async () => {
-    // This branch describes a REAL detected utterance of unclear speaker —
-    // the opposite uncertainty from a guess about the future — and shares
-    // the accent wrapper the prediction panels used. Removing the wrapper
-    // along with its other callers would silently take this with it, and
-    // the candidate's own speech would then be presented as the
-    // interviewer's question with nothing to tell them apart.
-    await render(baseProps({ questions: [entry({ provisional: true })] }));
-
-    expect(text()).toContain("Unconfirmed");
-    expect(text()).toContain(QUESTION);
-    expect(text()).toContain("Not confirmed as the interviewer");
-    expect(text()).not.toMatch(/predict/i);
-  });
+  // [R-166] the provisional entry's accent card and its "Unconfirmed" chip
+  // moved with CurrentQuestionPanel into
+  // app/copilot/dashboard/StickyQuestionStrip.test.js (ARCH-sticky §2.1) —
+  // that branch no longer renders through THIS component at all, so the
+  // check that it survives now lives where the branch actually is.
 
   it("the pace and filler readings still render, and still report unmeasured as unmeasured", async () => {
     await render(baseProps());
@@ -212,11 +205,18 @@ describe("what the removal must not have taken with it", () => {
 // two model calls per session — and every vocabulary check stayed green
 // because the copy no longer said "predict". The shape of the dashboard is
 // the property that actually matters, so pin the shape.
-describe("the dashboard's panel set is exactly three, by structure rather than by wording", () => {
+describe("the dashboard's panel set is exactly two, by structure rather than by wording", () => {
+  // ARCH-sticky §2.1/§4: the current-QUESTION panel (a third h4, and its own
+  // heading text) moved OUT of this component's own subtree into a sticky
+  // strip mounted as its SIBLING — see copilotHeadingOrder.test.js's G-1 for
+  // the CLIENT-scoped sequence that now proves the question's heading sits
+  // correctly relative to the dashboard's, which a component-scoped render
+  // of CopilotDashboard alone cannot see (it only ever renders the
+  // dashboard's own two remaining panels).
   it.each([
     ["live", undefined, LIVE_COPY],
     ["practice", PRACTICE_COPY, PRACTICE_COPY],
-  ])("%s mode renders those headings and no fourth panel", async (_mode, copy, expected) => {
+  ])("%s mode renders those headings and no third panel", async (_mode, copy, expected) => {
     await render(baseProps(copy ? { copy } : {}));
     // Tripwire, stated as its own assertion so it reads as intent: nothing
     // was rendered outside the component's own tree. See `text()` above.
@@ -224,26 +224,21 @@ describe("the dashboard's panel set is exactly three, by structure rather than b
     const found = headings();
 
     // Exact list, exact order. An added panel fails on the length alone,
-    // whatever it is called — which a `toBeGreaterThanOrEqual(3)` count of
+    // whatever it is called — which a `toBeGreaterThanOrEqual(2)` count of
     // h4s could never do, since the only direction this change can go wrong
     // is a panel coming BACK.
-    expect(found.map((h) => h.text)).toEqual([
-      expected.title,
-      expected.currentQuestionTitle,
-      expected.currentAnswerTitle,
-      expected.deliveryTitle,
-    ]);
+    expect(found.map((h) => h.text)).toEqual([expected.title, expected.currentAnswerTitle, expected.deliveryTitle]);
     // [a11y] one h3 for the dashboard, h4 for each panel under it, nothing
     // else — the tab's own h2 lives in TabHeader.js, outside this component.
-    expect(found.map((h) => h.level)).toEqual([3, 4, 4, 4]);
+    expect(found.map((h) => h.level)).toEqual([3, 4, 4]);
   });
 
-  it("renders exactly the three panels' text and nothing else at all", async () => {
+  it("renders exactly the two panels' text and nothing else at all", async () => {
     // The strongest assertion in the file, and the only one that catches a
     // HEADLESS panel. Two reviewed mutants rendered a full speculative
     // question-and-answer pair built from `<Typography component="span">`
     // and from a `<Box onClick>` toggle: no heading element, no `button`,
-    // no `role`, so the heading list stayed `[3,4,4,4]` and the
+    // no `role`, so the heading list stayed unchanged and the
     // interactive-surface sweep stayed empty, and both shipped green. Text
     // is the one channel every variant of this must use, because a panel
     // nobody can read is not a feature.
@@ -255,8 +250,6 @@ describe("the dashboard's panel set is exactly three, by structure rather than b
     expect(text()).toBe(
       [
         LIVE_COPY.title,
-        LIVE_COPY.currentQuestionTitle,
-        QUESTION,
         LIVE_COPY.currentAnswerTitle,
         "Answer ready, 2 points",
         "Point one.Point two.",
@@ -266,7 +259,7 @@ describe("the dashboard's panel set is exactly three, by structure rather than b
     );
   });
 
-  it("practice mode renders exactly its three panels' text and nothing else at all", async () => {
+  it("practice mode renders exactly its two panels' text and nothing else at all", async () => {
     // Run for practice as well as live, and NOT because it is symmetrical.
     // Practice mode is where the sample-answer feature already lives, so it
     // is the MORE likely of the two to grow a "here's what's coming next"
@@ -278,8 +271,6 @@ describe("the dashboard's panel set is exactly three, by structure rather than b
     expect(text()).toBe(
       [
         PRACTICE_COPY.title,
-        PRACTICE_COPY.currentQuestionTitle,
-        QUESTION,
         PRACTICE_COPY.currentAnswerTitle,
         "Show sample answer",
         PRACTICE_COPY.deliveryTitle,
@@ -419,8 +410,6 @@ describe("staleTypeChangeAt marks a card left over from a superseded interview t
     expect(text()).toBe(
       [
         LIVE_COPY.title,
-        LIVE_COPY.currentQuestionTitle,
-        QUESTION,
         LIVE_COPY.currentAnswerTitle,
         "Answer ready, 2 points",
         "Point one.Point two.",

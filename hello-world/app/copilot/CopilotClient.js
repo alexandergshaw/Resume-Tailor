@@ -29,6 +29,7 @@ import VoiceCueSidebar from "./VoiceCueSidebar";
 import CompanyBriefPanel from "./CompanyBriefPanel";
 import { TOUCH_TARGET_SX, TOUCH_SWITCH_SX } from "./mobileSx";
 import CopilotDashboard from "./dashboard/CopilotDashboard";
+import StickyQuestionStrip from "./dashboard/StickyQuestionStrip";
 import PracticeClient from "./practice/PracticeClient";
 import RoleDrillClient from "./roles/RoleDrillClient";
 import ModeSwitch from "./ModeSwitch";
@@ -506,6 +507,26 @@ export default function CopilotClient() {
     />
   );
 
+  // ARCH-sticky §2.4: the strip must not mount while the panel would render
+  // the "no question yet" fallback — a pinned "No question has been detected
+  // yet this session." over SessionSetup and the share instructions for the
+  // whole pre-session would be simultaneously useless and harmful. The
+  // feature's own condition is therefore `questions.length > 0` — there is a
+  // question to show.
+  //
+  // C-4: `|| held` is redundant in production — questionPin.js:70-79
+  // guarantees that `held` implies `questions.length > 0` (`resolvePin`
+  // returns `held: false` for an empty list, and the only `held: true`
+  // returns, :98 and :139, are downstream of that guard). It is here solely
+  // so CopilotClient.wiring.test.js:243-257 can reach the held branch with
+  // `questions === []`, which it must: it mocks useLiveSession (:126), and
+  // `questions` is this component's own `useState([])` above, passed INTO
+  // the mocked hook, so there is no key its `overrides` spread could set.
+  // That test is the only end-to-end jsdom proof that `held`, `pinnedId`,
+  // `newerQuestionCount` and `onReleasePin` are actually threaded to the
+  // strip. Remove this clause only together with that test's mount strategy.
+  const mountStrip = questions.length > 0 || held;
+
   return (
     <Box sx={{ maxWidth: 1180, mx: "auto", p: { xs: 1.5, sm: 3 } }}>
       {/* I8: consolidated pin/brief live region, mounted empty, never
@@ -565,6 +586,61 @@ export default function CopilotClient() {
         />
       ) : (
         <>
+          {/* D1: the single most important signal on the page, at the very
+              top — above SessionSetup, above the dashboard, above the sticky
+              question strip, above everything. It used to render OUTSIDE the
+              bounded wrapper below entirely (only inside `{live ? ... :
+              ...}`, itself below the wrapper's own closing tag), which put it
+              below the fold on desktop by construction: a working copilot
+              and a completely deaf one looked identical on the default
+              screen, and R-142's no-scroll requirement was broken for the one
+              element that exists to prove the session is alive.
+              ARCH-sticky §2.3: it moved again, from the wrapper's own first
+              child to AHEAD of the wrapper — a `position: sticky` element can
+              only occlude what FOLLOWS it in flow, so once the sticky
+              question strip mounts above the wrapper too (see the block just
+              below this one), anything left INSIDE the wrapper would be
+              covered for the whole session at `sm`/`xs`, which is the exact
+              below-the-fold condition this comment exists to prevent,
+              reintroduced by a different mechanism. Hoisting it here closes
+              that structurally, at zero cost:
+              useLiveColumnHeight.js:32 sizes the wrapper from its own
+              `rect.top`, so raising that top by this component's height and
+              removing it from the wrapper's own content leaves the wrapper's
+              measured height unchanged. Rendered unconditionally (not gated
+              on `live`) — it renders nothing visible while `!live` (see its
+              own component), but D5 needs it MOUNTED before a session ever
+              starts so its hidden live regions are already in the DOM the
+              instant they have their first sentence to announce. */}
+          <LiveHearingStrip
+            live={live}
+            finals={finals}
+            interims={interims}
+            startedAt={startedAt}
+            liveSince={liveSince}
+            now={now}
+            speakerSnapshot={speakerSnapshot}
+            source={source}
+          />
+
+          {/* ARCH-sticky §2.4: mounted only once there is a question to
+              show — see `mountStrip`'s own comment above for the full
+              derivation and for why `|| held` stays. Above the bounded
+              wrapper (not inside it) for the same reason LiveHearingStrip
+              is: a sticky sibling can only occlude what follows it, and
+              SessionSetup/the Start button must never be one of those
+              things. */}
+          {mountStrip ? (
+            <StickyQuestionStrip
+              questions={questions}
+              pinnedId={pinnedId}
+              held={held}
+              live={live}
+              newerQuestionCount={pinnedNewerCount}
+              onReleasePin={unpinQuestion}
+            />
+          ) : null}
+
           {/* Step 3: bounded to the remaining viewport height while `live`
               (see the measuring effect above). Below `sm` the page scrolls
               normally — a phone isn't the dual-screen case. `minHeight: 0`
@@ -579,32 +655,6 @@ export default function CopilotClient() {
               overflow: { xs: "visible", sm: live ? "hidden" : "visible" },
             }}
           >
-            {/* D1: the single most important signal on the page, at the
-                very top of the bounded, no-scroll wrapper — above
-                SessionSetup, above the dashboard, above everything. It used
-                to render OUTSIDE this wrapper entirely (only inside
-                `{live ? ... : ...}`, itself below the wrapper's own closing
-                tag), which put it below the fold on desktop by
-                construction: a working copilot and a completely deaf one
-                looked identical on the default screen, and R-142's
-                no-scroll requirement was broken for the one element that
-                exists to prove the session is alive. Rendered unconditionally
-                (not gated on `live`) — it renders nothing visible while
-                `!live` (see its own component), but D5 needs it MOUNTED
-                before a session ever starts so its hidden live regions are
-                already in the DOM the instant they have their first
-                sentence to announce. */}
-            <LiveHearingStrip
-              live={live}
-              finals={finals}
-              interims={interims}
-              startedAt={startedAt}
-              liveSince={liveSince}
-              now={now}
-              speakerSnapshot={speakerSnapshot}
-              source={source}
-            />
-
             {/* shareInstructions and the error/warning Alerts are ordinary
                 flex children, not folded into the measured height — the
                 ResizeObserver above re-measures if they change the top. */}
@@ -802,10 +852,14 @@ export default function CopilotClient() {
               />
             </Box>
 
-            {/* AC-I5: the dashboard — current question/answer and talking pace.
-                Presentational only (every value is a prop from
+            {/* AC-I5: the dashboard — the current question's answer and
+                talking pace. Presentational only (every value is a prop from
                 useCopilotDashboard above); does NOT replace QuestionFeed
-                below, which stays the full question history (AC-I5.30). */}
+                below, which stays the full question history (AC-I5.30).
+                ARCH-sticky §3.6: the current-question panel itself, and the
+                four props that only it read (held/live/newerQuestionCount/
+                onReleasePin), moved to <StickyQuestionStrip above — this call
+                keeps only what CurrentAnswerPanel/DeliveryPanel still need. */}
             {/* Step 3: flex:1/minHeight:0 lets this claim whatever height is
                 left after the auto-height items above it; overflow:auto is
                 the fallback if even that isn't enough — this scrolls
@@ -817,20 +871,30 @@ export default function CopilotClient() {
                 renders outside the column entirely (just past its close),
                 like TranscriptDisclosure, reachable by scroll not clipped. */}
             <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "row", gap: 2 }}>
-              <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+              {/* ARCH-sticky §3.4: `scrollPaddingTop` applies to a scroll
+                  container's OWN scrollport, and BOTH of this row's children
+                  are one — this Box (`overflow: "auto"`, unconditionally, at
+                  every width and in every state) and the rail Box right
+                  below it (`overflowY: "auto"`, same unconditional shape) —
+                  so the root's own scroll-padding (set by useStickyTop.js)
+                  does not reach a focused control scrolled INSIDE either
+                  column. `--sticky-pad` is written by that same hook; the
+                  fallback keeps this a no-op before it has ever measured
+                  anything. */}
+              <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", scrollPaddingTop: "var(--sticky-pad, 0px)" }}>
                 <CopilotDashboard
                   questions={questions}
                   pinnedId={pinnedId}
-                  held={held}
-                  live={live} // Defect 3 fix: gates the held panel's "still running" caption.
-                  newerQuestionCount={pinnedNewerCount}
-                  onReleasePin={unpinQuestion}
                   pace={pace}
                   fillers={fillers}
                   staleTypeChangeAt={staleTypeChangeAt}
                 />
               </Box>
-              {!isRailBelowMd ? <Box sx={{ overflowY: "auto", minHeight: 0 }}>{railContent}</Box> : null}
+              {!isRailBelowMd ? (
+                <Box sx={{ overflowY: "auto", minHeight: 0, scrollPaddingTop: "var(--sticky-pad, 0px)" }}>
+                  {railContent}
+                </Box>
+              ) : null}
             </Box>
           </Box>
 

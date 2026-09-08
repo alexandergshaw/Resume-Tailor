@@ -14,6 +14,7 @@ import LibraryEditor from "./components/LibraryEditor";
 import ExperienceTab from "./components/experience/ExperienceTab";
 import CopilotClient from "./copilot/CopilotClient";
 import ChatPanel from "./components/ChatPanel";
+import ChatFab from "./components/ChatFab";
 import StatusBar from "./components/StatusBar";
 import BatchTailorDialog from "./components/BatchTailorDialog";
 import DocumentPreviewMount from "./components/DocumentPreviewMount";
@@ -69,7 +70,6 @@ import TextField from "@mui/material/TextField";
 import FormControl from "@mui/material/FormControl";
 import InputLabel from "@mui/material/InputLabel";
 import MenuItem from "@mui/material/MenuItem";
-import Fab from "@mui/material/Fab";
 import Select from "@mui/material/Select";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
@@ -213,8 +213,11 @@ export default function Home() {
   // Position of the floating AI Help FAB; user can drag it anywhere.
   // Stored as offsets from the right/bottom of the viewport (in px).
   const [fabPos, setFabPos] = useState({ right: 24, bottom: 24 });
-  const [fabDragging, setFabDragging] = useState(false);
-  const fabDragStartRef = useRef(null);
+  // AC-K1.6: the launcher's own DOM node, so closing the chat panel (by its
+  // close button or by Escape) can return focus here instead of dropping it
+  // on <body>. The drag state/threshold/pointer-capture logic that used to
+  // live here moved into ChatFab.js along with the element itself.
+  const chatFabRef = useRef(null);
   // Library-update prompt: when an embedded tailor covers too little of the
   // posting, /api/tailor returns the buzzwords the user's library lacks and this
   // dialog asks permission before any of them are committed. Deduped per job.
@@ -2960,6 +2963,11 @@ export default function Home() {
             resumeFile={resumeFile}
             openAddApplicationDialog={appDialogs.openAddApplicationDialog}
             toggleInterviewSort={toggleInterviewSort}
+            // AC-K4: the compact (<900px) card layout's own sort control
+            // (TrackingTab.js) sets the field+direction directly rather than
+            // driving the desktop TableSortLabels' 3-state cycle -- this is
+            // the same raw setter `toggleInterviewSort` above wraps.
+            setInterviewSort={setInterviewSort}
             sortLabelSx={sortLabelSx}
             startColResize={startColResize}
             askAiAbout={chat.askAiAbout}
@@ -3052,62 +3060,18 @@ export default function Home() {
         />
       </main>
 
-      <Fab
-        color="primary"
-        variant="extended"
-        onPointerDown={(e) => {
-          if (e.button !== 0) return;
-          fabDragStartRef.current = {
-            x: e.clientX,
-            y: e.clientY,
-            startRight: fabPos.right,
-            startBottom: fabPos.bottom,
-            moved: false,
-          };
-          e.currentTarget.setPointerCapture(e.pointerId);
-        }}
-        onPointerMove={(e) => {
-          const start = fabDragStartRef.current;
-          if (!start) return;
-          const dx = e.clientX - start.x;
-          const dy = e.clientY - start.y;
-          if (!start.moved && Math.hypot(dx, dy) < 4) return;
-          start.moved = true;
-          if (!fabDragging) setFabDragging(true);
-          // right/bottom increase as we move left/up from the corner.
-          const nextRight = Math.max(8, Math.min(window.innerWidth - 80, start.startRight - dx));
-          const nextBottom = Math.max(8, Math.min(window.innerHeight - 48, start.startBottom - dy));
-          setFabPos({ right: nextRight, bottom: nextBottom });
-        }}
-        onPointerUp={(e) => {
-          const start = fabDragStartRef.current;
-          fabDragStartRef.current = null;
-          if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-            e.currentTarget.releasePointerCapture(e.pointerId);
-          }
-          setFabDragging(false);
-          // Suppress click-toggle if the user actually dragged.
-          if (start?.moved) return;
-          chat.setChatOpen((v) => !v);
-        }}
-        sx={{
-          position: "fixed",
-          right: fabPos.right,
-          bottom: fabPos.bottom,
-          zIndex: 1100,
-          textTransform: "none",
-          fontWeight: 700,
-          letterSpacing: 0.1,
-          cursor: fabDragging ? "grabbing" : "grab",
-          touchAction: "none",
-          boxShadow: "0 16px 32px rgba(25, 118, 210, 0.26)",
-        }}
-      >
-        {chat.chatOpen ? "Close" : "AI Help"}
-      </Fab>
+      <ChatFab
+        ref={chatFabRef}
+        open={chat.chatOpen}
+        onToggle={() => chat.setChatOpen((v) => !v)}
+        pos={fabPos}
+        onPosChange={setFabPos}
+      />
 
       {chat.chatOpen ? (
         <ChatPanel
+          onClose={() => chat.setChatOpen(false)}
+          returnFocusRef={chatFabRef}
           chatPanelRef={chat.chatPanelRef}
           chatScrollRef={chat.chatScrollRef}
           chatInputRef={chat.chatInputRef}

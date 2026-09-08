@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
-import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
@@ -12,37 +11,49 @@ import Typography from "@mui/material/Typography";
 import { answerLines } from "@/lib/copilot/answerPoints";
 import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus";
 import { pinnedQuestionEntry } from "@/lib/copilot/currentQuestion";
+import { dashboardCopy } from "@/lib/copilot/dashboardCopy";
 import AnswerAids from "../AnswerAids";
 import AnswerLines from "../AnswerLines";
-import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "../mobileSx";
+import { RealPanel } from "./panelShells";
+import { TOUCH_TARGET_SX } from "../mobileSx";
 
-// AC-I5/AC-J2: the copilot's dashboard — current question, its answer, and a
-// delivery strip covering the user's current talking pace AND verbal-filler
-// rate. Purely presentational (AC-I5.31):
-// every value arrives as a prop, same contract as
-// SampleAnswer.js/SubmittedDocs.js — this owns no fetching and no state
-// beyond the trivial "is a panel expanded" kind SubmittedDocs already uses
-// elsewhere, and here not even that. It does not replace QuestionFeed
-// (AC-I5.30) — the caller renders both; this is a glanceable summary,
-// QuestionFeed is the full history with its own redraft actions.
+// AC-I5/AC-J2: the copilot's dashboard — the current question's answer, and
+// a delivery strip covering the user's current talking pace AND
+// verbal-filler rate. Purely presentational (AC-I5.31): every value arrives
+// as a prop, same contract as SampleAnswer.js/SubmittedDocs.js — this owns
+// no fetching and no state beyond the trivial "is a panel expanded" kind
+// SubmittedDocs already uses elsewhere, and here not even that. It does not
+// replace QuestionFeed (AC-I5.30) — the caller renders both; this is a
+// glanceable summary, QuestionFeed is the full history with its own redraft
+// actions.
+//
+// ARCH-sticky §2.1: the current-QUESTION panel used to render here too, as
+// this grid's first child. It now mounts once per client, in a sticky strip
+// above this component entirely (app/copilot/dashboard/StickyQuestionStrip.js)
+// — "the question is always visible wherever I am on the page" needs it to
+// outlive whatever scroll position THIS component is at, which a child of
+// this grid structurally cannot. Nothing here duplicates it: this file
+// derives `current` only for CurrentAnswerPanel below, via the same
+// `pinnedQuestionEntry` call the strip makes — one decision, one place,
+// unmoved by the relocation.
 //
 // `questions` is the SAME array CopilotClient already holds and passes to
-// useCopilotDashboard — panels 1/2 re-derive "the current question" from it
-// directly (AC-I5.28) rather than through any prop this component invents,
-// so there is exactly one place that array is read as "what's the latest
+// useCopilotDashboard — this component re-derives "the current question"
+// from it directly (AC-I5.28) rather than through any prop it invents, so
+// there is exactly one place that array is read as "what's the latest
 // question" (here) instead of two copies that could disagree. Practice mode
 // has no such array; it synthesizes a one-entry list in the same shape (see
 // PracticeClient.js), which is what lets both modes share this component
 // rather than fork it.
 //
-// AC-J2.1: BOTH modes render this. The layout, the panel treatments and
-// every state (loading, error, empty, measured/unmeasured) are shared
-// verbatim — the whole point of practice mode having a dashboard is
-// rehearsing against the instrument the candidate will be reading during
-// the real interview, so a divergence here defeats the feature. Only the
-// WORDS differ, via the `copy` prop below, and only where a live-mode
-// sentence would be untrue in practice mode ("the interviewer has not
-// asked this" when there is no interviewer).
+// AC-J2.1: BOTH modes render this. The layout, the panel treatment and every
+// state (loading, error, empty, measured/unmeasured) are shared verbatim —
+// the whole point of practice mode having a dashboard is rehearsing against
+// the instrument the candidate will be reading during the real interview, so
+// a divergence here defeats the feature. Only the WORDS differ, via the
+// `copy` prop below, and only where a live-mode sentence would be untrue in
+// practice mode ("the interviewer has not asked this" when there is no
+// interviewer).
 const PACE_LABEL_TEXT = { slow: "Slow", conversational: "Conversational", rushed: "Rushed" };
 const PACE_LABEL_COLOR = {
   slow: "var(--warning)",
@@ -82,278 +93,15 @@ export { latestQuestionEntry } from "@/lib/copilot/currentQuestion";
 // for why the same guard used to live here AND in SampleAnswer.js, and had
 // already drifted between the two.
 
-// AC-J2.2: live mode's wording, verbatim — every string this component
-// rendered before practice mode shared it. It is the DEFAULT for the `copy`
-// prop, so live mode passes nothing and its output is unchanged; the same
-// "defaults are the incumbent mode's exact strings" discipline
-// PostingPicker.js's `label`/`blankHint` already use. Keeping both modes'
-// wording in one place, side by side, is also what makes a drift between
-// them visible in review rather than spread across two components.
-export const LIVE_COPY = {
-  title: "Live dashboard",
-  currentQuestionTitle: "Current question",
-  noQuestion: "No question has been detected yet this session.",
-  currentAnswerTitle: "Answer to the current question",
-  noCurrentAnswer: "There is no current question to answer yet.",
-  noPoints: "No talking points have been drafted for this question yet.",
-  // Covers both readings in the strip below (speed and filler rate), not
-  // speed alone any more — see DeliveryPanel.
-  deliveryTitle: "Your delivery",
-};
-
-// AC-J2.2: practice mode's wording. Deliberately the SAME sentences
-// wherever a live-mode sentence is still true with no interviewer in the
-// room — the differences below are all places where live's wording would
-// be a false statement here, not places where practice was given a
-// different voice for its own sake.
-export const PRACTICE_COPY = {
-  ...LIVE_COPY,
-  title: "Practice dashboard",
-  noQuestion: "No question yet — press Start practice to get your first one.",
-  // R-109: `noCurrentAnswer` is deliberately NOT overridden. Live's wording
-  // turns on the word "current", which is perfectly true in practice mode —
-  // there IS a current question — so paraphrasing it to "on screen" was
-  // divergence for its own sake, and it made this mode contradict itself:
-  // the panel titles below still say "Current question" and "Answer to the
-  // current question", so the body text would have called the same thing by
-  // a different name three lines under its own heading. The bar for an
-  // override here is that live's sentence would be FALSE with no
-  // interviewer in the room, not that a different phrasing reads slightly
-  // better.
-  noPoints: "No sample answer has been drafted for this question yet.",
-};
-
-// The two "real" panels' shared card look — a plain surface, same as
-// QuestionFeed's own question cards. Deliberately distinct from
-// AccentPanel's look below: a user glancing at this mid-interview must
-// never mistake one for the other (AC-I3.20).
-function RealPanel({ title, children }) {
-  return (
-    <Box
-      sx={{
-        p: { xs: 1.25, sm: 1.75 },
-        borderRadius: 2,
-        border: "1px solid var(--border)",
-        background: "var(--bg-soft)",
-        minWidth: 0,
-      }}
-    >
-      {/* F10: nested one level under the dashboard's own h3 title below —
-          `variant="subtitle2"` alone maps (via MUI's defaultVariantMapping)
-          to `h6`, which skipped straight from the tab's h2 with h3/h4/h5
-          never appearing. `component=` changes only the rendered element;
-          `variant` (and therefore the look) is unchanged. */}
-      <Typography variant="subtitle2" component="h4" sx={{ mb: 1, color: "var(--text-secondary)", fontWeight: 700 }}>
-        {title}
-      </Typography>
-      {children}
-    </Box>
-  );
-}
-
-// The shared card look for content the app is NOT certain about — an
-// accent-tinted surface plus an explicit chip, so it can never be read as
-// something the interviewer actually said or something already confirmed
-// for real (AC-I3.20). Deliberately distinct from RealPanel above.
-//
-// BUG-1: `chipLabel` is required — its only caller is
-// CurrentQuestionPanel's provisional branch below, passing
-// `chipLabel="Unconfirmed"`, which names the SPECIFIC uncertainty (a real
-// detected utterance of unclear speaker) rather than a generic label.
-// Reusing one wrapper (not copying it) is what keeps the accent-plus-chip
-// look itself in exactly one place.
-function AccentPanel({ title, children, chipLabel }) {
-  return (
-    <Box
-      sx={{
-        p: { xs: 1.25, sm: 1.75 },
-        borderRadius: 2,
-        border: "1px solid var(--accent)",
-        background: "var(--accent-soft)",
-        minWidth: 0,
-      }}
-    >
-      {/* BLOCKER fix: this row previously had no flexWrap, and the Chip had
-          no flexShrink guard. MUI's Chip root carries `overflow: hidden`,
-          which zeroes its flex `min-width: auto` floor, so at ~140px of
-          available width (well under the row's natural ~262px) the Chip
-          shrank first and its label ellipsized down to nothing readable
-          ("PREDI…" or narrower). This badge is load-bearing (see
-          CurrentQuestionPanel's "Unconfirmed" reuse below) — it is what
-          stops uncertain content from being read as something confirmed —
-          so it must never truncate. WRAP_ROW_SX lets the badge drop to its
-          own line intact instead. */}
-      <Stack direction="row" spacing={1} sx={{ mb: 1, alignItems: "center", ...WRAP_ROW_SX }}>
-        {/* F10: same nesting level as RealPanel's title above — both sit
-            directly under the dashboard's own h3 title. */}
-        <Typography variant="subtitle2" component="h4" sx={{ color: "var(--text-secondary)", fontWeight: 700 }}>
-          {title}
-        </Typography>
-        <Chip
-          size="small"
-          label={chipLabel}
-          sx={{
-            // `height: 18`/`fontSize: 10` unconditionally left no room for
-            // the label to wrap onto two lines even after the Stack above
-            // gained flexWrap, and 10px uppercase text is below a readable
-            // floor on a phone. `xs: "auto"` lets the label wrap; `sm` keeps
-            // the original compact pill on pointer-driven layouts.
-            height: { xs: "auto", sm: 18 },
-            fontSize: { xs: 11, sm: 10 },
-            fontWeight: 700,
-            letterSpacing: 0.3,
-            textTransform: "uppercase",
-            color: "var(--accent-contrast)",
-            background: "var(--accent)",
-            // Keeps the badge itself from being the thing that shrinks when
-            // the row is tight — see the Stack comment above.
-            flexShrink: 0,
-            "& .MuiChip-label": { py: { xs: 0.25, sm: 0 } },
-          }}
-        />
-      </Stack>
-      {children}
-    </Box>
-  );
-}
-
-// AC-T1.16/I6: the held treatment for the current-question panel. Reuses
-// AccentPanel's wrapper/Chip mechanics (WRAP_ROW_SX avoids the "PREDI…"
-// ellipsis bug) but with the WARNING accent — `--warning-soft` on
-// `--bg-surface` measures only 1.08:1, so the border, badge and release
-// control are ALL required, never colour alone (AC-X2). The release button
-// is the count-bearing element, one click, uncapped (OpenShift/Mastodon/
-// Guardian all ship this pattern); its caption says what is STILL
-// happening, so a frozen display doesn't read as broken.
-function HeldQuestionPanel({ title, newerCount, onRelease, live, children }) {
-  const releaseLabel =
-    newerCount > 0
-      ? `Release hold and show ${newerCount} newer question${newerCount === 1 ? "" : "s"}`
-      : "Release hold";
-  return (
-    <Box
-      sx={{ p: { xs: 1.25, sm: 1.75 }, borderRadius: 2, border: "1px solid var(--warning)", background: "var(--warning-soft)", minWidth: 0 }}
-    >
-      <Stack direction="row" spacing={1} sx={{ mb: 1, alignItems: "center", ...WRAP_ROW_SX }}>
-        <Typography variant="subtitle2" component="h4" sx={{ flex: 1, minWidth: 0, color: "var(--text-secondary)", fontWeight: 700 }}>
-          {title}
-        </Typography>
-        <Chip
-          size="small"
-          label="Held on screen"
-          sx={{
-            height: { xs: "auto", sm: 18 },
-            fontSize: { xs: 11, sm: 10 },
-            fontWeight: 700,
-            letterSpacing: 0.3,
-            textTransform: "uppercase",
-            color: "var(--warning)",
-            background: "transparent",
-            border: "1px solid var(--warning)",
-            flexShrink: 0,
-            "& .MuiChip-label": { py: { xs: 0.25, sm: 0 } },
-          }}
-        />
-      </Stack>
-      {children}
-      <Button
-        size="small"
-        variant="outlined"
-        onClick={onRelease}
-        sx={{ mt: 1, textTransform: "none", borderColor: "var(--warning)", color: "var(--warning)", ...TOUCH_TARGET_SX }}
-      >
-        {releaseLabel}
-      </Button>
-      {/* Defect 3 fix: was unconditional — a false "is it broken?" claim
-          once the session had actually ended (see useLiveSession.js's own
-          defect-3 fix for how a hold used to outlive its session).
-          Belt-and-suspenders: that fix already keeps `held` from being true
-          while `!live`. Adds a live/not-live axis without collapsing the
-          existing three states: not held, held, held-with-N-newer. */}
-      <Typography variant="caption" sx={{ display: "block", mt: 0.75, color: "var(--text-secondary)" }}>
-        {live
-          ? "Detection and drafting keep running behind the hold; only this panel's display is frozen."
-          : "This session has ended, so nothing is running behind this hold anymore — release it to see the dashboard's normal idle state."}
-      </Typography>
-    </Box>
-  );
-}
-
-// BUG-1: `current` can be the array's true LAST entry even though it is
-// `provisional` — latestQuestionEntry's fallback for "every entry is
-// provisional" above. Before this branch existed, that fallback rendered
-// through RealPanel — the plain treatment, no chip, no accent, no caveat —
-// under the same "Current question" heading a confirmed entry gets. By
-// construction a provisional entry is one the app CURRENTLY attributes to
-// the candidate's own voice (see the AC-M1.3.5 doc above), so that plain
-// treatment presented the candidate's own speech as the interviewer's
-// question with nothing to tell them apart. This is not a rare edge case:
-// at cold start the interviewer speaks first and becomes the provisional
-// argmax on word count alone, so their genuine opening question is
-// routinely the one flagged provisional — which is exactly why the
-// fallback must keep rendering (never nothing) and instead be marked.
-//
-// R-106's bar is why this is BOTH the accent/chip treatment AND a sentence,
-// not one or the other: visual distinction alone is insufficient (a user
-// glancing mid-interview, or anyone who can't rely on color/border), text
-// alone is insufficient (a user skimming past the caption to the bold
-// question line). Reuses AccentPanel rather than a new component so the
-// "uncertain content" look stays defined in one place; "Unconfirmed" names
-// this uncertainty specifically because this IS a real detected utterance,
-// just of unclear speaker — the opposite uncertainty a guess about the
-// future would be.
-//
-// Practice mode never sets `provisional` (see latestQuestionEntry's own
-// doc), so `current?.provisional` is always falsy there and this branch
-// never runs — practice always takes the plain `RealPanel` path below,
-// unchanged. AC-T1.16: `held` is checked FIRST, above the provisional
-// branch — a held entry gets the warning treatment above regardless of
-// whether it also happens to be provisional; practice mode passes no
-// `pinnedId` (so `held` is always false there), which is what keeps it
-// byte-identical to before this prop existed.
-function CurrentQuestionPanel({ current, copy, held, newerCount, onReleasePin, live }) {
-  if (held) {
-    return (
-      <HeldQuestionPanel title={copy.currentQuestionTitle} newerCount={newerCount} onRelease={onReleasePin} live={live}>
-        {current ? (
-          <Typography sx={{ color: "var(--text-primary)", fontWeight: 600, ...BREAK_LONG_WORDS_SX }}>
-            {current.question}
-          </Typography>
-        ) : (
-          <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-            {copy.noQuestion}
-          </Typography>
-        )}
-      </HeldQuestionPanel>
-    );
-  }
-  if (current?.provisional) {
-    return (
-      <AccentPanel title={copy.currentQuestionTitle} chipLabel="Unconfirmed">
-        <Typography sx={{ color: "var(--text-primary)", fontWeight: 600, ...BREAK_LONG_WORDS_SX }}>
-          {current.question}
-        </Typography>
-        <Typography variant="caption" sx={{ display: "block", mt: 0.75, color: "var(--text-secondary)" }}>
-          Not confirmed as the interviewer — this may be your own words, picked up while speaker identity is
-          still unsettled.
-        </Typography>
-      </AccentPanel>
-    );
-  }
-  return (
-    <RealPanel title={copy.currentQuestionTitle}>
-      {current ? (
-        <Typography sx={{ color: "var(--text-primary)", fontWeight: 600, ...BREAK_LONG_WORDS_SX }}>
-          {current.question}
-        </Typography>
-      ) : (
-        <Typography variant="body2" sx={{ color: "var(--text-muted)" }}>
-          {copy.noQuestion}
-        </Typography>
-      )}
-    </RealPanel>
-  );
-}
+// ARCH-sticky §2.7/§3.1: both copy constants now live in
+// lib/copilot/dashboardCopy.js, alongside the `dashboardCopy()` merge below
+// — the same merge app/copilot/dashboard/StickyQuestionStrip.js now makes
+// for the relocated question panel's copy, over the SAME module-local
+// default object, so neither side of the relocation can silently disagree
+// about what "the rest of the copy" is. Re-exported here (not re-declared)
+// so this file's own PracticeClient.js:17 import and
+// CopilotDashboard.render.test.js:22 import keep resolving unedited.
+export { LIVE_COPY, PRACTICE_COPY } from "@/lib/copilot/dashboardCopy";
 
 // BUG-2/R-121 group-L: shared by CurrentAnswerPanel below AND QuestionFeed's
 // own feed-level region — once BUG-3 makes QuestionFeed derive "current"
@@ -716,17 +464,16 @@ function DeliveryPanel({ pace, fillers, copy }) {
 
 export default function CopilotDashboard({
   questions,
-  // AC-T1.16..T1.18: the pin/hold surface. `pinnedId` degrades to
-  // latestQuestionEntry(questions) inside pinnedQuestionEntry when it is
-  // `null`/`undefined` — practice mode passes none of these four props at
-  // all, which is what keeps it byte-identical to before the pin existed.
+  // AC-T1.18: `pinnedId` degrades to latestQuestionEntry(questions) inside
+  // pinnedQuestionEntry when it is `null`/`undefined` — practice mode passes
+  // none of it, which is what keeps it byte-identical to before the pin
+  // existed. ARCH-sticky §3.6: `held`/`newerQuestionCount`/`onReleasePin`/
+  // `live` used to live here too, defaulted for the now-removed
+  // CurrentQuestionPanel call below — they are StickyQuestionStrip.js's own
+  // props now (its own defaults match what this file used to default), so
+  // this component no longer reads any of the pin/hold surface beyond the id
+  // itself.
   pinnedId,
-  held = false,
-  newerQuestionCount: newerCount = 0,
-  onReleasePin,
-  // Defect 3 fix: whether the SESSION is live — gates HeldQuestionPanel's
-  // caption above. Defaults `true` (practice mode never passes `held: true`).
-  live = true,
   pace,
   // Verbal-filler reading beside pace in DeliveryPanel — see the contract
   // atop FILLER_LABEL_TEXT/COLOR above. May be `undefined` from a caller
@@ -749,7 +496,7 @@ export default function CopilotDashboard({
   staleTypeChangeAt = 0,
 }) {
   const current = pinnedQuestionEntry(questions, pinnedId);
-  const text = { ...LIVE_COPY, ...(copy || {}) };
+  const text = dashboardCopy(copy);
 
   return (
     <Box
@@ -762,8 +509,8 @@ export default function CopilotDashboard({
       }}
     >
       {/* F10: the dashboard's own section title, one level under the tab's
-          h2 (TabHeader.js) — see RealPanel/AccentPanel/DeliveryPanel above
-          for the panel titles nested another level under this one. */}
+          h2 (TabHeader.js) — see RealPanel/DeliveryPanel above for the panel
+          titles nested another level under this one. */}
       <Box sx={{ mb: 1.5 }}>
         <Typography variant="subtitle2" component="h3" sx={{ color: "var(--text-secondary)", fontWeight: 700 }}>
           {text.title}
@@ -773,18 +520,19 @@ export default function CopilotDashboard({
       <Box
         sx={{
           display: "grid",
-          // Was `md` (900px). A half-width window on a common 1440-wide
-          // dual-screen setup is ~720px — under `md` — which fell to a
-          // single column and stacked both panels, the single biggest
-          // contributor to the scrolling the half-window/dual-screen user
-          // is complaining about. `sm` (600px) still gives up two columns
-          // well before that width. Do not "tidy" this back to `md`: the
-          // half-window case is the point, not an oversight.
-          gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
+          // ARCH-sticky §3.2: this used to be `{ xs: "1fr", sm: "1fr 1fr" }`
+          // so the question and answer panels sat side by side from `sm`
+          // up — a half-width window on a common 1440-wide dual-screen setup
+          // is ~720px, comfortably past `sm`, which is why this was `sm` and
+          // not `md` (do not "tidy" it back: the half-window case was the
+          // point, not an oversight). With the question panel relocated to
+          // the sticky strip, this grid has exactly one child left —
+          // CurrentAnswerPanel — so a second track would sit empty and just
+          // hold the answer at half width for no reason. One column, always.
+          gridTemplateColumns: "1fr",
           gap: 1.5,
         }}
       >
-        <CurrentQuestionPanel current={current} copy={text} held={held} newerCount={newerCount} onReleasePin={onReleasePin} live={live} />
         <CurrentAnswerPanel
           current={current}
           copy={text}
