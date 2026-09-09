@@ -86,9 +86,16 @@ function interaction({ text = MARKDOWN, annotations = [], searched = true, statu
 
 // The route reads the application scoped to the caller. `found` false models
 // "not this user's row" — RLS would return nothing, and so must we.
-function supabaseWith({ found = true } = {}) {
+// USER IDS ARE UNIQUE PER CALL, deliberately. This route's rate limiter is a
+// module singleton -- built at module scope so its counters survive between
+// requests -- which means they also survive between `it()` blocks in this file.
+// A shared "user-1" would let an early case's requests deny a later one, which
+// is a defect in the TEST, not in the bound. Cases that assert on the id itself
+// pass one explicitly. Same discipline as app/api/copilot/ask/route.test.js.
+let userSeq = 0;
+function supabaseWith({ found = true, userId = `digest-user-${(userSeq += 1)}` } = {}) {
   const maybeSingle = vi.fn().mockResolvedValue({
-    data: found ? { id: APP_ID, user_id: "user-1", positions: POSITION } : null,
+    data: found ? { id: APP_ID, user_id: userId, positions: POSITION } : null,
     error: null,
   });
   const chain = {
@@ -97,7 +104,7 @@ function supabaseWith({ found = true } = {}) {
     maybeSingle,
   };
   createClient.mockResolvedValue({
-    auth: { getUser: async () => ({ data: { user: { id: "user-1" } }, error: null }) },
+    auth: { getUser: async () => ({ data: { user: { id: userId } }, error: null }) },
     from: vi.fn(() => chain),
   });
   return chain;
@@ -186,7 +193,7 @@ describe("POST /api/application-digest — the gates before the model", () => {
 
   it("scopes the application read to the caller's own user_id", async () => {
     // Deleting the tenant filter leaves every other test in this file green.
-    const chain = supabaseWith();
+    const chain = supabaseWith({ userId: "user-1" });
     geminiReplying();
     await POST(request({ applicationId: APP_ID }));
     expect(chain.eq).toHaveBeenCalledWith("user_id", "user-1");
@@ -633,5 +640,58 @@ describe("POST /api/application-digest — the response-side invariant (D-1)", (
       // Non-empty sources, or a named reason. Never both empty.
       expect(stored.sources.length + refusedTotal, label).toBeGreaterThan(0);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The spend ceiling. Every digest that is not already stored is one GROUNDED
+// Interactions call -- the most expensive single request the tracking table can
+// issue -- and until this bound existed a loop against it was unmetered.
+// ---------------------------------------------------------------------------
+describe("the digest spend ceiling actually bites", () => {
+  const LIMIT = 12;
+
+  it("denies past the bound with 429, Retry-After and the RateLimit-* headers", async () => {
+    supabaseWith({ userId: "digest-greedy" });
+    geminiReplying();
+
+    const statuses = [];
+    for (let i = 0; i < LIMIT + 1; i += 1) {
+      statuses.push((await POST(request({ applicationId: APP_ID }))).status);
+    }
+
+    // A limiter built INSIDE the handler gets a fresh store on every request,
+    // so every caller is forever on its first request and all LIMIT+1 succeed.
+    expect(statuses.filter((s) => s !== 429)).toHaveLength(LIMIT);
+    expect(statuses[LIMIT]).toBe(429);
+
+    const denied = await POST(request({ applicationId: APP_ID }));
+    expect(denied.status).toBe(429);
+    expect(Number(denied.headers.get("Retry-After"))).toBeGreaterThanOrEqual(1);
+    expect(denied.headers.get("RateLimit-Limit")).toBe(String(LIMIT));
+  });
+
+  it("spends nothing on a denied request -- neither the model nor the row read", async () => {
+    supabaseWith({ userId: "digest-nospend" });
+    const create = geminiReplying();
+    for (let i = 0; i < LIMIT + 1; i += 1) await POST(request({ applicationId: APP_ID }));
+
+    const callsBefore = create.mock.calls.length;
+    listDigests.mockClear();
+    const denied = await POST(request({ applicationId: APP_ID }));
+    expect(denied.status).toBe(429);
+    expect(create.mock.calls).toHaveLength(callsBefore);
+    expect(listDigests).not.toHaveBeenCalled();
+  });
+
+  it("counts per authenticated user, so one caller's flood cannot deny another", async () => {
+    supabaseWith({ userId: "digest-flooder" });
+    geminiReplying();
+    for (let i = 0; i < LIMIT + 1; i += 1) await POST(request({ applicationId: APP_ID }));
+    expect((await POST(request({ applicationId: APP_ID }))).status).toBe(429);
+
+    supabaseWith({ userId: "digest-bystander" });
+    geminiReplying();
+    expect((await POST(request({ applicationId: APP_ID }))).status).not.toBe(429);
   });
 });

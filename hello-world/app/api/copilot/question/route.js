@@ -5,6 +5,7 @@ import { createClient as createSupabaseServerClient } from "@/lib/supabase/serve
 import { wantsEmbedded } from "@/lib/llm/featureEngine";
 import { nextPracticeQuestion } from "@/lib/copilot/practiceQuestions";
 import { normalizeQuestion } from "@/lib/copilot/questions";
+import { createRateLimiter, identify, rateLimitHeaders } from "@/lib/rateLimit/index";
 import {
   normalizeInterviewType,
   interviewType as getInterviewType,
@@ -87,6 +88,37 @@ function buildPrompt(posting, asked, descriptor) {
   return parts.join("\n");
 }
 
+// ---------------------------------------------------------------------------
+// THE SPEND CEILING for copilot-question.
+//
+// BUILT AT MODULE SCOPE, AND THAT IS LOAD-BEARING. A limiter constructed inside
+// the handler gets a brand-new store on every request, so every caller is
+// forever on its first request: it permits everything, counts nothing, and
+// passes a smoke test while doing it. lib/rateLimit/index.js's header states
+// this as the one way to adopt it catastrophically wrong, and both halves are
+// pinned -- a behavioural case that fires 31 requests and expects the last to
+// be denied (a per-request limiter would pass all 31), and the static case in
+// lib/rateLimit/adoption.test.js that this declaration precedes the handler.
+//
+// 30 per 10 minutes, per authenticated user. One drafted question per practice
+// turn, with a human answering out loud between turns; 30 is well above that
+// cadence.
+// A DENIED REQUEST STILL INCREMENTS (see the module's header): the bound is
+// 30 ATTEMPTS, not 30 successes.
+//
+// HONEST ABOUT WHAT THIS BUYS: createMemoryStore is per-instance, so on
+// serverless this bounds a caller to 30 x instanceCount, not 30. It is worth
+// having anyway -- it turns an unbounded loop against a model-calling endpoint
+// into a bounded one.
+// It is not a fleet-wide guarantee and must not be described as one. Swapping
+// in a Redis-backed store satisfying the same two-method interface needs no
+// change here.
+// ---------------------------------------------------------------------------
+const questionLimiter = createRateLimiter({ limit: 30, windowMs: 600_000, prefix: "copilot-question" });
+
+const questionRateLimitedMessage =
+  "Too many questions requested in a short window. Wait a moment and try again.";
+
 export async function POST(request) {
   try {
     const supabase = await createSupabaseServerClient();
@@ -97,6 +129,19 @@ export async function POST(request) {
       return Response.json(
         { error: "Sign in to use the interview copilot." },
         { status: 401 },
+      );
+    }
+
+    // THE BOUND, keyed on the id the auth gate above resolved -- never on the
+    // caller's access token, and never before the auth resolves. Checked ahead
+    // of body validation on purpose: an invalid request is still a request,
+    // and a caller hammering this endpoint with junk should exhaust its own
+    // allowance rather than get an unmetered lane.
+    const rateLimit = await questionLimiter.check(identify(request, { userId: user.id }));
+    if (!rateLimit.allowed) {
+      return Response.json(
+        { error: questionRateLimitedMessage },
+        { status: 429, headers: rateLimitHeaders(rateLimit) },
       );
     }
 

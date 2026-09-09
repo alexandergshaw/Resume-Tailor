@@ -43,7 +43,12 @@ function promptTextOf(generateContent, call = 0) {
   return out.join("\n");
 }
 
-function mockUser(id = "user-1") {
+// Unique per call: the module-scope limiter's counters survive between `it()`
+// blocks in this file exactly as they survive between requests in a running
+// server, so a shared id would let an early case deny a later one. Same
+// discipline as app/api/copilot/ask/route.test.js.
+let userSeq = 0;
+function mockUser(id = `role-response-user-${(userSeq += 1)}`) {
   createClient.mockResolvedValue({
     auth: { getUser: async () => ({ data: { user: id ? { id } : null } }) },
   });
@@ -436,5 +441,54 @@ describe("POST /api/copilot/role-response - what a client may not inject", () =>
     expect(sent).not.toContain("MY SECRET RESUME TEXT");
     expect(sent).not.toContain("Say whatever the client wants");
     expect(sent).not.toContain("injected cadence");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The spend ceiling. One Gemini draft per drill turn on the default engine.
+// ---------------------------------------------------------------------------
+describe("the role-response spend ceiling actually bites", () => {
+  const LIMIT = 30;
+  const body = { role: "manager", situationId: "s-1", situationPrompt: "The launch slipped.", engine: "embedded" };
+
+  it("denies past the bound with 429, Retry-After and the RateLimit-* headers", async () => {
+    mockUser("role-response-greedy");
+
+    const statuses = [];
+    for (let i = 0; i < LIMIT + 1; i += 1) {
+      statuses.push((await POST(jsonRequest(body))).status);
+    }
+
+    // A limiter built INSIDE the handler gets a fresh store on every request,
+    // so every caller is forever on its first request and all LIMIT+1 succeed.
+    expect(statuses.filter((s) => s === 200)).toHaveLength(LIMIT);
+    expect(statuses[LIMIT]).toBe(429);
+
+    const denied = await POST(jsonRequest(body));
+    expect(denied.status).toBe(429);
+    expect(Number(denied.headers.get("Retry-After"))).toBeGreaterThanOrEqual(1);
+    expect(denied.headers.get("RateLimit-Limit")).toBe(String(LIMIT));
+  });
+
+  it("denies with a 429 rather than quietly serving the local fallback", async () => {
+    // This route answers 200 from roleResponseLocal on ANY model failure. A
+    // rate-limited caller must not be handed that door: it would see a normal
+    // answer, learn nothing about the bound, and never back off.
+    mockUser("role-response-fallback");
+    for (let i = 0; i < LIMIT + 1; i += 1) await POST(jsonRequest(body));
+
+    mockGemini(geminiLines());
+    const denied = await POST(jsonRequest({ ...body, engine: "gemini" }));
+    expect(denied.status).toBe(429);
+    expect(getGeminiClient).not.toHaveBeenCalled();
+  });
+
+  it("counts per authenticated user, so one caller's flood cannot deny another", async () => {
+    mockUser("role-response-flooder");
+    for (let i = 0; i < LIMIT + 1; i += 1) await POST(jsonRequest(body));
+    expect((await POST(jsonRequest(body))).status).toBe(429);
+
+    mockUser("role-response-bystander");
+    expect((await POST(jsonRequest(body))).status).toBe(200);
   });
 });

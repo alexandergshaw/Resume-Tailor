@@ -319,6 +319,135 @@ describe("ExperienceTab -- focus after delete (D2)", () => {
   });
 });
 
+// DEFECT 2 -- ExperienceTab.js's own wiring masks a delete failure that
+// arrives after the user has already left DeletePageDialog. FormDialog was
+// corrected (commit 8866be1) so that Escape/backdrop/Cancel keep closing a
+// busy dialog INSTANTLY, and a failure that settles afterward brings the
+// dialog back to show it (`reopenForError`, driven off FormDialog's own
+// `error` PROP staying truthy once the failure lands). ExperienceTab used to
+// pass `error={deleteTargetId ? error : ""}` -- and `onClose` clears
+// `deleteTargetId` the instant the user leaves, so by the time the delete
+// actually fails, that ternary has already forced FormDialog's `error` prop
+// back to "", and `reopenForError` never fires. The user sees the dialog
+// vanish and has no way to know the delete never happened.
+//
+// MUI's own exit transition (a real setTimeout-driven Fade) never completes
+// in jsdom without fake timers advanced past it -- same reasoning as
+// FormDialog.test.js's own header comment on `finishExitTransition`.
+describe("ExperienceTab -- a delete failure that settles after the user left is not silently lost", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function finishExitTransition() {
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+  }
+
+  it("reopens DeletePageDialog to show a delete failure that settles after Cancel already closed it", async () => {
+    let resolveDelete;
+    const deletePromise = new Promise((resolve) => {
+      resolveDelete = resolve;
+    });
+    global.fetch = vi.fn((url, options) => {
+      if (!options) {
+        return Promise.resolve(jsonResponse(200, { pages: [PAGE_ROOT] }));
+      }
+      if (options.method === "DELETE") {
+        return deletePromise;
+      }
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+
+    await render();
+    await flush();
+
+    const rootItem = container.querySelector('[role="treeitem"][data-page-id="p1"]');
+    const deleteBtn = rowActionButton(rootItem, "DeleteIcon");
+    expect(deleteBtn).toBeDefined();
+    await click(deleteBtn);
+    await flush();
+
+    const confirmBtn = documentButtons().find((b) => b.textContent.trim() === "Delete");
+    expect(confirmBtn).toBeDefined();
+    await click(confirmBtn);
+    await flush();
+
+    // The DELETE is still in flight -- the dialog must read as busy now.
+    expect(documentButtons().find((b) => b.textContent.trim() === "Deleting…")).toBeDefined();
+
+    // The user asks to leave anyway. FormDialog's Cancel button is never
+    // disabled while busy (see FormDialog.js's own comment on why) -- the
+    // exit must work instantly, exactly like Escape/backdrop would.
+    const cancelBtn = documentButtons().find((b) => b.textContent.trim() === "Cancel");
+    expect(cancelBtn, "[instrument] Cancel must stay enabled and present while busy").toBeDefined();
+    await click(cancelBtn);
+    await finishExitTransition();
+    expect(
+      document.querySelector('[role="dialog"]'),
+      "[instrument] the exit must actually complete once its transition finishes",
+    ).toBeNull();
+
+    // The delete now fails, after the user already left.
+    await act(async () => {
+      resolveDelete(jsonResponse(500, { error: "Boom, delete failed." }));
+    });
+    await flush();
+
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(
+      dialog,
+      "a delete failure that settles after the user left must bring the dialog back, not vanish silently",
+    ).not.toBeNull();
+    expect(dialog.textContent).toContain("Boom, delete failed.");
+  });
+
+  it("does NOT reopen when a delete interrupted by an early close actually succeeds", async () => {
+    let resolveDelete;
+    const deletePromise = new Promise((resolve) => {
+      resolveDelete = resolve;
+    });
+    global.fetch = vi.fn((url, options) => {
+      if (!options) {
+        return Promise.resolve(jsonResponse(200, { pages: [PAGE_ROOT] }));
+      }
+      if (options.method === "DELETE") {
+        return deletePromise;
+      }
+      throw new Error(`Unexpected fetch call: ${url}`);
+    });
+
+    await render();
+    await flush();
+
+    const rootItem = container.querySelector('[role="treeitem"][data-page-id="p1"]');
+    const deleteBtn = rowActionButton(rootItem, "DeleteIcon");
+    await click(deleteBtn);
+    await flush();
+
+    const confirmBtn = documentButtons().find((b) => b.textContent.trim() === "Delete");
+    await click(confirmBtn);
+    await flush();
+
+    const cancelBtn = documentButtons().find((b) => b.textContent.trim() === "Cancel");
+    await click(cancelBtn);
+    await finishExitTransition();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+
+    await act(async () => {
+      resolveDelete(jsonResponse(200, {}));
+    });
+    await flush();
+
+    expect(document.querySelector('[role="dialog"]'), "a delete that succeeds after the user left must not resurrect the dialog").toBeNull();
+  });
+});
+
 describe("ExperienceTab -- a move into a collapsed parent expands it and focuses the moved row (D2 + D3)", () => {
   it("expands the destination row and moves focus to the moved page's new location", async () => {
     global.fetch = vi.fn((url, options) => {

@@ -15,7 +15,14 @@ function jsonRequest(body) {
   return { json: async () => body };
 }
 
-function mockUser(id = "user-1") {
+// USER IDS ARE UNIQUE PER CALL, deliberately. This route's rate limiter is a
+// module singleton -- that is the whole point of building it at module scope --
+// so its counters survive between `it()` blocks in this file exactly as they
+// survive between requests in a running server. A shared "user-1" would let an
+// early case's requests deny a later one, which is a defect in the TEST, not in
+// the bound. app/api/copilot/ask/route.test.js records the same discipline.
+let userSeq = 0;
+function mockUser(id = `critique-user-${(userSeq += 1)}`) {
   createClient.mockResolvedValue({
     auth: { getUser: async () => ({ data: { user: id ? { id } : null } }) },
   });
@@ -805,5 +812,58 @@ describe("POST /api/copilot/critique (G2 interview type)", () => {
 
     const generalDescriptor = resolveInterviewType("general");
     expect(promptText).toContain(`${generalDescriptor.label} interview. ${generalDescriptor.guidance}`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The spend ceiling. Every non-embedded request here is one Gemini call, and
+// until this bound existed a loop against this endpoint was unmetered.
+// ---------------------------------------------------------------------------
+describe("the critique spend ceiling actually bites", () => {
+  const LIMIT = 30;
+  const body = { question: "Q", type: "general", answer: STAR_ANSWER, engine: "embedded" };
+
+  it("denies past the bound with 429, Retry-After and the RateLimit-* headers", async () => {
+    mockUser("critique-greedy");
+
+    const statuses = [];
+    for (let i = 0; i < LIMIT + 1; i += 1) {
+      statuses.push((await POST(jsonRequest(body))).status);
+    }
+
+    // A limiter built INSIDE the handler gets a fresh store on every request,
+    // so every caller is forever on its first request and all LIMIT+1 succeed.
+    // This assertion is what catches that shape, and it is the reason the loop
+    // runs one request PAST the bound instead of stopping at it.
+    expect(statuses.filter((s) => s === 200)).toHaveLength(LIMIT);
+    expect(statuses[LIMIT]).toBe(429);
+
+    const denied = await POST(jsonRequest(body));
+    expect(denied.status).toBe(429);
+    expect(Number(denied.headers.get("Retry-After"))).toBeGreaterThanOrEqual(1);
+    expect(denied.headers.get("RateLimit-Limit")).toBe(String(LIMIT));
+    expect(denied.headers.get("RateLimit-Remaining")).toBe("0");
+  });
+
+  it("counts per authenticated user, so one caller's flood cannot deny another", async () => {
+    mockUser("critique-flooder");
+    for (let i = 0; i < LIMIT + 1; i += 1) await POST(jsonRequest(body));
+    const flooded = await POST(jsonRequest(body));
+    expect(flooded.status).toBe(429);
+
+    mockUser("critique-bystander");
+    const bystander = await POST(jsonRequest(body));
+    expect(bystander.status).toBe(200);
+  });
+
+  it("spends nothing on a denied request -- no model client is ever constructed", async () => {
+    mockUser("critique-nospend");
+    for (let i = 0; i < LIMIT + 1; i += 1) await POST(jsonRequest(body));
+
+    mockGemini({ verdict: "unused" });
+    const denied = await POST(jsonRequest({ ...body, engine: "gemini" }));
+    expect(denied.status).toBe(429);
+    expect(getGeminiClient).not.toHaveBeenCalled();
+    expect(getServerEnv).not.toHaveBeenCalled();
   });
 });

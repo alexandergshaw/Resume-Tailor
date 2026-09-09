@@ -10,6 +10,7 @@ import { buildMeetingContext } from "@/lib/meeting/meetingContext";
 import { formatDroppedNames } from "@/lib/experience/droppedNames";
 import { localInsights } from "@/lib/meeting/insightsLocal";
 import { normalizeTopic, normalizeInsights } from "@/lib/meeting/insightContract";
+import { createRateLimiter, identify, rateLimitHeaders } from "@/lib/rateLimit/index";
 
 // One read of the meeting copilot's insights panel. Fires on a pause in the
 // conversation (lib/meeting/chunkTrigger.js decides when), never streams
@@ -109,6 +110,38 @@ function recentTranscript(raw) {
   return trimmed || tail;
 }
 
+// ---------------------------------------------------------------------------
+// THE SPEND CEILING for meeting-insights.
+//
+// BUILT AT MODULE SCOPE, AND THAT IS LOAD-BEARING. A limiter constructed inside
+// the handler gets a brand-new store on every request, so every caller is
+// forever on its first request: it permits everything, counts nothing, and
+// passes a smoke test while doing it. lib/rateLimit/index.js's header states
+// this as the one way to adopt it catastrophically wrong, and both halves are
+// pinned -- a behavioural case that fires 61 requests and expects the last to
+// be denied (a per-request limiter would pass all 61), and the static case in
+// lib/rateLimit/adoption.test.js that this declaration precedes the handler.
+//
+// 60 per 10 minutes, per authenticated user. This is re-asked as a live
+// meeting's transcript grows, so the allowance has to cover a long meeting: 60
+// in ten minutes is one call every ten seconds sustained, which is well past
+// any real refresh cadence.
+// A DENIED REQUEST STILL INCREMENTS (see the module's header): the bound is
+// 60 ATTEMPTS, not 60 successes.
+//
+// HONEST ABOUT WHAT THIS BUYS: createMemoryStore is per-instance, so on
+// serverless this bounds a caller to 60 x instanceCount, not 60. It is worth
+// having anyway: a client polling in a tight loop currently bills a model call
+// per poll with no ceiling at all.
+// It is not a fleet-wide guarantee and must not be described as one. Swapping
+// in a Redis-backed store satisfying the same two-method interface needs no
+// change here.
+// ---------------------------------------------------------------------------
+const insightsLimiter = createRateLimiter({ limit: 60, windowMs: 600_000, prefix: "meeting-insights" });
+
+const insightsRateLimitedMessage =
+  "Too many insight refreshes in a short window. Wait a moment and try again.";
+
 export async function POST(request) {
   try {
     const supabase = await createSupabaseServerClient();
@@ -117,6 +150,19 @@ export async function POST(request) {
     } = await supabase.auth.getUser();
     if (!user?.id) {
       return Response.json({ error: "Sign in to use the meeting copilot." }, { status: 401 });
+    }
+
+    // THE BOUND, keyed on the id the auth gate above resolved -- never on the
+    // caller's access token, and never before the auth resolves. Checked ahead
+    // of body validation on purpose: an invalid request is still a request,
+    // and a caller hammering this endpoint with junk should exhaust its own
+    // allowance rather than get an unmetered lane.
+    const rateLimit = await insightsLimiter.check(identify(request, { userId: user.id }));
+    if (!rateLimit.allowed) {
+      return Response.json(
+        { error: insightsRateLimitedMessage },
+        { status: 429, headers: rateLimitHeaders(rateLimit) },
+      );
     }
 
     const body = await request.json();

@@ -15,7 +15,12 @@ function jsonRequest(body) {
   return { json: async () => body };
 }
 
-function mockUser(id = "user-1") {
+// Unique per call: the module-scope limiter's counters survive between `it()`
+// blocks in this file exactly as they survive between requests in a running
+// server, so a shared id would let an early case deny a later one. Same
+// discipline as app/api/copilot/ask/route.test.js.
+let userSeq = 0;
+function mockUser(id = `question-user-${(userSeq += 1)}`) {
   createClient.mockResolvedValue({
     auth: { getUser: async () => ({ data: { user: id ? { id } : null } }) },
   });
@@ -411,5 +416,44 @@ describe("POST /api/copilot/question (interviewType, gemini engine)", () => {
     });
     expect(data.question).toBe(expected.question);
     expect(data.type).toBe("technical");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The spend ceiling. One drafted question per practice turn; a loop here was
+// unmetered Gemini spend before this bound existed.
+// ---------------------------------------------------------------------------
+describe("the question spend ceiling actually bites", () => {
+  const LIMIT = 30;
+  const body = { posting: { title: "Engineer", company: "Acme", description: "Build things." }, asked: [], engine: "embedded" };
+
+  it("denies past the bound with 429, Retry-After and the RateLimit-* headers", async () => {
+    mockUser("question-greedy");
+
+    const statuses = [];
+    for (let i = 0; i < LIMIT + 1; i += 1) {
+      statuses.push((await POST(jsonRequest(body))).status);
+    }
+
+    // A limiter built INSIDE the handler gets a fresh store on every request,
+    // so every caller is forever on its first request and all LIMIT+1 succeed.
+    // That is the defect this loop exists to catch, which is why it runs one
+    // request PAST the bound rather than stopping at it.
+    expect(statuses.filter((s) => s === 200)).toHaveLength(LIMIT);
+    expect(statuses[LIMIT]).toBe(429);
+
+    const denied = await POST(jsonRequest(body));
+    expect(denied.status).toBe(429);
+    expect(Number(denied.headers.get("Retry-After"))).toBeGreaterThanOrEqual(1);
+    expect(denied.headers.get("RateLimit-Limit")).toBe(String(LIMIT));
+  });
+
+  it("counts per authenticated user, so one caller's flood cannot deny another", async () => {
+    mockUser("question-flooder");
+    for (let i = 0; i < LIMIT + 1; i += 1) await POST(jsonRequest(body));
+    expect((await POST(jsonRequest(body))).status).toBe(429);
+
+    mockUser("question-bystander");
+    expect((await POST(jsonRequest(body))).status).toBe(200);
   });
 });

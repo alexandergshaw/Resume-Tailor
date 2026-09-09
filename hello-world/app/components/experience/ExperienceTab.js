@@ -152,7 +152,22 @@ export default function ExperienceTab({ askAiAbout, addChatAttachments }) {
   const [selectedId, setSelectedId] = useState(null);
   const [expandedIds, setExpandedIds] = useState(() => new Set());
   const [renamingId, setRenamingId] = useState(null);
-  const [deleteTargetId, setDeleteTargetId] = useState(null);
+  // `deleteDialogOpen` and `deletingPage` are deliberately SEPARATE state,
+  // not one id doing both jobs. FormDialog's own "close always works, a
+  // late failure reopens" contract (commit 8866be1) depends on its `error`
+  // prop still reflecting the real failure even after the caller's `open`
+  // has already gone false - exactly the shape every other FormDialog
+  // consumer already has (AddAppDialog.js's `addAppDialog` data survives
+  // `setAddAppDialog(prev => ({...prev, open:false}))` the same way). A
+  // single `deleteTargetId` that `onClose` nulls immediately would clear
+  // the CONTENT (which page, and per the old `deleteTargetId ? error : ""`
+  // line, even the error) at the exact moment `open` needs to go false -
+  // which is what silently swallowed a delete failure that arrived after
+  // an early Cancel/Escape/backdrop. `deletingPage` and `deleteError` below
+  // outlive that close; only `deleteDialogOpen` toggles on it.
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deletingPage, setDeletingPage] = useState(null);
+  const [deleteError, setDeleteError] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [moveTargetId, setMoveTargetId] = useState(null);
   // The bulk-selection checkbox set (chunk 8) - deliberately separate state
@@ -177,7 +192,6 @@ export default function ExperienceTab({ askAiAbout, addChatAttachments }) {
   const emptyStateCreateButtonRef = useRef(null);
 
   const selectedPage = pages.find((p) => p.id === selectedId) || null;
-  const deleteTargetPage = pages.find((p) => p.id === deleteTargetId) || null;
   const moveTargetPage = pages.find((p) => p.id === moveTargetId) || null;
   const crumbs = selectedId ? breadcrumbFor(selectedId) : [];
 
@@ -378,6 +392,16 @@ export default function ExperienceTab({ askAiAbout, addChatAttachments }) {
     if (result.ok) announce(`Renamed to "${title}"`);
   }
 
+  // Opens DeletePageDialog for `id`, always starting from a clean slate -
+  // any error or busy state left over from a PREVIOUS delete (e.g. one the
+  // user closed early and never retried) must never bleed into a fresh
+  // request, whether for the same page or a different one.
+  function handleDeleteRequest(id) {
+    setDeletingPage(pages.find((p) => p.id === id) || null);
+    setDeleteError("");
+    setDeleteDialogOpen(true);
+  }
+
   async function handleDeleteConfirm(id) {
     // Snapshot who's about to disappear BEFORE the delete resolves - the
     // `pages` this closure sees stays fixed at its pre-delete value across
@@ -395,7 +419,9 @@ export default function ExperienceTab({ askAiAbout, addChatAttachments }) {
     const result = await deletePage(id);
     setDeleting(false);
     if (result.ok) {
-      setDeleteTargetId(null);
+      setDeleteError("");
+      setDeleteDialogOpen(false);
+      setDeletingPage(null);
       if (selectedId && removedIds.has(selectedId)) setSelectedId(null);
       announce(`Deleted "${deletedPage ? deletedPage.title : "page"}"`);
       // Focus used to be left stranded at document.body here - stranded
@@ -408,6 +434,17 @@ export default function ExperienceTab({ askAiAbout, addChatAttachments }) {
       } else if (nextFocusId) {
         setFocusRequest({ type: "page", pageId: nextFocusId });
       }
+    } else {
+      // `deleteDialogOpen` is deliberately left untouched here: if the user
+      // is still looking at the dialog, it just shows the error in place
+      // (unchanged behaviour). If they already closed it (Cancel/Escape/
+      // backdrop while `deleting` was true), `deleteDialogOpen` is already
+      // false and `deletingPage` still names the page - FormDialog's own
+      // `reopenForError` (fed by the real `error` string below, never
+      // masked by whether the dialog is nominally open) is what brings the
+      // dialog back to show this, exactly as it does for every other
+      // FormDialog consumer.
+      setDeleteError(result.error || "Failed to delete the page.");
     }
   }
 
@@ -673,7 +710,7 @@ export default function ExperienceTab({ askAiAbout, addChatAttachments }) {
                 onRenameCommit={handleRenameCommit}
                 onRenameCancel={() => setRenamingId(null)}
                 onCreateChild={handleCreate}
-                onDeleteRequest={setDeleteTargetId}
+                onDeleteRequest={handleDeleteRequest}
                 onMoveRequest={setMoveTargetId}
                 onMove={handleMove}
                 selectedPageIds={selectedPageIds}
@@ -774,12 +811,12 @@ export default function ExperienceTab({ askAiAbout, addChatAttachments }) {
       )}
 
       <DeletePageDialog
-        open={!!deleteTargetId}
+        open={deleteDialogOpen}
         pages={pages}
-        page={deleteTargetPage}
+        page={deletingPage}
         busy={deleting}
-        error={deleteTargetId ? error : ""}
-        onClose={() => setDeleteTargetId(null)}
+        error={deleteError}
+        onClose={() => setDeleteDialogOpen(false)}
         onConfirm={handleDeleteConfirm}
       />
 

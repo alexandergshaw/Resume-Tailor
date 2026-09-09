@@ -10,7 +10,12 @@ import { createClient } from "@/lib/supabase/server";
 // no longer depending on Gemini_LLM_API_Key (see lib/config/env.js). Mocking
 // that module out would hide the exact bug the fix addresses.
 
-function mockUser(id = "user-1") {
+// Unique per call: the module-scope limiter's counters survive between `it()`
+// blocks in this file exactly as they survive between requests in a running
+// server, so a shared id would let an early case deny a later one. Same
+// discipline as app/api/copilot/ask/route.test.js.
+let userSeq = 0;
+function mockUser(id = `token-user-${(userSeq += 1)}`) {
   createClient.mockResolvedValue({
     auth: { getUser: async () => ({ data: { user: id ? { id } : null } }) },
   });
@@ -304,5 +309,77 @@ describe("POST /api/copilot/token (provider selection never falls back)", () => 
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data).toEqual({ token: "dg-token-default", expiresIn: 60, provider: "deepgram" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The spend ceiling. Each POST here mints a REAL credential at a metered
+// provider -- an ElevenLabs single-use token is consumed whether or not the
+// browser ever connects -- so an unbounded loop is unbounded third-party spend
+// with nothing to show for it.
+// ---------------------------------------------------------------------------
+describe("the token-minting spend ceiling actually bites", () => {
+  const LIMIT = 10;
+
+  it("denies past the bound with 429, Retry-After and the RateLimit-* headers", async () => {
+    process.env.DEEPGRAM_API_KEY = "dg-server-key";
+    mockUser("token-greedy");
+    mockDeepgramGrant({ accessToken: "dg-token-abc", expiresIn: 30 });
+
+    const statuses = [];
+    for (let i = 0; i < LIMIT + 1; i += 1) {
+      statuses.push((await POST()).status);
+    }
+
+    // A limiter built INSIDE the handler gets a fresh store on every request,
+    // so every caller is forever on its first request and all LIMIT+1 succeed.
+    expect(statuses.filter((s) => s === 200)).toHaveLength(LIMIT);
+    expect(statuses[LIMIT]).toBe(429);
+
+    const denied = await POST();
+    expect(denied.status).toBe(429);
+    expect(Number(denied.headers.get("Retry-After"))).toBeGreaterThanOrEqual(1);
+    expect(denied.headers.get("RateLimit-Limit")).toBe(String(LIMIT));
+  });
+
+  it("mints nothing on a denied request -- the provider is never called", async () => {
+    process.env.DEEPGRAM_API_KEY = "dg-server-key";
+    mockUser("token-nospend");
+    mockDeepgramGrant({ accessToken: "dg-token-abc", expiresIn: 30 });
+    for (let i = 0; i < LIMIT + 1; i += 1) await POST();
+
+    const mintsBefore = globalThis.fetch.mock.calls.length;
+    const denied = await POST();
+    expect(denied.status).toBe(429);
+    expect(globalThis.fetch.mock.calls).toHaveLength(mintsBefore);
+  });
+
+  it("bounds POST but deliberately leaves the read-only GET alone", async () => {
+    // GET only reports which provider is configured -- no provider API call,
+    // no spend -- and the copilot privacy notice reads it on every page view.
+    // A bound there would be cost without benefit. Both halves are asserted
+    // for the SAME caller so this cannot pass by neither being limited.
+    process.env.DEEPGRAM_API_KEY = "dg-server-key";
+    mockUser("token-reader");
+    mockDeepgramGrant({ accessToken: "dg-token-abc", expiresIn: 30 });
+
+    for (let i = 0; i < LIMIT + 1; i += 1) await POST();
+    expect((await POST()).status).toBe(429);
+
+    for (let i = 0; i < LIMIT + 5; i += 1) {
+      expect((await GET()).status).toBe(200);
+    }
+  });
+
+  it("counts per authenticated user, so one caller's flood cannot deny another", async () => {
+    process.env.DEEPGRAM_API_KEY = "dg-server-key";
+    mockDeepgramGrant({ accessToken: "dg-token-abc", expiresIn: 30 });
+
+    mockUser("token-flooder");
+    for (let i = 0; i < LIMIT + 1; i += 1) await POST();
+    expect((await POST()).status).toBe(429);
+
+    mockUser("token-bystander");
+    expect((await POST()).status).toBe(200);
   });
 });

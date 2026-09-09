@@ -13,7 +13,12 @@ function jsonRequest(body) {
   return { json: async () => body };
 }
 
-function mockUser(id = "user-1") {
+// Unique per call: the module-scope limiter's counters survive between `it()`
+// blocks in this file exactly as they survive between requests in a running
+// server, so a shared id would let an early case deny a later one. Same
+// discipline as app/api/copilot/ask/route.test.js.
+let userSeq = 0;
+function mockUser(id = `detect-user-${(userSeq += 1)}`) {
   createClient.mockResolvedValue({
     auth: { getUser: async () => ({ data: { user: id ? { id } : null } }) },
   });
@@ -178,5 +183,61 @@ describe("POST /api/copilot/detect (LLM unavailable degrades, AC-R2.2)", () => {
     mockUser();
     const res400 = await POST(jsonRequest({ utterance: "   ", engine: "gemini" }));
     expect(res400.status).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The spend ceiling. This route fires once per interviewer utterance during a
+// LIVE interview -- the highest legitimate request rate in the product -- so the
+// bound is deliberately generous and the window short. It still turns an
+// unbounded loop against a model call into a bounded one.
+// ---------------------------------------------------------------------------
+describe("the detect spend ceiling actually bites", () => {
+  const LIMIT = 90;
+  const body = { utterance: "Tell me about a time you resolved a conflict.", engine: "embedded" };
+
+  it("denies past the bound with 429, Retry-After and the RateLimit-* headers", async () => {
+    mockUser("detect-greedy");
+
+    const statuses = [];
+    for (let i = 0; i < LIMIT + 1; i += 1) {
+      statuses.push((await POST(jsonRequest(body))).status);
+    }
+
+    // A limiter built INSIDE the handler gets a fresh store on every request,
+    // so every caller is forever on its first request and all LIMIT+1 succeed.
+    expect(statuses.filter((s) => s === 200)).toHaveLength(LIMIT);
+    expect(statuses[LIMIT]).toBe(429);
+
+    const denied = await POST(jsonRequest(body));
+    expect(denied.status).toBe(429);
+    expect(Number(denied.headers.get("Retry-After"))).toBeGreaterThanOrEqual(1);
+    expect(denied.headers.get("RateLimit-Limit")).toBe(String(LIMIT));
+  });
+
+  it("denies with a 429 rather than degrading to the local heuristic", async () => {
+    // The Gemini path here degrades to localDetection on ANY failure and
+    // answers 200. A rate-limited request must NOT take that door: a caller
+    // over its allowance has to see the 429, or the bound is invisible to it
+    // and it never backs off.
+    mockUser("detect-degrade");
+    for (let i = 0; i < LIMIT + 1; i += 1) await POST(jsonRequest(body));
+
+    getServerEnv.mockImplementation(() => {
+      throw new Error("Gemini_LLM_API_Key is not set.");
+    });
+    const denied = await POST(jsonRequest({ ...body, engine: "gemini" }));
+    expect(denied.status).toBe(429);
+    const data = await denied.json();
+    expect(data.degraded).toBeUndefined();
+  });
+
+  it("counts per authenticated user, so one caller's flood cannot deny another", async () => {
+    mockUser("detect-flooder");
+    for (let i = 0; i < LIMIT + 1; i += 1) await POST(jsonRequest(body));
+    expect((await POST(jsonRequest(body))).status).toBe(429);
+
+    mockUser("detect-bystander");
+    expect((await POST(jsonRequest(body))).status).toBe(200);
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Checkbox from "@mui/material/Checkbox";
@@ -240,6 +240,45 @@ export default function ImportToLibraryDialog({ open, onClose, fragments }) {
     };
   }, []);
 
+  // This dialog is NOT a FormDialog consumer -- its per-fragment checklist,
+  // editable preview and per-item results footer have no single top-level
+  // "error" or "submit" to hand FormDialog, so wrapping it in that scaffold
+  // would mean flattening real per-fragment state into a shape it was never
+  // built for. What it DOES borrow is the PATTERN FormDialog itself landed
+  // on after commit 8866be1: the exit always works, and a failure that
+  // settles after the user already left brings the dialog back to show it,
+  // rather than a busy lock that traps them here until every request
+  // finishes.
+  //
+  // `closedWhileImportingRef` remembers a close requested while `importing`;
+  // if importing later clears with at least one `results` entry at
+  // "error", `reopenForResult` brings the dialog back. A run that finishes
+  // with no failures clears `results` instead (see `handleClose` below) --
+  // the user already asked to leave, and nothing failed, so there is
+  // nothing to force them back for (mirrors FormDialog's own "a completed
+  // save never re-triggers this" - see its ruling comment on `error`).
+  const closedWhileImportingRef = useRef(false);
+  const [reopenForResult, setReopenForResult] = useState(false);
+
+  useEffect(() => {
+    // A genuine open (the parent, not this reopen mechanism, set `open`
+    // true) always supersedes a stale reopen from a previous cycle, same
+    // as FormDialog's own identically-shaped effect.
+    if (open) {
+      closedWhileImportingRef.current = false;
+      return;
+    }
+    if (!importing && results && closedWhileImportingRef.current) {
+      closedWhileImportingRef.current = false;
+      const hadFailure = Object.values(results).some((r) => r.status === "error");
+      if (hadFailure) {
+        setReopenForResult(true);
+      } else {
+        setResults(null);
+      }
+    }
+  }, [open, importing, results]);
+
   function toggle(key) {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -304,14 +343,26 @@ export default function ImportToLibraryDialog({ open, onClose, fragments }) {
 
   const summary = summaryText();
 
+  // The exit always works -- Escape, the backdrop and this Cancel/Done
+  // button all call this unconditionally, exactly like FormDialog's own
+  // `requestClose`. A close that arrives while `importing` is still true
+  // is remembered (not blocked) so the effect above can decide, once the
+  // run actually finishes, whether a failure needs to bring the dialog
+  // back.
   function handleClose() {
-    if (importing) return; // matches FormDialog's own busy gate elsewhere in this tab.
-    setResults(null);
+    if (importing) {
+      closedWhileImportingRef.current = true;
+    } else {
+      setResults(null);
+    }
+    setReopenForResult(false);
     onClose();
   }
 
+  const effectiveOpen = !!open || reopenForResult;
+
   return (
-    <Dialog open={!!open} onClose={handleClose} maxWidth="md" fullWidth fullScreen={isMobile}>
+    <Dialog open={effectiveOpen} onClose={handleClose} maxWidth="md" fullWidth fullScreen={isMobile}>
       <DialogTitle>Add to library</DialogTitle>
       <DialogContent dividers>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -440,7 +491,11 @@ export default function ImportToLibraryDialog({ open, onClose, fragments }) {
         ) : null}
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
-        <Button onClick={handleClose} disabled={importing} sx={{ textTransform: "none" }}>
+        {/* Never disabled while busy -- Escape and the backdrop already
+            exit an in-flight import, so a greyed-out Cancel beside them
+            would be the one visible affordance claiming otherwise (same
+            rule FormDialog.js's own Cancel button follows). */}
+        <Button onClick={handleClose} sx={{ textTransform: "none" }}>
           {results && !importing ? "Done" : "Cancel"}
         </Button>
         {entries.length > 0 ? (

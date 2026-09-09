@@ -40,7 +40,12 @@ function promptTextOf(generateContent, call = 0) {
   return out.join("\n");
 }
 
-function mockUser(id = "user-1") {
+// Unique per call: the module-scope limiter's counters survive between `it()`
+// blocks in this file exactly as they survive between requests in a running
+// server, so a shared id would let an early case deny a later one. Same
+// discipline as app/api/copilot/ask/route.test.js.
+let userSeq = 0;
+function mockUser(id = `role-situation-contract-user-${(userSeq += 1)}`) {
   createClient.mockResolvedValue({
     auth: { getUser: async () => ({ data: { user: id ? { id } : null } }) },
   });
@@ -241,5 +246,41 @@ describe("POST /api/copilot/role-situation - Gemini engine", () => {
     ).json();
     expect(data.source).toBe("fallback");
     expect(data.situation.prompt).not.toBe(repeated);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The spend ceiling. One Gemini scene per drill turn on the default engine.
+// ---------------------------------------------------------------------------
+describe("the role-situation spend ceiling actually bites", () => {
+  const LIMIT = 30;
+  const body = { role: "manager", asked: [], engine: "embedded" };
+
+  it("denies past the bound with 429, Retry-After and the RateLimit-* headers", async () => {
+    mockUser("role-situation-greedy");
+
+    const statuses = [];
+    for (let i = 0; i < LIMIT + 1; i += 1) {
+      statuses.push((await POST(jsonRequest(body))).status);
+    }
+
+    // A limiter built INSIDE the handler gets a fresh store on every request,
+    // so every caller is forever on its first request and all LIMIT+1 succeed.
+    expect(statuses.filter((s) => s === 200)).toHaveLength(LIMIT);
+    expect(statuses[LIMIT]).toBe(429);
+
+    const denied = await POST(jsonRequest(body));
+    expect(denied.status).toBe(429);
+    expect(Number(denied.headers.get("Retry-After"))).toBeGreaterThanOrEqual(1);
+    expect(denied.headers.get("RateLimit-Limit")).toBe(String(LIMIT));
+  });
+
+  it("counts per authenticated user, so one caller's flood cannot deny another", async () => {
+    mockUser("role-situation-flooder");
+    for (let i = 0; i < LIMIT + 1; i += 1) await POST(jsonRequest(body));
+    expect((await POST(jsonRequest(body))).status).toBe(429);
+
+    mockUser("role-situation-bystander");
+    expect((await POST(jsonRequest(body))).status).toBe(200);
   });
 });

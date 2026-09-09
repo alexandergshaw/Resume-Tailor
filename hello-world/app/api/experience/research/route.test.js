@@ -62,7 +62,14 @@ function fakeSupabase(userId) {
   };
 }
 
-function signedIn(userId = "user-1") {
+// USER IDS ARE UNIQUE PER CALL, deliberately. This route's rate limiter is a
+// module singleton -- built at module scope so its counters survive between
+// requests -- which means they also survive between `it()` blocks in this file.
+// A shared "user-1" would let an early case's requests deny a later one, which
+// is a defect in the TEST, not in the bound. Cases that assert on the id itself
+// still pass one explicitly. Same discipline as app/api/copilot/ask/route.test.js.
+let userSeq = 0;
+function signedIn(userId = `research-user-${(userSeq += 1)}`) {
   const supabase = fakeSupabase(userId);
   createClient.mockResolvedValue(supabase);
   return supabase;
@@ -125,7 +132,7 @@ describe("authentication and input", () => {
   });
 
   it("404s for a page that is not the caller's own, never reaching Gemini", async () => {
-    signedIn("user-1");
+    signedIn();
     store.listPages.mockResolvedValue({ pages: [page("mine", null)], error: null });
     const res = await POST(jsonRequest({ pageId: "not-mine" }));
     expect(res.status).toBe(404);
@@ -136,7 +143,7 @@ describe("authentication and input", () => {
 
 describe("the embedded engine", () => {
   it("refuses clearly and creates no page, without calling Gemini or the data layer's create/update", async () => {
-    signedIn("user-1");
+    signedIn();
     store.listPages.mockResolvedValue({ pages: [page("p1", null)], error: null });
 
     const res = await POST(jsonRequest({ pageId: "p1", engine: "embedded" }));
@@ -237,7 +244,7 @@ describe("happy path", () => {
   });
 
   it("drops a citation grounding never visited, keeping its text, and keeps one grounding did visit", async () => {
-    signedIn("user-1");
+    signedIn();
     store.listPages.mockResolvedValue({ pages: [page("p1", null)], error: null });
     listAttachments.mockResolvedValue({ attachments: [], error: null });
 
@@ -268,7 +275,7 @@ describe("happy path", () => {
   });
 
   it("marks the saved report ungrounded when grounding returned nothing, but still creates it", async () => {
-    signedIn("user-1");
+    signedIn();
     store.listPages.mockResolvedValue({ pages: [page("p1", null)], error: null });
     listAttachments.mockResolvedValue({ attachments: [], error: null });
 
@@ -292,7 +299,7 @@ describe("happy path", () => {
 
 describe("failure honesty", () => {
   it("502s when Gemini's text comes back empty, and creates no page", async () => {
-    signedIn("user-1");
+    signedIn();
     store.listPages.mockResolvedValue({ pages: [page("p1", null)], error: null });
     listAttachments.mockResolvedValue({ attachments: [], error: null });
     getGeminiClient.mockReturnValue({ models: { generateContent: vi.fn().mockResolvedValue(geminiResponse({ text: "" })) } });
@@ -303,7 +310,7 @@ describe("failure honesty", () => {
   });
 
   it("502s when the Gemini call itself throws, and creates no page", async () => {
-    signedIn("user-1");
+    signedIn();
     store.listPages.mockResolvedValue({ pages: [page("p1", null)], error: null });
     listAttachments.mockResolvedValue({ attachments: [], error: null });
     getGeminiClient.mockReturnValue({ models: { generateContent: vi.fn().mockRejectedValue(new Error("boom")) } });
@@ -314,7 +321,7 @@ describe("failure honesty", () => {
   });
 
   it("503s when Gemini is not configured", async () => {
-    signedIn("user-1");
+    signedIn();
     store.listPages.mockResolvedValue({ pages: [page("p1", null)], error: null });
     listAttachments.mockResolvedValue({ attachments: [], error: null });
     getServerEnv.mockImplementation(() => {
@@ -324,5 +331,45 @@ describe("failure honesty", () => {
     const res = await POST(jsonRequest({ pageId: "p1" }));
     expect(res.status).toBe(503);
     expect(store.createPage).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The spend ceiling. Every non-embedded request is one SEARCH-GROUNDED Gemini
+// call plus the page write behind it.
+// ---------------------------------------------------------------------------
+describe("the research spend ceiling actually bites", () => {
+  const LIMIT = 10;
+
+  it("denies past the bound, and an invalid request still spends the caller's own allowance", async () => {
+    // Checked BEFORE pageId validation on purpose: an invalid request is still
+    // a request, and a caller hammering this endpoint with junk must exhaust
+    // its own allowance rather than get an unmetered lane.
+    signedIn("research-greedy");
+
+    const statuses = [];
+    for (let i = 0; i < LIMIT + 1; i += 1) {
+      statuses.push((await POST(jsonRequest({}))).status);
+    }
+
+    // A limiter built INSIDE the handler gets a fresh store on every request,
+    // so every caller is forever on its first request and all LIMIT+1 are 400.
+    expect(statuses.filter((s) => s === 400)).toHaveLength(LIMIT);
+    expect(statuses[LIMIT]).toBe(429);
+
+    const denied = await POST(jsonRequest({}));
+    expect(denied.status).toBe(429);
+    expect(Number(denied.headers.get("Retry-After"))).toBeGreaterThanOrEqual(1);
+    expect(denied.headers.get("RateLimit-Limit")).toBe(String(LIMIT));
+    expect(getGeminiClient).not.toHaveBeenCalled();
+  });
+
+  it("counts per authenticated user, so one caller's flood cannot deny another", async () => {
+    signedIn("research-flooder");
+    for (let i = 0; i < LIMIT + 1; i += 1) await POST(jsonRequest({}));
+    expect((await POST(jsonRequest({}))).status).toBe(429);
+
+    signedIn("research-bystander");
+    expect((await POST(jsonRequest({}))).status).toBe(400);
   });
 });

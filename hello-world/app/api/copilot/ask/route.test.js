@@ -27,6 +27,7 @@ import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { createClient } from "@/lib/supabase/server";
 import { answerContextCache } from "@/lib/copilot/answerSessionCache";
+import { MAX_QUESTION_CHARS } from "@/lib/copilot/questionVocabulary";
 
 const ROUTE_SOURCE = readFileSync(path.join(process.cwd(), "app/api/copilot/ask/route.js"), "utf8");
 
@@ -193,7 +194,10 @@ describe("the question is bounded, and an empty one costs nothing", () => {
 
   it("REFUSES an over-cap question rather than silently answering a shorter one", async () => {
     const { from } = mockSupabase({ id: "long-user" });
-    const res = await POST(jsonRequest({ question: "k".repeat(2001), applicationId: "app-1" }));
+    // MAX_QUESTION_CHARS + 1, not a copy of today's literal -- exactly one
+    // character over whatever the cap actually is, so this stays "one over
+    // the cap" if the cap is ever raised (route.js:135 rejects on `> MAX_QUESTION_CHARS`).
+    const res = await POST(jsonRequest({ question: "k".repeat(MAX_QUESTION_CHARS + 1), applicationId: "app-1" }));
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/too long/i);
     expect(from).not.toHaveBeenCalled();

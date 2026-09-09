@@ -6,6 +6,12 @@ import { logChatMessage } from "@/lib/supabase/logChatMessage";
 import { wantsEmbedded } from "@/lib/llm/featureEngine";
 import { localChatReply } from "@/lib/chat/localAssistant";
 import { truncate, renderApplicationsSection } from "@/lib/chat/applicationContext";
+// Token accounting. Nothing in this repo read `usageMetadata` before this --
+// grepped at HEAD 9c27a63, zero hits outside node_modules -- so no model call
+// anywhere in the app could be costed. See lib/chat/usageAccounting.js for the
+// rule that governs it (a failed instrument is invalid, never its zero value)
+// and for why the readout lives here rather than in lib/activityLog/.
+import { readUsageTokens, summarizeContextChars, formatUsageLogLine } from "@/lib/chat/usageAccounting";
 // The latest typed question is untrusted, caller-supplied input like the
 // interview copilot's `question` -- so it is capped with the SAME shared
 // constant that route caps against (app/api/copilot/answer/route.js:55),
@@ -31,12 +37,30 @@ const MAX_ATTACHED_CHARS = 8000;
 const MAX_FETCHED_URLS = 3;
 const MAX_FETCHED_URL_CHARS = 8000;
 
+// Returns `{ text, sections }`.
+//
+// `text` is BYTE-IDENTICAL to what this function returned before it grew a
+// second return value -- same parts, same order, same `"\n\n"` join. Nothing
+// about what the model reads changed here.
+//
+// `sections` is the measurement: `[{ id, chars }]`, one entry per part that was
+// actually pushed, keyed by the request-body field it came from so a developer
+// reading the number knows what to cut to change it. Taken AS THE BLOCK IS
+// ASSEMBLED rather than by re-rendering it afterwards -- a second render is a
+// different string the moment anyone touches a cap, and a measurement that can
+// silently disagree with the thing it measures is worse than none.
 function buildContextBlock(resumeText, applications, pinnedContext, attachedFiles, fetchedUrls) {
   const parts = [];
+  const sections = [];
+  const push = (id, text) => {
+    parts.push(text);
+    sections.push({ id, chars: text.length });
+  };
 
   if (pinnedContext && typeof pinnedContext.content === "string" && pinnedContext.content.trim()) {
     const label = (typeof pinnedContext.label === "string" && pinnedContext.label.trim()) || "Pinned Context";
-    parts.push(
+    push(
+      "pinnedContext",
       `--- PINNED CONTEXT (user just clicked "Ask AI" on this; treat as the primary subject of the question) ---\n[${label}]\n${truncate(pinnedContext.content.trim(), MAX_RESUME_CHARS)}`,
     );
   }
@@ -52,7 +76,8 @@ function buildContextBlock(resumeText, applications, pinnedContext, attachedFile
         return `[${header}]\n${truncate(u.description || "", MAX_FETCHED_URL_CHARS)}`;
       });
     if (rendered.length > 0) {
-      parts.push(
+      push(
+        "fetchedUrls",
         `--- FETCHED URLS (content the user linked in their message; treat as primary reference material) ---\n${rendered.join("\n\n")}`,
       );
     }
@@ -67,20 +92,21 @@ function buildContextBlock(resumeText, applications, pinnedContext, attachedFile
         return `[${name}]\n${truncate(f.content.trim(), MAX_ATTACHED_CHARS)}`;
       });
     if (rendered.length > 0) {
-      parts.push(`--- USER-ATTACHED FILES (dropped into chat as context) ---\n${rendered.join("\n\n")}`);
+      push("attachedFiles", `--- USER-ATTACHED FILES (dropped into chat as context) ---\n${rendered.join("\n\n")}`);
     }
   }
 
   if (typeof resumeText === "string" && resumeText.trim()) {
-    parts.push(
+    push(
+      "resumeText",
       `--- USER'S UPLOADED RESUME ---\n${truncate(resumeText.trim(), MAX_RESUME_CHARS)}`,
     );
   }
 
   const applicationsSection = renderApplicationsSection(applications);
-  if (applicationsSection) parts.push(applicationsSection);
+  if (applicationsSection) push("applications", applicationsSection);
 
-  return parts.join("\n\n");
+  return { text: parts.join("\n\n"), sections };
 }
 
 // AC-1/AC-2 (app/api/chat/route.promptInjection.test.js): `buildContextBlock`'s
@@ -313,7 +339,13 @@ export async function POST(request) {
     // failing that (no user turn at all, e.g. every message was
     // assistant-authored), a synthetic trailing user turn so the context is
     // never silently dropped.
-    const contextBlock = buildContextBlock(resumeText, applications, pinnedContext, attachedFiles, fetchedUrls);
+    const { text: contextBlock, sections: contextSections } = buildContextBlock(
+      resumeText,
+      applications,
+      pinnedContext,
+      attachedFiles,
+      fetchedUrls,
+    );
     if (contextBlock) {
       const wrappedContext = { text: wrapUntrustedContext(contextBlock) };
       if (lastUserContentIndex >= 0) {
@@ -331,6 +363,39 @@ export async function POST(request) {
       },
     });
 
+    // --- What this turn cost -------------------------------------------------
+    //
+    // WHERE A DEVELOPER READS IT, both places deliberate:
+    //
+    //   1. The server log, one greppable line per Gemini turn
+    //      (`grep '\[chat\] usage'`). This is the only readout that exists for
+    //      a deployed function, and it sits beside the `[chat] logging message`
+    //      line this route already prints.
+    //   2. `usage` on the JSON response -- DevTools > Network > /api/chat >
+    //      Response. No new UI, no new plumbing, and it is the same numbers, so
+    //      the two can never disagree.
+    //
+    // Not the activity log: its own registry declares server-side work an
+    // uncaptured surface, in prose printed into the file users download. See
+    // lib/chat/usageAccounting.js's header for the full reasoning.
+    //
+    // `usage.tokens` is NULL, not zeros, when the provider sent no metadata.
+    // Both halves are computed after the call and neither can fail the request:
+    // the accounting functions are total.
+    const usage = {
+      tokens: readUsageTokens(response),
+      context: summarizeContextChars(contextSections),
+    };
+    // The comparison the applications finding turns on: the context block is
+    // re-sent WHOLE on every turn, while the transcript is the only part that
+    // actually grows. Printing both makes the ratio readable per request
+    // instead of arguable.
+    const transcriptChars = messages.reduce(
+      (total, m) => total + (typeof m?.content === "string" ? m.content.length : 0),
+      0,
+    );
+    console.log(formatUsageLogLine({ model: geminiModel, tokens: usage.tokens, context: usage.context, transcriptChars }));
+
     const rawReply = response.text?.trim() || "";
     // Defensive: even with the system prompt forbidding bold/italic, the model
     // occasionally emits markdown emphasis. Strip it server-side so the UI
@@ -341,7 +406,11 @@ export async function POST(request) {
       return Response.json({ error: "Empty response from Gemini." }, { status: 502 });
     }
 
-    return Response.json({ reply });
+    // ADDITIVE. `readChatResponse` (lib/chat/chatbot.js) reads only `reply` off
+    // a 200 and ignores everything else, so no client behaviour changes; the
+    // field exists so the cost of a turn is readable from the browser's own
+    // Network panel without a debug build.
+    return Response.json({ reply, usage });
   } catch (err) {
     return Response.json({ error: err?.message || "Chat request failed." }, { status: 500 });
   }

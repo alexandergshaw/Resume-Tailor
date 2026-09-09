@@ -35,7 +35,14 @@ function request(body) {
 
 const redirectFor = (slug) => `https://vertexaisearch.cloud.google.com/grounding-api-redirect/${slug}`;
 
-function signedIn(userId = "user-1") {
+// USER IDS ARE UNIQUE PER CALL, deliberately. This route's rate limiter is a
+// module singleton -- built at module scope so its counters survive between
+// requests -- which means they also survive between `it()` blocks in this file.
+// A shared "user-1" would let an early case's requests deny a later one, which
+// is a defect in the TEST, not in the bound. Cases that assert on the id itself
+// still pass one explicitly. Same discipline as app/api/copilot/ask/route.test.js.
+let userSeq = 0;
+function signedIn(userId = `references-user-${(userSeq += 1)}`) {
   createClient.mockResolvedValue({
     auth: { getUser: async () => ({ data: { user: { id: userId } }, error: null }) },
   });
@@ -524,5 +531,46 @@ describe("POST /api/meeting/references — caching", () => {
 
     expect(cached).not.toHaveBeenCalled();
     expect(generate).toHaveBeenCalledTimes(2); // no caching → every request looks it up itself
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The spend ceiling. Every cache MISS here is a search-grounded Gemini call
+// plus an outbound fetch per candidate link.
+// ---------------------------------------------------------------------------
+describe("the references spend ceiling actually bites", () => {
+  const LIMIT = 12;
+
+  it("denies past the bound, and an invalid request still spends the caller's own allowance", async () => {
+    // Checked BEFORE insightText validation on purpose: an invalid request is
+    // still a request, and a caller hammering this endpoint with junk must
+    // exhaust its own allowance rather than get an unmetered lane.
+    signedIn("references-greedy");
+    const generate = geminiReplying([{ title: "x", url: "https://a.example" }], ["https://a.example"]);
+
+    const statuses = [];
+    for (let i = 0; i < LIMIT + 1; i += 1) {
+      statuses.push((await POST(request({}))).status);
+    }
+
+    // A limiter built INSIDE the handler gets a fresh store on every request,
+    // so every caller is forever on its first request and all LIMIT+1 are 400.
+    expect(statuses.filter((s) => s === 400)).toHaveLength(LIMIT);
+    expect(statuses[LIMIT]).toBe(429);
+
+    const denied = await POST(request({}));
+    expect(denied.status).toBe(429);
+    expect(Number(denied.headers.get("Retry-After"))).toBeGreaterThanOrEqual(1);
+    expect(denied.headers.get("RateLimit-Limit")).toBe(String(LIMIT));
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("counts per authenticated user, so one caller's flood cannot deny another", async () => {
+    signedIn("references-flooder");
+    for (let i = 0; i < LIMIT + 1; i += 1) await POST(request({}));
+    expect((await POST(request({}))).status).toBe(429);
+
+    signedIn("references-bystander");
+    expect((await POST(request({}))).status).toBe(400);
   });
 });

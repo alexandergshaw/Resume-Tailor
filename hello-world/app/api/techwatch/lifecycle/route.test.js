@@ -29,7 +29,14 @@ import { POST } from "./route.js";
 
 const TECHNOLOGIES = [{ id: "typescript", label: "TypeScript" }];
 
-function signedIn(userId = "user-1") {
+// USER IDS ARE UNIQUE PER CALL, deliberately. This route's rate limiter is a
+// module singleton -- built at module scope so its counters survive between
+// requests -- which means they also survive between `it()` blocks in this file.
+// A shared "user-1" would let an early case's requests deny a later one, which
+// is a defect in the TEST, not in the bound. Cases that assert on the id itself
+// still pass one explicitly. Same discipline as app/api/copilot/ask/route.test.js.
+let userSeq = 0;
+function signedIn(userId = `lifecycle-user-${(userSeq += 1)}`) {
   createClient.mockResolvedValue({
     auth: { getUser: async () => ({ data: { user: { id: userId } }, error: null }) },
   });
@@ -232,5 +239,44 @@ describe("POST /api/techwatch/lifecycle", () => {
     const mod = await import("./route.js");
     expect(mod.runtime).toBe("nodejs");
     expect(mod.dynamic).toBe("force-dynamic");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The spend ceiling. Up to four SEARCH-GROUNDED calls per request -- the
+// highest per-request cost in Tech Watch, and the only endpoint here that calls
+// a model at all.
+// ---------------------------------------------------------------------------
+describe("the lifecycle spend ceiling actually bites", () => {
+  const LIMIT = 10;
+
+  it("denies past the bound with 429, Retry-After and the RateLimit-* headers", async () => {
+    signedIn("lifecycle-greedy");
+    geminiReplying([ROW]);
+
+    const statuses = [];
+    for (let i = 0; i < LIMIT + 1; i += 1) {
+      statuses.push((await POST(request({ technologies: TECHNOLOGIES }))).status);
+    }
+
+    // A limiter built INSIDE the handler gets a fresh store on every request,
+    // so every caller is forever on its first request and all LIMIT+1 succeed.
+    expect(statuses.filter((s) => s !== 429)).toHaveLength(LIMIT);
+    expect(statuses[LIMIT]).toBe(429);
+
+    const denied = await POST(request({ technologies: TECHNOLOGIES }));
+    expect(denied.status).toBe(429);
+    expect(Number(denied.headers.get("Retry-After"))).toBeGreaterThanOrEqual(1);
+    expect(denied.headers.get("RateLimit-Limit")).toBe(String(LIMIT));
+  });
+
+  it("counts per authenticated user, so one caller's flood cannot deny another", async () => {
+    signedIn("lifecycle-flooder");
+    geminiReplying([ROW]);
+    for (let i = 0; i < LIMIT + 1; i += 1) await POST(request({ technologies: TECHNOLOGIES }));
+    expect((await POST(request({ technologies: TECHNOLOGIES }))).status).toBe(429);
+
+    signedIn("lifecycle-bystander");
+    expect((await POST(request({ technologies: TECHNOLOGIES }))).status).not.toBe(429);
   });
 });

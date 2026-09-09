@@ -1,5 +1,41 @@
 import { getDeepgramApiKey, getElevenLabsApiKey, getSttProvider } from "@/lib/config/env";
 import { createClient as createSupabaseServerClient } from "@/lib/supabase/server";
+import { createRateLimiter, identify, rateLimitHeaders } from "@/lib/rateLimit/index";
+
+// ---------------------------------------------------------------------------
+// THE SPEND CEILING for copilot-token.
+//
+// BUILT AT MODULE SCOPE, AND THAT IS LOAD-BEARING. A limiter constructed inside
+// the handler gets a brand-new store on every request, so every caller is
+// forever on its first request: it permits everything, counts nothing, and
+// passes a smoke test while doing it. lib/rateLimit/index.js's header states
+// this as the one way to adopt it catastrophically wrong, and both halves are
+// pinned -- a behavioural case that fires 11 requests and expects the last to
+// be denied (a per-request limiter would pass all 11), and the static case in
+// lib/rateLimit/adoption.test.js that this declaration precedes the handlers.
+//
+// 10 per 10 minutes, per authenticated user, ON POST ONLY. Each POST mints a
+// REAL credential at a metered provider, and the ElevenLabs one is single-use:
+// it is consumed whether or not the browser ever connects, so a loop here is
+// pure third-party spend with nothing to show for it. A session needs one mint
+// plus a handful of reconnects. GET is deliberately NOT limited -- it calls no
+// provider, costs nothing, and the copilot's privacy notice reads it on every
+// page view, so a bound there would be cost without benefit.
+//
+// A DENIED REQUEST STILL INCREMENTS (see the module's header): the bound is
+// 10 ATTEMPTS, not 10 successful mints.
+//
+// HONEST ABOUT WHAT THIS BUYS: createMemoryStore is per-instance, so on
+// serverless this bounds a caller to 10 x instanceCount, not 10. It is worth
+// having anyway -- it turns an unbounded token-minting loop into a bounded one
+// -- but it is not a fleet-wide guarantee and must not be described as one.
+// Swapping in a Redis-backed store satisfying the same two-method interface
+// needs no change here.
+// ---------------------------------------------------------------------------
+const tokenLimiter = createRateLimiter({ limit: 10, windowMs: 600_000, prefix: "copilot-token" });
+
+const tokenRateLimitedMessage =
+  "Too many speech-to-text sessions started in a short window. Wait a moment and try again.";
 
 // Read-only counterpart to POST below: returns which provider is selected
 // without minting anything. A caller that only wants to know the provider
@@ -49,6 +85,25 @@ export async function POST() {
       return Response.json(
         { error: "Sign in to use the interview copilot." },
         { status: 401 },
+      );
+    }
+
+    // THE BOUND, keyed on the id the auth gate above resolved -- never on the
+    // caller's access token, and never before the auth resolves. Checked ahead
+    // of the provider lookup on purpose: a denied caller must not reach the
+    // mint, and must not learn anything about which provider is configured
+    // that it could not already learn from GET.
+    //
+    // `identify(null, ...)`: this handler takes no `request` (nothing here
+    // reads the body or the URL), and the authenticated id is the only key
+    // this route ever wants. The address path in `identify` is a backstop for
+    // anonymous routes; there is no anonymous caller here, because the 401
+    // above already returned.
+    const rateLimit = await tokenLimiter.check(identify(null, { userId: user.id }));
+    if (!rateLimit.allowed) {
+      return Response.json(
+        { error: tokenRateLimitedMessage },
+        { status: 429, headers: rateLimitHeaders(rateLimit) },
       );
     }
 

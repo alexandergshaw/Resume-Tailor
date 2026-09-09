@@ -26,6 +26,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import AskAiBox from "./AskAiBox.js";
 import { atWidth } from "@/app/theme/computedStyleAtWidth";
+import { MAX_QUESTION_CHARS } from "@/lib/copilot/questionVocabulary";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -127,9 +128,11 @@ describe("the box is there to type into, with no step in front of it", () => {
     expect(container.querySelectorAll("[aria-label]")).toHaveLength(0);
   });
 
-  it("caps the field at the same 2000 characters the route refuses past", async () => {
+  it("caps the field at the same number of characters the route refuses past", async () => {
     await render();
-    expect(input().getAttribute("maxLength")).toBe("2000");
+    // Imported, not hardcoded: a test asserting a copy of the literal cannot
+    // change even when a future audit rules MAX_QUESTION_CHARS should.
+    expect(input().getAttribute("maxLength")).toBe(String(MAX_QUESTION_CHARS));
   });
 });
 

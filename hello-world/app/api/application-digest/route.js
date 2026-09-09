@@ -44,6 +44,7 @@ import {
 import { listDigests, upsertDigest } from "@/lib/supabase/applicationDigests";
 import { buildCitedDigest } from "@/lib/tracking/digestCitations";
 import { buildDigestPrompt } from "@/lib/tracking/applicationDigest";
+import { createRateLimiter, identify, rateLimitHeaders } from "@/lib/rateLimit/index";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -137,6 +138,38 @@ function failureMessage(err, interaction) {
   return err?.message || GENERIC_FAILURE;
 }
 
+// ---------------------------------------------------------------------------
+// THE SPEND CEILING for application-digest.
+//
+// BUILT AT MODULE SCOPE, AND THAT IS LOAD-BEARING. A limiter constructed inside
+// the handler gets a brand-new store on every request, so every caller is
+// forever on its first request: it permits everything, counts nothing, and
+// passes a smoke test while doing it. lib/rateLimit/index.js's header states
+// this as the one way to adopt it catastrophically wrong, and both halves are
+// pinned -- a behavioural case that fires 13 requests and expects the last to
+// be denied (a per-request limiter would pass all 13), and the static case in
+// lib/rateLimit/adoption.test.js that this declaration precedes the handler.
+//
+// 12 per 10 minutes, per authenticated user. Each miss is one SEARCH-GROUNDED
+// Interactions call, the most expensive single request the tracking table can
+// issue. A person researches a handful of applications in a sitting; the
+// stored digest serves every re-render after that.
+// A DENIED REQUEST STILL INCREMENTS (see the module's header): the bound is
+// 12 ATTEMPTS, not 12 successes.
+//
+// HONEST ABOUT WHAT THIS BUYS: createMemoryStore is per-instance, so on
+// serverless this bounds a caller to 12 x instanceCount, not 12. It is worth
+// having anyway -- it is the difference between a runaway client costing
+// thousands of grounded searches and costing a few.
+// It is not a fleet-wide guarantee and must not be described as one. Swapping
+// in a Redis-backed store satisfying the same two-method interface needs no
+// change here.
+// ---------------------------------------------------------------------------
+const digestLimiter = createRateLimiter({ limit: 12, windowMs: 600_000, prefix: "application-digest" });
+
+const digestRateLimitedMessage =
+  "Too many digests requested in a short window. Wait a moment and try again.";
+
 export async function POST(request) {
   const supabase = await createClient();
   const {
@@ -144,6 +177,19 @@ export async function POST(request) {
   } = await supabase.auth.getUser();
   if (!user) return unauthorized();
   const userId = user.id;
+
+  // THE BOUND, keyed on the id the auth gate above resolved -- never on the
+  // caller's access token, and never before the auth resolves. Checked ahead of
+  // body validation on purpose: an invalid request is still a request, and a
+  // caller hammering this endpoint with junk should exhaust its own allowance
+  // rather than get an unmetered lane.
+  const rateLimit = await digestLimiter.check(identify(request, { userId }));
+  if (!rateLimit.allowed) {
+    return Response.json(
+      { error: digestRateLimitedMessage },
+      { status: 429, headers: rateLimitHeaders(rateLimit) },
+    );
+  }
 
   let body;
   try {

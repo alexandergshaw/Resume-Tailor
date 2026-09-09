@@ -515,3 +515,41 @@ describe("POST /api/meeting/insights — Gemini failure degrades to local, never
     expect(json.degraded).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The spend ceiling. This route is re-asked as a live meeting's transcript
+// grows, so the bound is deliberately generous -- roughly one call every ten
+// seconds -- while still turning an unbounded loop into a bounded one.
+// ---------------------------------------------------------------------------
+describe("the insights spend ceiling actually bites", () => {
+  const LIMIT = 60;
+  const body = { transcript: "Are we on track for the rollout?", engine: "embedded" };
+
+  it("denies past the bound with 429, Retry-After and the RateLimit-* headers", async () => {
+    mockUser("insights-greedy");
+
+    const statuses = [];
+    for (let i = 0; i < LIMIT + 1; i += 1) {
+      statuses.push((await POST(jsonRequest(body))).status);
+    }
+
+    // A limiter built INSIDE the handler gets a fresh store on every request,
+    // so every caller is forever on its first request and all LIMIT+1 succeed.
+    expect(statuses.filter((s) => s !== 429)).toHaveLength(LIMIT);
+    expect(statuses[LIMIT]).toBe(429);
+
+    const denied = await POST(jsonRequest(body));
+    expect(denied.status).toBe(429);
+    expect(Number(denied.headers.get("Retry-After"))).toBeGreaterThanOrEqual(1);
+    expect(denied.headers.get("RateLimit-Limit")).toBe(String(LIMIT));
+  });
+
+  it("counts per authenticated user, so one caller's flood cannot deny another", async () => {
+    mockUser("insights-flooder");
+    for (let i = 0; i < LIMIT + 1; i += 1) await POST(jsonRequest(body));
+    expect((await POST(jsonRequest(body))).status).toBe(429);
+
+    mockUser("insights-bystander");
+    expect((await POST(jsonRequest(body))).status).not.toBe(429);
+  });
+});

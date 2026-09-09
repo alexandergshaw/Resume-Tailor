@@ -284,6 +284,179 @@ describe("per-fragment failure reporting", () => {
   });
 });
 
+// DEFECT -- `handleClose` used to contain `if (importing) return;`, a real
+// busy lock that traps the user in this dialog while an import is in
+// flight, with the comment claiming it "matches FormDialog's own busy
+// gate" -- a gate that commit 8866be1 removed specifically because a
+// busy-lock on the exit path is itself a defect (see FormDialog.js's own
+// comment on the removed `allowCloseWhileBusy`). This dialog is not a
+// FormDialog consumer (its per-fragment checklist/preview/results shape
+// does not fit FormDialog's single-error, single-submit contract), so the
+// fix has to bring FormDialog's PATTERN here directly: the exit always
+// works, and a failure that arrives after the user left brings the dialog
+// back to show it, instead of vanishing silently.
+//
+// MUI's own exit transition (a real setTimeout-driven Fade) never
+// completes in jsdom without fake timers advanced past it -- same
+// reasoning as FormDialog.test.js's own header comment on
+// `finishExitTransition`.
+describe("exit works even mid-import, and a late failure is not silently lost", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function finishExitTransition() {
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+  }
+
+  // A controllable pending fetch so the test can close the dialog WHILE the
+  // import is still in flight, then decide how each request settles.
+  function deferred() {
+    let resolve;
+    const promise = new Promise((res) => {
+      resolve = res;
+    });
+    return { promise, resolve };
+  }
+
+  async function pressEscape() {
+    const target = document.querySelector(".MuiDialog-root");
+    await act(async () => {
+      target.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+  }
+
+  it("still closes on Escape while an import is in flight -- the fix must not add a busy lock", async () => {
+    const d1 = deferred();
+    const d2 = deferred();
+    global.fetch = vi.fn((url, opts) => {
+      const { text } = JSON.parse(opts.body);
+      return text === FRAGMENTS[1].text ? d2.promise : d1.promise;
+    });
+
+    let closes = 0;
+    await act(async () => {
+      root.render(
+        createElement(ImportToLibraryDialog, {
+          open: true,
+          onClose: () => {
+            closes += 1;
+          },
+          fragments: FRAGMENTS,
+        }),
+      );
+    });
+
+    await click(findButton("Add 2 to library"));
+    await flush();
+    expect(document.body.textContent).toContain("Importing…");
+
+    await pressEscape();
+    expect(closes, "Escape must still close the dialog even while an import is running -- a busy lock is itself the defect").toBe(1);
+  });
+
+  it("keeps Cancel enabled while importing, matching FormDialog's own busy-affordance rule", async () => {
+    const d1 = deferred();
+    global.fetch = vi.fn(() => d1.promise);
+    await render(baseProps());
+
+    await click(findButton("Add 2 to library"));
+    await flush();
+
+    const cancelBtn = findButton("Cancel");
+    expect(cancelBtn, "[instrument] a Cancel/Done button must be present while importing").toBeDefined();
+    expect(
+      cancelBtn.disabled,
+      "Cancel must stay enabled while busy -- a greyed-out Cancel beside a working Escape says 'you cannot leave' when you actually can",
+    ).toBe(false);
+  });
+
+  it("brings the dialog back to show a failure that arrives after the user left mid-import", async () => {
+    const d1 = deferred();
+    const d2 = deferred();
+    global.fetch = vi.fn((url, opts) => {
+      const { text } = JSON.parse(opts.body);
+      return text === FRAGMENTS[1].text ? d2.promise : d1.promise;
+    });
+
+    const onClose = vi.fn();
+    await act(async () => {
+      root.render(createElement(ImportToLibraryDialog, { open: true, onClose, fragments: FRAGMENTS }));
+    });
+
+    await click(findButton("Add 2 to library"));
+    await flush();
+
+    await pressEscape();
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    // The real caller (BulkActionsBar.js's own `onClose={() => setLibraryOpen(false)}`)
+    // reacts by setting its own `open` state false, unconditionally.
+    await act(async () => {
+      root.render(createElement(ImportToLibraryDialog, { open: false, onClose, fragments: FRAGMENTS }));
+    });
+    await finishExitTransition();
+    expect(
+      document.querySelector('[role="dialog"]'),
+      "[instrument] the exit must actually complete once its transition finishes",
+    ).toBeNull();
+
+    // One import succeeds, the other fails, after the user already left.
+    await act(async () => {
+      d1.resolve(jsonResponse(200, { row: {} }));
+      d2.resolve(jsonResponse(400, { error: "frag_id already exists." }));
+    });
+    await flush();
+
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog, "a failure that arrives after the user left mid-import must not be silently lost").not.toBeNull();
+    expect(dialog.textContent).toContain("frag_id already exists.");
+  });
+
+  it("does NOT reopen when every import that was in flight actually succeeds", async () => {
+    const d1 = deferred();
+    const d2 = deferred();
+    global.fetch = vi.fn((url, opts) => {
+      const { text } = JSON.parse(opts.body);
+      return text === FRAGMENTS[1].text ? d2.promise : d1.promise;
+    });
+
+    const onClose = vi.fn();
+    await act(async () => {
+      root.render(createElement(ImportToLibraryDialog, { open: true, onClose, fragments: FRAGMENTS }));
+    });
+
+    await click(findButton("Add 2 to library"));
+    await flush();
+
+    await pressEscape();
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      root.render(createElement(ImportToLibraryDialog, { open: false, onClose, fragments: FRAGMENTS }));
+    });
+    await finishExitTransition();
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+
+    await act(async () => {
+      d1.resolve(jsonResponse(200, { row: {} }));
+      d2.resolve(jsonResponse(200, { row: {} }));
+    });
+    await flush();
+
+    expect(
+      document.querySelector('[role="dialog"]'),
+      "an import that succeeds after the user left must not resurrect the dialog",
+    ).toBeNull();
+  });
+});
+
 // DRIFT CANARY. lib/llm/engines/tailor-lite/strategy.js does not export its
 // KEYWORD_JOIN dict (nothing under tailor-lite may be edited to add one -
 // see this chunk's own scope), so KEYWORD_JOIN_NAMES in ImportToLibraryDialog.js
