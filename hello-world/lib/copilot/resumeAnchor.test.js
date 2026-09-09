@@ -439,3 +439,96 @@ describe("resumeAnchor plausibility gate", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// The verb-initial check is TOO BROAD, and it was the one check with no test
+// where it is the deciding factor.
+// ---------------------------------------------------------------------------
+// MEASURED: both cases the suite already labels "verb-initial" are 8 and 9
+// words long, so `words.length > MAX_HEADER_WORDS` (6) blanks them before the
+// ACHIEVEMENT_VERBS line is ever reached. Deleting that line entirely left both
+// of them green. So the verb check's only real effect is on SHORT capitalised
+// segments -- which is exactly where real job titles live.
+//
+// Two of them, both real titles at real companies, were discarded whole:
+//
+//   "Managed Services Lead"   -- "Managed" is a past participle used
+//                                adjectivally; "Managed Services" is a standard
+//                                industry term.
+//   "Cut-Over Specialist"     -- the hyphen is a word boundary, so `\bcut\b`
+//                                matches inside "Cut-Over".
+//
+// And because a non-empty field failing the gate blanks its sibling too, each
+// one takes a perfectly good employer with it.
+describe("the verb-initial check does not swallow verb-shaped job titles", () => {
+  it("keeps a title whose first word is a participle, not an achievement verb", () => {
+    expect(gateHeaderPair("Managed Services Lead", "Initech")).toEqual({
+      title: "Managed Services Lead",
+      company: "Initech",
+    });
+  });
+
+  it("keeps a title whose first token is a hyphenated compound", () => {
+    // `\bcut\b` matches inside "Cut-Over" because the hyphen is a word
+    // boundary. Reading the whole segment rather than only words[0] is what
+    // makes the hyphen stop mattering, with no special case for it.
+    expect(gateHeaderPair("Cut-Over Specialist", "Initech")).toEqual({
+      title: "Cut-Over Specialist",
+      company: "Initech",
+    });
+  });
+
+  it("keeps more of the same shape, since neither of the two above is a special case", () => {
+    for (const title of [
+      "Managed Care Coordinator",
+      "Delivered Solutions Architect",
+      "Cut-Over Manager",
+      "Managed Services Lead II",
+    ]) {
+      expect(gateHeaderPair(title, "Initech"), title).toEqual({ title, company: "Initech" });
+    }
+  });
+
+  it("STILL blanks a short verb-initial bullet — the coverage this branch never had", () => {
+    // The paired negative, and the reason the narrowing is what it is. Every
+    // one of these is <= 6 words and capitalised, so the length check does NOT
+    // catch them: the verb check is the only thing standing between them and
+    // being read aloud as a job title.
+    for (const bullet of [
+      "Built the payment platform",
+      "Led a team of engineers",
+      "Reduced costs by 40%",
+      "Managed engineering teams",
+      "Cut release time in half",
+      "Shipped the redesign early",
+    ]) {
+      expect(gateHeaderPair(bullet, "Initech"), bullet).toEqual({ title: "", company: "" });
+    }
+  });
+
+  it("[control] the narrowing is not simply 'accept everything short'", () => {
+    // The three other checks must be untouched: a lowercase-initial wrap, a
+    // mid-string sentence break, and an over-long run all still blank the pair.
+    expect(gateHeaderPair("and development teams to translate", "Initech")).toEqual({ title: "", company: "" });
+    expect(gateHeaderPair("Owned the roadmap. Reported to the VP", "Initech")).toEqual({ title: "", company: "" });
+    expect(gateHeaderPair("Managed Services Lead For Europe And The Americas", "Initech")).toEqual({
+      title: "",
+      company: "",
+    });
+  });
+
+  it("reaches the real path, not just the exported gate", () => {
+    // gateHeaderPair is exported for literal-string cases, but a fix that only
+    // satisfied the unit would be the "green and broken" shape this repo keeps
+    // paying for. This drives the whole parse.
+    const material = [
+      "Experience",
+      "Managed Services Lead | Initech",
+      "Jan 2019 - Dec 2020",
+      "- Ran the cut-over for eleven regional sites with no unplanned downtime.",
+    ].join("\n");
+    const anchor = resumeAnchor(material, { question: "Tell me about running a cut-over." });
+    expect(anchor.title).toBe("Managed Services Lead");
+    expect(anchor.company).toBe("Initech");
+  });
+});

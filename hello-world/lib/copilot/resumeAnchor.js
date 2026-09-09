@@ -102,6 +102,21 @@ const MAX_HEADER_CHARS = 60;
 // punctuation, not a sign that a whole sentence leaked into the field.
 const MID_SENTENCE_PUNCTUATION_RE = /[.!?]\s/;
 
+// Is every word AFTER the first one capitalised? That is the shape of a title
+// compound ("Managed **Services Lead**", "Cut-Over **Specialist**") and not the
+// shape of a clause, because a clause carries lowercase function words —
+// "Led **a** team", "Built **the** platform", "Cut **costs** by 30%". Used to
+// narrow the verb-initial check below, and deliberately reads the WHOLE segment
+// rather than just the word after the verb: "Built the Payment Platform" has a
+// capitalised noun immediately after `words[0]` and is still a bullet.
+//
+// `words.length > 1` matters. Without it a lone "Managed" would pass vacuously,
+// and a single achievement verb standing alone as a header segment is far more
+// likely to be a bullet fragment than a job title.
+function isTitleCaseCompound(words) {
+  return words.length > 1 && words.slice(1).every((w) => /^[A-Z0-9]/.test(w));
+}
+
 // Does this NON-EMPTY string still read as a name (a title or an employer)
 // rather than a résumé bullet that got dragged into the header? The 4 checks
 // below are evaluated purely from the field's OWN text — never compared
@@ -127,7 +142,29 @@ function looksLikeName(text) {
   // than a second hand-rolled verb list, so "what counts as a bullet verb"
   // is answered the same way here as everywhere else that mines a résumé
   // line for an achievement signal.
-  if (ACHIEVEMENT_VERBS.test(words[0])) return false;
+  //
+  // ...but NOT when the rest of the segment is Title Case, because plenty of
+  // real titles begin with a word this list contains: "Managed Services Lead"
+  // (a past participle used adjectivally, and a standard industry term),
+  // "Managed Care Coordinator", "Cut-Over Specialist" (the hyphen is a word
+  // boundary, so `\bcut\b` matches inside the compound). Each was discarded
+  // whole — and, through the sibling rule below, took a perfectly good employer
+  // with it.
+  //
+  // WHY THIS NARROWING AND NOT A LOOSER ONE. The impact fails safe today: a
+  // candidate loses a role label rather than being handed a wrong sentence to
+  // read aloud mid-interview. So the wrong direction to be wrong in is
+  // ACCEPTING a bullet, and the override is written to be hard to satisfy by
+  // accident — every following word must be capitalised, so a single lowercase
+  // function word anywhere ("Managed Services Lead for EMEA") keeps the
+  // rejection. That costs a real title now and then, in the safe direction.
+  //
+  // Measured, and worth knowing before touching this line: the two cases this
+  // suite labels "verb-initial" are 8 and 9 words, so MAX_HEADER_WORDS blanks
+  // them before this check runs. Its only live effect is on short capitalised
+  // segments, which is where both the bullets and the real titles are — see
+  // resumeAnchor.test.js's paired positive and negative runs.
+  if (ACHIEVEMENT_VERBS.test(words[0]) && !isTitleCaseCompound(words)) return false;
   // A period/question mark/exclamation point followed by whitespace means
   // more than one sentence got glued into this field — never true of a
   // title or an employer name.
