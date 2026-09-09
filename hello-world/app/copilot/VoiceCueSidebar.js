@@ -8,7 +8,7 @@ import Typography from "@mui/material/Typography";
 import { VOICE_CUES } from "@/lib/copilot/voiceCues";
 import { answerCompanyFactsNotice, companyResearchDestination } from "@/lib/copilot/groundingNotice";
 import { SPEAKER_ATTRIBUTION, cueAvailabilityNotice, cueRowNote } from "@/lib/copilot/cuePolicy";
-import { TOUCH_TARGET_SX, WRAP_ROW_SX, BREAK_LONG_WORDS_SX } from "./mobileSx";
+import { TOUCH_TARGET_SX, WRAP_ROW_SX, BREAK_LONG_WORDS_SX } from "@/app/theme/mobileSx";
 
 // T3 (AC-T3.1..T3.7, superseded by AC-group-T-amendment.md section I). Lists
 // every voice cue the live interview screen understands, with a one-click

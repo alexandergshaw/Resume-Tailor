@@ -3,7 +3,7 @@
 import MenuItem from "@mui/material/MenuItem";
 import TextField from "@mui/material/TextField";
 import { CONTROL_OPTIONS, AUTO, normalizeCodeLanguageChoice } from "@/lib/copilot/codeLanguages";
-import { TOUCH_FIELD_SX, TOUCH_MUI_SELECT_SX } from "./mobileSx";
+import { TOUCH_FIELD_SX, TOUCH_MUI_SELECT_SX } from "@/app/theme/mobileSx";
 import { useCodeLanguageStorageBlocked } from "./useCodeLanguage";
 import { useInterviewTypeStorageBlocked } from "./useInterviewType";
 

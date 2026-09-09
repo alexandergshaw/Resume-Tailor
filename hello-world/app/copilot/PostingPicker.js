@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Autocomplete from "@mui/material/Autocomplete";
 import TextField from "@mui/material/TextField";
 import { fetchPracticePostings } from "@/lib/copilot/postings";
-import { TOUCH_FIELD_SX, TOUCH_ICON_SX } from "./mobileSx";
+import { TOUCH_FIELD_SX, TOUCH_ICON_SX } from "@/app/theme/mobileSx";
 
 const DEFAULT_LABEL = "Practice for";
 const DEFAULT_BLANK_HINT = "Leave blank to practice with generic questions.";

@@ -5,7 +5,7 @@ import Typography from "@mui/material/Typography";
 
 import { marksWithin } from "@/lib/copilot/glossaryMatch";
 
-import { BREAK_LONG_WORDS_SX } from "./mobileSx";
+import { BREAK_LONG_WORDS_SX } from "@/app/theme/mobileSx";
 import CitationDetail from "./CitationDetail";
 import ExpansionPanel from "./ExpansionPanel";
 import GlossaryTerm from "./GlossaryTerm";

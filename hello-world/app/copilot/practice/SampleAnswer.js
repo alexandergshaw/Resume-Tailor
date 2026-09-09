@@ -11,7 +11,7 @@ import { answerLines } from "@/lib/copilot/answerPoints";
 import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus";
 import AnswerAids from "../AnswerAids";
 import AnswerLines from "../AnswerLines";
-import { TOUCH_TARGET_SX, WRAP_ROW_SX } from "../mobileSx";
+import { TOUCH_TARGET_SX, WRAP_ROW_SX } from "@/app/theme/mobileSx";
 
 // G1: the toggleable sample answer for practice mode's current question.
 // Purely presentational — every bit of state (whether it's shown, whether a
@@ -177,10 +177,36 @@ export default function SampleAnswer({
             <Alert
               severity="error"
               action={
-                <Button color="inherit" size="small" onClick={onRetry}>
+                // The same TOUCH_TARGET_SX its two siblings in the Stack above
+                // carry. It was missed when they were done because it lives in
+                // a slot rather than beside them, so it kept MUI's natural
+                // `size="small"` height (~30.75px) and missed the 44px floor.
+                <Button color="inherit" size="small" onClick={onRetry} sx={TOUCH_TARGET_SX}>
                   Retry
                 </Button>
               }
+              // The Alert `action` slot's own offset, and the treatment is NOT
+              // invented here: ExpansionPanel.js:239-243 hit this exact slot
+              // and solved it, including the trap. MUI gives `.MuiAlert-action`
+              // `margin-left: auto` and `padding-left: 16px`, which pins the
+              // action to the right edge and reserves 16px in front of it — at
+              // the 320px floor this app targets, that is what squeezes the
+              // message to a few characters per line once the action is a real
+              // 44px target. All three treatments are needed TOGETHER: wrapping
+              // does nothing while the action keeps `margin-left: auto`, and it
+              // never triggers while the message cannot shrink below its own
+              // content width.
+              //
+              // The two slot styles go through `slotProps` rather than a nested
+              // selector on the root, per that precedent's measurement: a
+              // nested override has to out-rank MUI's own class rule for the
+              // slot, and the doubled-ampersand form that usually does silently
+              // did not apply here at all.
+              sx={WRAP_ROW_SX}
+              slotProps={{
+                action: { sx: { marginLeft: 0, paddingLeft: 0 } },
+                message: { sx: { minWidth: 0 } },
+              }}
             >
               {error || "Could not draft a sample answer."}
             </Alert>

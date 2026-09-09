@@ -7,7 +7,7 @@ import Collapse from "@mui/material/Collapse";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 
-import { TOUCH_TARGET_SX } from "./mobileSx";
+import { TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 
 // Collapsible panel where the candidate keeps the background the copilot uses to
 // personalize answers: a resume summary, the target job description, and any

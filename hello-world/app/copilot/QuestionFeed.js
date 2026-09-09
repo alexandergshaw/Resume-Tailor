@@ -23,7 +23,7 @@ import AnswerLines from "./AnswerLines";
 // true last one, its region is exposed to the same collision that hook
 // exists to prevent.
 import { useCurrentQuestionAnnouncement } from "./dashboard/CopilotDashboard";
-import { BREAK_LONG_WORDS_SX, PHONE_PANE_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "./mobileSx";
+import { BREAK_LONG_WORDS_SX, PHONE_PANE_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "@/app/theme/mobileSx";
 
 const TYPE_LABEL = {
   behavioral: "Behavioral",

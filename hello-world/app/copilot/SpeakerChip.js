@@ -2,7 +2,7 @@
 
 import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
-import { MOBILE_TAP_MIN, TOUCH_PILL_SX } from "./mobileSx";
+import { MOBILE_TAP_MIN, TOUCH_PILL_SX } from "@/app/theme/mobileSx";
 
 // AC-M1.5 requirement 2: the transcript's per-turn speaker chip, and — once
 // an in-person session offers a correction — the control that fixes it.

@@ -5,7 +5,7 @@ import Chip from "@mui/material/Chip";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
-import { BREAK_LONG_WORDS_SX } from "./mobileSx";
+import { BREAK_LONG_WORDS_SX } from "@/app/theme/mobileSx";
 import { PROJECT_PAGE_SOURCE } from "../../lib/copilot/projectStories.js";
 
 // AC-K1.2/AC-K1.3: the two groups that sit UNDER a drafted answer's cues —

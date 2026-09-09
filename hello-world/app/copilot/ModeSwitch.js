@@ -4,7 +4,7 @@ import Stack from "@mui/material/Stack";
 import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Typography from "@mui/material/Typography";
-import { TOUCH_TARGET_SX, WRAP_ROW_SX } from "./mobileSx";
+import { TOUCH_TARGET_SX, WRAP_ROW_SX } from "@/app/theme/mobileSx";
 
 // AC-Q10.5: split out of CopilotClient.js purely to keep that file under its
 // 1000-line cap — this owns the WHOLE mode toggle group: the "Mode:" label,

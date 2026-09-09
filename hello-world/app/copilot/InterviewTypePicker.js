@@ -3,7 +3,7 @@
 import MenuItem from "@mui/material/MenuItem";
 import TextField from "@mui/material/TextField";
 import { INTERVIEW_TYPES, interviewType as resolveInterviewType } from "@/lib/copilot/interviewTypes";
-import { TOUCH_FIELD_SX, TOUCH_MUI_SELECT_SX } from "./mobileSx";
+import { TOUCH_FIELD_SX, TOUCH_MUI_SELECT_SX } from "@/app/theme/mobileSx";
 import { useInterviewTypeStorageBlocked } from "./useInterviewType";
 
 // G2: presentational picker for which interview format BOTH copilot surfaces

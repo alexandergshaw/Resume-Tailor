@@ -9,7 +9,7 @@ import Divider from "@mui/material/Divider";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { videoWasReviewed } from "@/lib/copilot/answerProvenance";
-import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX } from "../mobileSx";
+import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 
 const STAR_LABELS = [
   ["situation", "Situation"],

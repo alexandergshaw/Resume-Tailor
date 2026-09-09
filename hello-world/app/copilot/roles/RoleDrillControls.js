@@ -12,7 +12,7 @@ import { fmtClock } from "@/lib/copilot/clock";
 import { visuallyHidden } from "@/lib/copilot/answerStatus";
 import StatusPill from "../StatusPill";
 import MicPicker from "../MicPicker";
-import { TOUCH_SWITCH_SX, TOUCH_TARGET_SX } from "../mobileSx";
+import { TOUCH_SWITCH_SX, TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 
 // Bounded down("sm") override, not an `xs` key (MUI sx trap: `xs` is
 // `min-width: 0` and has no way to turn itself back off at `sm`+, where

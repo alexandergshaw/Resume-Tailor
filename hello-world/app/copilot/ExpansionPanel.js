@@ -220,6 +220,11 @@ export default function ExpansionPanel({ line, api }) {
                   color="inherit"
                   onClick={() => resolved.retry(line)}
                   aria-label={`Retry more detail for: ${name}`}
+                  // The same floor the disclosure control above already takes.
+                  // `size="small"` renders ~31px, and this is the control a
+                  // candidate reaches for when an expansion has ALREADY failed
+                  // -- the worst moment to hand them a target they miss.
+                  sx={TOUCH_TARGET_SX}
                 >
                   Retry
                 </Button>

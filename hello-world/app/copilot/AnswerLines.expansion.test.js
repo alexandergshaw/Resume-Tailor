@@ -29,6 +29,8 @@ import path from "node:path";
 import AnswerLines from "./AnswerLines.js";
 import { ExpansionScope } from "./useAnswerExpansions.js";
 import { resetExpansionStore } from "@/lib/copilot/expansionStore.js";
+import { atWidth } from "@/app/theme/computedStyleAtWidth.js";
+import { MOBILE_TAP_MIN } from "@/app/theme/mobileSx";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -528,6 +530,26 @@ describe("the three states that are not sub-bullets", () => {
     expect(retry.getAttribute("aria-label")).toContain("Retry more detail for");
     await act(async () => retry.click());
     expect(calls.filter(([kind]) => kind === "retry")).toHaveLength(1);
+  });
+
+  it("gives the failure's Retry the shared touch floor, like every other control here", async () => {
+    // ExpansionPanel.js already imports TOUCH_TARGET_SX and applies it to the
+    // disclosure control; this Retry was the one control in the file that never
+    // got it, so a candidate re-trying a failed expansion on a phone was aiming
+    // at ~31px. Found while retiring the mobileSx shim, which fixed the exact
+    // same shape one file over in practice/SampleAnswer.js -- a Button with
+    // `size="small"` inside an Alert `action` slot.
+    const { api } = fakeApi({ [LINES[0].point]: { status: "error", subBullets: [], caption: "", code: "http" } });
+    const el = await render(withApi(api));
+    const li = topItems(el)[0];
+    const retry = [...li.querySelectorAll("button")].find((b) => b.textContent.includes("Retry"));
+    expect(retry, "[instrument] no Retry rendered, so there is nothing to measure").toBeTruthy();
+
+    expect(atWidth(375, () => window.getComputedStyle(retry).minHeight)).toBe(`${MOBILE_TAP_MIN}px`);
+    // A control, not a restatement: the floor must LIFT above the breakpoint.
+    // Without this, an unconditional 44px would satisfy the line above and
+    // silently change desktop too.
+    expect(atWidth(1000, () => window.getComputedStyle(retry).minHeight)).toBe("auto");
   });
 
   it("distinguishes a timeout from an ordinary failure, and a disabled feature from both", async () => {

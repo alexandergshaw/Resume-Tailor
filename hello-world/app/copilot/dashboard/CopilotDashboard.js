@@ -15,7 +15,7 @@ import { dashboardCopy, PACE_LABEL_TEXT, FILLER_LABEL_TEXT } from "@/lib/copilot
 import AnswerAids from "../AnswerAids";
 import AnswerLines from "../AnswerLines";
 import { RealPanel } from "./panelShells";
-import { TOUCH_TARGET_SX } from "../mobileSx";
+import { TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 
 // AC-I5/AC-J2: the copilot's dashboard — the current question's answer, and
 // a delivery strip covering the user's current talking pace AND

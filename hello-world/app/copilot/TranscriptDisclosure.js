@@ -6,7 +6,7 @@ import Collapse from "@mui/material/Collapse";
 import Stack from "@mui/material/Stack";
 import TranscriptView from "./TranscriptView";
 import QuestionFeed from "./QuestionFeed";
-import { TOUCH_TARGET_SX } from "./mobileSx";
+import { TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 
 // Step 4: links the transcript disclosure's Button (aria-controls) to the
 // region it shows/hides. D1: covers BOTH <TranscriptView> and

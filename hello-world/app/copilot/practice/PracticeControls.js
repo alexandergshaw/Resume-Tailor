@@ -9,7 +9,7 @@ import Typography from "@mui/material/Typography";
 import { fmtClock } from "@/lib/copilot/clock";
 import StatusPill from "../StatusPill";
 import MicPicker from "../MicPicker";
-import { TOUCH_SWITCH_SX, TOUCH_TARGET_SX } from "../mobileSx";
+import { TOUCH_SWITCH_SX, TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 
 // Presentational block for practice mode's session controls: the "Your
 // microphone" row, the Start/Stop row (status pill, elapsed clock,

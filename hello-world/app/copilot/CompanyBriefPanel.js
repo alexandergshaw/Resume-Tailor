@@ -6,7 +6,7 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Skeleton from "@mui/material/Skeleton";
 import Typography from "@mui/material/Typography";
-import { TOUCH_TARGET_SX, BREAK_LONG_WORDS_SX, WRAP_ROW_SX } from "./mobileSx";
+import { TOUCH_TARGET_SX, BREAK_LONG_WORDS_SX, WRAP_ROW_SX } from "@/app/theme/mobileSx";
 import { companyResearchDestination } from "@/lib/copilot/groundingNotice";
 import { safeExternalHref } from "@/lib/url/safeExternalHref";
 

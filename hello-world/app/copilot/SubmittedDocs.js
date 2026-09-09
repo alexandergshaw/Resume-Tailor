@@ -9,7 +9,7 @@ import Collapse from "@mui/material/Collapse";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 
-import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX } from "./mobileSx";
+import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 
 // Bounded so a long submitted résumé or cover letter can never push the
 // rest of the copilot screen down indefinitely (AC-H3.13) — it scrolls

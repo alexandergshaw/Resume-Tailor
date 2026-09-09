@@ -7,7 +7,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { visuallyHidden } from "@/lib/copilot/answerStatus";
 import SpeakerChip from "./SpeakerChip";
-import { BREAK_LONG_WORDS_SX, PHONE_PANE_SX } from "./mobileSx";
+import { BREAK_LONG_WORDS_SX, PHONE_PANE_SX } from "@/app/theme/mobileSx";
 
 // Formats ms-since-start as m:ss for the per-turn timestamp.
 function fmtElapsed(ms) {

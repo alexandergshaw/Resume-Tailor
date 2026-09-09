@@ -7,7 +7,7 @@ import Button from "@mui/material/Button";
 import Typography from "@mui/material/Typography";
 import { normalizeManualQuestion, MAX_MANUAL_QUESTION_CHARS } from "@/lib/copilot/manualQuestion";
 import { visuallyHidden } from "@/lib/copilot/answerStatus";
-import { TOUCH_FIELD_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "./mobileSx";
+import { TOUCH_FIELD_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "@/app/theme/mobileSx";
 
 const DEFAULT_CONFIRM_LABEL = "Added to the feed";
 

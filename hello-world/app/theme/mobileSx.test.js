@@ -14,11 +14,24 @@
 //      would happily pass against `MOBILE_TAP_MIN = 1` misread as a fraction
 //      by MUI's sizing transform. This block reads back what the browser
 //      would actually compute.
-//   3. SHIM IDENTITY PIN — `app/copilot/mobileSx.js` must re-export the SAME
-//      objects, not copies. `toBe`, never `toEqual`: a second copy with
-//      identical values would pass a `toEqual` and silently reintroduce the
-//      exact defect (four independently-drifting copies) this chunk exists
-//      to end.
+//   3. SHIM RETIREMENT PIN — `app/copilot/mobileSx.js` is GONE, and the call
+//      sites that used to come through it now name the contract directly.
+//
+//      THIS BLOCK USED TO BE A SHIM IDENTITY PIN, and the change is worth
+//      recording rather than just making. It asserted that the shim
+//      re-exported the SAME objects as this module (`toBe`, never `toEqual`,
+//      so a second copy with matching values could not pass), which was the
+//      right assertion for exactly as long as there were two paths to one
+//      module. The shim's own header called itself "a follow-up chunk, not a
+//      permanent arrangement" and named its cost: grepping for
+//      "theme/mobileSx" UNDER-COUNTED the contract's real adoption by the 30
+//      files that reached it relatively. All 30 now import
+//      `@/app/theme/mobileSx` and the shim is deleted, so reference identity
+//      through a second path is not a weaker property now -- it is a property
+//      with no subject left. Deleting these cases without replacement would
+//      have quietly dropped the only guard on the shim's return, so the block
+//      keeps its slot and changes its subject: the file must stay gone, and
+//      the adoption it was hiding is now counted here in the open.
 //   4. NO-COPIES SWEEP — every non-test .js file under app/ (not just the
 //      four originally-collapsed ones) is walked for the shape of a
 //      hand-rolled copy. This is the assertion that actually stops the
@@ -28,6 +41,12 @@
 //      contract, and app/components/preview/EditorToolbar.js, a deliberately
 //      accepted exception -- see docs/REGRESSION.md R-301) rather than
 //      folded silently into a shared list.
+//
+//      Its third check is now WHOLE-TREE. It used to exempt app/copilot/,
+//      because that is where the shim lived and a relative specifier there
+//      was legal; with the shim gone there is no file anywhere under app/
+//      that may reach this module relatively, and the exemption would have
+//      been dead weight that silently re-legalised 30 files.
 //
 // LIMITS, stated so no future reader over-reads a green run here: jsdom has
 // NO layout engine, so nothing below asserts a height, a width, or an
@@ -52,7 +71,7 @@
 // leaves the measured proof at its one existing home.
 
 import { describe, it, expect, afterEach, beforeAll } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createElement, act } from "react";
@@ -67,7 +86,6 @@ import CloseIcon from "@mui/icons-material/Close";
 import { makeTheme } from "./index.js";
 import { atWidth } from "./computedStyleAtWidth.js";
 import * as viaTheme from "./mobileSx.js";
-import * as viaCopilot from "../copilot/mobileSx.js";
 import {
   MOBILE_TAP_MIN,
   TOUCH_TARGET_SX,
@@ -358,33 +376,53 @@ describe("app/theme/mobileSx.js -- serialized-cascade pin (AC-9)", () => {
 });
 
 // --------------------------------------------------------------------------
-// Block 3 -- shim identity pin.
+// Block 3 -- shim retirement pin. See this file's header for what this block
+// used to assert and why that property no longer has a subject.
 // --------------------------------------------------------------------------
 
-describe("app/copilot/mobileSx.js -- the shim re-exports by reference (AC-4, AC-5)", () => {
-  it("exports the exact same keys as app/theme/mobileSx.js", () => {
-    expect(Object.keys(viaCopilot).sort()).toEqual(Object.keys(viaTheme).sort());
+const SHIM_PATH = join(HERE, "..", "copilot", "mobileSx.js");
+
+describe("app/copilot/mobileSx.js -- the re-export shim is retired (AC-4, AC-5)", () => {
+  it("the shim file is gone", () => {
+    expect(existsSync(SHIM_PATH)).toBe(false);
   });
 
-  it("every export is REFERENCE-IDENTICAL through the shim -- toBe, not toEqual", () => {
-    // toEqual would also pass against a second, independently-declared copy
-    // with matching values -- exactly the failure mode (four copies quietly
-    // drifting apart) this chunk exists to end. Only reference identity
-    // proves there is one object, reached by two paths.
-    for (const key of Object.keys(viaTheme)) {
-      expect(viaCopilot[key], `${key} is not the same object through the shim`).toBe(viaTheme[key]);
-    }
+  it("[positive control] the existence check can see a file that IS there", () => {
+    // Without this, a typo in SHIM_PATH -- a wrong directory, a dropped
+    // ".js" -- would make the assertion above pass for the wrong reason and
+    // keep passing on the day someone restores the shim.
+    expect(existsSync(join(HERE, "mobileSx.js"))).toBe(true);
+    expect(existsSync(join(HERE, "..", "copilot", "AnswerLines.js"))).toBe(true);
   });
 
-  it("is a single re-export plus a header comment that names its own cost", () => {
-    const src = readFileSync(join(HERE, "..", "copilot", "mobileSx.js"), "utf8");
-    const withoutComments = src
-      .split("\n")
-      .filter((line) => !line.trim().startsWith("//"))
-      .join("\n")
-      .trim();
-    expect(withoutComments).toBe('export * from "@/app/theme/mobileSx";');
-    expect(src).toContain("app/theme/mobileSx.js");
+  it("the call sites that used to come through it now name the contract directly", () => {
+    // The adoption number the shim's own header said it was hiding: it
+    // reported "grepping for theme/mobileSx UNDER-COUNTS the contract's real
+    // adoption by 30 files, because they come through here". Counted here in
+    // the open instead, so retiring the shim cannot silently be followed by
+    // re-hiding those call sites behind another indirection.
+    //
+    // A LOWER BOUND, deliberately, and 30 is not an arbitrary floor -- it is
+    // the exact number the shim's header claimed. New adopters under
+    // app/copilot/ should not have to edit this line; a call site that stops
+    // importing the contract, or starts reaching it by some other route,
+    // should. The exact-zero half of this property (nothing reaches it
+    // relatively any more) is block 4's third check, now whole-tree.
+    const importers = [];
+    (function walk(dir) {
+      for (const name of readdirSync(dir)) {
+        const full = join(dir, name);
+        if (statSync(full).isDirectory()) {
+          walk(full);
+          continue;
+        }
+        if (!full.endsWith(".js") || /\.(test|spec)\.js$/.test(full)) continue;
+        if (/from\s*["']@\/app\/theme\/mobileSx["']/.test(readFileSync(full, "utf8"))) {
+          importers.push(relative(HERE, full).split(sep).join("/"));
+        }
+      }
+    })(join(HERE, "..", "copilot"));
+    expect(importers.length, `only ${importers.length} app/copilot importers found`).toBeGreaterThanOrEqual(30);
   });
 });
 
@@ -405,11 +443,15 @@ describe("app/copilot/mobileSx.js -- the shim re-exports by reference (AC-4, AC-
 //   2. no file hand-rolls the touch-target NUMBER itself -- a `minWidth`/
 //      `minHeight` whose `xs` branch is a bare number in the 38..48 range,
 //      or the literal string `"44px"`,
-//   3. no file outside app/copilot/ reaches the module by a RELATIVE
-//      specifier -- that shape always means importing the temporary shim
-//      (app/copilot/mobileSx.js) from "the rest of the app", which is
-//      exactly the defect a human had to catch by eye in this batch
-//      (FormDialog.js briefly imported "../copilot/mobileSx").
+//   3. NO file under app/ reaches the module by a RELATIVE specifier. This
+//      check used to exempt app/copilot/, because the temporary shim lived
+//      there and 30 files legitimately reached it as "./mobileSx". With the
+//      shim deleted and all 30 rewritten to "@/app/theme/mobileSx", the
+//      exemption had nothing left to protect and was removed -- a relative
+//      specifier anywhere now means either the shim is back or someone has
+//      added a second one. The defect this originally caught is unchanged
+//      and still covered: a human had to spot by eye that FormDialog.js
+//      briefly imported "../copilot/mobileSx".
 //
 // EXEMPTIONS -- each named individually, with its own reason, rather than a
 // silent filename folded into a shared list:
@@ -488,7 +530,12 @@ describe("app/ -- no file outside the shared contract hand-rolls the touch-targe
     expect(rels.length).toBeGreaterThan(100);
     expect(rels).toContain(MOBILESX_REL);
     expect(rels).toContain(EDITOR_TOOLBAR_REL);
-    expect(rels).toContain("copilot/mobileSx.js");
+    // The walk still descends into app/copilot/ -- which matters more now
+    // than it did when this line named the shim, because check 3 below no
+    // longer exempts that directory and would report a false CLEAN if the
+    // walk stopped reaching it.
+    expect(rels).toContain("copilot/AnswerLines.js");
+    expect(rels).not.toContain("copilot/mobileSx.js");
   });
 
   it("[positive control] app/theme/mobileSx.js DOES declare TOUCH_* constants -- proving check 1 below isn't vacuous", () => {
@@ -519,9 +566,27 @@ describe("app/ -- no file outside the shared contract hand-rolls the touch-targe
     expect(offenders).toEqual([]);
   });
 
-  it("no file outside app/copilot/ reaches mobileSx by a relative import specifier", () => {
+  it("[positive control] the relative-specifier regex matches the shape it is hunting -- proving check 3 below isn't vacuous", () => {
+    // Checks 1 and 2 each have a real file that still trips them, so a broken
+    // regex shows up immediately. Check 3 is now expected to match NOTHING in
+    // the whole tree, which is precisely the state in which a regex that
+    // matches nothing at all looks identical to a clean tree. These are the
+    // exact specifiers the 30 retired call sites used, plus the cross-
+    // directory form FormDialog.js once had.
+    for (const shape of [
+      'import { TOUCH_TARGET_SX } from "./mobileSx";',
+      'import { TOUCH_TARGET_SX } from "../mobileSx";',
+      'import { TOUCH_TARGET_SX } from "../copilot/mobileSx";',
+      "import { TOUCH_TARGET_SX } from '../../theme/mobileSx.js';",
+    ]) {
+      expect(RELATIVE_MOBILESX_IMPORT_RE.test(shape), `missed: ${shape}`).toBe(true);
+    }
+    // …and does not fire on the specifier every call site is supposed to use.
+    expect(RELATIVE_MOBILESX_IMPORT_RE.test('import { TOUCH_TARGET_SX } from "@/app/theme/mobileSx";')).toBe(false);
+  });
+
+  it("no file anywhere under app/ reaches mobileSx by a relative import specifier", () => {
     const offenders = files()
-      .filter((f) => !f.rel.startsWith("copilot/"))
       .filter((f) => RELATIVE_MOBILESX_IMPORT_RE.test(f.src))
       .map((f) => f.rel);
     expect(offenders).toEqual([]);

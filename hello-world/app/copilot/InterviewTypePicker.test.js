@@ -93,9 +93,14 @@ afterEach(() => {
 describe("InterviewTypePicker — mobile sx (§C.7): additive, never a replacement", () => {
   const src = readSource("./InterviewTypePicker.js");
 
-  it("imports both TOUCH_FIELD_SX and TOUCH_MUI_SELECT_SX from ./mobileSx", () => {
-    expect(src).toMatch(/import\s*\{[^}]*TOUCH_FIELD_SX[^}]*\}\s*from\s*"\.\/mobileSx"/);
-    expect(src).toMatch(/import\s*\{[^}]*TOUCH_MUI_SELECT_SX[^}]*\}\s*from\s*"\.\/mobileSx"/);
+  it("imports both TOUCH_FIELD_SX and TOUCH_MUI_SELECT_SX from @/app/theme/mobileSx", () => {
+    // The specifier, and only the specifier, changed here: this file used to
+    // reach the contract through app/copilot/mobileSx.js, a re-export shim
+    // that has since been retired along with the other 29 call sites that
+    // came through it. What is asserted is unchanged -- both constants arrive
+    // from the ONE shared module, in one import statement each.
+    expect(src).toMatch(/import\s*\{[^}]*TOUCH_FIELD_SX[^}]*\}\s*from\s*"@\/app\/theme\/mobileSx"/);
+    expect(src).toMatch(/import\s*\{[^}]*TOUCH_MUI_SELECT_SX[^}]*\}\s*from\s*"@\/app\/theme\/mobileSx"/);
   });
 
   it("spreads both onto the same sx object, TOUCH_MUI_SELECT_SX last", () => {

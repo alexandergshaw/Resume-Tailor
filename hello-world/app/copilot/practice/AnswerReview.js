@@ -6,7 +6,7 @@ import Divider from "@mui/material/Divider";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { MIN_LUMA_SAMPLES } from "@/lib/copilot/videoStats";
-import { BREAK_LONG_WORDS_SX } from "../mobileSx";
+import { BREAK_LONG_WORDS_SX } from "@/app/theme/mobileSx";
 
 // Top offending phrases worth naming individually — capped so a rambly
 // answer doesn't turn a row into a wall of text. Shared by the Fillers and

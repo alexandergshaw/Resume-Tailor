@@ -7,7 +7,7 @@ import CircularProgress from "@mui/material/CircularProgress";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { spokenEstimate } from "@/lib/copilot/spokenPace";
-import { BREAK_LONG_WORDS_SX } from "../mobileSx";
+import { BREAK_LONG_WORDS_SX } from "@/app/theme/mobileSx";
 
 // AC-Q9.5 - the revealed model answer: the beats a strong answer makes, how
 // long it takes to say, how it should sound, the terms of art it draws on

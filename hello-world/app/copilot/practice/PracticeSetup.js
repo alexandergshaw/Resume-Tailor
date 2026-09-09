@@ -8,7 +8,7 @@ import CodeLanguageField from "../CodeLanguageField";
 import PostingPicker from "../PostingPicker";
 import SubmittedDocs from "../SubmittedDocs";
 import PrepContext from "../PrepContext";
-import { TOUCH_ICON_SX } from "../mobileSx";
+import { TOUCH_ICON_SX } from "@/app/theme/mobileSx";
 
 // Presentational block for practice mode's setup controls: the privacy
 // notice, the prep-context editor, the error/warning alerts, the interview

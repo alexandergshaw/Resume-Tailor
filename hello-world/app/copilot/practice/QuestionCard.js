@@ -8,7 +8,7 @@ import CircularProgress from "@mui/material/CircularProgress";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import SampleAnswer from "./SampleAnswer";
-import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX } from "../mobileSx";
+import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 
 const TYPE_LABEL = {
   behavioral: "Behavioral",

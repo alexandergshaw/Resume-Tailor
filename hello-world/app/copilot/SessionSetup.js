@@ -15,7 +15,7 @@ import PostingPicker from "./PostingPicker";
 import SubmittedDocs from "./SubmittedDocs";
 import PrepContext from "./PrepContext";
 import { companyResearchDestination } from "@/lib/copilot/groundingNotice";
-import { TOUCH_TARGET_SX, TOUCH_ICON_SX, BREAK_LONG_WORDS_SX } from "./mobileSx";
+import { TOUCH_TARGET_SX, TOUCH_ICON_SX, BREAK_LONG_WORDS_SX } from "@/app/theme/mobileSx";
 
 // R-129's known follow-up (see ../../docs/REGRESSION.md): live mode's own
 // pre-session setup block, extracted out of CopilotClient the same way

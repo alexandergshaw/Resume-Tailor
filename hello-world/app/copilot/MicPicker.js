@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import TextField from "@mui/material/TextField";
 import { listMicrophones, SYSTEM_DEFAULT_OPTION } from "@/lib/copilot/audioDevices";
-import { TOUCH_FIELD_SX, TOUCH_NATIVE_SELECT_SX } from "./mobileSx";
+import { TOUCH_FIELD_SX, TOUCH_NATIVE_SELECT_SX } from "@/app/theme/mobileSx";
 
 // AC-I1: live mode's microphone picker. Modelled on PostingPicker.js — it
 // loads its own options on mount and the caller owns only the current

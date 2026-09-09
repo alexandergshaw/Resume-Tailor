@@ -2,7 +2,7 @@
 
 import TextField from "@mui/material/TextField";
 import { ROLE_REGISTERS, roleRegister } from "@/lib/copilot/roleRegisters";
-import { TOUCH_FIELD_SX, TOUCH_NATIVE_SELECT_SX } from "../mobileSx";
+import { TOUCH_FIELD_SX, TOUCH_NATIVE_SELECT_SX } from "@/app/theme/mobileSx";
 
 // AC-Q9.1 - a single labelled select naming every role in the registry, the
 // current pick's own `blurb` as helper text. No nested menu, no wizard, no

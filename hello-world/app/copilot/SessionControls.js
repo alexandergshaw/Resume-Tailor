@@ -8,7 +8,7 @@ import Switch from "@mui/material/Switch";
 import Typography from "@mui/material/Typography";
 import { fmtClock } from "@/lib/copilot/clock";
 import StatusPill from "./StatusPill";
-import { TOUCH_TARGET_SX, TOUCH_SWITCH_SX } from "./mobileSx";
+import { TOUCH_TARGET_SX, TOUCH_SWITCH_SX } from "@/app/theme/mobileSx";
 
 // Headroom extraction, NOT a feature: split out of CopilotClient.js purely to
 // keep that file under CopilotClient.extraction.test.js's 950-line cap — the

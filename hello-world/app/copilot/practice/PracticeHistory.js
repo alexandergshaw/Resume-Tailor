@@ -14,7 +14,7 @@ import {
   listPracticeAnswers,
   signedVideoUrl,
 } from "@/lib/supabase/practiceAnswers";
-import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX } from "../mobileSx";
+import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 
 function fmtDate(value) {
   if (!value) return "";
