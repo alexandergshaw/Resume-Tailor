@@ -79,6 +79,7 @@ import {
   loadAppliedOrLaterExternalIds,
 } from "../lib/supabase/applicationStatusWriter";
 import { STATUS, excludeTrackingTabHiddenStatuses } from "../lib/applications/statusVocabulary";
+import { startPositionGlossary } from "../lib/copilot/glossaryTrigger";
 import { selectAppliedToggleAction } from "../lib/applications/applicationDecisions";
 import { persistGeneratedDocuments } from "../lib/supabase/persistGeneration";
 import { normalizeInterviewValue } from "../lib/tracking/stages";
@@ -1567,6 +1568,13 @@ export default function Home() {
       });
       if (result.reason === "error" || result.reason === "no-key") {
         console.error("[applyAutoTailoredRow] status update failed:", result);
+      } else {
+        // Applied, so start this posting's glossary research. Void, never
+        // awaited, and it swallows its own failures -- applying cannot be
+        // slowed or broken by it, which is why there is no error branch here
+        // to write. The row is keyed on the position and shared, so a second
+        // applicant to the same job re-enqueues nothing.
+        startPositionGlossary({ positionId: row.positions?.id });
       }
       setApplicationsRefreshKey((k) => k + 1);
     }
@@ -1635,6 +1643,11 @@ export default function Home() {
       status: STATUS.APPLIED,
     });
     if (!result.changed) return;
+
+    // Newly applied. `changed` is already false on a repeat toggle, so this
+    // does not fire twice for the same row; see applyAutoTailoredRow above for
+    // why it is unawaited and unguarded.
+    startPositionGlossary({ positionId });
 
     setAppliedByExternalId((prev) => {
       const next = new Map(prev || []);

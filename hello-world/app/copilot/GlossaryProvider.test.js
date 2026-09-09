@@ -179,3 +179,102 @@ describe("AC-T7 -- a failed read leaves the answer exactly as it would have been
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// AC-T5 -- THE LAZY BACKSTOP
+// ---------------------------------------------------------------------------
+// The four apply seams only reach postings applied to from now on. Every job
+// already in the tracker -- the ones the owner asked to backfill -- arrives
+// through here instead: opening the posting is what enqueues it.
+//
+// These are SEAM cases, and that is the point. glossaryTrigger.test.js already
+// proves the predicate decides correctly; only these prove the provider calls
+// it. That distinction has cost this feature twice already -- the ask-AI box
+// shipped sending an empty application id, and this very provider shipped
+// mounted nowhere -- each with a thorough suite one level too deep to see it.
+describe("AC-T5 -- opening a posting backfills it, and only when that can help", () => {
+  function stubFetch(body, { ok = true } = {}) {
+    const calls = [];
+    vi.stubGlobal("fetch", (url, init) => {
+      calls.push({ url: String(url), method: init?.method || "GET", body: init?.body });
+      return Promise.resolve({ ok, json: () => Promise.resolve(body) });
+    });
+    return calls;
+  }
+
+  const posts = (calls) => calls.filter((c) => c.method === "POST");
+
+  it("enqueues a posting that has NO row -- the backfill the owner asked for", async () => {
+    const calls = stubFetch({ glossary: null });
+    await mount(createElement(GlossaryProvider, { applicationId: "bf-none" }, createElement("i", null)));
+    expect(posts(calls)).toHaveLength(1);
+    expect(posts(calls)[0].url).toBe("/api/copilot/glossary");
+    expect(JSON.parse(posts(calls)[0].body)).toEqual({ applicationId: "bf-none" });
+  });
+
+  it("sends the positionId key when that is what it was given", async () => {
+    const calls = stubFetch({ glossary: null });
+    await mount(createElement(GlossaryProvider, { positionId: "bf-pos" }, createElement("i", null)));
+    expect(JSON.parse(posts(calls)[0].body)).toEqual({ positionId: "bf-pos" });
+  });
+
+  it("enqueues a finished row stuck below the research floor", async () => {
+    const calls = stubFetch({
+      glossary: { status: "partial", terms: TERMS, research_cursor: 8, research_total: 8, researched_count: 1, recalled_count: 7 },
+    });
+    await mount(createElement(GlossaryProvider, { applicationId: "bf-low" }, createElement("i", null)));
+    expect(posts(calls)).toHaveLength(1);
+  });
+
+  it("does NOT enqueue a row the worker is still researching", async () => {
+    const calls = stubFetch({
+      glossary: { status: "partial", terms: TERMS, research_cursor: 2, research_total: 9 },
+    });
+    await mount(createElement(GlossaryProvider, { applicationId: "bf-inflight" }, createElement("i", null)));
+    expect(posts(calls), "re-enqueuing would roll the term list out from under the cursor").toHaveLength(0);
+  });
+
+  it("does NOT enqueue a ready row", async () => {
+    const calls = stubFetch({
+      glossary: { status: "ready", terms: TERMS, research_cursor: 4, research_total: 4, researched_count: 4, recalled_count: 0 },
+    });
+    await mount(createElement(GlossaryProvider, { applicationId: "bf-ready" }, createElement("i", null)));
+    expect(posts(calls)).toHaveLength(0);
+  });
+
+  it("A FAILED READ IS NOT A CACHE MISS: a non-ok GET enqueues nothing", async () => {
+    // The trap this seam was built around. Folding !ok to `null` -- which is
+    // what the code did before the backstop existed -- makes a 500 on the read
+    // indistinguishable from "never researched", and every such load would then
+    // buy a fresh generation for a posting that already had one.
+    const calls = stubFetch({ glossary: null }, { ok: false });
+    await mount(createElement(GlossaryProvider, { applicationId: "bf-500" }, createElement("i", null)));
+    expect(posts(calls)).toHaveLength(0);
+  });
+
+  it("a rejected GET enqueues nothing either", async () => {
+    const calls = [];
+    vi.stubGlobal("fetch", (url, init) => {
+      calls.push({ url: String(url), method: init?.method || "GET" });
+      return Promise.reject(new Error("offline"));
+    });
+    await mount(createElement(GlossaryProvider, { applicationId: "bf-offline" }, createElement("i", null)));
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+  });
+
+  it("enqueues at most once, however many times the tree re-renders", async () => {
+    const calls = stubFetch({ glossary: null });
+    const tree = () => createElement(GlossaryProvider, { applicationId: "bf-once" }, createElement("i", null));
+    await mount(tree());
+    await mount(tree());
+    await mount(tree());
+    expect(posts(calls)).toHaveLength(1);
+  });
+
+  it("[control] the POST filter can see a POST at all", async () => {
+    // Every negative case above passes trivially if `posts()` never matches.
+    const calls = stubFetch({ glossary: null });
+    await mount(createElement(GlossaryProvider, { applicationId: "bf-control" }, createElement("i", null)));
+    expect(calls.map((c) => c.method)).toEqual(["GET", "POST"]);
+  });
+});

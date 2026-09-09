@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   EMPTY_GLOSSARY_INDEX,
@@ -8,6 +8,7 @@ import {
   glossaryMarksFor,
 } from "@/lib/copilot/glossaryMatch";
 import { glossaryPanelState } from "@/lib/copilot/glossaryPanel";
+import { shouldStartBackfill, startPositionGlossary } from "@/lib/copilot/glossaryTrigger";
 
 // THE POSTING GLOSSARY, HELD ONCE, REACHED THROUGH CONTEXT.
 //
@@ -106,6 +107,13 @@ export function GlossaryProvider({ applicationId, positionId, children }) {
   // would be one per posting change during a live session.
   const [loaded, setLoaded] = useState({ key: "", row: null });
 
+  // Guards ONE thing: React's StrictMode double-invokes effects on the same
+  // fiber in development, and a ref survives that (the instance is preserved)
+  // while not surviving a genuine remount -- which is exactly the distinction
+  // wanted. A real remount re-firing is self-limiting anyway: by then the row
+  // exists with a cursor in flight, and `shouldStartBackfill` says no.
+  const backfilledRef = useRef("");
+
   // `applicationId` is the key the copilot actually holds: postings.js's
   // `normalizePostingRows` drops `position.id`, so the practice picker's client
   // has `applications.id` and nothing else. The route resolves either.
@@ -117,9 +125,30 @@ export function GlossaryProvider({ applicationId, positionId, children }) {
     const param = applicationId ? "applicationId" : "positionId";
     // ONE request. No interval, no retry loop, no revalidation on focus.
     fetch(`/api/copilot/glossary?${param}=${encodeURIComponent(key)}`)
-      .then((response) => (response.ok ? response.json() : null))
+      .then((response) => {
+        // THROWN, not folded to `null`. A FAILED READ IS NOT A CACHE MISS --
+        // the route says so about its own read, and it matters more here: the
+        // two were indistinguishable downstream, so a 500 on this GET would
+        // have looked exactly like "this posting has never been researched" and
+        // sent the backstop below to buy a generation the row already had.
+        if (!response.ok) throw new Error(`glossary read failed: ${response.status}`);
+        return response.json();
+      })
       .then((body) => {
-        if (!cancelled) setLoaded({ key, row: body?.glossary || null });
+        if (cancelled) return;
+        const row = body?.glossary || null;
+        setLoaded({ key, row });
+
+        // THE LAZY BACKSTOP (AC-T5). The four apply seams only reach postings
+        // applied to from now on; everything already in the tracker arrives
+        // here. Reached only on a SUCCESSFUL read, never awaited, and it cannot
+        // change what this render shows -- a posting whose research starts now
+        // renders exactly as it did a moment ago, with no marks, which is the
+        // same no-spinner ruling AC-T7 makes for a failed read.
+        if (backfilledRef.current !== key && shouldStartBackfill(row)) {
+          backfilledRef.current = key;
+          startPositionGlossary(applicationId ? { applicationId: key } : { positionId: key });
+        }
       })
       .catch(() => {
         // Swallowed on purpose: an unreachable glossary must leave the answer

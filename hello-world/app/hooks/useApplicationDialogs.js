@@ -10,6 +10,7 @@ import { isDocxResume, isTextResume, buildTemplateLinesForUpload } from "../../l
 import { STAGE_TYPE_LABELS, createStageDialogState } from "../../lib/tracking/stages";
 import { setApplicationStatusByUser, deleteApplicationForUser } from "../../lib/supabase/applicationStatusWriter";
 import { buildEditApplicationPayload } from "../../lib/applications/applicationDecisions";
+import { startPositionGlossary } from "../../lib/copilot/glossaryTrigger";
 import { STATUS, STATUS_LABELS, isAppliedOrLater, classifyStatus } from "../../lib/applications/statusVocabulary";
 
 // Uploads a resume file and points one application row at the newly saved
@@ -463,6 +464,20 @@ export function useApplicationDialogs({
       }
     }
 
+    // Every write succeeded. Start the glossary ONLY if this save left the row
+    // applied-or-later: unlike the two seams in page.js, this dialog can save
+    // "tracking" or any other pre-apply status, and the user asked for this
+    // "when each position is applied to" -- watching a job is not applying to
+    // it, and harvesting for every tracked row would multiply the spend across
+    // postings nobody interviews for. This dialog holds the APPLICATION id and
+    // may hold no position id at all; the route resolves either.
+    if (isAppliedOrLater(editAppDialog.status)) {
+      startPositionGlossary({
+        positionId: editAppDialog.positionId,
+        applicationId: editAppDialog.applicationId,
+      });
+    }
+
     setApplicationData((prev) =>
       prev.map((a) =>
         a.id === editAppDialog.applicationId
@@ -600,6 +615,16 @@ export function useApplicationDialogs({
       setAddAppError(appErr.message || "Failed to save application.");
       setAddAppSaving(false);
       return;
+    }
+
+    // The application row exists. Gated on the chosen status for the same
+    // reason as the edit dialog above -- this form defaults to a pre-apply
+    // status, so firing unconditionally would harvest for every row a user
+    // merely tracks. Placed here rather than after the resume upload below:
+    // that step can fail and return early, and a failed resume attachment does
+    // not un-apply the application.
+    if (isAppliedOrLater(addAppDialog.status)) {
+      startPositionGlossary({ positionId, applicationId: insertedApp?.id });
     }
 
     if (addAppResumeFile && insertedApp?.id) {
