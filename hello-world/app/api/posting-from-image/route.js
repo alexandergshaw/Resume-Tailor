@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { getAuth, unauthorized } from "@/lib/experience/apiAuth";
+import { createRateLimiter, identify, rateLimitHeaders } from "@/lib/rateLimit/index";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { getServerEnv } from "@/lib/config/env";
 import { fetchUrlContent, extractUrls } from "@/lib/scrape/fetchUrlContent";
@@ -16,6 +18,44 @@ export const maxDuration = 60;
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024; // 12MB — screenshots are well under this
 const ALLOWED_MIME = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
 const MAX_URL_CANDIDATES = 5;
+
+// ---------------------------------------------------------------------------
+// THE SPEND CEILING, on the most expensive single request in the product:
+// vision (or Tesseract OCR) over an uploaded image, then a grounded web search,
+// then up to five outbound page fetches. Until this change the 12MB upload cap
+// was the ONLY thing throttling a loop against it, and the caller did not need
+// an account.
+//
+// BUILT AT MODULE SCOPE, AND THAT IS LOAD-BEARING. A limiter constructed inside
+// the handler gets a brand-new store on every request, so every caller is
+// forever on its first request: it permits everything, counts nothing, and
+// passes a smoke test while doing it. lib/rateLimit/index.js's header states
+// this as the one way to adopt it catastrophically wrong, and this route's
+// suite pins BOTH halves -- a behavioural case that fires 31 requests and
+// expects the 31st to be denied, and a static case that this declaration
+// precedes `POST`.
+//
+// 30 screenshots per 10 minutes, per authenticated user, and the number is
+// argued from the client rather than from the per-call cost. Screenshots are
+// processed by a SERIAL loop (app/hooks/useScreenshots.js:133) that, for each
+// item, runs this whole pipeline and THEN a full tailoring call before starting
+// the next -- tens of seconds per item -- so the largest batch that loop can
+// physically push through a ten-minute window is well under 30, and a real
+// user dropping a folder of postings is never clipped. What 30 does buy is the
+// difference between a scripted loop costing thousands of vision calls and
+// costing sixty. A DENIED REQUEST STILL INCREMENTS (see the module's header):
+// the bound is 30 ATTEMPTS, not 30 successes.
+//
+// HONEST ABOUT WHAT THIS BUYS: `createMemoryStore` is per-instance, so on
+// serverless this bounds a caller to 30 x instanceCount, not 30. It is worth
+// having anyway, but it is not a fleet-wide guarantee and must not be described
+// as one. Swapping in a Redis-backed store satisfying the same two-method
+// interface needs no change here.
+// ---------------------------------------------------------------------------
+const screenshotLimiter = createRateLimiter({ limit: 30, windowMs: 600_000, prefix: "posting-from-image" });
+
+const RATE_LIMITED_MESSAGE =
+  "Too many screenshots read in a short window. Wait a moment and try the rest again.";
 
 // Pull the first JSON object out of a model response. The vision call uses JSON
 // mime so this is usually clean, but parse defensively all the same.
@@ -206,6 +246,36 @@ async function resolvePosting(candidates) {
 }
 
 export async function POST(request) {
+  // ORDER IS LOAD-BEARING BELOW.
+  //
+  // 1. IDENTITY, from `auth.getUser()` by way of the shared `getAuth()`. Never
+  //    `getSession()`: that call makes ZERO network requests
+  //    (app/api/health/route.js:204-210 records the measurement), so gating on
+  //    it is not a weak check, it is a total bypass. Ahead of the MULTIPART
+  //    READ on purpose -- `request.formData()` buffers up to 12MB, and an
+  //    anonymous caller must not get this server to do that, never mind run
+  //    vision over the result.
+  //
+  //    Nothing legitimate is locked out by this. The only caller is
+  //    app/hooks/useScreenshots.js on `/`, a PAGE route, and
+  //    lib/supabase/middleware.js redirects any page route to /login without a
+  //    session -- there is no signed-out onboarding path through here.
+  const { userId } = await getAuth();
+  if (!userId) return unauthorized();
+
+  // 2. THE BOUND, keyed on the id step 1 resolved to -- never on the caller's
+  //    access token, and never before the auth resolves. Checked ahead of the
+  //    upload validation on purpose: an invalid request is still a request, and
+  //    a caller hammering this endpoint with junk should exhaust its own
+  //    allowance rather than get an unmetered lane.
+  const decision = await screenshotLimiter.check(identify(request, { userId }));
+  if (!decision.allowed) {
+    return NextResponse.json(
+      { error: RATE_LIMITED_MESSAGE },
+      { status: 429, headers: rateLimitHeaders(decision) },
+    );
+  }
+
   let formData;
   try {
     formData = await request.formData();

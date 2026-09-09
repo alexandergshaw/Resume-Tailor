@@ -41,6 +41,18 @@ const APP_API = path.join(process.cwd(), "app", "api");
 const BOUNDED = [
   // --- hard-authenticated: keyed on the id `auth.getUser()` resolved --------
   {
+    route: "app/api/copilot/answer/expand/route.js",
+    limit: 40,
+    windowMs: 600_000,
+    why: "one expansion per bullet the candidate opens; an answer carries at most a handful of bullets, so 40 in ten minutes covers opening every bullet of several answers while a scripted loop stops at 40",
+  },
+  {
+    route: "app/api/copilot/glossary/route.js",
+    limit: 4,
+    windowMs: 3_600_000,
+    why: "a generation is ~11 grounded calls, the most expensive single request in the product. Four an hour per user is deliberately tight; the per-posting cooldown and the per-fingerprint and lifetime call caps in the database are the bounds that actually protect a SHARED row, and this one only stops one user driving them",
+  },
+  {
     route: "app/api/copilot/critique/route.js",
     limit: 30,
     windowMs: 600_000,
@@ -106,6 +118,41 @@ const BOUNDED = [
     windowMs: 600_000,
     why: "up to four grounded calls per request -- the highest per-request cost in Tech Watch",
   },
+  // --- the four unauthenticated routes, gated and then bounded -------------
+  //
+  // These moved up from DEFERRED. Each was listed there for the SAME reason --
+  // "no auth gate at all, so identify() has nothing to key on" -- and the fix
+  // was therefore authentication first and the bound second, in that order. All
+  // four now resolve an id through `getAuth()` (lib/experience/apiAuth.js) and
+  // 401 without one, so `identify()` always succeeds and the bound is exact.
+  //
+  // Every client caller of all four sits on a PAGE route, and
+  // lib/supabase/middleware.js redirects any page route to /login without a
+  // session, so none of them could ever legitimately have run signed-out.
+  {
+    route: "app/api/posting-from-image/route.js",
+    limit: 30,
+    windowMs: 600_000,
+    why: "a batch of screenshots is processed by a SERIAL client loop (app/hooks/useScreenshots.js:133), each item costing vision + a grounded search + up to five outbound fetches and then a full tailoring call -- 30 leaves headroom over the largest batch that loop can physically push through ten minutes, while capping a scripted loop at 60 model calls instead of none",
+  },
+  {
+    route: "app/api/company-research/route.js",
+    limit: 30,
+    windowMs: 600_000,
+    why: "fires once per tailored job carrying a cover letter (app/hooks/useDocumentPreview.js:914), so it tracks the SAME screenshot batch as posting-from-image rather than the lower single-shot research routes, plus the user's own pasted article URLs",
+  },
+  {
+    route: "app/api/extract-employment/route.js",
+    limit: 10,
+    windowMs: 600_000,
+    why: "one call per resume the user picks in the employment-import dialog (app/page.js:1064) -- human-paced, and a denial degrades to the on-device parser rather than failing",
+  },
+  {
+    route: "app/api/fetch-posting/route.js",
+    limit: 20,
+    windowMs: 600_000,
+    why: "spends bandwidth and OUR outbound reputation rather than model money: an authenticated loop against a caller-chosen host is a scan that a third party sees coming from us. It has ZERO in-app callers, so any bound is generous",
+  },
   // --- already bounded before this change ----------------------------------
   {
     route: "app/api/copilot/ask/route.js",
@@ -123,16 +170,27 @@ const BOUNDED = [
  * THE LINE THIS PASS DREW, and it is the whole triage in one sentence: a
  * limiter can only bound what it can ATTRIBUTE. Every route in BOUNDED resolves
  * an authenticated user id and 401s without one, so `identify()` always
- * succeeds and the bound is exact. The routes below either have no auth gate at
- * all or treat auth as optional, so `identify()` falls through to the
- * proxy-attested address -- and when there is no trustworthy one (any
- * environment without an `x-forwarded-for` chain, `next dev` included) the
- * module's stated posture is to REFUSE the caller rather than pool them. Naively
- * adopting the limiter there would 429 every signed-out caller instead of
- * bounding them. Each needs an identity decision first; that is a change about
- * authentication, not about rate limiting, and it is why they wait.
+ * succeeds and the bound is exact. The routes below treat auth as OPTIONAL (or
+ * resolve it too late), so `identify()` falls through to the proxy-attested
+ * address -- and when there is no trustworthy one (any environment without an
+ * `x-forwarded-for` chain, `next dev` included) the module's stated posture is
+ * to REFUSE the caller rather than pool them. Naively adopting the limiter
+ * there would 429 every signed-out caller instead of bounding them. Each needs
+ * an identity decision first; that is a change about authentication, not about
+ * rate limiting, and it is why they wait.
+ *
+ * THE "NO AUTH GATE AT ALL" COHORT IS GONE. Four routes used to sit here for a
+ * strictly worse reason than optional auth -- they had no authentication of any
+ * kind, so an anonymous caller spent model money directly. They were gated
+ * first and bounded second (that order is the whole point) and now appear in
+ * BOUNDED; `GATED` below is the standing witness that the gate is still there
+ * and still ahead of the spend.
  */
 const DEFERRED = [
+  {
+    route: "app/api/cron/position-glossary/route.js",
+    why: "a cron worker, not a user-facing route. The shared CRON_SECRET (or Vercel's own x-vercel-cron header) IS the control here, and there is no caller identity to key a limiter on -- a per-caller bound keyed on the scheduler would only break a legitimate retry. Its spend is bounded where it can actually be enforced: the per-fingerprint and lifetime model_calls caps are database CHECKs, and the queue lease stops two invocations racing the same row.",
+  },
   {
     route: "app/api/copilot/answer/route.js",
     why: "OUT OF SCOPE for this change by instruction -- its diff must stay empty. It hard-authenticates, so it is the cheapest of these to bound and should be first in the next pass.",
@@ -142,20 +200,8 @@ const DEFERRED = [
     why: "auth here is best-effort and used only for logging; the model call happens for a signed-out caller too. Needs an identity decision before a bound can be correct.",
   },
   {
-    route: "app/api/company-research/route.js",
-    why: "NO auth gate at all -- an anonymous caller can spend a grounded Gemini call. The gap is the missing identity, and a bound is the second half of that fix, not the first.",
-  },
-  {
-    route: "app/api/posting-from-image/route.js",
-    why: "NO auth gate at all, and the most expensive single call in the product (vision + OCR + web search). Same identity problem; a 12MB upload is the only thing throttling a loop today.",
-  },
-  {
     route: "app/api/experience/knowledge/route.js",
     why: "POST calls Gemini; GET is a plain read of the caller's own rows. Its auth is resolved inside openScopeRequest AFTER the scope fan-out, so a correct bound wants that helper reordered first.",
-  },
-  {
-    route: "app/api/extract-employment/route.js",
-    why: "NO auth gate at all and it calls Gemini on the posted resume text. The single worst finding of the triage, and unfixable by a limiter alone: with no user id and no proxy chain there is nothing to key on.",
   },
   {
     route: "app/api/tailor/route.js",
@@ -171,11 +217,47 @@ const DEFERRED = [
   },
 ];
 
+/**
+ * The four routes that shipped with NO authentication of any kind, with the
+ * handler each one gates. Kept as its own table rather than folded into
+ * BOUNDED: every other bounded route was already authenticated before it was
+ * bounded, so for these four the gate is the finding and the bound is the
+ * follow-on. A future edit that removed the gate would leave every assertion in
+ * BOUNDED green -- the limiter would still be there, keyed on a `userId` that
+ * had quietly become `null`, which `identify()` then answers with
+ * `unidentified` and `check()` turns into a 429 for EVERY caller.
+ */
+const GATED = [
+  { route: "app/api/posting-from-image/route.js", handler: "POST" },
+  { route: "app/api/company-research/route.js", handler: "POST" },
+  { route: "app/api/extract-employment/route.js", handler: "POST" },
+  { route: "app/api/fetch-posting/route.js", handler: "GET" },
+];
+
 const BOUNDED_ROUTES = new Set(BOUNDED.map((entry) => entry.route));
 const DEFERRED_ROUTES = new Set(DEFERRED.map((entry) => entry.route));
 
 function sourceOf(relativePath) {
   return readFileSync(path.join(process.cwd(), relativePath), "utf8");
+}
+
+/**
+ * Source with its comments removed, so a rule ABOUT an identifier is not
+ * mistaken for a use of it. Every one of these routes carries a comment saying
+ * "never `getSession()`" and explaining why -- exactly the prose a naive
+ * `not.toMatch(/getSession\(/)` reads as the defect it is warning against.
+ *
+ * Deliberately conservative: block comments, and only whole-line `//` comments.
+ * A trailing `//` is left alone because `"https://…"` inside a string literal
+ * is not a comment, and truncating there could hide real code further along the
+ * line.
+ */
+function codeOf(relativePath) {
+  return sourceOf(relativePath)
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .split("\n")
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join("\n");
 }
 
 /** Offset of the first exported HTTP handler, or -1. */
@@ -194,6 +276,28 @@ function allRouteFiles(dir = APP_API, found = []) {
     }
   }
   return found;
+}
+
+// Every .js under lib/ and app/, walked once and remembered. Only a route that
+// NAMES its bound (rather than writing a literal) pays for this, and only once.
+let JS_FILES = null;
+function walkJs(dir, found = []) {
+  for (const entry of readdirSync(dir)) {
+    if (entry === "node_modules" || entry === ".next") continue;
+    const full = path.join(dir, entry);
+    if (statSync(full).isDirectory()) walkJs(full, found);
+    else if (full.endsWith(".js")) found.push(full);
+  }
+  return found;
+}
+function allJsFiles() {
+  if (!JS_FILES) {
+    JS_FILES = [
+      ...walkJs(path.join(process.cwd(), "lib")),
+      ...walkJs(path.join(process.cwd(), "app")),
+    ];
+  }
+  return JS_FILES;
 }
 
 describe("every bounded route builds its limiter at MODULE scope", () => {
@@ -245,13 +349,78 @@ describe("a denial is a 429 built from the limiter's own headers, never a throw"
 });
 
 describe("each route's declared bound matches the reasoned number recorded here", () => {
+  // A route may write its bound as a literal OR name a constant. Both are read
+  // here, because forcing a literal would be the wrong pressure: the glossary
+  // route's bounds are also enforced as database CHECKs, and a named constant is
+  // what keeps those two copies from drifting. An identifier is resolved to the
+  // `export const NAME = <number>` that declares it, so this still compares a
+  // NUMBER -- a route that renames its constant to one holding a different value
+  // fails exactly as a changed literal would.
+  function resolveBound(token) {
+    // Numeric separators are stripped HERE, not from the argument text before
+    // the token is read -- doing it earlier turns GENERATION_RATE_LIMIT into
+    // GENERATIONRATELIMIT and no declaration matches it.
+    if (/^[\d_]+$/.test(token)) return Number(token.replace(/_/g, ""));
+    const decl = new RegExp(`export const ${token}\\s*=\\s*([\\d_]+)`);
+    for (const file of allJsFiles()) {
+      const hit = decl.exec(readFileSync(file, "utf8"));
+      if (hit) return Number(hit[1].replace(/_/g, ""));
+    }
+    return null;
+  }
+
   it.each(BOUNDED)("$route keeps limit $limit over $windowMs ms", ({ route, limit, windowMs }) => {
     const source = sourceOf(route);
     const call = /createRateLimiter\(\{([^}]*)\}\)/.exec(source);
     expect(call).not.toBeNull();
-    const args = call[1].replace(/_/g, "");
-    expect(args).toMatch(new RegExp(`limit:\\s*${limit}\\b`));
-    expect(args).toMatch(new RegExp(`windowMs:\\s*${windowMs}\\b`));
+    const args = call[1];
+    const limitToken = /limit:\s*([A-Za-z0-9_]+)/.exec(args);
+    const windowToken = /windowMs:\s*([A-Za-z0-9_]+)/.exec(args);
+    expect(limitToken, `${route} passes no limit to createRateLimiter`).not.toBeNull();
+    expect(windowToken, `${route} passes no windowMs to createRateLimiter`).not.toBeNull();
+    expect(resolveBound(limitToken[1]), `${route}'s limit`).toBe(limit);
+    expect(resolveBound(windowToken[1]), `${route}'s windowMs`).toBe(windowMs);
+  });
+});
+
+describe("the four formerly-unauthenticated routes resolve an identity first", () => {
+  it.each(GATED)("$route gates on getUser() and refuses without an id", ({ route, handler }) => {
+    const code = codeOf(route);
+
+    // The shared helper, not a private re-implementation. `getAuth()` is the
+    // one place `auth.getUser()` is called for these routes.
+    expect(code).toMatch(/from "@\/lib\/experience\/apiAuth"/);
+    expect(code).toMatch(/\bgetAuth\(\)/);
+    expect(code).toMatch(/\bunauthorized\(\)/);
+
+    // NEVER getSession(). app/api/health/route.js records the measurement:
+    // getSession() makes ZERO network requests, so gating on it is not a weak
+    // check, it is a total bypass. Checked against COMMENT-STRIPPED source --
+    // each of these routes explains that rule in a comment, and the rule's own
+    // wording must not read as a violation of it.
+    expect(code).not.toMatch(/getSession\(/);
+
+    // The gate is INSIDE the handler and is the first thing in it.
+    const handlerAt = code.indexOf(`export async function ${handler}`);
+    expect(handlerAt).toBeGreaterThan(-1);
+    const body = code.slice(handlerAt);
+    const authAt = body.search(/\bgetAuth\(\)/);
+    const refuseAt = body.search(/\bunauthorized\(\)/);
+    expect(authAt).toBeGreaterThan(-1);
+    expect(refuseAt).toBeGreaterThan(authAt);
+  });
+
+  it.each(GATED)("$route resolves the id BEFORE it checks the bound", ({ route, handler }) => {
+    // Order is the whole adoption contract: `identify()` prefers the user id
+    // and falls back to a proxy-attested address, so checking the bound before
+    // the auth resolves would key every request on the address (or, with no
+    // trustworthy chain, refuse it) instead of on the caller.
+    const code = codeOf(route);
+    const body = code.slice(code.indexOf(`export async function ${handler}`));
+    const authAt = body.search(/\bgetAuth\(\)/);
+    const checkAt = body.search(/\.check\(identify\(/);
+    expect(checkAt).toBeGreaterThan(-1);
+    expect(authAt).toBeLessThan(checkAt);
   });
 });
 

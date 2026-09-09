@@ -401,11 +401,13 @@ export const ORPHAN_EXPORTS = [
   // not in rule TR-1's bucket. Making the tests import statically would move
   // all seven; that is a test-authoring choice, not a finding, and it is left
   // to whoever next touches those files.
-  {
-    file: "lib/copilot/pointLength.js",
-    name: "standsAlone",
-    why: "the executable form of the 'sufficient to stand on their own' acceptance gate. It has NO shipping caller by design: the drafters were rewritten so their output satisfies it and the corpus sweep runs the predicate to prove they still do, so a runtime caller would mean the answer path re-checks itself instead of being correct by construction",
-  },
+  // REMOVED 2026-09-08: lib/copilot/pointLength.js#standsAlone. Its entry said it
+  // had "NO shipping caller by design" -- true when written, and no longer true.
+  // The expandable-sub-bullets contract calls it as a runtime shape filter on
+  // generated sub-bullets, which is a different job from the corpus gate: the
+  // gate proves the DRAFTERS' own output stands alone, while the filter rejects
+  // a MODEL's sub-bullet that does not. Both want one predicate, so the export
+  // now has a real importer and this bucket is the wrong home for it.
   {
     file: "lib/copilot/pointLength.js",
     name: "MIN_POINT_WORDS",
@@ -431,10 +433,15 @@ export const ORPHAN_EXPORTS = [
     name: "FINITE_FORMS",
     why: "the finite-verb class S3 uses to tell a predicated clause from a noun phrase; enumerated rather than counted for the same reason as ANAPHOR_OPENERS, and pinned so a possessive apostrophe-s cannot be silently read as a finite verb",
   },
+  // REMOVED 2026-09-08: lib/copilot/materialQuote.js#materialQuote, for the same
+  // reason as standsAlone above. Its entry noted it was reached "via the
+  // drafters' quoting path rather than by a direct import of this name"; the
+  // expansion feature now imports the name directly, which is exactly the
+  // outcome that entry existed to make visible.
   {
-    file: "lib/copilot/materialQuote.js",
-    name: "materialQuote",
-    why: "the verbatim quoting entry point, exercised through the dynamic loader in its own suite and reached in shipping code via the drafters' quoting path rather than by a direct import of this name; it is deliberately the only quoting implementation so no drafter re-derives one",
+    file: "app/copilot/useAnswerExpansions.js",
+    name: "useAnswerExpansions",
+    why: "the hook itself, used once inside its own module by ExpansionScope at :150. The two names shipping code actually imports -- ExpansionScope and useExpansionApi -- are reachable from both session clients and ExpansionPanel, so the FEATURE is wired; only this one export is surplus, and un-exporting it is a one-word change a human should make deliberately",
   },
   {
     file: "lib/copilot/answerLocal.js",

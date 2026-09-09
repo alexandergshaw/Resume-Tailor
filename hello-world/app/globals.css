@@ -23,6 +23,47 @@ html {
   overflow-x: hidden;
 }
 
+/*
+ * WCAG 2.4.11 Focus Not Obscured (Minimum), app-wide.
+ *
+ * app/components/AppHeader.js is `position: sticky; top: 0; z-index: 1100`, so
+ * anchoring to a fragment — the skip link's `#main-content` on every route,
+ * and `#job-dock` on this one — scrolls the target's top edge to the top of
+ * the VIEWPORT, which is underneath the header. `<html>` is the scrollport
+ * that moves (see the `overflow-x` note above: `<body>` is deliberately not a
+ * scroll container), so the padding belongs here.
+ *
+ * PROVENANCE. `--app-header-height` is published by AppHeader.js from that
+ * element's own `getBoundingClientRect()`, re-measured on resize and via a
+ * ResizeObserver. It is NOT a literal and could not be: the header's `padding:
+ * 10px clamp(12px, 4vw, 24px)` scales horizontally only, and its `flex-wrap:
+ * wrap` lets the row break at narrow widths, so its rendered height is not a
+ * closed-form function of anything CSS can see here.
+ *
+ * NOT `--sticky-pad`. That property is app/copilot/useStickyTop.js's, it means
+ * header PLUS the copilot question strip, and it exists on /copilot only — so
+ * referencing it here would resolve to a bare fallback on the three routes
+ * that actually need this rule. That hook keeps writing its own, larger value
+ * as an INLINE style on this same element, which outranks this rule in the
+ * cascade; /copilot therefore keeps padding for header + strip, and falls back
+ * to this rule the moment the strip unmounts.
+ *
+ * THE FALLBACK IS 0px, and that is the identity rather than a guess: before
+ * the first measurement (SSR, and on a route with no header at all) the value
+ * is simply absent, and 0px reproduces today's behaviour exactly. It can only
+ * under-pad — the status quo — never over-pad against a height nobody measured.
+ *
+ * THE 4px IS THE FOCUS RING, not a margin of taste: this app's canonical ring
+ * is `2px solid var(--accent)` at `outline-offset: 2px` (stated 40 lines below
+ * on `.skip-link:focus-visible`, from knowledgePanelStyles.js's FOCUS_SX), so
+ * it is drawn 4px outside the border box that scroll-padding aligns. Without
+ * this term the element clears the header but its ring does not — on the one
+ * interaction this whole rule exists to serve.
+ */
+html {
+  scroll-padding-top: calc(var(--app-header-height, 0px) + 4px);
+}
+
 body {
   min-height: 100vh;
   display: flex;

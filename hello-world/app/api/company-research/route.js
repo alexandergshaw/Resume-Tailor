@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { getAuth, unauthorized } from "@/lib/experience/apiAuth";
+import { createRateLimiter, identify, rateLimitHeaders } from "@/lib/rateLimit/index";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { getServerEnv } from "@/lib/config/env";
 import { fetchUrlContent } from "@/lib/scrape/fetchUrlContent";
@@ -17,6 +19,42 @@ export const runtime = "nodejs";
 const MAX_POSTING_CHARS = 6000;
 const MAX_ARTICLE_CHARS = 6000;
 const WANT = 3;
+
+// ---------------------------------------------------------------------------
+// THE SPEND CEILING.
+//
+// BUILT AT MODULE SCOPE, AND THAT IS LOAD-BEARING. A limiter constructed inside
+// the handler gets a brand-new store on every request, so every caller is
+// forever on its first request: it permits everything, counts nothing, and
+// passes a smoke test while doing it. lib/rateLimit/index.js's header states
+// this as the one way to adopt it catastrophically wrong, and this route's
+// suite pins BOTH halves -- a behavioural case that fires 31 requests and
+// expects the 31st to be denied, and a static case that this declaration
+// precedes `POST`.
+//
+// 30 research calls per 10 minutes, per authenticated user. The number is
+// argued from THIS route's own driver rather than from the other grounded
+// routes, which are all single-shot and sit at 10-12: research here fires once
+// per tailored job that carries a cover letter
+// (app/hooks/useDocumentPreview.js:914, deduped per job id), so a batch of
+// screenshots processed by the serial loop in app/hooks/useScreenshots.js
+// produces one of these per item and it has to track that batch. On top of the
+// batch sit the article URLs a user pastes into the research dialog by hand.
+// 30 covers the largest realistic batch plus that manual tail, and still turns
+// an unbounded loop against a grounded call + up to three outbound article
+// fetches into a bounded one. A DENIED REQUEST STILL INCREMENTS (see the
+// module's header): the bound is 30 ATTEMPTS, not 30 successes.
+//
+// HONEST ABOUT WHAT THIS BUYS: `createMemoryStore` is per-instance, so on
+// serverless this bounds a caller to 30 x instanceCount, not 30. It is worth
+// having anyway, but it is not a fleet-wide guarantee and must not be described
+// as one. Swapping in a Redis-backed store satisfying the same two-method
+// interface needs no change here.
+// ---------------------------------------------------------------------------
+const researchLimiter = createRateLimiter({ limit: 30, windowMs: 600_000, prefix: "company-research" });
+
+const RATE_LIMITED_MESSAGE =
+  "Too many company research requests in a short window. Wait a moment and try again.";
 
 // Pull the first JSON array (or {articles:[...]}) out of a model text response.
 // Gemini's googleSearch tool is incompatible with responseMimeType:json, so the
@@ -267,6 +305,37 @@ async function researchUrl({ url, company, jobTitle }) {
 }
 
 export async function POST(request) {
+  // ORDER IS LOAD-BEARING BELOW.
+  //
+  // 1. IDENTITY, from `auth.getUser()` by way of the shared `getAuth()`. Never
+  //    `getSession()`: that call makes ZERO network requests
+  //    (app/api/health/route.js:204-210 records the measurement), so gating on
+  //    it is not a weak check, it is a total bypass. Ahead of everything else
+  //    on purpose -- both branches below spend before they return anything:
+  //    the company branch on a grounded Gemini call, the URL branch on
+  //    `fetchUrlContent` against a host the CALLER chose, with this server's
+  //    egress address as the source.
+  //
+  //    Nothing legitimate is locked out by this. The callers are
+  //    app/hooks/useCompanyResearch.js (on `/`) and app/copilot/useCompanyBrief.js
+  //    (on `/copilot`), both PAGE routes, and lib/supabase/middleware.js
+  //    redirects any page route to /login without a session.
+  const { userId } = await getAuth();
+  if (!userId) return unauthorized();
+
+  // 2. THE BOUND, keyed on the id step 1 resolved to -- never on the caller's
+  //    access token, and never before the auth resolves. Checked ahead of
+  //    validation on purpose: an invalid request is still a request, and a
+  //    caller hammering this endpoint with junk should exhaust its own
+  //    allowance rather than get an unmetered lane.
+  const decision = await researchLimiter.check(identify(request, { userId }));
+  if (!decision.allowed) {
+    return NextResponse.json(
+      { error: RATE_LIMITED_MESSAGE },
+      { status: 429, headers: rateLimitHeaders(decision) },
+    );
+  }
+
   let body;
   try {
     body = await request.json();

@@ -12,6 +12,7 @@ import { identityPropsFor } from "@/lib/copilot/identityProps";
 import { briefStatusMessage } from "@/lib/copilot/companyBrief";
 import { visuallyHidden } from "@/lib/copilot/answerStatus";
 import { useEngine } from "@/app/settings/engine";
+import { ExpansionScope } from "./useAnswerExpansions";
 import { useIsMobile } from "@/app/hooks/useResponsive";
 import TabHeader from "@/app/components/TabHeader";
 import LiveHearingStrip from "./LiveHearingStrip";
@@ -536,6 +537,30 @@ export default function CopilotClient() {
   const { paceForDisplay, fillersForDisplay } = useDeliveryReadings(pace, fillers, lastSampleAt, now);
 
   return (
+    // GOING DEEPER ON ONE BULLET. Every drafted bullet under here gets a "More
+    // detail" control that expands it into sub-bullets drawn from the
+    // candidate's own material. The scope is mounted HERE, once, rather than
+    // per card: it owns the single subscription to the module-scope expansion
+    // store, and the three components that actually render <AnswerLines> reach
+    // it through context without being edited. Mounting it per card would wake
+    // N cards x six bullets on every store write, because answerLines() is
+    // called unmemoized in four render bodies and nothing here is memoized.
+    //
+    // It wraps BOTH the dashboard and the transcript disclosure (which carries
+    // the question feed), so the live answer and the history cards behave the
+    // same way. `questions` is what lets a rendered line find the question and
+    // the RAW points array it came from, which the server needs to confirm the
+    // index really names that sentence.
+    <ExpansionScope
+      questions={questions}
+      request={{
+        applicationId: posting?.id || "",
+        profile,
+        interviewType,
+        codeLanguage,
+        engine,
+      }}
+    >
     <Box sx={{ maxWidth: 1180, mx: "auto", p: { xs: 1.5, sm: 3 } }}>
       {/* I8: consolidated pin/brief live region, mounted empty, never
           conditionally rendered — only its text ever changes. */}
@@ -868,5 +893,6 @@ export default function CopilotClient() {
         </>
       )}
     </Box>
+    </ExpansionScope>
   );
 }

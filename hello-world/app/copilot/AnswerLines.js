@@ -4,6 +4,7 @@ import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 
 import { BREAK_LONG_WORDS_SX } from "./mobileSx";
+import ExpansionPanel from "./ExpansionPanel";
 
 // AC-K1.1/AC-L1: the one place a drafted answer's lines are actually
 // rendered. The reported bug was exactly this markup existing as four
@@ -112,7 +113,20 @@ function usableSpan(emphasis, point) {
   return { start, end };
 }
 
-export default function AnswerLines({ lines }) {
+// GOING DEEPER ON ONE BULLET. `expansion` is optional and is usually absent:
+// ExpansionPanel falls back to the context an ExpansionScope provides, which is
+// how the three components that render this one get the feature without being
+// edited. With neither, ExpansionPanel renders null and this component's output
+// is byte-identical to what it was before the feature existed.
+//
+// THE WHOLE DIFF THIS FEATURE MAKES TO THIS FILE is one import, this prop, and
+// the three lines between the sentinels below. `usableSpan`, the three-branch
+// point render and the citation block are untouched, deliberately: the `<li>`'s
+// single `<strong>` is produced by one expression over one character range, and
+// nothing added here reads `line.emphasis`, slices `line.point`, or wraps a
+// text node that render produced. The sentinels also give the next chunk to
+// edit this file a region to slice AROUND rather than through.
+export default function AnswerLines({ lines, expansion }) {
   return (
     <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
       {lines.map((line, i) => {
@@ -157,6 +171,9 @@ export default function AnswerLines({ lines }) {
               From your {line.pageSource.title} page.
             </Typography>
           ) : null}
+          {/* expansion:start */}
+          <ExpansionPanel line={line} api={expansion} />
+          {/* expansion:end */}
         </Typography>
         );
       })}

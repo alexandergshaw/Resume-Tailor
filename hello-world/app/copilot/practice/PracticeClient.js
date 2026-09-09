@@ -8,6 +8,7 @@ import { interviewTypeLabel } from "@/lib/copilot/interviewTypes";
 import { buildPrivacyNotice } from "@/lib/copilot/practiceNotices";
 import { submitPracticeQuestion } from "@/lib/copilot/manualQuestion";
 import { useEngine } from "@/app/settings/engine";
+import { ExpansionScope } from "../useAnswerExpansions";
 import { useIsTablet } from "@/app/hooks/useResponsive";
 import TranscriptView from "../TranscriptView";
 import QuestionFeed from "../QuestionFeed";
@@ -679,6 +680,15 @@ export default function PracticeClient({
   const { paceForDisplay, fillersForDisplay } = useDeliveryReadings(pace, fillers, lastSampleAt, now);
 
   return (
+    // GOING DEEPER ON ONE BULLET, in practice mode. One scope, one store, one
+    // subscription, exactly as live mode's -- see CopilotClient.js's own note.
+    // `dashboardQuestions` is already the one-entry, live-mode-shaped stand-in
+    // this file synthesises, so a rendered line resolves back to the current
+    // question and the RAW points array the answer on screen came from.
+    <ExpansionScope
+      questions={dashboardQuestions}
+      request={{ applicationId: posting?.id || "", profile, interviewType, codeLanguage, engine }}
+    >
     <Box>
       <PracticeSetup
         privacyNotice={privacyNotice}
@@ -979,5 +989,6 @@ export default function PracticeClient({
         <PracticeHistory refreshSignal={savedAnswerVersion} />
       </Box>
     </Box>
+    </ExpansionScope>
   );
 }

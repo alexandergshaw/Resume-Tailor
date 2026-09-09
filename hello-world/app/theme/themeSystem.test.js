@@ -34,8 +34,27 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const APP_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 const COMPONENTS_DIR = join(APP_DIR, "components");
 
-// CSS variables that are legitimately NOT design tokens (injected by next/font).
-const NON_TOKEN_VARS = new Set(["font-manrope", "font-source-serif"]);
+// CSS variables that are legitimately NOT design tokens, and therefore cannot
+// be defined in tokens.js. Each entry is a deliberate exemption, not a
+// workaround, and each names its writer:
+//
+//   font-manrope / font-source-serif — injected by next/font in layout.js.
+//
+//   app-header-height — a RUNTIME MEASUREMENT, published by
+//     app/components/AppHeader.js from that element's own
+//     getBoundingClientRect() and consumed by the single `scroll-padding-top`
+//     rule in globals.css (WCAG 2.4.11). It is exempt for the same reason the
+//     two font vars are: this sweep's contract is "every var(--…) reference
+//     resolves to a DESIGN TOKEN", and a header's rendered height is not a
+//     design decision anyone can make in tokens.js — it is whatever the header
+//     measures at the current width, which `padding: 10px clamp(12px, 4vw,
+//     24px)` plus `flex-wrap: wrap` makes width-dependent. Defining it in
+//     tokens.js to satisfy this sweep would ship exactly the literal the
+//     measurement exists to avoid. The reference is NOT left unguarded:
+//     app/components/AppHeader.scrollPadding.test.js asserts the writer
+//     publishes it, the CSS consumes it, the fallback is 0px, and the two
+//     halves spell the same name.
+const NON_TOKEN_VARS = new Set(["font-manrope", "font-source-serif", "app-header-height"]);
 const DEFINED_TOKENS = new Set(Object.keys(tokens.light));
 
 const read = (p) => readFileSync(p, "utf8");

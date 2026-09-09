@@ -190,6 +190,21 @@ function longestRunIn(needle, haystack) {
  * number cannot arbitrate a false positive, and no caller should read it as if
  * it could.
  */
+/**
+ * How many tokens `text` has under THIS module's normalisation.
+ *
+ * Exported because "is this text quoted WHOLE out of one line?" is
+ * `materialQuote(text, lines).words === materialTokenCount(text)`, and that
+ * comparison is only sound when both sides count the same way. A caller
+ * reaching for a whitespace word count instead gets a check that is wrong in
+ * both directions: "Cut CI time in-half" is four whitespace words and five
+ * normalised tokens, so a whole quote is rejected, while a text with
+ * punctuation-only words can make a PARTIAL run compare equal and be accepted.
+ */
+export function materialTokenCount(text) {
+  return normalizedTokens(text).length;
+}
+
 export function materialQuote(text, lines) {
   const empty = { words: 0, line: "", lineIndex: -1 };
   const needle = normalizedTokens(text);

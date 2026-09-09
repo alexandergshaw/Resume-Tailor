@@ -400,13 +400,34 @@ describe("[src] every policy that can take a WITH CHECK declares one", () => {
 // Nothing later may quietly undo this.
 // ---------------------------------------------------------------------------
 describe("[src] no later migration reopens write access to positions", () => {
-  it("is currently the newest migration touching public.positions", () => {
+  // Migrations that reference public.positions AFTER the hardening, each with
+  // the reason this tripwire exists to extract. A later migration that is NOT on
+  // this list still fails the case below -- which is the whole point: the author
+  // is made to state why, rather than to widen a filter until it stops firing.
+  const LATER_TOUCHING_ALLOWED = [
+    {
+      file: "20260908010000_position_glossaries.sql",
+      why: "declares `position_glossaries.position_id uuid primary key references public.positions (id) on delete cascade` -- a foreign-key PARENT reference and nothing else. After stripSqlComments that FK line is its ONLY surviving mention of the table: it issues no grant, no policy and no revoke against positions, which the next case re-proves independently rather than on this entry's word. The cascade is deliberate -- a glossary keyed on a posting is meaningless once that posting row is gone.",
+    },
+  ];
+
+  it("is the newest migration to touch public.positions, apart from reasoned FK references", () => {
     const touching = files.filter((f) =>
       stripSqlComments(readFileSync(path.join(MIGRATIONS_DIR, f), "utf8")).includes(TABLE),
     );
     expect(touching).toContain(MIGRATION_NAME);
     expect(touching).toContain(GRANTS_CONTROL_NAME);
-    expect(touching[touching.length - 1]).toBe(MIGRATION_NAME);
+
+    // An allow-list entry must carry a real reason AND must actually touch the
+    // table, so neither a placeholder nor a stale line can sit here unnoticed.
+    for (const entry of LATER_TOUCHING_ALLOWED) {
+      expect(entry.why.length, `${entry.file} is allow-listed with no real reason`).toBeGreaterThan(60);
+      expect(touching, `${entry.file} is allow-listed but no longer touches ${TABLE}`).toContain(entry.file);
+    }
+
+    const allowed = new Set(LATER_TOUCHING_ALLOWED.map((e) => e.file));
+    const unlisted = touching.filter((f) => !allowed.has(f));
+    expect(unlisted[unlisted.length - 1]).toBe(MIGRATION_NAME);
   });
 
   it("any migration sorting after this one grants no write on positions and declares no write policy on it", () => {

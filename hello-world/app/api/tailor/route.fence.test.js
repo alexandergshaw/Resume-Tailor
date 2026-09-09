@@ -180,6 +180,16 @@ describe("route 3 — text OCR'd off an uploaded screenshot (lib/scrape/screensh
       postingText: HOSTILE,
       searchQuery: "Acme backend engineer",
     });
+    // /api/posting-from-image now refuses an unauthenticated caller before it
+    // reads the upload, so this leg needs a signed-in client for THAT call
+    // only -- `mockResolvedValueOnce` is consumed by the screenshot route and
+    // the /api/tailor call after it keeps the signed-out client this file's
+    // beforeEach installs, which is the shape route 1 and route 2 exercise and
+    // the shape this test is actually about.
+    createClient.mockResolvedValueOnce({
+      auth: { getUser: async () => ({ data: { user: { id: "fence-shot-user" } }, error: null }) },
+    });
+
     const image = new File([new Uint8Array(8)], "shot.png", { type: "image/png" });
     Object.defineProperty(image, "size", { value: 1000 });
     image.arrayBuffer = async () => new Uint8Array(8).buffer;

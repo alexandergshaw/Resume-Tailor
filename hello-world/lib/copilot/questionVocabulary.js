@@ -190,7 +190,11 @@ const CLAIM_PROXIMITY_WORDS = 8;
 // itself the way the model is actually instructed to write it, but the regex
 // below is case-insensitive so a differently-cased echo still counts.
 const STAR_LABEL_RE = /^\s*(situation|task|action|result)\s*:/i;
-const FIRST_PERSON_RE = /\bI\b/;
+// Exported for the expansion honesty filters, which have to ask the SAME
+// question this file already asks of a drafted point ("is this the candidate
+// speaking about their own work?") one nesting level down, of a sub-bullet. A
+// private second copy there would be free to drift from this one.
+export const FIRST_PERSON_RE = /\bI\b/;
 
 // AC-3.3, item 4's fix: condition (b) below used to be "STAR label + a bare
 // first-person 'I' anywhere in the point", with no check on what surrounds

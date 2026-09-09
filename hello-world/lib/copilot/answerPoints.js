@@ -190,7 +190,7 @@ export function answerLines(cues, points, pageSources = []) {
     .map((rawPoint, i) => {
       const pointLabelMatch = STAR_LABEL_RE.exec(rawPoint);
       const label = pointLabelMatch ? pointLabelMatch[1] : "";
-      const point = pointLabelMatch ? rawPoint.slice(pointLabelMatch[0].length).trim() : rawPoint;
+      const point = stripStarLabel(rawPoint);
 
       const resolvedCue = paired ? resolveLineCue(rawCues[i], point) : "";
       const run = resolvedCue ? locateCueRun(resolvedCue, point) : null;
@@ -201,9 +201,45 @@ export function answerLines(cues, points, pageSources = []) {
         point,
         pageSource: pageSourcesPaired ? resolvePageSource(rawPageSources[i]) : null,
         emphasis: run ? run.span : null,
+        // WHICH ENTRY OF `cleanPoints` THIS LINE CAME FROM (AC-11.2). Not the
+        // index of the line in the array this function returns: the `.filter`
+        // below runs AFTER this map, so a point that is nothing but its own
+        // STAR label occupies an index here and none there. Anything that
+        // needs to name a rendered bullet back to the array it was drafted
+        // from — the expansion route's identity check is the first — has to
+        // carry this and not a render position, or it silently elaborates the
+        // wrong bullet with the right count and the right citation shape.
+        //
+        // Deliberately a SCALAR computed inside this map, never a fourth
+        // positional array argument: every positional pairing this function
+        // takes is all-or-nothing on exact length (see `paired` and
+        // `pageSourcesPaired` above), and an array that was sometimes shorter
+        // would fail that gate and null every line's pairing at once.
+        sourceIndex: i,
       };
     })
     .filter((line) => line.point);
+}
+
+// The label strip answerLines performs above, exported so a consumer outside
+// this module gets the SAME rule rather than a copy of the regex.
+//
+// It exists because there are now three places that need "strip the STAR
+// label and trim": this function, the expansion route's `points[pointIndex]`
+// identity check, and anything downstream that has to compare a rendered
+// point against the raw array it was drafted from. The regex itself is
+// answerLocal.js's — and there is a DECOY: questionVocabulary.js declares a
+// different, module-private `STAR_LABEL_RE` (case-insensitive, leading
+// whitespace allowed, different capture semantics). Anyone who greps for the
+// name rather than importing this function will find two and may pick the
+// wrong one.
+//
+// Total by construction: a non-string returns "", never throws, and never
+// returns a non-string.
+export function stripStarLabel(text) {
+  const raw = typeof text === "string" ? text : "";
+  const match = STAR_LABEL_RE.exec(raw);
+  return match ? raw.slice(match[0].length).trim() : raw;
 }
 
 // Maximal alphanumeric runs of `text`, each with its own character offsets
@@ -278,6 +314,12 @@ function resolveLineCue(rawCue, point) {
   return cue;
 }
 
-function normalizeForComparison(text) {
+// Exported for the same reason stripStarLabel above is: "is this the same
+// sentence, modulo case, surrounding whitespace and one trailing stop?" is a
+// question the expansion contract has to answer with EXACTLY this rule — a
+// sub-bullet that merely restates its own parent is not further detail, and a
+// cache key that disagreed with this on what counts as the same point would
+// re-buy a paid model call on a redraft that changed nothing.
+export function normalizeForComparison(text) {
   return String(text || "").trim().toLowerCase().replace(/[.,;:!?…]+$/u, "");
 }

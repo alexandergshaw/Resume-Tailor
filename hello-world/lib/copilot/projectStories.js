@@ -383,7 +383,12 @@ export function selectBestStory(pagesInput, { question = "", points = [] } = {})
   };
 }
 
-function toSentence(text) {
+// Exported for the expansion drafter, which quotes the SAME `bullets` array
+// starPointsFromStory below quotes and must present them with exactly the
+// same sentence casing and terminal stop. A private second copy there would
+// let "verbatim modulo toSentence" mean two different things one nesting level
+// apart, which is precisely the provenance guarantee that has to hold.
+export function toSentence(text) {
   const t = String(text || "").trim();
   if (!t) return "";
   const capped = t.charAt(0).toUpperCase() + t.slice(1);

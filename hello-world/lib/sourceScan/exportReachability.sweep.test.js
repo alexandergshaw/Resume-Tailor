@@ -428,7 +428,17 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // someone to discover by deleting one. The eighth,
     // answerLocal.js#groundingCandidates, is the ordinary shape: read inside its
     // own module, with the `export` keyword the only surplus part.
-    expect(ORPHAN_EXPORTS).toHaveLength(64);
+    // 64 -> 63, and the total again hides movement in BOTH directions.
+    //   -2  pointLength.js#standsAlone and materialQuote.js#materialQuote gained
+    //       real importers when the expandable-sub-bullets feature landed. Both
+    //       entries said in so many words that they had no direct importer; that
+    //       stopped being true, so they left. This is the bucket working: it
+    //       surfaced two exports whose only justification was "nothing imports
+    //       this yet", and something did.
+    //   +1  useAnswerExpansions.js#useAnswerExpansions, the ordinary shape --
+    //       used once inside its own module, with the names shipping code
+    //       actually imports (ExpansionScope, useExpansionApi) reachable.
+    expect(ORPHAN_EXPORTS).toHaveLength(63);
   });
 
   it("[RULE TR-1] counts the exports whose only consumer is a test, exactly", () => {
@@ -519,7 +529,19 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // imports only, so the edge is real but invisible here. The eighth,
     // answerLocal.js#groundingCandidates, is called inside its own module.
     // Neither is a bucket move of the kind this number tracks.
-    expect(TEST_REFERENCED.length).toBe(304);
+    // 304 -> 336. Two large features landed together: expandable sub-bullets
+    // (expansionContract, expansionHonesty, expansionPrompt, expansionStore,
+    // answerExpansionLocal, answerRequestPrologue) and the position glossary
+    // (its constants, worker, store, ingest rules and citation join). Both follow
+    // this repo's dominant convention of widening a module's export surface so a
+    // unit suite can pin an internal helper or a threshold directly rather than
+    // through the public function -- rule TR-1's whole subject.
+    //
+    // The signal that this is a widened surface and not lost features is that the
+    // orphan half moved INDEPENDENTLY and in the other direction (64 -> 63): an
+    // export nothing at all asks for lands there, not here, and would have broken
+    // the split assertion above instead of this count.
+    expect(TEST_REFERENCED.length).toBe(336);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
@@ -547,7 +569,14 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // a dynamic `await load()`. The census reported them as orphans, which is
     // what this file's numbers actually say; the enumerated ledger is what
     // carries the truth that a test does read them.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(368);
+    // 368 -> 399 = 336 + 63, and the two halves moved in OPPOSITE directions:
+    // rule TR-1's bucket gained 32 as two large features widened their export
+    // surfaces for their unit suites, while the orphan half LOST one on net
+    // because `standsAlone` and `materialQuote` finally gained real importers.
+    // A feature built and never wired would have moved both the same way; that
+    // it did not is the evidence this total cannot show on its own, which is why
+    // the split assertion above is the one that matters.
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(399);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

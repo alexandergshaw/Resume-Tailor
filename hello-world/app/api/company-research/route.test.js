@@ -1,16 +1,47 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { jsonRequest } from "../../../test/helpers/supabaseMock.js";
 
 vi.mock("@/lib/config/env", () => ({ getServerEnv: vi.fn() }));
 vi.mock("@/lib/llm/geminiClient", () => ({ getGeminiClient: vi.fn() }));
 vi.mock("@/lib/scrape/fetchUrlContent", () => ({ fetchUrlContent: vi.fn() }));
 vi.mock("@/lib/scrape/webSearch", () => ({ searchPostingUrls: vi.fn(async () => []) }));
+vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 
 import { POST, parseArticles, extractGroundingSources } from "./route.js";
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { fetchUrlContent } from "@/lib/scrape/fetchUrlContent";
 import { searchPostingUrls } from "@/lib/scrape/webSearch";
+import { createClient } from "@/lib/supabase/server";
+
+const ROUTE_SOURCE = readFileSync(
+  path.join(process.cwd(), "app", "api", "company-research", "route.js"),
+  "utf8",
+);
+
+/** The bound this route declares. Duplicated in lib/rateLimit/adoption.test.js. */
+const LIMIT = 30;
+
+// USER IDS ARE UNIQUE PER CASE, deliberately. The rate limiter is a module
+// singleton, so its counters survive between `it()` blocks in this file exactly
+// as they survive between requests in a running server. Sharing one id would
+// let an early case's requests deny a later one -- a defect in the TEST, not in
+// the bound. Same discipline as app/api/copilot/ask/route.test.js.
+let userSeq = 0;
+function signedIn(userId = `research-user-${(userSeq += 1)}`) {
+  createClient.mockResolvedValue({
+    auth: { getUser: async () => ({ data: { user: { id: userId } }, error: null }) },
+  });
+  return userId;
+}
+
+function signedOut() {
+  createClient.mockResolvedValue({
+    auth: { getUser: async () => ({ data: { user: null }, error: null }) },
+  });
+}
 
 const ARTICLES_JSON = JSON.stringify({
   articles: [
@@ -40,8 +71,90 @@ function mockGemini({ text = ARTICLES_JSON, grounded = true } = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("Gemini_LLM_API_Key", "test-key");
+  signedIn();
 });
 afterEach(() => vi.unstubAllEnvs());
+
+// ---------------------------------------------------------------------------
+// Identity. This route used to have NO auth gate of any kind: one anonymous
+// POST bought a grounded Gemini call plus up to three outbound fetches.
+// ---------------------------------------------------------------------------
+describe("an anonymous caller cannot spend a grounded call here", () => {
+  it("401s without reaching Gemini or fetching anything", async () => {
+    signedOut();
+    mockGemini();
+    const res = await POST(jsonRequest({ company: "Acme", jobTitle: "Engineer" }));
+    expect(res.status).toBe(401);
+    expect(getGeminiClient).not.toHaveBeenCalled();
+    expect(fetchUrlContent).not.toHaveBeenCalled();
+  });
+
+  it("401s custom-URL mode too, so the fetcher is not an open proxy", async () => {
+    // URL mode reads a caller-chosen page with OUR egress before any model
+    // call. A gate that only covered the company branch would leave that open.
+    signedOut();
+    const res = await POST(jsonRequest({ url: "https://news.example/acme-lab", company: "Acme" }));
+    expect(res.status).toBe(401);
+    expect(fetchUrlContent).not.toHaveBeenCalled();
+  });
+
+  it("401s the embedded path too — the gate precedes the engine branch", async () => {
+    signedOut();
+    const res = await POST(jsonRequest({ company: "Acme", engine: "embedded" }));
+    expect(res.status).toBe(401);
+    expect(searchPostingUrls).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The bound. Only possible now that there is an id to key on.
+// ---------------------------------------------------------------------------
+describe("the spend ceiling actually bites", () => {
+  it("denies past the bound with 429 and a Retry-After", async () => {
+    signedIn("research-greedy");
+    mockGemini();
+
+    const statuses = [];
+    for (let i = 0; i < LIMIT + 1; i += 1) {
+      // An empty body 400s on validation -- which is deliberately AFTER the
+      // bound, so a caller hammering this endpoint with junk exhausts its own
+      // allowance rather than getting an unmetered lane.
+      statuses.push((await POST(jsonRequest({}))).status);
+    }
+
+    // A limiter built INSIDE the handler gets a fresh store on every request,
+    // so every caller is forever on its first request and all LIMIT+1 are 400.
+    expect(statuses.filter((s) => s === 400)).toHaveLength(LIMIT);
+    expect(statuses[LIMIT]).toBe(429);
+
+    const denied = await POST(jsonRequest({ company: "Acme" }));
+    expect(denied.status).toBe(429);
+    expect(Number(denied.headers.get("Retry-After"))).toBeGreaterThanOrEqual(1);
+    expect(denied.headers.get("RateLimit-Limit")).toBe(String(LIMIT));
+    expect(getGeminiClient).not.toHaveBeenCalled();
+  });
+
+  it("counts per authenticated user, so one caller's flood cannot deny another", async () => {
+    signedIn("research-flooder");
+    for (let i = 0; i < LIMIT + 1; i += 1) await POST(jsonRequest({}));
+    expect((await POST(jsonRequest({}))).status).toBe(429);
+
+    signedIn("research-bystander");
+    expect((await POST(jsonRequest({}))).status).toBe(400);
+  });
+
+  it("builds the limiter at MODULE scope, never inside the handler", () => {
+    // The static half of the assertion above. A per-request limiter counts
+    // nothing while looking correct, so only a construction-site check sees it.
+    const declaration = /^const \w+ = createRateLimiter\(/m;
+    expect(ROUTE_SOURCE).toMatch(declaration);
+    const limiterAt = ROUTE_SOURCE.search(declaration);
+    const handlerAt = ROUTE_SOURCE.indexOf("export async function POST");
+    expect(handlerAt).toBeGreaterThan(-1);
+    expect(limiterAt).toBeLessThan(handlerAt);
+    expect(ROUTE_SOURCE.slice(handlerAt)).not.toMatch(/createRateLimiter\(/);
+  });
+});
 
 describe("parseArticles", () => {
   it("parses {articles:[...]} and bare arrays, dropping malformed entries", () => {

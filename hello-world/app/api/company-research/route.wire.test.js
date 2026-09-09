@@ -30,13 +30,27 @@ vi.mock("@/lib/config/env", () => ({ getServerEnv: vi.fn() }));
 vi.mock("@/lib/llm/geminiClient", () => ({ getGeminiClient: vi.fn() }));
 vi.mock("@/lib/scrape/fetchUrlContent", () => ({ fetchUrlContent: vi.fn() }));
 vi.mock("@/lib/scrape/webSearch", () => ({ searchPostingUrls: vi.fn(async () => []) }));
+vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 
 import { GoogleGenAI } from "@google/genai";
 import { getServerEnv } from "@/lib/config/env";
 import { getGeminiClient } from "@/lib/llm/geminiClient";
 import { fetchUrlContent } from "@/lib/scrape/fetchUrlContent";
 import { captureGeminiRequests, toolsOf } from "@/lib/llm/geminiWireProbe";
+import { createClient } from "@/lib/supabase/server";
 import { POST } from "./route.js";
+
+// The route now refuses an unauthenticated caller before it builds any client,
+// so every case here needs a signed-in one to reach the wire at all. Ids are
+// unique per case because the route's rate limiter is a module singleton whose
+// counters survive between `it()` blocks exactly as they survive between
+// requests.
+let userSeq = 0;
+function signedIn() {
+  createClient.mockResolvedValue({
+    auth: { getUser: async () => ({ data: { user: { id: `wire-user-${(userSeq += 1)}` } }, error: null }) },
+  });
+}
 
 const jsonRequest = (body) =>
   new Request("http://localhost/api/company-research", {
@@ -47,6 +61,7 @@ const jsonRequest = (body) =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  signedIn();
   // wantsEmbedded reads process.env directly, not the mocked getServerEnv.
   vi.stubEnv("Gemini_LLM_API_Key", "test-key");
   getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });

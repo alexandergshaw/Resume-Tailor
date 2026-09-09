@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
+vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 vi.mock("@/lib/config/env", () => ({ getServerEnv: vi.fn() }));
 vi.mock("@/lib/llm/geminiClient", () => ({ getGeminiClient: vi.fn() }));
 vi.mock("@/lib/scrape/fetchUrlContent", () => ({
@@ -17,6 +20,34 @@ import { fetchUrlContent, extractUrls } from "@/lib/scrape/fetchUrlContent";
 import { lookupAtsPostingUrl } from "@/lib/scrape/atsLookup";
 import { readScreenshotOffline } from "@/lib/scrape/screenshotOcr";
 import { searchPostingUrls } from "@/lib/scrape/webSearch";
+import { createClient } from "@/lib/supabase/server";
+
+const ROUTE_SOURCE = readFileSync(
+  path.join(process.cwd(), "app", "api", "posting-from-image", "route.js"),
+  "utf8",
+);
+
+/** The bound this route declares. Duplicated in lib/rateLimit/adoption.test.js. */
+const LIMIT = 30;
+
+// USER IDS ARE UNIQUE PER CASE, deliberately. The rate limiter is a module
+// singleton, so its counters survive between `it()` blocks in this file exactly
+// as they survive between requests in a running server. Sharing one id would
+// let an early case's requests deny a later one -- a defect in the TEST, not in
+// the bound. Same discipline as app/api/copilot/ask/route.test.js.
+let userSeq = 0;
+function signedIn(userId = `shot-user-${(userSeq += 1)}`) {
+  createClient.mockResolvedValue({
+    auth: { getUser: async () => ({ data: { user: { id: userId } }, error: null }) },
+  });
+  return userId;
+}
+
+function signedOut() {
+  createClient.mockResolvedValue({
+    auth: { getUser: async () => ({ data: { user: null }, error: null }) },
+  });
+}
 
 // Default to the Gemini engine; the embedded suite passes "embedded" explicitly.
 // (Without an engine, wantsEmbedded would pick embedded when no Gemini key is
@@ -60,9 +91,96 @@ function mockGemini({ vision = VISION_JSON, searchText = "https://acme.example/j
 
 beforeEach(() => {
   vi.clearAllMocks();
+  signedIn();
   extractUrls.mockImplementation((t) => {
     const m = String(t || "").match(/https?:\/\/[^\s]+/g);
     return m ? m.slice(0, 5) : [];
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Identity. This route used to have NO auth gate of any kind, and it is the
+// most expensive single call in the product: vision + OCR + a grounded web
+// search + up to five outbound fetches. A 12MB upload cap was the only thing
+// throttling an anonymous loop.
+// ---------------------------------------------------------------------------
+describe("an anonymous caller cannot spend the vision pipeline", () => {
+  it("401s without reading the upload or reaching Gemini", async () => {
+    signedOut();
+    const formData = vi.fn(async () => new FormData());
+    const res = await POST({ formData });
+    expect(res.status).toBe(401);
+    // The gate precedes the multipart read, so a 12MB body is never buffered.
+    expect(formData).not.toHaveBeenCalled();
+    expect(getGeminiClient).not.toHaveBeenCalled();
+  });
+
+  it("401s the embedded path too — the gate precedes the engine branch", async () => {
+    // The embedded path is keyless, but it still runs Tesseract OCR on this
+    // server's CPU over an attacker-chosen image and then fans out to a web
+    // search. A gate that only covered the Gemini branch would leave that open.
+    signedOut();
+    readScreenshotOffline.mockResolvedValue({
+      jobTitle: "Senior Engineer",
+      company: "Acme",
+      location: "",
+      postingText: "x".repeat(200),
+      searchQuery: "Acme Senior Engineer",
+    });
+    const res = await POST(imageRequest(pngFile(), "embedded"));
+    expect(res.status).toBe(401);
+    expect(readScreenshotOffline).not.toHaveBeenCalled();
+    expect(searchPostingUrls).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The bound. Only possible now that there is an id to key on.
+// ---------------------------------------------------------------------------
+describe("the spend ceiling actually bites", () => {
+  it("denies past the bound with 429 and a Retry-After", async () => {
+    signedIn("shot-greedy");
+    mockGemini();
+
+    const statuses = [];
+    for (let i = 0; i < LIMIT + 1; i += 1) {
+      // No image 400s on validation -- which is deliberately AFTER the bound,
+      // so a caller hammering this endpoint with junk exhausts its own
+      // allowance rather than getting an unmetered lane.
+      statuses.push((await POST(imageRequest(null))).status);
+    }
+
+    // A limiter built INSIDE the handler gets a fresh store on every request,
+    // so every caller is forever on its first request and all LIMIT+1 are 400.
+    expect(statuses.filter((s) => s === 400)).toHaveLength(LIMIT);
+    expect(statuses[LIMIT]).toBe(429);
+
+    const denied = await POST(imageRequest(pngFile()));
+    expect(denied.status).toBe(429);
+    expect(Number(denied.headers.get("Retry-After"))).toBeGreaterThanOrEqual(1);
+    expect(denied.headers.get("RateLimit-Limit")).toBe(String(LIMIT));
+    expect(getGeminiClient).not.toHaveBeenCalled();
+  });
+
+  it("counts per authenticated user, so one caller's flood cannot deny another", async () => {
+    signedIn("shot-flooder");
+    for (let i = 0; i < LIMIT + 1; i += 1) await POST(imageRequest(null));
+    expect((await POST(imageRequest(null))).status).toBe(429);
+
+    signedIn("shot-bystander");
+    expect((await POST(imageRequest(null))).status).toBe(400);
+  });
+
+  it("builds the limiter at MODULE scope, never inside the handler", () => {
+    // The static half of the assertion above. A per-request limiter counts
+    // nothing while looking correct, so only a construction-site check sees it.
+    const declaration = /^const \w+ = createRateLimiter\(/m;
+    expect(ROUTE_SOURCE).toMatch(declaration);
+    const limiterAt = ROUTE_SOURCE.search(declaration);
+    const handlerAt = ROUTE_SOURCE.indexOf("export async function POST");
+    expect(handlerAt).toBeGreaterThan(-1);
+    expect(limiterAt).toBeLessThan(handlerAt);
+    expect(ROUTE_SOURCE.slice(handlerAt)).not.toMatch(/createRateLimiter\(/);
   });
 });
 

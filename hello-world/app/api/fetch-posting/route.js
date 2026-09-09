@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { getAuth, unauthorized } from "@/lib/experience/apiAuth";
+import { createRateLimiter, identify, rateLimitHeaders } from "@/lib/rateLimit/index";
 
 const BLOCKED_HOSTNAMES = [
   "localhost",
@@ -12,7 +14,68 @@ const BLOCKED_IP_PREFIXES = ["10.", "192.168.", "172.16.", "172.17.", "172.18.",
 
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024; // 2 MB
 
+// ---------------------------------------------------------------------------
+// THE OUTBOUND-REQUEST CEILING.
+//
+// THIS ROUTE IS DIFFERENT FROM THE MODEL ROUTES BOUNDED ALONGSIDE IT, and the
+// difference is the whole reason for the number. It spends no model money at
+// all; what an abusive loop here spends is bandwidth and, far more importantly,
+// OUR outbound reputation -- every request leaves this server aimed at a host
+// the CALLER chose, so a loop is a scan that a third party sees coming from us.
+// The gate above is therefore the real fix and this bound is the follow-on: it
+// makes that scan attributable to one account and finite.
+//
+// BUILT AT MODULE SCOPE, AND THAT IS LOAD-BEARING. A limiter constructed inside
+// the handler gets a brand-new store on every request, so every caller is
+// forever on its first request: it permits everything, counts nothing, and
+// passes a smoke test while doing it (lib/rateLimit/index.js's header states
+// this as the one way to adopt it catastrophically wrong). This route's suite
+// pins both halves.
+//
+// 20 fetches per 10 minutes, per authenticated user, and 20 is generous on
+// purpose: this route has ZERO callers anywhere in the app -- the in-product
+// scraping all goes through `lib/scrape/fetchUrlContent.js`, which has the
+// stronger SSRF checks (`checkRequestUrl`, `isBlockedHost`, `parseIPv4` /
+// `parseIPv6`) that the inline hostname list below does not. So no legitimate
+// traffic exists to clip, and the right follow-up is to decide whether this
+// endpoint should exist at all rather than to tune its limit.
+//
+// HONEST ABOUT WHAT THIS BUYS: `createMemoryStore` is per-instance, so on
+// serverless this bounds a caller to 20 x instanceCount, not 20.
+// ---------------------------------------------------------------------------
+const fetchPostingLimiter = createRateLimiter({ limit: 20, windowMs: 600_000, prefix: "fetch-posting" });
+
+const RATE_LIMITED_MESSAGE = "Too many pages fetched in a short window. Wait a moment and try again.";
+
 export async function GET(request) {
+  // ORDER IS LOAD-BEARING BELOW.
+  //
+  // 1. IDENTITY, from `auth.getUser()` by way of the shared `getAuth()`. Never
+  //    `getSession()`: that call makes ZERO network requests
+  //    (app/api/health/route.js:204-210 records the measurement), so gating on
+  //    it is not a weak check, it is a total bypass.
+  //
+  //    Ahead of the SSRF checks below, not after them, and that ordering is
+  //    itself a fix: answering a blocked host with 400 and a reachable one with
+  //    502-or-200 handed an ANONYMOUS caller a free oracle over this network's
+  //    address space. With the gate first, every unauthenticated probe gets the
+  //    same 401 and learns nothing.
+  const { userId } = await getAuth();
+  if (!userId) return unauthorized();
+
+  // 2. THE BOUND, keyed on the id step 1 resolved to -- never on the caller's
+  //    access token, and never before the auth resolves. Checked ahead of URL
+  //    validation on purpose: an invalid request is still a request, and a
+  //    caller hammering this endpoint with junk should exhaust its own
+  //    allowance rather than get an unmetered lane.
+  const decision = await fetchPostingLimiter.check(identify(request, { userId }));
+  if (!decision.allowed) {
+    return NextResponse.json(
+      { error: RATE_LIMITED_MESSAGE },
+      { status: 429, headers: rateLimitHeaders(decision) },
+    );
+  }
+
   const { searchParams } = new URL(request.url);
   const rawUrl = searchParams.get("url");
 
