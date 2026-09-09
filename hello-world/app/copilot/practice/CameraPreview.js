@@ -70,7 +70,21 @@ export default function CameraPreview({ stream, hasVideo, cameraOff, compact = f
     minWidth: 0,
     minHeight: compact ? 0 : { xs: 0, md: 340 },
     aspectRatio: compact ? "3 / 4" : { xs: "3 / 4", md: "auto" },
-    maxHeight: compact ? { xs: ["26vh", "26dvh"] } : { xs: ["45vh", "45dvh"], md: "62vh" },
+    // MOBILE-G F-07: the compact branch's `md: "none"` is not decoration.
+    // `xs` compiles to `@media (min-width:0px)`, which matches at EVERY
+    // width, so without an upper bound this 26vh cap is not "the phone cap"
+    // — it is the cap, everywhere. It was inert only while PracticeClient
+    // was the single caller and mounted `compact` solely below `md`, i.e.
+    // enforced by that caller's comment rather than by this style.
+    // RoleDrillClient is now a second caller passing `compact`, so the
+    // invariant is one call site further from where it is written down;
+    // `md: "none"` (max-height's own initial value, exactly as the sibling
+    // branch's `md` key restores the desktop 62vh) makes the style say it
+    // instead. Same shape as the sibling: the two-element array stays nested
+    // UNDER a breakpoint key so MUI emits `max-height:26vh;max-height:26dvh`
+    // as stacked declarations — passed at the top level it would be read as
+    // one value per breakpoint and the `vh` fallback would be lost.
+    maxHeight: compact ? { xs: ["26vh", "26dvh"], md: "none" } : { xs: ["45vh", "45dvh"], md: "62vh" },
     display: { xs: "flex", md: "block" },
     borderRadius: 2,
     border: "1px solid var(--border)",

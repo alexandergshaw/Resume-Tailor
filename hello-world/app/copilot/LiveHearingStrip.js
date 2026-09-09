@@ -78,18 +78,57 @@ export default function LiveHearingStrip({ live, finals, interims, startedAt, li
           // engages when the prop is `undefined`.
           role={null}
           severity={isSilent ? "warning" : "info"}
-          sx={{
+          sx={(theme) => ({
             mb: 1.5,
             py: 0.5,
             // AC-S3.6: bounded to about two lines — live mode must still not
             // need scrolling to see whether the copilot is hearing anything.
-            "& .MuiAlert-message": {
-              display: "-webkit-box",
-              WebkitLineClamp: 2,
-              WebkitBoxOrient: "vertical",
-              overflow: "hidden",
+            //
+            // Scoped to `sm` and up (MOBILE-G F-05). Two lines is a generous
+            // bound at a desktop width and a destructive one on a phone: the
+            // clamp is a hard `overflow: hidden` with no affordance to read
+            // what it cut, and the string it cuts is the longest one this
+            // component produces — the silent branch's sentence plus
+            // silenceHint(), 134 characters. Measured in a browser against
+            // that worst case, with this file's own serialized CSS:
+            //
+            //     viewport   message box   clientH/scrollH   clipped
+            //     320x812    230px         56 / 116          60px (3 of 5 lines)
+            //     375x812    285px         56 / 96           40px (2 of 4 lines)
+            //     430x812    340px         56 / 76           20px (1 of 3 lines)
+            //     900x812    810px         56 / 56           0px
+            //
+            // At 375 the deleted half is exactly "Check that your microphone
+            // is selected and not muted." — the only sentence on the screen
+            // that says what to DO about a deaf session, on the one component
+            // that exists to prove the session is alive. A 10px sweep put the
+            // last clipping width at 540 and the first clean one at 550, so
+            // `up("sm")` (600) covers the whole clipping band with ~50px to
+            // spare and leaves rendering at `sm` and up byte-identical.
+            //
+            // Letting it grow below `sm` costs nothing structural: at `xs`
+            // this component is a sibling AHEAD of the bounded live wrapper,
+            // which is itself `height: auto` / `overflow: visible` at `xs`
+            // (CopilotClient.js:693-694), and the page is the single scroller
+            // there. It also cannot move the sticky question strip's budget —
+            // useStickyTop.js sizes that from the APP HEADER's height and the
+            // viewport, never from anything in this column.
+            //
+            // Written as a `down`/`up` MEDIA QUERY rather than
+            // `WebkitLineClamp: { xs: "none", sm: 2 }`: the clamp is four
+            // co-operating declarations (`display: -webkit-box` is what makes
+            // `-webkit-line-clamp` mean anything at all), so switching one of
+            // them off per breakpoint leaves the other three applying at
+            // every width. The whole block has to be behind one bound.
+            [theme.breakpoints.up("sm")]: {
+              "& .MuiAlert-message": {
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              },
             },
-          }}
+          })}
         >
           {withHint}
         </Alert>

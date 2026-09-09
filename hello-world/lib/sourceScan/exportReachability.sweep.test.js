@@ -558,7 +558,44 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // route — now imports it. That is the census working in the good
     // direction, and it is the same movement `standsAlone` and `materialQuote`
     // made one chunk earlier.
-    expect(TEST_REFERENCED.length).toBe(342);
+    //
+    // 342 -> 351, and all nine are the glossary HOVER chunk's, in rule TR-1's
+    // exact shape: a module's public entry point is reached by shipping code
+    // and the widened surface is what its unit suite pins directly.
+    //   * glossaryMatch.js#MAX_MARKS_PER_LINE, #EMPTY_GLOSSARY_INDEX,
+    //     #buildGlossaryIndex, #findGlossaryMarks, #glossaryMarksFor -- the
+    //     module IS reachable (AnswerLines.js imports `marksWithin`, and
+    //     GlossaryProvider.js imports three more), and these five are what the
+    //     matcher's own suite and its corpus sweep drive directly, because a
+    //     tie-break and a straddle rule cannot be exercised through a render.
+    //   * glossaryCard.js#NO_SOURCE_SENTENCE, #POSTING_ONLY_LINE,
+    //     #sourceLinkLabel -- the wording constants the card's suite asserts by
+    //     name rather than restating as literals in a fixture; the module's
+    //     entry point, `glossaryCardModel`, IS imported by GlossaryTerm.js.
+    //   * glossaryPanel.js#GLOSSARY_PANEL_ROWS -- the sixteen-state
+    //     enumeration, exported so a test can assert there are sixteen of them
+    //     rather than counting branches by eye. `glossaryPanelState` itself is
+    //     imported by GlossaryProvider.js.
+    //
+    // The orphan half is FROZEN at 63 across this chunk, and that is the load-
+    // bearing half of the reading: every component this chunk added
+    // (GlossaryTerm, GlossaryProvider) is reached from AnswerLines.js, so a
+    // feature built and never wired would have landed in the other bucket.
+    //
+    // 351 -> 350, and the ONE symbol is GlossaryProvider.js#GlossaryProvider.
+    // It is a bucket move, and the direction is the interesting part: when the
+    // glossary UI landed, AnswerLines.js imported the CONTEXT HOOK out of that
+    // module, so the module was reachable while the PROVIDER COMPONENT itself
+    // had no shipping importer -- the feature rendered nothing because nothing
+    // mounted it. Mounting it in CopilotClient.js and practice/PracticeClient.js
+    // gave that export a real caller and this count fell by one.
+    //
+    // Worth keeping, because it is the second time this has happened: the
+    // ask-AI box shipped in 7e3d48c sending an empty applicationId for exactly
+    // the same reason -- built, tested, and never wired at the mount site. A
+    // count that falls when a feature is connected is the cheapest evidence
+    // this census produces that something is actually reachable by a user.
+    expect(TEST_REFERENCED.length).toBe(350);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
@@ -598,7 +635,17 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // the answer route, and every other export it added is read by name from
     // a static import in its own suite. A feature built and never wired would
     // have shown up in the other half.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(405);
+    // 405 -> 414 = 351 + 63, the orphan half again FROZEN. Same reading as the
+    // citation-detail chunk before it: the glossary hover's nine are all
+    // thresholds, wording constants and an enumeration that its suites read by
+    // name from static imports, and its two new components are both reached
+    // from AnswerLines.js.
+    // 414 -> 413 = 350 + 63, orphan half still FROZEN. The single step down is
+    // GlossaryProvider gaining its mount, described at the TR-1 assertion above.
+    // Note the direction: every other movement in this file's history has been
+    // upward, as features widened their export surfaces. A DECREASE here means
+    // shipping code started asking for something only a test used to ask for.
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(413);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

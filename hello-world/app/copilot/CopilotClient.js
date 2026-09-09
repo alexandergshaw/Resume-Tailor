@@ -13,6 +13,7 @@ import { briefStatusMessage } from "@/lib/copilot/companyBrief";
 import { visuallyHidden } from "@/lib/copilot/answerStatus";
 import { useEngine } from "@/app/settings/engine";
 import { ExpansionScope } from "./useAnswerExpansions";
+import { GlossaryProvider } from "./GlossaryProvider";
 import { useIsMobile } from "@/app/hooks/useResponsive";
 import TabHeader from "@/app/components/TabHeader";
 import LiveHearingStrip from "./LiveHearingStrip";
@@ -551,6 +552,13 @@ export default function CopilotClient() {
     // same way. `questions` is what lets a rendered line find the question and
     // the RAW points array it came from, which the server needs to confirm the
     // index really names that sentence.
+    // GLOSSARY TERMS, outermost so both the live answer and the history cards
+    // resolve the same definitions. `posting?.id` is the same fact
+    // useApplicationDocs, useRoomQuestions, AskAiBox and ExpansionScope below
+    // already consume on this surface -- passed explicitly rather than left to
+    // the provider's own default, because a default parameter on an id is what
+    // let the ask-AI box ship sending `applicationId: ""` on every request.
+    <GlossaryProvider applicationId={posting?.id || ""}>
     <ExpansionScope
       questions={questions}
       request={{
@@ -894,5 +902,6 @@ export default function CopilotClient() {
       )}
     </Box>
     </ExpansionScope>
+    </GlossaryProvider>
   );
 }

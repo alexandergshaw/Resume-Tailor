@@ -9,6 +9,7 @@ import { buildPrivacyNotice } from "@/lib/copilot/practiceNotices";
 import { submitPracticeQuestion } from "@/lib/copilot/manualQuestion";
 import { useEngine } from "@/app/settings/engine";
 import { ExpansionScope } from "../useAnswerExpansions";
+import { GlossaryProvider } from "../GlossaryProvider";
 import { useIsTablet } from "@/app/hooks/useResponsive";
 import TranscriptView from "../TranscriptView";
 import QuestionFeed from "../QuestionFeed";
@@ -685,6 +686,8 @@ export default function PracticeClient({
     // `dashboardQuestions` is already the one-entry, live-mode-shaped stand-in
     // this file synthesises, so a rendered line resolves back to the current
     // question and the RAW points array the answer on screen came from.
+    // GLOSSARY TERMS -- see CopilotClient.js's note above its own provider.
+    <GlossaryProvider applicationId={posting?.id || ""}>
     <ExpansionScope
       questions={dashboardQuestions}
       request={{ applicationId: posting?.id || "", profile, interviewType, codeLanguage, engine }}
@@ -990,5 +993,6 @@ export default function PracticeClient({
       </Box>
     </Box>
     </ExpansionScope>
+    </GlossaryProvider>
   );
 }

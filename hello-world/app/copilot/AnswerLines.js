@@ -3,9 +3,13 @@
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 
+import { marksWithin } from "@/lib/copilot/glossaryMatch";
+
 import { BREAK_LONG_WORDS_SX } from "./mobileSx";
 import CitationDetail from "./CitationDetail";
 import ExpansionPanel from "./ExpansionPanel";
+import GlossaryTerm from "./GlossaryTerm";
+import { useGlossaryMarks } from "./GlossaryProvider";
 
 // AC-K1.1/AC-L1: the one place a drafted answer's lines are actually
 // rendered. The reported bug was exactly this markup existing as four
@@ -124,6 +128,54 @@ function usableSpan(emphasis, point) {
   return { start, end };
 }
 
+// EXPLAINING ONE WORD OF THE SENTENCE. The posting's own glossary reaches this
+// component through CONTEXT with a frozen empty default, so the three call
+// sites need no edit and a render with no provider mounted produces exactly the
+// DOM it produced before this feature existed.
+//
+// THE COMPOSITION RULE, WHICH IS WHY THIS IS FOUR LINES AND NOT A LOOP OVER
+// SLICES. The marks are computed ONCE against the WHOLE `point`, above, and
+// then PARTITIONED here by the emphasis boundary -- `glossed` only ever emits a
+// mark that lies wholly inside the region it was asked for. Matching each slice
+// separately would be the obvious implementation and is wrong twice: a term
+// spanning the boundary would match in neither slice, and a term whose first
+// words end a slice would match a DIFFERENT, shorter term there than it does in
+// the whole sentence -- so which words are underlined would depend on where the
+// bold happens to start. A mark that CROSSES the boundary is dropped whole by
+// lib/copilot/glossaryMatch.js rather than split, which is what keeps the
+// single <strong> below over exactly `point.slice(span.start, span.end)`.
+//
+// NOTHING IS ADDED TO THE TEXT. `glossed` slices the point and re-emits every
+// character of it in order; a marked run is the POINT's own characters, in the
+// point's own case, wrapped in a control. So `li.textContent` is byte-identical
+// with and without marks, which is what makes it acceptable that a posting's
+// sources arrive over the minutes after it is opened: a candidate reading the
+// bullet aloud reads exactly what they would have read.
+//
+// With no marks in a region, `glossed` returns the bare `point.slice(from, to)`
+// -- the same string this component has always rendered, not a one-element
+// array -- so the empty-glossary rendering is identical rather than merely
+// equivalent.
+function glossed(point, from, to, marks) {
+  const inRegion = marksWithin(marks, from, to);
+  if (inRegion.length === 0) return point.slice(from, to);
+  const parts = [];
+  let at = from;
+  for (const mark of inRegion) {
+    if (mark.start > at) parts.push(point.slice(at, mark.start));
+    parts.push(
+      <GlossaryTerm
+        key={`${mark.start}-${mark.end}`}
+        term={mark.term}
+        surface={point.slice(mark.start, mark.end)}
+      />,
+    );
+    at = mark.end;
+  }
+  if (at < to) parts.push(point.slice(at, to));
+  return parts;
+}
+
 // GOING DEEPER ON ONE BULLET. `expansion` is optional and is usually absent:
 // ExpansionPanel falls back to the context an ExpansionScope provides, which is
 // how the three components that render this one get the feature without being
@@ -137,11 +189,26 @@ function usableSpan(emphasis, point) {
 // nothing added here reads `line.emphasis`, slices `line.point`, or wraps a
 // text node that render produced. The sentinels also give the next chunk to
 // edit this file a region to slice AROUND rather than through.
+//
+// ADDENDUM, written by the glossary chunk so the paragraph above is not read
+// as a claim about the FILE. It is a claim about the EXPANSION chunk's own
+// diff, and it is still true of it. The glossary is the fourth tenant of this
+// `<li>` and it is the one chunk that DOES touch the point render, because
+// marking a word of the sentence is the feature. What it may not do -- and
+// what `glossed` and lib/copilot/glossaryMatch.js exist to guarantee -- is
+// move the single <strong>, change one character of `li.textContent`, or put
+// anything of its own inside the citation or the expansion subtree.
 export default function AnswerLines({ lines, expansion }) {
+  /* glossary:start */
+  // Called ONCE, here, and not inside the map below: a hook in a callback that
+  // runs per line is a hook called conditionally.
+  const marksFor = useGlossaryMarks();
+  /* glossary:end */
   return (
     <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
       {lines.map((line, i) => {
         const span = usableSpan(line.emphasis, line.point);
+        const marks = marksFor(line.point, line.emphasis);
         return (
         <Typography
           key={i}
@@ -154,9 +221,32 @@ export default function AnswerLines({ lines, expansion }) {
               {line.label ? (
                 <Box component="span" sx={{ fontWeight: 600 }}>{`${line.label}: `}</Box>
               ) : null}
-              {line.point.slice(0, span.start)}
-              <strong>{line.point.slice(span.start, span.end)}</strong>
-              {line.point.slice(span.end)}
+              {glossed(line.point, 0, span.start, marks)}
+              {/* TWO BRANCHES FOR ONE <strong>, AND THE REASON IS WORTH THE
+                  FOUR LINES. They are behaviourally identical -- `glossed`
+                  returns the bare `point.slice(from, to)` when no mark falls
+                  inside the region it is asked for -- so this is not a
+                  behaviour switch. It is the guarantee AC-M20 asks for, made
+                  STRUCTURAL rather than incidental: when the glossary
+                  contributes nothing to the emphasised run, that run is
+                  produced by the byte-identical expression it has always been
+                  produced by, and AnswerLines.citation.test.js:181 pins that
+                  expression by name.
+                  BOTH BRANCHES ARE LIVE, and the second one carries a quarter
+                  of the feature: measured over this repository's own answer
+                  corpus (lib/copilot/glossaryMatch.corpus.test.js), 218 of 882
+                  marks land INSIDE the emphasised run. Refusing to mark there
+                  would have been the cheap way to protect this <strong>, and
+                  it would have lost the worst quarter -- the emphasised run is
+                  the cue, the words a candidate glances at in the two seconds
+                  before speaking, so it is the last place a term should refuse
+                  to explain itself. */}
+              {marksWithin(marks, span.start, span.end).length === 0 ? (
+                <strong>{line.point.slice(span.start, span.end)}</strong>
+              ) : (
+                <strong>{glossed(line.point, span.start, span.end, marks)}</strong>
+              )}
+              {glossed(line.point, span.end, line.point.length, marks)}
             </>
           ) : line.cue ? (
             <>
@@ -165,12 +255,15 @@ export default function AnswerLines({ lines, expansion }) {
                 {line.cue}
               </strong>
               {" — "}
-              {line.point}
+              {/* The CUE is not part of `line.point` and is never marked: the
+                  marks belong to the sentence, and a cue is a separate string
+                  the matcher never saw. */}
+              {glossed(line.point, 0, line.point.length, marks)}
             </>
           ) : (
             <>
               {line.label ? `${line.label}: ` : ""}
-              {line.point}
+              {glossed(line.point, 0, line.point.length, marks)}
             </>
           )}
           {line.pageSource ? (

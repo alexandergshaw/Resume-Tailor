@@ -6,6 +6,7 @@ import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Stack from "@mui/material/Stack";
 import { answerStatusMessage, visuallyHidden } from "@/lib/copilot/answerStatus";
+import { useIsTablet } from "@/app/hooks/useResponsive";
 import { roleLabel } from "@/lib/copilot/roleRegisters";
 import CameraPreview from "../practice/CameraPreview";
 import TranscriptView from "../TranscriptView";
@@ -51,6 +52,29 @@ import { useRoleDrill } from "./useRoleDrill";
 const REVEAL_PANEL_ID = "speak-as-reveal-panel";
 
 export default function RoleDrillClient({ sttProviderName, micDeviceId, onMicDeviceChange } = {}) {
+  // MOBILE-G F-06: practice mode has mounted a COMPACT self-view below `md`
+  // since its own mobile pass; this mode was added afterwards and never got
+  // it, so at 375x812 the full-size branch's 45dvh cap made the self-view
+  // 365.4px tall — 45% of the viewport, the largest single block on the
+  // screen, sitting between the recording controls and the transcript.
+  // Measured in a browser at 375 with the `md` branches switched off: 351 x
+  // 365.4 today, 351 x 211.1 with `compact` (26dvh), a 154.3px saving.
+  //
+  // `useIsTablet` (below `md`), not `useIsMobile` (below `sm`): it is the
+  // SAME cutoff the camera/transcript Stack's own `{ xs, md }` direction
+  // switches on below, so the compact cap and the column layout can never
+  // disagree about which widths are "phone-shaped" — the identical pairing
+  // PracticeClient.js:667 makes, for the identical reason.
+  //
+  // Unlike practice mode this needs no DOM reorder and no second mount:
+  // there is exactly one CameraPreview in this tree and the prop just changes
+  // its cap, so there is no way for two <video> elements to share one
+  // MediaStream here. It also keeps its full width, where practice mode's
+  // does not — this mode's row is a Stack with `alignItems: "stretch"`, so
+  // the panel is a stretched flex item whose height alone is clamped, while
+  // practice mode's compact instance is a block child whose clamped height
+  // transfers back through `aspect-ratio: 3/4` to a ~158px width.
+  const isTablet = useIsTablet();
   const { role, setRole } = useRoleChoice();
   const {
     situation,
@@ -203,7 +227,12 @@ export default function RoleDrillClient({ sttProviderName, micDeviceId, onMicDev
       {roleAnswer.error ? <Alert severity="error">{roleAnswer.error}</Alert> : null}
 
       <Stack direction={{ xs: "column", md: "row" }} spacing={2} sx={{ alignItems: "stretch" }}>
-        <CameraPreview stream={roleAnswer.stream} hasVideo={roleAnswer.hasVideo} cameraOff={roleAnswer.cameraOff} />
+        <CameraPreview
+          stream={roleAnswer.stream}
+          hasVideo={roleAnswer.hasVideo}
+          cameraOff={roleAnswer.cameraOff}
+          compact={isTablet}
+        />
         <TranscriptView
           finals={roleAnswer.finals}
           interims={{ them: "", you: roleAnswer.interim }}
