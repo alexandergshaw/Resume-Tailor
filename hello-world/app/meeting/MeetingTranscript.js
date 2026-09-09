@@ -26,6 +26,19 @@
 // consent notices, the Stop row and the whole insight list. See that export's
 // own doc for the two independent failures it exists to prevent.
 //
+// Adopting the contract wholesale cost something on desktop, though, and it
+// was owner-flagged as an unintended regression rather than silently kept:
+// PHONE_PANE_SX's `minHeight: 340` at `md` is correct for a pane that only
+// ever mounts once real content already exists (TranscriptView.js's copilot
+// equivalent). This pane mounts the moment a meeting starts and often shows
+// just one or two turns, so that floor turned a ~60px transcript into 340px
+// of empty desktop chrome. The sx below overrides `minHeight` back to its
+// own initial value at `md` -- and ONLY that property: `maxHeight`/
+// `overflowY` still come from the contract unmodified, so the
+// long-transcript cap and the overflowY-driven auto-follow gate below stay
+// identical to every other PHONE_PANE_SX adopter, and this file keeps
+// tracking the contract if that cap is ever tuned app-wide.
+//
 // The split below is not optional decoration on top of that import. Read
 // `PHONE_PANE_SX`'s effect on this component precisely: below `md` it sets
 // `overflowY: visible` and removes the height cap, so this element STOPS
@@ -242,9 +255,10 @@ export default function MeetingTranscript({ turns, interims, source }) {
   // in JS (where it could silently drift from the CSS). Computed `overflowY`
   // is the exact property the contract flips between the two regimes, so it
   // cannot go stale the way comparing `scrollHeight`/`clientHeight` would:
-  // early in a meeting the transcript is short enough not to have overflowed
-  // its `minHeight: 340` even at >= md, and that comparison alone cannot tell
-  // "not scrolled yet" apart from "not a scroller at all".
+  // this pane overrides the contract's `minHeight` away entirely (see the sx
+  // below), so even a single short turn leaves `scrollHeight === clientHeight`
+  // at >= md, and that comparison alone cannot tell "not scrolled yet" apart
+  // from "not a scroller at all".
   //
   // `scrollIntoView({ block: "nearest" })` serves BOTH regimes, which is why
   // there is one call rather than two: it is a no-op once the row is already
@@ -340,9 +354,18 @@ export default function MeetingTranscript({ turns, interims, source }) {
           // Replaces a hard `maxHeight: 420, overflowY: "auto"` — see this
           // file's header. Below `md` the page becomes the single scroller;
           // at `md` and up this is a bounded, internally-scrolling pane
-          // again, on the contract's shared values rather than this file's
-          // own.
+          // again, on the contract's shared `maxHeight`/`overflowY` — but
+          // not its `minHeight`; overridden right below, see this file's
+          // header for why.
           ...PHONE_PANE_SX,
+          // Owner-flagged desktop regression, restored: PHONE_PANE_SX's
+          // `minHeight: 340` at `md` has no floor this pane actually wants,
+          // so it is put back to the property's own initial value — this
+          // module's own "the value that leaves rendering unchanged" rule —
+          // rather than replaced with a different floor. This pane should be
+          // exactly as tall as its content, up to the `maxHeight` cap the
+          // line above still supplies unmodified.
+          minHeight: { xs: "auto", md: "auto" },
           p: 2,
           borderRadius: 2,
           border: "1px solid var(--border)",

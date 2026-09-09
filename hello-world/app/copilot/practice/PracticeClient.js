@@ -16,6 +16,7 @@ import CameraPreview from "./CameraPreview";
 import { useApplicationDocs } from "../useApplicationDocs";
 import CopilotDashboard, { PRACTICE_COPY } from "../dashboard/CopilotDashboard";
 import StickyQuestionStrip from "../dashboard/StickyQuestionStrip";
+import AskAiBox from "../dashboard/AskAiBox";
 import { useCopilotDashboard } from "../useCopilotDashboard";
 import { useLastSampleAt, useDeliveryReadings } from "../useDeliveryReadings";
 import PracticeSetup from "./PracticeSetup";
@@ -731,7 +732,20 @@ export default function PracticeClient({
           ARCH-stats-in-strip r3: `sessionLive={running}` — NOT this strip's
           own `live` prop, whose default of `true` would leave the row up
           after Stop (§2.4) — and `statsOnly` names the state `mountStrip`'s
-          second disjunct exists for: a running session with no question yet. */}
+          second disjunct exists for: a running session with no question yet.
+
+          ARCH-ask-ai, pre-session mount — the same shape live mode uses, in
+          the same slot, for the same reason: the ask-AI box is a CHILD of the
+          strip, so `mountStrip` took it away for the whole pre-session. It
+          now takes this ternary's ELSE branch (its `pb` restating the strip's
+          own gutter), which is what makes "exactly one ask box in every
+          state" structural. Below PracticeControls deliberately — that
+          component holds Start, which this must not push down the page.
+          `applicationId` is the same `posting?.id` fact useRoomQuestions,
+          useSampleAnswer and useApplicationDocs are already given, spelled
+          `|| ""` because AskAiBox's prop contract is a string, not a nullable
+          id. AskAiBox.js's header carries the rest of the reasoning, and the
+          one state this still cannot reach. */}
       {mountStrip ? (
         <StickyQuestionStrip
           questions={dashboardQuestions}
@@ -740,8 +754,12 @@ export default function PracticeClient({
           fillers={fillersForDisplay}
           sessionLive={running}
           statsOnly={!(dashboardQuestions.length > 0)}
+          applicationId={posting?.id || ""}
+          engine={engine}
         />
-      ) : null}
+      ) : (
+        <Box sx={{ pb: 1.5 }}><AskAiBox applicationId={posting?.id || ""} engine={engine} /></Box>
+      )}
 
       {/* Shown once at least one answer has been analyzed (AC-C4-6), and
           rendered independent of the review panel below so it stays

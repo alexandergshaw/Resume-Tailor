@@ -30,6 +30,7 @@ import CompanyBriefPanel from "./CompanyBriefPanel";
 import { TOUCH_TARGET_SX, TOUCH_SWITCH_SX } from "./mobileSx";
 import CopilotDashboard from "./dashboard/CopilotDashboard";
 import StickyQuestionStrip from "./dashboard/StickyQuestionStrip";
+import AskAiBox from "./dashboard/AskAiBox";
 import PracticeClient from "./practice/PracticeClient";
 import RoleDrillClient from "./roles/RoleDrillClient";
 import ModeSwitch from "./ModeSwitch";
@@ -636,14 +637,11 @@ export default function CopilotClient() {
             source={source}
           />
 
-          {/* ARCH-sticky §2.4: mounted only once there is a question to
-              show — see `mountStrip`'s own comment above for the full
-              derivation and for why `|| held` stays. Above the bounded
-              wrapper (not inside it) for the same reason LiveHearingStrip
-              is: a sticky sibling can only occlude what follows it, and
-              SessionSetup/the Start button must never be one of those
-              things. `sessionLive={live}` is the row's OWN gate (§2.4) —
-              never this strip's `live` prop. */}
+          {/* ARCH-sticky §2.4: the strip mounts only once there is a question to show — see `mountStrip`'s own comment above for the
+              full derivation and for why `|| held` stays. Above the bounded wrapper (not inside it) for the same reason LiveHearingStrip
+              is: a sticky sibling can only occlude what follows it, and SessionSetup/the Start button must never be one of those things.
+              `sessionLive={live}` is the row's OWN gate (§2.4) — never this strip's `live` prop. ARCH-ask-ai: the ask-AI box takes this
+              ternary's ELSE branch, its `pb` restating the strip's own gutter — AskAiBox.js's header has the rest of that reasoning. */}
           {mountStrip ? (
             <StickyQuestionStrip
               questions={questions}
@@ -656,8 +654,12 @@ export default function CopilotClient() {
               fillers={fillersForDisplay}
               sessionLive={live}
               statsOnly={!(questions.length > 0 || held)}
+              applicationId={posting?.id || ""}
+              engine={engine}
             />
-          ) : null}
+          ) : (
+            <Box sx={{ pb: 1.5 }}><AskAiBox applicationId={posting?.id || ""} engine={engine} /></Box>
+          )}
 
           {/* Step 3: bounded to the remaining viewport height while `live`
               (see the measuring effect above). Below `sm` the page scrolls

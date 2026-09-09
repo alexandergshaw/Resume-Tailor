@@ -287,7 +287,29 @@ describe("F-01 — the transcript pane adopts PHONE_PANE_SX", () => {
     const el = await pane();
     expect(styleAt(DESKTOP, el, "overflowY")).toBe("auto");
     expect(styleAt(DESKTOP, el, "maxHeight")).toBe("62vh");
-    expect(styleAt(DESKTOP, el, "minHeight")).toBe("340px");
+    // Corrected from PHONE_PANE_SX's own "340px" (which this file used to
+    // inherit unmodified). The owner ruled that floor an unintended desktop
+    // regression -- a two-turn transcript was rendering 340px of empty
+    // chrome instead of ~60px of content -- so MeetingTranscript.js now
+    // overrides `minHeight` back to its own initial value at `md`. This
+    // assertion used to read "340px"; leaving it there would pin the exact
+    // bug the case right below exists to fix. See that case for why.
+    expect(styleAt(DESKTOP, el, "minHeight")).toBe("auto");
+  });
+
+  it("does not carry PHONE_PANE_SX's 340px floor at 1000 -- a short transcript stays compact", async () => {
+    // TURNS is two short turns -- exactly the shape that exposed the
+    // regression: pre-8866be1 this pane was ~60px tall on desktop.
+    // PHONE_PANE_SX's own `minHeight: 340` (right for TranscriptView.js's
+    // copilot equivalent, which never mounts without content already
+    // loaded) turned that into 340px of blank space the moment this file
+    // adopted the shared contract wholesale. `maxHeight`/`overflowY` are
+    // asserted too, unchanged from the contract, so this case can only fail
+    // on the one property the fix actually touches.
+    const el = await pane();
+    expect(styleAt(DESKTOP, el, "minHeight")).toBe("auto");
+    expect(styleAt(DESKTOP, el, "maxHeight")).toBe("62vh");
+    expect(styleAt(DESKTOP, el, "overflowY")).toBe("auto");
   });
 });
 

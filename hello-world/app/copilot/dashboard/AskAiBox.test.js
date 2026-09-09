@@ -366,16 +366,78 @@ describe("the strip mounts it", () => {
     expect(line, "no ternary or && guard in front of the ask box").not.toMatch(/\?|&&/);
   });
 
-  it("KNOWN LIMITATION: it inherits the strip's own reachability and is absent where the strip renders null", async () => {
-    // Pinned rather than papered over. The ask box is a CHILD of the strip, so
-    // the strip's `statsOnly && measured && !showStats` early return takes it
-    // with it -- and both clients gate the whole strip on `mountStrip` (a
-    // question, a held question, or a live session with a measured reading),
-    // so pre-session, the state a candidate most wants this box in, it does not
-    // exist at all. The fix is mounting it as a SIBLING of the strip in
-    // CopilotClient.js/PracticeClient.js, which is outside this change's file
-    // scope. This case exists so that gap fails visibly the day someone
-    // believes it is closed.
+  it("is reachable PRE-SESSION anyway: both clients mount it in the else branch of their own strip ternary", () => {
+    // THIS CASE REPLACES A KNOWN-LIMITATION PIN, and is the one edit to an
+    // existing test this change makes. The pin read:
+    //
+    //   "KNOWN LIMITATION: it inherits the strip's own reachability and is
+    //    absent where the strip renders null"
+    //
+    // and asserted that a stats-only strip whose row is not hosted renders
+    // `container.innerHTML === ""` with no `input` anywhere -- which was true
+    // of the strip and is STILL true of the strip (the case below re-asserts
+    // exactly that, unweakened). What the pin's prose additionally claimed,
+    // and what is no longer true, is the consequence it drew from that: "both
+    // clients gate the whole strip on `mountStrip` ... so pre-session, the
+    // state a candidate most wants this box in, it does not exist at all."
+    // That is the limitation being removed, so the case that pins it has to
+    // go; leaving it would assert the absence of the feature.
+    //
+    // The fix is the one the pin itself named -- a sibling mount in the two
+    // clients -- shaped as the ELSE BRANCH of the existing `mountStrip`
+    // ternary rather than as a free-standing sibling, so that "exactly one
+    // instance in every state" is structural: two branches of one conditional
+    // cannot both render. The behavioural half of this proof (a real
+    // CopilotClient render, pre-session, with the request's `applicationId`
+    // read off the wire) is app/copilot/askAiPreSession.test.js; what is
+    // checked here is that the strip's own null state -- the reason the pin
+    // existed -- is covered at both call sites.
+    // Comments stripped before any of it: CopilotClient.js's own `:879` JSX
+    // comment says "moved to <StickyQuestionStrip above", and prose naming an
+    // element is not a second call site. Block comments (`{/* … */}`) and
+    // whole-line `//` comments only — a mid-line `//` strip would truncate a
+    // line holding a URL.
+    const decomment = (text) => text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
+    for (const [name, source] of [
+      ["CopilotClient.js", decomment(readFileSync(path.join(process.cwd(), "app/copilot/CopilotClient.js"), "utf8"))],
+      [
+        "PracticeClient.js",
+        decomment(readFileSync(path.join(process.cwd(), "app/copilot/practice/PracticeClient.js"), "utf8")),
+      ],
+    ]) {
+      expect(source, `${name} must import the box`).toMatch(
+        /import\s+AskAiBox\s+from\s+["'][^"']*dashboard\/AskAiBox["']/,
+      );
+      const askAt = source.indexOf("<AskAiBox");
+      const stripAt = source.indexOf("<StickyQuestionStrip");
+      expect(askAt, `${name} must mount the box`).toBeGreaterThan(-1);
+      expect(stripAt, `${name} must still mount the strip`).toBeGreaterThan(-1);
+      // Exactly one of each -- a second call site is invisible to every
+      // first-index check and is how two ask boxes end up on screen together.
+      expect(source.lastIndexOf("<AskAiBox"), `${name} mounts the box twice`).toBe(askAt);
+      expect(source.lastIndexOf("<StickyQuestionStrip"), `${name} mounts the strip twice`).toBe(stripAt);
+      // …and the box is in the ELSE branch of the strip's own ternary, which
+      // is what makes the two mutually exclusive.
+      const elseAt = stripAt + /\)\s*:\s*\(/.exec(source.slice(stripAt)).index;
+      expect(askAt, `${name} must mount the box in the strip ternary's else branch`).toBeGreaterThan(elseAt);
+    }
+  });
+
+  it("NARROWED LIMITATION: the strip's own stats-only collapse still takes the box with it", async () => {
+    // What survives the fix above, stated exactly rather than left implied.
+    // The client ternary is keyed on `mountStrip`, which the clients CAN
+    // compute; it cannot see the strip's INTERNAL `statsOnly && measured &&
+    // !showStats` early return, which depends on `statsHosted` -- a
+    // measurement useStickyTop makes through the very Box that return
+    // unmounts, and which no prop reports back out. So in the one remaining
+    // state -- a live session, no question detected yet, at least one reading
+    // measured, and a viewport too narrow to host the stats row -- the strip
+    // renders null, the client is on the strip branch, and there is no ask
+    // box. That state is DURING a session, never before one, so the
+    // pre-session gap the pin was written for is genuinely closed; this is
+    // the residue, and closing it needs a change inside
+    // StickyQuestionStrip.js (mounting AskAiBox above its own early return,
+    // or a prop that reports the collapse back out).
     const { default: StickyQuestionStrip } = await import("./StickyQuestionStrip.js");
     const header = document.createElement("header");
     header.setAttribute("data-app-header", "");

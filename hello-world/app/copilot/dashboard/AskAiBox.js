@@ -12,9 +12,68 @@ import { TOUCH_FIELD_SX, TOUCH_ICON_SX, BREAK_LONG_WORDS_SX } from "@/app/theme/
 import { MAX_QUESTION_CHARS } from "@/lib/copilot/questionVocabulary";
 import { visuallyHidden } from "@/lib/copilot/answerStatus";
 
-// The ask-AI box in the sticky strip: one text field, always open, answering
-// from this application's tracking row, the résumé and cover letter actually
-// submitted for it, and the candidate's own knowledge base.
+// The ask-AI box: one text field, always open, answering from this
+// application's tracking row, the résumé and cover letter actually submitted
+// for it, and the candidate's own knowledge base.
+//
+// ---------------------------------------------------------------------------
+// WHERE IT MOUNTS, AND WHY IT MOUNTS TWICE OVER (never twice at once).
+//
+// It shipped as a child of StickyQuestionStrip.js alone, which meant it
+// inherited that strip's reachability -- and both session clients gate the
+// whole strip on their own `mountStrip` predicate: a question, a held
+// question, or a live session with a measured reading. All three require a
+// session to have STARTED, so the box did not exist at all for the entire
+// pre-session, which is exactly when a candidate is preparing and most wants
+// to ask about the application they are about to interview for. That gap was
+// pinned as a named limitation in this component's own suite rather than
+// papered over; it is now closed.
+//
+// The fix is in the two clients (CopilotClient.js, PracticeClient.js), and it
+// is deliberately the ELSE BRANCH of the `mountStrip` ternary that already
+// decides whether the strip renders -- NOT a free-standing sibling beside it.
+// Two branches of one conditional cannot both render, so "exactly one ask box
+// on screen in every state" is STRUCTURAL rather than something a reader has
+// to verify by argument. A free-standing sibling would put a second field on
+// screen for the whole session, each with its own draft and its own answer
+// panel, one overlapping the other.
+//
+// Pre-session it therefore occupies the STRIP'S OWN SLOT: above the bounded,
+// `overflow: hidden` live column in live mode (which can clip its contents)
+// and below PracticeControls in practice mode (which holds Start, and must
+// not be pushed down the page). Both are also the one position a `position:
+// sticky` strip is allowed to sit in -- a sticky element can only occlude what
+// FOLLOWS it, and SessionSetup/PracticeControls must never be occluded. Using
+// the same slot means the box does not MOVE when a session starts and the
+// strip takes ownership of it; the `pb: 1.5` its pre-session wrapper carries
+// is the strip's own gutter, restated, so the spacing is identical either way.
+//
+// The strip's own children are untouched by any of this, so the height budget
+// measured below (useStickyTop.js's STRIP_MAX_SHARE) is unchanged: the
+// pre-session mount only ever renders when there is no strip at all.
+//
+// WHAT THIS STILL DOES NOT REACH, stated rather than left implied. The clients
+// can only key on `mountStrip`, which they compute. They cannot see the
+// strip's INTERNAL `statsOnly && measured && !showStats` early return, which
+// depends on `statsHosted` -- a measurement useStickyTop makes through the
+// very Box that return unmounts, and which is never reported back out as a
+// prop. So in one remaining state -- a live session, no question detected yet,
+// at least one reading measured, and a viewport too narrow to host the stats
+// row -- the client is on the strip branch, the strip renders null, and there
+// is no ask box. That state is DURING a session, never before one, so the
+// pre-session gap is genuinely closed; AskAiBox.test.js pins this residue
+// explicitly. Closing it needs a change inside StickyQuestionStrip.js
+// (mounting this above its own early return, or reporting the collapse out).
+//
+// THE PROPS, at all three mount sites. `applicationId` is the selected
+// posting's id -- `posting?.id` in both clients, whose posting picker renders
+// in the setup panel and is interactive with nothing started, which is what
+// makes the id genuinely available pre-session rather than something that has
+// to be invented. It was NOT threaded from either client before this change,
+// so the shipped box asked with an empty id in every state it could be reached
+// in. `""` rather than `null` when nothing is selected is the deliberate
+// spelling: the route then answers from the knowledge base alone, which is the
+// correct reading for "no application chosen yet", not an error.
 //
 // ---------------------------------------------------------------------------
 // WHY IT IS AN OPEN FIELD AND NOT A COLLAPSED TRIGGER.

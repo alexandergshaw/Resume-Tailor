@@ -32,13 +32,20 @@ const LOCATION_RE =
 // re-typed job-noun list one module over is exactly what drifts.
 const TITLE_KEYWORDS_BODY =
   "engineer|developer|manager|director|analyst|designer|scientist|consultant|intern(?:ship)?|lead|architect|administrator|specialist|coordinator|associate|officer|president|founder|owner|technician|teacher|professor|instructor|nurse|accountant|recruiter|strategist|marketer|writer|editor|producer|supervisor|representative|clerk|assistant|advisor|adviser|principal|head|vp|cto|ceo|cfo|coo|programmer|administrative|operations|sales|support";
-const TITLE_KEYWORDS = new RegExp(`(${TITLE_KEYWORDS_BODY})`, "i");
-
-// The same 48-word vocabulary, WORD-ANCHORED, for callers asking "does this
-// text NAME a job?" rather than "does a job word occur anywhere inside it?".
-// parseHeader below wants the second (it is disambiguating title from company
-// inside an already-parsed segment); a header CLASSIFIER wants the first, and
-// unanchored it misreads "Overhead" as `head` and "Headcount" as `Head`.
+// The vocabulary, WORD-ANCHORED, for asking "does this text NAME a job?".
+//
+// There used to be an unanchored twin beside this, and parseHeader used it to
+// pick the title on the stated grounds that a substring match was good enough
+// "inside an already-parsed segment". That justification was wrong and is
+// deleted with it: unanchored, `intern` matches inside "International", so the
+// header
+//     Northwind International
+//     Senior Engineer
+//     2019 - 2022
+// reported the COMPANY as the job title. The same substring hazard misreads
+// "Overhead" as `head` and "Headcount" as `Head`. Anchored is correct for both
+// questions this module asks, so there is now one regex and no choice to get
+// wrong.
 //
 // The `(?:s|ing)?` tail is load-bearing, not decoration: a bare \b…\b would
 // stop matching *Engineering*, *Engineers*, *Managers* and *Designers* — the
@@ -141,6 +148,29 @@ function isLongProse(line) {
   return words.length >= 8 || /[.!?]$/.test(trimmed);
 }
 
+// Does a line that CARRIES A DATE open an employment entry, or is it merely a
+// sentence that mentions when something happened?
+//
+// Every dated line used to open one, which is how
+//   "At Northwind I led the payments migration from 2019 - 2022, cutting
+//    deployment time by 40%."
+// became an employment entry -- and, with the salutation above it in the header
+// buffer, an entry at the WRONG company entirely.
+//
+// The discriminator is sentence-final punctuation, with one exception that
+// matters: a date-first header can legitimately end in a legal suffix
+// ("2019 - 2022 | Senior Engineer, Northwind Inc."), so a line that ends in a
+// period is still a header when it NAMES A JOB. `isLongProse`'s word-count arm
+// is deliberately NOT used here -- a real header runs long ("Senior Staff
+// Software Engineer, Developer Platform and Release Infrastructure, Northwind
+// International Logistics Holdings Limited" is 14 words before its date) and
+// gating on length would throw away exactly the headers this parser exists for.
+function opensEntry(line) {
+  const trimmed = String(line).trim();
+  if (!/[.!?]$/.test(trimmed)) return true;
+  return TITLE_KEYWORDS_RE.test(trimmed);
+}
+
 // Restrict to the experience section when a recognizable heading is present;
 // otherwise return all lines (best effort for heading-less résumés).
 function sliceExperienceSection(lines) {
@@ -202,7 +232,7 @@ function parseHeader(headerLines) {
 
   let title = "";
   let company = "";
-  const titleIdx = parts.findIndex((p) => TITLE_KEYWORDS.test(p));
+  const titleIdx = parts.findIndex((p) => TITLE_KEYWORDS_RE.test(p));
   if (titleIdx >= 0) {
     title = parts[titleIdx];
     // The employer is the first remaining part that does NOT itself name a job.
@@ -240,9 +270,13 @@ function parseHeader(headerLines) {
  * @returns {Array<{company,title,location,startDate,endDate,notes}>}
  */
 export function parseEmploymentHistory(input, { maxEntries = 4 } = {}) {
-  const lines = sliceExperienceSection(toLines(input))
-    .map((l) => l.trim())
-    .filter(Boolean);
+  // BLANK LINES ARE KEPT ON PURPOSE. They used to be filtered out here, which
+  // silently made every line adjacent to every other: a salutation three
+  // paragraphs above a dated sentence landed in that sentence's header buffer,
+  // and a cover letter parsed as employment at the company being APPLIED TO.
+  // A blank line is the one reliable block separator both resumes and letters
+  // actually use, so the loop below treats it as the end of a header block.
+  const lines = sliceExperienceSection(toLines(input)).map((l) => l.trim());
 
   const entries = [];
   let current = null;
@@ -267,15 +301,30 @@ export function parseEmploymentHistory(input, { maxEntries = 4 } = {}) {
   };
 
   for (const line of lines) {
+    // A blank line ends the current header block. Without this, unrelated lines
+    // separated by whole paragraphs are absorbed into the next dated line's
+    // header. `current` is deliberately left alone: a bullet list may be broken
+    // by a blank and still belong to the entry above it.
+    if (!line) {
+      headerBuffer = [];
+      continue;
+    }
+
     if (BULLET_RE.test(line)) {
       if (current) current.notes.push(line.replace(BULLET_RE, "").trim());
       continue;
     }
 
     const range = extractDateRange(line);
-    if (range) {
+    if (range && opensEntry(line)) {
       headerBuffer.push(line);
       flushEntry(range);
+      continue;
+    }
+    if (range) {
+      // A dated SENTENCE. It is never header material -- at most it is a note on
+      // the entry already open.
+      if (current) current.notes.push(line);
       continue;
     }
 
