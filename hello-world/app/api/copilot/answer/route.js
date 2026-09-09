@@ -30,6 +30,9 @@ import {
   noAttachmentBytesNotice,
 } from "@/lib/experience/knowledgeBase";
 import { resolvePageSources } from "@/lib/copilot/pageCitations";
+// WHICH PART of a cited page each point came from: wrapped around every
+// `pageSources` value below, on both engines. Rationale in its own header.
+import { attachCitationDetail } from "@/lib/copilot/citationDetail";
 import { selectBestStory, isEligiblePage } from "@/lib/copilot/projectStories";
 import { resolveFactSources } from "@/lib/copilot/factCitations";
 // AC-V5.2/C7/C8 (Group V architecture doc): the per-session Supabase fan-out
@@ -192,6 +195,10 @@ async function streamAnswer({
   grounding,
   story,
   kb,
+  // The page ROWS (bodies included), for attachCitationDetail on the `done`
+  // frame alone: `kb` carries only the `{ id, title, excerpted }` whitelist.
+  // Nothing about the prompt reads this.
+  pages,
   // §B.8: `{ override, resolved } | undefined` — computed once in POST (the
   // peek that started it lives there too) and handed down unchanged, exactly
   // like `questionRoleTerms` below.
@@ -289,7 +296,11 @@ async function streamAnswer({
     // incremental `points` frames above: a citation cannot be resolved from
     // a partial points array, since resolvePageSources' pairing is
     // all-or-nothing on length, so emitting one early would be a guess.
-    const pageSources = resolvePageSources(pageIds, { includedPages: kb.includedPages, pointCount: points.length });
+    // The detail rides this same value, so it inherits the rule above.
+    const pageSources = attachCitationDetail(
+      resolvePageSources(pageIds, { includedPages: kb.includedPages, pointCount: points.length }),
+      { points, pages },
+    );
     // AC-V4.4: `factSources` follows the identical "terminal frame only"
     // rule, and is included at all ONLY when `companyFacts` was actually
     // computed for this request — i.e. points mode, Gemini engine, employer
@@ -620,6 +631,7 @@ export async function POST(request) {
         grounding,
         story,
         kb,
+        pages,
         codeLanguage,
         questionRoleTerms,
         // AC-V5.4: the THUNK, not an already-awaited result — streamAnswer
@@ -639,7 +651,7 @@ export async function POST(request) {
     if (mode === "answer") {
       // Embedded engine: assemble the spoken answer on-device — no LLM.
       if (wantsEmbedded(body?.engine)) {
-        const { points, answer, type, pageSources } = draftSampleAnswerLocal({
+        const { points, answer, type, pageSources: localSources } = draftSampleAnswerLocal({
           question,
           profile,
           resume,
@@ -650,6 +662,10 @@ export async function POST(request) {
         if (points.length === 0) {
           return Response.json({ error: "Could not generate an answer." }, { status: 502 });
         }
+        // The SAME derivation the Gemini branches use — this feature has no
+        // engine-specific branch at all. It never adds or removes an entry, so
+        // `pageSources.some(Boolean)` below reads exactly as it did.
+        const pageSources = attachCitationDetail(localSources, { points, pages });
         return Response.json({
           points,
           // No model to ask on this path, so the cues are always the
@@ -750,7 +766,10 @@ export async function POST(request) {
         // of pages the prompt actually included — anything else (an
         // invented id, or a citation for a page never shown) is dropped to
         // null (lib/copilot/pageCitations.js's resolvePageSources).
-        pageSources: resolvePageSources(pageIds, { includedPages: kb.includedPages, pointCount: points.length }),
+        pageSources: attachCitationDetail(
+          resolvePageSources(pageIds, { includedPages: kb.includedPages, pointCount: points.length }),
+          { points, pages },
+        ),
         ...(await answerAids({
           postingDescription: posting,
           resume,
@@ -790,7 +809,7 @@ export async function POST(request) {
       // draftSampleAnswerLocal does for answer mode (a citation quoted
       // verbatim out of a page this engine read itself, true by
       // construction — no whitelist needed, unlike the Gemini path below).
-      const { points, type, pageSources } = draftAnswerLocal({
+      const { points, type, pageSources: localSources } = draftAnswerLocal({
         question,
         profile,
         resume,
@@ -805,7 +824,7 @@ export async function POST(request) {
         points,
         cues: deriveCues(points),
         type,
-        pageSources,
+        pageSources: attachCitationDetail(localSources, { points, pages }),
         // Embedded engine: no model call at all — see the answer-mode
         // branch above for the same rule stated once already.
         ...(await answerAids({ postingDescription: posting, resume, profile, question, points, story })),
@@ -876,7 +895,10 @@ export async function POST(request) {
       // one whenever pagesBlock is non-empty), validated against the same
       // whitelist the answer-mode branch above uses — an invented id or a
       // citation for a page never shown is dropped to null.
-      pageSources: resolvePageSources(pageIds, { includedPages: kb.includedPages, pointCount: points.length }),
+      pageSources: attachCitationDetail(
+        resolvePageSources(pageIds, { includedPages: kb.includedPages, pointCount: points.length }),
+        { points, pages },
+      ),
       // AC-V4.4: `factSources` is present at ALL only when `companyFacts`
       // was actually computed for this request (points mode, Gemini engine,
       // employer known) — a request that never had an employer to research

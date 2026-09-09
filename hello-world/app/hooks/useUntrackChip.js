@@ -9,7 +9,7 @@ import { untrackChipApplication, presentUntrackOutcome } from "@/lib/application
  * user is told.
  *
  * Extracted out of `app/page.js` rather than added to it: that file is at its
- * 3250-line ceiling, and the state this feature needs (the notice, plus the
+ * 3050-line ceiling, and the state this feature needs (the notice, plus the
  * announcement counter the live region keys on) has no business being another
  * two `useState`s in a component that already has ninety.
  *

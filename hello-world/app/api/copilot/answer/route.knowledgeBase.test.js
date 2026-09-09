@@ -410,7 +410,45 @@ describe("what the answer says it was built from (AC-6)", () => {
 
     expect(data.pageSources.filter(Boolean).length).toBeGreaterThan(0);
     for (const source of data.pageSources.filter(Boolean)) {
-      expect(source).toEqual({ id: "p1", title: "Payments migration" });
+      // WHY THIS IS toMatchObject AND NOT toEqual, recorded because loosening
+      // an exact-shape assertion always deserves a reason. The claim this case
+      // makes — and the only one it has ever made — is that the embedded
+      // engine's citation names the page it actually read, by id and by title,
+      // with no whitelist in the loop. That claim is asserted below, unchanged.
+      //
+      // What changed underneath it is that this fixture's point quotes its
+      // page's bullet VERBATIM (it is built from it), so the citation-detail
+      // derivation locates the block and the entry gains the reveal's payload.
+      // `toEqual` fails on extra keys, so it could no longer express "these two
+      // keys are right" without also freezing the enrichment out of existence.
+      // The full key set is pinned right after, so nothing is merely loosened.
+      expect(source).toMatchObject({ id: "p1", title: "Payments migration" });
+    }
+    // And the enrichment, pinned in its own right so nothing above is merely
+    // loosened. A beat that quotes one of the page's bullets verbatim locates
+    // it and carries the reveal's payload; a beat that does not (this draft's
+    // Situation beat is the page TITLE, not a bullet) keeps exactly the two
+    // keys it always had. This page has no headings at all, so even the
+    // located entry names no section rather than inventing one from the
+    // bullet's own words.
+    const enriched = data.pageSources.filter((s) => s && s.located);
+    expect(enriched.length).toBeGreaterThan(0);
+    for (const source of enriched) {
+      expect(Object.keys(source).sort()).toEqual([
+        "id",
+        "located",
+        "outline",
+        "outlineMore",
+        "quote",
+        "quoteTruncated",
+        "section",
+        "title",
+      ]);
+      expect(source.section).toBe(null);
+      expect(source.outline).toEqual([]);
+    }
+    for (const source of data.pageSources.filter((s) => s && !s.located)) {
+      expect(Object.keys(source).sort()).toEqual(["id", "title"]);
     }
   });
 });
@@ -851,5 +889,199 @@ describe("grounding.pages reports what the answer actually used", () => {
     const data = await res.json();
     expect(data.pageSources.filter(Boolean).length).toBeGreaterThan(0);
     expect(data.grounding.pages).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The citation DETAIL — the section blurb, and the material behind it.
+//
+// A section is not stored anywhere in this tree (every citation site carries
+// `{ id, title }` and nothing else), so it is RE-DERIVED server-side from the
+// candidate's own page body: a contiguous run of >= GROUNDED_SPAN_MIN_WORDS
+// normalised tokens shared between the drafted point and ONE block of that
+// page pins the block, and the markdown heading that block already sits under
+// is the blurb. It is enrichment ON the existing `pageSources` entry — no new
+// response key, no parallel array, no new positional pairing to get wrong —
+// so both answer caches carry it for free and no rendering surface is
+// re-threaded.
+//
+// The page bodies exist only here: answerGrounding.js states that the client
+// "has no view of the knowledge base at all". So this is the only place the
+// derivation can run.
+// ---------------------------------------------------------------------------
+describe("what the citation says about WHICH PART of the page (AC-CH.12)", () => {
+  const SECTION = "Automating compatibility checks";
+  const BULLET = "- Built a service that ran compatibility checks against every partner release";
+  const BODY = [
+    `## ${SECTION}`,
+    "",
+    BULLET,
+    "- Reconciled every settlement by hand for a week after the partner outage",
+    "",
+  ].join("\n");
+  const DETAIL_PAGE = () => page("p1", "Management Experience", BODY);
+  const QUESTION = "Tell me about automating compatibility checks for partner releases.";
+  const QUOTING_PAYLOAD = {
+    points: [
+      "Built a service that ran compatibility checks against every partner release.",
+      "It cut the partner escalation rate by 40 percent.",
+    ],
+    cues: ["The checks", "The result"],
+    type: "behavioral",
+    pageIds: ["p1", "p1"],
+  };
+
+  function mockGeminiStream(payload) {
+    getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
+    const doc = JSON.stringify(payload);
+    getGeminiClient.mockReturnValue({
+      models: {
+        generateContentStream: vi.fn().mockResolvedValue(
+          (async function* () {
+            yield { text: doc.slice(0, Math.floor(doc.length / 2)) };
+            yield { text: doc.slice(Math.floor(doc.length / 2)) };
+          })(),
+        ),
+        generateContent: vi.fn(() => new Promise(() => {})),
+      },
+    });
+  }
+
+  async function readFrames(res) {
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const frames = [];
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const split = splitFrames(buffer);
+      buffer = split.rest;
+      frames.push(...split.frames);
+    }
+    const tail = splitFrames(buffer + "\n");
+    frames.push(...tail.frames);
+    return frames;
+  }
+
+  const located = (sources) => sources.filter((s) => s && s.located);
+
+  // MUTATION PROOF for this whole block: enrich only the Gemini sites and the
+  // two embedded cases plus the parity case below go red.
+
+  it("enriches the streaming done frame", async () => {
+    mockKnowledgeBase({ pages: [DETAIL_PAGE()] });
+    mockGeminiStream(QUOTING_PAYLOAD);
+    const res = await POST(jsonRequest({ question: QUESTION, engine: "gemini", stream: true }));
+    const done = (await readFrames(res)).find((f) => f.t === "done");
+    const hits = located(done.pageSources);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0].section).toBe(SECTION);
+    expect(hits[0].quote).toBe(BULLET);
+    expect(hits[0].outline).toEqual([SECTION]);
+  });
+
+  it("enriches the non-streaming answer-mode response", async () => {
+    mockKnowledgeBase({ pages: [DETAIL_PAGE()] });
+    mockGemini(QUOTING_PAYLOAD);
+    const res = await POST(jsonRequest({ question: QUESTION, mode: "answer", engine: "gemini" }));
+    const hits = located((await res.json()).pageSources);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0].section).toBe(SECTION);
+  });
+
+  it("enriches the non-streaming POINTS-mode response too", async () => {
+    // The FIFTH citation site, and the one an audit of this route missed:
+    // points mode has its own non-streaming resolvePageSources call, and it is
+    // the one route.knowledgeBase.test.js:544 already exercises.
+    mockKnowledgeBase({ pages: [DETAIL_PAGE()] });
+    mockGemini(QUOTING_PAYLOAD);
+    const res = await POST(jsonRequest({ question: QUESTION, engine: "gemini" }));
+    const hits = located((await res.json()).pageSources);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0].section).toBe(SECTION);
+  });
+
+  it("enriches both embedded branches, and says the same thing the Gemini path does", async () => {
+    mockKnowledgeBase({ pages: [DETAIL_PAGE()] });
+    const answerRes = await POST(jsonRequest({ question: QUESTION, mode: "answer", engine: "embedded" }));
+    const answerHits = located((await answerRes.json()).pageSources);
+    expect(answerHits.length).toBeGreaterThan(0);
+
+    answerContextCache.clear();
+    mockKnowledgeBase({ pages: [DETAIL_PAGE()] });
+    const pointsRes = await POST(jsonRequest({ question: QUESTION, engine: "embedded" }));
+    const pointsHits = located((await pointsRes.json()).pageSources);
+    expect(pointsHits.length).toBeGreaterThan(0);
+
+    answerContextCache.clear();
+    mockKnowledgeBase({ pages: [DETAIL_PAGE()] });
+    mockGemini(QUOTING_PAYLOAD);
+    const geminiRes = await POST(jsonRequest({ question: QUESTION, mode: "answer", engine: "gemini" }));
+    const geminiHits = located((await geminiRes.json()).pageSources);
+
+    // The deterministic path IS the only path: there is no Gemini branch in
+    // this feature at all, so one page and one located block produce one
+    // answer on both engines.
+    const shape = (s) => ({ section: s.section, quote: s.quote, outline: s.outline, outlineMore: s.outlineMore });
+    expect(shape(answerHits[0])).toEqual(shape(geminiHits[0]));
+    expect(shape(pointsHits[0])).toEqual(shape(geminiHits[0]));
+  });
+});
+
+describe("the enrichment never fabricates and never widens the whitelist (AC-CH.13)", () => {
+  it("still drops a page id the prompt never showed", async () => {
+    mockKnowledgeBase({ pages: [page("p1", "Ledger sharding", "## Sharding\n\n- Sharded the ledger by tenant\n")] });
+    mockGemini({ ...GEMINI_PAYLOAD, pageIds: ["p1", "a-page-that-does-not-exist"] });
+    const res = await POST(jsonRequest({ question: "Tell me about the ledger work.", mode: "answer", engine: "gemini" }));
+    const data = await res.json();
+    expect(data.pageSources[1]).toBe(null);
+  });
+
+  it("leaves a citation whose point matched nothing byte-identical to today", async () => {
+    // The fallback tier makes NO claim beyond the one the citation already
+    // made. With no heading on the page there is not even an outline to show,
+    // so the entry keeps exactly the two keys it has always had — which is what
+    // keeps every exact-shape assertion in this file green.
+    mockKnowledgeBase({ pages: [page("p1", "Ledger sharding", "Sharded the ledger by tenant and cut p99")] });
+    mockGemini({ ...GEMINI_PAYLOAD, pageIds: ["p1", null] });
+    const res = await POST(jsonRequest({ question: "Tell me about the ledger work.", mode: "answer", engine: "gemini" }));
+    const data = await res.json();
+    expect(Object.keys(data.pageSources[0]).sort()).toEqual(["id", "title"]);
+  });
+
+  it("keeps the incremental points frames free of citations entirely", async () => {
+    getServerEnv.mockReturnValue({ geminiModel: "gemini-2.5-flash" });
+    const doc = JSON.stringify({ ...GEMINI_PAYLOAD, pageIds: ["p1", "p1"] });
+    getGeminiClient.mockReturnValue({
+      models: {
+        generateContentStream: vi.fn().mockResolvedValue(
+          (async function* () {
+            yield { text: doc.slice(0, 30) };
+            yield { text: doc.slice(30) };
+          })(),
+        ),
+        generateContent: vi.fn(() => new Promise(() => {})),
+      },
+    });
+    mockKnowledgeBase({ pages: [page("p1", "Ledger sharding", "## S\n\n- Sharded the ledger by tenant\n")] });
+    const res = await POST(jsonRequest({ question: "How did you shard the ledger?", engine: "gemini", stream: true }));
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const frames = [];
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const split = splitFrames(buffer);
+      buffer = split.rest;
+      frames.push(...split.frames);
+    }
+    frames.push(...splitFrames(buffer + "\n").frames);
+    const pointsFrames = frames.filter((f) => f.t === "points");
+    expect(pointsFrames.length).toBeGreaterThan(0);
+    for (const frame of pointsFrames) expect(frame).not.toHaveProperty("pageSources");
   });
 });

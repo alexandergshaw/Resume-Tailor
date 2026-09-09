@@ -541,7 +541,24 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // orphan half moved INDEPENDENTLY and in the other direction (64 -> 63): an
     // export nothing at all asks for lands there, not here, and would have broken
     // the split assertion above instead of this count.
-    expect(TEST_REFERENCED.length).toBe(336);
+    //
+    // 336 -> 342, and the +6 is +7 -1 rather than six new symbols. The seven
+    // are lib/copilot/citationDetail.js's five caps (MAX_SECTION_WORDS,
+    // MAX_SECTION_CHARS, MAX_QUOTE_CHARS, MAX_OUTLINE_HEADINGS,
+    // MAX_HEADING_CHARS) plus `headingText` and the single-citation
+    // `citationDetail` — rule TR-1's exact shape: the module's public entry
+    // point, `attachCitationDetail`, IS asked for by shipping code
+    // (app/api/copilot/answer/route.js, five call sites), and these seven are
+    // the thresholds and the two helpers its unit suite pins directly so a cap
+    // is never restated as a literal in a fixture.
+    //
+    // The one that LEFT is lib/experience/knowledgeBase.js#splitBlocks, and it
+    // left for the reason this bucket exists to make visible: it was an export
+    // only a test asked for, and citationDetail.js — reachable from the answer
+    // route — now imports it. That is the census working in the good
+    // direction, and it is the same movement `standsAlone` and `materialQuote`
+    // made one chunk earlier.
+    expect(TEST_REFERENCED.length).toBe(342);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
@@ -576,7 +593,12 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // A feature built and never wired would have moved both the same way; that
     // it did not is the evidence this total cannot show on its own, which is why
     // the split assertion above is the one that matters.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(399);
+    // 399 -> 405 = 342 + 63, with the orphan half FROZEN. The citation-detail
+    // chunk added no orphan at all: its one public entry point is imported by
+    // the answer route, and every other export it added is read by name from
+    // a static import in its own suite. A feature built and never wired would
+    // have shown up in the other half.
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(405);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

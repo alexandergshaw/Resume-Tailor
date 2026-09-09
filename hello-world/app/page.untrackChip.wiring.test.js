@@ -116,8 +116,8 @@ describe("the refusal is visible and audible", () => {
 });
 
 describe("page.js stays under its line ceiling", () => {
-  it("is shorter than 3250 lines", () => {
+  it("is shorter than 3050 lines", () => {
     const lines = pageSource.split("\n").length;
-    expect(lines).toBeLessThan(3250);
+    expect(lines).toBeLessThan(3050);
   });
 });

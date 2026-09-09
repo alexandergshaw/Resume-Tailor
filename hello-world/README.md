@@ -50,7 +50,6 @@ app/
       messages/                  POST — fetch + match job-related Gmail messages
     notifications/               GET / PATCH — in-app notifications
     cron/tailor/                 POST — scheduled auto-tailor pipeline
-    fetch-posting/               GET — scrape job description from a URL
     health/                      GET — liveness check
 
 lib/

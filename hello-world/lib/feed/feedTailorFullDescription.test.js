@@ -98,7 +98,7 @@ describe("the feed listing does not pay for it", () => {
 });
 
 describe("app/page.js stays within its line budget", () => {
-  it("is at most 3250 lines", () => {
-    expect(read(PAGE).split("\n").length).toBeLessThanOrEqual(3250);
+  it("is at most 3050 lines", () => {
+    expect(read(PAGE).split("\n").length).toBeLessThanOrEqual(3050);
   });
 });

@@ -4,6 +4,7 @@ import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 
 import { BREAK_LONG_WORDS_SX } from "./mobileSx";
+import CitationDetail from "./CitationDetail";
 import ExpansionPanel from "./ExpansionPanel";
 
 // AC-K1.1/AC-L1: the one place a drafted answer's lines are actually
@@ -93,6 +94,16 @@ import ExpansionPanel from "./ExpansionPanel";
 // component only ever receives a title that already passed that whitelist,
 // so it has nothing further to hedge.
 //
+// THAT SENTENCE, AND THE REVEAL BEHIND IT, now live in CitationDetail.js.
+// The `<Typography>` below is unchanged — same element, same position among
+// `li.children`, same colour, same `mt` — and only its children moved. An
+// entry the answer route could enrich (lib/copilot/citationDetail.js) also
+// names the SECTION of the page the point was located in, and turns the
+// caption into a control that reveals the matched text; an entry it could
+// not enrich renders exactly the inert sentence it always did, with no
+// control and no attribute. See that component for why it is a popover
+// rather than the modal the request named.
+//
 // Colour: `--text-secondary`, not `--text-muted`. R-228 settled this rule in
 // numbers — muted measures 3.90:1 against `--bg-soft`, the fill of all three
 // panels that render this component (CopilotDashboard's RealPanel,
@@ -168,7 +179,9 @@ export default function AnswerLines({ lines, expansion }) {
               variant="caption"
               sx={{ display: "block", color: "var(--text-secondary)", mt: 0.25, ...BREAK_LONG_WORDS_SX }}
             >
-              From your {line.pageSource.title} page.
+              {/* citation:start */}
+              <CitationDetail source={line.pageSource} />
+              {/* citation:end */}
             </Typography>
           ) : null}
           {/* expansion:start */}

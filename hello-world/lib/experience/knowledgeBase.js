@@ -30,11 +30,15 @@
 // here, in lib/meeting/**, and in the browser bundle. pageRanking.js pulls in
 // that same 1.4KB stopword JSON and lands here and in lib/meeting/** the same
 // way — but NOT in the browser bundle: verified, this file's only
-// non-test importers are app/api/copilot/answer/route.js and
-// lib/meeting/meetingContext.js, and that file's only non-test importers are
-// lib/meeting/insightsLocal.js and app/api/meeting/insights/route.js — all
-// server-side. That "smallest import, nothing else" constraint is
-// load-bearing for FOUR consumers now, not one.
+// non-test importers are app/api/copilot/answer/route.js,
+// lib/meeting/meetingContext.js and lib/copilot/citationDetail.js; that
+// second file's only non-test importers are lib/meeting/insightsLocal.js and
+// app/api/meeting/insights/route.js, and the third's only importer under
+// app/ is the answer route again (swept in citationDetail.test.js, because
+// splitBlocks below is exactly the kind of small useful export that invites a
+// client component to reach for it and drag this whole retrieval layer into
+// the browser bundle behind it) — all server-side. That "smallest import,
+// nothing else" constraint is load-bearing for FIVE consumers now, not one.
 //
 // NOT imported, though three sibling builders do: lib/experience/droppedNames.js,
 // the shared "…: “A”, “B”, and 3 more" formatter. Its callers splice those names

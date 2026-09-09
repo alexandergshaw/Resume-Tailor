@@ -5633,3 +5633,71 @@ Step 6 must reproduce step 5 exactly, three times over: recovery is not a one-sh
 3. Expand a bullet that has a citation and one that does not.
 
 **Expected:** (i) Exactly **one** bolded run in the parent bullet, in the same place, in every state — the expansion subtree contains no bold or italic text of any kind, including the control's own label. (ii) The citation stays where it was: still inside the same `<li>`, still **before** the control, still plain readable text, in every state. (iii) Reading order inside the bullet is text, then citation, then control, then panel. (iv) A bullet with no citation gains no placeholder.
+
+### R-359 | area: copilot-answers | parallel-safe: yes | automatable: no
+
+**Summary:** The citation reveal is a **popover, not a modal**, and it never steals the answer. A `Popover`/`Dialog` traps focus, sets `aria-hidden` on the rest of the app and locks page scroll — over the sentence the candidate is reading aloud. It is portalled out of the answer pane on purpose, because that pane is its own scroll container at `md` and up and an in-flow overlay would be clipped by its edge. jsdom has no layout engine at all (`getBoundingClientRect()` returns zeros and the popper positions everything at the origin), so **nothing about position is asserted anywhere** and this case is the only check there is.
+
+**Steps:**
+1. Draft an answer with a knowledge-base citation, on a desktop window, in the dashboard's answer panel.
+2. Hover the citation. While it is open, scroll the answer pane and click a bullet's "More detail" control.
+3. Repeat with the citation on the **last** bullet, at the very bottom of the pane.
+
+**Expected:** (i) The panel appears near the citation, fully visible, **not clipped by the pane's edge** and not off-screen. (ii) The page and the pane still scroll; the answer behind it is still readable and still reachable, and nothing is focus-trapped. (iii) On the last bullet the panel flips above the citation rather than being cut off.
+
+### R-360 | area: copilot-answers | parallel-safe: yes | automatable: no
+
+**Summary:** The reveal is legible on a phone. This is a tool used at 320px mid-interview, the panel carries the longest strings in the feature (a whole markdown block, plus a section list), and jsdom cannot lay out a single pixel of it. One measurement in particular is **unavailable in the test environment and is only checkable here**: jsdom resolves `text-align` on a `<button>` to the UA default `center` even when an author class rule that matches the element declares `left`, so the caption's left alignment is asserted only as a cascade *input*, never as a rendered result.
+
+**Steps:**
+1. At a 320px viewport, tap the citation on a bullet whose page has a long section body.
+2. Tap a citation on a page with eight or more headings.
+3. Rotate to landscape with the panel open.
+
+**Expected:** (i) The panel fits the viewport, wraps rather than overflowing horizontally, the quote scrolls inside its own box if it must, and nothing is cut off. (ii) The citation caption itself wraps to multiple lines **left-aligned, not centred**, and its tap target is comfortably large. (iii) The section list is readable and capped, ending in "and N more." (iv) Rotation does not leave the panel stranded off-screen or overlapping the answer's first bullet.
+
+### R-361 | area: copilot-answers | parallel-safe: yes | automatable: partly
+
+**Summary:** Hover, focus and tap all reach it, and WCAG 1.4.13's three obligations hold in a real browser. Hover alone is unreachable by keyboard and does not exist on touch, where a spurious `mouseleave` arrives right after the tap — which is why activation **latches**. The timings are pinned by tests; whether 0ms open / 200ms close *feels* right to a hand moving across a phone is not, and is what this case is for.
+
+**Steps:**
+1. Mouse: hover the citation, then move the pointer **onto the panel** and read it; then move away entirely.
+2. Keyboard: Tab to the citation, press Enter, Tab away, come back, press Escape.
+3. Touch: tap the citation, scroll the page, tap elsewhere.
+
+**Expected:** (i) It opens on hover, **survives the pointer travelling onto it**, and closes shortly after the pointer leaves both. (ii) Focus alone opens it; Enter latches it open so it survives a blur; Escape closes it **without moving focus**, and focus is still on the citation. (iii) Tap opens it and it **stays open** — a tap must never open-then-immediately-close; a second tap, or a tap outside, closes it. In all three, nothing closes on a timer.
+
+### R-362 | area: copilot-answers | parallel-safe: yes | automatable: yes
+
+**Summary:** The blurb is the candidate's own heading or **nothing**. A section is not stored anywhere in this app — it is re-derived from a verbatim four-token run against the candidate's own page body — and naming one the data cannot support is the same class of error as the false-employer bug: something confident and wrong about their own material, read aloud in an interview. Where the run is absent or ambiguous the app must say **less**, not guess.
+
+**Steps:**
+1. Write a page with `## Automating compatibility checks` over a bullet; ask a question that draws on it; draft on the **embedded** engine, then on **Gemini**.
+2. Write a page where the same phrase appears under two different headings, and draft an answer that uses it.
+3. Draft an answer where the model paraphrases entirely, quoting none of the page's own words.
+4. Give a page a heading of ten words and draft from it.
+5. Edit the page to add a section, do **not** redraft, and reopen the same cached answer.
+
+**Expected:** (i) "From your `<page>` page, under Automating compatibility checks." on **both** engines, with the panel showing that exact block. (ii) **No section named** — the ambiguous case falls back to the page alone. (iii) No section, no blurb, no control, and the citation line is byte-identical to what it was before this feature. (iv) No section, and **no truncated heading and no ellipsis and no em dash anywhere** — a heading is used whole or not at all. (v) The cached answer keeps whatever it was drafted with and never invents a section from the edited page.
+
+### R-363 | area: copilot-answers | parallel-safe: yes | automatable: partly
+
+**Summary:** Two disclosures now live inside one `<li>` — the citation reveal and "More detail" — and a screen reader must meet **one** pattern, not two. The citation control's accessible name is its own visible sentence, which a MUI `Tooltip` would silently override. jsdom has no accessibility tree: the ARIA *attributes* are asserted, what a real AT actually says is not.
+
+**Steps:**
+1. With a screen reader running, arrow onto a bullet that has both a citation and an expansion control.
+2. Activate the citation, then the expansion, then collapse both.
+3. Tab through a three-bullet answer where every bullet has a citation.
+
+**Expected:** (i) The bullet is announced as one item: point, then source, then the two controls — the citation is **not** behind a disclosure. (ii) Each control announces collapsed/expanded and its own name, and the citation control's name is the sentence you can see. (iii) No control announces a name that differs from its visible text, and no `aria-controls` points at an element that is not there.
+
+### R-364 | area: copilot-answers | parallel-safe: yes | automatable: yes
+
+**Summary:** The reveal costs nothing at request time and nothing at hover time. It rides the citation the answer already returns, so it survives a cache hit and issues **no request of its own** — deliberately, because this app has no rate limiting under `app/api` and a new per-hover endpoint would be unbounded by construction.
+
+**Steps:**
+1. With the network tab open, draft an answer and hover, focus and open every citation on it several times.
+2. Ask the same question again so it is served from the answer cache, and open its citations.
+3. Reveal, hide and re-reveal a practice-mode sample answer, then open its citations.
+
+**Expected:** (i) **Zero** network requests from any citation interaction. (ii) The cached answer's citations still carry their sections and their reveals — a cache write that dropped the enrichment shows a citation that silently loses its blurb on the second ask, which is the failure `pageSources` itself already had once. (iii) Practice mode behaves identically to live mode; neither surface needed a new prop.

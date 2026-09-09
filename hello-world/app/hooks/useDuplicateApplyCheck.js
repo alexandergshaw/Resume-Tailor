@@ -18,7 +18,7 @@ import { TRACKING_TAB_HIDDEN_STATUSES, STATUS_LABELS } from "@/lib/applications/
 // the plan's own file list, but required by a constraint the plan never
 // measured: app/page.js carries three independent, already-shipped tests
 // (app/components/DocumentPreviewMount.test.js, lib/drive/lineCeiling.test.js,
-// lib/feed/feedTailorFullDescription.test.js) pinning it to FEWER THAN 3250
+// lib/feed/feedTailorFullDescription.test.js) pinning it to FEWER THAN 3050
 // lines, part of this repo's standing page.js-consolidation effort. The
 // plan's own "+130 lines" estimate for page.js already exceeds that budget
 // (3182 + 130 = 3312), before this file's own additions are counted at all.

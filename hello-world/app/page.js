@@ -29,17 +29,13 @@ import {
 } from "../lib/chat/chatbot";
 import {
   isDocxResume,
-  isTextResume,
   buildTemplateLinesForUpload,
   getDownloadFileNameForTitle,
   createDocumentDownloaders,
-  extractResumeTextLines,
-  triggerBlobDownload,
   base64ToDocxBlob,
 } from "../lib/document/docx";
 import { parseDocxToModel, linesToModel } from "../lib/document/docxPreview";
 import { weaveSources } from "../lib/document/coverLetterWeave";
-import { parseEmploymentHistory } from "../lib/resume/parseEmployment";
 import { editFingerprint } from "../lib/tailor/editMining";
 import { recordMatchGaps, annotateAndRank, promotedEditRules } from "../lib/tailor/localSignals";
 import { runWithConcurrency } from "../lib/tailor/runWithConcurrency";
@@ -52,17 +48,14 @@ import { useManualPostings } from "./hooks/useManualPostings";
 import { useChat } from "./hooks/useChat";
 import { useApplicationDialogs } from "./hooks/useApplicationDialogs";
 import { useApplicationDigests } from "./hooks/useApplicationDigests";
+import { useLayoutPrefs } from "./hooks/useLayoutPrefs";
+import { useEmploymentImport } from "./hooks/useEmploymentImport";
+import { useMaterialsLocker } from "./hooks/useMaterialsLocker";
 import {
   REFERENCE_CONFIG,
   EDUCATION_CONFIG,
   EMPLOYMENT_CONFIG,
 } from "../lib/materials/profileEntries";
-import {
-  listMaterials,
-  uploadMaterial,
-  downloadMaterialBlob,
-  removeMaterial,
-} from "../lib/supabase/materials";
 import { openPostingBeside, openBlankBeside, navigateBeside } from "../lib/window/openPostingBeside";
 import { useEngine } from "@/app/settings/engine";
 import Box from "@mui/material/Box";
@@ -208,13 +201,6 @@ export default function Home() {
   const [applicationStages, setApplicationStages] = useState({});
   const [interviewSearch, setInterviewSearch] = useState("");
   const [interviewSort, setInterviewSort] = useState({ field: null, dir: "asc" });
-  // Width (in px) of the frozen columns on the Interviewing tab. User can drag
-  // the right edge of each header to resize; persisted to localStorage.
-  const [companyColWidth, setCompanyColWidth] = useState(140);
-  const [roleColWidth, setRoleColWidth] = useState(180);
-  // Position of the floating AI Help FAB; user can drag it anywhere.
-  // Stored as offsets from the right/bottom of the viewport (in px).
-  const [fabPos, setFabPos] = useState({ right: 24, bottom: 24 });
   // AC-K1.6: the launcher's own DOM node, so closing the chat panel (by its
   // close button or by Escape) can return focus here instead of dropping it
   // on <body>. The drag state/threshold/pointer-capture logic that used to
@@ -247,18 +233,10 @@ export default function Home() {
   const referencesCtl = useProfileEntries(REFERENCE_CONFIG);
   const educationCtl = useProfileEntries(EDUCATION_CONFIG);
   const employmentCtl = useProfileEntries(EMPLOYMENT_CONFIG);
-  // Status of the "import from résumé" action on the Employment History section.
-  const [employmentImport, setEmploymentImport] = useState({ loading: false, error: "", message: "" });
 
   // Per-job company research (warmed behind the preview; woven into the cover).
   const research = useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewReloadKey });
 
-  // Supplementary materials locker (transcripts etc.). Each item:
-  // { name, size, source: "remote"|"local", file? }. Persisted to Supabase for
-  // signed-in users; in-memory for the session otherwise. Download-only.
-  const [materials, setMaterials] = useState([]);
-  const [materialsBusy, setMaterialsBusy] = useState(false);
-  const [materialsError, setMaterialsError] = useState("");
   const [applicationsRefreshKey, setApplicationsRefreshKey] = useState(0);
 
   // Tracking-tab dialogs (add/edit/stage/communications) + their save handlers.
@@ -964,279 +942,33 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, applicationData.length]);
 
-  // Hydrate UI layout prefs (frozen-column widths + FAB position) once on mount.
-  useEffect(() => {
-    try {
-      const cw = parseInt(localStorage.getItem("interviewCompanyColWidth") || "", 10);
-      if (Number.isFinite(cw) && cw >= 80 && cw <= 600) setCompanyColWidth(cw);
-      const rw = parseInt(localStorage.getItem("interviewRoleColWidth") || "", 10);
-      if (Number.isFinite(rw) && rw >= 80 && rw <= 600) setRoleColWidth(rw);
-      const fp = localStorage.getItem("fabPos");
-      if (fp) {
-        const parsed = JSON.parse(fp);
-        if (
-          parsed && typeof parsed.right === "number" && typeof parsed.bottom === "number"
-        ) {
-          // Clamp to the current viewport so a position saved on a larger
-          // screen can't strand the FAB off-screen on a small one.
-          const maxRight = Math.max(8, window.innerWidth - 80);
-          const maxBottom = Math.max(8, window.innerHeight - 48);
-          setFabPos({
-            right: Math.min(Math.max(8, parsed.right), maxRight),
-            bottom: Math.min(Math.max(8, parsed.bottom), maxBottom),
-          });
-        }
-      }
-    } catch {}
-  }, []);
-  useEffect(() => {
-    localStorage.setItem("interviewCompanyColWidth", String(companyColWidth));
-  }, [companyColWidth]);
-  useEffect(() => {
-    localStorage.setItem("interviewRoleColWidth", String(roleColWidth));
-  }, [roleColWidth]);
-  useEffect(() => {
-    localStorage.setItem("fabPos", JSON.stringify(fabPos));
-  }, [fabPos]);
-  // Keep the floating FAB inside the viewport when the window resizes (e.g.
-  // rotating a phone or shrinking the window) so it never drifts off-screen.
-  useEffect(() => {
-    function clampFab() {
-      setFabPos((prev) => {
-        const maxRight = Math.max(8, window.innerWidth - 80);
-        const maxBottom = Math.max(8, window.innerHeight - 48);
-        const right = Math.min(Math.max(8, prev.right), maxRight);
-        const bottom = Math.min(Math.max(8, prev.bottom), maxBottom);
-        return right === prev.right && bottom === prev.bottom ? prev : { right, bottom };
-      });
-    }
-    window.addEventListener("resize", clampFab);
-    return () => window.removeEventListener("resize", clampFab);
-  }, []);
+  // Persisted UI layout prefs: the Interviewing table's frozen column
+  // widths and the AI Help FAB's position. Instantiated HERE, at the exact
+  // source position its five effects already occupied, so none of them
+  // changes index relative to any other effect -- see the hook header.
+  const { companyColWidth, roleColWidth, fabPos, setFabPos, startColResize } = useLayoutPrefs();
 
-  // Drag handler shared by both frozen-column resize handles.
-  function startColResize(which, event) {
-    event.preventDefault();
-    event.stopPropagation();
-    const startX = event.clientX;
-    const startWidth = which === "company" ? companyColWidth : roleColWidth;
-    const setter = which === "company" ? setCompanyColWidth : setRoleColWidth;
-    function onMove(e) {
-      const delta = e.clientX - startX;
-      const next = Math.min(600, Math.max(80, startWidth + delta));
-      setter(next);
-    }
-    function onUp() {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    }
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-  }
+  // "Import from résumé" on the Employment History section. The hook holds
+  // no effect at all, so this call site cannot reorder one; it sits where
+  // the handler already sat.
+  const { employmentImport, importEmploymentFromResume } = useEmploymentImport({
+    employmentCtl,
+    tailorEngine,
+  });
 
-  // Extract employment history from an uploaded résumé (.docx/.txt) and append
-  // the detected positions to the list (capped at 4). The file is parsed to text
-  // on-device. On the Embedded engine we parse it entirely on-device with the
-  // heuristic parser (no network/LLM); otherwise we send it to
-  // /api/extract-employment (Gemini) and fall back to that same parser if the
-  // route is unavailable. Existing non-empty entries are preserved; fields stay
-  // editable so the user can fix any misses.
-  async function importEmploymentFromResume(file) {
-    if (!file) return;
-    if (!isDocxResume(file) && !isTextResume(file)) {
-      setEmploymentImport({ loading: false, error: "Upload a .docx or .txt résumé.", message: "" });
-      return;
-    }
-    setEmploymentImport({ loading: true, error: "", message: "" });
-    try {
-      const lines = await extractResumeTextLines(file);
-      const resumeText = lines.join("\n");
-
-      let positions = [];
-      let usedAi = false;
-      // Embedded engine: parse on-device only, never call the LLM route.
-      if (tailorEngine !== "embedded") {
-        try {
-          const res = await fetch("/api/extract-employment", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ resumeText, engine: tailorEngine }),
-          });
-          if (res.ok) {
-            const json = await res.json();
-            if (Array.isArray(json?.positions)) {
-              positions = json.positions;
-              usedAi = true;
-            }
-          }
-        } catch {
-          // Network/route error — fall through to the offline parser.
-        }
-      }
-      if (!usedAi) {
-        positions = parseEmploymentHistory(lines);
-      }
-
-      if (positions.length === 0) {
-        setEmploymentImport({
-          loading: false,
-          error: "",
-          message: "Couldn't detect any employment history. Add entries manually below.",
-        });
-        return;
-      }
-      const existing = employmentCtl.entries.filter(
-        (e) => e.company || e.title || e.location || e.startDate || e.endDate || e.notes,
-      );
-      // Skip positions that already exist (by company + title) so re-uploading
-      // the same résumé doesn't stack duplicate entries.
-      const dedupeKey = (e) =>
-        `${(e.company || "").trim().toLowerCase()}|${(e.title || "").trim().toLowerCase()}`;
-      const existingKeys = new Set(existing.map(dedupeKey));
-      const room = Math.max(0, 4 - existing.length);
-      const additions = positions
-        .filter((p) => !existingKeys.has(dedupeKey(p)))
-        .slice(0, room)
-        .map((entry) => ({
-          id: `emp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          company: entry.company || "",
-          title: entry.title || "",
-          location: entry.location || "",
-          startDate: entry.startDate || "",
-          endDate: entry.endDate || "",
-          notes: entry.notes || "",
-        }));
-      const added = additions.length;
-      employmentCtl.setEntries([...existing, ...additions]);
-      employmentCtl.setOpen(true);
-      const suffix = usedAi ? "" : " (offline parser — AI unavailable)";
-      const noRoomMessage =
-        existing.length >= 4
-          ? "Your 4 employment slots are already full."
-          : "Those positions are already in your list.";
-      setEmploymentImport({
-        loading: false,
-        error: "",
-        message:
-          added > 0
-            ? `Imported ${added} position${added === 1 ? "" : "s"}${suffix}. Review and edit as needed.`
-            : noRoomMessage,
-      });
-    } catch (err) {
-      setEmploymentImport({
-        loading: false,
-        error: `Couldn't read that résumé: ${err?.message || "unknown error"}`,
-        message: "",
-      });
-    }
-  }
-
-  // ── Supplementary materials locker ────────────────────────────────────────
-  // Load the user's stored materials on sign-in.
-  useEffect(() => {
-    if (!currentUser) return undefined;
-    let cancelled = false;
-    (async () => {
-      const supabase = createClient();
-      const list = await listMaterials(supabase, currentUser.id);
-      if (!cancelled) setMaterials(list.map((m) => ({ ...m, source: "remote" })));
-    })();
-    return () => { cancelled = true; };
-  }, [currentUser]);
-
-  async function uploadMaterials(fileList) {
-    const files = Array.from(fileList || []);
-    if (files.length === 0) return;
-    setMaterialsError("");
-
-    // Signed-out: keep files in memory for the session only.
-    if (!currentUser) {
-      const additions = files.map((file) => ({
-        name: file.name,
-        size: file.size,
-        source: "local",
-        file,
-      }));
-      setMaterials((prev) => [...prev, ...additions]);
-      return;
-    }
-
-    setMaterialsBusy(true);
-    const supabase = createClient();
-    for (const file of files) {
-      if (file.size > 25 * 1024 * 1024) {
-        setMaterialsError(`${file.name} is too large (max 25 MB).`);
-        continue;
-      }
-      const { error } = await uploadMaterial(supabase, currentUser.id, file);
-      if (error) setMaterialsError(`${file.name}: ${error}`);
-    }
-    const list = await listMaterials(supabase, currentUser.id);
-    setMaterials(list.map((m) => ({ ...m, source: "remote" })));
-    setMaterialsBusy(false);
-  }
-
-  async function downloadMaterialFile(item) {
-    if (!item) return;
-    setMaterialsError("");
-    if (item.source === "local" && item.file) {
-      triggerBlobDownload(item.file, item.name);
-      return;
-    }
-    if (!currentUser) return;
-    const supabase = createClient();
-    const { blob, error } = await downloadMaterialBlob(supabase, currentUser.id, item.name);
-    if (error) {
-      setMaterialsError(error);
-      return;
-    }
-    triggerBlobDownload(blob, item.name);
-  }
-
-  async function removeMaterialFile(item) {
-    if (!item) return;
-    setMaterialsError("");
-    if (item.source === "local") {
-      setMaterials((prev) => prev.filter((m) => m !== item));
-      return;
-    }
-    if (!currentUser) return;
-    const supabase = createClient();
-    const { error } = await removeMaterial(supabase, currentUser.id, item.name);
-    if (error) {
-      setMaterialsError(error);
-      return;
-    }
-    setMaterials((prev) => prev.filter((m) => m.name !== item.name));
-  }
-
-  // Open the chat with a supplementary material attached as context. For remote
-  // files we fetch the bytes from Storage first; the chat attachment pipeline
-  // then text-extracts or inlines (image/PDF) the file.
-  async function askAiAboutMaterial(item) {
-    if (!item) return;
-    setMaterialsError("");
-    chat.setChatOpen(true);
-    try {
-      let file = item.source === "local" && item.file ? item.file : null;
-      if (!file && currentUser) {
-        const supabase = createClient();
-        const { blob, error } = await downloadMaterialBlob(supabase, currentUser.id, item.name);
-        if (error || !blob) {
-          setMaterialsError(error || "Could not load that file.");
-          return;
-        }
-        file = new File([blob], item.name, { type: blob.type || undefined });
-      }
-      if (file) await chat.addChatAttachments([file]);
-    } catch (err) {
-      setMaterialsError(err?.message || "Could not attach that file.");
-    }
-  }
+  // Supplementary materials locker (Supabase Storage + the chat hand-off).
+  // Instantiated HERE, at the exact source position its load-on-sign-in
+  // effect already occupied, so the extraction cannot move that effect
+  // relative to any other effect in this component -- see the hook header.
+  const {
+    materials,
+    materialsBusy,
+    materialsError,
+    uploadMaterials,
+    downloadMaterialFile,
+    removeMaterialFile,
+    askAiAboutMaterial,
+  } = useMaterialsLocker({ currentUser, chat });
 
   // Per-field copy helper for references / education TextFields.
   const [fieldCopyKey, setFieldCopyKey] = useState(null);

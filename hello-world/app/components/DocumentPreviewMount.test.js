@@ -78,7 +78,7 @@ describe("page.js renders the extracted DocumentPreviewMount", () => {
     // one fewer for a file with a trailing newline). A token extraction that
     // moved a handful of lines out would satisfy "under 3309" only by luck;
     // this pins the real shrink the 99-line mount block's removal produces.
-    expect(read(PAGE).split("\n").length).toBeLessThan(3250);
+    expect(read(PAGE).split("\n").length).toBeLessThan(3050);
   });
 });
 

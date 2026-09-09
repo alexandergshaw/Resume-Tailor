@@ -677,7 +677,7 @@ describe("AC-12 — the six mutation paths actually route (r2 §6.2)", () => {
 // ==========================================================================
 
 describe("AC-18 — the feature fits in app/page.js's remaining headroom", () => {
-  // WHY THIS IS ONE `it` AND NOT THREE. A bare `lines < 3250` passes today,
+  // WHY THIS IS ONE `it` AND NOT THREE. A bare `lines < 3050` passes today,
   // against a page.js that does not carry the feature — a green assertion
   // defending nothing. The budget is only meaningful once the feature is IN
   // the file, so the two are asserted together and fail together.
@@ -725,17 +725,31 @@ describe("AC-18 — the feature fits in app/page.js's remaining headroom", () =>
 
     // Deliberately duplicated from the four assertions in four other files, so
     // the ceiling fails HERE, at implementation time, rather than in an
-    // unrelated suite: app/page.untrackChip.wiring.test.js:121 (<3250),
-    // app/components/DocumentPreviewMount.test.js:81 (<3250),
-    // lib/feed/feedTailorFullDescription.test.js:102 (<=3250) and
+    // unrelated suite: app/page.untrackChip.wiring.test.js:121 (<3050),
+    // app/components/DocumentPreviewMount.test.js:81 (<3050),
+    // lib/feed/feedTailorFullDescription.test.js:102 (<=3050) and
     // lib/drive/lineCeiling.test.js:32 (<3309, with :27-31 recording "Do not
-    // raise the constant"). The binding cap is 3249, not 3250 — the two
-    // `toBeLessThan(3250)` assertions are stricter than the
+    // raise the constant"). The binding cap is 3249, not 3050 — the two
+    // `toBeLessThan(3050)` assertions are stricter than the
     // `toBeLessThanOrEqual` one.
+    // RATCHETED 3250 -> 3050 on 2026-09-08, in all five places at once, after
+    // an extraction took app/page.js from 3233 to 2965 by moving three domain
+    // hooks out (useLayoutPrefs, useEmploymentImport, useMaterialsLocker).
+    // Leaving the cap at 3250 would have let the file silently regrow into the
+    // 268 lines just freed, which is the whole failure mode these pins exist to
+    // stop -- a ceiling that only ever rises measures nothing. 3050 keeps ~85
+    // lines of ordinary working room.
+    //
+    // Worth knowing before raising it again: react-hooks v7's compiler analysis
+    // BAILS OUT on a component this size, measured by lifting page.js's own
+    // mount-hydration effect verbatim into a probe module, where
+    // `react-hooks/set-state-in-effect` fires -- while `npx eslint app/page.js`
+    // stays silent. Roughly eight effects in that file are therefore unlinted.
+    // The cap is not stylistic; below some size the linter starts working again.
     expect(
       lines.length,
       `app/page.js is ${lines.length} lines and has blown the ceiling four other test files also pin`,
-    ).toBeLessThan(3250);
+    ).toBeLessThan(3050);
 
     const mentions = lines.filter((line) => FEATURE_VOCAB.test(line));
     const substitutions = mentions.filter((line) => SUBSTITUTIONS.some((re) => re.test(line)));

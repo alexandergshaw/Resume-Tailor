@@ -118,15 +118,20 @@ const BOUNDED = [
     windowMs: 600_000,
     why: "up to four grounded calls per request -- the highest per-request cost in Tech Watch",
   },
-  // --- the four unauthenticated routes, gated and then bounded -------------
+  // --- the three unauthenticated routes still standing, gated and then -----
+  // bounded. A fourth, app/api/fetch-posting/route.js, shipped in this same
+  // no-auth cohort and was gated the same way; it is gone from this table (and
+  // from GATED below) because once gated it was found to have ZERO callers
+  // anywhere in the app and was deleted outright rather than kept and tuned --
+  // see GATED's own comment for the fuller reason.
   //
   // These moved up from DEFERRED. Each was listed there for the SAME reason --
   // "no auth gate at all, so identify() has nothing to key on" -- and the fix
   // was therefore authentication first and the bound second, in that order. All
-  // four now resolve an id through `getAuth()` (lib/experience/apiAuth.js) and
+  // three now resolve an id through `getAuth()` (lib/experience/apiAuth.js) and
   // 401 without one, so `identify()` always succeeds and the bound is exact.
   //
-  // Every client caller of all four sits on a PAGE route, and
+  // Every client caller of all three sits on a PAGE route, and
   // lib/supabase/middleware.js redirects any page route to /login without a
   // session, so none of them could ever legitimately have run signed-out.
   {
@@ -146,12 +151,6 @@ const BOUNDED = [
     limit: 10,
     windowMs: 600_000,
     why: "one call per resume the user picks in the employment-import dialog (app/page.js:1064) -- human-paced, and a denial degrades to the on-device parser rather than failing",
-  },
-  {
-    route: "app/api/fetch-posting/route.js",
-    limit: 20,
-    windowMs: 600_000,
-    why: "spends bandwidth and OUR outbound reputation rather than model money: an authenticated loop against a caller-chosen host is a scan that a third party sees coming from us. It has ZERO in-app callers, so any bound is generous",
   },
   // --- already bounded before this change ----------------------------------
   {
@@ -181,10 +180,14 @@ const BOUNDED = [
  *
  * THE "NO AUTH GATE AT ALL" COHORT IS GONE. Four routes used to sit here for a
  * strictly worse reason than optional auth -- they had no authentication of any
- * kind, so an anonymous caller spent model money directly. They were gated
+ * kind, so an anonymous caller spent model money directly. Three were gated
  * first and bounded second (that order is the whole point) and now appear in
  * BOUNDED; `GATED` below is the standing witness that the gate is still there
- * and still ahead of the spend.
+ * and still ahead of the spend. The fourth, app/api/fetch-posting/route.js,
+ * never spent model money at all -- it spent bandwidth and this server's
+ * outbound reputation aimed at a host the CALLER chose -- and once gated it
+ * was found to have ZERO callers anywhere in the app, so it was deleted
+ * rather than tuned. It appears in neither BOUNDED nor DEFERRED now.
  */
 const DEFERRED = [
   {
@@ -218,20 +221,29 @@ const DEFERRED = [
 ];
 
 /**
- * The four routes that shipped with NO authentication of any kind, with the
+ * The three routes that shipped with NO authentication of any kind, with the
  * handler each one gates. Kept as its own table rather than folded into
  * BOUNDED: every other bounded route was already authenticated before it was
- * bounded, so for these four the gate is the finding and the bound is the
+ * bounded, so for these three the gate is the finding and the bound is the
  * follow-on. A future edit that removed the gate would leave every assertion in
  * BOUNDED green -- the limiter would still be there, keyed on a `userId` that
  * had quietly become `null`, which `identify()` then answers with
  * `unidentified` and `check()` turns into a 429 for EVERY caller.
+ *
+ * A fourth route, app/api/fetch-posting/route.js, shipped in this same
+ * no-auth cohort and was gated the same way in the same change. It is not
+ * listed here: once gated, it was found to have ZERO callers anywhere in the
+ * app (the in-product scraping path is lib/scrape/fetchUrlContent.js, which
+ * also carries the real SSRF defences -- checkRequestUrl, isBlockedHost,
+ * parseIPv4/parseIPv6 -- that this route's inline BLOCKED_HOSTNAMES/
+ * BLOCKED_IP_PREFIXES string-prefix check duplicated and did not match), so
+ * the route and its test were deleted outright rather than kept in this
+ * table.
  */
 const GATED = [
   { route: "app/api/posting-from-image/route.js", handler: "POST" },
   { route: "app/api/company-research/route.js", handler: "POST" },
   { route: "app/api/extract-employment/route.js", handler: "POST" },
-  { route: "app/api/fetch-posting/route.js", handler: "GET" },
 ];
 
 const BOUNDED_ROUTES = new Set(BOUNDED.map((entry) => entry.route));
