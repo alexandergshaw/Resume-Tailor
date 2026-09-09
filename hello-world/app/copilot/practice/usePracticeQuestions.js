@@ -21,8 +21,9 @@ import { getInterviewType } from "../useInterviewType";
 //     nothing to do with, so posting is not exclusively the question
 //     flow's to own.
 //   - `abandonInProgressAnswer`/`resetAnswerState` (usePracticeAnswer) never
-//     get called from inside this hook, even though PracticeClient's
-//     onNextQuestion/onRetryQuestion/onPostingChange/stop/start (and, since
+//     get called from inside this hook, even though usePracticeHandlers'
+//     onNextQuestion/onRetryQuestion/onPostingChange and PracticeClient's own
+//     stop/start (and, since
 //     AC-A12/A13, its interview-type store subscriber) all call both a
 //     hook function here AND one of those in the same handler. Keeping
 //     "what question are we on" and "what's happening
@@ -120,7 +121,7 @@ export function usePracticeQuestions({ posting }) {
   // list — a prior failed request leaves `currentQuestion` in place, and
   // pressing Next again must not record it twice. Deliberately does NOT
   // call requestQuestion itself and does NOT touch answer state — the
-  // caller (PracticeClient's onNextQuestion) calls this FIRST, then
+  // caller (usePracticeHandlers' onNextQuestion) calls this FIRST, then
   // abandonInProgressAnswer/resetAnswerState, then passes the returned list
   // to `requestQuestion`, preserving the exact statement order the inline
   // version had (the question changing invalidates whatever answer — in

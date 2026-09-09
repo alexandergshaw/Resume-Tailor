@@ -38,6 +38,13 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const readSource = (rel) => readFileSync(join(HERE, rel), "utf8");
 const CLIENT = readSource("./PracticeClient.js");
+// AMENDED per constraint 2 above: the handlers this file pins moved, whole and
+// byte-identical, into usePracticeHandlers.js (a line-budget extraction — see
+// usePracticeHandlers.extraction.test.js). Every assertion below keeps its
+// exact subject; only the module it is read from changed. The alternative this
+// file forbids — leaving the duty list behind in PracticeClient.js as dead code
+// to keep a source-text test green — is what constraint 2 exists to prevent.
+const HANDLERS = readSource("./usePracticeHandlers.js");
 
 // The body of a top-level `const <name> = useCallback(...)` declaration,
 // bracket-balanced to the end of that call and NOT one character further.
@@ -131,17 +138,17 @@ describe("PracticeClient imports the shared store from its new home", () => {
 
 describe("PracticeClient WIRES the change subscription (AC-A13b)", () => {
   it("imports the change-subscription hook", () => {
-    expect(CLIENT).toMatch(
+    expect(HANDLERS).toMatch(
       /import\s*\{[^}]*\buseInterviewTypeChange\b[^}]*\}\s*from\s*["']\.\.\/useInterviewType(?:\.js)?["']/,
     );
   });
 
   it("actually CALLS it — an import alone ships the feature inert", () => {
-    expect(CLIENT).toMatch(/\buseInterviewTypeChange\s*\(/);
+    expect(HANDLERS).toMatch(/\buseInterviewTypeChange\s*\(/);
   });
 
   it("imports the shared duty composer from lib/copilot/", () => {
-    expect(CLIENT).toMatch(
+    expect(HANDLERS).toMatch(
       /import\s*\{[^}]*\bdiscardPracticeWork\b[^}]*\}\s*from\s*["']@\/lib\/copilot\/choiceChangeInvalidation(?:\.js)?["']/,
     );
   });
@@ -154,7 +161,7 @@ describe("PracticeClient WIRES the change subscription (AC-A13b)", () => {
     // and changing the posting silently clears the score average instead.
     // That is verbatim the failure AC-A13b exists to prevent, so the call has
     // to be scoped to the subscription it belongs to.
-    const subscriber = subscriptionHandler(CLIENT, "useInterviewTypeChange");
+    const subscriber = subscriptionHandler(HANDLERS, "useInterviewTypeChange");
     expect(subscriber).not.toBe(null);
     expect(subscriber).toMatch(/\bdiscardPracticeWork\s*\(/);
   });
@@ -163,7 +170,7 @@ describe("PracticeClient WIRES the change subscription (AC-A13b)", () => {
     // Same mutant, from the other side: without this, moving the call into
     // `onPostingChange` and ALSO leaving one in the subscriber would pass the
     // case above while a posting change wrongly discards practice work.
-    const posting = declarationBody(CLIENT, "onPostingChange");
+    const posting = declarationBody(HANDLERS, "onPostingChange");
     expect(posting).not.toBe(null);
     expect(posting).not.toMatch(/\bdiscardPracticeWork\s*\(/);
   });
@@ -174,7 +181,7 @@ describe("PracticeClient WIRES the change subscription (AC-A13b)", () => {
     // duty list, abandoning an in-progress recording and revoking a finished
     // take's replay. The store hands the origin to the handler; it must be
     // forwarded, not re-asserted.
-    const subscriber = subscriptionHandler(CLIENT, "useInterviewTypeChange");
+    const subscriber = subscriptionHandler(HANDLERS, "useInterviewTypeChange");
     const args = callExpression(subscriber, "discardPracticeWork(");
     expect(args).not.toBe(null);
     expect(args).not.toMatch(/\borigin\s*:\s*["']/);
@@ -188,7 +195,7 @@ describe("PracticeClient WIRES the change subscription (AC-A13b)", () => {
     // Scoped to the CALL, not the handler: a stable `useCallback`'s dependency
     // array sits inside the handler's own extent, so a callback mentioned only
     // there would satisfy a handler-wide match while the bag omitted it.
-    const subscriber = subscriptionHandler(CLIENT, "useInterviewTypeChange");
+    const subscriber = subscriptionHandler(HANDLERS, "useInterviewTypeChange");
     const args = callExpression(subscriber, "discardPracticeWork(");
     expect(args).not.toBe(null);
     expect(args).toMatch(/\binvalidateRoomDrafts\b/);
@@ -201,8 +208,8 @@ describe("PracticeClient WIRES the change subscription (AC-A13b)", () => {
     // from here it would silently stop a type change from invalidating the
     // question bank and the session score average. `discardDraftedAnswers`,
     // narrower still, would additionally stop it clearing the answer state.
-    expect(CLIENT).not.toMatch(/\bdiscardAnswerWork\s*\(/);
-    expect(CLIENT).not.toMatch(/\bdiscardDraftedAnswers\s*\(/);
+    expect(HANDLERS).not.toMatch(/\bdiscardAnswerWork\s*\(/);
+    expect(HANDLERS).not.toMatch(/\bdiscardDraftedAnswers\s*\(/);
   });
 });
 
@@ -222,11 +229,11 @@ describe("PracticeClient calls onInterviewTypeAnnouncement with a BUILT value (c
   it("accepts onInterviewTypeAnnouncement as a prop", () => {
     // Positive control for the calls below: without this, the component
     // could not reference the name at all.
-    expect(CLIENT).toMatch(/\bonInterviewTypeAnnouncement\b/);
+    expect(HANDLERS).toMatch(/\bonInterviewTypeAnnouncement\b/);
   });
 
   it("calls it from INSIDE the change subscriber, with a value built by a function call — never a literal, never nothing", () => {
-    const subscriber = subscriptionHandler(CLIENT, "useInterviewTypeChange");
+    const subscriber = subscriptionHandler(HANDLERS, "useInterviewTypeChange");
     expect(subscriber).not.toBe(null);
     expect(subscriber).toMatch(/\bonInterviewTypeAnnouncement\s*\(/);
 
@@ -242,7 +249,7 @@ describe("PracticeClient calls onInterviewTypeAnnouncement with a BUILT value (c
   });
 
   it("does not call it from the POSTING callback — the paired negative", () => {
-    const posting = declarationBody(CLIENT, "onPostingChange");
+    const posting = declarationBody(HANDLERS, "onPostingChange");
     expect(posting).not.toBe(null);
     expect(posting).not.toMatch(/\bonInterviewTypeAnnouncement\s*\(/);
   });
@@ -251,13 +258,13 @@ describe("PracticeClient calls onInterviewTypeAnnouncement with a BUILT value (c
     // '?.()' is exactly how a wiring bug like this one survives: it turns a
     // loud crash on a missing prop into a silent no-op indistinguishable
     // from "nothing needed announcing this time".
-    expect(CLIENT).not.toMatch(/onInterviewTypeAnnouncement\s*\?\.\s*\(/);
+    expect(HANDLERS).not.toMatch(/onInterviewTypeAnnouncement\s*\?\.\s*\(/);
   });
 });
 
 describe("the old inline invalidation sequence is GONE from onInterviewTypeChange", () => {
   it("still has the callback — PracticeSetup passes it to the picker's onChange", () => {
-    const body = declarationBody(CLIENT, "onInterviewTypeChange");
+    const body = declarationBody(HANDLERS, "onInterviewTypeChange");
     expect(body).not.toBe(null);
     // Positive control for the extraction below: without this, deleting the
     // callback entirely would satisfy every "no longer contains" assertion
@@ -276,7 +283,7 @@ describe("the old inline invalidation sequence is GONE from onInterviewTypeChang
     // inline list and giving each call an argument. There is no legitimate
     // reason for any of these three names to appear in this callback at all,
     // so the name alone is the assertion.
-    const body = declarationBody(CLIENT, "onInterviewTypeChange");
+    const body = declarationBody(HANDLERS, "onInterviewTypeChange");
     expect(body).not.toMatch(/\bresetQuestions\b/);
     expect(body).not.toMatch(/\babandonInProgressAnswer\b/);
     expect(body).not.toMatch(/\bresetAnswerState\b/);

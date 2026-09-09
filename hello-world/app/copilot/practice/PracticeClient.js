@@ -6,7 +6,6 @@ import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import { interviewTypeLabel } from "@/lib/copilot/interviewTypes";
 import { buildPrivacyNotice } from "@/lib/copilot/practiceNotices";
-import { submitPracticeQuestion } from "@/lib/copilot/manualQuestion";
 import { useEngine } from "@/app/settings/engine";
 import { ExpansionScope } from "../useAnswerExpansions";
 import { GlossaryProvider } from "../GlossaryProvider";
@@ -33,12 +32,12 @@ import { useRoomQuestions } from "./useRoomQuestions";
 import { useSampleAnswer } from "./useSampleAnswer";
 import { usePracticeCodeLanguage } from "./usePracticeCodeLanguage";
 import { shouldQueueSampleAnswer } from "@/lib/copilot/practiceFlow";
-import { useInterviewType, useInterviewTypeChange } from "../useInterviewType";
-import { discardPracticeWork } from "@/lib/copilot/choiceChangeInvalidation";
+import { useInterviewType } from "../useInterviewType";
 import { useSaveRecordings } from "./useSaveRecordings";
 import { usePrepContext } from "../usePrepContext";
 import { usePracticeCaptureSession } from "./usePracticeCaptureSession";
 import { usePracticeAnswerActions } from "./usePracticeAnswerActions";
+import { usePracticeHandlers } from "./usePracticeHandlers";
 import { usePracticeSessionLog } from "./usePracticeSessionLog";
 import { roomQuestionPrivacyClause } from "./practiceRoomQuestionPrivacy";
 
@@ -370,125 +369,31 @@ export default function PracticeClient({
   const { pace, fillers, recordSpeechSample, resetForSession: resetDashboardForSession, lastSampleAt } =
     useLastSampleAt(useCopilotDashboard());
 
-  // "Next question": advanceAsked (usePracticeQuestions) does the
-  // question-side half — see its own doc for the dedupe rule. Order matters
-  // here: abandonInProgressAnswer/resetAnswerState run BETWEEN computing
-  // the next asked list and requesting it, mirroring the inline version
-  // exactly (the question changing invalidates the previous answer).
-  const onNextQuestion = useCallback(() => {
-    // AC-N2: arms auto-start BEFORE the fetch, not after — the question
-    // this press is waiting for hasn't landed yet (requestQuestion is
-    // async), so there is nothing here to check synchronously. The
-    // attemptAutoStart effect below picks this up once `questionLoading`/
-    // `currentQuestionText` actually change. armedFromRef is captured in
-    // the same breath: whatever is on screen right now, so a failed fetch
-    // that leaves it unchanged can be told apart from a real arrival.
-    armedRef.current = true;
-    armedFromRef.current = currentQuestionRef.current?.question || "";
-    const next = advanceAsked();
-    abandonInProgressAnswer();
-    resetAnswerState();
-    requestQuestion(next);
-  }, [advanceAsked, abandonInProgressAnswer, resetAnswerState, requestQuestion, currentQuestionRef]);
-
-  const onRetryQuestion = useCallback(() => {
-    abandonInProgressAnswer();
-    resetAnswerState();
-    retryFetch();
-  }, [abandonInProgressAnswer, resetAnswerState, retryFetch]);
-
-  // AC-O5: typing a question does everything detecting one does — the drill
-  // question AND a fully drafted feed entry — by calling
-  // submitPracticeQuestion (lib/copilot/manualQuestion.js) with this
-  // component's own five pieces. See that function's own module doc for why
-  // the five-call sequence lives there rather than inline here: this
-  // component cannot be rendered under test, so a reordering inline would be
-  // unfalsifiable.
-  //
-  // Deliberately does NOT set armedRef/armedFromRef the way onNextQuestion
-  // does — those arm the recorder to auto-start the instant the new question
-  // lands, which is right for a press that means "give me something to
-  // answer", but wrong here: the user's hands are on the keyboard, typing,
-  // not signalling they're ready to speak.
-  const onManualQuestion = useCallback(
-    (text) =>
-      submitPracticeQuestion(text, {
-        advanceAsked,
-        abandonAnswer: abandonInProgressAnswer,
-        resetAnswer: resetAnswerState,
-        setDrillQuestion: setManualQuestion,
-        addToFeed: roomQuestions.addManualQuestion,
-      }),
-    [advanceAsked, abandonInProgressAnswer, resetAnswerState, setManualQuestion, roomQuestions.addManualQuestion],
-  );
-
-  // The picker can be changed at any time, including while live. Changing
-  // the posting clears the question flow via resetQuestions (see its own
-  // doc) and the answer flow — the question just changed out from under it.
-  const onPostingChange = useCallback(
-    (newPosting) => {
-      resetQuestions();
-      setPosting(newPosting);
-      abandonInProgressAnswer();
-      resetAnswerState();
-    },
-    [resetQuestions, abandonInProgressAnswer, resetAnswerState],
-  );
-
-  // G2/AC-G2-C-3/AC-A11-A13: the duty list that used to run inline here now
-  // runs from the store's change subscription below
-  // (onInterviewTypeChangeSubscriber), so the SAME origin-split list also
-  // runs for the other mode tab and another window's `storage` event. Kept
-  // as a named callback only because PracticeSetup.js passes it straight to
-  // the picker's onChange (AC-A14); collapsed to just the write, or the
-  // duty list would run twice for this tab's own picker.
-  const onInterviewTypeChange = useCallback(
-    (nextType) => {
-      setInterviewType(nextType);
-    },
-    [setInterviewType],
-  );
-
-  // AC-A11-A13/contract 7: registered against the store's own change
-  // subscription (contract 2), AFTER usePracticeQuestions/usePracticeAnswer/
-  // useRoomQuestions above since it closes over their functions (§C.3). The
-  // origin is forwarded from the store's own argument, NEVER a literal
-  // "local" — that would make AC-A11's three-valued split unreachable,
-  // abandoning an in-progress recording for a change made in a window the
-  // candidate isn't looking at. The announcement's own facts live in
-  // usePracticeAnswer's describeInterviewTypeChange (see its own doc), which
-  // hands up a { storage, ordinary } PAIR, not a string — CopilotClient's
-  // claimStorageAnnouncement owns the once-per-tab latch and picks between
-  // them. Forwarded whole and never unwrapped here: picking a row on this
-  // side is what silenced every practice change after the first on a
-  // storage-blocked tab.
-  const onInterviewTypeChangeSubscriber = useCallback(
-    (next, prev, meta) => {
-      discardPracticeWork({
-        origin: meta.origin,
-        resetQuestions,
-        markQuestionsStale: markQuestionsStaleForNewFormat,
-        clearSessionScores,
-        abandonInProgressAnswer,
-        resetAnswerState,
-        invalidateRoomDrafts: roomQuestions.invalidateDrafts,
-      });
-      onInterviewTypeAnnouncement(
-        describeInterviewTypeChange({ origin: meta.origin, label: interviewTypeLabel(next) }),
-      );
-    },
-    [
+  // AC-N2/AC-O5/AC-A11-A13: the question, posting and interview-type handlers
+  // live in usePracticeHandlers.js — see that module's own header for why this
+  // is the order-preserving seam, and why armedRef/armedFromRef stay declared
+  // here and are passed down by reference. Called at exactly the point the
+  // moved run began, so every hook after it keeps the index it already had.
+  const { onNextQuestion, onRetryQuestion, onManualQuestion, onPostingChange, onInterviewTypeChange } =
+    usePracticeHandlers({
+      advanceAsked,
+      requestQuestion,
+      retryFetch,
       resetQuestions,
       markQuestionsStaleForNewFormat,
-      clearSessionScores,
+      setManualQuestion,
+      currentQuestionRef,
       abandonInProgressAnswer,
       resetAnswerState,
-      roomQuestions.invalidateDrafts,
-      onInterviewTypeAnnouncement,
+      clearSessionScores,
       describeInterviewTypeChange,
-    ],
-  );
-  useInterviewTypeChange(onInterviewTypeChangeSubscriber);
+      roomQuestions,
+      setPosting,
+      setInterviewType,
+      armedRef,
+      armedFromRef,
+      onInterviewTypeAnnouncement,
+    });
 
   // AC-C3/AC-C4: the capture-session pipeline (camera/mic lifecycle,
   // transcript, elapsed clock, camera/mic toggles) lives in
@@ -550,8 +455,8 @@ export default function PracticeClient({
   // auto-start arming machinery, Done, Try again, Retry critique) live in
   // usePracticeAnswerActions.js — see that module's own header for why
   // armedRef/armedFromRef/postingRef stay declared here rather than moving
-  // in with the rest (onNextQuestion above also writes armedRef/
-  // armedFromRef, and postingRef is BUG-J4's own "not exclusively an
+  // in with the rest (usePracticeHandlers' onNextQuestion also writes
+  // armedRef/armedFromRef, and postingRef is BUG-J4's own "not exclusively an
   // answer-flow concern" ref) and are passed down by reference instead.
   const { onStartAnswer, onDoneAnswer, onTryAgainAnswer, onRetryCritique } = usePracticeAnswerActions({
     sessionRef,

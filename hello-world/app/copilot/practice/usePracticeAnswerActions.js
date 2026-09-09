@@ -17,12 +17,13 @@ import { readSaveEnabled } from "./useSaveRecordings";
 // usePracticeQuestions, usePracticeAnswer, respectively) — it is purely the
 // composition layer that turns their combined outputs into concrete button
 // handlers, the same "COMPONENT composes" split usePracticeQuestions.js's
-// own header documents for onNextQuestion/onPostingChange/etc. (which stay
-// in PracticeClient itself, unmoved, for the same reason).
+// own header documents for onNextQuestion/onPostingChange/etc. (which now sit
+// in usePracticeHandlers.js — a later line-budget extraction of the same kind,
+// out of the same caller, for the same reason).
 //
 // `armedRef`/`armedFromRef`/`postingRef` are passed in rather than created
 // here — armedRef/armedFromRef are also written by onNextQuestion
-// (PracticeClient.js), and postingRef is read by onDoneAnswer below but was
+// (usePracticeHandlers.js), and postingRef is read by onDoneAnswer below but was
 // deliberately kept in PracticeClient (see its own BUG-J4 comment) since
 // it's not exclusively an answer-flow concern either; a ref is a stable
 // mutable container regardless of which module holds the `useRef` call, so
