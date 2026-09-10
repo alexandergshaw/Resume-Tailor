@@ -1,0 +1,25 @@
+### R-267 | area: llm-grounding | parallel-safe: yes | automatable: yes
+
+**Summary:** Every grounded Gemini call in the app now actually asks for its tool on the wire. Until this case, none of them did.
+
+**Steps:**
+1. From `hello-world`, run `npx vitest run --no-file-parallelism lib/llm/tailorResume.wire.test.js lib/feed/llmSearch.wire.test.js app/api/application-digest/route.wire.test.js app/api/company-research/route.wire.test.js app/api/experience/research/route.wire.test.js app/api/meeting/references/route.wire.test.js app/api/posting-from-image/route.wire.test.js app/api/techwatch/lifecycle/route.wire.test.js`.
+2. From `hello-world`, run `npx vitest run --no-file-parallelism app/api lib/llm lib/feed lib/meeting lib/techwatch`.
+3. Read any `generateContent` call that passes `googleSearch` or `urlContext` in `hello-world/app/api/` or `hello-world/lib/`.
+
+**Expected:** All pass, and every one of those calls passes its tools as `config: { tools: [...] }` — never at the top level.
+
+**`GenerateContentParameters` has exactly THREE properties — `model`, `contents`, `config` — and `tools` belongs to `GenerateContentConfig`.** The `@google/genai` parameter transformer reads only those three keys and DISCARDS everything else before building the request body, with no error and no warning. Proven on the wire twice independently, by stubbing `globalThis.fetch` around the real SDK and reading `init.body`: `{model, contents, tools, config:{systemInstruction}}` produces a body with no `tools` at all, while `{model, contents, config:{systemInstruction, tools}}` produces `"tools":[{"googleSearch":{}}]`.
+
+**Eleven call sites across eight files used the dropped position, so every grounded feature in this app had been running ungrounded** — `app/api/company-research/route.js` (x2), `app/api/experience/research/route.js`, `app/api/application-digest/route.js`, `app/api/meeting/references/route.js`, `app/api/posting-from-image/route.js`, `app/api/techwatch/lifecycle/route.js`, `lib/feed/llmSearch.js`, and `lib/llm/tailorResume.js` (x3). (`lib/copilot/companyFactsSource.js` was fixed earlier, under R-264.)
+
+**The failure is total and invisible, which is why it survived so long:** no `tools` on the wire → no search → no `groundingMetadata` → `extractGroundingSources` returns `[]` → every corroboration step drops every claim → the feature returns nothing while still paying for a full model call. It is indistinguishable from a model that searched and found nothing. Tech Watch lifecycle and the meeting reference panel returned literally zero rows and cached that emptiness against a global key; the AI job-search ingest yielded zero postings per query on every scheduled run; the company-research route emitted its "could not confirm these via live search" warning on every response forever.
+
+**The tests that were supposed to pin the request shape asserted it against an INJECTED FAKE client, and that is the deeper lesson.** A fake sees whatever object the caller hands it and cannot observe the layer that drops the key, so five assertions across five files were permanently green against requests that never carried `tools` — including one sitting directly under a comment explaining why the tool was indispensable. Dependency injection is the right pattern for the pipeline and the wrong instrument for the transport. **Whenever a test's claim is "we asked the service for X", it has to drive the real SDK and read the bytes.** Those five now assert `config.tools` AND `expect(call.tools).toBeUndefined()` beside it, so the old shape cannot come back green; the eight `*.wire.test.js` files above are the real proof, built on the shared `lib/llm/geminiWireProbe.js` capture helper, and each carries a standing negative control pinning the top-level form as dropped — if a future SDK starts honouring it, those go red and every comment written about this is stale.
+
+**`lib/llm/tailorResume.js` was the highest-risk of the eleven and its conditional must not be collapsed.** Two of its sites carry a comment that `urlContext` is not compatible with `response_mime_type`, so JSON is forced only when no URL is being fetched. With `tools` silently dropped, the URL branch was sending NEITHER a tool NOR a JSON mime type — a third mode nobody designed, surviving only because `parseStructuredResult` is defensive about prose. The gate pins both directions: URL branch gets `tools` and no JSON mime, no-URL branch keeps JSON mime and no tools.
+
+**Also watch the discriminators.** Tests that tell one model call from another by `args?.tools` silently change which branch they exercise when `tools` moves, and keep passing while testing the wrong thing. `app/api/copilot/answer/route.companyFacts.test.js` and `route.latency.test.js` both use `args?.config?.tools` for exactly this reason; a sweep of the repo found no others.
+
+**Sabotage confirmed all eleven seams are load-bearing.** Moving `tools` back to the top level at each site in turn — one exact-string replacement, occurrence count asserted at exactly 1, byte-snapshot restore — turned that site's own wire test red and only that site's, in all eleven cases.
+

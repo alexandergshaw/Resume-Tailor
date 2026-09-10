@@ -1,0 +1,23 @@
+### R-284 | area: chat-response-parsing | parallel-safe: yes | automatable: yes
+
+**Summary:** `readChatResponse` reads the chat API's response body exactly once, via `response.text()`, and never calls `response.json()`. Every failure branch classifies by HTTP `status`, never by `content-type` — a platform-generated 413 can arrive as `text/plain`, `text/html`, `application/octet-stream`, or with no `content-type` header at all, and a content-type-keyed branch falls through to `.json()` for at least one of those shapes and reproduces the original `Unexpected token 'R', "Request En"... is not valid JSON` bug verbatim.
+
+**Steps:**
+1. Read `readChatResponse` in `hello-world/lib/chat/chatbot.js` — the whole function, from its `export async function readChatResponse` line to its closing brace — and confirm the only body read is the single `raw = await response.text()`, that `JSON.parse(raw)` runs on that string in its own try/catch immediately below it, and that no branch below that ever calls `.json()`. Read to the closing brace, so the `if (status === 413)` branch this case exists to check is included. *(**Anchors are now SYMBOLS, not line numbers, in every R-284…R-296 step.** They had been repointed three times by arithmetic and were stale again: this step cited `:281-355` for a function that sits ~130 lines earlier after A2's extraction of the refusal vocabulary into `lib/chat/refusal.js` dropped `chatbot.js` from ~1001 lines to ~870. Content of this case's assertions is unchanged throughout: still one `response.text()` read, still status-only classification, still no `.json()` call anywhere on the path.)*
+2. From `hello-world`, run `npx vitest run lib/chat/chatbot.response.test.js`.
+
+**Expected:** All tests pass, including the parametrized 413 case that drives a `text/plain`, `text/html`, `application/octet-stream`, and no-content-type body through the SAME status-413 branch and gets the same classified message every time, never a raw `SyntaxError`. A 200 response with a real `reply` string still parses correctly through the same single-read path, proving the fix did not just move the crash elsewhere.
+
+**Amendment to R-284's step 1 — the line counts in its own anchor note were never measured.** That note said A2's extraction "dropped `chatbot.js` from ~1001 lines to ~870," and neither number is real: [MEASURED, this tree] `chatbot.js` was 712 lines before the extraction and is 841 after — the extraction did **not** shrink this file, it grew by 128 lines. What the split actually bought was landing at 841 against `lib/chat/chatbot.refusal.test.js`'s `<= 900` ceiling rather than sailing well past 1,000. That test — `describe("lib/chat's line budget: the ceiling A2's module headers cite")` — did not exist when this note was written, which is why the anchor's own claim went unverified; it exists now and is what the module headers cite.
+
+### R-285 | area: chat-response-parsing | parallel-safe: yes | automatable: yes
+
+**Summary:** A route-supplied JSON `{error}` body surfaces verbatim to the user at 400 and 502; a 500 body does NOT, because `app/api/chat/route.js`'s catch-all returns `{error: err?.message}`, which can carry raw provider text (e.g. a bad Gemini key's SDK error) that must never print into the chat window.
+
+**Steps:**
+1. Read the status gate in `readChatResponse` (`hello-world/lib/chat/chatbot.js`) — the single `if (status !== 500 && parsed && typeof parsed.error === "string" && parsed.error)` line, the first branch after `const { status } = response;` — and confirm it explicitly excludes status 500 before any verbatim pass-through.
+2. Read `hello-world/app/api/chat/route.js:258` and confirm the catch-all still returns `Response.json({error: err?.message || "Chat request failed."}, {status: 500})` — the branch in step 1 exists specifically to keep that string off the screen. *(The `route.js:258` anchor is VERIFIED CURRENT, opened rather than assumed. The chatbot.js anchor in step 1 is now a symbol; see R-284 step 1 for why.)*
+3. From `hello-world`, run `npx vitest run lib/chat/chatbot.response.test.js`.
+
+**Expected:** All tests pass. A 400 `"No messages provided."`, a 502 `"Could not generate a reply."`, and a 502 `"Empty response from Gemini."` (the route's three JSON error shapes, `app/api/chat/route.js:139,195,253`) all surface verbatim to the user. A 500 body carrying `{"error":"fetch failed"}` (or any provider-shaped string, e.g. `[GoogleGenerativeAI Error]: API key not valid`) renders ONLY the generic "couldn't reach the assistant" message, and the raw provider text never appears in the rendered output.
+

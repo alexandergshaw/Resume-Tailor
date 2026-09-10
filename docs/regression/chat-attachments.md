@@ -1,0 +1,86 @@
+### R-286 | area: chat-attachments | parallel-safe: yes | automatable: yes
+
+**Summary:** The attachment byte budget is exact and internally consistent, and `base64Length` uses the ceiling formula so nothing at the edge of the accepted range can still trip the platform's 413.
+
+**Steps:**
+1. Read `MAX_REQUEST_BYTES` (4,500,000) in **`hello-world/lib/chat/chatLimits.js`** — it is a module of its own now, and `chatbot.js` imports and re-exports it. Then read the rest of the budget block in `hello-world/lib/chat/chatbot.js`, which still holds `CHAT_BODY_OVERHEAD_BYTES` (500,000), `MAX_ATTACHMENT_PAYLOAD_BYTES` (their difference, 4,000,000), `MAX_BINARY_ATTACHMENT_BYTES` (3,000,000), the `MAX_ATTACHMENT_SIZE_LABEL` `"2.8 MB"`, and `base64Length` immediately below them. *(**This anchor was stale while asserting its own verification** — it read "RE-VERIFIED after chunk A2 … opened and checked line by line, not by arithmetic" and every number in it was 18 lines off. It is worse than that now, and the entry says so plainly: `MAX_REQUEST_BYTES` has **changed FILES**. `refusal.js` was importing it back from `chatbot.js` while `chatbot.js` imported the refusal vocabulary from `refusal.js` — a real import cycle, safe only because nothing read the constant at module-evaluation time; one future top-level use, or a transform emitting `var`, would have yielded `undefined` and silently disabled AC-52's whole multiple-sections branch, with no lint rule in this repo to catch it. The constant and its WHY-4,500,000 derivation moved to the leaf module `chatLimits.js`, which both files import. Values, arithmetic and every claim in this case's Expected are unchanged.)*
+2. From `hello-world`, run `npx vitest run lib/chat/chatbot.response.test.js`.
+
+**Expected:** All tests pass. `base64Length(n)` computes `4 * Math.ceil(n/3)`, not `n * 4/3` — confirmed against an input where the two formulas diverge (the ceiling form is the one that must win, since the asymptotic ratio under-counts and would leave a live failure band). A file of exactly 3,000,000 decoded bytes is accepted (its base64 form is exactly 4,000,000 bytes, i.e. exactly `MAX_ATTACHMENT_PAYLOAD_BYTES`), and an aggregate exactly at 4,000,000 payload bytes is accepted — both boundaries are inclusive, not exclusive. The old 5 MiB (5,242,880-byte) gate's base64 form (~6.99 MB) is confirmed to sit above `MAX_REQUEST_BYTES`; the new 3,000,000-byte gate's base64 form is confirmed to sit at or below `MAX_ATTACHMENT_PAYLOAD_BYTES`. The `"2.8 MB"` label is truthful under both a decimal-MB reading of the true byte cap and a MiB-labeled-as-MB reading.
+
+### R-287 | area: chat-attachments | parallel-safe: yes | automatable: yes
+
+**Summary:** Text and `.docx` attachments are charged by their EXTRACTED content in UTF-8 bytes, not by `file.size` — a `.docx` is a ZIP, so its `file.size` is the compressed size and understates what actually gets sent; a 300 KB résumé can extract to 4.5 MB of text. A separate absolute ceiling on the un-extracted source file stops an unbounded client-side unzip.
+
+**Steps:**
+1. Read `attachmentCost` (a nested function inside `createChatHandlers`, `hello-world/lib/chat/chatbot.js`) and confirm the text/`.docx` branch encodes `entry.content` with `TextEncoder` (UTF-8 byte length), not `.length` (UTF-16 code units) — the binary branch's `dataB64` is pure ASCII base64 and needs no such adjustment.
+2. Read the `.docx` branch of `addChatAttachments` (`hello-world/lib/chat/chatbot.js`) and confirm the `if (isDocx && file.size > MAX_DOCX_SOURCE_BYTES)` check (25 * 1024 * 1024) runs on `file.size` BEFORE `buildTemplateLinesForUpload(file)` — and therefore before `JSZip.loadAsync` — is ever called, and is a separate check from the per-file gate one branch above it, `if (!isDocx && file.size > MAX_BINARY_ATTACHMENT_BYTES)`, which is explicitly skipped for `.docx`. *(Anchors converted to symbols — see R-284 step 1. The three line numbers previously cited here were all ~125 lines stale; the code itself is unchanged.)*
+3. From `hello-world`, run `npx vitest run lib/chat/chatbot.attachments.test.js`.
+
+**Expected:** All tests pass, including a case where a small-`file.size` `.docx` extracts to content whose UTF-8 byte length alone busts the aggregate budget, and a case where a `.docx` source file over 25 MB is refused before extraction is even attempted.
+
+### R-288 | area: chat-attachments | parallel-safe: yes | automatable: yes
+
+**Summary:** A bulk attach — `ExperienceTab.js`'s "Ask AI about these attachments", which hands `addChatAttachments` N files the user never individually chose — names EVERY refused file in the batch, not just the last one.
+
+**Steps:**
+1. Read `addChatAttachments` in `hello-world/lib/chat/chatbot.js` (whole function) and confirm refusals accumulate onto the `const errors = []` array declared at its top across the whole loop and are joined once, at the `setChatAttachError(errors.join(" "))` after the loop, rather than overwriting a single error slot per file. *(Anchors converted to symbols — see R-284 step 1; the line numbers previously here were ~125 lines stale, content unchanged.)*
+2. Read `hello-world/app/components/experience/ExperienceTab.js:471` and confirm the bulk path calls `addChatAttachments(files)` once with the whole file list.
+3. From `hello-world`, run `npx vitest run lib/chat/chatbot.attachments.test.js app/components/ChatPanel.gaps.test.js`.
+
+**Expected:** All tests pass. A batch containing multiple oversized or unsupported files produces one combined refusal naming every rejected file, and `ChatPanel` renders that combined text rather than only the last file's refusal.
+
+### R-289 | area: chat-attachments | parallel-safe: yes | automatable: yes
+
+**Summary:** A successful send clears only the attachments that request actually sent — a file attached mid-flight (after the request snapshot was taken, before the reply arrived) survives. A FAILED send never clears the tray. `Clear` empties attachments and the attach-error together, and is offered whenever there are messages OR attachments, not only when both are present.
+
+**Steps:**
+1. Read the success branch of `runChatRequest` in `hello-world/lib/chat/chatbot.js` — the `setChatAttachedFiles((prev) => {…})` after `if (!result.ok) throw` — and confirm it filters `prev` by reference against the `const sentAttachments = chatAttachedFiles || []` snapshot taken before the request went out, so anything attached after that snapshot but before the response resolves is left in the tray untouched.
+2. Confirm the `catch (err)` branch of the same function never reads or writes `chatAttachedFiles` at all. *(Anchors converted to symbols — see R-284 step 1. Everything this case asserts is unchanged; the remediation pass added two things inside the range, neither touching `chatAttachedFiles`: the request-body object is now `let payload` and is NULLED immediately after `readChatResponse` returns, so a successful send at the cap does not retain a second multi-MB object for the rest of the frame; and the lazy `refusalMessage` handed to `readChatResponse` is now an arrow that tells it which emitter is asking.)*
+3. Read the Clear control's render guard and `onClick` in `hello-world/app/components/ChatPanel.js` — the `{chatMessages.length > 0 || chatAttachedFiles.length > 0 ? (<Button …>Clear</Button>) : null}` block that closes the attachment-chip row — and confirm its click handler clears `chatMessages`, `chatAttachedFiles`, and `chatAttachError` together.
+4. From `hello-world`, run `npx vitest run lib/chat/chatbot.request.test.js app/components/ChatPanel.clear.test.js`.
+
+**Expected:** All tests pass, including: a successful send removes only the attachments it sent and leaves a mid-flight-attached file in the tray; a failed send leaves every attachment in place, byte for byte; Clear is absent with an empty thread and an empty tray; Clear is offered with messages and no attachments, and with attachments and no messages; Clear still clears the attach-error and still works end to end when `setChatAttachError` is not supplied at all (older callers).
+
+### R-290 | area: chat-attachments | parallel-safe: yes | automatable: yes
+
+**Summary:** A failed turn is marked in place and its slot is reused on retry, so a retry cannot grow the request. It renders visibly and audibly distinct from a sent turn, and Resend stays reachable on it.
+
+**Steps:**
+1. Read the `catch (err)` branch of `runChatRequest` (`hello-world/lib/chat/chatbot.js`) and confirm it marks the last user turn `failed: true` in place (`updated[lastIdx] = { ...updated[lastIdx], failed: true }`) rather than appending a new one; read the top of the same function and confirm the `cleanedBase.pop()` guard drops a trailing `failed` user turn already present in `baseMessages` before the new user turn is appended, so a retry reuses that slot instead of stacking a second, larger copy of the same turn. *(Anchors converted to symbols — see R-284 step 1. The catch branch's own body is byte-for-byte the same; the `finally` below it still calls `restoreComposerFocusIfLost` after `setChatSending(false)`, outside what this step reads.)*
+2. Read `hello-world/app/components/ChatPanel.js`: the `data-chat-turn={m.role === "user" ? (m.failed ? "failed" : "sent") : undefined}` attribute, scoped to its own element rather than folded into the message bubble, and the `<Box role="status">` "Not sent — try Resend below" cue inside the same turn.
+3. From `hello-world`, run `npx vitest run lib/chat/chatbot.request.test.js app/components/ChatPanel.gaps.test.js`.
+
+**Expected:** All tests pass, including: the failed turn carries `data-chat-turn="failed"`, distinct from a sent turn's `"sent"`; the cue element has `role="status"` so a screen reader announces it unprompted; its text states in words that the turn was not sent; its font size matches the panel's other error text (0.85rem); and the Resend control remains reachable and functional on that specific turn. A retry after a failure never leaves two copies of the same user turn in the transcript.
+
+### R-291 | area: chat-attachments | parallel-safe: yes | automatable: yes
+
+**Summary:** Blob preview URLs are revoked whenever an attachment leaves the tray — on a successful send, on Clear, and when a single chip is deleted individually — so none of the three paths leaks a blob URL for the rest of the page's life.
+
+**Steps:**
+1. Read `revokeAttachmentPreview` in `hello-world/lib/chat/chatbot.js` (guarded on `typeof URL`, not just try/catch, so it degrades to a no-op rather than throwing when the `URL` global is absent, as in a node test environment — the SAME degradation shape `composerFocusWasLost` in `lib/chat/composerFocus.js` uses for a missing `document` global) and its three call sites: the `setChatAttachedFiles((prev) => {…})` success branch of `runChatRequest`, the Clear handler's `chatAttachedFiles.forEach(revokeAttachmentPreview)` in `hello-world/app/components/ChatPanel.js`, and the per-chip `onDelete` handler further down the same file. *(Anchors converted to symbols — see R-284 step 1. The old note here was itself a worked example of why: it recorded three separate arithmetic repointings of these same lines, each correct when written and stale by the next extraction. The `ifLost` guard it references has since been extracted again, into `lib/chat/composerFocus.js`, and is now a named predicate rather than an inline branch.)*
+2. From `hello-world`, run `npx vitest run lib/chat/chatbot.attachments.test.js app/components/ChatPanel.clear.test.js app/components/ChatPanel.gaps.test.js`.
+
+**Expected:** All tests pass, including that Clear revokes every remaining chip's preview URL before emptying the tray, and that deleting one chip revokes only that chip's URL and leaves the others' intact.
+
+**Full-suite verification for R-284 through R-291, one command:** from `hello-world`, `npx vitest run lib/chat app/components/ChatPanel app/api/chat --no-file-parallelism`. **Re-measured after chunk A2 (the measured-refusal vocabulary, the composer-focus restore, and the always-mounted `chatError` live region): `Test Files 11 passed (11)` / `Tests 258 passed (258)`. Re-measured again after A2's remediation pass, by re-running this exact command rather than by arithmetic: `Test Files 11 passed (11)` / `Tests 264 passed (264)` — same eleven files, six cases added inside them; no case cited by R-284…R-291 was removed or renamed.** The rise from 10/170 is chunk A2 landing one wholly new file, `lib/chat/chatbot.refusal.test.js` (62 tests, covering AC-17/24-30/32/36/52-55 and M-8's source sweep), plus new cases inside `lib/chat/chatbot.request.test.js`, `lib/chat/chatbot.response.test.js` and `app/components/ChatPanel.gaps.test.js` — none of R-284 through R-291's own cited cases were removed or renamed. The full file list this glob now picks up: `lib/chat/chatbot.response.test.js`, `lib/chat/chatbot.attachments.test.js`, `lib/chat/chatbot.request.test.js`, `lib/chat/chatbot.refusal.test.js`, `app/components/ChatPanel.clear.test.js`, `app/components/ChatPanel.gaps.test.js`, `app/api/chat/route.test.js`, and the four other files the glob also picks up in the same directories: two pre-existing (`lib/chat/extractiveQa.test.js`, `lib/chat/localAssistant.test.js`) and two the applications-context extraction added (`lib/chat/applicationContext.test.js`, `lib/chat/applicationContextSourceSweep.test.js`).
+
+***`app/api/chat` is NEW in this command, and it is a coverage correction, not a tidy-up.*** The **entire server-side byte-identity proof lives in `hello-world/app/api/chat/route.test.js`** — the `[golden-applications]` (`:183`), `[golden-five-section]` (`:219`), `[cap]` (`:341`) and `[slice]` (`:371`) tests, which are the only things pinning what `renderApplicationsSection` actually emits into the model's `systemInstruction`. Every chat-area command in this document previously globbed **only** `lib/chat` and `app/components/ChatPanel`, so **someone could edit `renderApplicationsSection` and watch the whole chat area stay green.** Adding `app/api/chat` to this one command closes that. *(Measured on the shipping tree: the old two-glob command returns `Test Files 9 passed (9)` / `Tests 161 passed (161)`; the three-glob command above returns 10 files / 170 tests, i.e. `route.test.js` contributes 9 tests that nothing in the chat area was running.)*
+
+*(Counts amended twice: from the original 7 files / 115 tests after the applications-context extraction landed two new test files under `lib/chat/`, which the glob was always going to pick up; and again here, because the amended figure was stated as `Tests 160 passed (160)` when the tree that shipped it actually returns **161** — verified by re-running the exact command.)*
+
+### R-294 | area: chat-attachments | parallel-safe: yes | automatable: no
+
+**Summary:** After a successful send, the next turn does not carry the attachment that was just sent — the tray is cleared by design (R-289) — but there is currently no on-screen cue telling the user that happened.
+
+**Preconditions this case previously omitted, both of which turn it into a false failure if skipped:**
+- **The engine must actually be able to reply.** This case observes what happens after a **successful** send, and on the default Gemini engine (`DEFAULT_ENGINE` is `"gemini"`, `app/settings/engine.js:31`) with no `Gemini_LLM_API_Key` configured, step 1's send **fails**. On a failed send the tray is deliberately NOT cleared (R-289), so a tester with no key configured sees the attachment still sitting there and reads it as a regression — the same trap R-293 step 2 was amended to close. Either configure a working Gemini key, **or switch the engine control to "Embedded (no AI)"**, which replies deterministically with no key at all and exercises the identical clear-on-success path in `runChatRequest`.
+- **The observation is only visible in devtools.** Nothing on screen shows what a request carried. Open devtools → Network **before** step 1 and leave it open.
+
+**Steps:**
+1. With devtools' Network panel open and a working engine (see above), attach a file, send a message, and wait for the reply. Confirm the tray empties.
+2. Send a follow-up message in the same thread with no new attachment.
+3. In the Network panel, select the **second** `POST /api/chat` and read its request payload: confirm `attachedFiles` is `[]`. Compare against the first request, whose `attachedFiles` carries the file. *(Request payload, not response — the applications and attachments only ever travel client → server.)*
+
+**Expected:** The follow-up request carries no attachment — `attachedFiles: []` in the second request's payload — confirming R-289's clear-on-success behavior end to end in the running app rather than only against a test harness. **Known gap, recorded so it is not mistaken for a future regression:** there is no on-screen indication that the attachment was consumed by the prior turn and is no longer part of the conversation's ongoing context — a user who expects the model to keep referencing an attached résumé across several turns gets no warning that it dropped out after the first successful send. Note that step 3 is the ONLY observation point for this case; there is no UI affordance that reveals it, which is itself the gap recorded above.
+
