@@ -28,6 +28,14 @@ vi.mock("@/lib/copilot/sessionLogArchive", () => ({
 
 import { usePracticeSessionLog } from "./usePracticeSessionLog.js";
 import { downloadSessionLogArchive } from "@/lib/copilot/sessionLogArchive";
+// Real renderer, not mocked — this file only mocks sessionLogArchive above.
+// The end-to-end regression test below deliberately feeds this hook's REAL
+// recorded snapshot into sessionLog.js's REAL renderSessionLogMarkdown: an
+// emit/filter event-name mismatch (this hook emitting one type string,
+// sessionLog.js's Markdown builder filtering on another) is invisible to a
+// test that only inspects the hook's own snapshot, or one that only feeds
+// the renderer a hand-built fixture already using the "right" name.
+import { renderSessionLogMarkdown } from "@/lib/copilot/sessionLog.js";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -162,7 +170,10 @@ describe("what gets recorded (AC-Q7.2)", () => {
     update({ currentQuestionText: "Tell me about a conflict." }); // unrelated re-render, same text
     update({ currentQuestionText: "Describe a time you led." });
 
-    const served = eventsOfType(captured.sessionLogSnapshot(), "question.served");
+    // Emitted as "question.added" — the same type name live mode uses (see
+    // useQuestionPipeline.js) and the one sessionLog.js's Markdown renderer
+    // actually groups into "Questions and drafted answers".
+    const served = eventsOfType(captured.sessionLogSnapshot(), "question.added");
     expect(served.map((e) => e.question)).toEqual([
       "Tell me about a conflict.",
       "Describe a time you led.",
@@ -327,5 +338,32 @@ describe("downloading it (AC-Q7.4)", () => {
     // must not have handed `downloadSessionLogArchive` a null/undefined
     // snapshot either.
     expect(downloadSessionLogArchive).not.toHaveBeenCalled();
+  });
+});
+
+describe("end to end: a served question actually reaches the rendered log", () => {
+  // Regression test for the defect where practice mode's session log always
+  // rendered "_No questions were detected._" regardless of how many
+  // questions were served: this hook emitted "question.served" while
+  // sessionLog.js's renderer grouped "Questions and drafted answers" by
+  // "question.added" only. Drives the REAL recorder (this hook, backed by
+  // sessionLog.js's real createSessionLog — never mocked in this file) and
+  // the REAL renderer (renderSessionLogMarkdown, imported unmocked above)
+  // end to end, so a producer/consumer event-name mismatch like that one
+  // cannot hide behind a fixture that already uses the "right" name.
+  it("puts a served question's text in 'Questions and drafted answers', not Diagnostics, and not the empty-state line", () => {
+    const { captured, update } = mountProbe();
+    act(() => captured.onStart());
+    update({ currentQuestionText: "Tell me about a conflict." });
+
+    const snapshot = captured.sessionLogSnapshot();
+    const markdown = renderSessionLogMarkdown(snapshot, {});
+
+    const questionsSection = markdown
+      .split("## Questions and drafted answers")[1]
+      .split("## Diagnostics")[0];
+
+    expect(questionsSection).toContain("Tell me about a conflict.");
+    expect(markdown).not.toContain("_No questions were detected._");
   });
 });

@@ -149,10 +149,16 @@ export function usePracticeSessionLog({
   // question", "Retry", and typing one's own question) funnels through the
   // same state usePracticeQuestions already exposes, so watching it here
   // covers all of them without this hook needing to know which path fired.
+  // Emitted as "question.added" — the same event name live mode's
+  // useQuestionPipeline.js uses — because sessionLog.js's Markdown renderer
+  // groups the "Questions and drafted answers" section by that exact type
+  // string; a differently-named event here is invisible to that section and
+  // silently falls through to Diagnostics instead (see
+  // usePracticeSessionLog.test.js's end-to-end regression test).
   useEffect(() => {
     if (!currentQuestionText || currentQuestionText === lastQuestionRef.current) return;
     lastQuestionRef.current = currentQuestionText;
-    event("question.served", { question: currentQuestionText });
+    event("question.added", { question: currentQuestionText });
   }, [currentQuestionText, event]);
 
   useEffect(() => {
