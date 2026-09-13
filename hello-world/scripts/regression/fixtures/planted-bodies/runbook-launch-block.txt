@@ -1,0 +1,11 @@
+$repo = '<repo root>'; $chunk = '<chunk folder>'; $integrity = 'EXIT=<code> FILES=<n> CASES=<n>'
+$id = [guid]::NewGuid().ToString('N')
+$B = Join-Path $env:TEMP 'resume-tailor-regression'
+New-Item -ItemType Directory -Force -Path $B | Out-Null
+$mint = Join-Path $chunk "bucket-b.$id.mint"
+[IO.File]::WriteAllText($mint, "RUN_ID=$id`n")
+$node = (Get-Command node -CommandType Application | Select-Object -First 1).Source
+Start-Process -FilePath $node -WorkingDirectory (Join-Path $repo 'hello-world') -WindowStyle Hidden `
+  -ArgumentList @('scripts/regression/launch.js', '--mint', "`"$mint`"", '--integrity', "`"$integrity`"") `
+  -RedirectStandardOutput (Join-Path $B "$id.launcher.out.txt") -RedirectStandardError (Join-Path $B "$id.launcher.err.txt")
+"LAUNCHED RUN_ID=$id MINT=$mint"

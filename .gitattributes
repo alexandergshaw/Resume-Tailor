@@ -1,0 +1,4 @@
+hello-world/test/workflows/fixtures/** -text
+hello-world/scripts/regression/fixtures/** -text
+hello-world/scripts/regression/plantedExpected.json -text
+hello-world/scripts/regression/cnj-baseline.txt -text

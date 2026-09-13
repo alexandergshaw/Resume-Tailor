@@ -1,18 +1,20 @@
 ### R-260 | area: regression-process | parallel-safe: yes | automatable: no
 
-**Summary:** The stage-10 workflow cannot parse this document any more, and two cases had been unrunnable for months.
+**Summary:** This case documents the regression process itself. Its earlier text recorded a stage-10
+enumeration failure and the misleading summary line it produced; that history, and the fix, now live at
+R-381 — not here. What stays true after T3's scripted bucket-b runner landed: the stage-10 **workflow**
+does not execute `automatable: no` cases; bucket b runs every Steps vitest span, including those in `no`
+cases. A case naming a file that does not exist is not a passing case — enforced by the bucket-b runner
+itself now, cross-referenced at R-383 below, never left for a human to notice a stale path by chance.
 
 **Steps:**
-1. Run the stage-10 regression workflow against this document.
-2. Read its failure output, not only its summary.
+1. From the repository root, enumerate every case file directly: `find docs/regression -name '*.md' | sort`.
+   The count must equal `scripts/regression-integrity.sh`'s own `FILES=` figure.
+2. Launch bucket b per `docs/regression-runbook.md` section 1, and read its gate per section 2.
 
-**Expected:** It fails, and **its summary is misleading**: it reports `"No regression document at docs/REGRESSION.md"`. The document exists. The real cause is in the failure log — the enumeration agent exceeds a 64000-token output cap trying to turn ~3900 lines into executable cases. Taken at face value the summary would lead someone to recreate a document that is already there, or to skip the gate.
-
-**Until it is chunked, drive it directly.** The automatable cases name their own commands: `grep -o "npx vitest run [^\`]*" docs/REGRESSION.md`, collect the distinct paths, check each exists, and run them in one invocation. As of this group that is 175 commands naming 191 paths across 187 `automatable: yes` cases, and it completes in about three minutes.
-
-**Doing that surfaced two cases that could never have failed.** `lib/copilot/deepgram.test.js` moved under `lib/copilot/stt/` when speech-to-text became pluggable, and `app/components/TrackingTab.test.js` was split into `TrackingTab.digest.test.js`. Both were still named here, so those two cases had been silently vacuous since those commits. Paths corrected. **A case naming a file that does not exist is not a passing case.**
-
-**And the workflow never runs `automatable: no` cases at all** — four occurrences now, once against an explicit instruction. Its "all passing" covers the automatable subset only. The manual cases in the changed area have to be fanned out to adversarial reviewers by hand, **grouped by defect rather than by file**: in this group that pass found the honesty-gate hole, both privacy-notice failures, the contrast failure and the self-contradicting caption — every one of them invisible to the 5409 automated tests that were green throughout.
+**Expected:** Step 1's count matches the integrity script's `FILES=` line. Step 2's gate line resolves to
+`GATE=green` or routes to a named next action from the runbook's table — it never silently reports success
+on a run that has not actually finished.
 
 ### R-381 | area: regression-process | parallel-safe: yes | automatable: yes
 
@@ -53,3 +55,17 @@ Load-bearing specifics the next reader needs:
 - Rule 4 carries a **self-test canary** for exactly that failure mode: before scanning anything, it runs one known-good and one known-misplaced probe line through its own `verdict()` function and exits `9` with `PLACEMENT-CHECK SELF-TEST FAILED` on stderr if either answer comes back wrong. A clean rule-4 result is only trustworthy because that canary ran silently first — a `PLACEMENT-CHECK SELF-TEST FAILED` line anywhere in stderr means every other rule-4 result in that run is meaningless.
 - The `FILES=`/`CASES=` line and every count in this case's Expected section are point-in-time (ship-time) figures. `docs/REGRESSION.md` is appended to several times a day, so re-derive them from the live tree with the commands above rather than trusting either this document or whoever last ran them.
 
+### R-383 | area: regression-process | parallel-safe: no | automatable: yes
+
+**Summary:** T3's scripted regression runner (`hello-world/scripts/regression/`: the launcher, lock, gate
+and verdict machinery) and its stage-10 harness (`hello-world/test/workflows/`) are code this repo ships,
+not an exemption from the coverage they enforce on everything else.
+
+**Steps:**
+1. `cd hello-world && npx vitest run scripts/regression test/workflows`
+
+**Expected:** All tests pass. A handful of titles are timing-sensitive by design — their titles contain
+`heartbeat`, `confirmation`, `timeout kill`, `overdue kill` or `retention` — and can read slow under heavy
+concurrent load from other suites running at the same time. A failure confined to those titles, when the
+same title passes here run on its own, is contention, not a regression in this runner; a failure anywhere
+else in this Steps line is.

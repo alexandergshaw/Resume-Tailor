@@ -1,0 +1,2 @@
+import { describe, test, it, expect, beforeAll, afterAll } from 'vitest';
+test('p06 passes but leaks a rejection', async () => { Promise.reject(new Error('leaked rejection')); await new Promise((r) => setTimeout(r, 20)); expect(1).toBe(1) })

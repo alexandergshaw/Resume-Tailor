@@ -1,0 +1,6 @@
+{"file":"docs/regression/alpha.md","cases":["R-001","R-002"],"bytes":611,"payloadBytes":{"R-001":134,"R-002":135}}
+{"file":"docs/regression/beta.md","cases":["R-010","R-011"],"bytes":480,"payloadBytes":{"R-010":118,"R-011":113}}
+GRANDFATHERED=0
+YES_MANUAL_SMELL=0
+YES_WITH_MARKER=0
+FILES=2 CASES=4

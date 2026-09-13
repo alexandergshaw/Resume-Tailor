@@ -1,0 +1,64 @@
+$run = '<RUN_ID>'; $kill = $false; $knownText = ''
+$B = Join-Path $env:TEMP 'resume-tailor-regression'
+if ($run -cnotmatch '^[0-9a-f]{32}$') { throw 'RUN_ID invalid: do not walk' }
+$pairs = @(Get-ChildItem -LiteralPath $B -File | Where-Object { $_.Name -clike 'lock-*' -or $_.Name -clike '*.prior-lock.txt' } | ForEach-Object {
+  $l = @(Get-Content -LiteralPath $_.FullName)
+  if ($l -ccontains "RUN_ID=$run") { (@($l | Where-Object { $_ -cmatch '^(LAUNCHER_PID|LAUNCHED)=' }) -join ' ') } } | Sort-Object -Unique)
+if ($pairs.Count -ne 1 -or $pairs[0] -cnotmatch '^LAUNCHER_PID=([1-9][0-9]{0,9}) LAUNCHED=(\S+Z)$') { throw 'no single parseable lock for this run: walk by hand' }
+$ic = [Globalization.CultureInfo]::InvariantCulture; $rk = [Globalization.DateTimeStyles]::RoundtripKind
+$since = [DateTime]::Parse($Matches[2], $ic, $rk).ToUniversalTime()
+$roots = @([int]$Matches[1])
+$st = Join-Path (Join-Path $B $run) 'status.txt'
+if (Test-Path -LiteralPath $st) { $m = @(Select-String -LiteralPath $st -CaseSensitive -Pattern '^RUNNER_PID=([1-9][0-9]{0,9})$'); if ($m.Count -gt 0) { $roots += [int]$m[0].Matches[0].Groups[1].Value } }
+$known = @()
+foreach ($w in @($knownText -split '\s+' | Where-Object { $_ })) {
+  if ($w -cnotmatch '^([1-9][0-9]{0,9})@(\S+Z)$') { throw "known token invalid: $w" }
+  $known += [pscustomobject]@{ Id = [int]$Matches[1]; Created = [DateTime]::Parse($Matches[2], $ic, $rk).ToUniversalTime() }
+}
+function Get-RunTree($kn) {
+  $all = @(Get-CimInstance Win32_Process | Select-Object ProcessId, ParentProcessId, CreationDate, Name, CommandLine)
+  $script:tree = New-Object System.Collections.ArrayList; $seen = @{}
+  foreach ($r in $roots) {
+    $cut = [DateTime]::MaxValue
+    $rp = @($all | Where-Object { [int]$_.ProcessId -eq $r })
+    if ($rp.Count -gt 0) {
+      if ($rp[0].CommandLine -like "*$run*") { if (-not $seen.ContainsKey([string]$r)) { $seen[[string]$r] = 1; [void]$script:tree.Add($rp[0]) } }
+      else { $cut = $rp[0].CreationDate.ToUniversalTime() }
+    }
+    $queue = @($r)
+    while ($queue.Count -gt 0) {
+      $p = $queue[0]; $queue = @($queue | Select-Object -Skip 1)
+      foreach ($c in @($all | Where-Object { [int]$_.ParentProcessId -eq $p })) {
+        $t = $c.CreationDate.ToUniversalTime(); $k = [string]$c.ProcessId
+        if ($seen.ContainsKey($k) -or $t -lt $since -or ($p -eq $r -and $t -ge $cut)) { continue }
+        $seen[$k] = 1; [void]$script:tree.Add($c); $queue += [int]$c.ProcessId
+      }
+    }
+  }
+  $queue = @($kn | ForEach-Object { $_.Id })
+  foreach ($q in $kn) {
+    foreach ($c in @($all | Where-Object { [int]$_.ProcessId -eq $q.Id -and $_.CreationDate.ToUniversalTime() -eq $q.Created })) {
+      $k = [string]$c.ProcessId; if (-not $seen.ContainsKey($k)) { $seen[$k] = 1; [void]$script:tree.Add($c) }
+    }
+  }
+  while ($queue.Count -gt 0) {
+    $p = $queue[0]; $queue = @($queue | Select-Object -Skip 1)
+    foreach ($c in @($all | Where-Object { [int]$_.ParentProcessId -eq $p -and $_.CreationDate.ToUniversalTime() -ge $since })) {
+      $k = [string]$c.ProcessId; if ($seen.ContainsKey($k)) { continue }
+      $seen[$k] = 1; [void]$script:tree.Add($c); $queue += [int]$c.ProcessId
+    }
+  }
+}
+function Format-Token($c) { '{0}@{1}' -f $c.ProcessId, $c.CreationDate.ToUniversalTime().ToString('o') }
+Get-RunTree $known
+if ($kill) {
+  $cap = @($script:tree | ForEach-Object { Format-Token $_ })
+  "CAPTURED=$($cap.Count) $($cap -join ' ')"
+  $known += @($script:tree | ForEach-Object { [pscustomobject]@{ Id = [int]$_.ProcessId; Created = $_.CreationDate.ToUniversalTime() } })
+  foreach ($x in @($script:tree | Where-Object { $roots -contains [int]$_.ProcessId })) { taskkill.exe /PID $x.ProcessId /T /F }
+  Start-Sleep -Seconds 3; Get-RunTree $known
+  "SURVIVORS_AFTER_TREE_KILL=$($script:tree.Count)"
+  if ($script:tree.Count -gt 0) { foreach ($x in @($script:tree)) { taskkill.exe /PID $x.ProcessId /F }; Start-Sleep -Seconds 3; Get-RunTree $known }
+}
+"SURVIVORS=$($script:tree.Count)"
+$script:tree | ForEach-Object { "SURVIVOR $(Format-Token $_) $($_.Name) $($_.CommandLine)" }

@@ -1,0 +1,2 @@
+import { describe, test, it, expect, beforeAll, afterAll } from 'vitest';
+describe('ctl', () => { test('p01a', () => { expect(1).toBe(1) }); test('p01b', () => { expect(2).toBe(2) }) })

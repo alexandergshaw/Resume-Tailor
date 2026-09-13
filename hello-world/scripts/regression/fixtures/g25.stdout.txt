@@ -1,0 +1,13 @@
+
+ RUN  v4.1.8 C:/Users/alexa/AppData/Local/Temp/claude/C--Users-alexa-OneDrive-Documents-Projects-Resume-Tailor/37b2d75b-41e4-42e5-9c06-ea583f90b4f5/scratchpad/chunks/T3/probes/4b-A/rec/g25/hello-world
+
+ ✓ planted/q02.late.test.js (1 test) 3ms
+ ✓ planted/q01.pass.test.js (1 test) 3ms
+
+ Test Files  2 passed (3)
+      Tests  2 passed (2)
+     Errors  1 error
+   Start at  13:39:51
+   Duration  644ms (transform 26ms, setup 0ms, import 55ms, tests 6ms, environment 0ms)
+
+JSON report written to C:/Users/alexa/AppData/Local/Temp/claude/C--Users-alexa-OneDrive-Documents-Projects-Resume-Tailor/37b2d75b-41e4-42e5-9c06-ea583f90b4f5/scratchpad/chunks/T3/probes/4b-A/rec/g25/vitest.json

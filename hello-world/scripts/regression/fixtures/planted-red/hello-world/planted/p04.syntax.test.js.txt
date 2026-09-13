@@ -1,0 +1,2 @@
+import { describe, test, it, expect, beforeAll, afterAll } from 'vitest';
+test('p04 never parsed', () => { expect(1).toBe(1) )

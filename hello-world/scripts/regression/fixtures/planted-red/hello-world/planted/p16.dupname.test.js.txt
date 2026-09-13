@@ -1,0 +1,5 @@
+import { describe, test, it, expect, beforeAll, afterAll } from 'vitest';
+describe('p16 grp', () => {
+  test('p16 same name', () => { expect(1).toBe(1) })
+  test('p16 same name', () => { expect(1).toBe(2) })
+})

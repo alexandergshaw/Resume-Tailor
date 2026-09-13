@@ -1,0 +1,2 @@
+import { describe, test, it, expect, beforeAll, afterAll } from 'vitest';
+process.kill(process.pid, 'SIGKILL');

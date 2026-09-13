@@ -1,0 +1,2 @@
+import { describe, test, it, expect, beforeAll, afterAll } from 'vitest';
+test('p07 kills its own worker', () => { process.kill(process.pid) })

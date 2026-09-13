@@ -1,0 +1,387 @@
+{
+  "v": 1,
+  "vitest": "4.1.8",
+  "corpus": "planted-red",
+  "cases": [
+    {
+      "id": "R-901",
+      "shape": "G24 p01",
+      "new": {
+        "state": "pass",
+        "rows": []
+      },
+      "o2": "pass",
+      "d5": null
+    },
+    {
+      "id": "R-902",
+      "shape": "G24 p02",
+      "new": {
+        "state": "fail",
+        "rows": [
+          {
+            "kind": "fail",
+            "cause": "test:planted/p02.fail.test.js|p02 fails#1"
+          }
+        ]
+      },
+      "o2": "fail",
+      "d5": null
+    },
+    {
+      "id": "R-903",
+      "shape": "G24 p03",
+      "new": {
+        "state": "fail",
+        "rows": [
+          {
+            "kind": "fail-file",
+            "cause": "file:planted/p03.import.test.js"
+          }
+        ]
+      },
+      "o2": "fail",
+      "d5": null
+    },
+    {
+      "id": "R-904",
+      "shape": "G24 p04",
+      "new": {
+        "state": "fail",
+        "rows": [
+          {
+            "kind": "fail-file",
+            "cause": "file:planted/p04.syntax.test.js"
+          }
+        ]
+      },
+      "o2": "fail",
+      "d5": null
+    },
+    {
+      "id": "R-905",
+      "shape": "G24 p05",
+      "new": {
+        "state": "fail",
+        "rows": [
+          {
+            "kind": "fail-file",
+            "cause": "file:planted/p05.beforeall.test.js"
+          }
+        ]
+      },
+      "o2": "fail",
+      "d5": null
+    },
+    {
+      "id": "R-906",
+      "shape": "G24 p06",
+      "new": {
+        "state": "pass",
+        "rows": []
+      },
+      "o2": "pass",
+      "d5": null
+    },
+    {
+      "id": "R-907",
+      "shape": "G24 p07",
+      "new": {
+        "state": "fail",
+        "rows": [
+          {
+            "kind": "fail-file",
+            "cause": "file:planted/p07.crash.test.js"
+          }
+        ]
+      },
+      "o2": "pass",
+      "d5": "worker crash"
+    },
+    {
+      "id": "R-908",
+      "shape": "G24 p08",
+      "new": {
+        "state": "fail",
+        "rows": [
+          {
+            "kind": "fail-file",
+            "cause": "file:planted/p08.afterall.test.js"
+          }
+        ]
+      },
+      "o2": "fail",
+      "d5": null
+    },
+    {
+      "id": "R-909",
+      "shape": "G24 p09",
+      "new": {
+        "state": "fail",
+        "rows": [
+          {
+            "kind": "fail-file",
+            "cause": "file:planted/p09.empty.test.js"
+          }
+        ]
+      },
+      "o2": "fail",
+      "d5": null
+    },
+    {
+      "id": "R-910",
+      "shape": "G24 p10",
+      "new": {
+        "state": "fail",
+        "rows": [
+          {
+            "kind": "fail",
+            "cause": "test:planted/p10.only.test.js|p10 focused#1"
+          }
+        ]
+      },
+      "o2": "pass",
+      "d5": "focused test"
+    },
+    {
+      "id": "R-911",
+      "shape": "G24 p11",
+      "new": {
+        "state": "fail",
+        "rows": [
+          {
+            "kind": "fail",
+            "cause": "test:planted/p11.onlyalias.test.js|p11 focused through an alias#1"
+          }
+        ]
+      },
+      "o2": "pass",
+      "d5": "focused test"
+    },
+    {
+      "id": "R-912",
+      "shape": "G24 p12",
+      "new": {
+        "state": "fail",
+        "rows": [
+          {
+            "kind": "fail-file",
+            "cause": "file:planted/p12.describeonly.test.js"
+          }
+        ]
+      },
+      "o2": "pass",
+      "d5": "focused test"
+    },
+    {
+      "id": "R-913",
+      "shape": "G24 p13",
+      "new": {
+        "state": "fail",
+        "rows": [
+          {
+            "kind": "fail",
+            "cause": "test:planted/p13.concurrentonly.test.js|p13 focused#1"
+          }
+        ]
+      },
+      "o2": "pass",
+      "d5": "focused test"
+    },
+    {
+      "id": "R-914",
+      "shape": "G24 p14",
+      "new": {
+        "state": "pass",
+        "rows": []
+      },
+      "o2": "pass",
+      "d5": null
+    },
+    {
+      "id": "R-915",
+      "shape": "G24 p15",
+      "new": {
+        "state": "pass",
+        "rows": []
+      },
+      "o2": "pass",
+      "d5": null
+    },
+    {
+      "id": "R-916",
+      "shape": "G24 p16",
+      "new": {
+        "state": "fail",
+        "rows": [
+          {
+            "kind": "fail",
+            "cause": "test:planted/p16.dupname.test.js|p16 grp > p16 same name#2"
+          }
+        ]
+      },
+      "o2": "fail",
+      "d5": null
+    },
+    {
+      "id": "R-917",
+      "shape": "G25 q03",
+      "new": {
+        "state": "fail",
+        "rows": [
+          {
+            "kind": "fail-file",
+            "cause": "file:planted/q03.importkill.test.js"
+          }
+        ]
+      },
+      "o2": "pass",
+      "d5": "worker crash"
+    },
+    {
+      "id": "R-918",
+      "shape": "G28 t02",
+      "new": {
+        "state": "pass",
+        "rows": []
+      },
+      "o2": "pass",
+      "d5": null
+    },
+    {
+      "id": "R-919",
+      "shape": "G28 t03",
+      "new": {
+        "state": "fail",
+        "rows": [
+          {
+            "kind": "fail-file",
+            "cause": "file:planted/t03.todothenkill.test.js"
+          }
+        ]
+      },
+      "o2": "pass",
+      "d5": "worker crash"
+    },
+    {
+      "id": "R-920",
+      "shape": "G28 t05",
+      "new": {
+        "state": "pass",
+        "rows": []
+      },
+      "o2": "pass",
+      "d5": null
+    },
+    {
+      "id": "R-921",
+      "shape": "t02-alone",
+      "new": {
+        "state": "vacuous",
+        "rows": [
+          {
+            "kind": "vacuous",
+            "cause": "case:R-921|s1|k1"
+          }
+        ]
+      },
+      "o2": "pass",
+      "d5": "vacuous"
+    },
+    {
+      "id": "R-922",
+      "shape": "dead-filter",
+      "new": {
+        "state": "missing-paths",
+        "rows": [
+          {
+            "kind": "missing-paths",
+            "cause": "filter:planted/p99.absent.test.js"
+          }
+        ]
+      },
+      "o2": "missing",
+      "d5": null
+    },
+    {
+      "id": "R-923",
+      "shape": "t-no-match",
+      "new": {
+        "state": "no-match",
+        "rows": [
+          {
+            "kind": "no-match",
+            "cause": "pattern:zzz nothing"
+          }
+        ]
+      },
+      "o2": "pass",
+      "d5": "no -t"
+    },
+    {
+      "id": "R-924",
+      "shape": "def7-only",
+      "new": {
+        "state": "pass",
+        "rows": []
+      },
+      "o2": "fail",
+      "d5": "DEF-7-only failure"
+    },
+    {
+      "id": "R-925",
+      "shape": "count-short",
+      "new": {
+        "state": "count-short",
+        "rows": [
+          {
+            "kind": "claim",
+            "cause": "claim:R-925|k1|3 tests pass."
+          }
+        ]
+      },
+      "o2": "pass",
+      "d5": "claim outcomes"
+    },
+    {
+      "id": "R-926",
+      "shape": "k2-dup",
+      "new": {
+        "state": "fail",
+        "rows": [
+          {
+            "kind": "fail",
+            "cause": "test:planted/p16.dupname.test.js|p16 grp > p16 same name#2"
+          },
+          {
+            "kind": "claim",
+            "cause": "claim:R-926|k2|p16 grp > p16 same name"
+          }
+        ]
+      },
+      "o2": "fail",
+      "d5": null
+    }
+  ],
+  "runLevel": {
+    "o2Red": true,
+    "deciding": "Errors line",
+    "newOrphanRows": 5
+  },
+  "mutants": {
+    "m1": [
+      "R-907",
+      "R-917",
+      "R-919"
+    ],
+    "m2": [
+      "run-level"
+    ],
+    "m3": [
+      "R-910",
+      "R-911",
+      "R-912",
+      "R-913"
+    ]
+  }
+}

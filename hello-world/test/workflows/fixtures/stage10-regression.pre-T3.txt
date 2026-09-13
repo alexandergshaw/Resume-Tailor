@@ -1,7 +1,7 @@
 export const meta = {
   name: 'stage10-regression',
   description: 'Stage 10: run every case in the regression document, adversarially verify each reported failure, and report confirmed regressions without fixing them',
-  whenToUse: 'Once per group, after every feature in the group has cleared stages 1-9. Run against a settled tree - never while another agent is still editing. The parent runs scripts/regression-integrity.sh with its own Bash tool and supplies its rows as args.files (and its "FILES=/CASES=" line as args.summary). Do not invoke this workflow if that script exits non-zero - report its stderr and stop instead. Refuters now run on refuterModel (default opus) and no longer inherit runnerModel. Bucket b - the scripted regression runner under scripts/regression/ - is not a workflow input: the parent runs it separately, on its own, with its own launcher.',
+  whenToUse: 'Once per group, after every feature in the group has cleared stages 1-9. Run against a settled tree - never while another agent is still editing. The parent runs scripts/regression-integrity.sh with its own Bash tool and supplies its rows as args.files (and its "FILES=/CASES=" line as args.summary). Do not invoke this workflow if that script exits non-zero - report its stderr and stop instead.',
   phases: [
     { title: 'Enumerate', detail: 'parse the regression document into executable cases' },
     { title: 'Execute', detail: 'run parallel-safe cases fanned out, exclusive cases in sequence' },
@@ -41,7 +41,6 @@ export const meta = {
 //   refuters?: number,        // refutation agents per reported failure; default 2
 //   maxAdjudicated?: number,  // cap on failures adjudicated; default 8
 //   runnerModel?: string,     // default "opus" (regression is an Opus role)
-//   refuterModel?: string,    // default "opus" - refuters no longer inherit runnerModel; they review independently
 //   enumerateModel?: string,  // default "sonnet" (mechanical parsing)
 //   gates?: string[],         // commands every run should treat as gates
 // }
@@ -75,31 +74,11 @@ const enumerateBatchBytes = Math.max(1, input.enumerateBatchBytes || 110000)
 const refuters = Math.max(1, input.refuters || 2)
 const maxAdjudicated = Math.max(1, input.maxAdjudicated || 8)
 const runnerModel = input.runnerModel || 'opus'
-const refuterModel = input.refuterModel || 'opus'
 const enumerateModel = input.enumerateModel || 'sonnet'
 const areas = Array.isArray(input.areas) ? input.areas : []
 const gates = Array.isArray(input.gates) && input.gates.length > 0
   ? input.gates
   : ['npx eslint .', 'npx tsc --noEmit', 'npx vitest run', 'npm run build']
-
-// Reported once, and carried on every early return too, so a caller never has
-// to guess which model actually ran a given call site (T3 design section 12.2).
-const models = { enumerate: enumerateModel, runner: runnerModel, refuter: refuterModel }
-
-// The six lines every agent() prompt below must carry, contiguously and in
-// order (T3 design section 12.1). Domain-neutral on purpose: none of them
-// names the regression suite, a case, a refuter or a stage, so another
-// workflow can splice in the same six lines unchanged. Spliced into RULES,
-// the one composition point all 5 agent() call sites already share, so a
-// wording change here cannot silently miss a call site.
-const W_BLOCK = [
-  'W1. In the Bash tool, begin every command with: export PATH="/usr/bin:/bin:$PATH";',
-  'W2. node, npx and npm are not reachable from Bash here: run them from PowerShell, never from Bash.',
-  'W3. Never take a verdict from an exit code or from a piped command; quote the summary line the runner itself prints (for vitest: the Test Files and Tests lines).',
-  'W4. A command that did not report completion produced no result.',
-  'W5. A vitest run that shows only skipped tests, "No test files found", or no Tests line produced no result.',
-  'No result means blocked: report the step as blocked, never as pass or fail.',
-]
 
 const RULES = [
   'HARD RULES - violating any of these fails the task:',
@@ -108,7 +87,6 @@ const RULES = [
   '- Do NOT edit any product, test, or documentation file.',
   '- No emojis anywhere in your output.',
   '- Report honestly. A case you could not run is "blocked", not "passed". Never infer a pass from the absence of an error.',
-  ...W_BLOCK,
 ].join('\n')
 
 const CASES = {
@@ -258,79 +236,6 @@ function caseBlock(c) {
     `Steps: ${c.steps}`,
     `Expected: ${c.expected}`,
   ].join('\n')
-}
-
-// FNV-1a-32 over the exact dispatched block's UTF-16 code units, hex-encoded
-// and zero-padded to 8 characters. This is a fingerprint of what an agent was
-// actually handed (design section 12.2's blockDigest), never a security hash.
-function fnv1a32Hex(text) {
-  let h = 0x811c9dc5
-  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193) >>> 0
-  return (h >>> 0).toString(16).padStart(8, '0')
-}
-
-const VALID_STATUSES = ['pass', 'fail', 'blocked']
-const ANOMALY_EVIDENCE_CAP = 2000
-
-function truncateEvidence(evidence) {
-  const text = typeof evidence === 'string' ? evidence : ''
-  const truncated = text.length > ANOMALY_EVIDENCE_CAP
-  return { text: truncated ? text.slice(0, ANOMALY_EVIDENCE_CAP) : text, truncated }
-}
-
-// A verdict counts only from the agent whose dispatch label owns its case ID
-// (design section 12.2). Anything else - an ID reported by a batch that
-// wasn't dispatched it (out-of-batch), an ID that maps to no batch at all
-// (unknown), the same ID reported more than once by its own batch
-// (duplicate, every copy), or a status outside the schema (bad-status) - is a
-// verdictAnomaly. An anomaly never fills the gap: the case stays not-run,
-// and it gets no refuter, because nothing trustworthy was actually reported.
-function attributeVerdicts(dispatchBatches, outputsByLabel) {
-  const home = new Map()
-  for (const b of dispatchBatches) for (const id of b.caseIds) home.set(id, b)
-  const anomalies = []
-  const rawById = new Map()
-
-  for (const b of dispatchBatches) {
-    const output = outputsByLabel.get(b.label)
-    if (!output || !Array.isArray(output.verdicts)) continue
-    const ownEntries = new Map()
-    for (const v of output.verdicts) {
-      if (!v || typeof v.id !== 'string') continue
-      const owner = home.get(v.id)
-      const flag = (kind) => {
-        const e = truncateEvidence(v.evidence)
-        anomalies.push({ label: b.label, id: v.id, kind, status: v.status, evidence: e.text, evidenceTruncated: e.truncated })
-      }
-      if (!owner) {
-        flag('unknown')
-        continue
-      }
-      if (owner.label !== b.label) {
-        flag('out-of-batch')
-        continue
-      }
-      if (!VALID_STATUSES.includes(v.status)) {
-        flag('bad-status')
-        continue
-      }
-      if (!ownEntries.has(v.id)) ownEntries.set(v.id, [])
-      ownEntries.get(v.id).push(v)
-    }
-    for (const [id, entries] of ownEntries) {
-      if (entries.length > 1) {
-        for (const v of entries) {
-          const e = truncateEvidence(v.evidence)
-          anomalies.push({ label: b.label, id, kind: 'duplicate', status: v.status, evidence: e.text, evidenceTruncated: e.truncated })
-        }
-        continue
-      }
-      const [entry] = entries
-      rawById.set(id, { status: entry.status, evidence: entry.evidence, expectedVsActual: entry.expectedVsActual, label: b.label })
-    }
-  }
-
-  return { rawById, anomalies }
 }
 
 phase('Enumerate')
@@ -538,10 +443,6 @@ if (enumerationFailed) {
     discoveryFallback,
     detail: incompleteDetails.join('; ') || 'One or more enumerate agents returned nothing.',
     note: 'An enumerate agent failed or returned nothing. This does NOT mean the regression document is missing - see detail for which batch, and re-run.',
-    verdicts: [],
-    batches: [],
-    verdictAnomalies: [],
-    models,
   }
 }
 
@@ -552,10 +453,6 @@ if (!docFound) {
     doc,
     discoveryFallback,
     note: `No regression suite found under ${regressionDir}. Stage 10 cannot run until the parent creates it and appends the group's acceptance criteria.`,
-    verdicts: [],
-    batches: [],
-    verdictAnomalies: [],
-    models,
   }
 }
 
@@ -569,26 +466,11 @@ if (enumerationIncomplete) {
     fileIdSets,
     detail: incompleteDetails.join('; '),
     note: 'The regression suite was found and parsed SHORT - one or more files, ids, or case bodies did not come back complete. See detail. This is not "no regression document" and must not be reported as such.',
-    verdicts: [],
-    batches: [],
-    verdictAnomalies: [],
-    models,
   }
 }
 
 if (allCases.length === 0) {
-  return {
-    ok: false,
-    docFound: true,
-    doc,
-    total: 0,
-    discoveryFallback,
-    note: 'Regression suite found but produced zero cases. Check its structure.',
-    verdicts: [],
-    batches: [],
-    verdictAnomalies: [],
-    models,
-  }
+  return { ok: false, docFound: true, doc, total: 0, discoveryFallback, note: 'Regression suite found but produced zero cases. Check its structure.' }
 }
 
 // Cases the document itself declares manual are reported, never executed - they
@@ -609,7 +491,7 @@ const runnable = runnableAll.map((c) => {
   const split = splitManualSteps(c.steps)
   if (!split.separable) return c
   manualStepsReport.push({ id: c.id, area: c.area, manualSteps: split.manualSteps })
-  return { ...c, steps: split.autoSteps, split: true }
+  return { ...c, steps: split.autoSteps }
 })
 
 const safe = runnable.filter((c) => c.parallelSafe)
@@ -635,7 +517,7 @@ const runnerPreamble = [
 ].join('\n')
 
 const safeBatches = safe.length > 0 ? chunk(safe, buckets) : []
-const safeOutputs = await parallel(
+const safeRuns = await parallel(
   safeBatches.map((batch, i) => () =>
     agent(
       [runnerPreamble, '', `Run these ${batch.length} case(s):`, '', batch.map(caseBlock).join('\n\n')].join('\n'),
@@ -644,9 +526,9 @@ const safeOutputs = await parallel(
   ),
 )
 
-let exclusiveOutput = null
+let exclusiveRun = null
 if (exclusive.length > 0) {
-  exclusiveOutput = await agent(
+  exclusiveRun = await agent(
     [
       runnerPreamble,
       '',
@@ -658,65 +540,18 @@ if (exclusive.length > 0) {
   )
 }
 
-// batches is the dispatch record (design section 12.2, B-8/B-9): its labels
-// and caseIds are exactly the groupings the agent calls above already used,
-// never re-derived from what an agent reported back. Labels are unique
-// (one per safe-batch index, plus the one fixed "cases:exclusive"); caseIds
-// are disjoint because safe and exclusive partition runnable.
-const outputsByLabel = new Map(safeBatches.map((batch, i) => [`cases:${i + 1}`, safeOutputs[i]]))
-if (exclusive.length > 0) outputsByLabel.set('cases:exclusive', exclusiveOutput)
+const verdicts = []
+for (const r of safeRuns) if (r && Array.isArray(r.verdicts)) verdicts.push(...r.verdicts)
+if (exclusiveRun && Array.isArray(exclusiveRun.verdicts)) verdicts.push(...exclusiveRun.verdicts)
 
-const batches = safeBatches.map((batch, i) => ({
-  label: `cases:${i + 1}`,
-  model: runnerModel,
-  caseIds: batch.map((c) => c.id),
-  returned: Boolean(safeOutputs[i] && Array.isArray(safeOutputs[i].verdicts)),
-}))
-if (exclusive.length > 0) {
-  batches.push({
-    label: 'cases:exclusive',
-    model: runnerModel,
-    caseIds: exclusive.map((c) => c.id),
-    returned: Boolean(exclusiveOutput && Array.isArray(exclusiveOutput.verdicts)),
-  })
-}
-
-const { rawById, anomalies: verdictAnomalies } = attributeVerdicts(batches, outputsByLabel)
-const homeByCaseId = new Map(batches.flatMap((b) => b.caseIds.map((id) => [id, b])))
-const blockDigestById = new Map(runnable.map((c) => [c.id, fnv1a32Hex(caseBlock(c))]))
-
-// One row per enumerated ID, in allCases order (design section 12.2). A
-// dispatched case's status and label come only from attributeVerdicts'
-// result - never from re-scanning the raw agent output - so an anomaly can
-// never accidentally fill the gap it is supposed to leave.
-const rowById = new Map()
-for (const c of manual) {
-  rowById.set(c.id, { id: c.id, status: 'manual', label: null, adjudication: null, split: false, blockDigest: null })
-}
-for (const c of runnable) {
-  const raw = rawById.get(c.id)
-  const home = homeByCaseId.get(c.id)
-  rowById.set(c.id, {
-    id: c.id,
-    status: raw ? raw.status : 'not-run',
-    label: home ? home.label : null,
-    adjudication: null,
-    split: Boolean(c.split),
-    blockDigest: blockDigestById.get(c.id),
-  })
-}
-const verdictRows = allCases.map((c) => rowById.get(c.id))
-
-const byId = new Map(runnable.map((c) => [c.id, c]))
-const notRun = verdictRows.filter((r) => r.status === 'not-run').map((r) => r.id)
+const byId = new Map(allCases.map((c) => [c.id, c]))
+const reported = new Set(verdicts.map((v) => v.id))
+const notRun = runnable.filter((c) => !reported.has(c.id)).map((c) => c.id)
 if (notRun.length > 0) log(`WARNING: ${notRun.length} case(s) produced no verdict: ${notRun.join(', ')}`)
 
-const blockedRows = verdictRows.filter((r) => r.status === 'blocked')
-const passedCount = verdictRows.filter((r) => r.status === 'pass').length
-log(`${passedCount} passed, ${verdictRows.filter((r) => r.status === 'fail').length} failed, ${blockedRows.length} blocked.`)
-if (verdictAnomalies.length > 0) {
-  log(`WARNING: ${verdictAnomalies.length} verdict anomal(y/ies) (out-of-batch, unknown, duplicate or bad-status). The affected case(s) stay not-run.`)
-}
+const failures = verdicts.filter((v) => v.status === 'fail')
+const blocked = verdicts.filter((v) => v.status === 'blocked')
+log(`${verdicts.filter((v) => v.status === 'pass').length} passed, ${failures.length} failed, ${blocked.length} blocked.`)
 
 phase('Adjudicate')
 const LENSES = [
@@ -725,24 +560,14 @@ const LENSES = [
   'Is it NON-DETERMINISTIC? Re-run the case at least twice and check for order dependence, timing, or shared state from a neighbouring case.',
 ]
 
-// Adjudication reads only attributed fail rows: an anomaly never reaches
-// here, so every row below has a real case and a real reported evidence -
-// no more "Case <id>" or empty-string fallback for a case that was never
-// actually found. Selection order follows rawById's own insertion order -
-// batch by batch in dispatch order (safe batches, then exclusive), each in
-// the order its agent reported them - the same order the pre-T3 workflow
-// filled its one flat verdicts array in, never the enumerate/document order
-// verdictRows is kept in for the result's own verdicts field.
-const failedIds = [...rawById.entries()].filter(([, raw]) => raw.status === 'fail').map(([id]) => id)
-const toAdjudicateIds = failedIds.slice(0, maxAdjudicated)
-if (failedIds.length > toAdjudicateIds.length) {
-  log(`NOTE: adjudicating only ${toAdjudicateIds.length} of ${failedIds.length} failures (maxAdjudicated). The remainder are reported unadjudicated.`)
+const toAdjudicate = failures.slice(0, maxAdjudicated)
+if (failures.length > toAdjudicate.length) {
+  log(`NOTE: adjudicating only ${toAdjudicate.length} of ${failures.length} failures (maxAdjudicated). The remainder are reported unadjudicated.`)
 }
 
 const adjudicated = await parallel(
-  toAdjudicateIds.map((id) => () => {
-    const c = byId.get(id)
-    const raw = rawById.get(id)
+  toAdjudicate.map((f) => () => {
+    const c = byId.get(f.id)
     return parallel(
       Array.from({ length: refuters }, (unused, k) => () =>
         agent(
@@ -754,16 +579,16 @@ const adjudicated = await parallel(
             `Working directory: ${cwd}`,
             '',
             'Reported failure:',
-            caseBlock(c),
+            c ? caseBlock(c) : `Case ${f.id}`,
             '',
-            `Reported evidence: ${raw.evidence}`,
-            raw.expectedVsActual ? `Reported expected vs actual: ${raw.expectedVsActual}` : '',
+            `Reported evidence: ${f.evidence}`,
+            f.expectedVsActual ? `Reported expected vs actual: ${f.expectedVsActual}` : '',
             '',
             `Your angle for this review: ${LENSES[k % LENSES.length]}`,
             '',
             'Reproduce the case yourself before deciding. Set refuted=false only when you personally reproduced the failure and it reflects genuinely broken product behavior.',
           ].filter(Boolean).join('\n'),
-          { label: `refute:${id}:${k + 1}`, phase: 'Adjudicate', model: refuterModel, schema: REFUTATION },
+          { label: `refute:${f.id}:${k + 1}`, phase: 'Adjudicate', model: runnerModel, schema: REFUTATION },
         ),
       ),
     ).then((votes) => {
@@ -776,10 +601,10 @@ const adjudicated = await parallel(
       // failure mode a regression suite must never have.
       const majority = cast.length > 0 && standing > cast.length / 2
       return {
-        id,
-        area: c.area,
-        summary: c.summary,
-        evidence: raw.evidence,
+        id: f.id,
+        area: c ? c.area : '',
+        summary: c ? c.summary : '',
+        evidence: f.evidence,
         votesFor: standing,
         votesAgainst: cast.length - standing,
         confirmed: majority,
@@ -797,21 +622,15 @@ const dismissed = judged.filter((j) => !j.confirmed && !j.disputed)
 if (disputed.length > 0) {
   log(`${disputed.length} failure(s) DISPUTED - at least one reviewer reproduced them. Parent must judge; not dismissed.`)
 }
-const unadjudicated = failedIds.slice(toAdjudicateIds.length).map((id) => ({ id, evidence: rawById.get(id).evidence }))
-
-for (const j of confirmed) rowById.get(j.id).adjudication = 'confirmed'
-for (const j of disputed) rowById.get(j.id).adjudication = 'disputed'
-for (const j of dismissed) rowById.get(j.id).adjudication = 'dismissed'
-for (const u of unadjudicated) rowById.get(u.id).adjudication = 'unadjudicated'
+const unadjudicated = failures.slice(toAdjudicate.length).map((f) => ({ id: f.id, evidence: f.evidence }))
 
 return {
   ok:
     confirmed.length === 0 &&
     disputed.length === 0 &&
-    blockedRows.length === 0 &&
+    blocked.length === 0 &&
     notRun.length === 0 &&
-    unadjudicated.length === 0 &&
-    verdictAnomalies.length === 0,
+    unadjudicated.length === 0,
   doc,
   docFound: true,
   enumerationFailed: false,
@@ -820,19 +639,15 @@ return {
   fileIdSets,
   total: allCases.length,
   automatable: runnable.length,
-  passed: passedCount,
+  passed: verdicts.filter((v) => v.status === 'pass').length,
   manualCases: manual.map((c) => ({ id: c.id, summary: c.summary, steps: c.steps })),
   manualSteps: manualStepsReport,
   confirmedRegressions: confirmed,
   disputedFailures: disputed,
   dismissedFailures: dismissed.map((d) => ({ id: d.id, reasons: d.reasons })),
   unadjudicatedFailures: unadjudicated,
-  blocked: blockedRows.map((r) => ({ id: r.id, evidence: rawById.get(r.id).evidence })),
+  blocked: blocked.map((b) => ({ id: b.id, evidence: b.evidence })),
   notRun,
-  verdicts: verdictRows,
-  batches,
-  verdictAnomalies,
-  models,
   parentMustDo: [
     'Stage 11: run RCA on each confirmed regression, delegate the fix, then re-run this workflow. No partial passes.',
     'Blocked and not-run cases are not passes. Either make them runnable or record in the document why they cannot be automated.',

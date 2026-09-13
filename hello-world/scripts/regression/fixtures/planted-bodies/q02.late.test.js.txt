@@ -1,0 +1,2 @@
+import { describe, test, it, expect, beforeAll, afterAll } from 'vitest';
+test('q02 returns before its timer throws', () => { setTimeout(() => { throw new Error('late throw after the test returned') }, 30); expect(1).toBe(1) })

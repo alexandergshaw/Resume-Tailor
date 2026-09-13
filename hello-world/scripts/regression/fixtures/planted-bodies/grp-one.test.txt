@@ -1,0 +1,5 @@
+import { describe, test, expect } from 'vitest';
+describe('grp', () => {
+  test('one two', () => { expect(1).toBe(1) })
+})
+test('solo top', () => { expect(2).toBe(2) })

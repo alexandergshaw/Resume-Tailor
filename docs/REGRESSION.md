@@ -26,6 +26,7 @@ Rules:
   with the manual steps written out. Blocked is not the same as passing.
 - `scripts/regression-integrity.sh` must pass before this suite's stage-10 pass,
   and before push.
+- Bucket b runs from a script now; `docs/regression-runbook.md` is its entry point and residual-risk record.
 
 ## Case format
 
@@ -180,7 +181,7 @@ below records, for every file, which area it holds and which case IDs are in it.
 | practice-setup | `docs/regression/practice-setup.md` | 1 | R-129 |
 | preview-ai | `docs/regression/preview-ai.md` | 1 | R-015 |
 | preview-concurrency | `docs/regression/preview-concurrency.md` | 5 | R-011-014, R-027 |
-| regression-process | `docs/regression/regression-process.md` | 2 | R-260, R-381 |
+| regression-process | `docs/regression/regression-process.md` | 3 | R-260, R-381, R-383 |
 | responsive-contract | `docs/regression/responsive-contract.md` | 3 | R-299-301 |
 | sample-answer | `docs/regression/sample-answer.md` | 13 | R-082-083, R-087-089, R-097, R-117-120, R-130-132 |
 | sample-answer | `docs/regression/sample-answer-2.md` | 5 | R-133-137 |

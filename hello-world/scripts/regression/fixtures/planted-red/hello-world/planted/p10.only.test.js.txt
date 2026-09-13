@@ -1,0 +1,3 @@
+import { describe, test, it, expect, beforeAll, afterAll } from 'vitest';
+test.only('p10 focused', () => { expect(1).toBe(1) })
+test('p10 hidden failure', () => { expect(1).toBe(2) })

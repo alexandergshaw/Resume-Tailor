@@ -1,0 +1,2 @@
+import { describe, test, it, expect, beforeAll, afterAll } from 'vitest';
+test('t01 control', () => { expect(1).toBe(1); });

@@ -1,0 +1,4 @@
+import { describe, test, it, expect, beforeAll, afterAll } from 'vitest';
+beforeAll(() => { throw new Error('setup broke') })
+test('p05a', () => { expect(1).toBe(1) })
+test('p05b', () => { expect(1).toBe(1) })

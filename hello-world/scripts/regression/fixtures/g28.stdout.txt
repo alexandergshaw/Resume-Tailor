@@ -1,0 +1,14 @@
+
+ RUN  v4.1.8 C:/Users/alexa/AppData/Local/Temp/claude/C--Users-alexa-OneDrive-Documents-Projects-Resume-Tailor/37b2d75b-41e4-42e5-9c06-ea583f90b4f5/scratchpad/chunks/T3/probes/4b-A/rec/g28/hello-world
+
+ ✓ planted/t01.pass.test.js (1 test) 3ms
+ ↓ planted/t02.describetodo.test.js (0 test)
+ ↓ planted/t05.emptyskip.test.js (0 test)
+
+ Test Files  1 passed | 2 skipped (5)
+      Tests  1 passed (1)
+     Errors  2 errors
+   Start at  13:39:52
+   Duration  1.03s (transform 34ms, setup 0ms, import 62ms, tests 3ms, environment 0ms)
+
+JSON report written to C:/Users/alexa/AppData/Local/Temp/claude/C--Users-alexa-OneDrive-Documents-Projects-Resume-Tailor/37b2d75b-41e4-42e5-9c06-ea583f90b4f5/scratchpad/chunks/T3/probes/4b-A/rec/g28/vitest.json

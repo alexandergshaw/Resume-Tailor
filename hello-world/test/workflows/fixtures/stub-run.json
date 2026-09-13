@@ -1,0 +1,146 @@
+{
+  "v": 1,
+  "about": "T3 plan P-13: the one stub script the lane B harness replays. args = today's workflow args. enumerate = the stub enumerate output per case file. verdicts = the stub runner's verdict per case ID (R-909 has none on purpose: it is dispatched and must come back not-run). refutations = the scripted refuter votes per failing ID, in call order k = 1, 2. Coverage: pass, fail, blocked, not-run, manual; confirmed (R-908), disputed (R-906), dismissed (R-907), unadjudicated (R-905, the 4th failure under maxAdjudicated 3); a yes case whose steps hold `npx vitest run x.test.js` (R-901); a separable partly case (R-902); a grandfathered partly case (R-903); a pair sharing one identical step line in one runner prompt (R-907, R-908); an exclusive case (R-905). Two enumerate batches (60000 + 60000 > 100000) and three runner batches (cases:1, cases:2, cases:exclusive).",
+  "args": {
+    "files": [
+      {
+        "file": "docs/regression/alpha.md",
+        "cases": ["R-901", "R-902", "R-903", "R-904", "R-905"],
+        "bytes": 60000,
+        "payloadBytes": { "R-901": 160, "R-902": 330, "R-903": 190, "R-904": 150, "R-905": 170 }
+      },
+      {
+        "file": "docs/regression/beta.md",
+        "cases": ["R-906", "R-907", "R-908", "R-909", "R-910"],
+        "bytes": 60000,
+        "payloadBytes": { "R-906": 180, "R-907": 220, "R-908": 200, "R-909": 140, "R-910": 150 }
+      }
+    ],
+    "summary": "FILES=2 CASES=10",
+    "buckets": 2,
+    "enumerateBatchBytes": 100000,
+    "maxAdjudicated": 3,
+    "runnerModel": "sonnet"
+  },
+  "enumerate": {
+    "docs/regression/alpha.md": [
+      {
+        "id": "R-901",
+        "area": "alpha",
+        "summary": "The keyword scorer's unit tests pass",
+        "steps": "1. From hello-world run `npx vitest run x.test.js` and quote the Test Files and Tests lines.",
+        "expected": "Test Files  1 passed (1) and Tests  12 passed (12).",
+        "parallelSafe": true,
+        "automatable": "yes"
+      },
+      {
+        "id": "R-902",
+        "area": "alpha",
+        "summary": "A rewritten bullet keeps its metric",
+        "steps": "1. Run `npx vitest run lib/resume/bulletRewrite.test.js` and quote the Tests line.\n2. Manual (`automatable: no`): open /tailor, paste a job description and confirm the rewritten bullet reads naturally to a recruiter.\n3. Run `npx eslint lib/resume/bulletRewrite.js` and quote its summary.",
+        "expected": "Both commands report zero failures; the rewritten bullet keeps the original 30% figure.",
+        "parallelSafe": true,
+        "automatable": "partly"
+      },
+      {
+        "id": "R-903",
+        "area": "alpha",
+        "summary": "Saved applications show their company",
+        "steps": "1. Open the Applications tab while signed in.\n2. Check that every saved application shows its company name.",
+        "expected": "Every row names its company; none reads Unknown.",
+        "parallelSafe": true,
+        "automatable": "partly"
+      },
+      {
+        "id": "R-904",
+        "area": "alpha",
+        "summary": "A printed resume keeps one reading-order column",
+        "steps": "1. Print the tailored resume to PDF and check that no two-column layout was introduced.",
+        "expected": "The PDF reads top to bottom in one column, so an ATS parses it in order.",
+        "parallelSafe": true,
+        "automatable": "no"
+      },
+      {
+        "id": "R-905",
+        "area": "alpha",
+        "summary": "The production build succeeds",
+        "steps": "1. From hello-world run `npm run build`.\n2. Quote the build's success line.",
+        "expected": "The build prints its success line and exits 0.",
+        "parallelSafe": false,
+        "automatable": "yes"
+      }
+    ],
+    "docs/regression/beta.md": [
+      {
+        "id": "R-906",
+        "area": "beta",
+        "summary": "A two-column resume parses in reading order",
+        "steps": "1. Run `npx vitest run lib/ats/parseColumns.test.js` and quote the Tests line.",
+        "expected": "A two-column resume parses into one reading-order column.",
+        "parallelSafe": true,
+        "automatable": "yes"
+      },
+      {
+        "id": "R-907",
+        "area": "beta",
+        "summary": "Keyword stuffing is flagged",
+        "steps": "1. Run `npx vitest run lib/ats/keywordDensity.test.js` and quote the Tests line.\n2. Confirm the density check flags a bullet that repeats one keyword four times.",
+        "expected": "The stuffed bullet is flagged as reading like a keyword list.",
+        "parallelSafe": true,
+        "automatable": "yes"
+      },
+      {
+        "id": "R-908",
+        "area": "beta",
+        "summary": "A single keyword mention is not flagged",
+        "steps": "1. Run `npx vitest run lib/ats/keywordDensity.test.js` and quote the Tests line.\n2. Confirm a bullet that names the keyword once is not flagged.",
+        "expected": "The one-mention bullet is not flagged.",
+        "parallelSafe": true,
+        "automatable": "yes"
+      },
+      {
+        "id": "R-909",
+        "area": "beta",
+        "summary": "Cover-letter tone tests pass",
+        "steps": "1. Run `npx vitest run lib/coverLetter/tone.test.js` and quote the Tests line.",
+        "expected": "Tests  8 passed (8).",
+        "parallelSafe": true,
+        "automatable": "yes"
+      },
+      {
+        "id": "R-910",
+        "area": "beta",
+        "summary": "Duplicate job-board postings collapse to one",
+        "steps": "1. Run `npx vitest run lib/jobBoard/dedupe.test.js` and quote the Tests line.",
+        "expected": "Tests  5 passed (5).",
+        "parallelSafe": true,
+        "automatable": "yes"
+      }
+    ]
+  },
+  "verdicts": {
+    "R-901": { "status": "pass", "evidence": "npx vitest run x.test.js -> Test Files  1 passed (1) / Tests  12 passed (12)" },
+    "R-902": { "status": "pass", "evidence": "Tests  6 passed (6); eslint: 0 problems" },
+    "R-903": { "status": "blocked", "evidence": "needs a signed-in browser; none is available to this agent" },
+    "R-905": { "status": "fail", "evidence": "npm run build -> Failed to compile", "expectedVsActual": "expected the success line; got Failed to compile" },
+    "R-906": { "status": "fail", "evidence": "Tests  1 failed | 3 passed (4)", "expectedVsActual": "expected one column; got two interleaved columns" },
+    "R-907": { "status": "fail", "evidence": "Tests  1 failed | 5 passed (6)", "expectedVsActual": "expected a flag; got none" },
+    "R-908": { "status": "fail", "evidence": "Tests  1 failed | 5 passed (6)", "expectedVsActual": "expected no flag; got one" },
+    "R-910": { "status": "pass", "evidence": "Tests  5 passed (5)" }
+  },
+  "refutations": {
+    "R-906": [
+      { "refuted": false, "reason": "real-regression", "detail": "reproduced twice: the columns interleave" },
+      { "refuted": true, "reason": "flaky", "detail": "passed on two re-runs" }
+    ],
+    "R-907": [
+      { "refuted": true, "reason": "bad-test-case", "detail": "the case's threshold is stale" },
+      { "refuted": true, "reason": "stale-environment", "detail": "a cached build was read" }
+    ],
+    "R-908": [
+      { "refuted": false, "reason": "real-regression", "detail": "reproduced: a single mention is flagged" },
+      { "refuted": false, "reason": "real-regression", "detail": "reproduced on a clean tree" }
+    ]
+  },
+  "defaultRefutation": { "refuted": true, "reason": "could-not-reproduce", "detail": "stub default: no scripted vote" }
+}

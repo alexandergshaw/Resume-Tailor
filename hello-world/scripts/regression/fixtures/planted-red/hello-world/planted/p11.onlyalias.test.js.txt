@@ -1,0 +1,4 @@
+import { describe, test, it, expect, beforeAll, afterAll } from 'vitest';
+const focus = test.only
+focus('p11 focused through an alias', () => { expect(1).toBe(1) })
+test('p11 hidden failure', () => { expect(1).toBe(2) })

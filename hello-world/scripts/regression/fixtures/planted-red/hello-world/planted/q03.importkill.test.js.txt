@@ -1,0 +1,3 @@
+import { describe, test, it, expect, beforeAll, afterAll } from 'vitest';
+process.kill(process.pid)
+test('q03 never reached', () => { expect(1).toBe(1) })

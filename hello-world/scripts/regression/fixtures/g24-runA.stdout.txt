@@ -1,0 +1,41 @@
+
+ RUN  v4.1.8 C:/Users/alexa/AppData/Local/Temp/claude/C--Users-alexa-OneDrive-Documents-Projects-Resume-Tailor/37b2d75b-41e4-42e5-9c06-ea583f90b4f5/scratchpad/chunks/T3/probes/4b-A/rec/g24/hello-world
+
+ ✓ planted/p06.unhandled.test.js (1 test) 31ms
+ ❯ planted/p11.onlyalias.test.js (2 tests | 1 failed | 1 skipped) 1ms
+   × p11 focused through an alias
+   ↓ p11 hidden failure
+ ❯ planted/p12.describeonly.test.js (2 tests | 2 skipped) 1ms
+     ↓ p12 focused
+   ↓ p12 hidden failure
+ ❯ planted/p16.dupname.test.js (2 tests | 1 failed) 10ms
+     ✓ p16 same name 2ms
+     × p16 same name 6ms
+ ❯ planted/p05.beforeall.test.js (2 tests | 2 skipped) 4ms
+   ↓ p05a
+   ↓ p05b
+ ❯ planted/p13.concurrentonly.test.js (2 tests | 1 failed | 1 skipped) 1ms
+   × p13 focused
+   ↓ p13 hidden failure
+ ✓ planted/p01.pass.test.js (2 tests) 3ms
+ ❯ planted/p10.only.test.js (2 tests | 1 failed | 1 skipped) 1ms
+   × p10 focused
+   ↓ p10 hidden failure
+ ❯ planted/p03.import.test.js (0 test)
+ ❯ planted/p08.afterall.test.js (1 test) 6ms
+   ✓ p08a 2ms
+ ❯ planted/p02.fail.test.js (2 tests | 1 failed) 8ms
+   ✓ p02 passes 2ms
+   × p02 fails 5ms
+ ↓ planted/p14.skipped.test.js (2 tests | 2 skipped)
+ ❯ planted/p04.syntax.test.js (0 test)
+ ↓ planted/p15.todo.test.js (1 test | 1 todo)
+ ❯ planted/p09.empty.test.js (0 test)
+
+ Test Files  11 failed | 2 passed | 2 skipped (16)
+      Tests  5 failed | 6 passed | 9 skipped | 1 todo (22)
+     Errors  2 errors
+   Start at  13:39:47
+   Duration  3.44s (transform 90ms, setup 0ms, import 307ms, tests 67ms, environment 2ms)
+
+JSON report written to C:/Users/alexa/AppData/Local/Temp/claude/C--Users-alexa-OneDrive-Documents-Projects-Resume-Tailor/37b2d75b-41e4-42e5-9c06-ea583f90b4f5/scratchpad/chunks/T3/probes/4b-A/rec/g24/vitest.json
