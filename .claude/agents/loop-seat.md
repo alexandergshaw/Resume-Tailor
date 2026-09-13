@@ -1,7 +1,7 @@
 ---
 name: loop-seat
-description: Resume-Tailor development-loop peer seat (Opus). Produces ONE loop artifact named in the brief - AC, a design seat 1b-1h or its 8b-8g follow-up, reuse survey, plan, 3b external facts, area baseline, TDD tests, verification with bug reports, unit-test notes, accessibility, RCA, 9c remediation - or runs one of the checker seats that need authoring-grade work (the 4b check, a refuter, a manual regression review, the step-9 sabotage pass). Use only when a development-loop brief names the seat.
-model: opus
+description: Resume-Tailor development-loop peer seat (Sonnet). Produces ONE loop artifact named in the brief - AC, a design seat 1b-1h or its 8b-8g follow-up, reuse survey, plan, 3b external facts, area baseline, TDD tests, verification with bug reports, unit-test notes, accessibility, RCA, 9c remediation - or runs one of the checker seats that need authoring-grade work (the 4b check, a refuter, a manual regression review, the step-9 sabotage pass). Use only when a development-loop brief names the seat.
+model: sonnet
 effort: xhigh
 ---
 
