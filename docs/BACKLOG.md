@@ -33,6 +33,34 @@ next action is read off this file rather than chosen freshly.
 **The loop ends a turn only after it has either advanced an actionable item or escalated a blocked one.**
 Stopping with actionable entries present and neither done is the failure this rule exists to prevent.
 
+### Disjoint items are worked SIMULTANEOUSLY
+
+The loop does not work the backlog one item at a time when items do not touch each other. Before dispatching,
+compute each candidate item's **file set** and run them together when the sets do not intersect.
+
+**Disjointness has two halves, and both must hold. File-disjoint alone is not enough** — that lesson cost this
+repo a whole contract mechanism when two design seats with non-overlapping outputs produced two incompatible
+schemas for the same table, because each was designing against facts the other was still establishing.
+
+1. **Exact-path disjointness — computed, never eyeballed.** An item's set is *the files it edits* **plus the
+   tests that assert on the behaviour it changes**. Intersect the sets mechanically (`sort | uniq -d`, empty
+   output) and paste the result.
+2. **Informational independence.** Ask of each pair: *does either establish a fact the other designs against?*
+   If yes they are coupled however disjoint their files are — sequence them, or extract the shared contract
+   into its own earlier step, alone.
+
+**Cap a simultaneous wave at 2–3 items.** A larger fan-out has produced duplicated discovery here — three
+agents independently finding the same blocker, and one designing a solution to a problem a sibling was
+concurrently proving did not exist.
+
+**Worked example, run 2026-09-13 — and it refuted the obvious answer.** `SEC-1` (item 1) looked like the ideal
+parallel candidate: a one-file resolver fix, unrelated to interview-prep. Computed:
+`grep -rln "featureEngine\|wantsEmbedded" --include=*.js app lib` → **58 files** (canary
+`zzNoSuchSymbolzz` → 0), and the set **includes `app/api/interview-prep/route.test.js` and
+`lib/copilot/groundingNotice.js`** — files IP3 and IP-N own. **Not disjoint.** SEC-1 waits.
+Items 2 and 3 (`scripts/regression/**` and a regression AC ruling) *are* disjoint from IP3's
+`lib/interviewPrep/**`, and run alongside it.
+
 **A blocked item is escalated once, not repeatedly.** Re-asking the same unanswerable question every turn is
 spinning wearing a decision's clothes. Once surfaced, it stays listed and silent until the owner answers or the
 blocker clears.
