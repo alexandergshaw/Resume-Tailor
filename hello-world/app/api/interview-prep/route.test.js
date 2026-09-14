@@ -47,15 +47,23 @@ function codeOf(filePath) {
 }
 
 describe("O-14's gate -- a request-supplied engine must never override the server's configuration", () => {
-  // The positive control does not depend on route.js existing at all: it
-  // proves, against the REAL, already-shipped wantsEmbedded(), that the fix
-  // is genuinely necessary -- calling it with only the request-supplied
-  // value, exactly as a route that skipped the fix would, produces the wrong
-  // answer.
-  it("[positive control] wantsEmbedded(engine, env) ALONE returns false for an embedded server forced by RESUME_ENGINE -- proving F2(a) fails without the extra term", () => {
+  // This control used to prove the route's extra OR-term was NECESSARY, by
+  // showing the shipped wantsEmbedded() returned the wrong answer on its own.
+  // SEC-1 fixed that resolver (owner rulings O-14 + O-18), so the premise no
+  // longer holds and the control detected it -- which is what a control is
+  // for. It now pins the CURRENT truth: the resolver refuses an escalating
+  // request by itself, so the route's second term is redundant. It is kept
+  // regardless, because O-14 ruled the route-level gate stays as defence in
+  // depth rather than as the fix -- and a redundant guard that is asserted to
+  // be redundant cannot rot into a guard nobody notices is load-bearing.
+  it("[positive control] wantsEmbedded(engine, env) ALONE now refuses an escalating request against an embedded server -- so the route's extra term is redundant, and deliberately retained", () => {
     const env = { RESUME_ENGINE: "embedded" };
-    expect(wantsEmbedded("gemini", env)).toBe(false);
-    expect(wantsEmbedded("external", env)).toBe(false);
+    // Escalation is refused by the resolver itself (SEC-1).
+    expect(wantsEmbedded("gemini", env)).toBe(true);
+    expect(wantsEmbedded("external", env)).toBe(true);
+    // O-18's other half: de-escalation is still honoured, so this gate never
+    // blocks a candidate opting into the free, non-egressing path.
+    expect(wantsEmbedded("embedded", { RESUME_ENGINE: "gemini" })).toBe(true);
   });
 
   it("[no-op control] plan.r1.md §8.5's own row: with no engine requested, the OR composition trivially agrees with the server-forced term alone", () => {

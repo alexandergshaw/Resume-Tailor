@@ -33,18 +33,6 @@
 # input this item objects to.
 
 # ACTIONABLE (12)
-- id: "N1"
-  state: "actionable"
-  title: "**`SEC-1`: the engine-override fix, repo-wide.** A request-supplied `engine` overrides server config: `wantsEmbedded(\"gemini\", { RESUME_ENGINE: \"embedded\" })` returns **false**, with control `(\"bogus\", …)` → **true** proving the default *is* read for unrecognised values. An offline-configured deployment can be forced to spend on paid generation with the candidate's résumé."
-  owed_by: "Its own chunk — not yet started"
-  evidence: ["`lib/llm/featureEngine.js:28` `wantsEmbedded(requested, env)`; its own header states the precedence — `1. An explicit per-request engine` **before** `2. The server default RESUME_ENGINE` (`:8-9`), and `:33` falls back to the default only when there is no explicit request. Owner ruling **O-14**"]
-  blocked_reason: null
-  instrument: null
-  owns: null
-  verify: null
-  verify_proof: null
-  blocked_by: []
-
 - id: "N2"
   state: "actionable"
   title: "**O-2 step 7 precedence is ambiguous** when both the `Test Files` and `Errors` lines hold. No fix round is scheduled."
@@ -178,6 +166,18 @@
   blocked_by: []
 
 # OWNER (2)
+- id: "N13"
+  state: "actionable"
+  title: "**Two of the five B1 trigger sites are inert.** `generateWithReviewedValues` (`app/page.js`) and `runWorker` (`app/hooks/useManualPostings.js`) call `startInterviewPrepResearch` with **no resolvable `applicationId`** — `tailorPosting`'s return carries only `jobId` — so `prepTrigger.js`'s blank-id refusal fires and nothing happens downstream. The landed seam tests assert the *call*, which is made, so they stay green. **Three of five manual-tailor paths work; two do not.**"
+  owed_by: "A wave that threads the application id through the tailor return, or a design round that decides it cannot be"
+  evidence: ["`plan.r1.md` §4 names this as an unresolved tracing gap; the step-5 waves 8/9 report documents both call sites and the reliance on the blank-id refusal"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 - id: "D1"
   state: "owner"
   title: "**RLS on the three new interview-prep tables cannot be verified here.** Supabase's URL is a placeholder, so every CHECK, policy and the `claim_prep_pack_slot` RPC is a *specification*, not confirmed behaviour."

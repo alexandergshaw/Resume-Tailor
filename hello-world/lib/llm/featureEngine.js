@@ -4,11 +4,24 @@
 // user-facing choice: "embedded" means run the in-process deterministic path
 // with no LLM call; anything else means use Gemini.
 //
-// Precedence mirrors the tailor route's engine resolution:
-//   1. An explicit per-request engine ("embedded" | "gemini" | "external").
-//   2. The server default RESUME_ENGINE.
-//   3. If Gemini isn't configured at all, fall back to embedded so the feature
-//      still works instead of erroring.
+// Precedence (O-14, refined asymmetric by O-18): a request may only NARROW
+// capability, never widen it. Running embedded is a de-escalation -- no
+// spend, no egress -- so an explicit "embedded" request is always honored,
+// regardless of the server's configuration. Running gemini/external is an
+// escalation -- paid generation, live grounded search, the candidate's resume
+// leaving the process -- so a request for one of those is honored only when
+// the server default does not forbid it. Without this, a single request-body
+// field could force a deployment the owner configured offline (e.g.
+// RESUME_ENGINE=embedded) into paid Gemini calls with the candidate's resume;
+// blocking the opposite (a request choosing LESS spend/egress than the
+// default) would serve no security purpose, so it stays permitted.
+//   1. An explicit "embedded" request -- always wins.
+//   2. The server default RESUME_ENGINE, when set to a recognized engine --
+//      wins over any other explicit request (blocks escalation).
+//   3. Otherwise, an explicit "gemini"/"external" request -- honored when the
+//      server has no default forbidding it.
+//   4. If neither is configured and Gemini isn't set up at all, fall back to
+//      embedded so the feature still works instead of erroring.
 //
 // "external" is a document-generation engine only; for these auxiliary features
 // it has no deterministic path of its own, so it behaves like "gemini" (use the
@@ -27,12 +40,19 @@ function hasGeminiKey(env) {
 // (from the tailorEngine store); `env` is injectable for testing.
 export function wantsEmbedded(requested, env = process.env) {
   const wanted = String(requested || "").trim().toLowerCase();
-  if (wanted === EMBEDDED) return true;
-  if (wanted === GEMINI || wanted === EXTERNAL) return false;
 
-  // No explicit request → fall back to the server default, then key presence.
+  // A de-escalation: always honored, regardless of server configuration.
+  if (wanted === EMBEDDED) return true;
+
+  // Any other explicit request is an escalation -- blocked when the server
+  // default forbids it.
   const dflt = String(env.RESUME_ENGINE || "").trim().toLowerCase();
   if (dflt === EMBEDDED) return true;
+
+  if (wanted === GEMINI || wanted === EXTERNAL) return false;
+
+  // No explicit (recognized) request → the server default decides, then key
+  // presence.
   if (dflt === GEMINI || dflt === EXTERNAL) return false;
 
   return !hasGeminiKey(env);

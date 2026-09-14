@@ -4,6 +4,7 @@ import { renderMarkdown, GENERATED_HEADER } from "./renderMarkdown.mjs";
 import { parseBacklogYaml } from "./yamlLite.mjs";
 import { normalizeLineEndings } from "./normalizeLineEndings.mjs";
 import { BACKLOG_YML_PATH, BACKLOG_MD_PATH } from "./loadBacklog.mjs";
+import { compareIds } from "./idOrder.mjs";
 
 describe("renderMarkdown", () => {
   it("reproduces the committed docs/BACKLOG.md BYTE FOR BYTE from a fresh parse of docs/backlog.yml", () => {
@@ -36,13 +37,44 @@ describe("renderMarkdown", () => {
     expect(fresh).not.toBe(normalizeLineEndings(driftedFixture));
   });
 
-  it("renders each table row from live item fields — changing a title in memory changes the output row", () => {
+  it("renders each table row from live item fields — changing a title in memory changes that item's output row", () => {
     const items = parseBacklogYaml(readFileSync(BACKLOG_YML_PATH, "utf8"));
-    const mutated = items.map((it) => (it.id === "N1" ? { ...it, title: "CHANGED TITLE MARKER" } : it));
-    const md = renderMarkdown(mutated);
-    expect(md).toContain("CHANGED TITLE MARKER");
-    // "SEC-1" also appears in the static prose block's worked example, so assert against N1's
-    // own original title text specifically rather than that shared substring.
-    expect(md).not.toContain("the engine-override fix, repo-wide");
+    // Select the item to mutate by property (lowest-id actionable item), not by a hard-coded id, so
+    // this test does not re-couple to which items currently exist in docs/backlog.yml.
+    const target = items
+      .filter((it) => it.state === "actionable")
+      .sort((a, b) => compareIds(a.id, b.id))[0];
+    expect(target).toBeDefined();
+
+    const rowPrefix = `| ${target.id} |`;
+    const originalLines = renderMarkdown(items).split("\n");
+    const originalRow = originalLines.find((line) => line.startsWith(rowPrefix));
+    expect(originalRow).toBeDefined();
+
+    const mutated = items.map((it) => (it.id === target.id ? { ...it, title: "CHANGED TITLE MARKER" } : it));
+    const mutatedLines = renderMarkdown(mutated).split("\n");
+    const mutatedRow = mutatedLines.find((line) => line.startsWith(rowPrefix));
+
+    expect(mutatedRow).toContain("CHANGED TITLE MARKER");
+    expect(mutatedRow).not.toBe(originalRow);
+    // Only the mutated item's row changed; every other line of the document is untouched.
+    expect(mutatedLines.length).toBe(originalLines.length);
+    mutatedLines.forEach((line, i) => {
+      if (line === mutatedRow) return;
+      expect(line).toBe(originalLines[i]);
+    });
+  });
+
+  it("regression: rendering still succeeds after an item is removed from an in-memory copy of the real backlog.yml (the coupling the hard-coded 'N1' id used to create)", () => {
+    const items = parseBacklogYaml(readFileSync(BACKLOG_YML_PATH, "utf8"));
+    const target = items
+      .filter((it) => it.state === "actionable")
+      .sort((a, b) => compareIds(a.id, b.id))[0];
+    const shrunk = items.filter((it) => it.id !== target.id);
+
+    const md = renderMarkdown(shrunk);
+
+    expect(md.startsWith(GENERATED_HEADER)).toBe(true);
+    expect(md).not.toContain(`| ${target.id} |`);
   });
 });

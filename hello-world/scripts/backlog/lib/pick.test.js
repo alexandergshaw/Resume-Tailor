@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { pick } from "./pick.mjs";
 import { parseBacklogYaml } from "./yamlLite.mjs";
 import { BACKLOG_YML_PATH } from "./loadBacklog.mjs";
+import { compareIds } from "./idOrder.mjs";
 
 function item(overrides) {
   return {
@@ -108,13 +109,44 @@ describe("pick", () => {
     expect(decision.item.id).toBe("D1");
   });
 
-  it("real docs/backlog.yml (regression fixture): reports unscoped over the 12 real actionable items — this is the exact B2 defect this tooling exists to prevent. A naive selector reports 'nothing owed' here.", () => {
+  it("real docs/backlog.yml (regression fixture): reports unscoped over the real actionable items — this is the exact B2 defect this tooling exists to prevent. A naive selector reports 'nothing owed' here.", () => {
     const items = parseBacklogYaml(readFileSync(BACKLOG_YML_PATH, "utf8"));
     const decision = pick(items);
+
+    // Structural properties that hold for ANY valid backlog.yml — never a hard-coded id list, which
+    // breaks every time an item is closed (closed items are deleted per this file's own "no diary"
+    // rule, so the live file's contents change under this test by design).
+    const actionable = items.filter((it) => it.state === "actionable");
+    const trulyUnscoped = actionable.filter((it) => it.owns == null || it.verify == null);
+
+    // The B2 property itself: real backlog.yml is never fully scoped, so this must be "unscoped",
+    // never silently reported as "empty".
+    expect(trulyUnscoped.length).toBeGreaterThan(0);
     expect(decision.type).toBe("unscoped");
-    expect(decision.count).toBe(12);
-    expect(decision.ids).toEqual([
-      "N1", "N2", "N3", "N4", "N5", "N6", "N7", "N8", "N9", "N10", "N11", "N12",
-    ]);
+
+    // Every actionable item lacking owns/verify is surfaced, and nothing else is.
+    expect(decision.count).toBe(trulyUnscoped.length);
+    expect(decision.ids.length).toBe(trulyUnscoped.length);
+    for (const it of trulyUnscoped) {
+      expect(decision.ids).toContain(it.id);
+    }
+
+    // Ordering rule, not values: ids come back in the file's own deterministic (numeric-by-namespace)
+    // order.
+    expect(decision.ids).toEqual([...decision.ids].sort(compareIds));
+  });
+
+  it("regression: removing an item from an in-memory copy of the real backlog.yml does not break this suite (the coupling the hard-coded id list above used to create)", () => {
+    const items = parseBacklogYaml(readFileSync(BACKLOG_YML_PATH, "utf8"));
+    const before = pick(items);
+    expect(before.type).toBe("unscoped"); // precondition for this regression check to mean anything
+
+    const [closedId, ...remainingIds] = before.ids;
+    const shrunk = items.filter((it) => it.id !== closedId);
+    const after = pick(shrunk);
+
+    expect(after.type).toBe("unscoped");
+    expect(after.count).toBe(before.count - 1);
+    expect(after.ids).toEqual(remainingIds);
   });
 });
