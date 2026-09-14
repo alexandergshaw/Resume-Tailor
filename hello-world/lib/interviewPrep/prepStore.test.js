@@ -23,6 +23,7 @@ import {
   recordPrepEvent,
   listPrepEvents,
   checkPackByteBudget,
+  isCheckViolation,
 } from "@/lib/interviewPrep/prepStore.js";
 import { PREP_PACK_MAX_BYTES } from "@/lib/interviewPrep/prepConstants.js";
 
@@ -372,7 +373,10 @@ describe("checkPackByteBudget -- the pack byte bound moved out of the database C
     const result = checkPackByteBudget(overLimit);
     expect(result.ok).toBe(false);
     expect(result.bytes).toBe(PREP_PACK_MAX_BYTES + 1);
-    expect(result.message).toMatch(/violates check constraint/i);
+    // TRUE wording only -- no "violates check constraint" and no invented
+    // constraint name: that CHECK does not exist (interview_prep.sql's own
+    // "NOT ADDED, deliberately" note), so the message must never claim it.
+    expect(result.message).toMatch(/over the \d+-byte limit/i);
     expect(result.message).toContain("1 over");
   });
 
@@ -389,7 +393,7 @@ describe("checkPackByteBudget -- the pack byte bound moved out of the database C
     });
     expect(result.written).toBe(false);
     expect(result.reason).toBe("error");
-    expect(result.error).toMatch(/violates check constraint/i);
+    expect(result.error).toMatch(/over the \d+-byte limit/i);
     // No .from() call at all was made against the packs table -- the
     // refusal happened before any statement was issued, never as a
     // reaction to a database error.
@@ -408,5 +412,135 @@ describe("checkPackByteBudget -- the pack byte bound moved out of the database C
     });
     expect(result.written).toBe(true);
     expect(sb.calls.interview_prep_packs.update).toHaveLength(1);
+  });
+});
+
+describe("isCheckViolation / PG_CHECK_VIOLATION -- SQLSTATE-based, never message-text (N9)", () => {
+  // 3b.r1.md item 3 confirmed at primary source that SQLSTATE 23514 passes
+  // through supabase-js clean and unmodified on error.code. This is the
+  // fix for the defect N9 exists to remove: a message-text regex
+  // (`/violates check constraint/i`) breaks on any Postgres wording change;
+  // a `code === PG_CHECK_VIOLATION` comparison does not.
+  it("[mutant this kills: code dropped or coerced] writePrepPackResult surfaces a database error's code verbatim", async () => {
+    const sb = makeSupabase({
+      interview_prep_packs: {
+        data: null,
+        error: { code: "23514", message: "new row violates check constraint \"interview_prep_packs_status_check\"" },
+      },
+    });
+    const result = await writePrepPackResult(sb, {
+      applicationId: APP_ID,
+      userId: USER_ID,
+      leaseToken: LEASE_TOKEN,
+      status: "failed",
+      reason: "check-violation",
+    });
+    expect(result.written).toBe(false);
+    expect(result.code).toBe("23514");
+    expect(isCheckViolation(result)).toBe(true);
+  });
+
+  it('[negative control] a NON-check database error (code "23505", message containing "violates") reads as isCheckViolation:false', async () => {
+    const sb = makeSupabase({
+      interview_prep_packs: {
+        data: null,
+        error: { code: "23505", message: 'duplicate key value violates unique constraint "interview_prep_packs_pkey"' },
+      },
+    });
+    const result = await writePrepPackResult(sb, {
+      applicationId: APP_ID,
+      userId: USER_ID,
+      leaseToken: LEASE_TOKEN,
+      status: "failed",
+    });
+    expect(result.code).toBe("23505");
+    expect(isCheckViolation(result)).toBe(false);
+  });
+
+  it("[mutant this kills: message-text-only, code never read] a CHECK error whose message does NOT contain \"violates check constraint\" is still recognised via its code alone", async () => {
+    // A reworded/localised Postgres message -- the exact case a message-text
+    // matcher cannot survive. This fixture's `code` (23514) is what marks it
+    // as a CHECK violation; a build that read ONLY `error.message` (the old,
+    // pre-N9 regex, with no `.code` comparison at all) would find no phrase
+    // to match here and report false, disagreeing with the `true` expected
+    // below. NOTE: this fixture does NOT discriminate an OR-fallback build
+    // (`code === "23514" || /violates check constraint/i.test(message)`) --
+    // its first term alone already agrees with the correct answer, so both
+    // implementations return true here. See the dedicated OR-fallback
+    // fixture and canary below for the one that actually tells them apart.
+    const sb = makeSupabase({
+      interview_prep_packs: {
+        data: null,
+        error: { code: "23514", message: 'new row for relation "interview_prep_packs" fails a check condition on "status"' },
+      },
+    });
+    const result = await writePrepPackResult(sb, {
+      applicationId: APP_ID,
+      userId: USER_ID,
+      leaseToken: LEASE_TOKEN,
+      status: "failed",
+    });
+    expect(result.code).toBe("23514");
+    expect(isCheckViolation(result)).toBe(true);
+  });
+
+  it("[regression guard] the pre-flight over-budget refusal (THE TRAP: a JS-side refusal with no driver error) still sets code: PG_CHECK_VIOLATION as a deliberate stand-in", async () => {
+    const sb = makeSupabase({});
+    const oversized = { sections: {}, claims: {}, filler: "x".repeat(PREP_PACK_MAX_BYTES) };
+    const result = await writePrepPackResult(sb, {
+      applicationId: APP_ID,
+      userId: USER_ID,
+      leaseToken: LEASE_TOKEN,
+      status: "ready",
+      engine: "gemini",
+      pack: oversized,
+    });
+    expect(result.written).toBe(false);
+    expect(result.code).toBe("23514");
+    expect(isCheckViolation(result)).toBe(true);
+    // Still never reaches the database -- unchanged from the pre-existing
+    // [wiring] test above.
+    expect(sb.calls.interview_prep_packs).toBeUndefined();
+  });
+
+  it('[mutant this kills: an OR-fallback build (code === "23514" || /violates check constraint/i.test(message))] a database error carrying NO code but a message that DOES contain the phrase reads as isCheckViolation:false', async () => {
+    // The one fixture shape that actually tells the correct, code-only
+    // predicate apart from an OR-fallback: no `code` at all (so the correct
+    // predicate's `result.code === "23514"` is false), paired with a
+    // message that DOES carry "violates check constraint" (so the
+    // OR-fallback's second term would be true). The correct predicate must
+    // read false here; an OR-fallback would read true, disagreeing with the
+    // assertion below -- deliberately, not incidentally.
+    const sb = makeSupabase({
+      interview_prep_packs: {
+        data: null,
+        // No `code` key at all -- error.code is undefined on this object,
+        // exactly the shape a non-Postgres failure (a network error, say)
+        // could carry.
+        error: { message: "violates check constraint interview_prep_packs_status_check" },
+      },
+    });
+    const result = await writePrepPackResult(sb, {
+      applicationId: APP_ID,
+      userId: USER_ID,
+      leaseToken: LEASE_TOKEN,
+      status: "failed",
+    });
+    expect(result.code).toBeNull();
+    expect(isCheckViolation(result)).toBe(false);
+  });
+
+  it("[canary] proves the fixture above genuinely discriminates an OR-fallback build from the real, code-only predicate", () => {
+    // Not a runtime assertion against prepStore.js -- a literal simulation
+    // of the OR-fallback build, run against the SAME fixture as the test
+    // above, so the claim that it "reads as true there" is demonstrated
+    // rather than merely asserted. Same idiom as this file's other
+    // synthetic canaries (e.g. the claim_prep_pack_slot 4-parameter one,
+    // above).
+    const orFallbackIsCheckViolation = (result) =>
+      result?.code === "23514" || /violates check constraint/i.test(result?.error || "");
+    const fixture = { code: null, error: "violates check constraint interview_prep_packs_status_check" };
+    expect(orFallbackIsCheckViolation(fixture)).toBe(true);
+    expect(isCheckViolation(fixture)).toBe(false);
   });
 });

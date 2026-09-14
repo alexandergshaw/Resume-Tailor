@@ -14,7 +14,7 @@ const BLOCK_C = "\n## Verification owed\n\n| # | Item | Measured how |\n|---|---
 const BLOCK_D = "\n## Standing hazards — re-read before trusting a number\n\n- **An instrument here is defective until a constructed mutant kills it.** The author's own claim that a mutant\n  dies is not evidence: one wave reported a kill in good faith and the real mutant survived, because the mutant\n  tested was easier than the named one (ledger `T3-S9-3`).\n- **A count beside a list it does not match** has occurred three times — a table heading, a column enumeration,\n  and a ledger figure asserted as 4 where `grep -c \"module:\"` returns **5**.\n- **A claim restated from another document is not verified.** Six false claims propagated here purely by\n  restatement, each one grep-checkable. Run the grep with a canary before repeating a fact.\n- **Ruling on a check's blockers alone silently drops its majors.** Nine majors once sat unrouted through three\n  revisions because a ruling answered only the blockers, and everything downstream read the check as handled.";
 
 function nextRow(it) {
-  return `| ${it.id} | ${it.title} | ${it.owed_by} | ${it.evidence[0]} |`;
+  return `| ${it.id} | ${it.title} | ${it.owed_by} | ${it.evidence.join("; ")} |`;
 }
 function ownerRow(it) {
   return `| ${it.id} | ${it.title} | ${it.blocked_reason} |`;

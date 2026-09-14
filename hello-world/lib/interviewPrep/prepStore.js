@@ -55,8 +55,9 @@
 // - `writePrepPackResult`'s CHECK-safe fallback write (design-structure.r1.md
 //   §8.4, fired when the ordinary write raises `23514`) is a SEPARATE call
 //   into this same function with a safe payload -- orchestrating that retry
-//   is `app/api/interview-prep/route.js`'s job (a later wave), not this
-//   file's; this function only ever issues the one `UPDATE` it is asked for.
+//   is `lib/interviewPrep/finishAttempt.js`'s job (called from
+//   `app/api/interview-prep/route.js`), not this file's; this function only
+//   ever issues the one `UPDATE` it is asked for.
 
 import { normalizePack } from "./prepParse.js";
 import { PREP_MAX_ATTEMPTS, PREP_MODEL_CALLS_MAX, PREP_LEASE_MS, PREP_PACK_MAX_BYTES } from "./prepConstants.js";
@@ -75,6 +76,41 @@ const PACK_DETAIL_PROJECTION = "status, pack";
 function errMessage(error) {
   if (!error) return null;
   return typeof error.message === "string" ? error.message : String(error);
+}
+
+// The driver's own SQLSTATE for a CHECK constraint violation (3b.r1.md item
+// 3, confirmed at primary source: supabase-js passes `error.code` through
+// clean and unmodified, unlike `error.message`, whose wording is Postgres's
+// to change). This is the ONLY thing isCheckViolation below ever compares
+// against -- never a substring of `error.message` (see N9: a message-text
+// matcher breaks on any Postgres wording change; a SQLSTATE does not).
+// Module-local, not exported: every consumer either lives in this file or
+// receives a value already tagged with it (writePrepPackResult's `code`
+// field) and compares against isCheckViolation, never the literal itself
+// (lib/sourceScan/exportReachability.sweep.test.js's TR-1 count: an export
+// whose only importer is a test is exactly the shape that rule flags).
+const PG_CHECK_VIOLATION = "23514";
+
+function errCode(error) {
+  if (!error) return null;
+  // Verbatim, never coerced or defaulted -- an absent `code` becomes `null`
+  // (matching errMessage's own null-when-absent convention above), not
+  // `undefined` and never PG_CHECK_VIOLATION.
+  return error.code ?? null;
+}
+
+/**
+ * True only when a writePrepPackResult() result's own `code` field is
+ * exactly PG_CHECK_VIOLATION. Deliberately has NO message-text fallback --
+ * reintroducing one is the exact defect N9 exists to remove. The one
+ * caller, lib/interviewPrep/finishAttempt.js's finishAttempt(), passes this
+ * function the whole write result (never `write.error` alone), since `code`
+ * -- not `error` -- is what this predicate reads.
+ *
+ * @param {{ code?: string|null }} result
+ */
+export function isCheckViolation(result) {
+  return result?.code === PG_CHECK_VIOLATION;
 }
 
 // The one place `attemptsExhausted` is computed (design-structure.r1.md
@@ -278,6 +314,20 @@ export async function claimPrepPack(supabase, { applicationId, userId }) {
  * `TextEncoder` (already used by test/helpers/supabaseMock.js's `fakeBlob`)
  * is the one UTF-8-byte-length primitive available in both environments.
  *
+ * The `message` this returns is a TRUE statement about what happened, never
+ * "violates check constraint interview_prep_packs_pack_size_check" --
+ * that constraint does not exist (see the "NOT ADDED, deliberately" note
+ * above); this bound is enforced here, in JS, not by the database, and
+ * saying otherwise sends an operator hunting a CHECK that is in no
+ * migration. `writePrepPackResult` below tags this refusal's `code` field
+ * with `PG_CHECK_VIOLATION` as a DELIBERATE STAND-IN -- a JS-side refusal
+ * before any statement runs carries no real driver error and so has no real
+ * SQLSTATE of its own -- purely so its existing CHECK-safe fallback retry
+ * (design-structure.r1.md §8.4, `lib/interviewPrep/finishAttempt.js`'s
+ * `finishAttempt`) keeps treating this refusal the same way it treats an
+ * actual `23514` from the database. That stand-in is a fact about the
+ * `code` field, never about this function's own `message` text.
+ *
  * @param {*} pack
  * @param {number} limit
  * @returns {{ ok: boolean, bytes: number, message: string|null }}
@@ -288,9 +338,7 @@ export function checkPackByteBudget(pack, limit = PREP_PACK_MAX_BYTES) {
   return {
     ok: false,
     bytes,
-    message:
-      `pack is ${bytes} bytes, ${bytes - limit} over the ${limit}-byte limit -- ` +
-      "violates check constraint interview_prep_packs_pack_size_check",
+    message: `pack is ${bytes} bytes, ${bytes - limit} over the ${limit}-byte limit`,
   };
 }
 
@@ -329,15 +377,11 @@ export async function writePrepPackResult(
   const normalizedPack = pack != null ? normalizePack(pack) : pack;
 
   // The byte bound this table's own CHECK used to enforce -- see
-  // checkPackByteBudget's header. Checked BEFORE any statement runs, so an
-  // oversize pack never reaches the database at all. The message reuses the
-  // "violates check constraint" phrase app/api/interview-prep/route.js's
-  // `isCheckViolation()` already recognises, so its existing CHECK-safe
-  // fallback retry (design-structure.r1.md §8.4) keeps handling this failure
-  // mode unmodified.
+  // checkPackByteBudget's header for why `code: PG_CHECK_VIOLATION` is used
+  // here even though this refusal is JS-side and carries no driver error.
   if (normalizedPack != null) {
     const budget = checkPackByteBudget(normalizedPack);
-    if (!budget.ok) return { written: false, reason: "error", error: budget.message };
+    if (!budget.ok) return { written: false, reason: "error", error: budget.message, code: PG_CHECK_VIOLATION };
   }
 
   const { data, error: dbError } = await supabase
@@ -363,12 +407,12 @@ export async function writePrepPackResult(
     .eq("lease_token", leaseToken)
     .select();
 
-  if (dbError) return { written: false, reason: "error", error: errMessage(dbError) };
+  if (dbError) return { written: false, reason: "error", error: errMessage(dbError), code: errCode(dbError) };
 
   const rows = Array.isArray(data) ? data : [];
-  if (rows.length === 0) return { written: false, reason: "stale-token", error: null };
+  if (rows.length === 0) return { written: false, reason: "stale-token", error: null, code: null };
 
-  return { written: true, reason: null, error: null };
+  return { written: true, reason: null, error: null, code: null };
 }
 
 /**

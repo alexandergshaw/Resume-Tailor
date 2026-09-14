@@ -65,6 +65,26 @@ describe("renderMarkdown", () => {
     });
   });
 
+  it("joins every entry of a multi-entry evidence array into the row, not just the first (a renderer that drops content is a defective instrument)", () => {
+    const items = parseBacklogYaml(readFileSync(BACKLOG_YML_PATH, "utf8"));
+    const target = items
+      .filter((it) => it.state === "actionable")
+      .sort((a, b) => compareIds(a.id, b.id))[0];
+    const withMultiEvidence = items.map((it) =>
+      it.id === target.id ? { ...it, evidence: ["FIRST ENTRY MARKER", "SECOND ENTRY MARKER", "THIRD ENTRY MARKER"] } : it,
+    );
+
+    const md = renderMarkdown(withMultiEvidence);
+    const row = md.split("\n").find((line) => line.startsWith(`| ${target.id} |`));
+
+    expect(row).toBeDefined();
+    // [mutant this kills: `it.evidence[0]` reinstated in nextRow] every entry
+    // must reach the rendered row, not only the first.
+    expect(row).toContain("FIRST ENTRY MARKER");
+    expect(row).toContain("SECOND ENTRY MARKER");
+    expect(row).toContain("THIRD ENTRY MARKER");
+  });
+
   it("regression: rendering still succeeds after an item is removed from an in-memory copy of the real backlog.yml (the coupling the hard-coded 'N1' id used to create)", () => {
     const items = parseBacklogYaml(readFileSync(BACKLOG_YML_PATH, "utf8"));
     const target = items

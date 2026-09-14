@@ -83,11 +83,11 @@ import { listDigests } from "@/lib/supabase/applicationDigests";
 import { postingFingerprint } from "@/lib/copilot/glossaryStore";
 import {
   claimPrepPack,
-  writePrepPackResult,
   deletePrepPackContent,
   recordModelCallIssued,
   recordPrepEvent,
 } from "@/lib/interviewPrep/prepStore";
+import { finishAttempt } from "@/lib/interviewPrep/finishAttempt";
 import { PREP_RATE_LIMIT, PREP_RATE_WINDOW_MS, PREP_GENERATION_TIMEOUT_MS } from "@/lib/interviewPrep/prepConstants";
 
 export const runtime = "nodejs";
@@ -235,55 +235,12 @@ function parsePrepResponse(response) {
   return { ok: true, pack: parsed };
 }
 
-function isCheckViolation(message) {
-  return typeof message === "string" && /violates check constraint/i.test(message);
-}
-
-// interview_prep_events' outcome mirrors the pack's own status, except a
-// 'failed' status is recorded as 'error' -- see this file's header comment.
-function outcomeForStatus(status) {
-  return status === "failed" ? "error" : status;
-}
-
-// The one place an attempt's terminal write AND its durable event row happen
-// together, for every attempt this route makes (unavailable, embedded-ready,
-// gemini-ready, or any failure). design-structure.r1.md §8.4's CHECK-safe
-// fallback lives here: if the ordinary write itself violates a CHECK, retry
-// once with a minimal, always-satisfiable payload rather than leaving the row
-// stuck mid-attempt -- the fallback payload carries no `pack` content, so the
-// same size/shape CHECK that could reject a real pack can never reject it.
-async function finishAttempt(supabase, { applicationId, userId, leaseToken, triggerClass, engine, ...payload }) {
-  let write = await writePrepPackResult(supabase, { applicationId, userId, leaseToken, ...payload });
-  let status = payload.status;
-  let reason = payload.reason ?? null;
-
-  if (!write.written && write.reason === "error" && isCheckViolation(write.error)) {
-    status = "failed";
-    reason = "check-violation";
-    write = await writePrepPackResult(supabase, {
-      applicationId,
-      userId,
-      leaseToken,
-      status: "failed",
-      reason: "check-violation",
-      error: write.error,
-    });
-  }
-
-  if (write.written) {
-    await recordPrepEvent(supabase, {
-      applicationId,
-      userId,
-      eventType: "attempt",
-      triggerClass,
-      engine,
-      outcome: outcomeForStatus(status),
-      reason,
-    });
-  }
-
-  return { write, status };
-}
+// finishAttempt (the one place an attempt's terminal write AND its durable
+// event row happen together, including design-structure.r1.md §8.4's
+// CHECK-safe fallback retry) lives in lib/interviewPrep/finishAttempt.js,
+// not here -- extracted so it can be given real runtime test coverage
+// without a mocked Next.js route (see that file's own header, and this
+// file's own header on why route.test.js is a source-text-only instrument).
 
 function writeFailureResponse(write) {
   if (write.reason === "stale-token") return Response.json({ status: "stale" });

@@ -1,8 +1,9 @@
-// app/api/interview-prep/route.js does not exist in this checkout yet
-// (plan.r1.md Wave 3). This file is a SOURCE-TEXT instrument, not a runtime
-// integration test, and that is a deliberate scoping decision, not a
-// shortcut -- stated here so a later reader does not mistake it for less
-// than it is, or for more.
+// app/api/interview-prep/route.js exists in this checkout (landed in
+// plan.r1.md Wave 3) and this diff edits it. This file is a SOURCE-TEXT
+// instrument, not a runtime integration test, and that stays a deliberate
+// scoping decision, not a shortcut, even now that the route exists --
+// stated here so a later reader does not mistake it for less than it is, or
+// for more.
 //
 // WHY SOURCE-TEXT, NOT A MOCKED POST() CALL. A full runtime harness for this
 // route would need to fake auth (lib/experience/apiAuth.js), the rate
@@ -37,12 +38,18 @@ import { wantsEmbedded } from "@/lib/llm/featureEngine.js";
 const ROUTE_PATH = path.join(process.cwd(), "app", "api", "interview-prep", "route.js");
 
 /** Comments stripped so a prose mention of a symbol is never mistaken for
- *  code that uses it -- same discipline as app/glossaryTriggerSeams.test.js. */
+ *  code that uses it -- same discipline as app/glossaryTriggerSeams.test.js.
+ *  Strips a `//` run to end-of-line wherever it starts, not only when the
+ *  whole line is a comment -- a TRAILING `//` comment (code, then a comment)
+ *  used to survive this and could false-fail one of the bans below. This
+ *  file's own route source carries no `//` inside a string or regex literal
+ *  (checked by hand), so this is safe here even though it is not a general
+ *  JS tokenizer. */
 function codeOf(filePath) {
   return readFileSync(filePath, "utf8")
     .replace(/\/\*[\s\S]*?\*\//g, " ")
     .split("\n")
-    .map((line) => line.replace(/^\s*\/\/.*$/, ""))
+    .map((line) => line.replace(/\/\/.*$/, ""))
     .join("\n");
 }
 
@@ -206,5 +213,136 @@ describe("recordModelCallIssued gates the paid call (design-operate.r1.md §6, O
     // fixture, so indexOf(..., recordIdx) never finds it after the record
     // call -- exactly the ordering defect this instrument must catch.
     expect(generateIdx).toBe(-1);
+  });
+});
+
+describe("the route composes its terminal-write path through the extracted finishAttempt module, never a route-local reimplementation (N9)", () => {
+  // finishAttempt() -- including the CHECK-safe fallback that reads
+  // isCheckViolation() -- moved out of this route into
+  // lib/interviewPrep/finishAttempt.js (see that file's own header and
+  // finishAttempt.test.js for its runtime coverage and its own,
+  // call-shape-level source checks on isCheckViolation). What THIS file
+  // still owns is the route's own composition: that it defers to that
+  // module rather than a local stand-in, and that no message-text pattern
+  // has crept back into the route itself.
+  const NO_LOCAL_FINISH_ATTEMPT = /(function|const|let)\s+finishAttempt\b/;
+  const CHECK_PHRASE = /check\s+constraint/i;
+
+  it("route.js exists", () => {
+    expect(existsSync(ROUTE_PATH), "app/api/interview-prep/route.js has not been implemented yet").toBe(true);
+  });
+
+  it("imports finishAttempt from its own dedicated module, not a route-local reimplementation", () => {
+    const code = codeOf(ROUTE_PATH);
+    expect(code).toMatch(/import\s*\{[^}]*\bfinishAttempt\b[^}]*\}\s*from\s*["'][^"']*finishAttempt["']/);
+    expect(code).not.toMatch(NO_LOCAL_FINISH_ATTEMPT);
+  });
+
+  it('[mutant this kills: the message-text regex reintroduced, with or without "violates"] the route\'s own source contains no CHECK-constraint phrasing of its own', () => {
+    // The defect N9 removes: `function isCheckViolation(message) { return
+    // typeof message === "string" && /violates check constraint/i.test(message);
+    // }`. The ORIGINAL ban here only matched the full "violates check
+    // constraint" phrase, so a reworded matcher testing for just "check
+    // constraint" (dropping "violates") evaded it -- broadened below to
+    // catch either.
+    const code = codeOf(ROUTE_PATH);
+    expect(code).not.toMatch(CHECK_PHRASE);
+  });
+
+  it("[control] the phrase-absence check can actually fail -- proven on synthetic fixtures, WITH and WITHOUT \"violates\"", () => {
+    const withViolates = `
+      function isCheckViolation(message) {
+        return typeof message === "string" && /violates check constraint/i.test(message);
+      }
+    `;
+    const withoutViolates = `
+      function isCheckViolation(message) {
+        return typeof message === "string" && /check constraint/i.test(message);
+      }
+    `;
+    expect(withViolates).toMatch(CHECK_PHRASE);
+    expect(withoutViolates).toMatch(CHECK_PHRASE);
+  });
+
+  it("[control] the no-local-finishAttempt check can actually fail -- proven on a synthetic fixture that keeps the import but shadows it locally", () => {
+    // The exact evasion this guards against: an import line that still
+    // satisfies a naive "imports finishAttempt" substring check, sitting
+    // beside a local definition that actually gets called instead.
+    const brokenSource = `
+      import { finishAttempt as sharedFinishAttempt } from "@/lib/interviewPrep/finishAttempt";
+      function finishAttempt() { return { write: { written: false }, status: "failed" }; }
+    `;
+    expect(brokenSource).toMatch(NO_LOCAL_FINISH_ATTEMPT);
+  });
+});
+
+describe("attemptCtx carries triggerClass and engine to every finishAttempt call site (N14 remediation review)", () => {
+  // Measured: deleting `engine` from attemptCtx's own literal leaves the full
+  // lib/interviewPrep + app/api/interview-prep suite (136 tests) green --
+  // no test previously read attemptCtx's declared property list, so
+  // interview_prep_events.engine would go silently blank on every attempt
+  // this route records. finishAttempt.test.js's own wire test (against the
+  // real writePrepPackResult/recordPrepEvent) pins the VALUES that reach the
+  // event row; this file owns the route's own composition -- that the one
+  // object built here actually carries both fields to every write site.
+  const ATTEMPT_CTX_DECL = /const\s+attemptCtx\s*=\s*\{([^}]*)\}/;
+
+  it("route.js exists", () => {
+    expect(existsSync(ROUTE_PATH), "app/api/interview-prep/route.js has not been implemented yet").toBe(true);
+  });
+
+  it('[mutant this kills: "engine" (or "triggerClass") dropped from the attemptCtx literal] attemptCtx names both triggerClass and engine', () => {
+    const code = codeOf(ROUTE_PATH);
+    const match = code.match(ATTEMPT_CTX_DECL);
+    expect(match, "const attemptCtx = { ... } not found in route.js").not.toBeNull();
+    expect(match[1]).toMatch(/\btriggerClass\b/);
+    expect(match[1]).toMatch(/\bengine\b/);
+  });
+
+  it("every finishAttempt(supabase, { call site spreads attemptCtx, directly or via a ctx object built from it", () => {
+    const code = codeOf(ROUTE_PATH);
+    const CALL_SITE = /finishAttempt\(supabase,\s*\{/g;
+    let match;
+    let count = 0;
+    while ((match = CALL_SITE.exec(code))) {
+      count += 1;
+      const window = code.slice(match.index, match.index + 200);
+      expect(window, `finishAttempt call at offset ${match.index} does not spread attemptCtx or ctx`).toMatch(
+        /\.\.\.(attemptCtx|ctx)\b/,
+      );
+    }
+    // Five direct route-body calls plus refuseRecordingFailure's own --
+    // regressing this count would mean a call site's shape changed enough
+    // that this scan no longer sees it at all.
+    expect(count).toBeGreaterThanOrEqual(6);
+  });
+
+  it("refuseRecordingFailure's own ctx argument is itself built by spreading attemptCtx", () => {
+    // refuseRecordingFailure(supabase, ctx) spreads `...ctx`, not
+    // `...attemptCtx`, by name -- ctx is its own parameter. The previous
+    // test alone would pass even if that parameter were seeded from
+    // something else entirely, so this checks the CALL site builds ctx from
+    // attemptCtx in the first place.
+    const code = codeOf(ROUTE_PATH);
+    const idx = code.indexOf("refuseRecordingFailure(supabase, {");
+    expect(idx, "refuseRecordingFailure(supabase, { call site not found").toBeGreaterThanOrEqual(0);
+    const window = code.slice(idx, idx + 200);
+    expect(window).toMatch(/\.\.\.attemptCtx\b/);
+  });
+
+  it("[control] the attemptCtx property check can actually fail -- proven on a fixture missing engine", () => {
+    const brokenSource = "const attemptCtx = { applicationId, userId, leaseToken: claim.leaseToken, triggerClass };";
+    const match = brokenSource.match(ATTEMPT_CTX_DECL);
+    expect(match).not.toBeNull();
+    expect(match[1]).not.toMatch(/\bengine\b/);
+  });
+
+  it("[control] the per-call-site spread check can actually fail -- proven on a fixture that stops spreading attemptCtx", () => {
+    const brokenSource = 'const { write, status } = await finishAttempt(supabase, { applicationId, status: "ready" });';
+    const CALL_SITE = /finishAttempt\(supabase,\s*\{/g;
+    const match = CALL_SITE.exec(brokenSource);
+    expect(match).not.toBeNull();
+    const window = brokenSource.slice(match.index, match.index + 200);
+    expect(window).not.toMatch(/\.\.\.(attemptCtx|ctx)\b/);
   });
 });

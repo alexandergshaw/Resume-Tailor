@@ -36,8 +36,13 @@ export const PREP_ROUTE_MAX_DURATION_S = 120;
 export const PREP_RATE_LIMIT = 12;
 export const PREP_RATE_WINDOW_MS = 600_000;
 
-/** `interview_prep_packs_pack_size_check`'s byte cap on the stored `pack`
- *  JSONB document. */
+/** The byte cap `lib/interviewPrep/prepStore.js`'s `checkPackByteBudget`
+ *  enforces on the stored `pack` JSONB document, in JS rather than as a
+ *  database CHECK -- the migration's own "NOT ADDED, deliberately" note
+ *  (supabase/migrations/20260914000000_interview_prep.sql) explains why: a
+ *  CHECK built on `pg_column_size` would not be IMMUTABLE, which is a
+ *  dump/restore hazard. No `interview_prep_packs_pack_size_check` constraint
+ *  exists in that migration. */
 export const PREP_PACK_MAX_BYTES = 262_144;
 
 /** Per-attempt timeout for IP3's own (non-grounded) generation call. Must be
