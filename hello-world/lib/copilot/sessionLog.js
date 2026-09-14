@@ -247,6 +247,24 @@ function transcriptLabel(evt, speakerSnapshot) {
   return "Unknown speaker";
 }
 
+// AC-Q2.3 correlation helper, shared by the live `answer.done` shape and
+// practice's `answer.metrics`/`answer.critique`/`answer.critique.error`
+// shapes below. Requires `id` to be present on BOTH sides — two absent ids
+// (`undefined === undefined`) must never be treated as a match, or a single
+// id-less event would collapse onto every id-less question in the log (see
+// the guard above this function's own call sites). Returns the LAST
+// matching event, not the first: a question answered twice ("Try again" in
+// practice) keeps the same id, and the second attempt is the one the
+// candidate wants judged — a `.find` would show the first attempt forever.
+function lastEventForId(events, type, id) {
+  if (id == null) return undefined;
+  let result;
+  for (const e of events) {
+    if (e.type === type && e.id === id) result = e;
+  }
+  return result;
+}
+
 function formatFields(evt) {
   const parts = [];
   for (const key of Object.keys(evt)) {
@@ -308,7 +326,7 @@ function buildMarkdown(snapshot, opts) {
     lines.push("_No questions were detected._");
   } else {
     for (const q of questions) {
-      const answer = events.find((e) => e.type === "answer.done" && e.id === q.id);
+      const answer = lastEventForId(events, "answer.done", q.id);
       lines.push(`### [${fmtClock(q.t)}] ${safeStr(q.question)}`);
       if (answer) {
         lines.push(`Drafted [${fmtClock(answer.t)}]:`);
@@ -319,7 +337,32 @@ function buildMarkdown(snapshot, opts) {
           lines.push("_No answer drafted._");
         }
       } else {
-        lines.push("_No answer drafted._");
+        // Practice mode never emits `answer.done` (see
+        // usePracticeSessionLog.js) — it records a spoken answer's delivery
+        // metrics and AI critique as their own events instead, stamped with
+        // the same locally-minted `id` this question carries. Nothing here
+        // is fabricated: this reads exactly the facts practice already
+        // recorded, by id, at render time. If none of the three exist (never
+        // answered, or abandoned before Done), the line stays the honest
+        // "_No answer drafted._" — unchanged from before this branch existed.
+        const metrics = lastEventForId(events, "answer.metrics", q.id);
+        const critique = lastEventForId(events, "answer.critique", q.id);
+        const critiqueError = lastEventForId(events, "answer.critique.error", q.id);
+        if (metrics || critique || critiqueError) {
+          if (metrics) {
+            lines.push(`- [${fmtClock(metrics.t)}] **answer.metrics** — ${formatFields(metrics)}`);
+          }
+          if (critique) {
+            lines.push(`- [${fmtClock(critique.t)}] **answer.critique** — ${formatFields(critique)}`);
+          }
+          if (critiqueError) {
+            lines.push(
+              `- [${fmtClock(critiqueError.t)}] **answer.critique.error** — ${formatFields(critiqueError)}`,
+            );
+          }
+        } else {
+          lines.push("_No answer drafted._");
+        }
       }
       lines.push("");
     }
@@ -332,7 +375,16 @@ function buildMarkdown(snapshot, opts) {
   lines.push("## Diagnostics");
   lines.push("");
   const diagnostics = events.filter(
-    (e) => e.type !== "transcript" && e.type !== "question.added" && e.type !== "answer.done",
+    (e) =>
+      e.type !== "transcript" &&
+      e.type !== "question.added" &&
+      e.type !== "answer.done" &&
+      // Practice's per-question answer facts, once surfaced under their
+      // question above, must not ALSO print here — each event still renders
+      // in exactly one place (AC-Q2.4), matching the `answer.done` precedent.
+      e.type !== "answer.metrics" &&
+      e.type !== "answer.critique" &&
+      e.type !== "answer.critique.error",
   );
   if (!diagnostics.length) {
     lines.push("_No additional diagnostic events were recorded._");

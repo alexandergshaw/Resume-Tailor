@@ -35,7 +35,7 @@ import { downloadSessionLogArchive } from "@/lib/copilot/sessionLogArchive";
 // sessionLog.js's Markdown builder filtering on another) is invisible to a
 // test that only inspects the hook's own snapshot, or one that only feeds
 // the renderer a hand-built fixture already using the "right" name.
-import { renderSessionLogMarkdown } from "@/lib/copilot/sessionLog.js";
+import { renderSessionLogMarkdown } from "@/lib/copilot/sessionLog";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -92,6 +92,13 @@ function mountProbe() {
 
 function eventsOfType(snapshot, type) {
   return (snapshot?.events || []).filter((e) => e.type === type);
+}
+
+// Isolates the "Questions and drafted answers" section from the rest of the
+// rendered document, the same way the existing end-to-end test below already
+// does — shared here because several new tests below need it too.
+function questionsSectionOf(markdown) {
+  return markdown.split("## Questions and drafted answers")[1].split("## Diagnostics")[0];
 }
 
 beforeEach(() => {
@@ -351,7 +358,7 @@ describe("end to end: a served question actually reaches the rendered log", () =
   // the REAL renderer (renderSessionLogMarkdown, imported unmocked above)
   // end to end, so a producer/consumer event-name mismatch like that one
   // cannot hide behind a fixture that already uses the "right" name.
-  it("puts a served question's text in 'Questions and drafted answers', not Diagnostics, and not the empty-state line", () => {
+  it("puts a served question's text in 'Questions and drafted answers', not the empty-state line", () => {
     const { captured, update } = mountProbe();
     act(() => captured.onStart());
     update({ currentQuestionText: "Tell me about a conflict." });
@@ -365,5 +372,145 @@ describe("end to end: a served question actually reaches the rendered log", () =
 
     expect(questionsSection).toContain("Tell me about a conflict.");
     expect(markdown).not.toContain("_No questions were detected._");
+  });
+});
+
+describe("end to end: a practice answer's metrics and critique reach the rendered log (AC-Q2.3)", () => {
+  // Regression test for the defect where every practice question rendered
+  // "_No answer drafted._" beneath it even when the candidate answered and a
+  // critique was recorded: sessionLog.js's renderer only ever named
+  // "answer.done" (a live-mode-only event practice never emits), while this
+  // hook records the same facts as "answer.metrics"/"answer.critique". Drives
+  // the REAL recorder (this hook, backed by sessionLog.js's real
+  // createSessionLog) and the REAL renderer (renderSessionLogMarkdown,
+  // imported unmocked above) end to end — the join the original defect fell
+  // through, because the producer's own tests only ever asserted its own
+  // event names and the renderer's own tests only ever fed it fixtures that
+  // already used the "right" names.
+  it("puts the answer's recorded delivery metrics and critique under its question, not the empty-state line", () => {
+    const { captured, update } = mountProbe();
+    act(() => captured.onStart());
+    update({ currentQuestionText: "Tell me about a conflict." });
+    update({ answering: true });
+    update({ answering: false });
+    update({ answerMetrics: { wpm: 142, fillerCount: 6, seconds: 88 } });
+    update({
+      critique: { score: 88, strengths: ["Strong STAR structure"] },
+      critiqueStatus: "done",
+    });
+
+    const markdown = renderSessionLogMarkdown(captured.sessionLogSnapshot(), {});
+    const questionsSection = questionsSectionOf(markdown);
+
+    expect(questionsSection).toContain("142");
+    expect(questionsSection).toContain("Strong STAR structure");
+    expect(questionsSection).not.toContain("_No answer drafted._");
+
+    // AC-Q2.4: the same fact must not ALSO print in Diagnostics — each event
+    // still renders in exactly one place.
+    const diagnostics = markdown.slice(markdown.indexOf("## Diagnostics"));
+    expect(diagnostics).not.toContain("142");
+    expect(diagnostics).not.toContain("Strong STAR structure");
+  });
+});
+
+describe("undefined === undefined collapse guard, driven through the real hook (AC-Q2.3 guard)", () => {
+  // The naive way to fix the defect above is to make practice emit a SINGLE
+  // id-less event the renderer correlates by `e.id === q.id` with no
+  // presence check: since practice questions also carry no id,
+  // `undefined === undefined` is true and the one answer collapses onto
+  // EVERY question in the log. This drives the REAL hook (which mints and
+  // freezes a real per-question id — see usePracticeSessionLog.js) into the
+  // REAL renderer and proves a later, unanswered question never inherits an
+  // earlier one's answer.
+  it("does not let one question's answer bleed into a later, unanswered question", () => {
+    const { captured, update } = mountProbe();
+    act(() => captured.onStart());
+
+    update({ currentQuestionText: "Tell me about a conflict." });
+    update({ answering: true });
+    update({ answering: false });
+    update({ answerMetrics: { wpm: 142, fillerCount: 6, seconds: 88 } });
+    update({
+      critique: { score: 88, strengths: ["Strong STAR structure"] },
+      critiqueStatus: "done",
+    });
+
+    // Q2 served, left completely unanswered.
+    update({ currentQuestionText: "Describe a time you led." });
+
+    const questionsSection = questionsSectionOf(
+      renderSessionLogMarkdown(captured.sessionLogSnapshot(), {}),
+    );
+    const q2Block = questionsSection.slice(questionsSection.indexOf("Describe a time you led."));
+
+    expect(q2Block).toContain("_No answer drafted._");
+    expect(q2Block).not.toContain("142");
+    expect(q2Block).not.toContain("Strong STAR structure");
+  });
+});
+
+describe("collision: identical question text must not cross-contaminate (AC-Q2.3)", () => {
+  // Two DIFFERENT questions in the same session can carry IDENTICAL text —
+  // nothing dedupes a manually-typed question against an earlier one, and
+  // this hook's own "not the same text served twice in a row" guard only
+  // blocks CONSECUTIVE repeats. Correlating by text instead of a minted id
+  // would make the second occurrence silently inherit the first's answer.
+  it("gives two questions with the same text two different ids, each showing only its own answer", () => {
+    const { captured, update } = mountProbe();
+    act(() => captured.onStart());
+
+    update({ currentQuestionText: "Tell me about yourself." });
+    update({ answering: true });
+    update({ answering: false });
+    update({ answerMetrics: { wpm: 100 } });
+
+    update({ currentQuestionText: "Describe your strengths." }); // distinct, intervening question
+    update({ currentQuestionText: "Tell me about yourself." }); // same text again, not consecutive
+
+    const questionsSection = questionsSectionOf(
+      renderSessionLogMarkdown(captured.sessionLogSnapshot(), {}),
+    );
+    const occurrences = questionsSection.split("Tell me about yourself.");
+    expect(occurrences).toHaveLength(3); // exactly two headings with this text
+
+    expect(occurrences[1]).toContain("100"); // the FIRST occurrence's own metrics
+    expect(occurrences[2]).toContain("_No answer drafted._"); // the SECOND, unanswered
+    expect(occurrences[2]).not.toContain("100");
+  });
+});
+
+describe("collision: the same question answered twice shows the latest attempt (AC-Q2.3, 'Try again')", () => {
+  // "Try again" re-answers the SAME question without currentQuestionText
+  // changing, so no new question.added fires and both attempts' events are
+  // tagged with the same id. "Try again" exists specifically so the
+  // candidate's SECOND attempt is the one judged — a naive `.find` (first
+  // match) would show the first, discarded attempt forever.
+  it("replaces the first attempt's metrics and critique with the second, not both", () => {
+    const { captured, update } = mountProbe();
+    act(() => captured.onStart());
+
+    update({ currentQuestionText: "Tell me about a conflict." });
+
+    update({ answering: true });
+    update({ answering: false });
+    update({ answerMetrics: { wpm: 111 } });
+    update({ critique: { strengths: ["Attempt one weak"] }, critiqueStatus: "done" });
+
+    // "Try again": currentQuestionText is unchanged, so the same id is
+    // re-captured for this second recording.
+    update({ answering: true });
+    update({ answering: false });
+    update({ answerMetrics: { wpm: 222 } });
+    update({ critique: { strengths: ["Attempt two strong"] }, critiqueStatus: "done" });
+
+    const questionsSection = questionsSectionOf(
+      renderSessionLogMarkdown(captured.sessionLogSnapshot(), {}),
+    );
+
+    expect(questionsSection).toContain("222");
+    expect(questionsSection).toContain("Attempt two strong");
+    expect(questionsSection).not.toContain("111");
+    expect(questionsSection).not.toContain("Attempt one weak");
   });
 });

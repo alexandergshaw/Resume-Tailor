@@ -234,6 +234,22 @@ describe("renderSessionLogMarkdown — the readable record (AC-Q2)", () => {
     expect(md).toContain("Result: shipped two weeks early");
   });
 
+  it("never lets two id-less questions collapse onto the same id-less answer (AC-Q2.3 guard)", () => {
+    // Practice questions carry no `id` (see usePracticeSessionLog.js), so
+    // `q.id` is `undefined` for both. An id-less `answer.done` must not
+    // satisfy `undefined === undefined` and attach itself to every question
+    // in the log — each must independently say no answer was drafted.
+    const log = newLog([0, 1_000, 2_000]);
+    log.event("question.added", { question: "Q1" });
+    log.event("question.added", { question: "Q2" });
+    log.event("answer.done", { points: ["should not appear anywhere"] });
+    const md = renderSessionLogMarkdown(log.snapshot());
+    const questionsSection = md.split("## Questions and drafted answers")[1].split("## Diagnostics")[0];
+    const noAnswerCount = (questionsSection.match(/_No answer drafted\._/g) || []).length;
+    expect(noAnswerCount).toBe(2);
+    expect(questionsSection).not.toContain("should not appear anywhere");
+  });
+
   it("says so explicitly when a question was never answered (AC-Q2.3)", () => {
     const log = newLog([0, 5_000]);
     log.event("question.added", { id: 3, question: "Why this role?" });

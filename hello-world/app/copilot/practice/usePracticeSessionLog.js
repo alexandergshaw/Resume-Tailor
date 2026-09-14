@@ -84,6 +84,27 @@ export function usePracticeSessionLog({
   const loggedCritiqueRef = useRef(null);
   const lastCritiqueErrorRef = useRef("");
 
+  // AC-Q2.3 correlation: practice questions have no server-issued id, but
+  // sessionLog.js's renderer needs one to pair a spoken answer's metrics and
+  // critique with the question they belong to (see sessionLog.js's own
+  // "Questions and drafted answers" loop). `questionIdRef` is a monotonic
+  // counter, local to this hook, bumped once per genuinely-new
+  // `question.added` — the exact same place `lastQuestionRef` already
+  // dedupes a *consecutive* repeat, so two questions with IDENTICAL text
+  // still get two DIFFERENT ids and never cross-contaminate each other's
+  // answer. `currentQuestionIdRef` is "which question is on screen right
+  // now, by id." `answerQuestionIdRef` is frozen at the moment an answer
+  // recording STARTS (not re-read live afterward) — see that effect below
+  // for why freezing, not a live read, is the deliberate choice — and tags
+  // every event describing that recording's outcome. "Try again" re-answers
+  // the SAME question without `currentQuestionText` changing, so it
+  // re-captures the SAME id: both attempts' events end up tagged alike, and
+  // sessionLog.js's `lastEventForId` (last match, not first) is what makes
+  // the renderer show the most recent attempt.
+  const questionIdRef = useRef(0);
+  const currentQuestionIdRef = useRef(undefined);
+  const answerQuestionIdRef = useRef(undefined);
+
   // The one place every event actually reaches the log. Never throws (see
   // sessionLog.js's own `event()` contract) and is a silent no-op before
   // any session has started (logRef.current is null) — callers below never
@@ -117,6 +138,9 @@ export function usePracticeSessionLog({
       loggedMetricsRef.current = null;
       loggedCritiqueRef.current = null;
       lastCritiqueErrorRef.current = "";
+      questionIdRef.current = 0;
+      currentQuestionIdRef.current = undefined;
+      answerQuestionIdRef.current = undefined;
       log.event("session.start", {
         posting: posting
           ? { id: posting.id ?? null, name: posting.title || posting.company || null }
@@ -158,7 +182,9 @@ export function usePracticeSessionLog({
   useEffect(() => {
     if (!currentQuestionText || currentQuestionText === lastQuestionRef.current) return;
     lastQuestionRef.current = currentQuestionText;
-    event("question.added", { question: currentQuestionText });
+    questionIdRef.current += 1;
+    currentQuestionIdRef.current = questionIdRef.current;
+    event("question.added", { id: questionIdRef.current, question: currentQuestionText });
   }, [currentQuestionText, event]);
 
   useEffect(() => {
@@ -232,9 +258,18 @@ export function usePracticeSessionLog({
   // what get logged, via prevAnsweringRef.
   useEffect(() => {
     if (answering && !prevAnsweringRef.current) {
+      // Freeze the id THIS recording belongs to now, rather than re-reading
+      // currentQuestionIdRef live at metrics/critique time — see this
+      // hook's own header comment on questionIdRef for why a locally-frozen
+      // value is preferred over trusting a cross-hook reset-ordering
+      // invariant this file does not own.
+      answerQuestionIdRef.current = currentQuestionIdRef.current;
       event("answer.recording.start", { question: questionTextRef.current });
     } else if (!answering && prevAnsweringRef.current) {
-      event("answer.recording.stop", { question: questionTextRef.current });
+      event("answer.recording.stop", {
+        id: answerQuestionIdRef.current,
+        question: questionTextRef.current,
+      });
     }
     prevAnsweringRef.current = answering;
   }, [answering, event]);
@@ -251,7 +286,7 @@ export function usePracticeSessionLog({
     }
     if (answerMetrics === loggedMetricsRef.current) return;
     loggedMetricsRef.current = answerMetrics;
-    event("answer.metrics", { metrics: answerMetrics });
+    event("answer.metrics", { id: answerQuestionIdRef.current, metrics: answerMetrics });
   }, [answerMetrics, event]);
 
   // AC-Q7.2: the critique returned for an answer, and its failure.
@@ -262,7 +297,7 @@ export function usePracticeSessionLog({
     }
     if (critique === loggedCritiqueRef.current) return;
     loggedCritiqueRef.current = critique;
-    event("answer.critique", { critique });
+    event("answer.critique", { id: answerQuestionIdRef.current, critique });
   }, [critique, critiqueStatus, event]);
 
   useEffect(() => {
@@ -272,7 +307,7 @@ export function usePracticeSessionLog({
     }
     if (critiqueError === lastCritiqueErrorRef.current) return;
     lastCritiqueErrorRef.current = critiqueError;
-    event("answer.critique.error", { message: critiqueError });
+    event("answer.critique.error", { id: answerQuestionIdRef.current, message: critiqueError });
   }, [critiqueError, critiqueStatus, event]);
 
   return {
