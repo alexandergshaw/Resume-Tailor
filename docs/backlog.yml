@@ -1,0 +1,216 @@
+# docs/backlog.yml — source of truth for the backlog. docs/BACKLOG.md is GENERATED from this file
+# by hello-world/scripts/backlog/render.mjs — never hand-edit BACKLOG.md, edit this file and re-render.
+#
+# Schema per item (every field present on every item; unused ones are null):
+#   id             - unique, namespaced: N = actionable, D = owner decision, V = verification owed
+#   state          - "actionable" | "owner" | "verification"
+#   title          - the Item/Question cell (markdown, full text)
+#   owed_by        - actionable only: the "Owed by" cell
+#   evidence       - actionable only: array of the "Measured how" cell text (kept as one element per
+#                    cell at migration — see below on why it is not forced into file:line pairs)
+#   blocked_reason - owner only: the "Why it is blocked" cell
+#   instrument     - verification only: the "Measured how" cell (the exact instrument the owner runs)
+#   owns           - actionable only, nullable: glob(s) of files this item edits; null = not yet scoped
+#   verify         - actionable only, nullable: the command that proves this item is done; null = not
+#                    yet scoped. NEVER fabricate this to make an item look complete — an invented
+#                    verify is a gate that compares a guess to itself.
+#   verify_proof   - populated only once the three-part-plus-kill authoring gate (fails on HEAD,
+#                    passes on a real fix, is KILLED by reverting the fix, survives a no-op edit —
+#                    see scripts/backlog/lib/contract.mjs) has actually proven `verify` can fail for
+#                    the right reason; null until then
+#   blocked_by     - array of other items' ids. A NON-EMPTY list blocks this item unconditionally,
+#                    whether or not the named id still exists in this file — resolving a blocker is
+#                    always an explicit edit removing its id here, never inferred from the id's
+#                    disappearance (a closed item is deleted per this file's own "no diary" rule, so
+#                    disappearance cannot be told apart from a typo'd id). See scripts/backlog/lib/blocked.mjs.
+#
+# `owns`/`verify` are left null for every item below, deliberately. This is Phase 1 of a two-phase
+# migration: a lossless, mechanical transcription of the existing docs/BACKLOG.md (this file), and a
+# separate, later, judgment-heavy chunk that scopes each item's owns/verify one at a time under the
+# authoring gate. Scoping 12 of 15 items by guessing here would be the exact "verify that cannot fail"
+# defect this tooling exists to prevent — see N1's own note: its most obvious verify command already
+# passes today, before any fix, because the code's existing test suite was never written against the
+# input this item objects to.
+
+# ACTIONABLE (12)
+- id: "N1"
+  state: "actionable"
+  title: "**`SEC-1`: the engine-override fix, repo-wide.** A request-supplied `engine` overrides server config: `wantsEmbedded(\"gemini\", { RESUME_ENGINE: \"embedded\" })` returns **false**, with control `(\"bogus\", …)` → **true** proving the default *is* read for unrecognised values. An offline-configured deployment can be forced to spend on paid generation with the candidate's résumé."
+  owed_by: "Its own chunk — not yet started"
+  evidence: ["`lib/llm/featureEngine.js:28` `wantsEmbedded(requested, env)`; its own header states the precedence — `1. An explicit per-request engine` **before** `2. The server default RESUME_ENGINE` (`:8-9`), and `:33` falls back to the default only when there is no explicit request. Owner ruling **O-14**"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N2"
+  state: "actionable"
+  title: "**O-2 step 7 precedence is ambiguous** when both the `Test Files` and `Errors` lines hold. No fix round is scheduled."
+  owed_by: "A regression AC round"
+  evidence: ["ledger `T3-C4b-6`, `T3-V6-6`"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N3"
+  state: "actionable"
+  title: "**Three 4b instrument minors, disclosed and unfixed.** `C4B-6` an import-extension regex fragility; `C4B-7` the reason-vocabulary CHECK canary drawn from the same source it validates (partially mitigated); `C4B-8` an outcome-check that asserts containment only"
+  owed_by: "A later 4b round"
+  evidence: ["`check-4b.r1.md` majors table; scoped out by `4b.r2.md`"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N4"
+  state: "actionable"
+  title: "**The K1-PROHIBITION corpus is held-out by instruction, not by construction.** `lib/interviewPrep/__fixtures__/predictionCorpus.js` sits in the implementer's own module directory; nothing prevents reading it. Proven discriminating today: a 10-string lookup-table build passes all 27 visible rows and ships both held-out sentences unrefused"
+  owed_by: "A later hardening round — derive held-out members rather than store them"
+  evidence: ["`4b.r2.md`; ruling `R-IP3-64`"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N5"
+  state: "actionable"
+  title: "**Three named contract functions have no test and no implementation.** `packRenderState`, `packIsStale`, `shouldStartPrep` are named by `design-structure.r1.md` §3 but no 4b row exercises them, so step-5 wave 1 correctly declined to build them against a guessed row shape. A coverage gap in 4b, not an implementation gap"
+  owed_by: "A 4b round, then the wave that owns them"
+  evidence: ["`prepContract.js`'s own comment names the gap; step-5 wave 1 report"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N6"
+  state: "actionable"
+  title: "**`launch.js` L7's `lockedIds` guard is unswept** — no faithful dangerous mutant was found for it. Named, not asserted clean"
+  owed_by: "A later sabotage pass"
+  evidence: ["`sabotage.r2.md`"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N7"
+  state: "actionable"
+  title: "**`prepLog.js` was built with no specifying document and no test.** 86 lines, created because the wave table needs the file to exist for a later mechanical gate and the UI wave. Its export shape is invented, and nothing exercises it — the same class wave 1 correctly refused for three other functions"
+  owed_by: "A 4b round before it carries behaviour"
+  evidence: ["`lib/interviewPrep/prepLog.js` header discloses it; step-5 wave 2 report"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N8"
+  state: "actionable"
+  title: "**The prep prompt does NOT send the résumé or cover letter.** `route.js` writes `resumeId`/`coverLetterId` as `null` and generates from the posting text plus the digest only, because no binding document names a résumé/cover-letter store. **Two consequences**: answers are not tailored to the candidate's actual material, which is the feature's point; and **O-12's disclosure says the résumé and cover letter are sent**, so the notice currently over-states what leaves the app"
+  owed_by: "A design round to name the store, then the wave that wires it — **and IP-N re-checks the notice text against what is actually sent**"
+  evidence: ["`app/api/interview-prep/route.js` header discloses it; owner ruling **O-12**"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N9"
+  state: "actionable"
+  title: "**The route discriminates a CHECK violation by MESSAGE TEXT.** `finishAttempt()` matches on the error message because `prepStore.js`'s return shape does not expose `error.code` — yet 3b confirmed at primary source that SQLSTATE `23514` passes through supabase-js **clean and unmodified**. A message-text matcher breaks on any wording change; the code is right there"
+  owed_by: "Expose `error.code` from `prepStore.js` and match on it"
+  evidence: ["`route.js` `finishAttempt()`; `3b.r1.md` item 3"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N10"
+  state: "actionable"
+  title: "**`interview_prep_events.outcome` mapping is unconfirmed** (`'failed'→'error'`, else mirrors pack status) — a best-evidenced reading absent a stated CHECK vocabulary"
+  owed_by: "4b/9c, against the real migration"
+  evidence: ["flagged in `route.js` in-file"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N11"
+  state: "actionable"
+  title: "**O-7's digest-ensure forwards the caller's cookie** in a server-to-server fetch, because no existing helper does this. Security-relevant and unreviewed"
+  owed_by: "A security review round"
+  evidence: ["disclosed in `route.js`'s header"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N12"
+  state: "actionable"
+  title: "**`interview_prep_spend.attempts` is still client-resettable.** `authenticated` holds `grant update (attempts, updated_at)` because `claim_prep_pack_slot` is `SECURITY INVOKER` and increments `attempts` **as that role** — revoking it breaks every claim with a permission error. So a `PATCH` can set `attempts` to 0 and buy more retries. **Bounded, and adjudicated as acceptable for now**: every retry still increments `model_calls`, which only the `SECURITY DEFINER` `record_prep_model_call` can write, so the **money** cap holds regardless — exposure is capped at `model_calls <= 12`. **The fix**: make `claim_prep_pack_slot` `SECURITY DEFINER` with its own tenant checks, then revoke insert/update from `authenticated` entirely"
+  owed_by: "A contract round (the contract currently specifies `SECURITY INVOKER`)"
+  evidence: ["`20260914000000_interview_prep.sql:368-369`; flagged by the implementer rather than worked around"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+# OWNER (2)
+- id: "D1"
+  state: "owner"
+  title: "**RLS on the three new interview-prep tables cannot be verified here.** Supabase's URL is a placeholder, so every CHECK, policy and the `claim_prep_pack_slot` RPC is a *specification*, not confirmed behaviour."
+  owed_by: null
+  evidence: []
+  blocked_reason: "Needs `pg_class.relrowsecurity`, `pg_policies` and `information_schema.columns` run against the live project and pasted back. Inferring it from the migration is the defect that has already produced two wrong rulings here (`schema-migration-drift`)"
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "D2"
+  state: "owner"
+  title: "**The transport claim is doc-verified, not wire-verified.**"
+  owed_by: null
+  evidence: []
+  blocked_reason: "No `GEMINI_API_KEY` in this checkout. Recorded in the research ledger with that caveat"
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+# VERIFICATION (1)
+- id: "V1"
+  state: "verification"
+  title: "**Rich résumé copy has never touched a real clipboard.** The unit tests prove both `text/html` and `text/plain` are set with the right payloads, each with a negative control — but nobody has pasted into Word or Google Docs."
+  owed_by: null
+  evidence: []
+  blocked_reason: null
+  instrument: "`npx vitest run lib/clipboard app/components/preview app/components/DocumentPreviewDialog.copy.test.js` → 339/339. A real paste is the missing instrument"
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []

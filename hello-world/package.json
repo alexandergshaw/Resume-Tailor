@@ -13,7 +13,11 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "copy-mediapipe": "node scripts/copy-mediapipe.mjs"
+    "copy-mediapipe": "node scripts/copy-mediapipe.mjs",
+    "backlog:next": "node scripts/backlog/next.mjs",
+    "backlog:wave": "node scripts/backlog/wave.mjs",
+    "backlog:render": "node scripts/backlog/render.mjs",
+    "backlog:check": "node scripts/backlog/checkGenerated.mjs && node scripts/backlog/checkContract.mjs"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
