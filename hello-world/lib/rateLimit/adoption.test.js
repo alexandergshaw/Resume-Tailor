@@ -159,6 +159,12 @@ const BOUNDED = [
     windowMs: 600_000,
     why: "the original adoption (1515a16) -- listed so the sweep below counts it",
   },
+  {
+    route: "app/api/interview-prep/route.js",
+    limit: 12,
+    windowMs: 600_000,
+    why: "one prep generation per application per ten minutes, matching PREP_RATE_LIMIT/PREP_RATE_WINDOW_MS and the grounded-call cadence application-digest is already sized for",
+  },
 ];
 
 /**

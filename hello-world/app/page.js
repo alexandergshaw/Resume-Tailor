@@ -80,6 +80,7 @@ import {
 } from "../lib/supabase/applicationStatusWriter";
 import { STATUS, excludeTrackingTabHiddenStatuses } from "../lib/applications/statusVocabulary";
 import { startPositionGlossary } from "../lib/copilot/glossaryTrigger";
+import { startInterviewPrepResearch } from "../lib/interviewPrep/prepTrigger";
 import { selectAppliedToggleAction } from "../lib/applications/applicationDecisions";
 import { persistGeneratedDocuments } from "../lib/supabase/persistGeneration";
 import { normalizeInterviewValue } from "../lib/tracking/stages";
@@ -1648,6 +1649,10 @@ export default function Home() {
     // does not fire twice for the same row; see applyAutoTailoredRow above for
     // why it is unawaited and unguarded.
     startPositionGlossary({ positionId });
+    // B3: IP3's own research trigger. `result.id` is the applications row
+    // writeApplicationStatus just wrote/promoted, the same value
+    // startInterviewPrepResearch keys its lookup on.
+    startInterviewPrepResearch({ applicationId: result.id, triggerClass: "B3" });
 
     setAppliedByExternalId((prev) => {
       const next = new Map(prev || []);
@@ -2290,7 +2295,9 @@ export default function Home() {
           // the moment that row ever went back through a pre-apply status.
           // Targeting "tailored" instead means the promote can never carry an
           // applied-or-later value, so the guard actually protects.
-          await upsertApplication(supabase, { userId: currentUser.id, positionId, status: STATUS.TAILORED });
+          const applicationId = await upsertApplication(supabase, { userId: currentUser.id, positionId, status: STATUS.TAILORED });
+          // B1: IP3's own research trigger, fired with the row just upserted.
+          startInterviewPrepResearch({ applicationId, triggerClass: "B1" });
         }
         await persistGeneratedDocuments(supabase, {
           userId: currentUser.id,
@@ -2363,9 +2370,18 @@ export default function Home() {
   }
 
   // Generate the document with the reviewed slot values via the manual pipeline.
-  function generateWithReviewedValues(values) {
+  async function generateWithReviewedValues(values) {
     setSlotReview((prev) => ({ ...prev, open: false }));
-    manualTailor.tailorPosting(null, { values, overridePosting: slotReview.posting });
+    const result = await manualTailor.tailorPosting(null, { values, overridePosting: slotReview.posting });
+    // B1: IP3's own research trigger. tailorPosting's own return carries
+    // jobId, not the applications.id row startInterviewPrepResearch keys
+    // on -- useManualTailor.js's own persistence (upsertApplication) is
+    // invisible from here, and widening its return shape is outside this
+    // wave's grant (plan.r1.md §4, the tracing gap named rather than
+    // guessed at). Fires with no id on success; prepTrigger.js's own
+    // blank-id refusal makes this a documented no-op, the same as any
+    // other caller that has none yet.
+    if (result?.ok) startInterviewPrepResearch({ triggerClass: "B1" });
   }
 
   // Tailor a résumé + cover letter for a Live Feed posting. Mirrors
@@ -2539,7 +2555,9 @@ export default function Home() {
         if (positionId) {
           // Tailoring is not applying (P-1) — see the matching comment in
           // handleUrlSubmit above. Promote to "tailored", never "applied".
-          await upsertApplication(supabase, { userId: currentUser.id, positionId, status: STATUS.TAILORED });
+          const applicationId = await upsertApplication(supabase, { userId: currentUser.id, positionId, status: STATUS.TAILORED });
+          // B1: IP3's own research trigger, fired with the row just upserted.
+          startInterviewPrepResearch({ applicationId, triggerClass: "B1" });
         }
         await persistGeneratedDocuments(supabase, {
           userId: currentUser.id,

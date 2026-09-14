@@ -61,6 +61,10 @@ export const ALLOWED_UNREACHABLE_MODULES = [
     file: "lib/llm/geminiWireProbe.js",
     why: "shared Gemini request-capturing probe used by eight wire tests; it exists because the `tools`-nesting defect was invisible to every non-wire test in the repo",
   },
+  {
+    file: "lib/interviewPrep/__fixtures__/predictionCorpus.js",
+    why: "the held-out K1-PROHIBITION fixture for prepParse.test.js -- PREDICTION_CORPUS is the corpus that suite imports directly by name; a plain .js beside the test it feeds, same shape as practiceSessionTestDoubles.js and driveWireProbe.js above, and never ships to a browser",
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -100,7 +104,24 @@ export const ALLOWED_UNREACHABLE_MODULES = [
 // required these lines to go. That is the ledger doing exactly what its own
 // comment promises: a finding held in a named bucket until it is acted on, then
 // removed when it is.
-export const UNWIRED_MODULES = [];
+//
+// ONE ENTRY LEFT, IP3. lib/interviewPrep/prepTrigger.js was the other --
+// landed built and tested in isolation, with its consuming wave named but not
+// yet built, the same shape as the original three. Wave 8/9 landed its five
+// call sites (app/page.js's generateWithReviewedValues/handleUrlSubmit/
+// handleTailorFeedPosting/handleToggleApplied and
+// app/hooks/useManualPostings.js's runWorker), so the measurable signal its
+// own finding named -- app/prepTriggerSeams.test.js's must-fire assertions
+// going green -- has happened, and the line is deleted per this ledger's own
+// rule: delete the day a real caller lands. lib/interviewPrep/prepLog.js
+// remains: its own `finding` says what the missing wiring is; delete that
+// line the day PrepPackPanel.js (or another caller) lands a real one.
+export const UNWIRED_MODULES = [
+  {
+    file: "lib/interviewPrep/prepLog.js",
+    finding: "createPrepLog is the ephemeral per-tab counter behind design-experience.r2.md §4.2's \"N events recorded\" caption and its own D6(v) reset control; no component in this checkout calls it. design-structure.r1.md's module-boundaries table (§3) has no entry for this file at all, and the component that would call it, PrepPackPanel.js, is named in this file's own header as a later wave",
+  },
+];
 
 // ---------------------------------------------------------------------------
 // LEDGER 3 -- exported symbols in a REACHABLE module that neither shipping code
@@ -276,6 +297,54 @@ export const ORPHAN_EXPORTS = [
     name: "formatMessageDate",
     why: "declared and exported and not referenced even inside emailUtils.js -- a presentation helper for a Gmail list view that nothing renders",
   },
+
+  // --- IP3's own budget/projection constants, invented ahead of their
+  // consuming wave. Every one below is cited against a specific design
+  // section or contract clause in its own file, not a guess -- this is the
+  // same shape as prepContract.js's own header disclosure for
+  // packRenderState/packIsStale/shouldStartPrep: built to the contract,
+  // consumed by a later round. -------------------------------------------
+  {
+    file: "lib/interviewPrep/prepConstants.js",
+    name: "PREP_GENERATION_MAX_ATTEMPTS",
+    why: "documents IP3's own generation call as issued at most once per attempt, a structural property of the shared Gemini client's construction (1-0-contract.r8.md §10.6) rather than a settable flag; route.js does not read it back and no test pins it by name",
+  },
+  {
+    file: "lib/interviewPrep/prepConstants.js",
+    name: "PREP_ROUTE_MAX_DURATION_S",
+    why: "route.js:98 restates this value as a literal (`export const maxDuration = 120`) with a comment pointing back here, because Next.js requires a route segment config value to be statically analyzable rather than imported; the constant documents the number, it cannot be the number there",
+  },
+  {
+    file: "lib/interviewPrep/prepConstants.js",
+    name: "PREP_GENERATION_TIMEOUT_FLOOR_MS",
+    why: "the floor PREP_GENERATION_TIMEOUT_MS (which route.js does import) must never be reduced below, per this module's own doc comment; nothing enforces that floor yet and no test reads it",
+  },
+  {
+    file: "lib/interviewPrep/prepConstants.js",
+    name: "PREP_ROUTE_RESERVE_MS",
+    why: "the non-generation round-trip time budget named in this module's own doc comment (auth, rate limiter, the claim RPC, the terminal write, recordPrepEvent); nothing in route.js checks the request against it yet",
+  },
+  {
+    file: "lib/interviewPrep/prepConstants.js",
+    name: "PREP_LEASE_SLACK_MS",
+    why: "the slack this module's own doc comment says a caller should subtract from a lease's remaining time before treating it as usably expired; claimPrepPack in prepStore.js does not read it, and no test does either",
+  },
+  {
+    file: "lib/interviewPrep/prepContract.js",
+    name: "PREP_LIST_COLUMNS",
+    why: "used once inside prepContract.js itself, to build PREP_LIST_PROJECTION (which prepStore.js imports and passes to .select()); nothing outside this module asks for the column array itself",
+  },
+  {
+    file: "lib/interviewPrep/prepContract.js",
+    name: "PREP_SPEND_COLUMNS",
+    why: "same shape as PREP_LIST_COLUMNS: used once inside this module to build PREP_SPEND_PROJECTION (which prepStore.js's spend read imports); nothing outside asks for the column array on its own",
+  },
+  {
+    file: "lib/interviewPrep/prepParse.js",
+    name: "containsDetectedName",
+    why: "used internally by normalizeStage, this file's own O-15 choke point, to decide whether a line needs the citation and prediction checks at all; exported so a future unit suite could pin the name-detection heuristic on its own, but prepParse.test.js currently drives it only through normalizePack",
+  },
+
   {
     file: "lib/llm/engines/tailor-lite/docxModel.js",
     name: "decodeXml",

@@ -162,4 +162,10 @@ export const FEATURE_LOG_LEDGER = [
     attached: false,
     why: "This log is rebuilt at download time from the stored summary and question rows rather than accumulated in memory, so producing it needs a live database read that a synchronous render of this file cannot perform. It stays on the knowledge panel, where the rows it describes are already loaded.",
   },
+  {
+    module: "lib/interviewPrep/prepLog.js",
+    label: "Interview-prep activity ledger",
+    attached: false,
+    why: "createPrepLog is the ephemeral, per-tab counter behind interview-prep's own \"N events recorded\" caption and its own reset control -- it dies with the tab by design and never reads or writes interview_prep_packs, interview_prep_spend or interview_prep_events. The durable record this feature actually exposes for download is served from listPrepEvents in lib/interviewPrep/prepStore.js, so there is nothing in this module for a markdown file to fold in.",
+  },
 ];

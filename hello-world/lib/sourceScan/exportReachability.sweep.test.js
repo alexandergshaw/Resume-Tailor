@@ -348,7 +348,11 @@ describe("every module is reachable from something that ships, or is on a ledger
     for (const entry of ALLOWED_UNREACHABLE_MODULES) {
       expect(entry.why.length, `${entry.file} is allow-listed with no real reason`).toBeGreaterThan(40);
     }
-    expect(ALLOWED_UNREACHABLE_MODULES).toHaveLength(9);
+    // 9 -> 10: lib/interviewPrep/__fixtures__/predictionCorpus.js, IP3's held-out
+    // K1-PROHIBITION corpus. Same shape as practiceSessionTestDoubles.js and
+    // driveWireProbe.js above it -- a fixture module its own suite imports by
+    // name, never code that ships.
+    expect(ALLOWED_UNREACHABLE_MODULES).toHaveLength(10);
   });
 
   it("keeps the unwired-feature findings visible and described", () => {
@@ -364,7 +368,19 @@ describe("every module is reachable from something that ships, or is on a ledger
     // both modules reachable from shipping code and failed the exact match
     // above until their lines were deleted -- the prompt working as designed,
     // in the direction this bucket was actually built for.
-    expect(UNWIRED_MODULES.map((e) => e.file)).toEqual([]);
+    //
+    // [] -> 2 -> 1. IP3's own prepLog.js and prepTrigger.js both landed built
+    // and tested in isolation with their consuming wave named but not yet
+    // landed -- the ORIGINAL shape this bucket exists for, not sweep/test
+    // infrastructure. prepTrigger.js's finding was independently measurable,
+    // not just a header claim: app/prepTriggerSeams.test.js's must-fire
+    // assertions were red against that checkout. Wave 8/9 landed its five
+    // call sites, that suite is green, and the line is gone -- the prompt
+    // working as designed, same as the rate-limiter pair above. prepLog.js
+    // remains unwired.
+    expect(UNWIRED_MODULES.map((e) => e.file)).toEqual([
+      "lib/interviewPrep/prepLog.js",
+    ]);
     for (const entry of UNWIRED_MODULES) {
       expect(entry.finding.length, `${entry.file} is recorded as unwired with no description`).toBeGreaterThan(60);
     }
@@ -438,7 +454,17 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     //   +1  useAnswerExpansions.js#useAnswerExpansions, the ordinary shape --
     //       used once inside its own module, with the names shipping code
     //       actually imports (ExpansionScope, useExpansionApi) reachable.
-    expect(ORPHAN_EXPORTS).toHaveLength(63);
+    // 63 -> 71: IP3's own eight, every one built ahead of its consuming wave
+    // and cited against its own design section rather than guessed --
+    // prepConstants.js's PREP_GENERATION_MAX_ATTEMPTS, PREP_ROUTE_MAX_DURATION_S,
+    // PREP_GENERATION_TIMEOUT_FLOOR_MS, PREP_ROUTE_RESERVE_MS and
+    // PREP_LEASE_SLACK_MS; prepContract.js's PREP_LIST_COLUMNS and
+    // PREP_SPEND_COLUMNS (each used once, internally, to build the
+    // *_PROJECTION string that IS reachable); and prepParse.js's
+    // containsDetectedName, used internally by this file's own O-15 choke
+    // point but not yet pinned by a test of its own. None of the eight
+    // demoted an existing entry -- this is new surface, not a SEPARATOR move.
+    expect(ORPHAN_EXPORTS).toHaveLength(71);
   });
 
   it("[RULE TR-1] counts the exports whose only consumer is a test, exactly", () => {
@@ -595,7 +621,16 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // the same reason -- built, tested, and never wired at the mount site. A
     // count that falls when a feature is connected is the cheapest evidence
     // this census produces that something is actually reachable by a user.
-    expect(TEST_REFERENCED.length).toBe(350);
+    // 350 -> 355: IP3's own five, all in prepStore.js's read/list surface
+    // (readPrepPack, listPrepPacks, listPrepEvents, checkPackByteBudget) plus
+    // prepContract.js's PREP_REASON_VALUES, each driven directly by
+    // prepStore.test.js or interviewPrepMigrationShape.test.js while route.js
+    // imports only the five write-path functions and the three rate/timeout
+    // constants it actually calls. Rule TR-1's exact shape: a module's real
+    // entry point ships (claimPrepPack, writePrepPackResult and the rest are
+    // reachable from route.js) and these five are what its own suites pin
+    // directly instead of driving them only through the shipping surface.
+    expect(TEST_REFERENCED.length).toBe(355);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
@@ -645,7 +680,12 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // Note the direction: every other movement in this file's history has been
     // upward, as features widened their export surfaces. A DECREASE here means
     // shipping code started asking for something only a test used to ask for.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(413);
+    // 413 -> 426 = 355 + 71, both halves widening together (see each
+    // assertion's own comment above for its half of IP3's thirteen). Both
+    // moving the same direction is expected here, not a red flag on its own --
+    // the split assertion just above is what would catch a feature built and
+    // never wired, and neither half of IP3's total came from a bucket move.
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(426);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

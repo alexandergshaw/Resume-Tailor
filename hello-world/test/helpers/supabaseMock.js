@@ -2,8 +2,8 @@ import { vi } from "vitest";
 
 // A chainable mock of the Supabase PostgREST query builder. Every filter /
 // modifier method returns `this` so calls can be chained exactly like the real
-// client (`.from().select().eq().in().order().limit()...`). The chain resolves
-// to a canned `{ data, error }` result, configured per table.
+// client (`.from().select().eq().in().or().order().limit()...`). The chain
+// resolves to a canned `{ data, error }` result, configured per table.
 //
 // Tables are described as a map: { tableName: { select, insert, update, delete,
 // upsert } } where each value is the `{ data, error }` returned for that verb.
@@ -26,7 +26,7 @@ export function makeSupabase(tables = {}, opts = {}) {
 
   function builderFor(table) {
     const tableCalls =
-      calls[table] || (calls[table] = { select: [], insert: [], update: [], delete: [], upsert: [], eq: [], in: [], order: [], limit: [], maybeSingle: 0, single: 0 });
+      calls[table] || (calls[table] = { select: [], insert: [], update: [], delete: [], upsert: [], eq: [], in: [], or: [], order: [], limit: [], maybeSingle: 0, single: 0 });
     let verb = "select";
 
     const builder = {};
@@ -44,6 +44,14 @@ export function makeSupabase(tables = {}, opts = {}) {
     builder.upsert = record("upsert");
     builder.eq = record("eq");
     builder.in = record("in");
+    // A PostgREST OR filter (design-structure.r1.md §8.3's predicated DELETE:
+    // `AND (status <> 'running' OR lease_until < now())`, expressed via
+    // supabase-js as `.or("status.neq.running,lease_until.lt.<iso>")`).
+    // Additive: no existing test in this repo calls `.or()` against this
+    // helper (test/helpers/supabaseFake.js is a SEPARATE fake used
+    // elsewhere and is unaffected), so this cannot change any landed test's
+    // behaviour.
+    builder.or = record("or");
     builder.order = record("order");
     builder.limit = vi.fn((...args) => {
       tableCalls.limit.push(args);

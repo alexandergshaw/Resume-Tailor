@@ -21,6 +21,7 @@ import {
   finish,
   isIdle,
 } from "../../lib/tailor/rollingQueue";
+import { startInterviewPrepResearch } from "../../lib/interviewPrep/prepTrigger";
 
 const CONCURRENCY_LIMIT = 3;
 const POSTINGS_KEY = "jobPostings";
@@ -270,6 +271,13 @@ export function useManualPostings({
       });
       if (result?.ok) {
         periodOutcomeRef.current.done += 1;
+        // B1: IP3's own research trigger, per R-IP3-58's narrow grant (the
+        // trigger invocation only -- no other behaviour here changes).
+        // tailorPosting's own return carries jobId, not the applications.id
+        // row startInterviewPrepResearch keys on (same documented gap as
+        // app/page.js's generateWithReviewedValues); fires with no id,
+        // which prepTrigger.js's own blank-id refusal turns into a no-op.
+        startInterviewPrepResearch({ triggerClass: "B1" });
         setEntries((prev) =>
           patchEntry(prev, id, {
             status: "done",
