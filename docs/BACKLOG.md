@@ -16,6 +16,26 @@ the next piece of work.
    history.
 4. **Owner-only items are never started by an agent.** They are listed so they are not forgotten, not so they
    are picked up.
+5. **The loop does not stop while this file has entries.** Finishing a chunk is not finishing the work — the
+   next action is always the next backlog item. See "How the loop consumes this file" below.
+
+## How the loop consumes this file
+
+**While this file is non-empty, the dev loop does not stop.** At the end of every chunk, wave, or ruling, the
+next action is read off this file rather than chosen freshly.
+
+| Section | What the loop does |
+|---|---|
+| **Next — actionable now** | Work it. Top to bottom unless a dependency says otherwise. This is where the loop spends its time. |
+| **Owner decisions outstanding** | **Never started.** When these are all that remain, the loop's action is to **put them to the owner as a decision** — once, with what is blocked and what would unblock it. Escalating is a step; idling is not. |
+| **Verification owed** | Same: surface it, with the exact instrument the owner would run. |
+
+**The loop ends a turn only after it has either advanced an actionable item or escalated a blocked one.**
+Stopping with actionable entries present and neither done is the failure this rule exists to prevent.
+
+**A blocked item is escalated once, not repeatedly.** Re-asking the same unanswerable question every turn is
+spinning wearing a decision's clothes. Once surfaced, it stays listed and silent until the owner answers or the
+blocker clears.
 
 ---
 
@@ -26,6 +46,8 @@ the next piece of work.
 | 1 | **`SEC-1`: the engine-override fix, repo-wide.** A request-supplied `engine` overrides server config: `wantsEmbedded("gemini", { RESUME_ENGINE: "embedded" })` returns **false**, with control `("bogus", …)` → **true** proving the default *is* read for unrecognised values. An offline-configured deployment can be forced to spend on paid generation with the candidate's résumé. | Its own chunk — not yet started | `lib/llm/featureEngine.js:28` `wantsEmbedded(requested, env)`; its own header states the precedence — `1. An explicit per-request engine` **before** `2. The server default RESUME_ENGINE` (`:8-9`), and `:33` falls back to the default only when there is no explicit request. Owner ruling **O-14** |
 | 2 | **Unswept regression modules.** Named rather than asserted clean by the step-9 sabotage pass: `io.js`'s `killTree`, `git`/`toplevel`, `spawnVitest`, `readVitestVersion`, walk/hash helpers, `createExclusive`/`appendExisting`/`rewriteInPlace`/`readLockText`; `launch.js` L3/L6/L7 beyond L1; `report.capEvidence`; `invoke`'s zero-tests case; `verdict.judgeRun`'s both-null case | A later sabotage pass | ledger `T3-S9-6`, `T3-S9-10` |
 | 3 | **O-2 step 7 precedence is ambiguous** when both the `Test Files` and `Errors` lines hold. No fix round is scheduled. | A regression AC round | ledger `T3-C4b-6`, `T3-V6-6` |
+| 4 | **Three 4b instrument minors, disclosed and unfixed.** `C4B-6` an import-extension regex fragility; `C4B-7` the reason-vocabulary CHECK canary drawn from the same source it validates (partially mitigated); `C4B-8` an outcome-check that asserts containment only | A later 4b round | `check-4b.r1.md` majors table; scoped out by `4b.r2.md` |
+| 5 | **The K1-PROHIBITION corpus is held-out by instruction, not by construction.** `lib/interviewPrep/__fixtures__/predictionCorpus.js` sits in the implementer's own module directory; nothing prevents reading it. Proven discriminating today: a 10-string lookup-table build passes all 27 visible rows and ships both held-out sentences unrefused | A later hardening round — derive held-out members rather than store them | `4b.r2.md`; ruling `R-IP3-64` |
 
 ## Owner decisions outstanding
 
