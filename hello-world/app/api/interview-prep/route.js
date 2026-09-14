@@ -63,16 +63,22 @@
 // can widen `buildPrepPrompt` and start passing `resumeId`/`coverLetterId`
 // without any change to the write/read/claim/spend mechanics below.
 //
-// The `outcome` value this route writes to `interview_prep_events` for an
-// 'attempt' event mirrors the pack's own terminal `status` ('ready',
-// 'partial', 'unavailable'), except a 'failed' status is recorded as
-// 'error' -- the one outcome value design-operate.r1.md §6/OP-9 cites by
-// name for the spend-record-failure path, generalized here to every failed
-// attempt so the event log's outcome vocabulary needs only four members
-// while `reason` (an 8-member, CHECK-bounded column) carries the specific
-// cause. No binding document enumerates `interview_prep_events_outcome_check`'s
-// exact members; this mapping is the most-evidenced reading available in this
-// checkout and is named here for 9c/4b to confirm against the real migration.
+// The `outcome` value written to `interview_prep_events` for an 'attempt'
+// event is decided by `outcomeForStatus` in lib/interviewPrep/finishAttempt.js
+// -- see that function's own header for the member-by-member reachability
+// table, which is the authority.
+//
+// This comment previously claimed the vocabulary "needs only four members"
+// and that "no binding document enumerates
+// `interview_prep_events_outcome_check`'s exact members". BOTH WERE FALSE.
+// The migration states the vocabulary outright -- seven members for an
+// 'attempt' event, at supabase/migrations/20260914000000_interview_prep.sql
+// :413-418 -- and it was confirmed byte-identical on the live project on
+// 2026-09-14, along with every other constraint on these three tables (no
+// drift in either direction). 'failed' is itself a permitted outcome, so
+// the blanket 'failed' -> 'error' rewrite this comment used to describe was
+// collapsing a distinction the schema deliberately keeps; it is gone
+// (backlog N10).
 
 import { getAuth, unauthorized, badRequest, notFound } from "@/lib/experience/apiAuth";
 import { getGeminiClient } from "@/lib/llm/geminiClient";

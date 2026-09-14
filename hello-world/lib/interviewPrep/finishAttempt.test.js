@@ -216,3 +216,190 @@ describe("finishAttempt's DEFAULT deps -- real prepStore.js functions, driven wi
     expect(result.status).toBe("ready");
   });
 });
+
+describe("outcomeForStatus's mapping (N10) -- every reachable 'attempt' outcome, driven through a real finishAttempt call", () => {
+  // N10 found the header comment's claimed mapping ('failed' -> 'error',
+  // else mirrors `status`) written as a guess, absent any stated CHECK
+  // vocabulary -- but interview_prep_events_outcome_check
+  // (supabase/migrations/20260914000000_interview_prep.sql:413-418) DOES
+  // state one, and it contradicts that guess: 'failed' is itself a
+  // permitted 'attempt' outcome, so collapsing every 'failed' status into
+  // 'error' erases a real distinction the schema keeps. These tests drive
+  // finishAttempt for real (via makeSupabase's REAL writePrepPackResult/
+  // recordPrepEvent, the same style as the "DEFAULT deps" block above) for
+  // every status route.js can pass that is NOT already covered by an
+  // existing test in this file.
+
+  it("[mutant this kills: outcomeForStatus's unconditional 'failed' -> 'error' rewrite] a plain 'failed' status (no CHECK-safe fallback involved) is recorded as outcome 'failed', carrying its own reason unchanged", async () => {
+    const sb = makeSupabase({
+      interview_prep_packs: { data: [{ application_id: APP_ID }], error: null },
+    });
+
+    const result = await finishAttempt(sb, {
+      applicationId: APP_ID,
+      userId: USER_ID,
+      leaseToken: LEASE_TOKEN,
+      triggerClass: "B1",
+      engine: "gemini",
+      status: "failed",
+      reason: "provider-error",
+      error: "The model call did not complete.",
+    });
+
+    const eventPayload = sb.calls.interview_prep_events.insert[0][0];
+    expect(eventPayload).toMatchObject({ outcome: "failed", reason: "provider-error" });
+    expect(result.status).toBe("failed");
+  });
+
+  it("a 'partial' status passes straight through as outcome 'partial'", async () => {
+    const sb = makeSupabase({
+      interview_prep_packs: { data: [{ application_id: APP_ID }], error: null },
+    });
+
+    await finishAttempt(sb, {
+      applicationId: APP_ID,
+      userId: USER_ID,
+      leaseToken: LEASE_TOKEN,
+      status: "partial",
+      pack: { sections: {}, claims: {} },
+    });
+
+    expect(sb.calls.interview_prep_events.insert[0][0]).toMatchObject({ outcome: "partial", reason: null });
+  });
+
+  it("an 'unavailable' status passes straight through as outcome 'unavailable', carrying its reason", async () => {
+    const sb = makeSupabase({
+      interview_prep_packs: { data: [{ application_id: APP_ID }], error: null },
+    });
+
+    await finishAttempt(sb, {
+      applicationId: APP_ID,
+      userId: USER_ID,
+      leaseToken: LEASE_TOKEN,
+      status: "unavailable",
+      reason: "refused-posting",
+    });
+
+    expect(sb.calls.interview_prep_events.insert[0][0]).toMatchObject({
+      outcome: "unavailable",
+      reason: "refused-posting",
+    });
+  });
+
+  it('[mutant this kills: the stale-token branch deleted, or its outcome/reason hardcoded wrong] a write that matches zero rows (write.reason "stale-token") still records ONE attempt event, with outcome "stale-token" and reason forced to null', async () => {
+    // data: [] reproduces writePrepPackResult's own stale-token path
+    // (prepStore.js:412-413): the UPDATE's .eq("lease_token", ...) predicate
+    // matched no row because some other invocation's write already rotated
+    // it first. No local mock of writePrepPackResult here -- the real
+    // prepStore.js function runs, exactly like the "DEFAULT deps" block above.
+    const sb = makeSupabase({
+      interview_prep_packs: { data: [], error: null },
+    });
+
+    const result = await finishAttempt(sb, {
+      applicationId: APP_ID,
+      userId: USER_ID,
+      leaseToken: LEASE_TOKEN,
+      triggerClass: "B1",
+      engine: "gemini",
+      status: "ready",
+      pack: { sections: {}, claims: {} },
+    });
+
+    expect(result.write.written).toBe(false);
+    expect(result.write.reason).toBe("stale-token");
+    expect(sb.calls.interview_prep_packs.update).toHaveLength(1);
+    expect(sb.calls.interview_prep_events.insert).toHaveLength(1);
+    // 'stale-token' is not a member of the 8-value PREP_REASON_VALUES
+    // vocabulary (prepContract.js) that this same `reason` column is
+    // CHECK-bounded to, so nothing but null is legal to store here.
+    expect(sb.calls.interview_prep_events.insert[0][0]).toMatchObject({
+      outcome: "stale-token",
+      reason: null,
+    });
+  });
+});
+
+describe("interview_prep_events_outcome_check's 'attempt' vocabulary, parsed from the migration itself (N10 vocabulary-drift guard)", () => {
+  const MIGRATION_PATH = path.join(
+    process.cwd(),
+    "supabase",
+    "migrations",
+    "20260914000000_interview_prep.sql",
+  );
+
+  // Reads the vocabulary out of the migration's own SQL text -- never a JS
+  // constant copied from it. This repo has exactly one JS-side vocabulary
+  // constant near this feature, PREP_REASON_VALUES (prepContract.js), and it
+  // is the unrelated 8-member `reason` vocabulary shared by both tables, not
+  // this 7-member `outcome` vocabulary -- there is no JS constant this guard
+  // could shortcut through even if it wanted to (the C4B-7/N3 canary trap
+  // this guard exists to avoid).
+  function attemptOutcomeVocabulary() {
+    const sql = readFileSync(MIGRATION_PATH, "utf8");
+    const match = sql.match(/event_type\s*=\s*'attempt'\s*and\s*outcome\s*in\s*\(([^)]*)\)/);
+    if (!match) {
+      throw new Error("interview_prep_events_outcome_check's 'attempt' branch was not found in the migration");
+    }
+    return match[1]
+      .split(",")
+      .map((entry) => entry.trim().replace(/^'|'$/g, ""))
+      .filter(Boolean);
+  }
+
+  it("has exactly the 7 members outcomeForStatus is documented against", () => {
+    expect(attemptOutcomeVocabulary().sort()).toEqual(
+      ["check-violation", "error", "failed", "partial", "ready", "stale-token", "unavailable"].sort(),
+    );
+  });
+
+  it("[control] the membership check below is capable of failing -- a value the migration does not list is correctly rejected", () => {
+    const vocabulary = attemptOutcomeVocabulary();
+    expect(vocabulary).not.toContain("bogus-outcome-a-mutant-might-emit");
+  });
+
+  it("every outcome a real finishAttempt call can emit stays inside the migration's own vocabulary", async () => {
+    const vocabulary = attemptOutcomeVocabulary();
+    const emitted = [];
+    const recordPrepEvent = vi.fn(async (_sb, payload) => {
+      emitted.push(payload.outcome);
+      return { recorded: true, error: null };
+    });
+    const writtenOk = { written: true, reason: null, error: null, code: null };
+
+    // Every branch finishAttempt.js's own code can reach: plain status
+    // pass-through (ready/partial/unavailable/failed), the CHECK-safe
+    // fallback (-> "error"), and the stale-token branch (-> "stale-token").
+    for (const status of ["ready", "partial", "unavailable", "failed"]) {
+      await finishAttempt(
+        {},
+        { applicationId: APP_ID, userId: USER_ID, leaseToken: LEASE_TOKEN, status, reason: null },
+        { writePrepPackResult: vi.fn().mockResolvedValue(writtenOk), recordPrepEvent },
+      );
+    }
+
+    const checkViolationFirstWrite = { written: false, reason: "error", code: "23514", error: "too big" };
+    await finishAttempt(
+      {},
+      { applicationId: APP_ID, userId: USER_ID, leaseToken: LEASE_TOKEN, status: "ready", pack: {} },
+      {
+        writePrepPackResult: vi.fn().mockResolvedValueOnce(checkViolationFirstWrite).mockResolvedValueOnce(writtenOk),
+        recordPrepEvent,
+      },
+    );
+
+    await finishAttempt(
+      {},
+      { applicationId: APP_ID, userId: USER_ID, leaseToken: LEASE_TOKEN, status: "ready", pack: {} },
+      {
+        writePrepPackResult: vi.fn().mockResolvedValue({ written: false, reason: "stale-token", error: null, code: null }),
+        recordPrepEvent,
+      },
+    );
+
+    expect(emitted.length).toBe(6);
+    for (const outcome of emitted) {
+      expect(vocabulary).toContain(outcome);
+    }
+  });
+});

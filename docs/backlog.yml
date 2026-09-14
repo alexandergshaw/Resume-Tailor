@@ -32,7 +32,7 @@
 # passes today, before any fix, because the code's existing test suite was never written against the
 # input this item objects to.
 
-# ACTIONABLE (12)
+# ACTIONABLE (11)
 - id: "N2"
   state: "actionable"
   title: "**O-2 step 7 precedence is ambiguous** when both the `Test Files` and `Errors` lines hold. No fix round is scheduled."
@@ -129,11 +129,11 @@
   verify_proof: null
   blocked_by: []
 
-- id: "N10"
+- id: "N15"
   state: "actionable"
-  title: "**`interview_prep_events.outcome` mapping is unconfirmed** (`'failed'→'error'`, else mirrors pack status) — a best-evidenced reading absent a stated CHECK vocabulary"
-  owed_by: "4b/9c, against the real migration"
-  evidence: ["flagged in `route.js` in-file"]
+  title: "**A tracking row cannot open the preview/edit window.** Owner request, 2026-09-14. `app/components/tracking/ApplicationCard.js` gives each row `JD` (`:178`) and `Resume` (`:181`) buttons, but both open `AppViewDialog` with a `kind`, which is a **read-only view** — not `DocumentPreviewDialog`, the window that carries editing, the rich-copy path, filename control, download and Save-to-Drive. That dialog is mounted once by `app/components/DocumentPreviewMount.js` and driven by the `preview` state of the main tailoring flow, so it is reachable only by tailoring a posting in this session: a row tailored on a previous visit has no route to it at all. **What is owed**: a per-row action on the tracking table that opens `DocumentPreviewDialog` for that row's tailored résumé and cover letter. **Two things a design round must settle before code**: (1) the dialog is a single long-lived mount reading one `preview` object — opening it for an arbitrary row means either populating that state from the row or giving the mount a second entry point, and which one is correct is not derivable from the current code; (2) the stored-document source for a row is the same unnamed résumé/cover-letter store that **N8** is blocked on, so if the row's documents are not already in hand this item inherits that blocker. **Constraint**: the standing minimize-clicks directive applies — one action with good defaults, not a menu then a picker"
+  owed_by: "A design round settling the mount's second entry point and the row→document source, then the wave that builds it"
+  evidence: ["`app/components/tracking/ApplicationCard.js:178`, `:181` (the two existing read-only row buttons)", "`app/components/DocumentPreviewMount.js` (single mount, driven by the tailoring flow's `preview` state)", "`app/components/DocumentPreviewDialog.js` (the window owed)", "coupled to **N8** for the document source"]
   blocked_reason: null
   instrument: null
   owns: null
