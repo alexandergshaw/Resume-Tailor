@@ -1092,6 +1092,39 @@ describe("AC-C7: text/plain only, and not one app-introduced invisible codepoint
     // ...and no announcement leaked one either.
     expect(INVISIBLE.test(politeRegion().textContent)).toBe(false);
   });
+
+  it("AC-C7 amendment: the copy-event fallback carries the UNFLATTENED html verbatim alongside the flattened text", async () => {
+    // The production wiring end to end: DocumentPreviewDialog's getHtml prop
+    // (the real preview surface's own innerHTML, read fresh at click time) all
+    // the way through CopyDocumentControl into writePlainText's html option.
+    // Both expected values come from instruments independent of the source
+    // under test -- the DOM's own innerHTML, and htmlToPlainText imported
+    // directly -- never re-derived from writePlainText or CopyDocumentControl.
+    const store = [];
+    installExecCommandStub((command) => {
+      if (command === "copy") dispatchCopyEvent(store);
+      return true;
+    });
+    await render(baseProps());
+    const expectedHtml = nonEmptyString(previewSurface().innerHTML);
+    await clickCopy();
+    expect(store).toEqual([
+      { type: "text/plain", value: htmlToPlainText(expectedHtml) },
+      { type: "text/html", value: expectedHtml },
+    ]);
+  });
+
+  it("NEGATIVE CONTROL: the assertion above is not vacuous -- a copy event missing the text/html entry fails it", () => {
+    // A copy event carrying ONLY the plain flavour -- the shape this union
+    // produced before this change, and what it must never regress to.
+    const plainOnlyStore = [{ type: "text/plain", value: "Led migration" }];
+    expect(() =>
+      expect(plainOnlyStore).toEqual([
+        { type: "text/plain", value: "Led migration" },
+        { type: "text/html", value: "<p>Led migration</p>" },
+      ]),
+    ).toThrow();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1234,7 +1267,10 @@ describe("AC-C11.4: every activation mutates the live region, INCLUDING a byte-i
     const { records, node } = await secondClickMutations(politeRegion);
     expect(records.length).toBeGreaterThan(0);
     nonEmptyString(node.textContent);
-    expect(store).toHaveLength(2);
+    // Two clicks -> two copy-event writes. Counted by the text/plain flavour
+    // specifically: since the AC-C7 amendment a single write also sets
+    // text/html, so a bare store length counts mime types, not writes.
+    expect(store.filter((e) => e.type === "text/plain")).toHaveLength(2);
   });
 
   it("a DISABLED control's refusal path -- the case none of the design documents pinned", async () => {

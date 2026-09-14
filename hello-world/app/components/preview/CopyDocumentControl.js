@@ -13,7 +13,7 @@ import { writePlainText } from "@/lib/clipboard/plainText";
 import { copyOutcome, disabledOutcome } from "./copyOutcome";
 import { TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 
-export default function CopyDocumentControl({ getText, copyState, scopeLabel, accessibleName, variant, mode, onOutcome, label = "Copy text" }) {
+export default function CopyDocumentControl({ getText, getHtml, copyState, scopeLabel, accessibleName, variant, mode, onOutcome, label = "Copy text" }) {
   // O-7: a monotonic counter, not a `useState` (which would re-render mid-
   // copy for no reason) -- only the NEWEST activation's outcome is ever
   // announced, so a slow permission prompt from an earlier click can never
@@ -46,7 +46,12 @@ export default function CopyDocumentControl({ getText, copyState, scopeLabel, ac
       return;
     }
 
-    const result = await writePlainText(text, { mode });
+    // AC-C7 amendment: an optional rich flavour, read at the SAME click-time
+    // instant as `text` above. `getHtml` is optional -- insertReference-style
+    // callers stay plain-only by never supplying it -- and writePlainText
+    // treats an empty string the same as an omitted one.
+    const html = typeof getHtml === "function" ? getHtml() : undefined;
+    const result = await writePlainText(text, { mode, html });
     if (tokenRef.current !== seq) return; // a newer activation already reported
     emit(copyOutcome(result, label_));
   };

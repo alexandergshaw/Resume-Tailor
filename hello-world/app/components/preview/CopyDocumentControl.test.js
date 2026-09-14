@@ -324,6 +324,64 @@ describe("the clipboard seam's two controls", () => {
 });
 
 // ---------------------------------------------------------------------------
+// AC-C7 amendment -- getHtml is wired to writePlainText's html option
+// ---------------------------------------------------------------------------
+
+describe("AC-C7 amendment: getHtml supplies the rich flavour, read at click time", () => {
+  it("is not called by rendering, and is called exactly once per activation, same as getText", async () => {
+    installClipboardStub();
+    const getHtml = vi.fn(() => "<p>Led migration</p>");
+    await render(baseProps({ getHtml }));
+    expect(getHtml).not.toHaveBeenCalled();
+    await click();
+    expect(getHtml).toHaveBeenCalledTimes(1);
+  });
+
+  it("with no async clipboard, the copy-event fallback carries BOTH text/html and text/plain", async () => {
+    const store = [];
+    installExecCommandStub((command) => {
+      if (command === "copy") dispatchCopyEvent(store);
+      return true;
+    });
+    const html = "<p>Led migration</p>";
+    const onOutcome = vi.fn();
+    await render(baseProps({ getHtml: () => html, onOutcome }));
+    await click();
+    expect(store).toEqual([
+      { type: "text/plain", value: RESUME_TEXT },
+      { type: "text/html", value: html },
+    ]);
+    const outcome = onOutcome.mock.calls[0][0];
+    nonEmptyString(outcome.polite);
+    expect(outcome.alert).toBe("");
+  });
+
+  it("NEGATIVE CONTROL: the identical fallback with NO getHtml prop carries ONLY text/plain", async () => {
+    const store = [];
+    installExecCommandStub((command) => {
+      if (command === "copy") dispatchCopyEvent(store);
+      return true;
+    });
+    const onOutcome = vi.fn();
+    await render(baseProps({ onOutcome }));
+    await click();
+    expect(store).toEqual([{ type: "text/plain", value: RESUME_TEXT }]);
+  });
+
+  it("when the async clipboard is available, html cannot ride it -- write() is still never called", async () => {
+    // The async branch is plain-only regardless of getHtml; this is the
+    // ordinary case (an async-capable browser) and pins that getHtml being
+    // present never routes the copy through the ClipboardItem API instead.
+    installClipboardStub();
+    const onOutcome = vi.fn();
+    await render(baseProps({ getHtml: () => "<p>Led migration</p>", onOutcome }));
+    await click();
+    expect(writeTextCalls).toEqual([RESUME_TEXT]);
+    expect(navigator.clipboard.write).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // AC-C4 / AC-C9.1 -- the edit-mode fence, WIRED
 // ---------------------------------------------------------------------------
 

@@ -422,9 +422,12 @@ export default function DocumentPreviewDialog({
 
   // AC-C1.5: edit mode reads the LIVE innerHTML (commitDraft still writes innerText -- D2/F-1);
   // view mode prefers the hand-edited scopes[tab].html over the parsed model (AC-C1.2, and the
-  // same precedence as activePayload above). O-1: called at CLICK time, never memoised.
-  const copySourceText = () =>
-    htmlToPlainText(mode === "edit" && editorRef.current ? editorRef.current.innerHTML : scopes[tab]?.html || docState[tab]?.html || "");
+  // same precedence as activePayload above). O-1: called at CLICK time, never memoised. Shared by
+  // the plain flavour below (flattened) and the rich flavour passed as getHtml (verbatim -- the
+  // copy-event union is the only channel that can carry it, AC-C7's html clause).
+  const activeSourceHtml = () =>
+    mode === "edit" && editorRef.current ? editorRef.current.innerHTML : scopes[tab]?.html || docState[tab]?.html || "";
+  const copySourceText = () => htmlToPlainText(activeSourceHtml());
 
   // Commit any pending edit, then download the active document.
   const handleDownload = () => { commitDraft(); onDownload?.(tab, activePayload()); };
@@ -944,6 +947,7 @@ export default function DocumentPreviewDialog({
             delivery action; outlined beside Download .docx elsewhere. */}
         <CopyDocumentControl
           getText={copySourceText}
+          getHtml={activeSourceHtml}
           copyState={copyState}
           scopeLabel={SCOPE_LABEL[tab]}
           accessibleName={`Copy text of the ${SCOPE_LABEL[tab].toLowerCase()}`}

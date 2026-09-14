@@ -565,6 +565,118 @@ describe("AC-C9.1 / AC-C4: the textarea is FENCED to view mode", () => {
 });
 
 // ---------------------------------------------------------------------------
+// AC-C7 amendment: an `html` payload adds a text/html flavour, carried ONLY
+// by the copy-event union, tried BEFORE the async branch.
+// ---------------------------------------------------------------------------
+
+describe("AC-C7 amendment: html rides the copy-event flavour, and is tried before the async branch", () => {
+  it("with an html payload, the copy-event union runs FIRST and carries BOTH flavours, even though the async branch would also succeed", async () => {
+    const clipboardData = makeClipboardData();
+    let event = null;
+    const doc = new FakeDocument({
+      execCommand: execScript([
+        (d) => {
+          event = fireCopy(d, clipboardData);
+          return true;
+        },
+      ]),
+    });
+    const writeText = vi.fn(async () => {});
+    const html = "<p>Led migration</p>";
+    const result = await writePlainText(DOCUMENT_TEXT, { navigator: asyncNavigator({ writeText }), document: doc, html });
+    expect(result).toEqual({ ok: true, via: "copyEvent" });
+    // The whole point of the reorder: the async branch is never even reached.
+    expect(writeText).not.toHaveBeenCalled();
+    expect(clipboardData.attempts).toEqual([
+      { type: "text/plain", value: DOCUMENT_TEXT },
+      { type: "text/html", value: html },
+    ]);
+    expect(clipboardData.stored["text/plain"]).toBe(DOCUMENT_TEXT);
+    expect(clipboardData.stored["text/html"]).toBe(html);
+    // Still the load-bearing call from the original comment: omit it and the
+    // spec copies the current selection instead of what was just set.
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("NEGATIVE CONTROL: the identical call with NO html payload never sets text/html, and step 1 still wins the race", async () => {
+    const clipboardData = makeClipboardData();
+    const doc = new FakeDocument({
+      execCommand: execScript([
+        (d) => {
+          fireCopy(d, clipboardData);
+          return true;
+        },
+      ]),
+    });
+    const writeText = vi.fn(async () => {});
+    const result = await writePlainText(DOCUMENT_TEXT, { navigator: asyncNavigator({ writeText }), document: doc });
+    expect(result).toEqual({ ok: true, via: "async" });
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(doc.execCommandCalls).toHaveLength(0);
+  });
+
+  it("falls back to the async branch, PLAIN ONLY, when the copy-event union cannot carry the html at all", async () => {
+    const html = "<p>Led migration</p>";
+    const writeText = vi.fn(async () => {});
+    const doc = new FakeDocument(); // no execCommand installed -- copyEvent is "unavailable"
+    const result = await writePlainText(DOCUMENT_TEXT, { navigator: asyncNavigator({ writeText }), document: doc, html });
+    // No new vocabulary member for "the html did not make it": via:"async"
+    // already says so, since via:"copyEvent" is the only channel that can
+    // ever carry text/html.
+    expect(result).toEqual({ ok: true, via: "async" });
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText.mock.calls[0][0]).toBe(DOCUMENT_TEXT);
+  });
+
+  it("falls back to the textarea, PLAIN ONLY, view mode, when neither earlier branch can carry it", async () => {
+    const html = "<p>Led migration</p>";
+    const doc = new FakeDocument({ execCommand: execScript([() => false, () => true]) });
+    const result = await writePlainText(DOCUMENT_TEXT, { navigator: {}, document: doc, html, mode: "view" });
+    expect(result).toEqual({ ok: true, via: "textarea" });
+    expect(textareaOf(doc)?.value).toBe(DOCUMENT_TEXT);
+  });
+
+  it("a text/html-only failure never costs the plain flavour: setData(text/html) throws, text/plain still lands", async () => {
+    const html = "<p>Led migration</p>";
+    let event = null;
+    const clipboardData = {
+      attempts: [],
+      stored: {},
+      setData(type, value) {
+        this.attempts.push({ type, value });
+        if (type === "text/html") throw new Error("text/html rejected");
+        this.stored[type] = value;
+      },
+    };
+    const doc = new FakeDocument({
+      execCommand: execScript([
+        (d) => {
+          event = fireCopy(d, clipboardData);
+          return true;
+        },
+      ]),
+    });
+    const result = await writePlainText(DOCUMENT_TEXT, { navigator: {}, document: doc, html });
+    expect(result).toEqual({ ok: true, via: "copyEvent" });
+    expect(clipboardData.stored["text/plain"]).toBe(DOCUMENT_TEXT);
+    expect(clipboardData.stored["text/html"]).toBeUndefined();
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("the edit-mode fence still holds for a rich copy: refuses without creating a textarea", async () => {
+    // execCommand exists (so both step 2 and step 3 get PAST their own
+    // "unavailable" guard) but is inert -- no copy event fires -- so the
+    // union falls all the way through to step 3's mode fence, exactly the
+    // path AC-C4's harm travels through if that fence is ever skipped.
+    const html = "<p>Led migration</p>";
+    const doc = new FakeDocument({ execCommand: execScript([() => true]) });
+    const result = await writePlainText(DOCUMENT_TEXT, { navigator: {}, document: doc, html, mode: "edit" });
+    expect(result).toEqual({ ok: false, via: "textarea", reason: "editModeRefused" });
+    expect(doc.created).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The contract: never throws, never rejects. Proved by test, not by comment.
 // ---------------------------------------------------------------------------
 
