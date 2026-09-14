@@ -287,6 +287,22 @@ describe('§2.8 interleavings (injected through deps)', () => {
     const d = depsFor(s, { spawn: fakeRunner({ exitAfterMs: null }), fs: dfs });
     expect(await launch({ mint: s.mint, integrity: INTEGRITY }, d.deps)).toMatchObject({ exit: 'lock-lost' });
   });
+  test('§2.8 fixture 8b: 3 CUMULATIVE but non-consecutive write failures, each separated by a success, never trip lock-lost (T3-S9-18)', async () => {
+    // Every third write succeeds (resetting the fail counter), so no more than 2 failures ever land in a
+    // row - unlike fixture 8 above, this never reaches HEARTBEAT_FAILS (3) if the reset actually fires.
+    const s = setup();
+    let lockWrites = 0;
+    const dfs = { ...fs, writeSync: (fd, buf, ...rest) => {
+      if (String(buf).startsWith('T3_LOCK=v1')) {
+        lockWrites += 1;
+        if (lockWrites % 3 !== 0) throw Object.assign(new Error('EIO injected'), { code: 'EIO' });
+      }
+      return fs.writeSync(fd, buf, ...rest);
+    } };
+    const d = depsFor(s, { spawn: fakeRunner({ exitAfterMs: 260 }), fs: dfs });
+    expect(await launch({ mint: s.mint, integrity: INTEGRITY }, d.deps)).toMatchObject({ exit: '0' });
+    expect(d.killed).toEqual([]);
+  });
   test('§2.8 fixture 9: lock-lost during retention -> no runner spawned, EXIT=lock-lost, WAITED_PID=-', async () => {
     const s = setup();
     const d = depsFor(s, {

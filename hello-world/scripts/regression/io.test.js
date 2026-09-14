@@ -2,14 +2,26 @@
 // scratch-only: every path this file writes lives under a fresh mkdtempSync directory, cleaned up
 // after each test. Before this file, no `.test.js` imported `./io.js` directly at all - its guards
 // were exercised only incidentally, through gate.js, launch.js and runner.js.
-import { describe, test, expect, afterEach } from 'vitest';
+import { describe, test, expect, afterEach, vi } from 'vitest';
 import {
   existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deleteRunDir, deleteCompanion, releaseOwnLock, takeOverLock } from './io.js';
+import { spawn as spawnMock } from 'node:child_process';
+import {
+  deleteRunDir, deleteCompanion, releaseOwnLock, takeOverLock,
+  appendExisting, readLockText, sha256File, sha256Normalised, spawnVitest,
+} from './io.js';
 import { parseLock, formatLock } from './lockFile.js';
+
+// spawnVitest's own spawn() call is not dependency-injected (§7.3), so the only way to observe what it
+// actually passes to child_process.spawn is to intercept the real function and forward through to it -
+// never a total fake, since the fixture below needs a real child process to actually exit.
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, spawn: vi.fn((...args) => actual.spawn(...args)) };
+});
 
 const ID = '0123456789abcdef0123456789abcdef';
 const OTHER = 'fedcba9876543210fedcba9876543210';
@@ -133,11 +145,82 @@ describe('takeOverLock byte-exact staleness guard (T3-S9-6)', () => {
   });
 });
 
+describe('appendExisting missing-file guarantee (T3-S9-14)', () => {
+  test('throws ENOENT and creates nothing when the target path does not exist (io.js:121, "S-2")', () => {
+    const base = fresh();
+    const p = join(base, 'status.txt');
+    let err;
+    try {
+      appendExisting(p, 'text');
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err.code).toBe('ENOENT');
+    expect(existsSync(p)).toBe(false);
+  });
+  test('[positive control] appends to an existing file rather than refusing', () => {
+    const base = fresh();
+    const p = join(base, 'status.txt');
+    writeFileSync(p, 'A');
+    appendExisting(p, 'B');
+    expect(readFileSync(p, 'utf8')).toBe('AB');
+  });
+});
+
+describe('readLockText error-discrimination guard (T3-S9-15)', () => {
+  test('re-throws a non-ENOENT read error instead of treating it as absent', () => {
+    const err = Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+    const deps = { readFileSync: () => { throw err; } };
+    expect(() => readLockText('/some/lock/path', deps)).toThrow(err);
+  });
+  test('[positive control] a genuinely missing lock reads as absent', () => {
+    const enoent = Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' });
+    const deps = { readFileSync: () => { throw enoent; } };
+    expect(readLockText('/some/lock/path', deps)).toEqual({ state: 'absent' });
+  });
+});
+
+describe('sha256Normalised CRLF invariance (T3-S9-16)', () => {
+  test('hashes a CRLF copy the same as its LF original', () => {
+    const base = fresh();
+    const lfPath = join(base, 'lf.txt');
+    const crlfPath = join(base, 'crlf.txt');
+    const text = 'line one\nline two\nline three\n';
+    writeFileSync(lfPath, text);
+    writeFileSync(crlfPath, text.replace(/\n/g, '\r\n'));
+    expect(sha256Normalised(crlfPath)).toBe(sha256Normalised(lfPath));
+  });
+  test('[positive control] sha256File (no normalisation) DOES differ between the CRLF and LF copies', () => {
+    const base = fresh();
+    const lfPath = join(base, 'lf.txt');
+    const crlfPath = join(base, 'crlf.txt');
+    const text = 'line one\nline two\nline three\n';
+    writeFileSync(lfPath, text);
+    writeFileSync(crlfPath, text.replace(/\n/g, '\r\n'));
+    expect(sha256File(crlfPath)).not.toBe(sha256File(lfPath));
+  });
+});
+
+describe('spawnVitest non-detached guarantee (T3-S9-17, T3-H2)', () => {
+  test('spawns its vitest child with detached: false', async () => {
+    const dir = fresh('io-spawn-');
+    const script = join(dir, 'ok.mjs');
+    writeFileSync(script, 'process.exitCode = 0;\n');
+    spawnMock.mockClear();
+    const res = await spawnVitest([script], { cwd: dir, stdoutPath: join(dir, 'out.txt'), stderrPath: join(dir, 'err.txt') });
+    expect(res.status).toBe(0);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(spawnMock.mock.calls[0][2]).toMatchObject({ detached: false });
+  });
+});
+
 // Left unswept in this wave, named rather than silently skipped (T3-S9-6): io.js's `killTree` (spawns
 // real taskkill.exe; needs a live child process to be a meaningful test, not a guard-shaped function),
 // `git`/`toplevel` (already exercised indirectly via plantedRepo.js's own git init/commit calls),
-// `spawnVitest` (covered by runner.test.js), `readVitestVersion`/`vitestMjsPath` (covered by
-// gate.test.js), and `walkFiles`/`corpusFiles`/`sha256File`/`sha256Normalised`/`recordBase` (thin
-// wrappers with no branch of safety consequence). `createExclusive`/`appendExisting`/`rewriteInPlace`/
-// `readLockText` have only a source-text ordering guard today (structure.test.js); no behavioural test
-// of their own was added here.
+// `readVitestVersion`/`vitestMjsPath` (covered by gate.test.js), and `walkFiles`/`corpusFiles`/
+// `recordBase` (thin wrappers with no branch of safety consequence). `createExclusive`/`rewriteInPlace`
+// have only a source-text ordering guard today (structure.test.js); no behavioural test of their own was
+// added here. `appendExisting`, `readLockText`, `sha256Normalised` and `spawnVitest`'s non-detached
+// guarantee now have direct behavioural tests above (T3-S9-14, T3-S9-15, T3-S9-16, T3-S9-17); `sha256File`
+// is exercised as the CRLF invariance block's positive-control comparison, not separately pinned.

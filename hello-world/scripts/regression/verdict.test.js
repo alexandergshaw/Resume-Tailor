@@ -197,6 +197,7 @@ describe('A-12 INCONCLUSIVE reasons and A-13 exit codes', () => {
     ['g', 'a self-test failure', one, { facts: { selfTestOk: false } }],
     ['h', 'FP_END differs from FP_START', one, { fpEnd: H('b') }],
     ['h', 'FP_END not computable', one, { fpEnd: null }],
+    ['h', 'FP_END and FP_START both not computable (T3-S9-13)', one, { fpStart: null, fpEnd: null }],
     ['j', 'an unreadable CNJ baseline', one, { baseline: { state: 'inconclusive', reason: 'j' } }],
   ];
   test.each(ROWS)('A-12 reasons (a)-(j): (%s) %s (T3-L18)', (letter, _n, blocks, over) => {

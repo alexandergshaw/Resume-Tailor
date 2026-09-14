@@ -108,6 +108,15 @@ describe('§5.3 judged-bad rows', () => {
     expect(big.evidenceTruncated).toBe(true);
     expect(big.evidence.includes('\ufffd')).toBe(false);
   });
+  test('evidence cap never splits a 4-byte character: it phase-shifts the cut into the middle of one at byte 4096 (T3-S9-11)', () => {
+    // The 3-byte case above lands its cut one byte short of 4096 by coincidence of that character's
+    // width; a 4-byte character forces the naive 4096-byte cut to land mid-character instead, which is
+    // the case the fallback loop (not just the byte-length check) has to actually walk backward for.
+    const big = capEvidence(`a${'\u{1F600}'.repeat(1200)}`);
+    expect(Buffer.byteLength(big.evidence, 'utf8')).toBe(4093);
+    expect(big.evidenceTruncated).toBe(true);
+    expect(big.evidence.includes('\ufffd')).toBe(false);
+  });
 });
 
 describe('§5.3 report context and §6.4 brief', () => {

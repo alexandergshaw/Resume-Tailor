@@ -134,6 +134,12 @@ describe('§9 fixtures 11-16: runs', () => {
     const pid = Number(readFileSync(join(s.dir, 'pid.txt'), 'utf8'));
     expect(() => process.kill(pid, 0)).toThrow();
   });
+  test('§9 fixture 12b: a stub that exits 0 with valid JSON reporting zero tests -> ISOLATED=inconclusive, never observed (T3-S9-12)', { timeout: 60000 }, async () => {
+    const s = stub("import { writeFileSync } from 'node:fs';\nconst out = process.argv.find((a) => a.startsWith('--outputFile.json='));\nwriteFileSync(out.slice('--outputFile.json='.length), JSON.stringify({ numTotalTests: 0, testResults: [] }));\nprocess.exitCode = 0;\n");
+    const r = await invoke(encodeFormC([s.mjs, 'run', ...FIXED_FLAGS, 'kb/speaker.test.js']), deps(s));
+    const last = r.lines[r.lines.length - 1];
+    expect(last).toMatch(/^INVOKED EXIT=0 JSON=present TESTS=0 FAILED=- ISOLATED=inconclusive /);
+  });
   test('§9 fixture 13: NODE_OPTIONS=--require=<marker module> in the caller\'s env -> marker absent; a direct node --require writes it', { timeout: 180000 }, () => {
     const d = stubDir();
     const markerMod = join(d, 'marker.cjs');
