@@ -91,8 +91,8 @@
 //       before cutting. docx.js#buildDocxFromUploadedTemplate is the worked
 //       example of exactly that near-miss.
 //
-//   ALLOWED_UNREACHABLE_MODULES (9) / UNWIRED_MODULES (0)  whole files no
-//       entry point can reach. The nine are sweep and test infrastructure
+//   ALLOWED_UNREACHABLE_MODULES (11) / UNWIRED_MODULES (0)  whole files no
+//       entry point can reach. The eleven are sweep and test infrastructure
 //       (including this sweep's own ledger module -- see its self-entry
 //       there) and are justified one by one. The findings bucket is empty
 //       because all three of its entries were reviewed and deleted -- see
@@ -352,7 +352,13 @@ describe("every module is reachable from something that ships, or is on a ledger
     // K1-PROHIBITION corpus. Same shape as practiceSessionTestDoubles.js and
     // driveWireProbe.js above it -- a fixture module its own suite imports by
     // name, never code that ships.
-    expect(ALLOWED_UNREACHABLE_MODULES).toHaveLength(10);
+    // 10 -> 11 (N22): lib/interviewPrep/migrationGrantReplay.js, the grant/revoke
+    // replay extracted from interviewPrepEffectiveSchema.test.js to bring that
+    // file under the 1000-line cap. ONE entry added, none removed -- stated
+    // because this count has been bumped before with a comment naming a single
+    // movement when the real delta was +2/-1, and a count that is right by
+    // coincidence is worse than a red one.
+    expect(ALLOWED_UNREACHABLE_MODULES).toHaveLength(11);
   });
 
   it("keeps the unwired-feature findings visible and described", () => {
@@ -464,7 +470,11 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // containsDetectedName, used internally by this file's own O-15 choke
     // point but not yet pinned by a test of its own. None of the eight
     // demoted an existing entry -- this is new surface, not a SEPARATOR move.
-    expect(ORPHAN_EXPORTS).toHaveLength(71);
+    // 71 -> 70 (N16 wave D): prepParse.js#containsDetectedName is no longer an
+    // orphan -- buildEmbeddedPack screens position.title/company through it before
+    // interpolating, so it has a real shipping consumer now. ONE entry removed,
+    // none added; the same single movement as the TR-1 bump above.
+    expect(ORPHAN_EXPORTS).toHaveLength(70);
   });
 
   it("[RULE TR-1] counts the exports whose only consumer is a test, exactly", () => {
@@ -630,7 +640,18 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // entry point ships (claimPrepPack, writePrepPackResult and the rest are
     // reachable from route.js) and these five are what its own suites pin
     // directly instead of driving them only through the shipping surface.
-    expect(TEST_REFERENCED.length).toBe(356);
+    // 356 -> 357: prepPack.js (N16 wave B) went from a wholly unreachable
+    // module -- its exports counted in neither half of this split, only in
+    // the module-ledger mismatch that made the sweep red -- to a shipping
+    // one, because route.js now imports `packStatus` to compute the
+    // terminal write status on a normalized generation-path pack.
+    // `packStatus` itself is reachable from that real call site and lands in
+    // neither bucket. Its sibling export, `completeSections`, has no
+    // shipping importer of its own (packStatus computes the count inline
+    // rather than calling it) but IS imported by name from
+    // prepPack.test.js -- rule TR-1's exact shape, so it lands here rather
+    // than in ORPHAN_EXPORTS.
+    expect(TEST_REFERENCED.length).toBe(357);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
@@ -716,6 +737,18 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     //      departure is what masked effectiveAttribution's arrival: +2/-1
     //      nets to the same +1 the old comment described, by coincidence,
     //      not by the reasoning it gave.
+    // 427 -> 428: prepPack.js (N16 wave B), described just above at the
+    // TEST_REFERENCED assertion -- wiring `packStatus` into route.js made
+    // the module reachable, and its lone unreached export, `completeSections`,
+    // is why the total rises by one rather than two: `packStatus` itself is
+    // an ordinary reachable export, not counted in either half of this split.
+    // 428 -> 427 (N16 wave D): prepParse.js#containsDetectedName LEFT the orphan
+    // ledger because it gained a real shipping consumer -- buildEmbeddedPack (now
+    // in prepPack.js) screens `position.title`/`company` through it before
+    // interpolating them, since those values come from external job feeds and are
+    // not our own text. ONE movement, OUT, none in. Stated by name because this
+    // count has been bumped before with a comment naming a single movement when
+    // the real delta was +2/-1.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(427);
   });
 

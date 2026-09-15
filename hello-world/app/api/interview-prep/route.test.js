@@ -34,6 +34,8 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { wantsEmbedded } from "@/lib/llm/featureEngine.js";
+import { normalizePack, EMBEDDED_TEMPLATE_ORIGIN } from "@/lib/interviewPrep/prepParse.js";
+import { packStatus, buildEmbeddedPack } from "@/lib/interviewPrep/prepPack.js";
 
 const ROUTE_PATH = path.join(process.cwd(), "app", "api", "interview-prep", "route.js");
 
@@ -305,36 +307,15 @@ describe("the embedded write satisfies interview_prep_packs' own CHECK constrain
     expect(existsSync(ROUTE_PATH), "app/api/interview-prep/route.js has not been implemented yet").toBe(true);
   });
 
-  /** Isolates buildEmbeddedPack's own body, so a `claims` literal read
-   *  elsewhere in the file (e.g. the Gemini generation path) can never be
-   *  mistaken for this function's. */
-  function embeddedPackBody(code) {
-    const idx = code.indexOf("function buildEmbeddedPack");
-    expect(idx, "function buildEmbeddedPack not found in route.js").toBeGreaterThanOrEqual(0);
-    const nextFn = code.indexOf("function buildPrepPrompt", idx);
-    expect(nextFn, "function buildPrepPrompt not found after buildEmbeddedPack").toBeGreaterThan(idx);
-    return code.slice(idx, nextFn);
-  }
-
-  it('[mutant this kills] buildEmbeddedPack returns "claims: []" -- a real array literal, never the object-map "claims: {}"', () => {
-    const code = codeOf(ROUTE_PATH);
-    const body = embeddedPackBody(code);
-    expect(body).toMatch(/claims\s*:\s*\[\s*\]/);
-    expect(body).not.toMatch(/claims\s*:\s*\{\s*\}/);
-  });
-
-  it("[control] the claims-array check can actually fail -- proven on a synthetic fixture still emitting the object-map shape", () => {
-    const broken = `
-      function buildEmbeddedPack({ position, digest }) {
-        return { sections: { stages: [] }, claims: {} };
-      }
-      function buildPrepPrompt() {}
-    `;
-    const idx = broken.indexOf("function buildEmbeddedPack");
-    const nextFn = broken.indexOf("function buildPrepPrompt", idx);
-    const body = broken.slice(idx, nextFn);
-    expect(body).not.toMatch(/claims\s*:\s*\[\s*\]/);
-    expect(body).toMatch(/claims\s*:\s*\{\s*\}/);
+  // buildEmbeddedPack itself now lives in lib/interviewPrep/prepPack.js
+  // (imported above, the same module route.js imports packStatus from), so
+  // this checks the REAL function's return value at runtime rather than
+  // scanning route.js's source text for a literal that no longer lives
+  // there.
+  it('[mutant this kills] buildEmbeddedPack returns a real claims ARRAY, never an object map', () => {
+    const pack = buildEmbeddedPack({ position: { title: "Engineer", company: "Globex" }, digest: null });
+    expect(Array.isArray(pack.claims)).toBe(true);
+    expect(pack.claims).toEqual([]);
   });
 
   /** Isolates the embedded gate's own block, up to the Gemini client setup
@@ -443,5 +424,379 @@ describe("attemptCtx carries triggerClass and engine to every finishAttempt call
     expect(match).not.toBeNull();
     const window = brokenSource.slice(match.index, match.index + 200);
     expect(window).not.toMatch(/\.\.\.(attemptCtx|ctx)\b/);
+  });
+});
+
+describe("buildEmbeddedPack emits the four-section Pack contract (N16 wave B, moved to prepPack.js in wave D)", () => {
+  // Wave A rewrote normalizePack to read `sections.stages.stages` (the
+  // nested shape interview_prep_packs_ready_is_complete actually checks),
+  // but buildEmbeddedPack once emitted `sections: { stages: [...] }` -- a
+  // regression that dropped the embedded pack's one Overview stage at write
+  // time (prepStore.js's writePrepPackResult also runs normalizePack). Wave
+  // D moved buildEmbeddedPack itself into lib/interviewPrep/prepPack.js (so
+  // the runtime proof below in "the F-1 regression" can call the REAL
+  // function), so this now checks the real function's return shape directly
+  // rather than scanning route.js's source text for a literal that no
+  // longer lives there.
+  it('[mutant this kills] carries all four Pack sections -- aboutYou, whyRole, askThem, stages -- at the paths interview_prep_packs_ready_is_complete reads', () => {
+    const pack = buildEmbeddedPack({ position: { title: "Engineer", company: "Globex" }, digest: null });
+    expect(Array.isArray(pack.sections.aboutYou.answer.lines)).toBe(true);
+    expect(Array.isArray(pack.sections.whyRole.answer.lines)).toBe(true);
+    expect(Array.isArray(pack.sections.askThem.questions)).toBe(true);
+  });
+
+  it('[mutant this kills] "stages" is an OBJECT carrying its own "stages" array -- never the array directly under sections (the exact wave-A regression)', () => {
+    const pack = buildEmbeddedPack({ position: { title: "Engineer", company: "Globex" }, digest: null });
+    expect(Array.isArray(pack.sections.stages.stages)).toBe(true);
+    // The regressed shape this closes: `sections.stages` ITSELF an array,
+    // one level shallower than the contract.
+    expect(Array.isArray(pack.sections.stages)).toBe(false);
+  });
+});
+
+describe("buildPrepPrompt requests the same four-section Pack contract, at the same nested paths, plus O-15/C-46's new instruction lines (N16 wave B)", () => {
+  // Isolates buildPrepPrompt's own body so a `sections`/`claims` literal
+  // belonging to buildEmbeddedPack (above it in the file) can never be
+  // mistaken for this function's requested JSON shape.
+  function promptBody(code) {
+    const idx = code.indexOf("function buildPrepPrompt");
+    expect(idx, "function buildPrepPrompt not found in route.js").toBeGreaterThanOrEqual(0);
+    const nextFn = code.indexOf("function parsePrepResponse", idx);
+    expect(nextFn, "function parsePrepResponse not found after buildPrepPrompt").toBeGreaterThan(idx);
+    return code.slice(idx, nextFn);
+  }
+
+  it("route.js exists", () => {
+    expect(existsSync(ROUTE_PATH), "app/api/interview-prep/route.js has not been implemented yet").toBe(true);
+  });
+
+  it('[mutant this kills] the requested JSON shape names all four sections at the CHECK\'s own nested paths, and a flat "claims" array', () => {
+    const body = promptBody(codeOf(ROUTE_PATH));
+    expect(body).toMatch(/"aboutYou"\s*:\s*\{\s*"answer"\s*:\s*\{\s*"lines"/);
+    expect(body).toMatch(/"whyRole"\s*:\s*\{\s*"answer"\s*:\s*\{\s*"lines"/);
+    expect(body).toMatch(/"askThem"\s*:\s*\{\s*"questions"/);
+    expect(body).toMatch(/"stages"\s*:\s*\{\s*"stages"\s*:\s*\[/);
+    expect(body).toMatch(/"claims"\s*:\s*\[/);
+  });
+
+  it('[control] the requested-shape check can actually fail -- proven on the OLD, pre-N16 shape line', () => {
+    const oldShapeLine =
+      '{"tellMeAboutYourself": string, "whyThisPosition": string, "questionsToAsk": string[], "sections": {"stages": [{"name": string, "questions": string[], "recommendedAnswer": string}]}}';
+    expect(oldShapeLine).not.toMatch(/"aboutYou"\s*:\s*\{\s*"answer"\s*:\s*\{\s*"lines"/);
+    expect(oldShapeLine).not.toMatch(/"askThem"\s*:\s*\{\s*"questions"/);
+    expect(oldShapeLine).not.toMatch(/"stages"\s*:\s*\{\s*"stages"\s*:\s*\[/);
+  });
+
+  it("[mutant this kills] instructs the model that every one of the four sections must be non-empty", () => {
+    const body = promptBody(codeOf(ROUTE_PATH));
+    expect(body).toContain("Every one of the four sections must be non-empty.");
+  });
+
+  it('[mutant this kills] instructs the model on C-46\'s citation contract: claimId must resolve, and sourceUrl must be a real publisher URL, never a redirect', () => {
+    const body = promptBody(codeOf(ROUTE_PATH));
+    expect(body).toContain(
+      "Any support.claimId must appear as an id in claims, and every claims entry must carry a real publisher URL in sourceUrl -- never a search-redirect URL.",
+    );
+  });
+
+  it("[mutant this kills] instructs the model to write aboutYou/whyRole in first person and never name any person there", () => {
+    const body = promptBody(codeOf(ROUTE_PATH));
+    expect(body).toContain(
+      "Write aboutYou and whyRole in the first person. Never write the candidate's own name, or any person's name, in those two sections.",
+    );
+  });
+
+  it("keeps the pre-existing O-11/O-15 interviewer-prediction prohibition verbatim", () => {
+    const body = promptBody(codeOf(ROUTE_PATH));
+    expect(body).toContain(
+      "Never name, describe, or predict which specific person will conduct or attend any interview, however confident you are -- that is forbidden.",
+    );
+  });
+
+  it("[control] the three new instruction-line checks can actually fail -- proven on a fixture missing all three", () => {
+    const broken = [
+      "Respond with ONLY a JSON object.",
+      "Never name, describe, or predict which specific person will conduct or attend any interview, however confident you are -- that is forbidden.",
+    ].join("\n\n");
+    expect(broken).not.toContain("Every one of the four sections must be non-empty.");
+    expect(broken).not.toContain("Any support.claimId must appear as an id in claims");
+    expect(broken).not.toContain("Write aboutYou and whyRole in the first person.");
+  });
+});
+
+describe("the generation path computes packStatus AFTER normalizing the model's reply, never on the raw parsed pack (N16 wave B / write rule)", () => {
+  // SOURCE-TEXT ONLY, matching this file's own established discipline (see
+  // its header): this can prove the route's SOURCE calls normalizePack
+  // before packStatus and feeds packStatus the variable that call produced,
+  // never `parsed.pack` directly. It CANNOT prove, at runtime, that the
+  // value reaching packStatus actually went through every one of
+  // normalizePack's drop/null branches correctly -- prepParse.test.js owns
+  // that runtime proof for normalizePack itself, and finishAttempt.test.js
+  // owns it for the write path beneath this route. What would defeat this
+  // instrument: a build that imports normalizePack and packStatus, calls
+  // both somewhere in the file, but computes the written status from
+  // `parsed.pack` directly (reintroducing the exact bug this wave closes --
+  // a 'ready' pack full of lines normalizePack would have dropped). A
+  // regex ordering check cannot see through a build that renames variables
+  // to defeat it by coincidence; only a real invocation with an injected
+  // model response could close that gap, and this file's own header already
+  // disclaims that kind of harness for every other gate it checks.
+  it("route.js exists", () => {
+    expect(existsSync(ROUTE_PATH), "app/api/interview-prep/route.js has not been implemented yet").toBe(true);
+  });
+
+  it("imports normalizePack from prepParse.js and packStatus from prepPack.js, not a route-local reimplementation", () => {
+    const code = codeOf(ROUTE_PATH);
+    expect(code).toMatch(/import\s*\{[^}]*\bnormalizePack\b[^}]*\}\s*from\s*["'][^"']*prepParse["']/);
+    expect(code).toMatch(/import\s*\{[^}]*\bpackStatus\b[^}]*\}\s*from\s*["'][^"']*prepPack["']/);
+  });
+
+  it('[mutant this kills] never calls packStatus on "parsed.pack" directly', () => {
+    const code = codeOf(ROUTE_PATH);
+    expect(code).not.toMatch(/packStatus\(\s*parsed\.pack\s*\)/);
+  });
+
+  it('[mutant this kills] normalizePack(parsed.pack) is computed, and packStatus is called on that same result, in that order', () => {
+    const code = codeOf(ROUTE_PATH);
+    const normIdx = code.search(/normalizePack\(\s*parsed\.pack\s*\)/);
+    expect(normIdx, "normalizePack(parsed.pack) not found in route.js").toBeGreaterThanOrEqual(0);
+    const statusIdx = code.indexOf("packStatus(", normIdx);
+    expect(statusIdx, "packStatus( not found after normalizePack(parsed.pack)").toBeGreaterThan(normIdx);
+    // The two must share a variable: whatever name normalizePack's result is
+    // assigned to must be the SAME name packStatus is invoked with, not a
+    // second, independent read of parsed.pack under a different name.
+    const assign = code.slice(normIdx - 60, normIdx).match(/const\s+(\w+)\s*=\s*$/);
+    expect(assign, "normalizePack(parsed.pack) is not assigned to a const").not.toBeNull();
+    const varName = assign[1];
+    const statusCall = code.slice(statusIdx, statusIdx + 40);
+    expect(statusCall).toMatch(new RegExp(`packStatus\\(\\s*${varName}\\s*\\)`));
+  });
+
+  it('[mutant this kills] a computedStatus of null (0 of 4 sections survived normalization) writes status "failed" with reason "provider-error", not "ready"', () => {
+    const code = codeOf(ROUTE_PATH);
+    const nullIdx = code.search(/computedStatus\s*===\s*null/);
+    expect(nullIdx, "no branch tests computedStatus === null").toBeGreaterThanOrEqual(0);
+    const finishIdx = code.indexOf("finishAttempt(supabase,", nullIdx);
+    expect(finishIdx, "no finishAttempt call found after the computedStatus === null check").toBeGreaterThan(nullIdx);
+    const window = code.slice(finishIdx, finishIdx + 300);
+    expect(window).toMatch(/status\s*:\s*["']failed["']/);
+    expect(window).toMatch(/reason\s*:\s*["']provider-error["']/);
+  });
+
+  it("[control] the ordering check can actually fail -- proven on a fixture that reads parsed.pack a second time under a different name", () => {
+    const broken = `
+      // padding so the preceding-60-characters slice below has enough room,
+      // matching how much real surrounding code precedes the real call site.
+      const shapedPack = normalizePack(parsed.pack);
+      const computedStatus = packStatus(parsed.pack);
+    `;
+    const normIdx = broken.search(/normalizePack\(\s*parsed\.pack\s*\)/);
+    const statusIdx = broken.indexOf("packStatus(", normIdx);
+    const assign = broken.slice(normIdx - 60, normIdx).match(/const\s+(\w+)\s*=\s*$/);
+    expect(assign).not.toBeNull();
+    const varName = assign[1];
+    const statusCall = broken.slice(statusIdx, statusIdx + 40);
+    expect(statusCall).not.toMatch(new RegExp(`packStatus\\(\\s*${varName}\\s*\\)`));
+  });
+
+  it("[control] the null-status write-rule check can actually fail -- proven on a fixture that writes 'ready' regardless", () => {
+    const broken = `
+      if (computedStatus === null) {
+      }
+      const { write, status } = await finishAttempt(supabase, {
+        status: "ready",
+        pack: normalizedPack,
+      });
+    `;
+    const nullIdx = broken.search(/computedStatus\s*===\s*null/);
+    const finishIdx = broken.indexOf("finishAttempt(supabase,", nullIdx);
+    const window = broken.slice(finishIdx, finishIdx + 300);
+    expect(window).not.toMatch(/status\s*:\s*["']failed["']/);
+    expect(window).not.toMatch(/reason\s*:\s*["']provider-error["']/);
+  });
+});
+
+describe("F-1: the embedded-template K1-SHAPE exemption is unreachable from the generation (model) path", () => {
+  // Companion to prepParse.test.js's own F-1 describe block, which proves
+  // the MECHANICS (exemptCitation true/false) at the normalizePack level.
+  // What THIS file owns, per its own header, is proving the route's SOURCE
+  // actually strips the field on the one path an attacker can reach --
+  // buildEmbeddedPack's own literal is never attacker-influenced at all, so
+  // the model (generation) path is the only one that needs this proof.
+  it("route.js exists", () => {
+    expect(existsSync(ROUTE_PATH), "app/api/interview-prep/route.js has not been implemented yet").toBe(true);
+  });
+
+  it('[mutant this kills] buildEmbeddedPack sets templateOrigin to the SAME EMBEDDED_TEMPLATE_ORIGIN constant normalizePack checks against', () => {
+    const pack = buildEmbeddedPack({ position: { title: "Engineer", company: "Globex" }, digest: null });
+    expect(pack.templateOrigin).toBe(EMBEDDED_TEMPLATE_ORIGIN);
+  });
+
+  // J: the strip now lives inside parsePrepResponse -- the single boundary
+  // where untrusted model JSON becomes a pack object -- rather than as a
+  // separate step the caller must remember to run afterward (see that
+  // function's own header). Isolating its body, rather than scanning the
+  // whole file, means an unrelated rename of some OTHER variable named
+  // "parsed" elsewhere in route.js cannot false-fail this check, and a
+  // strip that migrated to a different function would be caught by the
+  // "not found" assertion below rather than silently matching leftover text.
+  function parsePrepResponseBody(code) {
+    const idx = code.indexOf("function parsePrepResponse");
+    expect(idx, "function parsePrepResponse not found in route.js").toBeGreaterThanOrEqual(0);
+    const nextFn = code.indexOf("function writeFailureResponse", idx);
+    expect(nextFn, "function writeFailureResponse not found after parsePrepResponse").toBeGreaterThan(idx);
+    return code.slice(idx, nextFn);
+  }
+
+  it('[mutant this kills] parsePrepResponse deletes templateOrigin off the parsed JSON before returning it as "pack"', () => {
+    const body = parsePrepResponseBody(codeOf(ROUTE_PATH));
+    const deleteIdx = body.indexOf("delete parsed.templateOrigin");
+    expect(deleteIdx, "delete parsed.templateOrigin not found in parsePrepResponse").toBeGreaterThanOrEqual(0);
+    const returnIdx = body.indexOf("return { ok: true, pack: parsed }", deleteIdx);
+    expect(returnIdx, "return { ok: true, pack: parsed } not found after the delete").toBeGreaterThan(deleteIdx);
+  });
+
+  it("[control] the isolation helper can actually fail -- proven on a fixture where the strip has moved OUTSIDE parsePrepResponse", () => {
+    const broken = `
+      function parsePrepResponse(response) {
+        return { ok: true, pack: JSON.parse(response.text) };
+      }
+      function writeFailureResponse() {}
+    `;
+    const idx = broken.indexOf("function parsePrepResponse");
+    const nextFn = broken.indexOf("function writeFailureResponse", idx);
+    const body = broken.slice(idx, nextFn);
+    expect(body.indexOf("delete parsed.templateOrigin")).toBe(-1);
+  });
+
+  it("runtime: parsePrepResponse cannot be imported directly (route.test.js's own header) -- so the strip's actual behaviour is proven at the prepParse level: a pack shaped exactly like what parsePrepResponse now hands normalizePack (templateOrigin already absent) is refused normally", () => {
+    // This mirrors exactly what reaches normalizePack once parsePrepResponse
+    // has run: no templateOrigin key at all. prepParse.test.js's own F-1
+    // block asserts the same fact directly against normalizePack; this
+    // documents why route.js's own composition (strip, then normalize) is
+    // what makes that fact reachable on the generation path.
+    const raw = JSON.stringify({
+      sections: { aboutYou: { answer: { lines: [{ text: "Jane Doe led that project." }] } } },
+      claims: [],
+      templateOrigin: EMBEDDED_TEMPLATE_ORIGIN,
+    });
+    const parsed = JSON.parse(raw);
+    delete parsed.templateOrigin;
+    const normalized = normalizePack(parsed);
+    expect(normalized.sections.aboutYou.answer.lines).toHaveLength(0);
+  });
+});
+
+describe("F-1: the embedded pack survives normalizePack for a realistic Title-Case job title (runtime, against the REAL producer)", () => {
+  // The F-1 deliverable: a structurally perfect, semantically empty pack
+  // must be impossible to ship green again. A prior revision of this test
+  // ran the proof against `embeddedPackFixture`, a hand-mirrored COPY of
+  // buildEmbeddedPack's literal, on the theory that the source-text blocks
+  // above pin the real literal "byte-for-byte" so the two could not drift.
+  // That theory was false: those blocks pinned only KEY STRUCTURE
+  // (`aboutYou: { answer: { lines: ... }`), never the strings, never
+  // non-emptiness -- a mutant emptying `lines` to `[]`, dropping a question,
+  // or rewriting a sentence entirely all left the fixture-based version of
+  // this test green. Wave D moved buildEmbeddedPack into
+  // lib/interviewPrep/prepPack.js specifically so this test could import
+  // and run the REAL function -- no mirror, nothing to drift.
+  it('[the F-1 regression] all four sections of the REAL buildEmbeddedPack survive normalizePack, and packStatus reports "ready", for the Title-Case title "Software Engineer"', () => {
+    const pack = buildEmbeddedPack({ position: { title: "Software Engineer", company: "Acme Robotics" }, digest: null });
+    const normalized = normalizePack(pack);
+    expect(normalized.sections.aboutYou.answer.lines.length).toBeGreaterThan(0);
+    expect(normalized.sections.whyRole.answer.lines.length).toBeGreaterThan(0);
+    // Exact count, not merely > 0 -- buildEmbeddedPack asks two distinct
+    // askThem questions, and a mutant dropping one of them must still fail
+    // this test even though one question is still a non-empty array.
+    expect(normalized.sections.askThem.questions.length).toBe(2);
+    expect(normalized.sections.stages.stages.length).toBeGreaterThan(0);
+    // What packStatus computes from this survived content: with the fix,
+    // all four sections are non-empty, so the pure predicate says "ready".
+    // route.js's OWN embedded branch still deliberately WRITES "partial"
+    // regardless (see buildEmbeddedPack's own header -- an owner ruling,
+    // unchanged by this fix): a deterministic, no-LLM backend is templated
+    // filler, never a real researched pack, so "ready" would overstate it
+    // even though every section now genuinely survives. This assertion
+    // proves the CONTENT survived (packStatus can now honestly say "ready"
+    // for it), not what literal status byte the route chooses to persist.
+    expect(packStatus(normalized)).toBe("ready");
+  });
+
+  it('[mutant this kills] the stage carries its "Tell me about yourself." question and exactly one Overview stage -- not an empty shell', () => {
+    const pack = buildEmbeddedPack({ position: { title: "Software Engineer", company: "Acme Robotics" }, digest: null });
+    const normalized = normalizePack(pack);
+    expect(normalized.sections.stages.stages).toHaveLength(1);
+    expect(normalized.sections.stages.stages[0].name).toBe("Overview");
+    expect(normalized.sections.stages.stages[0].questions).toContain("Tell me about yourself.");
+  });
+
+  it('[mutant this kills] aboutYou/whyRole actually mention the posting\'s own company -- a length check alone cannot tell "Lead with the experience..." apart from unrelated filler text of the same length', () => {
+    // "Acme Robotics" ends in a recognized organization suffix ("Robotics"),
+    // so E's own title/company screening (above) never substitutes it out --
+    // this is a stable content pin regardless of that fix.
+    const pack = buildEmbeddedPack({ position: { title: "Software Engineer", company: "Acme Robotics" }, digest: null });
+    const normalized = normalizePack(pack);
+    expect(normalized.sections.aboutYou.answer.lines[0].text).toContain("Acme Robotics");
+    expect(normalized.sections.whyRole.answer.lines[0].text).toContain("Acme Robotics");
+  });
+
+  it('[the exact defect this closes] the REAL pack, run through the OLD flat sections.stages shape wave B regressed to, still recovers its stage via F-5 (not a false pass from an unrelated fix)', () => {
+    const pack = buildEmbeddedPack({ position: { title: "Data Scientist", company: "Northwind Health" }, digest: null });
+    // Simulate the pre-fix regression: sections.stages as the array
+    // directly, one level shallower than the contract.
+    pack.sections.stages = pack.sections.stages.stages;
+    const normalized = normalizePack(pack);
+    expect(normalized.sections.stages.stages).toHaveLength(1);
+  });
+
+  it("[control] WITHOUT templateOrigin set, the stage's own 'Why <company>' question -- the one piece E's title/company screening cannot pre-filter, since the collision is with the FIXED template word \"Why\", not the company value itself -- is dropped, proving the exemption still does real work", () => {
+    const pack = buildEmbeddedPack({ position: { title: "Software Engineer", company: "Acme Robotics" }, digest: null });
+    delete pack.templateOrigin;
+    const normalized = normalizePack(pack);
+    expect(normalized.sections.stages.stages[0].questions).not.toContain("Why Acme Robotics?");
+    expect(normalized.sections.stages.stages[0].questions).toContain("Tell me about yourself.");
+  });
+
+  it("[control] a lower-case, non-Title-Case job title never needed the exemption in the first place", () => {
+    const pack = buildEmbeddedPack({ position: { title: "engineer", company: "globex" }, digest: null });
+    delete pack.templateOrigin;
+    const normalized = normalizePack(pack);
+    expect(packStatus(normalized)).toBe("ready");
+  });
+});
+
+describe("E: buildEmbeddedPack never interpolates a name-shaped title/company uncited (position rows are merged from external job feeds)", () => {
+  // The exact executed exploit a prior revision of this pack shipped: an
+  // exempted pack (templateOrigin set) kept "Lead with the experience most
+  // relevant to the Jane Doe role at Acme Robotics." uncited, because the
+  // K1-SHAPE exemption -- justified as "our own fixed template ... it
+  // cannot name a real person" -- was actually applied to the template PLUS
+  // whatever `position.title`/`position.company` a job feed supplied
+  // (lib/supabase/writePosition.js merges `positions` rows keyed on
+  // `external_id`, e.g. "gh-12345" -- external, uncorroborated data).
+  it('[mutant this kills] a title shaped like a real person\'s name is never interpolated -- it falls back to "this role"', () => {
+    const pack = buildEmbeddedPack({ position: { title: "Jane Doe", company: "Acme Robotics" }, digest: null });
+    const aboutYouText = pack.sections.aboutYou.answer.lines[0].text;
+    expect(aboutYouText).not.toContain("Jane Doe");
+    expect(aboutYouText).toContain("this role");
+  });
+
+  it('[mutant this kills] a company shaped like a real person\'s name is never interpolated -- it falls back to "this company"', () => {
+    const pack = buildEmbeddedPack({ position: { title: "Engineer", company: "Jane Doe" }, digest: null });
+    const aboutYouText = pack.sections.aboutYou.answer.lines[0].text;
+    expect(aboutYouText).not.toContain("Jane Doe");
+    expect(aboutYouText).toContain("this company");
+  });
+
+  it("[positive control] an ordinary company name ending in a recognized organization suffix is used as-is", () => {
+    const pack = buildEmbeddedPack({ position: { title: "Engineer", company: "Acme Robotics" }, digest: null });
+    expect(pack.sections.aboutYou.answer.lines[0].text).toContain("Acme Robotics");
+  });
+
+  it("runtime: even WITH templateOrigin's exemption, the resulting pack never carries an uncited detected name once E's screening runs first", () => {
+    const pack = buildEmbeddedPack({ position: { title: "Jane Doe", company: "Acme Robotics" }, digest: null });
+    const normalized = normalizePack(pack);
+    const allText = JSON.stringify(normalized.sections);
+    expect(allText).not.toContain("Jane Doe");
   });
 });

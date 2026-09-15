@@ -49,19 +49,24 @@
 // per-call or client-level, and a `{ maxRetries: 0 }` literal here would be a
 // decorative no-op (silently discarded, same as the bare timeout).
 // ---------------------------------------------------------------------------
-// SCOPE, STATED HONESTLY. No binding IP3 document names a module or a table
-// that resolves the résumé/cover-letter content, or their ids, for a given
-// application -- résumé/cover-letter personalization of the generated pack,
-// and `resume_id`/`cover_letter_id` on the stored row, are therefore left
-// `null` by this wave rather than guessing a module name or a schema this
-// checkout cannot confirm (guessing wrong would fail the whole route on an
-// import mismatch instead of on the O-15/spend-gate behaviour this file
-// exists to prove -- the same caution app/prepTriggerSeams.test.js's own
-// header states for the trigger sites). The generation prompt is built from
-// the position's own posting text and the application's company digest (if
-// one is on file); a later wave that locates the résumé/cover-letter store
-// can widen `buildPrepPrompt` and start passing `resumeId`/`coverLetterId`
-// without any change to the write/read/claim/spend mechanics below.
+// SCOPE, STATED HONESTLY. Wiring the candidate's résumé and cover letter into
+// this prompt is backlog N8, and the owner has HELD N8 behind a new item,
+// N26, for a load-bearing reason: `containsDetectedName`
+// (lib/interviewPrep/prepParse.js) matches any consecutive Title-Case word
+// pair outside a small, disclosed organization-suffix allow-list, so ordinary
+// résumé prose ("React Native", "Google Cloud", "Apache Kafka") reads as a
+// person's name. Under O-15's contract an uncited name-detected line in
+// `aboutYou`/`whyRole` is DROPPED at write time (normalizePack,
+// prepParse.js), so feeding a résumé into this prompt today would silently
+// delete most of the candidate's own material rather than personalize the
+// pack with it. `resume_id`/`cover_letter_id` on the stored row are therefore
+// left `null` by this wave -- a HELD decision, not an unresolved module
+// lookup -- and `buildPrepPrompt` is built only from the position's own
+// posting text and the application's company digest (if one is on file). A
+// later wave that resolves N26 (a name-detection pass that tolerates résumé
+// prose, or an equivalent fix) can widen `buildPrepPrompt` and start passing
+// `resumeId`/`coverLetterId` without any change to the write/read/claim/spend
+// mechanics below.
 //
 // The `outcome` value written to `interview_prep_events` for an 'attempt'
 // event is decided by `outcomeForStatus` in lib/interviewPrep/finishAttempt.js
@@ -94,6 +99,8 @@ import {
   recordPrepEvent,
 } from "@/lib/interviewPrep/prepStore";
 import { finishAttempt } from "@/lib/interviewPrep/finishAttempt";
+import { normalizePack, countRefusedLines } from "@/lib/interviewPrep/prepParse";
+import { packStatus, buildEmbeddedPack } from "@/lib/interviewPrep/prepPack";
 import { PREP_RATE_LIMIT, PREP_RATE_WINDOW_MS, PREP_GENERATION_TIMEOUT_MS } from "@/lib/interviewPrep/prepConstants";
 
 export const runtime = "nodejs";
@@ -174,45 +181,13 @@ function ensureCompanyDigest(request, applicationId) {
 
 // The deterministic, zero-outbound path (engine: "embedded"). No model call,
 // so no spend gate applies -- matches app/api/copilot/glossary/route.js's own
-// GATE 14 posture: zero outbound, zero client.
-//
-// Written for status 'partial', never 'ready' -- a deterministic, no-LLM
-// backend produces only the Overview stage below, not the four sections
-// (aboutYou/whyRole/askThem/stages) interview_prep_packs_ready_is_complete
-// requires of a 'ready' pack (supabase/migrations/20260914000000_interview_prep.sql
-// :194-211); 'partial' is honest about that and never evaluates the CHECK at
-// all (it only fires for status = 'ready'). `claims` is still a real array,
-// not an object map -- interview_prep_packs_claims_is_array (:219-220)
-// applies to 'partial' too, and a producer should be correct at the source
-// rather than leaning on prepParse.js's normalizePack to rescue it downstream.
-function buildEmbeddedPack({ position, digest }) {
-  const title = String(position?.title || "").trim() || "this position";
-  const company = String(position?.company || "").trim() || "the company";
-  const hasDigest = digest?.status === "ready" && typeof digest.markdown === "string" && digest.markdown.trim();
-  const digestNote = hasDigest
-    ? "Company research is already on file in the tracking table's digest -- read it for specifics before your interview."
-    : "No company research is on file yet for this posting.";
-
-  return {
-    tellMeAboutYourself: `Lead with the experience most relevant to the ${title} role at ${company}.`,
-    whyThisPosition: `Explain what draws you to the ${title} role at ${company} specifically, not to the field in general.`,
-    questionsToAsk: [
-      `What does success look like in the first 90 days as ${title}?`,
-      "How is this team's work measured?",
-    ],
-    sections: {
-      stages: [
-        {
-          name: "Overview",
-          questions: ["Tell me about yourself.", `Why ${company}?`],
-          recommendedAnswer: digestNote,
-          support: null,
-        },
-      ],
-    },
-    claims: [],
-  };
-}
+// GATE 14 posture: zero outbound, zero client. `buildEmbeddedPack` itself
+// now lives in lib/interviewPrep/prepPack.js (imported above, alongside
+// `packStatus`), not here -- moved so a runtime test can call the REAL
+// producer through the REAL normalizePack/packStatus instead of a
+// hand-mirrored fixture that can silently drift from it; see that module's
+// own header for the full rationale (the Pack contract shape, the
+// 'partial'-not-'ready' owner ruling, and F-1's K1-SHAPE exemption).
 
 // The prompt for IP3's own (non-grounded) generation call. No tools, no
 // googleSearch (PI-4) -- a live person search during generation is exactly
@@ -230,7 +205,10 @@ function buildPrepPrompt({ position, digest }) {
   return [
     `You are preparing a candidate for an interview for the ${title} role at ${company}.`,
     "Respond with ONLY a JSON object (no prose, no markdown fences) shaped exactly like:",
-    '{"tellMeAboutYourself": string, "whyThisPosition": string, "questionsToAsk": string[], "sections": {"stages": [{"name": string, "questions": string[], "recommendedAnswer": string}]}}',
+    '{"version": 1, "sections": {"aboutYou": {"answer": {"lines": [{"text": string, "support": {"kind": "claim", "claimId": string}|null}]}}, "whyRole": {"answer": {"lines": [{"text": string, "support": {"kind": "claim", "claimId": string}|null}]}}, "askThem": {"questions": [{"text": string, "support": {"kind": "claim", "claimId": string}|null}]}, "stages": {"stages": [{"name": string, "questions": string[], "recommendedAnswer": string, "support": {"kind": "claim", "claimId": string}|null}]}}, "claims": [{"id": string, "text": string, "sourceUrl": string}]}',
+    "Every one of the four sections must be non-empty.",
+    "Any support.claimId must appear as an id in claims, and every claims entry must carry a real publisher URL in sourceUrl -- never a search-redirect URL.",
+    "Write aboutYou and whyRole in the first person. Never write the candidate's own name, or any person's name, in those two sections.",
     "Never name, describe, or predict which specific person will conduct or attend any interview, however confident you are -- that is forbidden.",
     "Base every claim about the company on the research below; never invent a fact you cannot support.",
     `Posting:\n${description}`,
@@ -238,6 +216,15 @@ function buildPrepPrompt({ position, digest }) {
   ].join("\n\n");
 }
 
+// J: the F-1 K1-SHAPE exemption's `templateOrigin` field is stripped HERE --
+// the single boundary where untrusted model JSON becomes a pack object --
+// rather than as a separate step the generation path below must remember to
+// call afterward. A strip living downstream, defended only by a source-text
+// check on this file's own variable names, breaks silently on an unrelated
+// rename (no behaviour change) and does not protect a future second
+// call site that builds a pack from a model reply without going through
+// this exact code. Centralizing it here means every caller of this function
+// gets the strip for free.
 function parsePrepResponse(response) {
   const raw = response?.text;
   if (typeof raw !== "string" || !raw.trim()) return { ok: false, error: "The model returned no text." };
@@ -247,7 +234,10 @@ function parsePrepResponse(response) {
   } catch {
     return { ok: false, error: "The model's reply was not valid JSON." };
   }
-  if (!parsed || typeof parsed !== "object") return { ok: false, error: "The model's reply was not a pack object." };
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { ok: false, error: "The model's reply was not a pack object." };
+  }
+  delete parsed.templateOrigin;
   return { ok: true, pack: parsed };
 }
 
@@ -443,10 +433,66 @@ export async function POST(request) {
     return Response.json({ status });
   }
 
+  // The route normalizes the model's reply ITSELF, and computes packStatus
+  // on THAT normalized pack -- never on `parsed.pack` directly.
+  // writePrepPackResult (prepStore.js) normalizes again inside itself before
+  // every write, but by the time it runs, the terminal `status` this call
+  // passes down must already reflect what SURVIVES normalization (a
+  // name/citation refusal can drop a whole section's lines), not what the
+  // model merely claimed to return. Computing status on the raw reply is
+  // exactly how a 'ready' pack full of dropped lines gets written; running
+  // normalizePack twice IS safe (idempotent) -- see that function's own
+  // header (F-2) for why that claim used to be false for one field
+  // (`refusedLines`) and is not, any more, now that field is gone.
+  //
+  // F-1's own K1-SHAPE exemption keys off `pack.templateOrigin` -- a field
+  // ONLY buildEmbeddedPack's literal ever legitimately sets. The model's
+  // reply is free-form JSON, so nothing stops a hostile reply from including
+  // that exact key to claim the exemption for itself; parsePrepResponse
+  // above already strips it, at the one boundary where untrusted JSON
+  // becomes a pack, so the exemption is unreachable from a model-authored
+  // pack by the time `parsed.pack` reaches here.
+  const normalizedPack = normalizePack(parsed.pack);
+  const computedStatus = packStatus(normalizedPack);
+
+  // F-2: computed once, here, on the pre-normalization reply -- see
+  // countRefusedLines' own header (prepParse.js) for why a count carried on
+  // normalizePack's own return value cannot work across prepStore.js's own
+  // repeated write/read normalization. No column on interview_prep_packs
+  // holds this today (adding one is a migration, out of scope for this
+  // wave, and PREP_PACK_MAX_BYTES is exactly why this value must not be
+  // written into `pack` itself) -- logged for operator visibility instead
+  // of silently discarded.
+  const refusedLines = countRefusedLines(parsed.pack, normalizedPack.claims);
+  if (refusedLines > 0) {
+    console.warn("interview-prep: normalizePack refused line(s) in a generated pack", {
+      applicationId,
+      refusedLines,
+    });
+  }
+
+  if (computedStatus === null) {
+    // Zero of the four sections survived normalization -- a model that
+    // returned parseable JSON with no usable content is a provider failure
+    // ('provider-error' is already a PREP_REASON_VALUES member), never the
+    // candidate-facing 'unavailable' GATE 10 reserves for a genuinely empty
+    // posting.
+    const { write, status } = await finishAttempt(supabase, {
+      ...attemptCtx,
+      status: "failed",
+      reason: "provider-error",
+      error: "The model's reply contained no usable section after normalization.",
+      postingFingerprint: fingerprint,
+      digestResearchedAt,
+    });
+    if (!write.written) return writeFailureResponse(write);
+    return Response.json({ status });
+  }
+
   const { write, status } = await finishAttempt(supabase, {
     ...attemptCtx,
-    status: "ready",
-    pack: parsed.pack,
+    status: computedStatus,
+    pack: normalizedPack,
     postingFingerprint: fingerprint,
     digestResearchedAt,
     researchedAt: new Date().toISOString(),

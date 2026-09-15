@@ -32,12 +32,12 @@
 # passes today, before any fix, because the code's existing test suite was never written against the
 # input this item objects to.
 
-# ACTIONABLE (18)
-- id: "N18"
+# ACTIONABLE (23)
+- id: "N22"
   state: "actionable"
-  title: "**Answered questions must STAY on screen, and a newly detected question must not take the panel until the candidate confirms it.** Owner request, 2026-09-14, prioritized ABOVE the prep pack. **The workflow, in the owner's own words**: live copilot mode is running; the interviewer asks a question; the app detects it; the app answers it **and asks before displaying the answer**; the candidate clicks yes; the answer displays. Repeat: the candidate clicks display for the next question/answer, that answer displays, **and the previous question/answer goes into a collapsible list** the candidate can scroll back to and re-open. **What exists today, and why this is a semantics change not an addition**: `lib/copilot/currentQuestion.js` decides ONE current entry (the latest non-provisional, AC-M1.3.5) and `lib/copilot/questionPin.js` adds a **time-bounded** hold on top of it (AC-T1.16..T1.16.3) — so a newer question eventually wins on its own. The owner is asking for the hold to be **indefinite and candidate-controlled**: nothing advances without an explicit confirm, and nothing is ever evicted, only collapsed. `newerQuestionCount` already exists in `currentQuestion.js` and is the natural signal for \"N waiting\". **Design questions a round must settle before code**: (a) what happens to a generated answer the candidate never confirms — is it kept, discarded, or regenerated on expand, and does it still cost a model call; (b) whether confirmation gates GENERATION or only DISPLAY (the owner's wording is display — the app answers, THEN asks — which means the spend happens before the confirm, and that should be stated rather than assumed); (c) how the collapsed list behaves when an interview runs long (no cap, or a cap with what eviction rule — the owner's requirement is that nothing is lost, so a cap needs an explicit ruling); (d) what a queue of unconfirmed questions looks like when three arrive in one breath — strictly ordered, or can the candidate pick out of order. **Constraint**: the standing minimize-clicks directive is deliberately overridden here for ONE click (the confirm) because the owner asked for it by name; it is not a licence to add a second"
-  owed_by: "A design round (1c UX + 1b structure) settling the four questions above, then the wave that builds it"
-  evidence: ["`lib/copilot/currentQuestion.js` (single-current decision, AC-M1.3.5, and `newerQuestionCount`)", "`lib/copilot/questionPin.js` (today's TIME-bounded hold, AC-T1.16..T1.16.3)", "`app/copilot/QuestionFeed.js` and `app/copilot/dashboard/CopilotDashboard.js` (the surface)", "[[minimize-clicks]] — overridden for exactly one confirm, by owner request"]
+  title: "**Five findings against the SHIPPED N12 lockdown migration, plus the owner-ruled cleanup it must carry.** A fresh adversarial check ran against `3d9bb27` AFTER it was pushed (it shipped on a design round and a self-report, with no check — that omission is the reason these exist). `supabase/migrations/20260915000000_interview_prep_spend_lockdown.sql` is NOT yet applied, so all of this is corrected IN PLACE rather than chased with a further migration. **(1) The execute-grant replay is provably wrong against this repo own files.** `interviewPrepEffectiveSchema.test.js:386-389` requires the literal word `execute` and an exact-byte signature match; run verbatim over the real migrations it reports PUBLIC holds EXECUTE on `prune_feed_postings`, which `20260612000000_feed_postings_retention.sql:33` explicitly revokes with `revoke all on function`. Five further re-grant spellings are invisible. Fix: match `execute|all`, `function|routine`, normalise the signature, split the role list, and add `prune_feed_postings` as a control in THAT describe block. **(2) The table-grant replay is evadable by seven legal spellings**, including this repo own house style: `grant select on table x to anon, authenticated;` (`20260609010000_feed_grants.sql:12`) is dropped entirely by the regex at `:160`. Also missed: no `ON TABLE` keyword, multi-table, `with grant option`, quoted role, unqualified table, and a `do $$ ... execute ... $$` block. **(3) The migration never names `anon`.** It revokes EXECUTE from `public` and table privileges from `authenticated` only, while both precedents it cites do both (`feed_postings_retention.sql:33-34`), and `20260908000000_positions_policy_hardening.sql:155-163` ALREADY RULED that on Supabase an omission is not an absence. `revoke ... from public` does not remove an explicit `anon` grant, so the file headline claim may be false and `anon` may still hold INSERT/UPDATE on the spend table. **(4) The `42501` raise is permanently reachable and the migration ships no remedy.** Its comment says that should never happen; it happens on any project where the still-open N12 hole was used. A squatted spend row keyed to a victim application makes every future claim for that victim abort, forever, with no user-reachable escape (`authenticated` has no DELETE grant or policy on that table, deliberately). **OWNER RULING, 2026-09-15: the migration CLEANS UP cross-tenant rows** rather than refusing to apply and reporting them. Delete, before the function is replaced, every `interview_prep_spend` and `interview_prep_packs` row whose `user_id` does not match its application owner - by definition only the exploit can have created one, so nothing legitimate is lost. The deletion must be counted and reported in the migration output, and V2 query (7) stays as the post-apply confirmation that zero remain. **(5) The migration states a FALSE fact about Postgres** at `:245-250` - it claims a bare `revoke update` does not reach a column-scoped grant; the REVOKE reference says the opposite, column privileges are revoked automatically. The `expandPrivilege` model in the test inherits the error, so a future author who simplifies CORRECTLY gets a false red"
+  owed_by: "A corrections round on the unapplied migration and its replay parser, before V2 is run"
+  evidence: ["`supabase/migrations/20260915000000_interview_prep_spend_lockdown.sql:230`, `:232`, `:245-250`, `:251-252`", "`lib/interviewPrep/interviewPrepEffectiveSchema.test.js:160`, `:386-389`", "`supabase/migrations/20260612000000_feed_postings_retention.sql:33-34` and `20260908000000_positions_policy_hardening.sql:155-163` (the two precedents it cites but only half-follows)", "`20260609010000_feed_grants.sql:12` (the multi-role spelling the replay drops)", "V2 carries the post-apply queries, including (7) for cross-tenant rows"]
   blocked_reason: null
   instrument: null
   owns: null
@@ -57,6 +57,18 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N26"
+  state: "actionable"
+  title: "**`containsDetectedName` cannot tell a person from a product, and that blocks grounding the prep pack in the candidate’s own résumé.** `prepParse.js:45`’s `NAME_PAIR_RE` matches ANY consecutive Title-Case pair whose second word is outside a 23-entry org-suffix list. Résumé prose is dense with exactly that shape - \"React Native\", \"Apache Kafka\", \"Google Cloud\", \"Series B\", \"Payments Platform\". Under the pack contract landed for N16, a name-detected line that carries no citation is REFUSED, and in `aboutYou`/`whyRole` a refusal is a DROP (not a null), so **feeding a résumé in would silently delete most of the candidate’s own material** - the exact opposite of what N8 exists to achieve. The only signal would be the `refusedLines` counter N16 wave A added. **Proven, not predicted**: N16 wave A was asked for a control asserting the line \"Shipped the payments service on React Native and Google Cloud.\" survives intact; it does not, and the agent encoded the AC as vitest `it.fails(...)` rather than widen the heuristic or fabricate a citation. That disclosed failure is live in `prepParse.test.js` today and should be converted to a real assertion by this round. **OWNER RULING, 2026-09-15**: build a **held-out corpus of real résumé prose** and narrow the detector against it, **measuring the false-positive rate** rather than guessing. O-15 stays intact - a real person’s name still requires a cited claim; it is the DETECTOR that is wrong, not the rule. The owner explicitly rejected the alternative of exempting `aboutYou`/`whyRole` from the citation requirement, because that would let an uncited person’s name into those sections. **Do NOT widen `ORG_SUFFIX_WORDS`** - `prepParse.js:48-52` discloses the heuristic as weak by design, and whack-a-mole without a corpus is how ruling R-IP3-63/64’s two-n-gram defect happened. **Corpus discipline** ([[loop-traps-spec]], and backlog N4 records the same trap for the K1-PROHIBITION corpus): the held-out members must be derivable rather than stored beside the implementer’s own module, or a lookup table passes every visible row"
+  owed_by: "A hardening round: build the corpus, measure the current false-positive rate, narrow the detector, re-measure"
+  evidence: ["`lib/interviewPrep/prepParse.js:45` (`NAME_PAIR_RE`), `:48-52` (the heuristic disclosed as weak by design), `:53-77` (the 23-entry org-suffix list)", "`lib/interviewPrep/prepParse.test.js` - the AC-N8.2 control currently encoded as `it.fails(...)`", "backlog N4 - the same held-out-corpus trap, already recorded for K1-PROHIBITION"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 - id: "N8"
   state: "actionable"
   title: "**The prep prompt does NOT send the résumé or cover letter.** `route.js` writes `resumeId`/`coverLetterId` as `null` and generates from the posting text plus the digest only, because no binding document names a résumé/cover-letter store. **Two consequences**: answers are not tailored to the candidate's actual material, which is the feature's point; and **O-12's disclosure says the résumé and cover letter are sent**, so the notice currently over-states what leaves the app"
@@ -67,13 +79,133 @@
   owns: null
   verify: null
   verify_proof: null
+  blocked_by: ["N26"]
+
+- id: "N25"
+  state: "actionable"
+  title: "**The interview prep pack has NO READ SURFACE - nothing in the app ever shows a candidate their pack.** Found by the N16/N8 design round, 2026-09-15, and it reframes what \"fixing the prep pack\" means. **Measured, with a canary**: `readPrepPack` and `listPrepPacks` (`lib/interviewPrep/prepStore.js`) have ZERO non-test callers; there is no `GET` handler in `app/api/interview-prep/` (the directory holds only `route.js` and `route.test.js`); and no component renders a pack. The canary on the same instrument (`fetchApplicationDocs`) returned 40+ hits across routes and libs, so the absence is real and not a dead grep. **Consequence, and it must be said out loud when N16/N8 land**: those two items make the pack GENERATE correctly and LAND in the database grounded in the candidate materials - and the candidate still sees nothing. `prepTrigger.js:51-74` fires the POST and discards the response. Reporting N16/N8 as \"the prep pack now works\" would be false. **What this wave owes**: a `GET` on the prep route (or a direct client read - `prepStore.js`’s reads are deliberately browser-safe, its own header says so), a component, and the rendered disclosure notice `lib/interviewPrep/prepNotice.js` produces. **One rule the design round established that this wave must honour**: a `partial` pack renders the sections that exist WITH a visible \"some sections could not be generated - regenerate\" affordance. It must never render three of four sections as though the pack were complete - that is the same over-statement class as N8’s disclosure. **Also unresolved here**: `interview_prep_events` has a durable per-attempt log and `prepLog.js` exists (N7) with no specifying document; the read surface is where a \"download prep log\" control would live, per the standing feature-log directive [[feature-logs]]"
+  owed_by: "A design round (1c) for the pack surface, then the wave that builds it - AFTER N16 and N8 land, since the shape it renders is what they define"
+  evidence: ["`lib/interviewPrep/prepStore.js` `readPrepPack`/`listPrepPacks` - zero non-test callers (canary `fetchApplicationDocs` -> 40+)", "`app/api/interview-prep/` contains only `route.js` and `route.test.js` - no GET", "`lib/interviewPrep/prepTrigger.js:51-74` - fire-and-forget POST, response discarded", "[[feature-logs]] - the standing directive the prep log would fall under"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
   blocked_by: []
 
-- id: "N22"
+- id: "N28"
   state: "actionable"
-  title: "**Five findings against the SHIPPED N12 lockdown migration, plus the owner-ruled cleanup it must carry.** A fresh adversarial check ran against `3d9bb27` AFTER it was pushed (it shipped on a design round and a self-report, with no check — that omission is the reason these exist). `supabase/migrations/20260915000000_interview_prep_spend_lockdown.sql` is NOT yet applied, so all of this is corrected IN PLACE rather than chased with a further migration. **(1) The execute-grant replay is provably wrong against this repo own files.** `interviewPrepEffectiveSchema.test.js:386-389` requires the literal word `execute` and an exact-byte signature match; run verbatim over the real migrations it reports PUBLIC holds EXECUTE on `prune_feed_postings`, which `20260612000000_feed_postings_retention.sql:33` explicitly revokes with `revoke all on function`. Five further re-grant spellings are invisible. Fix: match `execute|all`, `function|routine`, normalise the signature, split the role list, and add `prune_feed_postings` as a control in THAT describe block. **(2) The table-grant replay is evadable by seven legal spellings**, including this repo own house style: `grant select on table x to anon, authenticated;` (`20260609010000_feed_grants.sql:12`) is dropped entirely by the regex at `:160`. Also missed: no `ON TABLE` keyword, multi-table, `with grant option`, quoted role, unqualified table, and a `do $$ ... execute ... $$` block. **(3) The migration never names `anon`.** It revokes EXECUTE from `public` and table privileges from `authenticated` only, while both precedents it cites do both (`feed_postings_retention.sql:33-34`), and `20260908000000_positions_policy_hardening.sql:155-163` ALREADY RULED that on Supabase an omission is not an absence. `revoke ... from public` does not remove an explicit `anon` grant, so the file headline claim may be false and `anon` may still hold INSERT/UPDATE on the spend table. **(4) The `42501` raise is permanently reachable and the migration ships no remedy.** Its comment says that should never happen; it happens on any project where the still-open N12 hole was used. A squatted spend row keyed to a victim application makes every future claim for that victim abort, forever, with no user-reachable escape (`authenticated` has no DELETE grant or policy on that table, deliberately). **OWNER RULING, 2026-09-15: the migration CLEANS UP cross-tenant rows** rather than refusing to apply and reporting them. Delete, before the function is replaced, every `interview_prep_spend` and `interview_prep_packs` row whose `user_id` does not match its application owner - by definition only the exploit can have created one, so nothing legitimate is lost. The deletion must be counted and reported in the migration output, and V2 query (7) stays as the post-apply confirmation that zero remain. **(5) The migration states a FALSE fact about Postgres** at `:245-250` - it claims a bare `revoke update` does not reach a column-scoped grant; the REVOKE reference says the opposite, column privileges are revoked automatically. The `expandPrivilege` model in the test inherits the error, so a future author who simplifies CORRECTLY gets a false red"
-  owed_by: "A corrections round on the unapplied migration and its replay parser, before V2 is run"
-  evidence: ["`supabase/migrations/20260915000000_interview_prep_spend_lockdown.sql:230`, `:232`, `:245-250`, `:251-252`", "`lib/interviewPrep/interviewPrepEffectiveSchema.test.js:160`, `:386-389`", "`supabase/migrations/20260612000000_feed_postings_retention.sql:33-34` and `20260908000000_positions_policy_hardening.sql:155-163` (the two precedents it cites but only half-follows)", "`20260609010000_feed_grants.sql:12` (the multi-role spelling the replay drops)", "V2 carries the post-apply queries, including (7) for cross-tenant rows"]
+  title: "**A prep-pack stage’s `questions[]` strings are never shape-validated, so a malformed model reply renders as `null`, `5` or `[object Object]` to the candidate.** Executed by a reviewer: `stages:[{name:\"S\", questions:[null,5,{a:1}], recommendedAnswer:\"Real answer.\"}]` normalizes UNCHANGED and `packStatus` returns `\"ready\"`. N16 wave D closed this class for the other three sections (`isUsableTextEntry`) and for whole stage ENTRIES (`normalizeStageList`), but not for the strings INSIDE a stage - the one place `normalizeStage` iterates raw model-supplied strings. **Deliberately declined in wave E, with the reason recorded** (a reviewer’s cost call): it needs a malformed model reply to reach at all, it is rendering hygiene rather than an O-15 grounding or CHECK-constraint defect, and fixing it means touching `normalizeStage` - the one function whose behaviour three landed tests and an owner ruling now pin. Small fix, large breakage surface; the right trade was to queue it. **Fix when taken**: in `normalizeStage`’s filter, also drop any `questions[]` entry that is not a non-empty trimmed string - the same rule `isUsableTextEntry` already applies elsewhere. **It is only observable once N25 (the read surface) exists**, which is the natural time to take it"
+  owed_by: "The wave that builds the read surface (N25), or any later round that reopens normalizeStage"
+  evidence: ["`lib/interviewPrep/prepParse.js` `normalizeStage` - iterates `questions[]` without a shape check", "`lib/interviewPrep/prepPack.js` `isUsableTextEntry` - the rule already applied to the other three sections", "reviewer-executed: a stage with `questions:[null,5,{a:1}]` yields `packStatus === ready`"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N27"
+  state: "actionable"
+  title: "**Two residuals deferred out of N16 wave C, both about packs that already exist or lines that were silently dropped.** **(a) Legacy packs keep three orphaned top-level keys.** Rows written before N16 stored `tellMeAboutYourself`/`whyThisPosition`/`questionsToAsk` at the TOP level plus a flat `sections.stages` array. Wave C added a read-time limb so the flat stages still resolve, but the three top-level keys are never migrated into the new `sections.{aboutYou,whyRole,askThem}` - they survive as keys nothing will ever read again, and those packs therefore render as missing three of four sections once a read surface exists (N25). Needs a data migration, or a documented decision that legacy rows are regenerated rather than migrated. **(b) `refusedLines` has nowhere to go.** `countRefusedLines` is called once in `route.js` and written to `console.warn`. There is no column for it (`interview_prep_packs`’ contract is `{version, sections, claims}` per the migration’s own comment at `20260914000000_interview_prep.sql:153`, which is why the field was removed from the persisted document). So the ONE signal that the name-detector silently deleted a candidate’s content is a server log line nobody reads. `interview_prep_events` already exists as the durable per-attempt log and is the obvious home. **Why (b) matters more than it looks**: N26 records that `containsDetectedName` drops real résumé and first-person prose, and a checker measured 5 of 10 plausible model-written lines refused. Until the count is durable, there is no way to tell a pack that was generated thin from one that was gutted - and those need opposite responses"
+  owed_by: "A wave after N25 (the read surface) exists, so both residuals can be judged against something the candidate actually sees"
+  evidence: ["`lib/interviewPrep/prepParse.js` `extractStageList` (the read-time limb that recovers flat stages but not the three top-level keys)", "`app/api/interview-prep/route.js` - `countRefusedLines` result goes to `console.warn`", "`supabase/migrations/20260914000000_interview_prep.sql:153` (the `{version, sections, claims}` contract)", "backlog N26 (the detector), N25 (the read surface)"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N29"
+  state: "actionable"
+  title: "**The prep pack can only be kicked off automatically; a tracking row needs a manual \"prepare me for this interview\" control.** Owner request, 2026-09-15. Today generation fires only as a side effect of tailoring - `startInterviewPrepResearch` (`lib/interviewPrep/prepTrigger.js:51`) is called from exactly two places, `app/page.js:1655` (trigger class B3) and `app/hooks/useManualPostings.js:280` (B1) - so a candidate who tailored a posting last week, or who wants a second pass before an interview tomorrow, has no way to ask for one. **The tracking row is the right home and is already the only surface that HAS what the trigger needs**: `app/components/tracking/ApplicationCard.js` renders per-row actions (`:178` JD, `:181` Resume, `:200` Comms, `:222` Edit) against a row carrying a real `application_id` - which is precisely what backlog **N13** records as MISSING at two of the five existing call sites, where `tailorPosting` returns only a `jobId` and the blank-id refusal silently swallows the call. A tracking-row button has no such gap. **Coupled to N25, and the pairing matters**: there is no read surface, so a manual kick-off today would spend a capped attempt and show the candidate nothing at all - no running state, no result, no failure. Build them together, or build N25 first. **A fire-and-forget button with no feedback is worse than no button.** **Design questions**: (a) what the control shows across the four states (never generated / running / ready / failed) - the row already reads pack status via `listPrepPacks`, which is browser-safe by design; (b) what it says when the caps are spent (`attempts >= 6` or `model_calls >= 12`) rather than letting the click fail silently - `claimPrepPack` already returns a distinct `attempts-spent` reason; (c) whether a re-run replaces the stored pack or offers a choice, given `writePrepPackResult` is a plain UPDATE and O-16’s delete control exists separately; (d) the standing [[minimize-clicks]] directive - one action with good defaults, not a menu then a confirm. **Trigger class**: this is a new, candidate-initiated class distinct from B1/B3, and `interview_prep_events.trigger_class` is CHECK-bounded to `(\"B1\", \"B3\")` (`20260914000000_interview_prep.sql:406-407`), so a manual trigger needs either a migration adding its own value or an explicit ruling to reuse one - **it cannot just be passed through**"
+  owed_by: "A design round settling the four questions and the trigger_class ruling, then the wave that builds it - after or alongside N25"
+  evidence: ["`lib/interviewPrep/prepTrigger.js:51` (`startInterviewPrepResearch`, the only entry point)", "`app/page.js:1655` and `app/hooks/useManualPostings.js:280` - the only two call sites today", "`app/components/tracking/ApplicationCard.js:178`, `:181`, `:200`, `:222` - the per-row action strip this joins", "`supabase/migrations/20260914000000_interview_prep.sql:406-407` - trigger_class CHECK is bounded to B1/B3", "coupled to N25 (no read surface) and N13 (the missing application id at two existing sites)"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N13"
+  state: "actionable"
+  title: "**Two of the five B1 trigger sites are inert.** `generateWithReviewedValues` (`app/page.js`) and `runWorker` (`app/hooks/useManualPostings.js`) call `startInterviewPrepResearch` with **no resolvable `applicationId`** — `tailorPosting`'s return carries only `jobId` — so `prepTrigger.js`'s blank-id refusal fires and nothing happens downstream. The landed seam tests assert the *call*, which is made, so they stay green. **Three of five manual-tailor paths work; two do not.**"
+  owed_by: "A wave that threads the application id through the tailor return, or a design round that decides it cannot be"
+  evidence: ["`plan.r1.md` §4 names this as an unresolved tracing gap; the step-5 waves 8/9 report documents both call sites and the reliance on the blank-id refusal"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N11"
+  state: "actionable"
+  title: "**O-7's digest-ensure forwards the caller's cookie** in a server-to-server fetch, because no existing helper does this. Security-relevant and unreviewed"
+  owed_by: "A security review round"
+  evidence: ["disclosed in `route.js`'s header"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N5"
+  state: "actionable"
+  title: "**Three named contract functions have no test and no implementation.** `packRenderState`, `packIsStale`, `shouldStartPrep` are named by `design-structure.r1.md` §3 but no 4b row exercises them, so step-5 wave 1 correctly declined to build them against a guessed row shape. A coverage gap in 4b, not an implementation gap"
+  owed_by: "A 4b round, then the wave that owns them"
+  evidence: ["`prepContract.js`'s own comment names the gap; step-5 wave 1 report"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N7"
+  state: "actionable"
+  title: "**`prepLog.js` was built with no specifying document and no test.** 86 lines, created because the wave table needs the file to exist for a later mechanical gate and the UI wave. Its export shape is invented, and nothing exercises it — the same class wave 1 correctly refused for three other functions"
+  owed_by: "A 4b round before it carries behaviour"
+  evidence: ["`lib/interviewPrep/prepLog.js` header discloses it; step-5 wave 2 report"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N4"
+  state: "actionable"
+  title: "**The K1-PROHIBITION corpus is held-out by instruction, not by construction.** `lib/interviewPrep/__fixtures__/predictionCorpus.js` sits in the implementer's own module directory; nothing prevents reading it. Proven discriminating today: a 10-string lookup-table build passes all 27 visible rows and ships both held-out sentences unrefused"
+  owed_by: "A later hardening round — derive held-out members rather than store them"
+  evidence: ["`4b.r2.md`; ruling `R-IP3-64`"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N3"
+  state: "actionable"
+  title: "**Three 4b instrument minors, disclosed and unfixed.** `C4B-6` an import-extension regex fragility; `C4B-7` the reason-vocabulary CHECK canary drawn from the same source it validates (partially mitigated); `C4B-8` an outcome-check that asserts containment only"
+  owed_by: "A later 4b round"
+  evidence: ["`check-4b.r1.md` majors table; scoped out by `4b.r2.md`"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N24"
+  state: "actionable"
+  title: "**The live interview panel is too small to be useful on non-mobile screens.** Owner report, 2026-09-15. The copilot dashboard is the surface a candidate reads WHILE being interviewed, and on a laptop or desktop it wastes most of the window. **Grounded in the constraints that produce it, not a vibe**: the sticky question band is capped at **30% of the viewport height** - `BAND_BASE_DVH` in `app/copilot/stickyQuestionGuards.test.js:48` pins `max(calc(64px + 4.25rem), calc((100dvh - var(--sticky-top, 0px)) * 0.30))` - so on a 1080p screen the question and its answer share roughly a third of the height while two thirds sit empty. The voice-cue rail then takes a fixed **280px** at `md` and up (`app/copilot/VoiceCueSidebar.js:30` `RAIL_SX`), which is a far larger proportional bite at 1280px than the layout was tuned for. The column arithmetic (`CopilotClient.js:862`, `:873`, `:904`) is a `flex: 1 / minHeight: 0` chain written so the pieces fit on a phone, and it holds the same shape all the way up. **Almost every sizing decision in this surface was made for the phone case and never re-judged for the desktop one** - see [[copilot-mobile]], which records the mobile pass; there has been no desktop equivalent. **What this must NOT become**: more panels visible at once. The candidate is reading this while a person waits for them to speak, so the goal is BIGGER TYPE AND FEWER THINGS, not denser information - the [[minimize-clicks]] reasoning applied to attention rather than clicks. **A design round should settle**: what the desktop breakpoint gives back to the answer area; whether the rail collapses, docks or moves at `lg`+; whether the band cap should be a function of available height rather than a fixed fraction; and what the reading distance actually is (a laptop at arm length is not a phone at 30cm, and the type scale never changed). **Measurement limit, stated honestly**: this repo cannot measure real layout - jsdom computes no geometry and the browser pane needs a visible window ([[measurement-instruments]]). The design round needs real screenshots at real breakpoints, which is an owner-run instrument"
+  owed_by: "A design round (1c) for the desktop breakpoint, then the wave that builds it"
+  evidence: ["`app/copilot/stickyQuestionGuards.test.js:48` (`BAND_BASE_DVH` - the 30%-of-viewport cap)", "`app/copilot/VoiceCueSidebar.js:30` (`RAIL_SX` - fixed 280px at md+)", "`app/copilot/CopilotClient.js:862`, `:873`, `:904` (the flex/minHeight column chain)", "[[copilot-mobile]] records the mobile pass; no desktop equivalent exists"]
   blocked_reason: null
   instrument: null
   owns: null
@@ -141,42 +273,6 @@
   verify_proof: null
   blocked_by: []
 
-- id: "N3"
-  state: "actionable"
-  title: "**Three 4b instrument minors, disclosed and unfixed.** `C4B-6` an import-extension regex fragility; `C4B-7` the reason-vocabulary CHECK canary drawn from the same source it validates (partially mitigated); `C4B-8` an outcome-check that asserts containment only"
-  owed_by: "A later 4b round"
-  evidence: ["`check-4b.r1.md` majors table; scoped out by `4b.r2.md`"]
-  blocked_reason: null
-  instrument: null
-  owns: null
-  verify: null
-  verify_proof: null
-  blocked_by: []
-
-- id: "N4"
-  state: "actionable"
-  title: "**The K1-PROHIBITION corpus is held-out by instruction, not by construction.** `lib/interviewPrep/__fixtures__/predictionCorpus.js` sits in the implementer's own module directory; nothing prevents reading it. Proven discriminating today: a 10-string lookup-table build passes all 27 visible rows and ships both held-out sentences unrefused"
-  owed_by: "A later hardening round — derive held-out members rather than store them"
-  evidence: ["`4b.r2.md`; ruling `R-IP3-64`"]
-  blocked_reason: null
-  instrument: null
-  owns: null
-  verify: null
-  verify_proof: null
-  blocked_by: []
-
-- id: "N5"
-  state: "actionable"
-  title: "**Three named contract functions have no test and no implementation.** `packRenderState`, `packIsStale`, `shouldStartPrep` are named by `design-structure.r1.md` §3 but no 4b row exercises them, so step-5 wave 1 correctly declined to build them against a guessed row shape. A coverage gap in 4b, not an implementation gap"
-  owed_by: "A 4b round, then the wave that owns them"
-  evidence: ["`prepContract.js`'s own comment names the gap; step-5 wave 1 report"]
-  blocked_reason: null
-  instrument: null
-  owns: null
-  verify: null
-  verify_proof: null
-  blocked_by: []
-
 - id: "N6"
   state: "actionable"
   title: "**`launch.js` L7's `lockedIds` guard is unswept** — no faithful dangerous mutant was found for it. Named, not asserted clean"
@@ -189,47 +285,11 @@
   verify_proof: null
   blocked_by: []
 
-- id: "N7"
-  state: "actionable"
-  title: "**`prepLog.js` was built with no specifying document and no test.** 86 lines, created because the wave table needs the file to exist for a later mechanical gate and the UI wave. Its export shape is invented, and nothing exercises it — the same class wave 1 correctly refused for three other functions"
-  owed_by: "A 4b round before it carries behaviour"
-  evidence: ["`lib/interviewPrep/prepLog.js` header discloses it; step-5 wave 2 report"]
-  blocked_reason: null
-  instrument: null
-  owns: null
-  verify: null
-  verify_proof: null
-  blocked_by: []
-
 - id: "N15"
   state: "actionable"
   title: "**A tracking row cannot open the preview/edit window.** Owner request, 2026-09-14. `app/components/tracking/ApplicationCard.js` gives each row `JD` (`:178`) and `Resume` (`:181`) buttons, but both open `AppViewDialog` with a `kind`, which is a **read-only view** — not `DocumentPreviewDialog`, the window that carries editing, the rich-copy path, filename control, download and Save-to-Drive. That dialog is mounted once by `app/components/DocumentPreviewMount.js` and driven by the `preview` state of the main tailoring flow, so it is reachable only by tailoring a posting in this session: a row tailored on a previous visit has no route to it at all. **What is owed**: a per-row action on the tracking table that opens `DocumentPreviewDialog` for that row's tailored résumé and cover letter. **Two things a design round must settle before code**: (1) the dialog is a single long-lived mount reading one `preview` object — opening it for an arbitrary row means either populating that state from the row or giving the mount a second entry point, and which one is correct is not derivable from the current code; (2) the stored-document source for a row is the same unnamed résumé/cover-letter store that **N8** is blocked on, so if the row's documents are not already in hand this item inherits that blocker. **Constraint**: the standing minimize-clicks directive applies — one action with good defaults, not a menu then a picker"
   owed_by: "A design round settling the mount's second entry point and the row→document source, then the wave that builds it"
   evidence: ["`app/components/tracking/ApplicationCard.js:178`, `:181` (the two existing read-only row buttons)", "`app/components/DocumentPreviewMount.js` (single mount, driven by the tailoring flow's `preview` state)", "`app/components/DocumentPreviewDialog.js` (the window owed)", "coupled to **N8** for the document source"]
-  blocked_reason: null
-  instrument: null
-  owns: null
-  verify: null
-  verify_proof: null
-  blocked_by: []
-
-- id: "N11"
-  state: "actionable"
-  title: "**O-7's digest-ensure forwards the caller's cookie** in a server-to-server fetch, because no existing helper does this. Security-relevant and unreviewed"
-  owed_by: "A security review round"
-  evidence: ["disclosed in `route.js`'s header"]
-  blocked_reason: null
-  instrument: null
-  owns: null
-  verify: null
-  verify_proof: null
-  blocked_by: []
-
-- id: "N13"
-  state: "actionable"
-  title: "**Two of the five B1 trigger sites are inert.** `generateWithReviewedValues` (`app/page.js`) and `runWorker` (`app/hooks/useManualPostings.js`) call `startInterviewPrepResearch` with **no resolvable `applicationId`** — `tailorPosting`'s return carries only `jobId` — so `prepTrigger.js`'s blank-id refusal fires and nothing happens downstream. The landed seam tests assert the *call*, which is made, so they stay green. **Three of five manual-tailor paths work; two do not.**"
-  owed_by: "A wave that threads the application id through the tailor return, or a design round that decides it cannot be"
-  evidence: ["`plan.r1.md` §4 names this as an unresolved tracing gap; the step-5 waves 8/9 report documents both call sites and the reliance on the blank-id refusal"]
   blocked_reason: null
   instrument: null
   owns: null

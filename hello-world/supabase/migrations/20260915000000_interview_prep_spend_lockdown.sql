@@ -34,7 +34,7 @@
 --              itself fully revoked below.
 --   :455-471 -- claim_prep_pack_slot's own header, asserting SECURITY INVOKER
 --              and unqualified table names as the function's permanent shape
---              "matching design-structure.r1.md ss4.1's own adopted text
+--              "matching design-structure.r1.md §4.1's own adopted text
 --              byte-for-byte". That adopted text specified SECURITY INVOKER;
 --              this migration supersedes that adopted text under backlog
 --              N12, for the reason in the next section. The unqualified-name
@@ -99,7 +99,125 @@
 -- drop policy if exists before create policy, and grant/revoke are
 -- idempotent by definition -- matching every other migration in this
 -- directory (20260914000000_interview_prep.sql's own closing note; also
--- stated at 20260908000000_positions_policy_hardening.sql:188).
+-- stated at 20260908000000_positions_policy_hardening.sql:188). The cleanup
+-- block below is the one exception worth calling out explicitly: it is
+-- re-runnable too (a second run simply finds zero cross-tenant rows and
+-- reports zero deleted), but it is not idempotent in the sense of "always
+-- produces the same rows" -- it can only ever delete a given poisoned row
+-- once.
+
+-- ===========================================================================
+-- CLEANUP: cross-tenant rows created via the still-open N12 hole -- BEFORE
+-- claim_prep_pack_slot is replaced, deliberately
+-- ===========================================================================
+-- OWNER RULING, 2026-09-15. Ordering matters: once claim_prep_pack_slot
+-- below becomes SECURITY DEFINER with the ownership-checked spend upsert's
+-- `where interview_prep_spend.user_id = auth.uid()`, a POISONED row (one
+-- whose user_id does not match its own application's owner -- reachable
+-- today only through the still-open N12 hole: POSTing a victim's
+-- application_id creates interview_prep_spend/interview_prep_packs rows
+-- keyed to the victim's application but owned by the attacker) makes that
+-- upsert's WHERE clause match zero rows for that application FOREVER --
+-- v_spend_rows stays 0 on every subsequent call, and the 42501 raise below
+-- fires on every claim attempt for that victim, permanently, with no
+-- candidate-facing or application-level way to clear it (authenticated holds
+-- no DELETE grant or policy on this table, by design). Running this cleanup
+-- FIRST, before the function below is replaced, means the new function never
+-- has a poisoned row left to trip over.
+--
+-- WHAT "FIRST" ACTUALLY BUYS, STATED PRECISELY (minor-10 correction): this
+-- paragraph previously claimed running the cleanup after the function swap
+-- would leave the new function "live, and already poisoned, for the entire
+-- window in between" -- decorative, not established. All statements in this
+-- file run inside ONE migration: .github/workflows/supabase-migrations.yml
+-- applies it via `supabase db push`, which wraps each migration FILE in a
+-- single transaction, so within this one file the cleanup and the function
+-- swap commit together or not at all -- no window between them can exist
+-- regardless of which comes first. The ordering is kept anyway, for a human
+-- reader's sake and as defense-in-depth against a future edit that splits
+-- this file's statements across more than one transaction, not because
+-- today's ordering closes a race that would otherwise exist.
+--
+-- WHY THIS DELETE CANNOT REMOVE A LEGITIMATE ROW: every writer of these two
+-- tables -- the ORIGINAL invoker claim_prep_pack_slot this file supersedes,
+-- record_prep_model_call, and the new DEFINER claim_prep_pack_slot below --
+-- always sets user_id to auth.uid(), the CALLER's own identity, never a
+-- client-suppliable value. A legitimate row's user_id can therefore only
+-- ever equal its own application's user_id. A row where they differ can only
+-- exist if some caller supplied an application_id belonging to a DIFFERENT
+-- account than their own and the write proceeded anyway -- exactly the
+-- still-open N12 gap described above, and by definition only that gap can
+-- produce such a row. Deleting exactly the rows where they differ therefore
+-- removes only exploit-created rows, never a legitimately-written one.
+--
+-- Counted and reported, not silent -- get diagnostics + raise notice, so a
+-- later reader can tell "nothing was wrong" from "this did not run". Order
+-- between the two tables' own deletes does not matter (neither references
+-- the other; both independently reference applications), so spend is
+-- cleaned first only because it is the table this file's header discusses
+-- first.
+do $$
+declare
+  v_deleted_spend integer;
+  v_deleted_packs integer;
+  v_spend_force_rls boolean;
+  v_packs_force_rls boolean;
+begin
+  -- MAJOR-6, reworded (MAJOR-E adversarial-review correction): the wording
+  -- here previously claimed "neither table carries a DELETE policy" --
+  -- false for interview_prep_packs, which has carried
+  -- "interview_prep_packs_delete_own" (using auth.uid() = user_id) since
+  -- 20260914000000_interview_prep.sql:271-273. The conclusion below still
+  -- holds, but for the mechanism that actually produces it:
+  -- relforcerowsecurity, if ever set on either table, forces RLS to filter
+  -- THIS MIGRATION's own DELETE exactly the way it would filter any
+  -- non-owner role's -- and a migration runs with no authenticated session,
+  -- so auth.uid() is NULL here. No ownership policy -- present
+  -- (interview_prep_packs) or absent (interview_prep_spend) -- can ever
+  -- match a NULL auth.uid() against a row's own (necessarily non-null)
+  -- user_id, so a force-RLS table deletes ZERO rows no matter how many
+  -- cross-tenant rows actually exist, regardless of whether it happens to
+  -- carry a DELETE policy at all.
+  --
+  -- MAJOR-F, OWNER RULING 2026-09-15: raises rather than merely warning.
+  -- Left as a warning, continuing on would install the DEFINER
+  -- claim_prep_pack_slot below while a poisoned row stays behind --
+  -- permanently unclaimable (this file's own reasoning above), with no
+  -- candidate-facing remedy -- and a CI warning is routinely unread. Gated
+  -- on relforcerowsecurity alone, not on whether either DELETE actually
+  -- reports zero rows, so a genuinely clean project (both flags false)
+  -- never reaches this branch. Checked here, for both tables, before
+  -- either DELETE runs. Every statement in this file runs in one
+  -- transaction (this file's own header, above), so raising here rolls
+  -- back cleanly and leaves the file re-runnable once relforcerowsecurity
+  -- is cleared.
+  select relforcerowsecurity into v_spend_force_rls
+    from pg_class where oid = 'public.interview_prep_spend'::regclass;
+  if v_spend_force_rls then
+    raise exception 'interview_prep_spend has relforcerowsecurity set -- aborting rather than silently deleting 0 row(s): with no authenticated session in a migration, auth.uid() is NULL and no ownership policy can match, so any cross-tenant row here would be left behind, permanently unclaimable once claim_prep_pack_slot below is installed; clear relforcerowsecurity on this table and re-run this migration';
+  end if;
+
+  select relforcerowsecurity into v_packs_force_rls
+    from pg_class where oid = 'public.interview_prep_packs'::regclass;
+  if v_packs_force_rls then
+    raise exception 'interview_prep_packs has relforcerowsecurity set -- aborting rather than silently deleting 0 row(s): with no authenticated session in a migration, auth.uid() is NULL and no ownership policy can match, so any cross-tenant row here would be left behind, permanently unclaimable once claim_prep_pack_slot below is installed; clear relforcerowsecurity on this table and re-run this migration';
+  end if;
+
+  delete from public.interview_prep_spend spend
+  using public.applications app
+  where spend.application_id = app.id
+    and spend.user_id <> app.user_id;
+  get diagnostics v_deleted_spend = row_count;
+  raise notice 'interview_prep_spend cross-tenant cleanup: % row(s) deleted', v_deleted_spend;
+
+  delete from public.interview_prep_packs packs
+  using public.applications app
+  where packs.application_id = app.id
+    and packs.user_id <> app.user_id;
+  get diagnostics v_deleted_packs = row_count;
+  raise notice 'interview_prep_packs cross-tenant cleanup: % row(s) deleted', v_deleted_packs;
+end;
+$$;
 
 -- ===========================================================================
 -- claim_prep_pack_slot -- converted to SECURITY DEFINER, ownership checked
@@ -227,9 +345,22 @@ $$;
 -- never touching PUBLIC's privilege at all means PUBLIC has held EXECUTE on
 -- both functions, unnoticed, since that file was applied. Revoked here,
 -- explicitly, rather than assumed closed by omission.
+--
+-- `anon` is revoked as its OWN statement, separate from `public` -- a bare
+-- `revoke ... from public` narrows the default PUBLIC-wide grant but does
+-- NOT remove an explicit grant a more specific role such as `anon` might
+-- separately hold, so naming `public` alone would not actually prove `anon`
+-- has no path to either function. Both precedents this file's own header
+-- cites revoke `anon` explicitly rather than relying on the umbrella revoke
+-- to reach it: 20260612000000_feed_postings_retention.sql:33-34 revokes
+-- `from public;` AND `from anon, authenticated;` as separate statements, and
+-- 20260908000000_positions_policy_hardening.sql already ruled that on this
+-- project an omission is not an absence.
 revoke execute on function public.claim_prep_pack_slot(uuid, uuid, timestamptz) from public;
+revoke execute on function public.claim_prep_pack_slot(uuid, uuid, timestamptz) from anon;
 grant execute on function public.claim_prep_pack_slot(uuid, uuid, timestamptz) to authenticated;
 revoke execute on function public.record_prep_model_call(uuid) from public;
+revoke execute on function public.record_prep_model_call(uuid) from anon;
 grant execute on function public.record_prep_model_call(uuid) to authenticated;
 
 -- ===========================================================================
@@ -242,14 +373,27 @@ grant execute on function public.record_prep_model_call(uuid) to authenticated;
 -- `grant update (attempts, updated_at)` existed ONLY to let the old INVOKER
 -- claim_prep_pack_slot write as the caller; that reason is gone.
 --
--- Two revokes, not one, because the original grant is itself two shapes:
--- `grant update (attempts, updated_at) ...` is a COLUMN-level privilege,
--- stored separately from a table-level one, and only a `revoke` naming the
--- same columns removes it -- a bare `revoke update ...` does not reach a
--- column-scoped grant. The second statement then removes the plain,
--- table-level `insert` the original migration also granted.
+-- Two revokes, not one -- belt-and-braces, not strictly required. Per the
+-- PostgreSQL documentation's REVOKE reference (Notes section, verbatim):
+-- "When revoking privileges on a table, the corresponding column privileges
+-- (if any) are automatically revoked on each column of the table, as well."
+-- So the second, bare `revoke update, insert ...` below already reaches the
+-- original migration's column-scoped `grant update (attempts, updated_at)`
+-- on its own -- the first, explicit column-scoped revoke is deliberate
+-- redundancy, not a requirement. Kept anyway and stated explicitly, matching
+-- this repo's own convention of never leaving a privilege's removal to an
+-- unstated cascade (3b.r1.md Item 1; 1-0-contract.r8.md §15), and as cheap
+-- insurance should this ever run against a database where that cascade
+-- behaviour somehow does not hold.
 revoke update (attempts, updated_at) on table public.interview_prep_spend from authenticated;
 revoke update, insert on table public.interview_prep_spend from authenticated;
+-- `anon` never held a grant on this table
+-- (20260914000000_interview_prep.sql granted only `authenticated` and
+-- `service_role`), so this revoke is a no-op today -- restated anyway, as
+-- its own explicit statement rather than assumed closed by omission,
+-- matching 20260908000000_positions_policy_hardening.sql:274's identical
+-- precedent for `positions`.
+revoke all on table public.interview_prep_spend from anon;
 -- Restated, not merely left alone -- this pair is now a complete statement
 -- of the table's intended privileges (matching
 -- 20260908000000_positions_policy_hardening.sql's own precedent for
@@ -271,8 +415,18 @@ grant all on table public.interview_prep_spend to service_role;
 -- nothing when DEFINER's usual bypass holds, and is the ONLY thing that
 -- keeps claim_prep_pack_slot's and record_prep_model_call's writes working
 -- at all if it does not. Not adding `force row level security`: that
--- setting would make RLS apply even to the table owner, which would break
--- BOTH DEFINER functions outright rather than merely fail to bypass it.
+-- setting would make RLS apply even to the table owner -- overstated here
+-- previously as something that "would break BOTH DEFINER functions
+-- outright". The restated policies above check `auth.uid()`, which reads
+-- the CALLING session's own JWT GUC regardless of which role is actually
+-- executing the statement, not the table owner's identity -- so a
+-- legitimate DEFINER write would likely still satisfy its own policy under
+-- force RLS too, not be broken outright by it. Not confirmed against a live
+-- project from this checkout ([[schema-migration-drift]],
+-- [[windows-shell-environment]]), so left off rather than asserted safe --
+-- the decision not to add force RLS is unaffected either way; restating the
+-- policies above is what actually matters, regardless of whether force RLS
+-- is ever set.
 drop policy if exists "interview_prep_spend_insert_own" on public.interview_prep_spend;
 create policy "interview_prep_spend_insert_own" on public.interview_prep_spend
   for insert with check (auth.uid() = user_id);
@@ -287,11 +441,19 @@ create policy "interview_prep_spend_update_own" on public.interview_prep_spend
 -- section, restated because it applies just as fully here:
 -- NEXT_PUBLIC_SUPABASE_URL is a placeholder in this checkout
 -- ([[schema-migration-drift]], [[windows-shell-environment]]), so nothing in
--- this file -- the ownership check, the `42501` raise, the column-privilege
--- revoke, the PUBLIC execute revoke, or whether this project's
+-- this file -- the ownership check, the `42501` raise, the cleanup block's
+-- own DELETE/GET DIAGNOSTICS/RAISE NOTICE, the column-privilege revoke, the
+-- PUBLIC/anon execute and table revokes, or whether this project's
 -- `relforcerowsecurity`/function-ownership actually needs the restated
 -- policies above -- has been executed against a real Postgres instance from
--- this seat. lib/interviewPrep/interviewPrepEffectiveSchema.test.js, which
--- this file's shape was driven by, can only prove the DECLARED SQL text is
--- internally consistent across every migration replayed in order; it cannot
--- prove Postgres enforces any of it.
+-- this seat. In particular: whether the cleanup block finds and removes any
+-- cross-tenant rows on the live project, and how many, is unknown from
+-- here -- its `raise notice` output is only visible to whoever actually
+-- runs the migration, and the owner should capture it for that reason.
+-- lib/interviewPrep/interviewPrepEffectiveSchema.test.js, which this file's
+-- shape was driven by, can only prove the DECLARED SQL text is internally
+-- consistent across every migration replayed in order, and that the cleanup
+-- block's own statements PRECEDE claim_prep_pack_slot's replacement IN THE
+-- SOURCE TEXT -- text order, read top to bottom, not a proof of execution
+-- order inside the live database. It cannot prove Postgres enforces any of
+-- it.

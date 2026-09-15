@@ -42,6 +42,10 @@ export const ALLOWED_UNREACHABLE_MODULES = [
     why: "this file. The data ledgers for exportReachability.sweep.test.js (ALLOWED_UNREACHABLE_MODULES, UNWIRED_MODULES, ORPHAN_EXPORTS, DESYNCED_STATEMENTS), split out to bring that file under the 1000-line cap; a plain .js and not a .test.js for the same reason as exportGraph.js above, and unreachable for the same reason as every other entry in this ledger -- only the sweep test imports it, by name",
   },
   {
+    file: "lib/interviewPrep/migrationGrantReplay.js",
+    why: "the grant/revoke replay and SQL-shape parsing for interviewPrepEffectiveSchema.test.js, split out to bring that file under the 1000-line cap -- same shape and same reason as exportGraph.js and this ledger itself. It parses supabase/migrations text to model the EFFECTIVE privilege state after every migration applies, which no shipping code does or should do; only that one test imports it, by name. Kept beside its consumer rather than in lib/sourceScan because its vocabulary (interview_prep_spend, claim_prep_pack_slot) is this feature's, not generic -- move it if a second feature ever needs the replay",
+  },
+  {
     file: "app/components/experience/experienceTabTestHarness.js",
     why: "shared jsdom harness (fetch stubs, page fixtures, PageEditor/AttachmentPanel mock modules) for the four ExperienceTab suites; it is a .js and not a .test.js so that importing it does not re-run another suite's describes",
   },
@@ -339,12 +343,6 @@ export const ORPHAN_EXPORTS = [
     name: "PREP_SPEND_COLUMNS",
     why: "same shape as PREP_LIST_COLUMNS: used once inside this module to build PREP_SPEND_PROJECTION (which prepStore.js's spend read imports); nothing outside asks for the column array on its own",
   },
-  {
-    file: "lib/interviewPrep/prepParse.js",
-    name: "containsDetectedName",
-    why: "used internally by normalizeStage, this file's own O-15 choke point, to decide whether a line needs the citation and prediction checks at all; exported so a future unit suite could pin the name-detection heuristic on its own, but prepParse.test.js currently drives it only through normalizePack",
-  },
-
   {
     file: "lib/llm/engines/tailor-lite/docxModel.js",
     name: "decodeXml",

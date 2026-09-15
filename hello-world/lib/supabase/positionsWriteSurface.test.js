@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { stripComments } from "../sourceScan/tokenizeSource.js";
 
 // ---------------------------------------------------------------------------
 // The point of this whole change is that `positions_insert_authenticated` /
@@ -100,15 +101,25 @@ describe("the browser-reachable write surface of `positions`", () => {
     // browser-reachable module is still a failure. (This shape change was made
     // while the assertion was red for a structural reason only — the writer
     // did not exist yet — never to get past a behavioural red.)
+    // Comments are STRIPPED before the mention scan. A file that merely NAMES
+    // writePosition.js in prose -- citing it as evidence that `positions` rows
+    // are merged from external job feeds, which lib/interviewPrep/ now does in
+    // two headers -- is not a file that imports it, and a raw text scan cannot
+    // tell those apart. This is the same discipline app/copilot/QuestionFeed's
+    // sweeps and app/api/interview-prep/route.test.js already apply, using the
+    // one shared regex-literal-aware stripper. Stripping makes this assertion
+    // MORE precise, never weaker: the thing it forbids is a static IMPORT, and
+    // an import is code.
+    const codeOf = (f) => stripComments(readFileSync(path.join(ROOT, f), "utf8"));
     const mentions = SOURCE_FILES
       .map(rel)
       .filter((f) => f !== "lib/supabase/writePosition.js")
-      .filter((f) => /writePosition/.test(readFileSync(path.join(ROOT, f), "utf8")));
+      .filter((f) => /writePosition/.test(codeOf(f)));
 
     const STATIC_IMPORT = /import\s+[^;]*from\s+["'][^"']*writePosition(\.js)?["']/;
 
     for (const f of mentions) {
-      const text = readFileSync(path.join(ROOT, f), "utf8");
+      const text = codeOf(f);
       const serverOnly = f.startsWith("app/api/") || f === "lib/feed/tailorAndQueue.js";
       if (serverOnly) continue;
       expect(STATIC_IMPORT.test(text), `${f} statically imports the service-role position writer`).toBe(false);
