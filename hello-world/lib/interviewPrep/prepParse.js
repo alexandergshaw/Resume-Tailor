@@ -104,14 +104,41 @@ function isRedirectUrl(url) {
 }
 
 /** K1-SHAPE: does `support` resolve, through `claims`, to a genuine,
- *  non-redirect citation? */
+ *  non-redirect citation? `claims` is the array `normalizePack` guarantees
+ *  (`interview_prep_packs_claims_is_array`), resolved by id rather than by
+ *  index -- an absent `support.claimId` is refused before the lookup runs
+ *  so it can never coincide with a claims entry that also carries no `id`. */
 function isCitedClaim(support, claims) {
-  if (!support || support.kind !== "claim") return false;
-  const claim = claims[support.claimId];
+  if (!support || support.kind !== "claim" || !support.claimId) return false;
+  const claim = claims.find((entry) => entry && entry.id === support.claimId);
   if (!claim || typeof claim.sourceUrl !== "string") return false;
   const sourceUrl = claim.sourceUrl.trim();
   if (!sourceUrl) return false;
   return !isRedirectUrl(sourceUrl);
+}
+
+/**
+ * Normalizes `pack.claims` into the array shape
+ * `interview_prep_packs_claims_is_array` requires whenever `status` is
+ * `'ready'`/`'partial'` (supabase/migrations/20260914000000_interview_prep.sql):
+ * `jsonb_typeof(pack -> 'claims') = 'array'`. An already-array input is
+ * returned unchanged. A legacy or model-supplied object map
+ * (`{ [claimId]: { text, sourceUrl } }`) is CONVERTED, not dropped -- each
+ * entry becomes `{ ...value, id }`, carrying the map's own key forward as
+ * `id` so `isCitedClaim`'s `.find` can still resolve it; dropping the map
+ * instead would silently un-ground every citation it held. An entry whose
+ * value is not a plain object is skipped rather than emitted malformed.
+ * Any other input (`undefined`, `null`, a string, a number) defaults to `[]`.
+ *
+ * @param {*} rawClaims
+ * @returns {Array<{id: string, [key: string]: *}>}
+ */
+function normalizeClaims(rawClaims) {
+  if (Array.isArray(rawClaims)) return rawClaims;
+  if (!rawClaims || typeof rawClaims !== "object") return [];
+  return Object.entries(rawClaims)
+    .filter(([, value]) => value && typeof value === "object" && !Array.isArray(value))
+    .map(([id, value]) => ({ ...value, id }));
 }
 
 // K1-PROHIBITION's predicate, copied verbatim from design-operate.r1.md §1b:
@@ -156,18 +183,20 @@ function normalizeStage(stageEntry, claims) {
  * can be bypassed, not two independently-maintained copies.
  *
  * Pure and total: never throws, and a pack with no stages normalizes to an
- * empty stage list rather than an error.
+ * empty stage list rather than an error. Also the sole place `pack.claims`
+ * is coerced into the array shape the database requires -- see
+ * `normalizeClaims` above.
  *
  * @param {*} pack
  * @returns {*} the same pack, with any stage failing K1-SHAPE or
  *   K1-PROHIBITION carrying `recommendedAnswer: null` in place of the
- *   generated text.
+ *   generated text, and `claims` guaranteed to be an array.
  */
 export function normalizePack(pack) {
   if (!pack || typeof pack !== "object") return pack;
   const sections = pack.sections && typeof pack.sections === "object" ? pack.sections : {};
   const stages = Array.isArray(sections.stages) ? sections.stages : [];
-  const claims = pack.claims && typeof pack.claims === "object" ? pack.claims : {};
+  const claims = normalizeClaims(pack.claims);
 
   const normalizedStages = stages.map((stageEntry) => normalizeStage(stageEntry, claims));
 

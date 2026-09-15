@@ -276,6 +276,105 @@ describe("the route composes its terminal-write path through the extracted finis
   });
 });
 
+describe("the embedded write satisfies interview_prep_packs' own CHECK constraints under status 'partial', never 'ready'", () => {
+  // Confirmed present on the live project (no drift), supabase/migrations/
+  // 20260914000000_interview_prep.sql:
+  //
+  //   interview_prep_packs_claims_is_array (:219-220) -- applies to BOTH
+  //   'ready' AND 'partial': `jsonb_typeof(pack -> 'claims') = 'array'`. So
+  //   buildEmbeddedPack must emit a real array unconditionally, not rely on
+  //   prepParse.js's normalizePack to rescue an object map at write time --
+  //   a producer should be correct at the source.
+  //
+  //   interview_prep_packs_ready_is_complete (:194-211) -- applies ONLY to
+  //   'ready', and requires `pack -> 'sections'` to carry all four of
+  //   aboutYou/whyRole/askThem/stages, each resolving to a non-empty array
+  //   at the exact nested paths the migration names. buildEmbeddedPack's
+  //   `sections` carries only `stages`, so it can only ever satisfy this
+  //   CHECK by building a full four-section pack -- which the owner ruled
+  //   against, choosing instead to write status 'partial' (honest about a
+  //   deterministic, no-LLM backend), which never evaluates this CHECK at
+  //   all (`status <> 'ready' or (...)`).
+  //
+  // Both instruments below are source-text, matching this file's own
+  // established idiom (see its header): the two gates they pin are about
+  // WHICH LITERAL the route's source writes, not about a mocked dependency
+  // graph's return value.
+
+  it("route.js exists", () => {
+    expect(existsSync(ROUTE_PATH), "app/api/interview-prep/route.js has not been implemented yet").toBe(true);
+  });
+
+  /** Isolates buildEmbeddedPack's own body, so a `claims` literal read
+   *  elsewhere in the file (e.g. the Gemini generation path) can never be
+   *  mistaken for this function's. */
+  function embeddedPackBody(code) {
+    const idx = code.indexOf("function buildEmbeddedPack");
+    expect(idx, "function buildEmbeddedPack not found in route.js").toBeGreaterThanOrEqual(0);
+    const nextFn = code.indexOf("function buildPrepPrompt", idx);
+    expect(nextFn, "function buildPrepPrompt not found after buildEmbeddedPack").toBeGreaterThan(idx);
+    return code.slice(idx, nextFn);
+  }
+
+  it('[mutant this kills] buildEmbeddedPack returns "claims: []" -- a real array literal, never the object-map "claims: {}"', () => {
+    const code = codeOf(ROUTE_PATH);
+    const body = embeddedPackBody(code);
+    expect(body).toMatch(/claims\s*:\s*\[\s*\]/);
+    expect(body).not.toMatch(/claims\s*:\s*\{\s*\}/);
+  });
+
+  it("[control] the claims-array check can actually fail -- proven on a synthetic fixture still emitting the object-map shape", () => {
+    const broken = `
+      function buildEmbeddedPack({ position, digest }) {
+        return { sections: { stages: [] }, claims: {} };
+      }
+      function buildPrepPrompt() {}
+    `;
+    const idx = broken.indexOf("function buildEmbeddedPack");
+    const nextFn = broken.indexOf("function buildPrepPrompt", idx);
+    const body = broken.slice(idx, nextFn);
+    expect(body).not.toMatch(/claims\s*:\s*\[\s*\]/);
+    expect(body).toMatch(/claims\s*:\s*\{\s*\}/);
+  });
+
+  /** Isolates the embedded gate's own block, up to the Gemini client setup
+   *  that follows it -- so the Gemini generation path's own (unrelated)
+   *  "ready" write can never be mistaken for the embedded path's. */
+  function embeddedGateWindow(code) {
+    const gateIdx = code.indexOf("if (useEmbedded) {");
+    expect(gateIdx, "if (useEmbedded) { block not found in route.js").toBeGreaterThanOrEqual(0);
+    const clientIdx = code.indexOf("let client;", gateIdx);
+    expect(clientIdx, "let client; not found after the embedded gate").toBeGreaterThan(gateIdx);
+    return code.slice(gateIdx, clientIdx);
+  }
+
+  it('[mutant this kills] the embedded path\'s own finishAttempt call writes status "partial", never "ready"', () => {
+    const code = codeOf(ROUTE_PATH);
+    const window = embeddedGateWindow(code);
+    expect(window).toMatch(/status\s*:\s*["']partial["']/);
+    expect(window).not.toMatch(/status\s*:\s*["']ready["']/);
+  });
+
+  it("[control] the embedded-status check can actually fail -- proven on a synthetic fixture that still writes 'ready'", () => {
+    const broken = `
+      if (useEmbedded) {
+        const pack = buildEmbeddedPack({ position, digest });
+        const { write, status } = await finishAttempt(supabase, {
+          ...attemptCtx,
+          status: "ready",
+          pack,
+        });
+      }
+      let client;
+    `;
+    const gateIdx = broken.indexOf("if (useEmbedded) {");
+    const clientIdx = broken.indexOf("let client;", gateIdx);
+    const window = broken.slice(gateIdx, clientIdx);
+    expect(window).not.toMatch(/status\s*:\s*["']partial["']/);
+    expect(window).toMatch(/status\s*:\s*["']ready["']/);
+  });
+});
+
 describe("attemptCtx carries triggerClass and engine to every finishAttempt call site (N14 remediation review)", () => {
   // Measured: deleting `engine` from attemptCtx's own literal leaves the full
   // lib/interviewPrep + app/api/interview-prep suite (136 tests) green --

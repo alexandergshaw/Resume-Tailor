@@ -364,10 +364,10 @@ export async function writePrepPackResult(
     reason = null,
     error = null,
     engine = null,
-    pack = null,
+    pack,
     resumeId = null,
     coverLetterId = null,
-    postingFingerprint = null,
+    postingFingerprint,
     digestResearchedAt = null,
     researchedAt = null,
     truncatedReason = null,
@@ -384,24 +384,49 @@ export async function writePrepPackResult(
     if (!budget.ok) return { written: false, reason: "error", error: budget.message, code: PG_CHECK_VIOLATION };
   }
 
+  // `pack` and `posting_fingerprint` are the two columns on this table
+  // declared `not null` with their own DEFAULT (supabase/migrations/
+  // 20260914000000_interview_prep.sql:155,159) -- a DEFAULT never applies to
+  // an explicit `SET col = NULL`, so forwarding either argument
+  // unconditionally once it had defaulted to `null` put NULL into a NOT NULL
+  // column and raised SQLSTATE 23502 (backlog N14). `pack`/`postingFingerprint`
+  // above therefore carry NO default value: an un-supplied argument stays
+  // `undefined` here and its key is left out of the SET list entirely below,
+  // so the column keeps whatever it already held rather than being nulled --
+  // finishAttempt.js's own CHECK-safe fallback retry is exactly this caller,
+  // supplying neither. An argument explicitly passed as `null` is NOT the
+  // same as an un-supplied one and is still sent through as `null` (a bad
+  // value fails loudly at the database, matching this function's own
+  // documented `reason`-validation discipline above, rather than being
+  // silently swallowed into an omission).
+  //
+  // Every other column in this SET list stays unconditional on purpose --
+  // they are genuinely nullable, and several callers rely on an un-supplied
+  // argument writing NULL: `reason`'s own `clearedReason` force-null for
+  // `ready`/`partial` (§8.5) above, and `lease_until`/`lease_token`'s
+  // hardcoded `null` releasing the lease on every terminal write. Dropping
+  // every null-or-undefined key here (rather than only the two NOT NULL
+  // columns' un-supplied case) would release no lease and is the wrong fix.
+  const updateSet = {
+    status,
+    reason: clearedReason,
+    error,
+    engine,
+    resume_id: resumeId,
+    cover_letter_id: coverLetterId,
+    digest_researched_at: digestResearchedAt,
+    researched_at: researchedAt,
+    truncated_reason: truncatedReason,
+    lease_until: null,
+    lease_token: null,
+    updated_at: new Date().toISOString(),
+  };
+  if (pack !== undefined) updateSet.pack = normalizedPack;
+  if (postingFingerprint !== undefined) updateSet.posting_fingerprint = postingFingerprint;
+
   const { data, error: dbError } = await supabase
     .from(PACKS_TABLE)
-    .update({
-      status,
-      reason: clearedReason,
-      error,
-      engine,
-      pack: normalizedPack,
-      resume_id: resumeId,
-      cover_letter_id: coverLetterId,
-      posting_fingerprint: postingFingerprint,
-      digest_researched_at: digestResearchedAt,
-      researched_at: researchedAt,
-      truncated_reason: truncatedReason,
-      lease_until: null,
-      lease_token: null,
-      updated_at: new Date().toISOString(),
-    })
+    .update(updateSet)
     .eq("application_id", applicationId)
     .eq("user_id", userId)
     .eq("lease_token", leaseToken)

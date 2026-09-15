@@ -12,7 +12,20 @@
 //
 //   sections.stages[N].recommendedAnswer  (string)
 //   sections.stages[N].support            ({ kind, claimId } | undefined)
-//   claims[claimId]                       ({ text, sourceUrl })
+//   claims                                ({ id, text, sourceUrl }[])
+//
+// `claims` is an ARRAY, resolved by `.find(c => c.id === support.claimId)`,
+// not a map keyed by claim id. This is a wave-1 correction, not part of the
+// four binding documents: `interview_prep_packs_claims_is_array`
+// (supabase/migrations/20260914000000_interview_prep.sql) CHECKs
+// `jsonb_typeof(pack -> 'claims') = 'array'` whenever `status` is
+// `'ready'`/`'partial'`, so a map-shaped `claims` object fails that CHECK
+// with 23514 on every write, for every engine. `normalizePack` — this
+// module's write/read choke point — therefore also CONVERTS a legacy or
+// model-supplied object map (`{ [claimId]: { text, sourceUrl } }`) into this
+// array shape rather than dropping it, so a citation is never silently
+// un-grounded by the conversion itself. See prepParse.js's own header and
+// the "claims type guarantee" / "conversion fidelity" describe blocks below.
 //
 // Every fixture below is built ONLY from that shape. design-structure.r1.md
 // §9 also names `AnswerLine`/`Question.text` as scanned surfaces, but gives no
@@ -65,7 +78,7 @@ const COMPANY_FACT_SENTENCE =
 // A sentence with no detected personal name at all — the vacuity/no-name case.
 const NO_NAME_SENTENCE = "Acme Robotics builds warehouse robots for cold storage and runs three depots.";
 
-function pack({ stages = [], claims = {} } = {}) {
+function pack({ stages = [], claims = [] } = {}) {
   return { sections: { stages }, claims };
 }
 
@@ -98,7 +111,7 @@ describe("normalizePack — K1-SHAPE: name implies cited", () => {
   it("[mutant] drops a detected name whose claimId resolves to an EMPTY sourceUrl", () => {
     const input = pack({
       stages: [stage("Jane Doe leads the platform team at this company.", { kind: "claim", claimId: "c-empty" })],
-      claims: { "c-empty": { text: "Jane Doe leads the platform team.", sourceUrl: "" } },
+      claims: [{ id: "c-empty", text: "Jane Doe leads the platform team.", sourceUrl: "" }],
     });
     const answers = survivingAnswers(normalizePack(input));
     expect(answers.join("\n")).not.toContain("Jane Doe");
@@ -107,7 +120,7 @@ describe("normalizePack — K1-SHAPE: name implies cited", () => {
   it("[positive control] keeps a detected name whose claim resolves to a non-empty sourceUrl", () => {
     const input = pack({
       stages: [stage(COMPANY_FACT_SENTENCE, { kind: "claim", claimId: "c1" })],
-      claims: { c1: { text: "Jane Doe is VP of Engineering.", sourceUrl: PUBLISHER_URL } },
+      claims: [{ id: "c1", text: "Jane Doe is VP of Engineering.", sourceUrl: PUBLISHER_URL }],
     });
     const answers = survivingAnswers(normalizePack(input));
     expect(answers).toContain(COMPANY_FACT_SENTENCE);
@@ -136,7 +149,7 @@ describe("normalizePack — K1-PROHIBITION: cited is not enough (design-operate.
     // is unconditional -- a citation cannot license a prediction.
     const input = pack({
       stages: [stage(PREDICTION_SENTENCE, { kind: "claim", claimId: "c7" })],
-      claims: { c7: { text: "Jane Doe is VP of Engineering and leads the platform team", sourceUrl: PUBLISHER_URL } },
+      claims: [{ id: "c7", text: "Jane Doe is VP of Engineering and leads the platform team", sourceUrl: PUBLISHER_URL }],
     });
     const answers = survivingAnswers(normalizePack(input));
     expect(answers).not.toContain(PREDICTION_SENTENCE);
@@ -149,7 +162,7 @@ describe("normalizePack — K1-PROHIBITION: cited is not enough (design-operate.
     // every line that names a cited person.
     const input = pack({
       stages: [stage(COMPANY_FACT_SENTENCE, { kind: "claim", claimId: "c7" })],
-      claims: { c7: { text: "Jane Doe is VP of Engineering and leads the platform team", sourceUrl: PUBLISHER_URL } },
+      claims: [{ id: "c7", text: "Jane Doe is VP of Engineering and leads the platform team", sourceUrl: PUBLISHER_URL }],
     });
     const answers = survivingAnswers(normalizePack(input));
     expect(answers).toContain(COMPANY_FACT_SENTENCE);
@@ -170,7 +183,7 @@ describe("normalizePack — K1-PROHIBITION: cited is not enough (design-operate.
     const paraphrase = "The panel will most likely include Jane Doe from Engineering.";
     const input = pack({
       stages: [stage(paraphrase, { kind: "claim", claimId: "c8" })],
-      claims: { c8: { text: "Jane Doe works in Engineering.", sourceUrl: PUBLISHER_URL } },
+      claims: [{ id: "c8", text: "Jane Doe works in Engineering.", sourceUrl: PUBLISHER_URL }],
     });
     const answers = survivingAnswers(normalizePack(input));
     expect(answers).not.toContain(paraphrase);
@@ -209,7 +222,7 @@ describe("normalizePack — K1-PROHIBITION generalizes across a structurally div
   it.each(PREDICTION_CORPUS)("[$term] refuses a cited prediction: $label", ({ text }) => {
     const input = pack({
       stages: [stage(text, { kind: "claim", claimId: "corpus" })],
-      claims: { corpus: { text: "Jane Doe is VP of Engineering and leads the platform team.", sourceUrl: PUBLISHER_URL } },
+      claims: [{ id: "corpus", text: "Jane Doe is VP of Engineering and leads the platform team.", sourceUrl: PUBLISHER_URL }],
     });
     const answers = survivingAnswers(normalizePack(input));
     expect(answers).not.toContain(text);
@@ -223,7 +236,7 @@ describe("normalizePack — K1-PROHIBITION generalizes across a structurally div
     // fails here even though it would pass every refusal row above.
     const input = pack({
       stages: [stage(companyFact, { kind: "claim", claimId: "corpus-fact" })],
-      claims: { "corpus-fact": { text: "Jane Doe is VP of Engineering and leads the platform team.", sourceUrl: PUBLISHER_URL } },
+      claims: [{ id: "corpus-fact", text: "Jane Doe is VP of Engineering and leads the platform team.", sourceUrl: PUBLISHER_URL }],
     });
     const answers = survivingAnswers(normalizePack(input));
     expect(answers).toContain(companyFact);
@@ -239,7 +252,7 @@ describe("normalizePack — the redirect-shaped negative citation fixture (C-46 
     // header for why that is a decision, not a restatement of §9.
     const input = pack({
       stages: [stage("Jane Doe is the VP of Engineering at this company.", { kind: "claim", claimId: "c9" })],
-      claims: { c9: { text: "Jane Doe is VP of Engineering.", sourceUrl: REDIRECT_URL } },
+      claims: [{ id: "c9", text: "Jane Doe is VP of Engineering.", sourceUrl: REDIRECT_URL }],
     });
     const answers = survivingAnswers(normalizePack(input));
     expect(answers.join("\n")).not.toContain("Jane Doe");
@@ -251,9 +264,94 @@ describe("normalizePack — the redirect-shaped negative citation fixture (C-46 
     // sourceUrl's shape differs.
     const input = pack({
       stages: [stage("Jane Doe is the VP of Engineering at this company.", { kind: "claim", claimId: "c9" })],
-      claims: { c9: { text: "Jane Doe is VP of Engineering.", sourceUrl: PUBLISHER_URL } },
+      claims: [{ id: "c9", text: "Jane Doe is VP of Engineering.", sourceUrl: PUBLISHER_URL }],
     });
     const answers = survivingAnswers(normalizePack(input));
     expect(answers).toContain("Jane Doe is the VP of Engineering at this company.");
+  });
+});
+
+describe("normalizePack — array-shaped claims resolve by id (interview_prep_packs_claims_is_array)", () => {
+  it("resolves a citation by id and keeps recommendedAnswer when the sourceUrl is real and non-redirect", () => {
+    const input = pack({
+      stages: [stage(COMPANY_FACT_SENTENCE, { kind: "claim", claimId: "arr-1" })],
+      claims: [{ id: "arr-1", text: "Jane Doe is VP of Engineering.", sourceUrl: PUBLISHER_URL }],
+    });
+    const answers = survivingAnswers(normalizePack(input));
+    expect(answers).toContain(COMPANY_FACT_SENTENCE);
+  });
+});
+
+describe("normalizePack — claims type guarantee (interview_prep_packs_claims_is_array)", () => {
+  // The database CHECK this whole wave exists to satisfy tests exactly one
+  // thing: jsonb_typeof(pack -> 'claims') = 'array'. Asserted directly here,
+  // independent of any citation behaviour, for every input shape a caller
+  // (a fresh claim, a legacy stored row, a malformed model reply) could hand
+  // normalizePack.
+  it.each([
+    ["no claims property at all", { sections: { stages: [] } }],
+    ["claims: {}", { sections: { stages: [] }, claims: {} }],
+    ["claims: null", { sections: { stages: [] }, claims: null }],
+    ["claims: a string", { sections: { stages: [] }, claims: "not-an-array-or-object" }],
+    [
+      "claims already an array",
+      { sections: { stages: [] }, claims: [{ id: "c1", text: "t", sourceUrl: PUBLISHER_URL }] },
+    ],
+  ])("%s -> result.claims is an array", (_label, input) => {
+    const result = normalizePack(input);
+    expect(Array.isArray(result.claims)).toBe(true);
+  });
+});
+
+describe("normalizePack — conversion fidelity: a legacy/model-supplied object map is converted, not dropped", () => {
+  it("converts an object-map claims input into an array carrying the original key as id, and a citation still resolves against it", () => {
+    const input = {
+      sections: { stages: [stage(COMPANY_FACT_SENTENCE, { kind: "claim", claimId: "legacy-1" })] },
+      claims: { "legacy-1": { text: "Jane Doe is VP of Engineering.", sourceUrl: PUBLISHER_URL } },
+    };
+    const result = normalizePack(input);
+    expect(Array.isArray(result.claims)).toBe(true);
+    expect(result.claims).toContainEqual({
+      id: "legacy-1",
+      text: "Jane Doe is VP of Engineering.",
+      sourceUrl: PUBLISHER_URL,
+    });
+    // The test the brief names as the one that catches "converted, but
+    // silently un-grounded": if the conversion dropped the map instead of
+    // rewriting it, this citation could never resolve and the sentence
+    // would come back with recommendedAnswer: null.
+    expect(survivingAnswers(result)).toContain(COMPANY_FACT_SENTENCE);
+  });
+
+  it("skips a map entry whose value is not an object, rather than emitting it malformed", () => {
+    const input = {
+      sections: { stages: [] },
+      claims: { bad: "not-an-object", good: { text: "t", sourceUrl: PUBLISHER_URL } },
+    };
+    const result = normalizePack(input);
+    expect(result.claims).toEqual([{ id: "good", text: "t", sourceUrl: PUBLISHER_URL }]);
+  });
+});
+
+describe("normalizePack — negative controls on claim-id resolution", () => {
+  it("a claimId matching nothing in the claims array is uncited", () => {
+    const input = pack({
+      stages: [stage("Jane Doe leads the platform team at this company.", { kind: "claim", claimId: "does-not-exist" })],
+      claims: [{ id: "c1", text: "Jane Doe is VP of Engineering.", sourceUrl: PUBLISHER_URL }],
+    });
+    const answers = survivingAnswers(normalizePack(input));
+    expect(answers.join("\n")).not.toContain("Jane Doe");
+  });
+
+  it("an entry with no id is NOT matched by a support with no claimId (undefined === undefined must not collapse)", () => {
+    // This repo has already shipped an undefined-collapsing bug once in a
+    // different module -- this is the regression test for reintroducing it
+    // here, at the .find(c => c.id === support.claimId) resolution site.
+    const input = pack({
+      stages: [stage("Jane Doe leads the platform team at this company.", { kind: "claim" })],
+      claims: [{ text: "Jane Doe is VP of Engineering.", sourceUrl: PUBLISHER_URL }],
+    });
+    const answers = survivingAnswers(normalizePack(input));
+    expect(answers.join("\n")).not.toContain("Jane Doe");
   });
 });

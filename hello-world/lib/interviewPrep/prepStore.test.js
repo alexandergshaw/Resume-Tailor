@@ -544,3 +544,126 @@ describe("isCheckViolation / PG_CHECK_VIOLATION -- SQLSTATE-based, never message
     expect(isCheckViolation(fixture)).toBe(false);
   });
 });
+
+describe("N14 -- writePrepPackResult omits pack/posting_fingerprint from its UPDATE SET when the caller does not supply them", () => {
+  // interview_prep_packs.pack and .posting_fingerprint are both `not null`
+  // with their own DEFAULT (supabase/migrations/20260914000000_interview_prep.sql
+  // :155/:159) -- a DEFAULT never applies to an explicit `SET col = NULL`, so
+  // this function's former unconditional payload put NULL into a NOT NULL
+  // column for any caller that omitted either argument, raising SQLSTATE
+  // 23502. finishAttempt.js's own CHECK-safe fallback retry (§8.4) is exactly
+  // such a caller: it never supplies `pack` or `postingFingerprint`.
+  function updatePayload(sb) {
+    expect(sb.calls.interview_prep_packs.update).toHaveLength(1);
+    return sb.calls.interview_prep_packs.update[0][0];
+  }
+
+  it('[mutant this kills: pack defaulted to null and written unconditionally] a terminal write that supplies no `pack` sends an UPDATE payload with NO "pack" key at all', async () => {
+    const sb = makeSupabase({ interview_prep_packs: { data: [{ application_id: APP_ID }], error: null } });
+    await writePrepPackResult(sb, {
+      applicationId: APP_ID,
+      userId: USER_ID,
+      leaseToken: LEASE_TOKEN,
+      status: "failed",
+      reason: "check-violation",
+      error: "pack is 300000 bytes, 37856 over the 262144-byte limit",
+    });
+    expect(updatePayload(sb)).not.toHaveProperty("pack");
+  });
+
+  it('[mutant this kills: posting_fingerprint defaulted to null and written unconditionally] the same write sends NO "posting_fingerprint" key either', async () => {
+    const sb = makeSupabase({ interview_prep_packs: { data: [{ application_id: APP_ID }], error: null } });
+    await writePrepPackResult(sb, {
+      applicationId: APP_ID,
+      userId: USER_ID,
+      leaseToken: LEASE_TOKEN,
+      status: "failed",
+      reason: "check-violation",
+      error: "pack is 300000 bytes, 37856 over the 262144-byte limit",
+    });
+    expect(updatePayload(sb)).not.toHaveProperty("posting_fingerprint");
+  });
+
+  it("[lease-release control, capable of failing against a blanket drop-every-null-or-undefined-key rewrite] the same write still sets lease_until: null and lease_token: null", async () => {
+    const sb = makeSupabase({ interview_prep_packs: { data: [{ application_id: APP_ID }], error: null } });
+    await writePrepPackResult(sb, {
+      applicationId: APP_ID,
+      userId: USER_ID,
+      leaseToken: LEASE_TOKEN,
+      status: "failed",
+      reason: "check-violation",
+      error: "pack is 300000 bytes, 37856 over the 262144-byte limit",
+    });
+    const payload = updatePayload(sb);
+    expect(payload).toHaveProperty("lease_until", null);
+    expect(payload).toHaveProperty("lease_token", null);
+  });
+
+  it('[writer-discipline control, §8.5] a status:"ready" write still force-nulls reason -- present-and-null, never omitted', async () => {
+    const sb = makeSupabase({ interview_prep_packs: { data: [{ application_id: APP_ID }], error: null } });
+    await writePrepPackResult(sb, {
+      applicationId: APP_ID,
+      userId: USER_ID,
+      leaseToken: LEASE_TOKEN,
+      status: "ready",
+      reason: "some-caller-supplied-value-that-must-be-cleared",
+      engine: "gemini",
+      pack: { sections: {}, claims: {} },
+    });
+    expect(updatePayload(sb)).toHaveProperty("reason", null);
+  });
+
+  it('[writer-discipline control, §8.5] a status:"partial" write also force-nulls reason', async () => {
+    const sb = makeSupabase({ interview_prep_packs: { data: [{ application_id: APP_ID }], error: null } });
+    await writePrepPackResult(sb, {
+      applicationId: APP_ID,
+      userId: USER_ID,
+      leaseToken: LEASE_TOKEN,
+      status: "partial",
+      reason: "some-caller-supplied-value-that-must-be-cleared",
+      pack: { sections: {}, claims: {} },
+    });
+    expect(updatePayload(sb)).toHaveProperty("reason", null);
+  });
+
+  it("a write that DOES supply a pack still sends it, keyed and normalized", async () => {
+    const sb = makeSupabase({ interview_prep_packs: { data: [{ application_id: APP_ID }], error: null } });
+    await writePrepPackResult(sb, {
+      applicationId: APP_ID,
+      userId: USER_ID,
+      leaseToken: LEASE_TOKEN,
+      status: "ready",
+      engine: "gemini",
+      pack: { sections: {}, claims: {} },
+    });
+    const payload = updatePayload(sb);
+    expect(payload).toHaveProperty("pack");
+    expect(payload.pack).not.toBeNull();
+  });
+
+  it("a write that DOES supply postingFingerprint still sends posting_fingerprint, keyed", async () => {
+    const sb = makeSupabase({ interview_prep_packs: { data: [{ application_id: APP_ID }], error: null } });
+    await writePrepPackResult(sb, {
+      applicationId: APP_ID,
+      userId: USER_ID,
+      leaseToken: LEASE_TOKEN,
+      status: "unavailable",
+      reason: "refused-posting",
+      postingFingerprint: "abc123",
+    });
+    expect(updatePayload(sb)).toHaveProperty("posting_fingerprint", "abc123");
+  });
+
+  it("[not-supplied vs explicitly-null] a write that explicitly supplies pack: null still sends the key, as null -- only an un-supplied argument is omitted", async () => {
+    const sb = makeSupabase({ interview_prep_packs: { data: [{ application_id: APP_ID }], error: null } });
+    await writePrepPackResult(sb, {
+      applicationId: APP_ID,
+      userId: USER_ID,
+      leaseToken: LEASE_TOKEN,
+      status: "unavailable",
+      reason: "refused-posting",
+      pack: null,
+    });
+    expect(updatePayload(sb)).toHaveProperty("pack", null);
+  });
+});

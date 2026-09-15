@@ -175,6 +175,16 @@ function ensureCompanyDigest(request, applicationId) {
 // The deterministic, zero-outbound path (engine: "embedded"). No model call,
 // so no spend gate applies -- matches app/api/copilot/glossary/route.js's own
 // GATE 14 posture: zero outbound, zero client.
+//
+// Written for status 'partial', never 'ready' -- a deterministic, no-LLM
+// backend produces only the Overview stage below, not the four sections
+// (aboutYou/whyRole/askThem/stages) interview_prep_packs_ready_is_complete
+// requires of a 'ready' pack (supabase/migrations/20260914000000_interview_prep.sql
+// :194-211); 'partial' is honest about that and never evaluates the CHECK at
+// all (it only fires for status = 'ready'). `claims` is still a real array,
+// not an object map -- interview_prep_packs_claims_is_array (:219-220)
+// applies to 'partial' too, and a producer should be correct at the source
+// rather than leaning on prepParse.js's normalizePack to rescue it downstream.
 function buildEmbeddedPack({ position, digest }) {
   const title = String(position?.title || "").trim() || "this position";
   const company = String(position?.company || "").trim() || "the company";
@@ -200,7 +210,7 @@ function buildEmbeddedPack({ position, digest }) {
         },
       ],
     },
-    claims: {},
+    claims: [],
   };
 }
 
@@ -347,12 +357,13 @@ export async function POST(request) {
     return Response.json({ status });
   }
 
-  // GATE 11. The embedded path.
+  // GATE 11. The embedded path. Terminal status is 'partial', not 'ready' --
+  // see buildEmbeddedPack's own header for why.
   if (useEmbedded) {
     const pack = buildEmbeddedPack({ position, digest });
     const { write, status } = await finishAttempt(supabase, {
       ...attemptCtx,
-      status: "ready",
+      status: "partial",
       pack,
       postingFingerprint: fingerprint,
       digestResearchedAt,
