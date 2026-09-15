@@ -56,14 +56,50 @@ describe("parseBacklogYaml", () => {
     expect(() => parseBacklogYaml(text)).toThrow(/unrecognized line/);
   });
 
-  it("real backlog.yml: parses to exactly 15 items with unique, namespaced ids (N1-N12, D1-D2, V1)", async () => {
+  // The per-state counts this test used to hardcode (12 actionable / 2 owner /
+  // 1 verification) rotted on 2026-09-14, when closing four items and opening
+  // three turned it red for a reason that had nothing to do with the parser it
+  // is testing. A count of a list that is DESIGNED to change -- this file's own
+  // "no diary" rule deletes closed items -- is an instrument that fires on
+  // correct work. What is actually invariant is the NAMESPACE RULE the schema
+  // header states: the id's leading letter and the `state` field are two
+  // independent fields that must agree. Cross-checking them is a real
+  // assertion; re-deriving a count from the file it validates would only prove
+  // self-consistency ([[loop-traps-tests]]'s canary trap, backlog N3).
+  const STATE_OF_PREFIX = { N: "actionable", D: "owner", V: "verification" };
+
+  it("real backlog.yml: every item's id namespace agrees with its state, and ids are unique", async () => {
     const { readFileSync } = await import("node:fs");
     const { BACKLOG_YML_PATH } = await import("./loadBacklog.mjs");
     const items = parseBacklogYaml(readFileSync(BACKLOG_YML_PATH, "utf8"));
-    expect(items).toHaveLength(15);
-    expect(new Set(items.map((it) => it.id)).size).toBe(15);
-    expect(items.filter((it) => it.state === "actionable")).toHaveLength(12);
-    expect(items.filter((it) => it.state === "owner")).toHaveLength(2);
-    expect(items.filter((it) => it.state === "verification")).toHaveLength(1);
+
+    expect(items.length).toBeGreaterThan(0);
+    expect(new Set(items.map((it) => it.id)).size).toBe(items.length);
+
+    for (const it of items) {
+      expect(it.id, `id "${it.id}" is not namespaced N/D/V`).toMatch(/^[NDV]\d+$/);
+      expect(it.state, `id "${it.id}" claims state "${it.state}"`).toBe(STATE_OF_PREFIX[it.id[0]]);
+    }
+  });
+
+  it("[control] the namespace check can fail -- a V-prefixed item declaring itself actionable is rejected", () => {
+    const items = parseBacklogYaml(
+      [
+        '- id: "V9"',
+        '  state: "actionable"',
+        '  title: "wrong state for a V id"',
+        "  owed_by: null",
+        "  evidence: []",
+        "  blocked_reason: null",
+        "  instrument: null",
+        "  owns: null",
+        "  verify: null",
+        "  verify_proof: null",
+        "  blocked_by: []",
+      ].join(String.fromCharCode(10)),
+    );
+    expect(items).toHaveLength(1);
+    expect(STATE_OF_PREFIX[items[0].id[0]]).toBe("verification");
+    expect(items[0].state).not.toBe(STATE_OF_PREFIX[items[0].id[0]]);
   });
 });

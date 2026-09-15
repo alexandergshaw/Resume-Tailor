@@ -14,6 +14,19 @@
 // prepContract.js's PREP_REASON_VALUES export, do not exist in this
 // checkout -- not because a fixture is malformed.
 //
+// SPLIT UNDER BACKLOG N12 -- THIS FILE IS NOW EXPLICITLY HISTORICAL. A
+// follow-up migration (20260915000000_interview_prep_spend_lockdown.sql)
+// converts claim_prep_pack_slot to SECURITY DEFINER and narrows
+// interview_prep_spend's grants further, which would otherwise leave this
+// file's own spend-grant and SECURITY INVOKER assertions green while
+// asserting the exact opposite of the shipped schema. Every property below
+// that a LATER migration can change now lives instead in
+// lib/interviewPrep/interviewPrepEffectiveSchema.test.js, which replays
+// every migration file in order rather than reading this one file's text.
+// This file keeps its original job -- pinning what
+// 20260914000000_interview_prep.sql itself, byte for byte, still says --
+// and each block a later migration supersedes is retitled below to say so.
+//
 // FIRST OBLIGATION OF THIS SEAT (rulings.md R-IP3-61): 1-0-contract.r8.md's
 // own Functions table still shows claim_prep_pack_slot's stale, pre-fix
 // 4-parameter signature. The 3-parameter form -- (p_application_id uuid,
@@ -132,6 +145,14 @@ function functionBody(stripped, name) {
   return stripped.slice(open + 2, close);
 }
 
+// HISTORICAL, read unconditionally: this file's identity is now a pinned
+// fact, not something a differently-shaped future migration could leave
+// this suite guessing about. `20260915000000_interview_prep_spend_lockdown.sql`
+// (backlog N12) deliberately does NOT match `/_interview_prep\.sql$/` --
+// see that file's own header -- specifically so the glob below keeps
+// matching exactly this one file rather than two.
+const ORIGINAL_MIGRATION = "20260914000000_interview_prep.sql";
+
 let migrationFiles = null;
 let raw = null;
 let stripped = null;
@@ -140,10 +161,8 @@ beforeAll(() => {
   migrationFiles = readdirSync(MIGRATIONS_DIR)
     .filter((f) => f.endsWith(".sql"))
     .filter((f) => /_interview_prep\.sql$/.test(f));
-  if (migrationFiles.length === 1) {
-    raw = readFileSync(path.join(MIGRATIONS_DIR, migrationFiles[0]), "utf8");
-    stripped = stripSqlComments(raw);
-  }
+  raw = readFileSync(path.join(MIGRATIONS_DIR, ORIGINAL_MIGRATION), "utf8");
+  stripped = stripSqlComments(raw);
 });
 
 describe("[control] the extractor works against a REAL, independently-authored migration", () => {
@@ -229,9 +248,8 @@ describe("[control] functionBody — the K2-RPC extractor's OWN independent veri
 });
 
 describe("the migration file itself", () => {
-  it("[control] exactly one *_interview_prep.sql migration exists, timestamp-prefixed", () => {
-    expect(migrationFiles).toHaveLength(1);
-    expect(migrationFiles[0]).toMatch(/^\d{14}_interview_prep\.sql$/);
+  it("[control] the glob still resolves to exactly the historical file, by name -- a future migration whose name happens to satisfy /_interview_prep\\.sql$/ fails loudly here instead of this suite silently reading the wrong file", () => {
+    expect(migrationFiles).toEqual([ORIGINAL_MIGRATION]);
   });
 
   describe("R-IP3-61's first obligation -- the GRANT targets the AUTHORITATIVE 3-parameter signature", () => {
@@ -372,7 +390,7 @@ describe("the migration file itself", () => {
     });
   });
 
-  describe("interview_prep_spend's authenticated privileges -- narrowed this round to close the spend-reset hole", () => {
+  describe("interview_prep_spend's authenticated privileges as THIS FILE alone declares them (HISTORICAL -- superseded by backlog N12's 20260915000000_interview_prep_spend_lockdown.sql, which revokes the UPDATE/INSERT grants this block still finds; current effective grants are asserted in lib/interviewPrep/interviewPrepEffectiveSchema.test.js)", () => {
     // R-IP3-45's spend-bypass-by-deleting, reintroduced at the RLS/grant
     // layer because an earlier round specified the events table's policies
     // and never specified this one's. Closed by: no DELETE grant or policy
@@ -430,11 +448,11 @@ describe("the migration file itself", () => {
       expect(grantsFor(stripped, "public.interview_prep_spend", "service_role")).toEqual(["all"]);
     });
 
-    it("[mutant this kills] no CREATE POLICY on interview_prep_spend uses `for delete`, under any policy name", () => {
+    it("[mutant this kills, HISTORICAL scope -- this file's own text only, not the effective schema] no CREATE POLICY on interview_prep_spend uses `for delete`, under any policy name", () => {
       expect(stripped).not.toMatch(/create policy "[^"]*"\s+on public\.interview_prep_spend\s+for delete/i);
     });
 
-    it("[canary] the delete-policy regex is capable of matching a real create-policy statement", () => {
+    it("[canary, HISTORICAL scope] the delete-policy regex is capable of matching a real create-policy statement", () => {
       const fixture =
         'create policy "interview_prep_spend_delete_own" on public.interview_prep_spend\n  for delete using (auth.uid() = user_id);';
       expect(fixture).toMatch(/create policy "[^"]*"\s+on public\.interview_prep_spend\s+for delete/i);
@@ -457,7 +475,7 @@ describe("the migration file itself", () => {
       expect(match[1]).not.toMatch(/p_user_id/i);
     });
 
-    it("[control] the same preamble-slice technique correctly reads claim_prep_pack_slot's OWN, already-known SECURITY INVOKER declaration", () => {
+    it("[control, HISTORICAL -- true of THIS FILE's text forever, no longer true of the effective schema] the same preamble-slice technique correctly reads claim_prep_pack_slot's OWN, already-known SECURITY INVOKER declaration in 20260914000000_interview_prep.sql itself; backlog N12's 20260915000000_interview_prep_spend_lockdown.sql converts the LIVE function to SECURITY DEFINER -- that current mode is asserted in lib/interviewPrep/interviewPrepEffectiveSchema.test.js, not here", () => {
       // Proves the technique the next test relies on actually discriminates
       // -- run here against a function this file already knows is INVOKER.
       const fnIdx = stripped.indexOf("function public.claim_prep_pack_slot");

@@ -32,7 +32,19 @@
 # passes today, before any fix, because the code's existing test suite was never written against the
 # input this item objects to.
 
-# ACTIONABLE (12)
+# ACTIONABLE (11)
+- id: "N17"
+  state: "actionable"
+  title: "**Voice enrollment: identify the candidate'''s own voice from an uploaded sample of them reading an app-provided passage.** Owner request, 2026-09-14. **Scope is narrower than it sounds, and the survey is why**: for a REMOTE interview the app already separates the two voices by CHANNEL — `lib/copilot/capture.js` takes the candidate'''s own voice from `getUserMedia` (mic) and the other party'''s from `getDisplayMedia` (tab/system audio), so enrollment adds nothing there. The case that actually needs this is the **SHARED MICROPHONE / in-person** session, which is exactly what `lib/copilot/speakerIdentity.js` exists for today — and it identifies the candidate BEHAVIOURALLY (word share, question detection, confidence gates), not by voice. **The motivating failure is already documented in that file'''s header**: v1 scored on word share alone and elected the INTERVIEWER as the user at '''high''' confidence on two real interview openings, after which the copilot stopped evaluating their speech for questions and went **silently deaf for the rest of the session** — the file calls this the worst failure mode the feature has, because the user cannot tell it happened. A voiceprint replaces a heuristic that is known to fail silently, which is the strongest case for building it. **THE FEASIBILITY CRUX, unresolved**: diarization as wired today (`lib/copilot/stt/index.js`, Deepgram and ElevenLabs Scribe) yields ANONYMOUS speaker tags (`speakerTag` = provider-assigned id), never an identity — binding tag→person needs either provider-side speaker enrollment/verification or a locally-run speaker-embedding model, and NEITHER is confirmed available on the current providers. That question must be settled at primary source BEFORE any UI is designed, or the enrollment flow gets built against a capability that does not exist. **Why an app-provided passage is the right call** (the owner asked for it and it is correct): a known transcript gives phonetic coverage, lets the app verify the upload is actually someone reading THAT passage rather than arbitrary audio, and supports a quality gate (too short, too noisy, clipped) before a bad enrollment silently degrades every later session. **A voiceprint is BIOMETRIC data** — distinct from the recordings the copilot already stores — **OWNER RULING, 2026-09-14: storing the candidate'''s voice is PERMITTED, provided they are made aware of it and consent.** That settles whether the feature may exist. Three things it does NOT settle, and a design round must: (a) what deletion looks like — consent to store is not consent to keep forever, and the copilot already ships a delete control precedent (O-16'''s per-application delete) rather than a tombstone; (b) whether the consent is one-time at enrollment or re-surfaced, and where the disclosure actually appears — this repo has already shipped a disclosure that OVER-STATED what left the app (see N8), so the notice text must be checked against what is actually sent; (c) **conditional, and only if the research round finds provider-side enrollment is the ONLY feasible path**: consent to the APP storing a voiceprint is not obviously consent to transmitting it to a third-party STT vendor, which is a separate egress the owner should rule on once it is known to be necessary"
+  owed_by: "A 3b research round settling provider speaker-ID/enrollment support at primary source and an owner ruling on biometric storage, THEN a design round, THEN the wave that builds it"
+  evidence: ["`lib/copilot/speakerIdentity.js` header (the behavioural identifier this replaces, and its silently-deaf failure)", "`lib/copilot/capture.js:4-12` (channel separation already solves the remote case)", "`lib/copilot/stt/index.js:117-137` (`speakerTag` is provider-assigned and anonymous; `diarizationActive`)", "`lib/copilot/answerSpeakers.js` header (the no-tag-means-candidate compatibility rule any change here must preserve)"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 - id: "N2"
   state: "actionable"
   title: "**O-2 step 7 precedence is ambiguous** when both the `Test Files` and `Errors` lines hold. No fix round is scheduled."
@@ -153,37 +165,12 @@
   verify_proof: null
   blocked_by: []
 
-- id: "N12"
-  state: "actionable"
-  title: "**`interview_prep_spend.attempts` is still client-resettable.** `authenticated` holds `grant update (attempts, updated_at)` because `claim_prep_pack_slot` is `SECURITY INVOKER` and increments `attempts` **as that role** — revoking it breaks every claim with a permission error. So a `PATCH` can set `attempts` to 0 and buy more retries. **Bounded, and adjudicated as acceptable for now**: every retry still increments `model_calls`, which only the `SECURITY DEFINER` `record_prep_model_call` can write, so the **money** cap holds regardless — exposure is capped at `model_calls <= 12`. **The fix**: make `claim_prep_pack_slot` `SECURITY DEFINER` with its own tenant checks, then revoke insert/update from `authenticated` entirely"
-  owed_by: "A contract round (the contract currently specifies `SECURITY INVOKER`)"
-  evidence: ["`20260914000000_interview_prep.sql:368-369`; flagged by the implementer rather than worked around"]
-  blocked_reason: null
-  instrument: null
-  owns: null
-  verify: null
-  verify_proof: null
-  blocked_by: []
-
-# OWNER (2)
 - id: "N13"
   state: "actionable"
   title: "**Two of the five B1 trigger sites are inert.** `generateWithReviewedValues` (`app/page.js`) and `runWorker` (`app/hooks/useManualPostings.js`) call `startInterviewPrepResearch` with **no resolvable `applicationId`** — `tailorPosting`'s return carries only `jobId` — so `prepTrigger.js`'s blank-id refusal fires and nothing happens downstream. The landed seam tests assert the *call*, which is made, so they stay green. **Three of five manual-tailor paths work; two do not.**"
   owed_by: "A wave that threads the application id through the tailor return, or a design round that decides it cannot be"
   evidence: ["`plan.r1.md` §4 names this as an unresolved tracing gap; the step-5 waves 8/9 report documents both call sites and the reliance on the blank-id refusal"]
   blocked_reason: null
-  instrument: null
-  owns: null
-  verify: null
-  verify_proof: null
-  blocked_by: []
-
-- id: "D1"
-  state: "owner"
-  title: "**RLS on the three new interview-prep tables cannot be verified here.** Supabase's URL is a placeholder, so every CHECK, policy and the `claim_prep_pack_slot` RPC is a *specification*, not confirmed behaviour."
-  owed_by: null
-  evidence: []
-  blocked_reason: "Needs `pg_class.relrowsecurity`, `pg_policies` and `information_schema.columns` run against the live project and pasted back. Inferring it from the migration is the defect that has already produced two wrong rulings here (`schema-migration-drift`)"
   instrument: null
   owns: null
   verify: null
@@ -203,6 +190,18 @@
   blocked_by: []
 
 # VERIFICATION (1)
+- id: "V2"
+  state: "verification"
+  title: "**N12'''s lockdown migration has never been applied or run.** `supabase/migrations/20260915000000_interview_prep_spend_lockdown.sql` converts `claim_prep_pack_slot` to `SECURITY DEFINER` with an explicit ownership check and revokes `authenticated`'''s write privileges on `interview_prep_spend`. Every claim about it is a **source-text claim about SQL that has never executed** — no Supabase project is reachable from this checkout (placeholder `NEXT_PUBLIC_SUPABASE_URL`). Until it is applied, the client-resettable `attempts` hole is still OPEN in production, and the conversion carries its own risk: if the function'''s owner is not the table owner, or `relforcerowsecurity` is set on the table, `SECURITY DEFINER` does NOT bypass RLS — the migration hedges by re-stating the two spend policies rather than dropping them, but which world the project is in cannot be seen from here"
+  owed_by: null
+  evidence: []
+  blocked_reason: null
+  instrument: "Apply the migration, then run: (1) `select p.proname, p.prosecdef, p.proconfig, pg_get_userbyid(p.proowner) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='''public''' and p.proname in ('''claim_prep_pack_slot''','''record_prep_model_call''');` — expect `prosecdef=true` for both and a pinned empty `search_path`. (2) `select grantee, column_name, privilege_type from information_schema.column_privileges where table_schema='''public''' and table_name='''interview_prep_spend''' and grantee='''authenticated''' and privilege_type='''UPDATE''';` — expect ZERO rows; `role_table_grants` alone does NOT show column privileges, so this is the query that proves the revoke landed. (3) `select p.proname, p.proacl from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='''public''' and p.proname in ('''claim_prep_pack_slot''','''record_prep_model_call''');` — `proacl` must contain no entry beginning `=X/` (that is PUBLIC'''s execute). (4) **THE DECIDING QUERY, absent from the D1 set**: `select c.relname, c.relrowsecurity, c.relforcerowsecurity, pg_get_userbyid(c.relowner) from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='''public''' and c.relname in ('''interview_prep_spend''','''interview_prep_packs''');` — DEFINER only bypasses RLS if `relowner` matches the function owner from (1) AND `relforcerowsecurity` is false. (5) The only instrument that proves N12 CLOSED rather than described: with a real signed-in user'''s JWT, `PATCH /rest/v1/interview_prep_spend?application_id=eq.<own id>` body `{\"attempts\":0}` must return 403 / SQLSTATE 42501, **and** a subsequent claim from that same user must still succeed. Both halves are required — the first proves the revoke landed, the second proves the conversion did not break claiming"
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 - id: "V1"
   state: "verification"
   title: "**Rich résumé copy has never touched a real clipboard.** The unit tests prove both `text/html` and `text/plain` are set with the right payloads, each with a negative control — but nobody has pasted into Word or Google Docs."
