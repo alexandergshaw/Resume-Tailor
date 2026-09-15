@@ -114,35 +114,21 @@ export function effectiveAttribution(speakerAttribution, snapshot) {
 // reasons: an aria-live region does not re-announce text that is unchanged
 // from the last announcement (so two different refusals sharing one string
 // would go silent the second time), and a downloaded session log with one
-// reason standing for four different causes cannot answer the question this
+// reason standing for two different causes cannot answer the question this
 // log exists to answer.
+//
+// N18 delta review D7: NO_QUESTION, NOTHING_HELD and HOLD_ALREADY_IN_FORCE
+// used to live here, each naming a hold/release refusal. Both cues are fully
+// retired (voiceCues.js's own header) and no caller can produce any of the
+// three any more — an enumeration built so the downloaded log can answer
+// "why did nothing happen when I said the phrase" is exactly as misleading
+// when it advertises causes that can never occur as it is when it omits a
+// real one, so all three are removed rather than kept as permanently-dead
+// entries.
 export const CUE_IGNORED_REASONS = {
   AMBIGUOUS: "ambiguous",
   IDENTITY: "speaker identity has not settled yet",
   ATTRIBUTION_UNAVAILABLE: "cannot tell voices apart this session",
-  NO_QUESTION: "no question detected yet to hold",
-  // AC-V2.4: the mirror of NO_QUESTION on the RELEASE side. A matched release
-  // with nothing held used to fall through to no action and no log line at
-  // all, so the session log showed a bare `cue.matched` and could not answer
-  // "why did nothing happen when I said the phrase" — the one remaining case
-  // where it could not. Deliberately worded as a DIFFERENT cause from
-  // NO_QUESTION rather than reusing it: "there is no question to hold" and
-  // "no question is being held" are two different situations for the person
-  // reading the log back, and the distinctness case below is what keeps them
-  // that way.
-  NOTHING_HELD: "no question is being held",
-  // AC-V2.3.1: the pin-side mirror of ATTRIBUTION_UNAVAILABLE, and the one
-  // refusal in this list that this module cannot itself decide — whether a
-  // hold is already in force is question state, which never enters this
-  // file (see resolveCueAction's own note). The reason lives here anyway
-  // because that is where every OTHER cause the session log can carry is
-  // named, and a log with one cause missing from the enumeration is exactly
-  // what AC-V2.4 exists to prevent. Worded as a DIFFERENT cause from
-  // NOTHING_HELD: "a question is already being held" (so a second hold cue
-  // may not move it) and "no question is being held" (so a release cue has
-  // nothing to act on) are opposite situations, and the distinctness case
-  // below is what keeps them readable as such.
-  HOLD_ALREADY_IN_FORCE: "a question is already being held",
   COMPANY_UNAVAILABLE: "company brief unavailable",
 };
 
@@ -175,9 +161,11 @@ export function qualifiesForCue({ frame, snapshot, source, speakerAttribution })
   // the same words again would fire the same cue twice. On ElevenLabs this
   // is EVERY final, so without this check an UNAVAILABLE session newly able
   // to see a cue at all would fire every one of them twice — a duplicate
-  // "does that answer your question" would release a hold it already
-  // released, and a duplicate pin would re-pin FORWARD a second time to
-  // whatever is latest by then.
+  // "pull up the company" would spend a second real outbound request for a
+  // single spoken phrase. (N18 delta review D6: this used to name the
+  // hold/release cues' own double-fire harms; both are retired — see
+  // voiceCues.js's own header — and "company" is the one action left for
+  // this check to guard.)
   //
   // This is one of the few consumers for which "skip the flagged frame
   // wholesale" is genuinely right, and it is right because this function
@@ -203,8 +191,11 @@ export function qualifiesForCue({ frame, snapshot, source, speakerAttribution })
   // GUESS from acting (an argmax that might be looking at the wrong tag) —
   // where there is no guess being made at all, there is nothing for that gate
   // to protect against. The protection that remains for this state is
-  // resolveCueAction's action filter below (V2.3): only `pin` may act, and a
-  // false hold is the cheap side of voiceCues.js's own documented asymmetry.
+  // resolveCueAction's action filter below (V2.3): since the N18 delta
+  // review F1 retirement of the hold ("pin") cue, no action passes that
+  // filter while attribution is unavailable — the one cue this registry
+  // still ships (company) is refused there too, exactly like every other
+  // match this frame could produce.
   // *** AC-V2.2.1/C2 — THE GATE NEEDS A STRONGER INPUT THAN THE FLAG ***
   // The arm opens on EVIDENCE, not on the raw flag: only while no speaker tag
   // has ever been observed. That is precisely the session it was written for
@@ -251,10 +242,15 @@ export function qualifiesForCue({ frame, snapshot, source, speakerAttribution })
 // of "pin" | "unpin" | "company" | null.
 //
 // Deliberately does not decide what happens when `act` is "pin" but there is
-// nothing to pin — that stays useQuestionPin's own `null` return, turned into
-// CUE_IGNORED_REASONS.NO_QUESTION by the caller, because the caller is the
-// one that actually attempted the pin and knows it came back empty; this
-// module never touches question state at all.
+// nothing to pin — before the N18 delta review F1 retirement that stayed
+// useQuestionPin's own `null` return, turned into CUE_IGNORED_REASONS.NO_QUESTION
+// by the caller, because the caller was the one that actually attempted the
+// pin and knew it came back empty; this module never touched question state
+// at all. `useQuestionPin.js` is deleted along with the hold cue itself
+// (voiceCues.js's own header), so NO_QUESTION is enumerated below but no
+// longer produced by any caller — AC-V2.4's distinctness test still checks
+// it as a fact about the CUE_IGNORED_REASONS shape, independent of whether
+// any registry currently reaches it.
 //
 // AC-V2.8: takes the session's `snapshot` alongside the attribution flag, and
 // asks `effectiveAttribution` the one question rather than re-reading the flag.
@@ -275,40 +271,43 @@ export function resolveCueAction({ match, speakerAttribution, snapshot }) {
     return { act: null, ignoredReason: CUE_IGNORED_REASONS.AMBIGUOUS };
   }
 
-  // AC-V2.3: this is the asymmetry voiceCues.js's own header already
-  // documents, applied to the one state where nobody can say whose voice a
-  // frame carries. A false HOLD holds the question the candidate is already
-  // reading and expires on its own in 120s — cheap, often even wanted. A
-  // false RELEASE yanks away a hold the candidate set deliberately, mid-
+  // AC-V2.3: this WAS the asymmetry voiceCues.js's own header used to
+  // document, applied to the one state where nobody can say whose voice a
+  // frame carries. A false HOLD held the question the candidate was already
+  // reading and expired on its own in 120s — cheap, often even wanted. A
+  // false RELEASE yanked away a hold the candidate set deliberately, mid-
   // answer. A false COMPANY spends a real outbound request carrying the
-  // posting's details. So when attribution is unavailable, `pin` is the only
-  // action allowed through; `unpin` and `company` are refused with a reason
-  // that names the actual cause, not a generic "ignored".
+  // posting's details. So while that asymmetry stood, `pin` was the only
+  // action allowed through when attribution was unavailable; `unpin` and
+  // `company` were refused with a reason that named the actual cause, not a
+  // generic "ignored".
   //
-  // *** AC-V2.3.1 — THE ASYMMETRY ABOVE HOLDS ONLY WHILE NOTHING IS HELD ***
-  // "A false hold is cheap because it holds the question the candidate is
-  // already reading" is true when there is no hold to disturb. It is FALSE
-  // for a SECOND pin cue: useQuestionPin.pinCurrentQuestion always pins
-  // `latestQuestionEntry` and clears `supersededAt` (AC-T1.16.1's deliberate
-  // "re-pin FORWARD"), so a second cue MOVES an existing hold onto the newest
-  // question — the same harm the unpin refusal below exists to prevent,
-  // through the other door. That refusal is NOT made here: this module is
-  // pure and cannot see whether a hold exists, and teaching it would put
-  // question state into a policy module. It is made at the action site,
-  // app/copilot/useCueActions.js's pin branch, which owns `pinnedIdRef`, and
-  // it logs CUE_IGNORED_REASONS.HOLD_ALREADY_IN_FORCE above. `pin` therefore
-  // still passes this gate: the policy's answer is "a hold cue may act", and
-  // "may it act THIS time" is the caller's question.
+  // N18 delta review F1, OWNER RULING: the hold ("pin") and release
+  // ("unpin") cues are fully retired (voiceCues.js's own header) — no
+  // production match can carry either action any more, so today this branch
+  // refuses the one cue it still ships (company) too, every time attribution
+  // is unavailable, the same as every other match this frame could produce.
+  //
+  // N18 delta review D4, OWNER RULING: the `pin` exemption that used to sit
+  // here is REMOVED, not merely unreachable. AC-V2.3.1's own history already
+  // established the exemption was wrong even while pin/hold existed: a
+  // second pin cue MOVED an existing hold onto the newest question —
+  // useQuestionPin.pinCurrentQuestion (deleted along with
+  // lib/copilot/questionPin.js/useQuestionPin.js in the F1 retirement)
+  // always pinned `latestQuestionEntry` — the same harm the unpin refusal
+  // exists to prevent, through the other door. Keeping a bypass for a name
+  // no caller can currently produce is not a harmless no-op: it silently
+  // re-activates the moment any future action is ever named "pin" again (the
+  // obvious name if a hold returns), in exactly the session where the
+  // interviewer's own voice can drive the candidate's dashboard. cueRowNote's
+  // mirror exemption is removed in the same change, for the same reason.
   //
   // AC-V2.8: this refusal used to read the raw flag, so a token-blip session
   // that could demonstrably tell voices apart still had the candidate's own
   // release and company cues refused with the reason "cannot tell voices apart
   // this session" — a refusal whose stated cause was simply false, written
   // into the downloaded log AC-V2.4 exists to make answerable.
-  if (
-    effectiveAttribution(speakerAttribution, snapshot) === SPEAKER_ATTRIBUTION.UNAVAILABLE &&
-    match?.action !== "pin"
-  ) {
+  if (effectiveAttribution(speakerAttribution, snapshot) === SPEAKER_ATTRIBUTION.UNAVAILABLE) {
     return { act: null, ignoredReason: CUE_IGNORED_REASONS.ATTRIBUTION_UNAVAILABLE };
   }
 
@@ -329,46 +328,62 @@ export function resolveCueAction({ match, speakerAttribution, snapshot }) {
 //
 // AC-V2.6.2/C4 (accessibility audit). WCAG 3.3.2 Labels or Instructions: an
 // instruction that is false is worse than no instruction. This sentence used
-// to end "…only from their buttons below" in BOTH branches. That is true of
+// to end "…only from their buttons below" in BOTH branches. That was true of
 // the expanded rail and false of the collapsed one, whose whole tree holds a
 // single button — the expand toggle — sitting ABOVE this notice. Collapsed is
 // the state a live session is actually in, so the wrong half was the half
 // that mattered.
 //
+// B2 (fresh delta review): a SECOND, independent false instruction, found
+// after the C4 fix above: this sentence still named "holding a question" as
+// the one cue that works from a spoken cue, and named "releasing it" as one
+// of the two that are button-only — but the hold and release cues are fully
+// retired (N18 delta review F1; voiceCues.js's own header). VOICE_CUES ships
+// exactly one action, "company", and resolveCueAction refuses it too while
+// attribution is unavailable (it is not "pin", the one action that clause
+// ever exempted) — so the true statement is the reverse of what this used to
+// say: the one cue this rail has is button-only, full stop, with nothing
+// left that works from a spoken cue in this state at all.
+//
 // The variant lives here rather than in the component for the same reason
 // every other sentence on this axis does: VoiceCueSidebar.js states the
-// policy, it does not restate it. That file already solved this exact problem
-// once for its own copy and left the note — MIC_NOTE_SHORT drops "the buttons
-// above" "on purpose: collapsed renders no buttons" — and the shared string
-// simply never got the same treatment. Only the "how to reach them" clause
-// differs; the fact being disclosed is identical in both, which
-// cuePolicy.test.js asserts directly so the two cannot drift into two
-// different claims about what works.
+// policy, it does not restate it. That file already solved the collapsed/
+// expanded half of this problem for its own copy — MIC_NOTE_SHORT drops "the
+// buttons above" "on purpose: collapsed renders no buttons" — and only the
+// "how to reach it" clause differs between the two variants below; the fact
+// being disclosed is identical in both, which cuePolicy.test.js asserts
+// directly so the two cannot drift into two different claims about what
+// works.
 const AVAILABILITY_NOTICE_LEAD =
-  "Your speech-to-text provider can't tell voices apart this session, so only holding a question works from a spoken cue — releasing it and referencing the company still work, but only from their buttons";
+  "Your speech-to-text provider can't tell voices apart this session, so referencing the company doesn't work from a spoken cue — it still works, but only from its button";
 
 //
 // AC-V2.8: `snapshot` rides in the options bag beside `collapsed`, and the
 // state test goes through `effectiveAttribution`. Without it this sentence told
-// the user their release and company cues were button-only in a session where
-// the policy had just started permitting them — the same class of defect as a
-// privacy notice describing a transfer that does not happen. Omitting the
-// snapshot keeps today's (conservative) wording.
+// the user the company cue was button-only in a session where the policy had
+// just started permitting it — the same class of defect as a privacy notice
+// describing a transfer that does not happen. Omitting the snapshot keeps
+// today's (conservative) wording.
 export function cueAvailabilityNotice(speakerAttribution, { collapsed = false, snapshot } = {}) {
   if (effectiveAttribution(speakerAttribution, snapshot) !== SPEAKER_ATTRIBUTION.UNAVAILABLE) return "";
   // Defaults to the expanded wording on a bare one-argument call: a caller
   // that has not been taught about the rail's collapse state is, by
   // definition, not the collapsed rail.
-  if (collapsed) return `${AVAILABILITY_NOTICE_LEAD}: expand this rail to reach them.`;
+  if (collapsed) return `${AVAILABILITY_NOTICE_LEAD}: expand this rail to reach it.`;
   return `${AVAILABILITY_NOTICE_LEAD} below.`;
 }
 
 // A short per-row note for exactly the rows resolveCueAction refuses in this
-// state — never the pin row, always the other two while UNAVAILABLE. Kept in
-// lockstep with resolveCueAction by construction (see the anti-drift test in
-// cuePolicy.test.js, which checks every action against every attribution
-// value): a row carries a note if and only if the policy would refuse a
-// spoken match for it.
+// state — every row VOICE_CUES ships while UNAVAILABLE (just "company"
+// today). Kept in lockstep with resolveCueAction by construction (see the
+// anti-drift test in cuePolicy.test.js, which checks every action against
+// every attribution value): a row carries a note if and only if the policy
+// would refuse a spoken match for it.
+//
+// N18 delta review D4, OWNER RULING: the `pin` exemption this used to carry
+// (mirroring resolveCueAction's own, removed above for the same reason) is
+// gone — see that function's own comment for why keeping a bypass for a
+// retired action name is not a harmless no-op.
 //
 // AC-V2.8: same `snapshot`, same single derivation. Because both this and
 // resolveCueAction now ask `effectiveAttribution` rather than each testing the
@@ -377,6 +392,5 @@ export function cueAvailabilityNotice(speakerAttribution, { collapsed = false, s
 // tags-present and a tags-absent snapshot to prove it.
 export function cueRowNote(action, speakerAttribution, { snapshot } = {}) {
   if (effectiveAttribution(speakerAttribution, snapshot) !== SPEAKER_ATTRIBUTION.UNAVAILABLE) return "";
-  if (action === "pin") return "";
   return "Button only this session — this provider can't tell whose voice said it.";
 }

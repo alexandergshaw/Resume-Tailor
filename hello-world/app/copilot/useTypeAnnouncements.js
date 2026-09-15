@@ -21,24 +21,34 @@ import { interviewTypeLabel } from "@/lib/copilot/interviewTypes";
 // and the join that folds both slots into the one string CopilotClient's
 // consolidated live region renders. `mode`, `redraftCurrentAnswer`, the
 // shared answer-cache/draft-generation refs, `setStaleTypeChangeAt`
-// (Contract 8's stale-card timestamp) and the ambient cue/brief text all
-// stay arguments — every one of them is also read or set by code that stays
+// (Contract 8's stale-card timestamp) and the ambient brief text all stay
+// arguments — every one of them is also read or set by code that stays
 // behind in CopilotClient.js.
+// N18 delta review D5: `cueText` is removed from this parameter list. It was
+// always `cueAnnouncement.text` from CopilotClient.js, permanently "" since
+// the N18 delta review F1 hold/release retirement (neither useCueActions.js
+// nor useLiveSession.js has produced real cue text since) -- a dead value
+// threaded through a live parameter, two dependency arrays and a join arm
+// below, all for a caller that could never vary it. The ambient-signature
+// stamps and the joinInterviewTypeAnnouncements call below now hardcode the
+// same empty string in its place, which keeps every computed string
+// byte-identical to what it always was.
 export function useTypeAnnouncements({
   mode,
   redraftCurrentAnswer,
   answerCacheRef,
   draftGenRef,
   setStaleTypeChangeAt,
-  cueText,
   briefText,
 }) {
   // Contract 7/8: this surface's own announcement and practice's own.
   const [typeAnnouncement, setTypeAnnouncement] = useState("");
   const [practiceTypeAnnouncement, setPracticeTypeAnnouncement] = useState("");
   const announcedStorageBlockRef = useRef(false); // AC-A15b: once per tab; touched in the handler only.
-  // Step-9c-iii: each slot's ambient "cue|brief" signature when SET, compared
+  // Step-9c-iii: each slot's ambient "|brief" signature when SET, compared
   // at render time near the join — see joinInterviewTypeAnnouncements's doc.
+  // The leading `|` is what a real cue slot used to occupy (N18 delta review
+  // D5): kept as a literal so the format stays exactly what it always was.
   const [typeAmbientAtSet, setTypeAmbientAtSet] = useState("");
   const [practiceAmbientAtSet, setPracticeAmbientAtSet] = useState("");
 
@@ -73,12 +83,16 @@ export function useTypeAnnouncements({
           storageBlocked: announceBlocked,
         }),
       );
-      setTypeAmbientAtSet(`${cueText}|${briefText}`);
+      // N18 delta review D5: the leading `|` is now a hardcoded literal
+      // rather than an interpolated `cueText` -- cueText was permanently ""
+      // here even before this cleanup, so the computed string is
+      // byte-identical; only the dead parameter is gone.
+      setTypeAmbientAtSet(`|${briefText}`);
     },
     // answerCacheRef/draftGenRef are refs and setStaleTypeChangeAt is a
     // useState setter — all stable identities that never change across
     // renders, so listing them here is behaviour-neutral.
-    [mode, redraftCurrentAnswer, answerCacheRef, draftGenRef, setStaleTypeChangeAt, cueText, briefText],
+    [mode, redraftCurrentAnswer, answerCacheRef, draftGenRef, setStaleTypeChangeAt, briefText],
   );
   useInterviewTypeChange(onInterviewTypeChanged);
 
@@ -96,9 +110,9 @@ export function useTypeAnnouncements({
     onForeignChange: useCallback(
       (text) => {
         setTypeAnnouncement(text);
-        setTypeAmbientAtSet(`${cueText}|${briefText}`);
+        setTypeAmbientAtSet(`|${briefText}`);
       },
-      [cueText, briefText],
+      [briefText],
     ),
   });
 
@@ -106,9 +120,9 @@ export function useTypeAnnouncements({
   const onPracticeTypeAnnouncement = useCallback(
     (text) => {
       setPracticeTypeAnnouncement(claimStorageAnnouncement(text, announcedStorageBlockRef));
-      setPracticeAmbientAtSet(`${cueText}|${briefText}`);
+      setPracticeAmbientAtSet(`|${briefText}`);
     },
-    [cueText, briefText],
+    [briefText],
   );
 
   // MATERIAL-2: the one gap the ambient check alone can't close — a round
@@ -119,16 +133,21 @@ export function useTypeAnnouncements({
   }, []);
 
   // MATERIAL-1/step-9c-iii: see joinInterviewTypeAnnouncements's own doc.
+  // N18 delta review D5: `cueText: ""` is a hardcoded literal, not a
+  // passed-in value -- no production caller can produce real cue text any
+  // more (the hold/release retirement), so this keeps the composer's own
+  // ambient-signature format byte-identical to what it always computed
+  // without accepting a dead parameter from this hook's own caller.
   const [liveTypeText, practiceTypeText] = joinInterviewTypeAnnouncements({
     mode,
     live: typeAnnouncement,
     practice: practiceTypeAnnouncement,
     liveAmbientAtSet: typeAmbientAtSet,
     practiceAmbientAtSet,
-    cueText,
+    cueText: "",
     briefText,
   });
-  const consolidatedLiveText = [cueText, briefText, liveTypeText, practiceTypeText]
+  const consolidatedLiveText = [briefText, liveTypeText, practiceTypeText]
     .filter(Boolean)
     .join(" ");
 

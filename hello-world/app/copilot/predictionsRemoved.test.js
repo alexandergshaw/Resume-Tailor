@@ -189,12 +189,14 @@ const FILES = [
       /anticipat/i,
       /coming next/i,
     ],
-    // `chipLabel="Unconfirmed"` rather than the bare word: deleting the
-    // whole provisional branch still leaves "Unconfirmed" in this file's own
+    // `chipLabel="Unverified speaker"` rather than the bare word: deleting
+    // the whole provisional branch still leaves the phrase in this file's own
     // surrounding comments, so the loose form passed against a mutant that
     // had removed the branch entirely. Moved here with the panel itself
-    // (ARCH-sticky §2.1) — this is now the ONLY place that renders it.
-    keep: [/chipLabel="Unconfirmed"/],
+    // (ARCH-sticky §2.1) — this is now the ONLY place that renders it. m11
+    // renamed the chip from "Unconfirmed" (a collision with N18's own
+    // "confirm" vocabulary) to "Unverified speaker".
+    keep: [/chipLabel="Unverified speaker"/],
   },
   {
     // The two client-module bans are what stop the removal being defeated

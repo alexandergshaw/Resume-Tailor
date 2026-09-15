@@ -1,114 +1,46 @@
 // AC-T1.1..T1.8. The registry of spoken cues a candidate can say during a
-// LIVE interview to control the copilot without touching the keyboard: hold
-// ("pin") the current question and its drafted answer on screen so a later
-// detection cannot evict what the candidate is mid-sentence reading, release
-// that hold, or pull up company research for the selected posting. `title`,
-// `summary` and `phrases` are rendered verbatim by the cue sidebar
+// LIVE interview to control the copilot without touching the keyboard.
+// `title`, `summary` and `phrases` are rendered verbatim by the cue sidebar
 // (VoiceCueSidebar.js, T3) — they are user-facing copy, not internal labels.
+//
+// N18 delta review F1, OWNER RULING: full retirement of the "hold" ("pin")
+// and "release" ("unpin") cues. This registry used to carry three actions —
+// hold the current question and its drafted answer on screen, release that
+// hold, and pull up company research for the selected posting — but the
+// hold's only surviving behavioural effects were harmful with no offsetting
+// benefit: an "aria-busy" that suppressed genuine draft-status announcements
+// for the duration of a hold, and a stale "Held on screen" region and
+// "Currently held" chip that never reflected what the confirm gate
+// (questionConfirm.js) actually shows. The confirm gate is now the ONLY
+// surface that decides which question is current — see that module's own
+// header. `lib/copilot/questionPin.js` and its React half
+// (app/copilot/useQuestionPin.js) are deleted; nothing in this module names
+// them any more. Company research remains the one action this registry
+// still recognizes.
 //
 // What this module deliberately does NOT do: it does not decide WHEN to run
 // (that is useLiveSession.js's job, gated to final transcript frames only —
-// AC-T1.13); it does not know what a "pinned question" or a "posting" is,
-// or mutate any state; it has no opinion on whether a matched cue could
-// actually be acted on (no question yet, no posting selected), and it does
-// not decide whether an AMBIGUOUS match should be acted on either — see
-// matchVoiceCue below, the caller (useLiveSession.js, AC-T1.2.1) refuses to
-// act when `ambiguous` is true. It is a pure text-in, cue-out function,
-// matching localDetection.js's own boundary.
+// AC-T1.13); it does not know what a "posting" is, or mutate any state; it
+// has no opinion on whether a matched cue could actually be acted on (no
+// posting selected), and it does not decide whether an AMBIGUOUS match
+// should be acted on either — see matchVoiceCue below, the caller
+// (useLiveSession.js, AC-T1.2.1) refuses to act when `ambiguous` is true.
+// The ambiguity check itself is unchanged and still generic (it fires
+// whenever two DIFFERENT actions match one utterance) even though this
+// registry currently ships only one action, exactly as it was before hold
+// and release existed. It is a pure text-in, cue-out function, matching
+// localDetection.js's own boundary.
 //
 // Reuses `normalizeQuestion` from ./questions.js for the exact same
 // lowercase/whitespace-collapse normalization the question detector already
 // applies to live speech, rather than inventing a second normalizer. That
 // function deliberately does NOT strip punctuation, so every pattern below
 // tolerates commas, periods and question marks sitting next to the words it
-// cares about — and the sentence-boundary anchors below (SENTENCE_START_SRC)
-// depend on that punctuation still being present. It also does NOT normalize
-// apostrophes, so a contraction can arrive as `'`, `’`, or nothing at all
-// (STT dependent) — every pattern below that touches a contraction is built
-// from a shared fragment that accepts all three.
-//
-// VOCABULARY, REDESIGNED against two constraints the user stated directly
-// after the first shipped vocabulary violated both:
-//
-//   1. A cue must sound NATURAL said out loud in a real interview. "Unpin",
-//      "pull up the company", "bring up the company", "show me the company",
-//      "remind me about this company", "what do we know about them" are
-//      commands addressed to an app. Nobody says them in a job interview. A
-//      cue nobody will actually say is a cue that does not exist. All of
-//      them are gone, not narrowed.
-//
-//   2. A cue must be something only the CANDIDATE would say. The copilot
-//      listens on a microphone, and on two of the three sources the
-//      interviewer's voice can reach that microphone, so any phrase an
-//      interviewer might plausibly utter is a phrase the interviewer can use
-//      to drive the candidate's own dashboard. Cut for this reason: "hold
-//      that thought" (what an interviewer says to interrupt you), "give me a
-//      second/moment/minute" ("give me a second while I pull up your
-//      resume" is interviewer speech), and "let's move on" / "moving on" /
-//      "next question" — the last three already appeared in questions.js's
-//      LEAD_IN_RE as INTERVIEWER lead-ins, this codebase's own evidence
-//      about who says them.
-//
-// The replacement vocabulary organises around DIRECTION: an interviewer says
-// "walk me through", a candidate says "let me walk you through". The pronoun
-// is what assigns a phrase to a speaker, and it is what most of the new
-// patterns rely on instead of an anchor or a rare word.
-//
-// THE MISFIRE COST IS NOT SYMMETRIC ACROSS THE THREE ACTIONS, and every
-// judgment call below about which interviewer-risk cues to keep and which to
-// cut follows from this:
-//   - An interviewer accidentally triggering HOLD merely holds the question
-//     the candidate is already on. Near-harmless, often what you'd want
-//     anyway.
-//   - An interviewer accidentally triggering RELEASE yanks away a hold the
-//     candidate set deliberately, mid-answer. Harmful.
-//   - Anything triggering COMPANY spends an outbound request carrying the
-//     posting's details and pops a panel. The most expensive of the three.
-//
-// So this file is TOLERANT on hold and STRICT on release and company. The
-// pin cues below ("let me give you an example…", "let me take a step
-// back…", "let me walk you through…", "off the top of my head…") all have a
-// confirmed natural interviewer utterance an adversarial pass produced for
-// them (an interviewer clarifying their own question with an example, or
-// framing it with context, or explaining the interview's agenda, or
-// caveating a quick answer). They are kept anyway, deliberately, BECAUSE the
-// worst outcome of an interviewer tripping one is a hold the candidate
-// almost certainly wants anyway. Do not read their presence in that
-// adversarial pass as a defect to fix — the fix already happened, in the
-// unpin and company vocabularies below, which do not get the same latitude.
+// cares about. It also does NOT normalize apostrophes, so a contraction can
+// arrive as `'`, `’`, or nothing at all (STT dependent) — every pattern
+// below that touches a contraction is built from a shared fragment that
+// accepts all three.
 import { normalizeQuestion } from "./questions.js";
-
-// ============================================================================
-// ACCEPTED RESIDUALS, consolidated. Every KNOWN interviewer exposure left in
-// this file on purpose, gathered in one place so they can be read — and
-// re-argued, if the calculus ever changes — together, instead of being
-// rediscovered piecemeal one cue at a time. Each entry below also has a
-// short pointer next to its cue; this block is the canonical explanation.
-//
-// 1. PIN — the "good question" family (PIN_QUESTION_RE). An interviewer DOES
-//    say "good question" when the CANDIDATE asks THEM one, usually near the
-//    end of an interview. Accepted: a false HOLD is the cheap side of the
-//    asymmetry documented above (it only holds the question already on
-//    screen), it is one click to undo, and the in-person identity gate plus
-//    the tab/system channel separation cover most of the remaining exposure.
-//
-// 2. UNPIN — "does that answer" / "hope that answers"
-//    (UNPIN_ANSWERS_QUESTION_RE, UNPIN_HOPE_THAT_ANSWERS_RE). Both fire when
-//    the INTERVIEWER answers a question the CANDIDATE asked them. Accepted:
-//    that exchange is confined to the end-of-interview "any questions for
-//    us?" stretch, and a release there costs nothing — there is no held
-//    answer left to protect by then.
-//
-// 3. UNPIN — "that's how I'd approach it" (UNPIN_APPROACH_RE), the
-//    unprompted-peer-opinion case that survives its own "too"/"as well"/
-//    "either" guard (see that pattern's comment for the guard itself):
-//    "Funny enough, that's how I'd approach it if I were still writing code
-//    day to day" has no trailing agreement marker for the guard to catch.
-//    Accepted: this needs the interviewer to volunteer their own take,
-//    unprompted, peer to peer — a narrow stretch of an interview — and a
-//    false release there costs little: there is rarely a hold worth
-//    protecting during a peer-to-peer technical aside.
-// ============================================================================
 
 // Shared fragment for a first-person contraction that can arrive spelled
 // three ways depending on the STT provider: "I've" (straight apostrophe),
@@ -117,106 +49,6 @@ import { normalizeQuestion } from "./questions.js";
 // exposed as its own RegExp, so it is never accidentally handed to `exec`
 // on its own.
 const IVE_SRC = "i(?:['’]?ve|\\s+have)";
-// Same idea for "that's" / "that’s" / "thats".
-const THATS_SRC = "that['’]?s";
-// Same idea again for "I'd" / "I’d" / "Id" / "I would".
-const ID_SRC = "i(?:['’]?d|\\s+would)";
-
-// AC-T1.5. "Good/great/interesting/tough/fair/excellent question" in any
-// natural framing ("Good question", "That's a great question", "What a
-// great question"). Deliberately matches the adjective immediately before
-// "question" and nothing else — NOT a leading "that's"/"that is"/"what a" —
-// so the pattern needs no apostrophe handling at all (STT renders "that's"
-// as "'", "'" or nothing; matching on the invariant tail of the phrase sidesteps
-// that variance entirely instead of enumerating every contraction spelling).
-//
-// ACCEPTED RESIDUAL #1 (see the consolidated block above import for the
-// reasoning): kept at the user's explicit request even though it is a known
-// exposure. Do not remove this as an oversight, and do not treat it as
-// license to re-add its now-deleted siblings ("hold that thought", "give me
-// a second", "let's move on", "moving on", "next question") as a consistency
-// fix — those were cut because an interviewer says them UNPROMPTED,
-// mid-interview, about their own agenda, which is a materially worse
-// exposure than an interviewer echoing "question" back at the candidate.
-const PIN_QUESTION_RE = /\b(?:good|great|interesting|tough|fair|excellent)\s+question\b/;
-// "Let me think" (about that / for a second / …) — a stall only the person
-// about to ANSWER says. Match the stable core, ignore whatever trails it.
-const PIN_LET_ME_THINK_RE = /\blet me think\b/;
-// "Let me take a step back" — an opener for reframing before answering.
-const PIN_STEP_BACK_RE = /\blet me take a step back\b/;
-// "Let me give you an example" / "Let me give you a concrete example".
-// `an?` matches the bare "a" or "an", so one pattern covers both the plain
-// and "concrete" framings without enumerating them separately.
-const PIN_EXAMPLE_RE = /\blet me give you an? (?:concrete )?example\b/;
-// "Let me walk you through …" — the candidate's own direction. Its mirror,
-// "walk me through …", is the interviewer's direction (see questions.js's
-// STARTERS, which lists "walk me" as an interviewer opener) and is a hard
-// negative control below: the pronoun is the entire distinction, so this
-// pattern must never loosen to match "walk me through" on its own.
-const PIN_WALK_THROUGH_RE = /\blet me walk you through\b/;
-// "Off the top of my head" — a hedge before an unprepared answer.
-const PIN_TOP_OF_HEAD_RE = /\boff the top of my head\b/;
-
-// AC-T1.6, REDESIGNED, then narrowed TWICE after adversarial passes each
-// found a natural interviewer utterance for phrases that had been in this
-// list. Release is the STRICT side of the asymmetry documented at the top
-// of this file — an interviewer accidentally releasing a hold the candidate
-// set deliberately, mid-answer, is a real harm, not a shrug — so unlike the
-// pin cues above, a confirmed interviewer sentence here is grounds to cut,
-// not to keep. Cut, each with the interviewer line that sank it:
-//   - "let me know if you want more detail" — "Let me know if you want more
-//     detail on the comp package."
-//   - "happy to go deeper" — "We're happy to go deeper on comp later if
-//     you'd like."
-//   - "back to you" — the sharpest of the first round: it has no pronoun
-//     asymmetry at all ("back to you" is exactly what an interviewer says to
-//     open a NEW question and hand the candidate the floor — "Okay, back to
-//     you, tell me about your experience" — the opposite of a candidate
-//     signing off), so there was no narrowing that could have saved it.
-//   - "that's the short version" — cut in the second round. Interviewers
-//     condense the role, the comp and the process constantly, and this is
-//     exactly the phrase they use to signal it: "That's the short version of
-//     how our team is structured, happy to get into specifics later."
-// Each of the above is now a hard negative control instead of a cue.
-//
-// What survives is the phrases said by the person who has just FINISHED
-// answering, handing the conversation back, that no adversarial pass could
-// find an interviewer saying. "That's how I'd approach it" replaced "that's
-// the short version" as the third: only the person who was ASKED a question
-// has an approach of their own to close on — an interviewer has no answer to
-// sign off. "Unpin" — a command addressed to the app — was already gone from
-// the first redesign for a different reason: nobody says it out loud.
-//
-// ACCEPTED RESIDUAL #2 on the two "answer" phrases below (see the
-// consolidated block above import for the reasoning): both DO fire when the
-// interviewer answers a question the CANDIDATE asked them.
-
-// "Does that answer your/the question". Requires the full phrase
-// contiguous, not just "answer" and "question" appearing somewhere in the
-// same sentence (see the negative control "So I own the answer to that end
-// to end", which contains "answer" with no "does that answer" anywhere).
-const UNPIN_ANSWERS_QUESTION_RE = /\bdoes that answer (?:your|the) question\b/;
-// "(I) hope that answers (it/your question/…)". "answers?" tolerates the
-// singular "answer" some speakers use here too.
-const UNPIN_HOPE_THAT_ANSWERS_RE = /\bhope that answers?\b/;
-// "That's how I'd/I would approach it" — closing an answer by naming it as
-// your own take. ID_SRC covers "I'd"/"I’d"/"Id"/"I would" the same way
-// IVE_SRC covers "I've" above.
-//
-// Excludes a trailing "too" / "as well" / "either" (allowing punctuation and
-// up to a couple of filler words in between, e.g. "approach it as well, for
-// what it's worth"): that trailing word is the tell of an INTERVIEWER
-// AGREEING with an approach the candidate just described, peer to peer — a
-// person closing their OWN answer never appends it, because at that moment
-// there is nothing yet to agree with. Confirmed against "If I were in your
-// seat, that's how I'd approach it too." and "...as well, for what it's
-// worth.", both of which fire without this guard. What survives past the
-// guard is ACCEPTED RESIDUAL #3, documented in the consolidated block above
-// import: the narrower case of an interviewer volunteering an unprompted
-// peer opinion with no agreement marker to catch.
-const UNPIN_APPROACH_RE = new RegExp(
-  `\\b${THATS_SRC} how ${ID_SRC} approach it\\b(?!\\s*(?:,\\s*)?(?:\\w+\\s+){0,2}(?:too|as well|either)\\b)`
-);
 
 // AC-T1.7, REDESIGNED, then narrowed AGAIN after a second adversarial pass
 // found two independent problems. The original noun-phrase and command-verb
@@ -231,10 +63,9 @@ const UNPIN_APPROACH_RE = new RegExp(
 // The replacements are the natural bridges a candidate says when they are
 // ABOUT to reference something they know about the company. Saying one buys
 // the couple of seconds the panel needs to load, which is the point: the
-// cue is useful speech in its own right, not an incantation. Company is the
-// STRICT, expensive side of the asymmetry documented at the top of this
-// file — a match spends a real outbound request carrying the posting's
-// details — so it gets the tightest guard of the three actions.
+// cue is useful speech in its own right, not an incantation. Company spends
+// a real outbound request carrying the posting's details, so it gets the
+// tightest guard this module has.
 //
 // Problem 1, a boundary bug: `\bthe company\b` alone matches inside "the
 // company's competitor" (an apostrophe satisfies `\b` just as well as a
@@ -291,41 +122,10 @@ const COMPANY_TELL_ME_MORE_RE = new RegExp(`\\btell me more about ${COMPANY_END_
 
 // Ordered, one entry per action. Order only matters as the tie-break in
 // matchVoiceCue (AC-T1.2: equal-index matches keep the earlier-declared
-// cue), so pin/unpin/company here simply follows the order they are
-// introduced in the acceptance criteria (T1, then T2).
+// cue) — with a single entry left it has no observable effect today, but
+// stays in place rather than being collapsed away, since a future cue would
+// need it again immediately.
 const CUES = [
-  {
-    id: "pin-question",
-    action: "pin",
-    title: "Hold the question",
-    summary:
-      "Keeps this question on screen while you answer.",
-    phrases: [
-      "That's a great question.",
-      "Let me think about that for a moment.",
-      "Let me take a step back.",
-      "Let me give you an example.",
-      "Let me walk you through it.",
-      "Off the top of my head, we ran about forty services.",
-    ],
-    patterns: [
-      PIN_QUESTION_RE,
-      PIN_LET_ME_THINK_RE,
-      PIN_STEP_BACK_RE,
-      PIN_EXAMPLE_RE,
-      PIN_WALK_THROUGH_RE,
-      PIN_TOP_OF_HEAD_RE,
-    ],
-  },
-  {
-    id: "unpin-question",
-    action: "unpin",
-    title: "Release the question",
-    summary:
-      "Follows new questions again when you are done.",
-    phrases: ["Does that answer your question?", "I hope that answers it.", "That's how I'd approach it."],
-    patterns: [UNPIN_ANSWERS_QUESTION_RE, UNPIN_HOPE_THAT_ANSWERS_RE, UNPIN_APPROACH_RE],
-  },
   {
     id: "company-brief",
     action: "company",
@@ -386,22 +186,22 @@ function lastMatchIndex(pattern, text) {
 // against every cue and reports:
 //   - `id`/`action`/`matchedAt` — the cue whose pattern matches LATEST in the
 //     utterance, same as before: speech is sequential, so when a candidate
-//     says "Good question. ... Does that answer your question?" the thing
-//     they said last is the operative intent. Ties on index fall to
-//     whichever cue is declared earlier in VOICE_CUES (the comparison below
-//     only replaces the current winner on a STRICTLY greater index).
+//     says two cues in one utterance, the thing they said last is the
+//     operative intent. Ties on index fall to whichever cue is declared
+//     earlier in VOICE_CUES (the comparison below only replaces the current
+//     winner on a STRICTLY greater index).
 //   - `actions` — the distinct actions that matched ANYWHERE in the
 //     utterance, not just the winner's.
 //   - `ambiguous` — true when `actions` has more than one member. A single
-//     provider-final frame carrying both a pin cue and a release cue
-//     ("Good question, and I hope that answers it.") is far more likely to
-//     be narrative speech than sequential candidate intent, since finals
-//     arrive only every few seconds. The caller
-//     (useLiveSession.js) MUST NOT act on an ambiguous match — it still logs
-//     `id`/`action`/`matchedAt` so the frame is traceable, it just doesn't
-//     change any state on it. Repeating the SAME action twice ("Good
-//     question, that's a really good question") is NOT ambiguous: only one
-//     action is present in `actions` either way.
+//     provider-final frame carrying two DIFFERENT actions is far more likely
+//     to be narrative speech than sequential candidate intent, since finals
+//     arrive only every few seconds. The caller (useLiveSession.js) MUST NOT
+//     act on an ambiguous match — it still logs `id`/`action`/`matchedAt` so
+//     the frame is traceable, it just doesn't change any state on it.
+//     Repeating the SAME action twice is NOT ambiguous: only one action is
+//     present in `actions` either way. This check stays generic even though
+//     the registry above currently ships only one action — see this file's
+//     own module doc.
 export function matchVoiceCue(text) {
   if (typeof text !== "string") return null;
   const normalized = normalizeQuestion(text);

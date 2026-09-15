@@ -311,60 +311,18 @@ describe("VoiceCueSidebar -- accessible names (AC-X2, amendment I4, SF-3)", () =
   });
 });
 
-describe("VoiceCueSidebar -- the hold control is one stable button (amendment I5)", () => {
-  it("keeps the SAME accessible name whether pinned is false or true", async () => {
-    const Sidebar = await loadSidebar();
-    await render(Sidebar, baseProps({ pinned: false }));
-    const holdOff = buttonForAction("pin");
-    expect(holdOff).toBeDefined();
-    const nameOff = accessibleName(holdOff);
-
-    await render(Sidebar, baseProps({ pinned: true }));
-    const holdOn = buttonForAction("pin");
-    expect(holdOn).toBeDefined();
-    expect(accessibleName(holdOn)).toBe(nameOff);
-  });
-
-  it("carries aria-pressed reflecting the pinned state, on the hold button only", async () => {
-    const Sidebar = await loadSidebar();
-    await render(Sidebar, baseProps({ pinned: false }));
-    expect(buttonForAction("pin").getAttribute("aria-pressed")).toBe("false");
-
-    await render(Sidebar, baseProps({ pinned: true }));
-    expect(buttonForAction("pin").getAttribute("aria-pressed")).toBe("true");
-
-    // The release button is a one-shot action, not a toggle -- it carries
-    // no aria-pressed at all.
-    expect(buttonForAction("unpin").hasAttribute("aria-pressed")).toBe(false);
-  });
-
-  it("shows a non-colour state carrier (text badge) alongside the pressed hold button", async () => {
-    const Sidebar = await loadSidebar();
-    await render(Sidebar, baseProps({ pinned: true }));
-    expect(container.textContent).toMatch(/currently held/i);
-  });
-
-  // S11 (mutation harness survivor): only the PRESENCE of the badge was
-  // ever asserted, never its absence -- a badge that renders on every row
-  // regardless of pinned state stayed green.
-  it("shows the 'Currently held' badge on no row at all when nothing is pinned (S11)", async () => {
-    const Sidebar = await loadSidebar();
-    await render(Sidebar, baseProps({ pinned: false }));
-    expect(container.textContent).not.toMatch(/currently held/i);
-  });
-});
+// N18 delta review F1, OWNER RULING: full retirement of the hold ("pin")
+// cue — the "one stable button" contract (amendment I5) it used to carry
+// (aria-pressed, the "Currently held" text badge) is retired along with it;
+// see VoiceCueSidebar.js's own module doc. This describe block, and every
+// test in it, is removed rather than left asserting a permanent no-op, per
+// the reviewer's "do not leave a half-retired surface" finding.
 
 describe("VoiceCueSidebar -- one click performs the cue's action", () => {
   it("calls onActivate with the cue's action for each button", async () => {
     const Sidebar = await loadSidebar();
     const props = baseProps();
     await render(Sidebar, props);
-
-    await click(buttonForAction("pin"));
-    expect(props.onActivate).toHaveBeenLastCalledWith("pin");
-
-    await click(buttonForAction("unpin"));
-    expect(props.onActivate).toHaveBeenLastCalledWith("unpin");
 
     await click(buttonForAction("company"));
     expect(props.onActivate).toHaveBeenLastCalledWith("company");
@@ -383,6 +341,74 @@ describe("VoiceCueSidebar -- collapse (AC-T3.5, amendment I3)", () => {
     await render(Sidebar, baseProps({ collapsed: true }));
     expect(container.querySelectorAll("h4")).toHaveLength(0);
     expect(container.textContent).toMatch(/voice cues? available/i);
+  });
+
+  // B1 (adversarial delta review): this collapsed summary used to
+  // hand-write "Hold, release, or pull up company research…" independent of
+  // VOICE_CUES, so retiring the hold/release cues from the registry (N18
+  // delta review F1) left the SENTENCE still instructing a live candidate to
+  // say two cues that no longer exist — a false instruction read mid-
+  // interview. Confirmed against the real component before this fix: with
+  // VOICE_CUES down to a single "company" cue, the rendered text still
+  // contained the literal words "Hold, release". Checked against every
+  // retired action name, not just the two this bug happened to name, so a
+  // FUTURE retirement (e.g. of "company" itself) trips this the same way.
+  //
+  // N18 delta review D2, three widenings after a fresh review measured the
+  // original version of this test against four mutants and found it caught
+  // only one:
+  //   1. Exact-word regex (`\bhold\b`) missed the inflected forms a mutant
+  //      actually used ("holding", "releasing", "pinned") — widened to a
+  //      STEM match with a `\w*` tail, below.
+  //   2. Collapsed-only, default-attribution-only: an append to MIC_NOTE_FULL
+  //      (only rendered EXPANDED) or to the degraded-state notice (only
+  //      rendered while attribution is UNAVAILABLE) was invisible to a test
+  //      that never rendered either state — widened to loop both `collapsed`
+  //      values with `speakerAttribution: UNAVAILABLE` set, so every branch
+  //      that can carry text is actually on screen when this runs.
+  //   3. The verb list itself was checked only against the REAL registry, so
+  //      a component that hardcoded today's English ("reference the
+  //      company") instead of deriving it from VOICE_CUES passed every check
+  //      above by coincidence. Proven apart, the same way the row-list test
+  //      earlier in this file does: swap in a FAKE registry and require the
+  //      fake verb on screen and the real title absent.
+  it("never describes a retired cue action, in any rail state, and derives its verb list from the registry rather than a hardcoded copy (B1/D2)", async () => {
+    const RETIRED_STEM = /\b(hold|releas|unpin|pin)\w*\b/i;
+    const RealSidebar = await loadSidebar();
+    for (const collapsed of [true, false]) {
+      await render(
+        RealSidebar,
+        baseProps({ collapsed, speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE }),
+      );
+      expect(container.textContent).not.toMatch(RETIRED_STEM);
+    }
+
+    // The positive/structural half: a fresh module registry generation, so
+    // the collapsed summary's verb list can only come from THIS import, not
+    // a literal baked into the component.
+    vi.resetModules();
+    const fakeCues = [
+      { id: "fake-1", action: "company", title: "Zzyzx the archive", summary: "Fake summary.", phrases: ["Say it"], patterns: [] },
+    ];
+    const FakeSidebar = await loadSidebar(fakeCues);
+    await render(FakeSidebar, baseProps({ collapsed: true }));
+    expect(container.textContent).toContain("zzyzx the archive");
+    for (const realCue of VOICE_CUES) {
+      const realVerb = realCue.title.charAt(0).toLowerCase() + realCue.title.slice(1);
+      expect(container.textContent).not.toContain(realVerb);
+    }
+  });
+
+  // The positive half of the same invariant: the summary must still name
+  // the cue(s) VOICE_CUES actually ships, derived from the registry rather
+  // than a second hand-written list that could itself drift.
+  it("names the cue(s) VOICE_CUES actually ships in its collapsed summary", async () => {
+    const Sidebar = await loadSidebar();
+    await render(Sidebar, baseProps({ collapsed: true }));
+    for (const cue of VOICE_CUES) {
+      const verb = cue.title.charAt(0).toLowerCase() + cue.title.slice(1);
+      expect(container.textContent).toContain(verb);
+    }
   });
 
   it("toggles via the expand/collapse control, which reports its state with aria-expanded", async () => {
@@ -537,9 +563,10 @@ describe("VoiceCueSidebar -- vertical budget and row structure (SF-6)", () => {
 });
 
 // AC-V2.6. The degraded-state disclosure: when the STT provider can't tell
-// voices apart, hold still works from a spoken cue but release/company are
-// button-only this session — and the user must be told that, in terms a
-// screen reader can read, without needing the panel open. Every assertion
+// voices apart, the company cue — the only cue VOICE_CUES ships since the
+// N18 delta review F1 hold/release retirement — is button-only this
+// session, and the user must be told that, in terms a screen reader can
+// read, without needing the panel open. Every assertion
 // here reads its expectation off lib/copilot/cuePolicy.js's own exports
 // rather than hardcoding a sentence, for the same anti-drift reason that
 // module exists at all (see its own header and VoiceCueSidebar.js's).
@@ -580,16 +607,27 @@ describe("VoiceCueSidebar -- degraded attribution disclosure (AC-V2.1/V2.6)", ()
     }
   });
 
-  it("marks the release and company rows, but not the hold row, when unavailable", async () => {
+  // m3 (adversarial delta review): this used to read as protecting a
+  // distinct "release" row via a made-up "unpin" action, but VOICE_CUES
+  // retired that cue — cuePolicy.js's cueRowNote falls through to the SAME
+  // string for any action other than "pin", so `cueRowNote("unpin", …)` and
+  // `cueRowNote("company", …)` were always identical, and asserting both
+  // proved nothing beyond "the company row's note is present". Rewritten to
+  // check only the row this registry actually renders.
+  //
+  // N18 delta review D4: the "pin" exemption cited above is itself removed
+  // now — cuePolicy.js's own comment on resolveCueAction/cueRowNote explains
+  // why keeping a bypass for a retired action's name was not a harmless
+  // no-op. "pin" behaves exactly like every other action here now, which
+  // this checks directly rather than continuing to assert the retired
+  // contract.
+  it("marks the company row when unavailable, and no longer exempts \"pin\" either (D4)", async () => {
     const Sidebar = await loadSidebar();
     await render(Sidebar, baseProps({ collapsed: false, speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE }));
     const pinNote = cueRowNote("pin", SPEAKER_ATTRIBUTION.UNAVAILABLE);
-    const unpinNote = cueRowNote("unpin", SPEAKER_ATTRIBUTION.UNAVAILABLE);
     const companyNote = cueRowNote("company", SPEAKER_ATTRIBUTION.UNAVAILABLE);
-    expect(pinNote).toBe("");
-    expect(unpinNote.trim()).not.toBe("");
+    expect(pinNote.trim()).not.toBe("");
     expect(companyNote.trim()).not.toBe("");
-    expect(container.textContent).toContain(unpinNote);
     expect(container.textContent).toContain(companyNote);
   });
 
@@ -716,28 +754,23 @@ describe("VoiceCueSidebar -- the degraded state reaches the control, not just th
       .join(" ");
   }
 
-  it("describes the release and company buttons with the policy's own row note", async () => {
+  // N18 delta review F1: this used to loop over ["unpin", "company"] — the
+  // release ("unpin") cue is retired along with the hold cue itself
+  // (voiceCues.js no longer registers either), so company is the only
+  // action left to describe.
+  it("describes the company button with the policy's own row note", async () => {
     const Sidebar = await loadSidebar();
     await render(Sidebar, baseProps({ collapsed: false, speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE }));
-    for (const action of ["unpin", "company"]) {
-      const button = buttonForAction(action);
-      expect(button).toBeDefined();
-      const note = cueRowNote(action, SPEAKER_ATTRIBUTION.UNAVAILABLE);
-      expect(note.trim()).not.toBe("");
-      // Not merely "has the attribute": it resolves to a real element in this
-      // tree whose text is the shared module's own sentence. A dangling id
-      // reference announces nothing at all and is invisible to a check that
-      // only reads the attribute.
-      expect(button.getAttribute("aria-describedby")).toBeTruthy();
-      expect(describedText(button)).toBe(note.trim());
-    }
-  });
-
-  it("leaves the hold button undescribed, because holding still works by voice", async () => {
-    const Sidebar = await loadSidebar();
-    await render(Sidebar, baseProps({ collapsed: false, speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE }));
-    expect(cueRowNote("pin", SPEAKER_ATTRIBUTION.UNAVAILABLE)).toBe("");
-    expect(buttonForAction("pin").getAttribute("aria-describedby")).toBeNull();
+    const button = buttonForAction("company");
+    expect(button).toBeDefined();
+    const note = cueRowNote("company", SPEAKER_ATTRIBUTION.UNAVAILABLE);
+    expect(note.trim()).not.toBe("");
+    // Not merely "has the attribute": it resolves to a real element in this
+    // tree whose text is the shared module's own sentence. A dangling id
+    // reference announces nothing at all and is invisible to a check that
+    // only reads the attribute.
+    expect(button.getAttribute("aria-describedby")).toBeTruthy();
+    expect(describedText(button)).toBe(note.trim());
   });
 
   it("describes nothing at all once attribution is active", async () => {
@@ -861,7 +894,11 @@ describe("VoiceCueSidebar -- the disclosure follows the evidence, not the flag (
       }),
     );
     expect(container.textContent).toContain(cueAvailabilityNotice(SPEAKER_ATTRIBUTION.UNAVAILABLE));
-    expect(container.textContent).toContain(cueRowNote("unpin", SPEAKER_ATTRIBUTION.UNAVAILABLE));
+    // m3: was cueRowNote("unpin", …) — a made-up action that happens to
+    // return the same string as "company" (cuePolicy.js's fallback branch
+    // does not distinguish by action name), which tested a row this
+    // registry no longer renders. "company" is the row actually on screen.
+    expect(container.textContent).toContain(cueRowNote("company", SPEAKER_ATTRIBUTION.UNAVAILABLE));
   });
 
   it("treats an unwired snapshot prop as no evidence, never as evidence", async () => {

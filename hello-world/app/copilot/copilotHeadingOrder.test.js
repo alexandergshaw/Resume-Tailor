@@ -20,11 +20,16 @@
 // below is measured against. CopilotDashboard is left REAL for the same
 // reason.
 //
-// `held: true` with `questions: []` is how the strip is reached here: the
-// hook is mocked, so CopilotClient.js's own `useState([])` for `questions`
-// is never populated, and the live mount predicate's `|| held` disjunct is
-// the only path in. That is pin 15's path, and it is the reason the
-// disjunct is kept.
+// N18 delta review F1, OWNER RULING: `held: true` with `questions: []` used
+// to be how the strip was reached here — the hook is mocked, so
+// CopilotClient.js's own `useState([])` for `questions` is never populated
+// any other way, and the live mount predicate's `|| held` disjunct was the
+// only path in. That disjunct is retired along with the hold cue itself
+// (questionPin.js/useQuestionPin.js are deleted), so this file now reaches
+// `mountStrip` through its REAL gate instead: the mocked `useLiveSession`
+// seeds `questions` via the render-phase-update idiom CopilotClient.js's
+// own `railCollapsed` already uses (a same-component setState call during
+// render, guarded so it fires exactly once) — see SEED_QUESTIONS below.
 //
 // NOT ASSERTED HERE (jsdom has no layout engine): that the strip is
 // actually pinned, that it does not occlude anything, or that the cap
@@ -89,7 +94,20 @@ vi.mock("./useCompanyBrief", () => ({
 }));
 
 let liveSessionReturn;
-vi.mock("./useLiveSession", () => ({ useLiveSession: () => liveSessionReturn }));
+// N18 delta review F1: the ONLY externally-reachable way left to make
+// `mountStrip` (CopilotClient.js) true through this fully-mocked hook —
+// `questions` and `status` are CopilotClient's OWN useState, never read from
+// this mock's return, so the sole entry point is the `setQuestions` this
+// mock is handed as an argument. Guarded on `questions.length === 0` so it
+// fires exactly once (the render-phase-update idiom this codebase already
+// uses for CopilotClient.js's own `railCollapsed`), not on every render.
+const SEED_QUESTIONS = [{ id: 1, question: "Current question", status: "done", points: ["A point."] }];
+vi.mock("./useLiveSession", () => ({
+  useLiveSession: (args) => {
+    if (args.questions.length === 0) args.setQuestions(SEED_QUESTIONS);
+    return liveSessionReturn;
+  },
+}));
 
 function baseLiveSessionReturn(overrides = {}) {
   return {
@@ -118,8 +136,6 @@ function baseLiveSessionReturn(overrides = {}) {
     pinnedId: null,
     newerQuestionCount: 0,
     held: false,
-    pinCurrentQuestion: vi.fn(),
-    unpinQuestion: vi.fn(),
     cueAnnouncement: { text: "", nonce: 0 },
     ...overrides,
   };
@@ -134,9 +150,9 @@ let CopilotClient;
 
 beforeEach(async () => {
   globalThis.fetch = vi.fn(() => Promise.resolve({ ok: false }));
-  // The held branch is the only one that reaches the question surface with
-  // useLiveSession mocked -- see the file header.
-  liveSessionReturn = baseLiveSessionReturn({ held: true, newerQuestionCount: 0 });
+  // SEED_QUESTIONS (seeded through the mocked useLiveSession above) is what
+  // reaches the question surface now — see the file header.
+  liveSessionReturn = baseLiveSessionReturn();
   ({ default: CopilotClient } = await import("./CopilotClient.js"));
   container = document.createElement("div");
   document.body.appendChild(container);

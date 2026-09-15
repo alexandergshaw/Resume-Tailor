@@ -2,21 +2,20 @@
 
 import Typography from "@mui/material/Typography";
 import { BREAK_LONG_WORDS_SX } from "@/app/theme/mobileSx";
-import { RealPanel, AccentPanel, HeldQuestionPanel } from "./panelShells";
+import { RealPanel, AccentPanel } from "./panelShells";
 
 // ARCH-sticky §2.1/§3.1. Moved out of CopilotDashboard.js: this panel now
 // mounts once per client, inside
 // app/copilot/dashboard/StickyQuestionStrip.js's sticky strip, rather than
 // inside CopilotDashboard's own grid — "relocation, not duplication". Every
 // default this panel used to receive implicitly from CopilotDashboard's own
-// destructured parameters — the `copy` merge, the `held`/`newerCount`/`live`
-// fallbacks, the heading level that made this panel's own heading legal —
-// is now the CALLER's job (StickyQuestionStrip for `copy`/heading;
-// CopilotClient/PracticeClient for the pin surface), and nothing here
-// defaults silently: a caller that drops a prop gets an honest-looking
-// WRONG answer rather than a thrown error, which is why
-// stickyQuestionGuards.test.js (G-2) and copilotHeadingOrder.test.js (G-1)
-// exist as source/render guards rather than relying on this file alone.
+// destructured parameters — the `copy` merge, the heading level that made
+// this panel's own heading legal — is now the CALLER's job
+// (StickyQuestionStrip for both), and nothing here defaults silently: a
+// caller that drops a prop gets an honest-looking WRONG answer rather than a
+// thrown error, which is why stickyQuestionGuards.test.js (G-2) and
+// copilotHeadingOrder.test.js (G-1) exist as source/render guards rather
+// than relying on this file alone.
 //
 // This panel is a leaf — it announces nothing of its own accord (enforced
 // directly against this file's source by stickyQuestionGuards.test.js's
@@ -52,36 +51,26 @@ import { RealPanel, AccentPanel, HeldQuestionPanel } from "./panelShells";
 // Practice mode never sets `provisional` (see PracticeClient's
 // `dashboardQuestions`), so `current?.provisional` is always falsy there and
 // this branch never runs — practice always takes the plain `RealPanel` path
-// below, unchanged. AC-T1.16: `held` is checked FIRST, above the provisional
-// branch — a held entry gets the warning treatment regardless of whether it
-// also happens to be provisional; practice mode passes no `pinnedId` (so
-// `held` is always false there), which is what keeps it byte-identical to
-// before this prop existed.
-export default function CurrentQuestionPanel({ current, copy, held, newerCount, onReleasePin, live, headingLevel = "h4" }) {
-  if (held) {
-    return (
-      <HeldQuestionPanel
-        title={copy.currentQuestionTitle}
-        newerCount={newerCount}
-        onRelease={onReleasePin}
-        live={live}
-        headingLevel={headingLevel}
-      >
-        {current ? (
-          <Typography sx={{ color: "var(--text-primary)", fontWeight: 600, ...BREAK_LONG_WORDS_SX }}>
-            {current.question}
-          </Typography>
-        ) : (
-          <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
-            {copy.noQuestion}
-          </Typography>
-        )}
-      </HeldQuestionPanel>
-    );
-  }
+// below, unchanged.
+//
+// M6, OWNER RULING: the `held` branch that used to be checked first here —
+// a warning-accented HeldQuestionPanel treatment for a voice-cue hold — was
+// retired. It contradicted the confirm gate: while held, this panel showed
+// the PINNED question while StickyQuestionStrip's other confirm-gate-driven
+// surfaces (and CopilotDashboard) showed the CONFIRMED one — AC-N18.2's "one
+// decision, one place" violated by construction. The confirm gate is now the
+// only thing that can move `current`, so a hold has nothing left to freeze
+// here; `held`/`newerCount`/`onReleasePin`/`live` are no longer accepted.
+//
+// m11: the chip below reads "Unverified speaker", not "Unconfirmed" — N18's
+// own vocabulary uses "confirm" for the candidate's explicit acknowledgement
+// (WaitingList's "Show answer"/"Waiting to show"), and this chip described a
+// different concept entirely (a provisional SPEAKER attribution). Two
+// meanings sharing one word, on one screen, mid-interview.
+export default function CurrentQuestionPanel({ current, copy, headingLevel = "h4" }) {
   if (current?.provisional) {
     return (
-      <AccentPanel title={copy.currentQuestionTitle} chipLabel="Unconfirmed" headingLevel={headingLevel}>
+      <AccentPanel title={copy.currentQuestionTitle} chipLabel="Unverified speaker" headingLevel={headingLevel}>
         <Typography sx={{ color: "var(--text-primary)", fontWeight: 600, ...BREAK_LONG_WORDS_SX }}>
           {current.question}
         </Typography>

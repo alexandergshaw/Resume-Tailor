@@ -21,13 +21,14 @@ import { visuallyHidden } from "@/lib/copilot/answerStatus";
 //
 // It shipped as a child of StickyQuestionStrip.js alone, which meant it
 // inherited that strip's reachability -- and both session clients gate the
-// whole strip on their own `mountStrip` predicate: a question, a held
-// question, or a live session with a measured reading. All three require a
-// session to have STARTED, so the box did not exist at all for the entire
-// pre-session, which is exactly when a candidate is preparing and most wants
-// to ask about the application they are about to interview for. That gap was
-// pinned as a named limitation in this component's own suite rather than
-// papered over; it is now closed.
+// whole strip on their own `mountStrip` predicate: a question, or a live
+// session with a measured reading (N18 delta review D3: a third reason this
+// used to name, a held question, is retired along with the hold cue itself).
+// Both require a session to have STARTED, so the box did not exist at all
+// for the entire pre-session, which is exactly when a candidate is
+// preparing and most wants to ask about the application they are about to
+// interview for. That gap was pinned as a named limitation in this
+// component's own suite rather than papered over; it is now closed.
 //
 // The fix is in the two clients (CopilotClient.js, PracticeClient.js), and it
 // is deliberately the ELSE BRANCH of the `mountStrip` ternary that already

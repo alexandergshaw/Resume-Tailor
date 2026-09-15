@@ -44,9 +44,12 @@
 // from CopilotClient.js into app/copilot/useTypeAnnouncements.js (read below
 // as HOOK) to buy CopilotClient.extraction.test.js's 950-line cap some
 // headroom. CLIENT kept only two seams: feeding the hook the real
-// `cueAnnouncement.text`/`briefLiveText` values (as `cueText`/`briefText`),
-// and calling the `resetTypeAnnouncements` the hook hands back from
-// `onModeChange`. When ANY of this moves again, re-amend the assertions
+// `briefLiveText` value (as `briefText`) — N18 delta review D5: the sibling
+// `cueAnnouncement.text`/`cueText` seam is removed entirely, not merely
+// mentioned here; no caller has produced real cue text since the F1
+// hold/release retirement — and calling the `resetTypeAnnouncements` the
+// hook hands back from `onModeChange`. When ANY of this moves again, re-amend
+// the assertions
 // below rather than deleting them — an assertion made to merely prove a
 // string exists somewhere, rather than that the module which now owns the
 // property still enforces it, is the exact failure mode this note warns
@@ -140,10 +143,10 @@ function invalidateLiveAnswersCall(src) {
 // — this project's formatter emits `[deps],\n)`).
 //
 // Scoped to the ARRAY, never to the handler as a whole — the mirror image of
-// the loophole `invalidateLiveAnswersCall` exists to close. `cueText` and
-// `briefText` are also read in the handler's BODY (the ambient stamp), so a
-// handler-wide `/\bcueText\b/` would stay green with the dependency array
-// emptied, which is the exact defect the assertion below is here to catch.
+// the loophole `invalidateLiveAnswersCall` exists to close. `briefText` is
+// also read in the handler's BODY (the ambient stamp), so a handler-wide
+// `/\bbriefText\b/` would stay green with the dependency array emptied,
+// which is the exact defect the assertion below is here to catch.
 // Returning names rather than the raw text is what keeps that assertion
 // tight: an element must BE the dependency, not merely contain its letters.
 function dependencyNames(handler) {
@@ -728,34 +731,40 @@ describe("CopilotClient.js's own mechanism matches the model above (step-9c-iii,
     expect(CLIENT).not.toMatch(/\bflushSync\b/);
     expect(HOOK).not.toMatch(/\buseLayoutEffect\b/);
     expect(HOOK).not.toMatch(/\bflushSync\b/);
-    // HOOK receives the ambient text as its OWN `cueText`/`briefText`
-    // parameters (CLIENT's job, checked below, is handing it the real
-    // `cueAnnouncement.text`/`briefLiveText` values under those names) — so
-    // the stamp itself is keyed on the parameter names, not the outer
-    // variables that no longer exist inside this file.
+    // HOOK receives the ambient text as its OWN `briefText` parameter
+    // (CLIENT's job, checked below, is handing it the real `briefLiveText`
+    // value under that name) — so the stamp itself is keyed on the
+    // parameter name, not an outer variable that no longer exists inside
+    // this file. N18 delta review D5: the stamp's leading `|` is now a
+    // hardcoded literal rather than an interpolated `cueText` — cueText was
+    // permanently "" in production even before this cleanup (no caller has
+    // produced real cue text since the hold/release retirement), so the
+    // computed string is byte-identical; only the dead parameter is gone.
     //
     // Scoped to EACH handler's own extent, not "somewhere in HOOK" — both
-    // stamp calls are textually identical (`cueText`/`briefText` are shared
-    // params), so a bare file-wide match here would still pass with one of
-    // the two calls deleted, because the other's identical text satisfies
-    // the same regex. Found by mutating this file.
-    const stamp = /setTypeAmbientAtSet\(`\$\{cueText\}\|\$\{briefText\}`\)/;
+    // stamp calls are textually identical (`briefText` is a shared param),
+    // so a bare file-wide match here would still pass with one of the two
+    // calls deleted, because the other's identical text satisfies the same
+    // regex. Found by mutating this file.
+    const stamp = /setTypeAmbientAtSet\(`\|\$\{briefText\}`\)/;
     const interviewTypeHandler = subscriptionHandler(HOOK, "useInterviewTypeChange");
     expect(interviewTypeHandler).toMatch(stamp);
     const codeLanguageConfig = callExpression(HOOK, "useLiveCodeLanguageChange(");
     expect(codeLanguageConfig).not.toBe(null);
     expect(codeLanguageConfig).toMatch(stamp);
-    expect(HOOK).toMatch(/setPracticeAmbientAtSet\(`\$\{cueText\}\|\$\{briefText\}`\)/);
+    expect(HOOK).toMatch(/setPracticeAmbientAtSet\(`\|\$\{briefText\}`\)/);
   });
 
-  it("HOOK's live handler OWN deps include cueText and briefText — the stale-closure guard, and CLIENT feeds it the real values", () => {
+  it("HOOK's live handler OWN deps include briefText — the stale-closure guard, and CLIENT feeds it the real value", () => {
     const handler = subscriptionHandler(HOOK, "useInterviewTypeChange");
-    // Renamed from cueAnnouncement.text/briefLiveText to cueText/briefText —
-    // an unavoidable consequence of parameterizing the hook (it has no
-    // `cueAnnouncement` or `briefLiveText` of its own to close over) — but
-    // the guard is the SAME one: a stale-closure defense on whichever
-    // variables actually carry the live cue/brief text at the moment the
-    // handler runs.
+    // Renamed from briefLiveText to briefText — an unavoidable consequence
+    // of parameterizing the hook (it has no `briefLiveText` of its own to
+    // close over) — but the guard is the SAME one: a stale-closure defense
+    // on whichever variable actually carries the live brief text at the
+    // moment the handler runs. N18 delta review D5: `cueText` dropped out of
+    // this guard entirely — it is no longer a parameter HOOK accepts at all,
+    // so it cannot go stale; see the join-call-site test below for what
+    // replaced it.
     //
     // PRESENCE of each required dependency, asserted one at a time — NOT the
     // array's exact source text, which is what this assertion used to pin. A
@@ -771,24 +780,23 @@ describe("CopilotClient.js's own mechanism matches the model above (step-9c-iii,
     // already records the same growth for the four arrays the useLiveSession
     // move produced. The exact-match text failed that edit as though it were
     // a regression while proving nothing the loop below does not, so it goes;
-    // the four names it required stay required, and ORDER — which React does
-    // not read — does not.
+    // the names it required stay required, and ORDER — which React does not
+    // read — does not.
     //
     // Widened exactly this far and no further: a substring match over the
     // whole handler, or over the array's raw text, would each be satisfied by
     // something that is not a dependency at all (see `dependencyNames`).
     const deps = dependencyNames(handler);
     expect(deps).not.toBe(null);
-    for (const dep of ["mode", "redraftCurrentAnswer", "cueText", "briefText"]) {
+    for (const dep of ["mode", "redraftCurrentAnswer", "briefText"]) {
       expect(deps, `missing dependency: ${dep}`).toContain(dep);
     }
-    // The other half of the guard: those parameters must actually BE
-    // cueAnnouncement.text/briefLiveText, not some other stand-in — checked
-    // at CLIENT's call site into the hook, which is the one place those two
-    // real values still exist under their own names.
+    // The other half of the guard: that parameter must actually BE
+    // briefLiveText, not some other stand-in — checked at CLIENT's call
+    // site into the hook, which is the one place that real value still
+    // exists under its own name.
     const call = callExpression(CLIENT, "useTypeAnnouncements(");
     expect(call).not.toBe(null);
-    expect(call).toMatch(/cueText:\s*cueAnnouncement\.text/);
     expect(call).toMatch(/briefText:\s*briefLiveText/);
   });
 
@@ -809,7 +817,14 @@ describe("CopilotClient.js's own mechanism matches the model above (step-9c-iii,
   it("the join call site (inside HOOK) passes the ambient fields through to the real composer", () => {
     expect(HOOK).toMatch(/liveAmbientAtSet:\s*typeAmbientAtSet/);
     expect(HOOK).toMatch(/practiceAmbientAtSet/);
-    expect(HOOK).toMatch(/cueText(?:,|\s*:\s*cueText)/);
+    // N18 delta review D5: cueText is no longer threaded in from a caller —
+    // no production caller can produce real cue text any more (the
+    // hold/release retirement) — so HOOK hardcodes the literal empty string
+    // here rather than accepting a dead parameter, which keeps the
+    // composer's own ambient-signature format
+    // (`${cueText}|${briefText}`, lib/copilot/choiceChangeInvalidation.js)
+    // byte-identical to what it always computed.
+    expect(HOOK).toMatch(/cueText:\s*""/);
     expect(HOOK).toMatch(/briefText(?:,|\s*:\s*briefText)/);
   });
 });

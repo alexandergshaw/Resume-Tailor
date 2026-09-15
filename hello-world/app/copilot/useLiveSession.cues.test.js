@@ -1,14 +1,23 @@
 // @vitest-environment jsdom
 //
-// AC-T1.13..T1.18. The claim under test is WIRING: that a spoken cue on the
-// candidate's own channel reaches the pin, that the wrong kinds of frame do
-// not, and that pinning never interferes with question detection. Every one
+// AC-T1.13/T1.18. The claim under test is WIRING: that a spoken cue on the
+// candidate's own channel reaches its handler, that the wrong kinds of frame
+// do not, and that a cue never interferes with question detection. Every one
 // of those is a composition property of the hook — under the default
 // `environment: "node"` the hook body never runs, so a cue path that quietly
 // forked into its own second pipeline, or fired on interim frames, would
 // leave the rest of the suite green (R-166 is the standing example). Hence
 // the per-file jsdom opt-in, and the same CopilotSession-mock harness
 // useLiveSession.manual.test.js already established.
+//
+// N18 delta review F1, OWNER RULING: full retirement of the hold ("pin") and
+// release ("unpin") cues (see voiceCues.js's own module doc). Every describe
+// block below that had no content once they were gone — the hold itself, its
+// re-pin-forward and release paths, the "nothing to hold"/"nothing held"
+// refusals, the two-distinct-actions ambiguity case, and the now-permanently
+// idle polite-region announcement — is removed rather than left asserting a
+// permanent no-op. What remains proves the SAME wiring claims through the one
+// cue action left: company.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createElement, useRef, useState, act } from "react";
@@ -19,7 +28,6 @@ vi.mock("@/lib/copilot/detectClient", () => ({ confirmQuestion: vi.fn() }));
 vi.mock("@/lib/copilot/answerClient", () => ({ draftAnswer: vi.fn() }));
 
 import { useLiveSession } from "./useLiveSession.js";
-import { CUE_IGNORED_REASONS } from "@/lib/copilot/cuePolicy";
 import { CopilotSession } from "@/lib/copilot/session";
 import { confirmQuestion } from "@/lib/copilot/detectClient";
 import { draftAnswer } from "@/lib/copilot/answerClient";
@@ -69,9 +77,6 @@ function Probe({ onState, onCompanyCue, source = "tab" }) {
     start: live.start,
     stop: live.stop,
     clearAll: live.clearAll,
-    pinnedId: live.pinnedId,
-    pinCurrentQuestion: live.pinCurrentQuestion,
-    unpinQuestion: live.unpinQuestion,
     sessionLogSnapshot: live.sessionLogSnapshot,
   });
   return null;
@@ -171,45 +176,31 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("useLiveSession — a pin cue holds the current question (AC-T1.13/T1.14)", () => {
-  it("pins the current question when the candidate says one of the pin phrases", async () => {
-    const { state } = mountProbe();
+describe("useLiveSession — a spoken cue reaches its handler (AC-T1.13)", () => {
+  it("calls the company handler when the candidate says a company phrase", async () => {
+    const onCompanyCue = vi.fn(() => true);
+    const { state } = mountProbe({ onCompanyCue });
     await startSession(state);
     await askAndAnswer(state, "Tell me about a time you handled conflict.");
     expect(state.questions).toHaveLength(1);
-    expect(state.pinnedId).toBeNull();
+    expect(onCompanyCue).not.toHaveBeenCalled();
 
     await act(async () => {
-      speakAsCandidate("That's a great question, so let me start with the context.");
+      speakAsCandidate("I was reading about the company recently.");
     });
-    expect(state.pinnedId).toBe(state.questions[0].id);
+    expect(onCompanyCue).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps holding the FIRST question after a second one is detected", async () => {
-    // This is the whole point of the feature: a follow-up detected while the
-    // candidate is still answering must not become what the dashboard shows.
-    const { state } = mountProbe();
+  it("still detects and drafts questions alongside a spoken cue", async () => {
+    // A cue changes nothing about what the pipeline hears. A cue that
+    // silently deafened detection would be a far worse defect than anything
+    // it could fix.
+    const onCompanyCue = vi.fn(() => true);
+    const { state } = mountProbe({ onCompanyCue });
     await startSession(state);
     await askAndAnswer(state, "Tell me about a time you handled conflict.");
     await act(async () => {
-      speakAsCandidate("Good question.");
-    });
-    const pinned = state.pinnedId;
-
-    await askAndAnswer(state, "And how did the team react to that?");
-    expect(state.questions.length).toBeGreaterThan(1);
-    expect(state.pinnedId).toBe(pinned);
-  });
-
-  it("still detects and drafts questions while pinned", async () => {
-    // Pinning changes what is DISPLAYED as current, never what the pipeline
-    // hears. A pin that silently deafened detection would be far worse than
-    // the eviction it exists to prevent.
-    const { state } = mountProbe();
-    await startSession(state);
-    await askAndAnswer(state, "Tell me about a time you handled conflict.");
-    await act(async () => {
-      speakAsCandidate("Let me think about that.");
+      speakAsCandidate("I was reading about the company recently.");
     });
     await askAndAnswer(state, "So why do you want to work here?");
     expect(state.questions.map((q) => q.question)).toContain("Why do you want to work here?");
@@ -221,57 +212,59 @@ describe("useLiveSession — the wrong frames must not fire a cue (AC-T1.13)", (
   it("ignores an INTERIM candidate frame", async () => {
     // An interim's text is re-emitted and rewritten several times a second,
     // so a cue matched on interims fires repeatedly for one spoken phrase.
-    const { state } = mountProbe();
+    const onCompanyCue = vi.fn(() => true);
+    const { state } = mountProbe({ onCompanyCue });
     await startSession(state);
     await askAndAnswer(state, "Tell me about a time you handled conflict.");
     await act(async () => {
-      speakAsCandidate("That's a great question", { isFinal: false, speechFinal: false });
+      speakAsCandidate("I was reading about the company recently", { isFinal: false, speechFinal: false });
     });
-    expect(state.pinnedId).toBeNull();
+    expect(onCompanyCue).not.toHaveBeenCalled();
   });
 
   it("ignores the same phrase spoken by the INTERVIEWER", async () => {
-    // These cues are the candidate's own controls. An interviewer saying
-    // "next question" must not release a hold the candidate just placed.
-    const { state } = mountProbe();
+    // These cues are the candidate's own controls. An interviewer saying it
+    // must not spend the request on the candidate's behalf.
+    const onCompanyCue = vi.fn(() => true);
+    const { state } = mountProbe({ onCompanyCue });
     await startSession(state);
     await askAndAnswer(state, "Tell me about a time you handled conflict.");
-    await act(async () => {
-      speakAsCandidate("Good question.");
-    });
-    const pinned = state.pinnedId;
 
     await act(async () => {
-      speakAsInterviewer("Does that answer your question?");
+      speakAsInterviewer("I was reading about the company recently.");
     });
-    expect(state.pinnedId).toBe(pinned);
+    expect(onCompanyCue).not.toHaveBeenCalled();
   });
 
   it("ignores a re-delivered frame the pipeline has already seen", async () => {
     // `textAlreadyDelivered` is the provider-boundary dedupe for a committed
     // frame repeating a final's exact span (see lib/copilot/stt/index.js).
     // Acting on it would fire one spoken cue twice.
-    const { state } = mountProbe();
+    const onCompanyCue = vi.fn(() => true);
+    const { state } = mountProbe({ onCompanyCue });
     await startSession(state);
     await askAndAnswer(state, "Tell me about a time you handled conflict.");
     await act(async () => {
-      speakAsCandidate("Good question.");
+      speakAsCandidate("I was reading about the company recently.");
     });
+    expect(onCompanyCue).toHaveBeenCalledTimes(1);
+
     await act(async () => {
-      speakAsCandidate("Does that answer your question?", { textAlreadyDelivered: true });
+      speakAsCandidate("I was reading about the company recently.", { textAlreadyDelivered: true });
     });
-    // The re-delivered release never lands, so the hold survives.
-    expect(state.pinnedId).not.toBeNull();
+    // The re-delivered frame never lands, so the handler is not called again.
+    expect(onCompanyCue).toHaveBeenCalledTimes(1);
   });
 
   it("does not fire on ordinary interview speech", async () => {
-    const { state } = mountProbe();
+    const onCompanyCue = vi.fn(() => true);
+    const { state } = mountProbe({ onCompanyCue });
     await startSession(state);
     await askAndAnswer(state, "Tell me about a time you handled conflict.");
     await act(async () => {
       speakAsCandidate("I asked a lot of questions in that role and got back a clear answer.");
     });
-    expect(state.pinnedId).toBeNull();
+    expect(onCompanyCue).not.toHaveBeenCalled();
   });
 });
 
@@ -298,8 +291,8 @@ describe("useLiveSession — in-person cues wait for identity to settle (AC-T1.1
     await act(async () => {});
   }
 
-  async function inPersonSession() {
-    const { state } = mountProbe({ source: "inperson" });
+  async function inPersonSession(onCompanyCue) {
+    const { state } = mountProbe({ source: "inperson", onCompanyCue });
     await startSession(state);
     await askAsInterviewerInPerson("Tell me about a time you handled conflict.");
     return state;
@@ -307,18 +300,19 @@ describe("useLiveSession — in-person cues wait for identity to settle (AC-T1.1
 
   it("ignores a cue while identity is still unsettled", async () => {
     snapshot = { userTag: 0, confidence: "low", overridden: false, tags: [0, 1] };
-    const state = await inPersonSession();
+    const onCompanyCue = vi.fn(() => true);
+    await inPersonSession(onCompanyCue);
     await act(async () => {
-      speakAsCandidate("Good question.");
+      speakAsCandidate("I was reading about the company recently.");
     });
-    expect(state.pinnedId).toBeNull();
+    expect(onCompanyCue).not.toHaveBeenCalled();
   });
 
   it("records why it stayed inert", async () => {
     snapshot = { userTag: 0, confidence: "low", overridden: false, tags: [0, 1] };
     const state = await inPersonSession();
     await act(async () => {
-      speakAsCandidate("Good question.");
+      speakAsCandidate("I was reading about the company recently.");
     });
     const ignored = logEntries(state, "cue.ignored");
     expect(ignored.some((e) => /identity|unsettled|speaker/i.test(String(e.reason || "")))).toBe(true);
@@ -326,266 +320,36 @@ describe("useLiveSession — in-person cues wait for identity to settle (AC-T1.1
 
   it("acts once confidence reaches high", async () => {
     snapshot = { userTag: 0, confidence: "high", overridden: false, tags: [0, 1] };
-    const state = await inPersonSession();
+    const onCompanyCue = vi.fn(() => true);
+    await inPersonSession(onCompanyCue);
     await act(async () => {
-      speakAsCandidate("Good question.");
+      speakAsCandidate("I was reading about the company recently.");
     });
-    expect(state.pinnedId).not.toBeNull();
+    expect(onCompanyCue).toHaveBeenCalledTimes(1);
   });
 
   it("acts once the user has corrected the attribution by hand", async () => {
     snapshot = { userTag: 0, confidence: "low", overridden: true, tags: [0, 1] };
-    const state = await inPersonSession();
+    const onCompanyCue = vi.fn(() => true);
+    await inPersonSession(onCompanyCue);
     await act(async () => {
-      speakAsCandidate("Good question.");
+      speakAsCandidate("I was reading about the company recently.");
     });
-    expect(state.pinnedId).not.toBeNull();
+    expect(onCompanyCue).toHaveBeenCalledTimes(1);
   });
 
   it("does not apply that gate to tab sessions", async () => {
     // tab/system get structural speaker separation from two independent
     // sockets, so there is no identity guess to wait on.
     snapshot = { userTag: null, confidence: "unknown", overridden: false, tags: [] };
-    const { state } = mountProbe({ source: "tab" });
+    const onCompanyCue = vi.fn(() => true);
+    const { state } = mountProbe({ source: "tab", onCompanyCue });
     await startSession(state);
     await askAndAnswer(state, "Tell me about a time you handled conflict.");
     await act(async () => {
-      speakAsCandidate("Good question.");
+      speakAsCandidate("I was reading about the company recently.");
     });
-    expect(state.pinnedId).not.toBeNull();
-  });
-});
-
-describe("useLiveSession — an ambiguous utterance changes nothing (AC-T1.2.1)", () => {
-  it("neither pins nor unpins when one frame carries two intents", async () => {
-    const { state } = mountProbe();
-    await startSession(state);
-    await askAndAnswer(state, "Tell me about a time you handled conflict.");
-    await act(async () => {
-      speakAsCandidate("Good question. So we cut latency by a third. Does that answer your question?");
-    });
-    expect(state.pinnedId).toBeNull();
-  });
-
-  it("leaves an existing hold alone", async () => {
-    const { state } = mountProbe();
-    await startSession(state);
-    await askAndAnswer(state, "Tell me about a time you handled conflict.");
-    await act(async () => {
-      state.pinCurrentQuestion();
-    });
-    const pinned = state.pinnedId;
-    await act(async () => {
-      speakAsCandidate("Good question. So we cut latency by a third. Does that answer your question?");
-    });
-    expect(state.pinnedId).toBe(pinned);
-  });
-
-  it("records the ambiguity rather than staying silent about it", async () => {
-    const { state } = mountProbe();
-    await startSession(state);
-    await askAndAnswer(state, "Tell me about a time you handled conflict.");
-    await act(async () => {
-      speakAsCandidate("Good question. So we cut latency by a third. Does that answer your question?");
-    });
-    const ignored = logEntries(state, "cue.ignored");
-    expect(ignored.some((e) => /ambiguous/i.test(String(e.reason || "")))).toBe(true);
-  });
-});
-
-describe("useLiveSession — a repeated pin cue re-pins forward (AC-T1.16.1)", () => {
-  it("moves the hold to the newest question", async () => {
-    // This is what makes the population that causes the stale-hold problem —
-    // candidates who reflexively say "good question" every single time —
-    // self-correct on every question instead of stranding on the first.
-    const { state } = mountProbe();
-    await startSession(state);
-    await askAndAnswer(state, "Tell me about a time you handled conflict.");
-    await act(async () => {
-      speakAsCandidate("Good question.");
-    });
-    const first = state.pinnedId;
-
-    await askAndAnswer(state, "So why do you want to work here?");
-    await act(async () => {
-      speakAsCandidate("Ooh, tough question.");
-    });
-    expect(state.pinnedId).not.toBe(first);
-    expect(state.pinnedId).toBe(state.questions[state.questions.length - 1].id);
-  });
-});
-
-describe("useLiveSession — releasing the hold (AC-T1.17)", () => {
-  it("releases on an unpin cue", async () => {
-    const { state } = mountProbe();
-    await startSession(state);
-    await askAndAnswer(state, "Tell me about a time you handled conflict.");
-    await act(async () => {
-      speakAsCandidate("Good question.");
-    });
-    expect(state.pinnedId).not.toBeNull();
-
-    await act(async () => {
-      speakAsCandidate("Does that answer your question?");
-    });
-    expect(state.pinnedId).toBeNull();
-  });
-
-  it("releases when the release control is used", async () => {
-    const { state } = mountProbe();
-    await startSession(state);
-    await askAndAnswer(state, "Tell me about a time you handled conflict.");
-    await act(async () => {
-      state.pinCurrentQuestion();
-    });
-    expect(state.pinnedId).not.toBeNull();
-    await act(async () => {
-      state.unpinQuestion();
-    });
-    expect(state.pinnedId).toBeNull();
-  });
-
-  it("releases on Clear", async () => {
-    const { state } = mountProbe();
-    await startSession(state);
-    await askAndAnswer(state, "Tell me about a time you handled conflict.");
-    await act(async () => {
-      state.pinCurrentQuestion();
-    });
-    await act(async () => {
-      state.clearAll();
-    });
-    expect(state.pinnedId).toBeNull();
-  });
-
-  it("releases on Stop", async () => {
-    const { state } = mountProbe();
-    await startSession(state);
-    await askAndAnswer(state, "Tell me about a time you handled conflict.");
-    await act(async () => {
-      state.pinCurrentQuestion();
-    });
-    await act(async () => {
-      await state.stop();
-    });
-    expect(state.pinnedId).toBeNull();
-  });
-
-  // Regression pass, defect 3. lib/copilot/session.js ends a
-  // CopilotSession two ways that never call this hook's own `stop()` at
-  // all: the audio track's native "ended" event (a "Stop sharing" click, or
-  // the interviewer closing the shared tab) calls CopilotSession's own
-  // stop(), which fires `onStatus("idle")`; a fatal essential-source error
-  // escalates straight to `onStatus("error")`. Both reach this hook as
-  // nothing more than the `onStatus` callback `start()` hands to `new
-  // CopilotSession(...)` calling `setStatus(s)` — see that callback's own
-  // body. Before the defect-3 fix, `pin.unpinQuestion()` was called ONLY
-  // from this hook's `stop()`, so a hold survived a session that ended
-  // either of these two other ways, `held` stayed true forever (the ticking
-  // `now` clock that resolvePin's own 120s expiry needs is itself gated on
-  // `live`, so it could never even attempt to self-correct), and
-  // CopilotDashboard kept claiming detection and drafting were still
-  // running behind it.
-  //
-  // Simulated here by invoking the exact `onStatus` callback captured off
-  // the mocked CopilotSession — precisely what session.js calls on both of
-  // the paths above — WITHOUT ever calling `state.stop()`.
-  it("releases the hold when the session ends without stop() being called (defect 3)", async () => {
-    const { state } = mountProbe();
-    await startSession(state);
-    await askAndAnswer(state, "Tell me about a time you handled conflict.");
-    await act(async () => {
-      state.pinCurrentQuestion();
-    });
-    expect(state.pinnedId).not.toBeNull();
-
-    await act(async () => {
-      sessionOptions.onStatus("idle");
-    });
-    expect(state.pinnedId).toBeNull();
-  });
-
-  it("releases when a new session starts", async () => {
-    const { state } = mountProbe();
-    await startSession(state);
-    await askAndAnswer(state, "Tell me about a time you handled conflict.");
-    await act(async () => {
-      state.pinCurrentQuestion();
-    });
-    expect(state.pinnedId).not.toBeNull();
-    await startSession(state);
-    expect(state.pinnedId).toBeNull();
-  });
-});
-
-describe("useLiveSession — a pin with nothing to hold (AC-T1.14/T1.18)", () => {
-  it("does not pin when no question has been detected yet", async () => {
-    const { state } = mountProbe();
-    await startSession(state);
-    await act(async () => {
-      speakAsCandidate("Good question.");
-    });
-    expect(state.pinnedId).toBeNull();
-  });
-
-  it("records WHY it could not act, rather than silently doing nothing", async () => {
-    const { state } = mountProbe();
-    await startSession(state);
-    await act(async () => {
-      speakAsCandidate("Good question.");
-    });
-    const ignored = logEntries(state, "cue.ignored");
-    expect(ignored.length).toBeGreaterThan(0);
-    expect(String(ignored[0].reason || "")).toMatch(/question/i);
-  });
-});
-
-describe("useLiveSession — a release with nothing held (AC-V2.4)", () => {
-  it("does not fall silent when a matched release has no hold to release", async () => {
-    // The mirror of "a pin with nothing to hold" above, and the one refusal
-    // that used to log nothing at all: `act === "unpin" && pinnedIdRef.current
-    // !== null` simply fell through when nothing was held, leaving a lone
-    // `cue.matched` in the log. AC-V2.4 is the criterion that says a session
-    // must never again be unable to answer "why did nothing happen when I
-    // said the phrase", and this was the last case where it could not.
-    const { state } = mountProbe();
-    await startSession(state);
-    await askAndAnswer(state, "Tell me about a time you handled conflict.");
-    // Deliberately no pin — a question exists, nothing is holding it.
-    expect(state.pinnedId).toBeNull();
-
-    await act(async () => {
-      speakAsCandidate("Does that answer your question?");
-    });
-
-    // The cue really did match — this is a refusal, not a non-match, and the
-    // log has to show both halves or it reads as a phrase that went unheard.
-    expect(logTypes(state)).toContain("cue.matched");
-    const ignored = logEntries(state, "cue.ignored");
-    expect(ignored).toHaveLength(1);
-    expect(ignored[0].reason).toBe(CUE_IGNORED_REASONS.NOTHING_HELD);
-    // And nothing was released, since there was nothing to release.
-    expect(logTypes(state)).not.toContain("question.unpinned");
-  });
-
-  it("still logs the release itself, not a refusal, when something IS held", async () => {
-    // The positive control: a reason that fires unconditionally would report
-    // every successful release as a refusal.
-    const { state } = mountProbe();
-    await startSession(state);
-    await askAndAnswer(state, "Tell me about a time you handled conflict.");
-    await act(async () => {
-      speakAsCandidate("Good question.");
-    });
-    expect(state.pinnedId).not.toBeNull();
-
-    await act(async () => {
-      speakAsCandidate("Does that answer your question?");
-    });
-
-    expect(logTypes(state)).toContain("question.unpinned");
-    const reasons = logEntries(state, "cue.ignored").map((e) => e.reason);
-    expect(reasons).not.toContain(CUE_IGNORED_REASONS.NOTHING_HELD);
+    expect(onCompanyCue).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -598,21 +362,6 @@ describe("useLiveSession — the company cue (AC-T1.18/T2)", () => {
       speakAsCandidate("I was reading about the company recently.");
     });
     expect(onCompanyCue).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not pin or unpin as a side effect", async () => {
-    const onCompanyCue = vi.fn(() => true);
-    const { state } = mountProbe({ onCompanyCue });
-    await startSession(state);
-    await askAndAnswer(state, "Tell me about a time you handled conflict.");
-    await act(async () => {
-      state.pinCurrentQuestion();
-    });
-    const pinned = state.pinnedId;
-    await act(async () => {
-      speakAsCandidate("I have been following the company closely.");
-    });
-    expect(state.pinnedId).toBe(pinned);
   });
 
   it("records a reason when the handler reports it could not act", async () => {
@@ -632,207 +381,34 @@ describe("useLiveSession — the company cue (AC-T1.18/T2)", () => {
     await act(async () => {
       speakAsCandidate("I was reading about the company recently.");
     });
-    expect(state.pinnedId).toBeNull();
+    // No handler passed at all — the mount must not throw, and the refusal
+    // still reads "company unavailable", not a generic ignored reason.
+    const ignored = logEntries(state, "cue.ignored");
+    expect(ignored.some((e) => e.action === "company")).toBe(true);
   });
 });
 
 describe("useLiveSession — every cue is in the session log (AC-T1.18)", () => {
   it("records the cue that matched", async () => {
-    const { state } = mountProbe();
+    const onCompanyCue = vi.fn(() => true);
+    const { state } = mountProbe({ onCompanyCue });
     await startSession(state);
     await askAndAnswer(state, "Tell me about a time you handled conflict.");
     await act(async () => {
-      speakAsCandidate("Good question.");
+      speakAsCandidate("I was reading about the company recently.");
     });
     expect(logTypes(state)).toContain("cue.matched");
     const [entry] = logEntries(state, "cue.matched");
-    expect(entry.action).toBe("pin");
-    expect(String(entry.utterance || "")).toContain("Good question");
-  });
-
-  it("records the resulting pin and the later release", async () => {
-    const { state } = mountProbe();
-    await startSession(state);
-    await askAndAnswer(state, "Tell me about a time you handled conflict.");
-    await act(async () => {
-      speakAsCandidate("Good question.");
-    });
-    await act(async () => {
-      speakAsCandidate("Does that answer your question?");
-    });
-    const types = logTypes(state);
-    expect(types).toContain("question.pinned");
-    expect(types).toContain("question.unpinned");
-    // Order matters: a log that shows the release before the hold would not
-    // explain the session it exists to explain.
-    expect(types.indexOf("question.pinned")).toBeLessThan(types.indexOf("question.unpinned"));
-    expect(types.indexOf("question.pinned")).toBeGreaterThan(-1);
+    expect(entry.action).toBe("company");
+    expect(String(entry.utterance || "")).toContain("I was reading about the company recently");
   });
 });
 
-// AC-T1.18.1 / C5 (accessibility audit). R-229's "announce on the voice path
-// only" clause, and the reason it was not being met: `useCueActions` mints
-// `{ text, nonce }` and CopilotClient renders only `.text`. The fresh object
-// literal guarantees React re-RENDERS — which is the trap SpeakerBar.js
-// documents — but a screen reader announces a TEXT CHANGE in a live region,
-// not a render, so an identical sentence lands as silence. Every hold used to
-// produce the same six words, so the voice path announced once per session
-// and then went quiet for the rest of the interview, at the exact moments the
-// panel content changed underneath a user who cannot see it.
-//
-// *** ASSERTED WITH A MutationObserver, NOT BY READING THE FINAL TEXT ***
-// The final text is IDENTICAL in the working and the broken version — the
-// whole defect lives in what never got committed to the DOM in between. A
-// test that renders three holds and then reads `region.textContent` passes
-// against the bug. `takeRecords()` is drained synchronously after each step
-// instead of relying on the observer callback, so each assertion is about
-// that step's own commit rather than about whatever the microtask queue had
-// caught up with by the end. This project has the identical failure on record
-// for a save-status region.
-function LiveRegionProbe({ onState, source = "tab" }) {
-  const [status, setStatus] = useState("idle");
-  const [questions, setQuestions] = useState([]);
-  const answerCacheRef = useRef(new Map());
-  const draftGenRef = useRef(0);
-  const live = useLiveSession({
-    answerCacheRef,
-    draftGenRef,
-    recordSpeechSample: () => {},
-    resetForSession: () => {},
-    status,
-    setStatus,
-    questions,
-    setQuestions,
-    source,
-    micDeviceId: null,
-    profile: "Senior engineer at Acme.",
-    posting: null,
-    autoDraft: true,
-    setSetupExpanded: () => {},
-    setShowHistory: () => {},
-    onCompanyCue: () => false,
-  });
-  onState({ questions, start: live.start, pinnedId: live.pinnedId });
-  // Exactly what CopilotClient.js puts in its consolidated polite region:
-  // `cueAnnouncement.text`, and nothing else. The nonce never reaches the DOM
-  // — which is the whole point of the defect.
-  return createElement("span", { "data-testid": "cue-live-region" }, live.cueAnnouncement.text);
-}
-
-function mountLiveRegionProbe(props = {}) {
-  const container = document.createElement("div");
-  document.body.appendChild(container);
-  const root = createRoot(container);
-  const state = {};
-  mounted.push({ root, container });
-  act(() => {
-    root.render(createElement(LiveRegionProbe, { ...props, onState: (s) => Object.assign(state, s) }));
-  });
-  const region = container.querySelector('[data-testid="cue-live-region"]');
-  // The observer's own callback COLLECTS rather than discards, and `drain`
-  // merges whatever it has already banked with whatever is still queued.
-  // Draining `takeRecords()` alone is a race: the callback fires as a
-  // microtask, and `await act(...)` awaits microtasks, so by the time a test
-  // asks, the queue may already have been emptied INTO the callback — a
-  // mutation that really happened then reads as zero, and the test passes or
-  // fails on scheduling rather than on behaviour.
-  const banked = [];
-  const observer = new MutationObserver((records) => banked.push(...records));
-  observer.observe(region, { childList: true, characterData: true, subtree: true });
-  const drain = () => {
-    banked.push(...observer.takeRecords());
-    const count = banked.length;
-    banked.length = 0;
-    return count;
-  };
-  // Anything the mount itself produced is not an announcement.
-  drain();
-  return { state, region, drain };
-}
-
-describe("useLiveSession — the polite region announces EVERY spoken hold (AC-T1.18.1)", () => {
-  it("commits a distinct announcement for each hold, not just the first", async () => {
-    const { state, region, drain } = mountLiveRegionProbe();
-    await startSession(state);
-
-    const announced = [];
-    const turns = [
-      ["Tell me about a time you handled conflict.", "That's a great question."],
-      ["What do you know about Purple Wave?", "Let me take a step back."],
-      ["How would you handle a disagreement with your manager?", "Let me give you an example."],
-    ];
-
-    for (const [question, phrase] of turns) {
-      await askAndAnswer(state, question);
-      // A question merely arriving is not an announcement on this region —
-      // R-229 gives the arrival count to QuestionFeed's own region.
-      expect(drain()).toBe(0);
-
-      await act(async () => {
-        speakAsCandidate(phrase);
-      });
-      announced.push({ committed: drain() > 0, text: region.textContent });
-    }
-
-    // Three holds, three commits. Before this fix the second and third
-    // rendered the identical sentence, so nothing reached the DOM and a
-    // screen-reader user heard nothing while the panel changed under them.
-    expect(announced.map((a) => a.committed)).toEqual([true, true, true]);
-    expect(new Set(announced.map((a) => a.text)).size).toBe(3);
-    for (const a of announced) expect(a.text.trim()).not.toBe("");
-  });
-
-  it("names the question it is talking about, so the user knows WHICH one is held", async () => {
-    // "Useful, not merely different": the thing that makes each announcement
-    // distinct is the same thing that makes it worth hearing. A bare counter
-    // would satisfy the test above and tell the user nothing.
-    const { state, region } = mountLiveRegionProbe();
-    await startSession(state);
-    await askAndAnswer(state, "Tell me about a time you handled conflict.");
-    await act(async () => {
-      speakAsCandidate("That's a great question.");
-    });
-
-    expect(region.textContent).toContain("Tell me about a time you handled conflict.");
-    expect(state.pinnedId).toBe(state.questions[0].id);
-  });
-
-  it("says something different when a hold MOVES than when one is created", async () => {
-    // AC-T1.16.1's re-pin-forward is a different event from a first hold, and
-    // it is the one that most needs saying: the panel's content changed.
-    const { state, region } = mountLiveRegionProbe();
-    await startSession(state);
-    await askAndAnswer(state, "Tell me about a time you handled conflict.");
-    await act(async () => {
-      speakAsCandidate("That's a great question.");
-    });
-    const created = region.textContent;
-
-    await askAndAnswer(state, "What do you know about Purple Wave?");
-    await act(async () => {
-      speakAsCandidate("Let me take a step back.");
-    });
-    const moved = region.textContent;
-
-    expect(moved).not.toBe(created);
-    expect(moved).toContain("What do you know about Purple Wave?");
-  });
-
-  it("still commits the release, and does not repeat the hold's own sentence", async () => {
-    const { state, region, drain } = mountLiveRegionProbe();
-    await startSession(state);
-    await askAndAnswer(state, "Tell me about a time you handled conflict.");
-    await act(async () => {
-      speakAsCandidate("That's a great question.");
-    });
-    const held = region.textContent;
-    drain();
-
-    await act(async () => {
-      speakAsCandidate("Does that answer your question?");
-    });
-    expect(drain()).toBeGreaterThan(0);
-    expect(region.textContent).not.toBe(held);
-    expect(state.pinnedId).toBeNull();
-  });
-});
+// N18 delta review F1, OWNER RULING: full retirement of the hold ("pin") and
+// release ("unpin") cues retired the polite-region announcement this file
+// used to test here (AC-T1.18.1/C5) along with them — `useCueActions.js`
+// never calls `announceCue` any more (the company action never did either),
+// so `cueAnnouncement` is now a permanently idle `{ text: "", nonce: 0 }`.
+// The MutationObserver harness this block built (LiveRegionProbe,
+// mountLiveRegionProbe) and every test in it are removed rather than left
+// asserting a permanent no-op.

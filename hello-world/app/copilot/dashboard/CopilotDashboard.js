@@ -15,7 +15,8 @@ import { dashboardCopy, PACE_LABEL_TEXT, FILLER_LABEL_TEXT } from "@/lib/copilot
 import AnswerAids from "../AnswerAids";
 import AnswerLines from "../AnswerLines";
 import { RealPanel } from "./panelShells";
-import { TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
+import { BREAK_LONG_WORDS_SX, TOUCH_TARGET_SX, WRAP_ROW_SX } from "@/app/theme/mobileSx";
+import { confirmRevealLabel } from "@/lib/copilot/confirmReveal";
 
 // AC-I5/AC-J2: the copilot's dashboard — the current question's answer, and
 // a delivery strip covering the user's current talking pace AND
@@ -222,7 +223,37 @@ export function useCurrentQuestionAnnouncement(current, statusText) {
 // as-is rather than auto-redrafting it (contract 8's own doc; AC-A15 is
 // local-origin only), so the card can silently go on describing the wrong
 // format unless something says otherwise.
-function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel, staleTypeChangeAt = 0 }) {
+// AC-N18.13, THE DELIBERATE DIVERGENCE: `announceHiddenReadiness` is what
+// keeps this reused reveal gate from also reusing R-110's SILENCE. Practice
+// mode (AC-J2.3/AC-G1) hides readiness on purpose — the drill is answering
+// cold, so the status region is forced to "idle" while `answerHidden`, same
+// as always (this defaults `false`, so that caller's behaviour is untouched,
+// byte for byte). Live mode's N18 gate hides the SAME content for the
+// opposite reason: the candidate has already been told a question was
+// detected (the waiting surface, or the panel itself) and is being asked to
+// confirm *because* the answer is ready — withholding that readiness would
+// defeat the one thing this gate exists to announce. Passing `true` here
+// leaves the REAL status (`current?.status`) flowing into the region even
+// while hidden, so "Drafting an answer" / "Answer ready, N points" still
+// reach a screen-reader user before they ever click "Show answer".
+function CurrentAnswerPanel({
+  current,
+  copy,
+  answerHidden,
+  onReveal,
+  revealLabel,
+  announceHiddenReadiness = false,
+  staleTypeChangeAt = 0,
+  // M7, OWNER RULING: the undo affordance for a confirm that turns out
+  // wrong — most acutely the cold-start seed, where seedView (questionConfirm.js)
+  // tracks the latest entry INCLUDING a provisional one, so the candidate's
+  // very first confirm can lock in their own sentence with no way back
+  // except Clear (which wipes the whole session). Optional: `undefined` for
+  // every caller that predates M7 (practice mode, which has no confirm gate
+  // at all) hides the control entirely rather than wiring a handler with
+  // nothing to call.
+  onUnconfirm,
+}) {
   // BUG-J6: filtered here (not `current.points` directly) — see
   // lib/copilot/answerPoints.js's doc for why an unfiltered array can reach
   // this component with blank entries in it. The `done` branch below tests
@@ -239,7 +270,7 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
   // sake — see that hook's doc for why the announcement can't simply be
   // this string on every render.
   const currentAnswerStatusText = answerStatusMessage({
-    status: answerHidden ? "idle" : current?.status,
+    status: answerHidden && !announceHiddenReadiness ? "idle" : current?.status,
     bulletCount: lines.length,
   });
   const currentAnswerRegionText = useCurrentQuestionAnnouncement(current, currentAnswerStatusText);
@@ -257,9 +288,20 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
   // the reveal button actually being pressed.
   const revealedRef = useRef(null);
   const prevAnswerHiddenRef = useRef(answerHidden);
+  // AC-N18.13 EXTENSION: seeded to whether this mount already starts past
+  // its own reveal (`!answerHidden`) — a caller that mounts mid-session
+  // (or a test harness) with something already showing must not be treated
+  // as "not yet activated". Flips permanently true the first time this
+  // effect sees the true -> false transition below, and never resets.
+  const hasEverRevealedRef = useRef(!answerHidden);
+  const prevCurrentIdRef = useRef(current?.id ?? null);
   useEffect(() => {
     const prevAnswerHidden = prevAnswerHiddenRef.current;
     prevAnswerHiddenRef.current = answerHidden;
+    const prevCurrentId = prevCurrentIdRef.current;
+    const currentId = current?.id ?? null;
+    prevCurrentIdRef.current = currentId;
+
     // R-110/R-122: three separate protections here, each doing a different
     // job — worth naming precisely rather than crediting one with work
     // another one does:
@@ -267,22 +309,43 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
     //      mount (see the ref's own declaration above), so this effect can
     //      never see a transition on its first run. That is what stops a
     //      mount-time false-positive focus steal, in every mode.
-    //   2. Live mode passes neither `answerHidden` nor `onRevealAnswer`, so
-    //      this component's defaults hold `answerHidden={false}` for the
+    //   2. Practice mode passes neither `answerHidden` nor `onRevealAnswer`,
+    //      so this component's defaults hold `answerHidden={false}` for the
     //      component's ENTIRE life — there is no `true -> false` edge to
-    //      detect in the first place, ever. That absence of any transition
-    //      is what excludes live mode, independent of the `onReveal` guard
-    //      below: the condition on the next line is unreachable there
-    //      regardless of whether that guard exists.
-    //   3. The `onReveal` guard is defence-in-depth for a caller this
-    //      component does not have today: one that passes `answerHidden`
-    //      (making the edge reachable) without also passing
-    //      `onRevealAnswer`. It protects nothing in live mode currently,
-    //      since live mode never reaches a state where the edge could fire.
-    if (prevAnswerHidden === true && answerHidden === false && typeof onReveal === "function") {
+    //      detect there, ever.
+    //   3. The `onReveal` guard is defence-in-depth for a caller that passes
+    //      `answerHidden` (making the edge reachable) without also passing
+    //      `onRevealAnswer` — neither practice mode nor live mode is that
+    //      caller today, since both always pass a real reveal callback
+    //      alongside the flag.
+    const revealedJustNow = prevAnswerHidden === true && answerHidden === false && typeof onReveal === "function";
+    if (revealedJustNow) hasEverRevealedRef.current = true;
+
+    // AC-N18.13 EXTENSION, THE SECOND HALF OF F-F7's FIX. The seed's own
+    // reveal (above) is not the only way this panel's content changes out
+    // from under a keyboard/screen-reader user. Once anything has been
+    // confirmed, resolveConfirmedView's own contract (questionConfirm.js)
+    // guarantees `current` moves ONLY via a later explicit confirm — never
+    // automatically — so a swap onto a DIFFERENT id here, at any point after
+    // the first reveal, is exactly the same "content changed under a
+    // control that then vanishes" shape the original F7 bug was: the
+    // waiting-list button that triggered it (WaitingList, above)
+    // unmounts the instant its entry stops being `waiting`, so without this,
+    // focus would fall back to <body> for every confirm AFTER the first one.
+    // Gated on `announceHiddenReadiness` (live mode's own marker, see that
+    // prop's doc) so practice mode — whose `current` legitimately changes
+    // automatically, with no click behind it — never has this fire.
+    const swappedAfterActivation =
+      announceHiddenReadiness &&
+      hasEverRevealedRef.current &&
+      !revealedJustNow &&
+      currentId !== prevCurrentId &&
+      currentId !== null;
+
+    if (revealedJustNow || swappedAfterActivation) {
       revealedRef.current?.focus();
     }
-  }, [answerHidden, onReveal]);
+  }, [answerHidden, onReveal, current?.id, announceHiddenReadiness]);
 
   return (
     <RealPanel title={copy.currentAnswerTitle}>
@@ -291,14 +354,25 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
           draft moves loading -> done — see answerStatusMessage's doc for why
           a region that mounts already carrying its final text is not
           announced by NVDA/JAWS.
-          R-110/AC-J2.3: while `answerHidden` is true the status is forced to
+          R-110/AC-J2.3: while `answerHidden` is true AND `announceHiddenReadiness`
+          is false (practice mode, the default), the status is forced to
           "idle" so this region stays silent — the panel must not announce
           the drafted answer's readiness or shape (e.g. "Answer ready, 4
           points") before the user has asked to see it, which would leak
           exactly the thing practice mode's reveal gate exists to withhold.
-          Nothing is lost: the F7 focus move above already lands focus on the
-          revealed container the moment the user presses reveal, which is
-          what announces the content at that point.
+          Nothing is lost there: the F7 focus move above already lands focus
+          on the revealed container the moment the user presses reveal, which
+          is what announces the content at that point.
+          AC-N18.13, THE DELIBERATE DIVERGENCE: live mode passes
+          `announceHiddenReadiness`, which keeps this SAME region live while
+          hidden — see `announceHiddenReadiness`'s own doc above the
+          component for why: the N18 confirm gate withholds the answer
+          precisely so the candidate can be told it is ready before they
+          click to see it (N18 delta review D9: reworded off "hold", which a
+          sweep now treats as the retired voice cue's own name, not this
+          gate's), the opposite of what practice mode's drill needs. Do not
+          "fix" this back to unconditional silence; that would re-import
+          R-110's reasoning into a caller it was never meant to govern.
           BUG-2: text comes from useCurrentQuestionAnnouncement above, not a
           bare answerStatusMessage(...) call — see that hook's doc for why a
           swap between two already-`done` entries needs more than the status
@@ -316,7 +390,19 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
           {copy.noCurrentAnswer}
         </Typography>
       ) : answerHidden ? (
-        <Button size="small" variant="outlined" onClick={onReveal} sx={TOUCH_TARGET_SX}>
+        // N18 delta review F6: m10 changed this to `onReveal(current.id)`,
+        // claiming to fix a click racing a re-render that changed which
+        // entry is current. It cannot: this button (and the identical
+        // `current` value it closes over) is only ever attached fresh by the
+        // SAME render that produced `current`, and CopilotClient.js's own
+        // `onRevealAnswer` closure is rebuilt from that identical render's
+        // `confirmedCurrent` at the same time — there is no commit at which
+        // the two could name different entries for React to attach a stale
+        // handler over. No fixture in this suite (or a plausible one) can
+        // tell `onReveal(current.id)` apart from `onReveal()`, which is what
+        // m10 replaced; reverted rather than left claiming a fix it never
+        // was.
+        <Button size="small" variant="outlined" onClick={() => onReveal()} sx={TOUCH_TARGET_SX}>
           {revealLabel}
         </Button>
       ) : (
@@ -372,6 +458,22 @@ function CurrentAnswerPanel({ current, copy, answerHidden, onReveal, revealLabel
               {copy.noPoints}
             </Typography>
           )}
+          {/* M7: one click, no confirmation dialog — undoing is itself the
+              safe, reversible action (the entry falls back to `waiting`, or
+              to the seed's own hidden-behind-reveal state; nothing is
+              deleted). Rendered only when a caller actually has the confirm
+              gate's `unconfirmQuestion` to call (live mode); practice mode
+              never passes `onUnconfirm` and never renders this. */}
+          {onUnconfirm ? (
+            <Button
+              size="small"
+              variant="text"
+              onClick={() => onUnconfirm(current.id)}
+              sx={{ mt: 1, textTransform: "none", color: "var(--text-secondary)", ...TOUCH_TARGET_SX }}
+            >
+              Not the interviewer — undo
+            </Button>
+          ) : null}
         </Box>
       )}
     </RealPanel>
@@ -477,6 +579,195 @@ function DeliveryPanel({ pace, fillers, copy }) {
   );
 }
 
+// AC-N18.4: the "asks before displaying" surface for every question besides
+// whichever one is `current` right now. M4 (fresh delta review): this used
+// to say the seed never appears here at all — false; questionConfirm.js's
+// own `firstUnconfirmedView` puts every OTHER unconfirmed, non-provisional
+// entry into `waiting` from the moment it is detected, seed or not (AC-N18.1's
+// F2 fix), so a second or third question arriving before the very first
+// confirm is exactly as reachable through this list as one detected after.
+// The genuine exception is the FIRST question itself: it IS `current`, so it
+// goes straight to CurrentAnswerPanel's own reveal gate instead of appearing
+// here (currentIsSeed, above).
+//
+// Renders question TEXT, not a count — questionPin.js:22-24 (AC-N18.4's own
+// citation): "a passive on-screen badge does not fix this, because someone
+// mid-answer is reading bullets, not counting badges." A candidate mid-answer
+// needs to know WHICH later question is waiting to decide whether it is
+// worth jumping to out of order (AC-N18.5) — a bare count answers a
+// different question than the one they're actually asking.
+//
+// Mounted here, inside CopilotDashboard's own always-visible column
+// (CopilotClient.js's box around this component has no disclosure gating
+// it), never inside TranscriptDisclosure.js's <Collapse>, which stays closed
+// by default for every live session (CopilotClient.js's own comment on that
+// disclosure). Confirming from a control buried behind a second click would
+// contradict AC-N18.4's own "still one click" requirement the moment a
+// session actually starts.
+//
+// m9: `onConfirmNext` wires useLiveSession's confirmNext — previously
+// computed and returned, unconsumed by any caller. This list's own primary
+// action is its natural home: "Show next" confirms the OLDEST waiting entry
+// (the order the interviewer actually asked them in —
+// lib/copilot/questionConfirm.js's nextConfirmTarget) with one click, for a
+// candidate who wants to advance without reading every question's own text
+// first. `onConfirmNext` is optional so a caller that predates m9 (there are
+// none left, but the pattern matches every other prop here) renders
+// byte-identically without it.
+//
+// M3 (fresh delta review): this used to also take a `waitingCount` prop,
+// documented as load-bearing alongside `onConfirmNext` — but it never could
+// differ from `items.length`: resolveConfirmedView returns both `waiting`
+// and `waitingCount` from the exact same computation, and every caller
+// (CopilotClient.js) passed both straight through. A mutant that made this
+// component ignore the prop entirely changed nothing observable. Removed
+// rather than kept as a no-op parameter — see useQuestionConfirm.js's own
+// return shape and CopilotClient.js's call site, both trimmed the same way.
+function WaitingList({ items, onConfirm, onConfirmNext }) {
+  if (!items.length) return null;
+  return (
+    <Box sx={{ mt: 1.5 }}>
+      <Stack direction="row" spacing={1} sx={{ mb: 1, alignItems: "center", ...WRAP_ROW_SX }}>
+        <Typography
+          variant="subtitle2"
+          component="h4"
+          sx={{ flex: 1, minWidth: 0, color: "var(--text-secondary)", fontWeight: 700 }}
+        >
+          Waiting to show ({items.length})
+        </Typography>
+        {onConfirmNext ? (
+          <Button size="small" variant="text" onClick={onConfirmNext} sx={{ textTransform: "none", ...TOUCH_TARGET_SX }}>
+            Show next
+          </Button>
+        ) : null}
+      </Stack>
+      <Stack spacing={1}>
+        {items.map((entry) => {
+          // Same decision, same place as CurrentAnswerPanel's own reveal
+          // label (lib/copilot/confirmReveal.js) — see that module's doc.
+          const stateLabel = confirmRevealLabel(entry.status);
+          return (
+            <Button
+              key={entry.id}
+              variant="outlined"
+              onClick={() => onConfirm(entry)}
+              startIcon={entry.status === "loading" ? <CircularProgress size={14} color="inherit" /> : null}
+              // D10-style: the visible content IS the question's own text
+              // (AC-N18.4), and the accessible name adds the verb ahead of
+              // it, the same "{action}: {question}" composition QuestionFeed
+              // already uses for its own per-card button.
+              aria-label={`${stateLabel}: ${entry.question}`}
+              sx={{
+                justifyContent: "flex-start",
+                textAlign: "left",
+                textTransform: "none",
+                ...TOUCH_TARGET_SX,
+              }}
+            >
+              <Typography component="span" sx={{ color: "var(--text-primary)", fontWeight: 600, ...BREAK_LONG_WORDS_SX }}>
+                {entry.question}
+              </Typography>
+            </Button>
+          );
+        })}
+      </Stack>
+    </Box>
+  );
+}
+
+// AC-N18.7/N18.8: one past question+answer, collapsed by default. Renders a
+// HEADER ROW ONLY until expanded — question text, a timestamp, and a status
+// dot — never mounting AnswerLines/AnswerAids until the candidate actually
+// asks for them. `answerLines(...)` runs unmemoized on every render
+// (CopilotClient.js's own comment on that cost) and every streamed points
+// frame re-renders whichever entry is still drafting, so a collapsed item
+// that called it anyway would pay that cost for content nobody can see.
+// Expanding never mounts a live region of its own (F-F8): the answer text
+// underneath is already final by the time it can be expanded (this entry is,
+// by construction, no longer `current`), so there is nothing here for an
+// aria-live region to announce that the click itself doesn't already convey.
+function HistoryItem({ entry, copy }) {
+  const [expanded, setExpanded] = useState(false);
+  // Computed ONLY when expanded — see this function's own doc above for why
+  // a collapsed item must not pay this cost at all.
+  const lines = expanded ? answerLines(entry.cues, entry.points, entry.pageSources) : [];
+  // CopilotDashboard.contrast.test.js bans --text-muted file-wide (it fails
+  // 4.5:1 on this file's --bg-soft panels) — --text-secondary is this file's
+  // own established stand-in, used here too even though this dot is
+  // decorative rather than text, so the whole file stays on one palette.
+  const statusColor =
+    entry.status === "done" ? "var(--success)" : entry.status === "error" ? "var(--danger)" : "var(--text-secondary)";
+  return (
+    <Box sx={{ borderRadius: 2, border: "1px solid var(--border)", background: "var(--bg-soft)", overflow: "hidden" }}>
+      <Button
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        variant="text"
+        sx={{
+          width: 1,
+          p: 1.25,
+          justifyContent: "flex-start",
+          textAlign: "left",
+          textTransform: "none",
+          borderRadius: 0,
+          ...TOUCH_TARGET_SX,
+        }}
+      >
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center", width: 1 }}>
+          <Box component="span" aria-hidden="true">
+            {expanded ? "▾" : "▸"}
+          </Box>
+          <Typography
+            component="span"
+            sx={{ flex: 1, minWidth: 0, color: "var(--text-primary)", fontWeight: 600, ...BREAK_LONG_WORDS_SX }}
+          >
+            {entry.question}
+          </Typography>
+          {Number.isFinite(entry.at) ? (
+            <Typography component="span" variant="caption" sx={{ color: "var(--text-secondary)", flexShrink: 0 }}>
+              {new Date(entry.at).toLocaleTimeString()}
+            </Typography>
+          ) : null}
+          <Box
+            aria-hidden="true"
+            sx={{ width: 8, height: 8, borderRadius: "50%", background: statusColor, flexShrink: 0 }}
+          />
+        </Stack>
+      </Button>
+      {expanded ? (
+        <Box sx={{ px: 1.25, pb: 1.25 }}>
+          {lines.length ? (
+            <>
+              <AnswerLines lines={lines} />
+              <AnswerAids buzzwords={entry.buzzwords} anchor={entry.anchor} idealProject={entry.idealProject} />
+            </>
+          ) : (
+            <Typography variant="body2" sx={{ color: "var(--text-secondary)" }}>
+              {copy.noPoints}
+            </Typography>
+          )}
+        </Box>
+      ) : null}
+    </Box>
+  );
+}
+
+function HistoryList({ items, copy }) {
+  if (!items.length) return null;
+  return (
+    <Box sx={{ mt: 1.5 }}>
+      <Typography variant="subtitle2" component="h4" sx={{ mb: 1, color: "var(--text-secondary)", fontWeight: 700 }}>
+        Previous questions
+      </Typography>
+      <Stack spacing={1}>
+        {items.map((entry) => (
+          <HistoryItem key={entry.id} entry={entry} copy={copy} />
+        ))}
+      </Stack>
+    </Box>
+  );
+}
+
 export default function CopilotDashboard({
   questions,
   // AC-T1.18: `pinnedId` degrades to latestQuestionEntry(questions) inside
@@ -489,6 +780,38 @@ export default function CopilotDashboard({
   // this component no longer reads any of the pin/hold surface beyond the id
   // itself.
   pinnedId,
+  // AC-N18.14: the confirm gate's already-resolved `current` — computed ONCE
+  // in useQuestionConfirm.js (via useLiveSession.js/CopilotClient.js) and
+  // handed straight through. `undefined` (practice mode, and every existing
+  // test) falls through to the pinnedQuestionEntry derivation below, so this
+  // is purely additive — this component never calls resolveConfirmedView
+  // itself, the exact defect BUG-3/R-121 already taught this codebase not to
+  // repeat for a "what's current" decision.
+  current: currentOverride,
+  // Whether `current` above is still the unconfirmed seed (AC-N18.1). `false`
+  // by default so a caller that never confirms anything (practice mode)
+  // never hides its answer for this reason. N18 delta review F5: this is
+  // `answerHidden`'s own default below, not a second, independent gate — a
+  // caller that passes ONLY this prop still gets CurrentAnswerPanel's reveal
+  // gate; one that also passes `answerHidden` explicitly (as CopilotClient.js
+  // does today) overrides it as usual.
+  currentIsSeed = false,
+  // AC-N18.7/N18.8: confirmed entries older than `current`, newest first,
+  // rendered as a collapsed-by-default list directly under the answer panel
+  // — see HistoryList below. Empty for every caller that doesn't pass it.
+  history = [],
+  // AC-N18.4: detected, not-yet-confirmed entries, each rendered as its own
+  // button showing its OWN question text — see WaitingList below.
+  waiting = [],
+  // AC-N18.5/N18.9: the one handler behind every button both lists render —
+  // see CopilotClient.js's onConfirmQuestion for what it does (confirm, plus
+  // a draft for an `idle` entry).
+  onConfirmQuestion,
+  // m9: wires useLiveSession's confirmNext into WaitingList's own primary
+  // action — see that function's own doc. Undefined for every caller that
+  // predates m9 (practice mode included), which is what keeps WaitingList's
+  // own default (no "Show next" button) byte-identical for them.
+  onConfirmNext,
   pace,
   // Verbal-filler reading beside pace in DeliveryPanel — see the contract
   // atop FILLER_LABEL_TEXT/COLOR above. May be `undefined` from a caller
@@ -501,16 +824,34 @@ export default function CopilotDashboard({
   // added here later can never leave a mode rendering `undefined`.
   copy,
   // AC-J2.3: practice mode's reveal gate — see CurrentAnswerPanel above.
-  answerHidden = false,
+  // Defaults to `currentIsSeed` (N18 delta review F5), not a bare `false`,
+  // so the AC-N18.1 seed gate is what actually drives it for a caller that
+  // passes ONLY `currentIsSeed` — see that prop's own comment above.
+  // CopilotClient.js relies on this default rather than passing the two
+  // redundantly; a caller that DOES pass `answerHidden` explicitly (practice
+  // mode's own reveal-toggle wiring) still overrides it as usual.
+  answerHidden = currentIsSeed,
   onRevealAnswer,
   revealLabel = "Show sample answer",
+  // M7: see CurrentAnswerPanel's own doc above — passed straight through,
+  // undefined for every caller that predates it.
+  onUnconfirm,
+  // AC-N18.13: see CurrentAnswerPanel's own doc for the R-110 divergence
+  // this drives. `false` by default — practice mode's existing silence is
+  // untouched unless a caller opts in.
+  announceHiddenReadiness = false,
   // Contract 8: see CurrentAnswerPanel's own doc above. Defaulted to `0` —
   // no caller today passes a negative `current.at`, so this never trips
   // unless CopilotClient deliberately sets it, which is what keeps every
   // existing caller (practice mode included) byte-identical.
   staleTypeChangeAt = 0,
 }) {
-  const current = pinnedQuestionEntry(questions, pinnedId);
+  // AC-N18.14: `currentOverride` (undefined for every caller that predates
+  // N18) is checked explicitly against `undefined`, not merely truthiness —
+  // `null` is a legitimate "nothing confirmed and nothing detected yet"
+  // value the confirm gate can hand through, and must not fall back to the
+  // pin-based derivation just because it is falsy.
+  const current = currentOverride !== undefined ? currentOverride : pinnedQuestionEntry(questions, pinnedId);
   const text = dashboardCopy(copy);
 
   return (
@@ -554,9 +895,24 @@ export default function CopilotDashboard({
           answerHidden={answerHidden}
           onReveal={onRevealAnswer}
           revealLabel={revealLabel}
+          announceHiddenReadiness={announceHiddenReadiness}
           staleTypeChangeAt={staleTypeChangeAt}
+          onUnconfirm={onUnconfirm}
         />
       </Box>
+
+      {/* AC-N18.4: directly under the answer panel — not inside
+          TranscriptDisclosure's collapsed-by-default region (see
+          WaitingList's own doc for why that would make a single-click
+          confirm a two-click one during a live session). Renders nothing
+          when `waiting` is empty, which is every render for every caller
+          that doesn't pass it. */}
+      <WaitingList items={waiting} onConfirm={onConfirmQuestion} onConfirmNext={onConfirmNext} />
+
+      {/* AC-N18.7/N18.8: same placement reasoning as WaitingList above — the
+          re-openable list of everything already shown and confirmed past.
+          Renders nothing when `history` is empty. */}
+      <HistoryList items={history} copy={text} />
 
       <Box sx={{ mt: 1.5 }}>
         <DeliveryPanel pace={pace} fillers={fillers} copy={text} />

@@ -145,7 +145,18 @@ vi.mock("./useCompanyBrief", () => ({
 }));
 
 let liveSessionReturn;
-vi.mock("./useLiveSession", () => ({ useLiveSession: () => liveSessionReturn }));
+// N18 delta review D3: captures the args CopilotClient actually calls this
+// hook with, so a test can drive `setQuestions`/`setStatus` for REAL — the
+// hook's mocked-out internals can never call them on their own, and
+// `questions`/`status` are CopilotClient's own useState, not fields of
+// `liveSessionReturn`. See the three tests below that use it.
+let liveSessionArgs;
+vi.mock("./useLiveSession", () => ({
+  useLiveSession: (args) => {
+    liveSessionArgs = args;
+    return liveSessionReturn;
+  },
+}));
 function baseLiveSessionReturn(overrides = {}) {
   return {
     warning: "",
@@ -173,8 +184,6 @@ function baseLiveSessionReturn(overrides = {}) {
     pinnedId: null,
     newerQuestionCount: 0,
     held: false,
-    pinCurrentQuestion: vi.fn(),
-    unpinQuestion: vi.fn(),
     cueAnnouncement: { text: "", nonce: 0 },
     ...overrides,
   };
@@ -189,6 +198,7 @@ beforeEach(async () => {
   fetchMock = vi.fn(() => Promise.resolve({ ok: true, status: 200, json: async () => ({ answer: "ok" }) }));
   globalThis.fetch = fetchMock;
   liveSessionReturn = baseLiveSessionReturn();
+  liveSessionArgs = null;
   ({ default: CopilotClient } = await import("./CopilotClient.js"));
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -212,6 +222,19 @@ async function render() {
 // Every ask-AI box currently on screen, by its own accessible name.
 function askBoxes() {
   return [...container.querySelectorAll("label")].filter((el) => el.textContent.trim() === ASK_LABEL);
+}
+
+// N18 delta review D3: the one DOM signal unique to the strip's OWN
+// CurrentQuestionPanel ("Current question", the default LIVE_COPY heading —
+// see lib/copilot/dashboardCopy.js) — never rendered by the pre-session
+// AskAiBox branch, and by nothing else in this file's mocked tree. Both
+// branches of `mountStrip`'s ternary pass AskAiBox the identical
+// `applicationId`/`engine` props, so a request-shaped assertion alone cannot
+// tell "the strip's own copy is wired" apart from "the pre-session copy is
+// wired and the strip never mounted at all" — this is what actually proves
+// the strip mounted, not merely that AN ask box (either one) exists.
+function stripMounted() {
+  return [...container.querySelectorAll("h3")].some((h) => h.textContent.trim() === "Current question");
 }
 
 function askField() {
@@ -313,9 +336,21 @@ describe("live mode: the ask box is on screen BEFORE a session starts", () => {
     // nothing about the other. Before this change NEITHER client passed
     // `applicationId` to the strip at all, so the shipped box asked with an
     // empty id in every state it could actually be reached in.
-    liveSessionReturn = baseLiveSessionReturn({ held: true, pinnedId: 1, newerQuestionCount: 1 });
+    //
+    // N18 delta review D3: `mountStrip` is `questions.length > 0 || (live &&
+    // anyMeasured)` now — the `|| held` disjunct this fixture used to drive
+    // is retired (CopilotClient.js's own comment on `mountStrip`), and
+    // `questions`/`status` are CopilotClient's OWN useState, never fields of
+    // `liveSessionReturn` — so setting `held`/`pinnedId`/`newerQuestionCount`
+    // here never actually mounted the strip; it was already mounted (or not)
+    // for reasons this fixture did not touch. Seeding a real question
+    // through the captured `setQuestions` drives the REAL disjunct instead.
     await render();
     await clickText(/select posting/i);
+    await act(async () => {
+      liveSessionArgs.setQuestions([{ id: 1, question: "a question detected mid-session", provisional: false }]);
+    });
+    expect(stripMounted(), "the strip never actually mounted").toBe(true);
     await typeAndSubmit("a question asked mid-session");
 
     expect(askRequests()).toHaveLength(1);
@@ -327,20 +362,29 @@ describe("live mode: the ask box is on screen BEFORE a session starts", () => {
 
 describe("live mode: there is never more than one ask box", () => {
   it("keeps exactly one once the strip mounts and takes ownership of it", async () => {
-    // `held: true` reaches `mountStrip` through its second disjunct, so the
-    // strip renders and brings its own AskAiBox. A pre-session mount added as
-    // an unconditional sibling would show TWO fields here — two drafts, two
-    // answer panels, and a second one covering the first.
-    liveSessionReturn = baseLiveSessionReturn({ held: true, pinnedId: 1, newerQuestionCount: 1 });
+    // N18 delta review D3: a real question (not the retired `held` fixture —
+    // see the test above) is what reaches `mountStrip` through its first
+    // disjunct, so the strip renders and brings its own AskAiBox. A
+    // pre-session mount added as an unconditional sibling would show TWO
+    // fields here — two drafts, two answer panels, and a second one covering
+    // the first.
     await render();
+    await act(async () => {
+      liveSessionArgs.setQuestions([{ id: 1, question: "a question detected mid-session", provisional: false }]);
+    });
+    expect(stripMounted(), "the strip never actually mounted").toBe(true);
     expect(askBoxes()).toHaveLength(1);
   });
 
   it("keeps exactly one across the pre-session -> session transition", async () => {
     await render();
     expect(askBoxes()).toHaveLength(1);
-    liveSessionReturn = baseLiveSessionReturn({ held: true, pinnedId: 1, newerQuestionCount: 1 });
-    await render();
+    // N18 delta review D3: drives the transition through the real
+    // `questions.length > 0` disjunct rather than the retired `held` fixture.
+    await act(async () => {
+      liveSessionArgs.setQuestions([{ id: 1, question: "a question detected mid-session", provisional: false }]);
+    });
+    expect(stripMounted(), "the strip never actually mounted").toBe(true);
     expect(askBoxes()).toHaveLength(1);
   });
 });
@@ -414,9 +458,10 @@ function siblingMountFailures(rawSource) {
   // alone for every application the candidate ever asks about.
   for (const [name, idx] of [["strip", stripIdx], ["ask-box", askIdx]]) {
     // To the self-closing `/>`, never to the first `>`. The strip mount
-    // carries `statsOnly={!(questions.length > 0 || held)}`, so slicing to the
-    // first `>` stops INSIDE the props and every prop after it reads as
-    // missing — a guard that fails correct code.
+    // carries `statsOnly={!(questions.length > 0)}` (the `|| held` disjunct it
+    // used to carry is retired, N18), so slicing to the first `>` stops INSIDE
+    // the props and every prop after it reads as missing — a guard that fails
+    // correct code.
     const close = source.indexOf("/>", idx);
     const mount = source.slice(idx, close === -1 ? source.length : close);
     if (!/applicationId=\{[^}]*\bposting\b/.test(mount)) failures.push(`${name}-applicationId-not-from-posting`);

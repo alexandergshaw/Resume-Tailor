@@ -146,8 +146,6 @@ function baseLiveSessionReturn(overrides = {}) {
     pinnedId: null,
     newerQuestionCount: 0,
     held: false,
-    pinCurrentQuestion: vi.fn(),
-    unpinQuestion: vi.fn(),
     cueAnnouncement: { text: "", nonce: 0 },
     ...overrides,
   };

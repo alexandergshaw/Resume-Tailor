@@ -7,14 +7,11 @@ import { speakerDisplayLabel } from "@/lib/copilot/speakerIdentity";
 import { useSessionLogRecorder } from "./useSessionLogRecorder";
 import { useDraftAnswer } from "./useDraftAnswer";
 import { useVoiceCues } from "./useVoiceCues";
-import { useQuestionPin } from "./useQuestionPin";
+import { useQuestionConfirm } from "./useQuestionConfirm";
 import { SPEAKER_ATTRIBUTION } from "@/lib/copilot/cuePolicy";
 import { useCueActions } from "./useCueActions";
 import { useQuestionPipeline } from "./useQuestionPipeline";
 import { getInterviewType } from "./useInterviewType";
-// Contract 6 (AC-A15): this file did not import pinnedQuestionEntry before —
-// its only importers were CopilotDashboard.js and QuestionFeed.js.
-import { pinnedQuestionEntry } from "@/lib/copilot/currentQuestion";
 
 const CONTEXT_TURNS = 12;
 
@@ -190,11 +187,6 @@ export function useLiveSession({
     speakerAttributionRef.current = speakerAttribution;
   }, [speakerAttribution]);
 
-  // AC-T1.16..T1.18: pin/hold state (useQuestionPin.js, split for the line
-  // cap); reuses the ticking `now` clock so an expiry can fire with no click.
-  const pin = useQuestionPin({ questions, questionsRef, now });
-  const pinnedIdRef = useRef(null); // mirrors pin.pinnedId, as questionsRef mirrors questions.
-  useEffect(() => { pinnedIdRef.current = pin.pinnedId; }, [pin.pinnedId]);
   const onCompanyCueRef = useRef(onCompanyCue);
   useEffect(() => { onCompanyCueRef.current = onCompanyCue; }, [onCompanyCue]);
   const evaluateVoiceCue = useVoiceCues(source); // AC-T1.13: see useVoiceCues.js.
@@ -207,56 +199,42 @@ export function useLiveSession({
   const { startLog, logEvent, logProvider, sessionLogSnapshot, downloadLog, hasEvents: sessionLogHasEvents } =
     useSessionLogRecorder(source, speakerSnapshotRef);
 
-  // AC-T1.13/T1.16.1/T1.17/T1.18/AC-V2: the "act" half of useVoiceCues.js's
-  // "decide vs act" split — see useCueActions.js's own doc for why this is a
-  // separate hook rather than inline code here (the 1000-line cap).
-  const { handleVoiceCue, cueAnnouncement, resetCueAnnouncement } = useCueActions({
-    pin,
-    pinnedIdRef,
+  // AC-N18.1..N18.12: the confirm gate's React state (useQuestionConfirm.js,
+  // split for the line cap the same way useSessionLogRecorder.js's own state
+  // is) — a newly detected question must not take the panel until confirmed.
+  // Needs `logEvent` (AC-N18.12), so it is declared after
+  // useSessionLogRecorder above.
+  const confirm = useQuestionConfirm({ questions, questionsRef, logEvent });
+  // N18 delta review F1: mirrors confirm.current, the same way questionsRef
+  // mirrors questions — onDraft/redraftCurrentAnswer below are stable
+  // callbacks (near-empty dep arrays) that fire from an EVENT well after the
+  // render that created them, so they must resolve "is this THE current
+  // entry" against the LATEST confirm-gate decision, not a stale closure.
+  // Replaces the pinnedIdRef mirror the now-retired hold used to keep for
+  // the identical reason — the confirm gate is the only surface left that
+  // decides which question is current (BUG-3/R-121's "one decision, one
+  // place"). Destructured into its own binding (not `confirm.current`
+  // inline) purely so the effect's dependency array does not end in
+  // `.current` — react-hooks/exhaustive-deps reads that suffix as a React
+  // ref access and warns, even though `confirm` is a plain object, not one.
+  const confirmedCurrentEntry = confirm.current;
+  const confirmedCurrentRef = useRef(null);
+  useEffect(() => { confirmedCurrentRef.current = confirmedCurrentEntry; }, [confirmedCurrentEntry]);
+
+  // AC-T1.13/AC-V2: the "act" half of useVoiceCues.js's "decide vs act"
+  // split — see useCueActions.js's own doc for why this is a separate hook
+  // rather than inline code here (the 1000-line cap).
+  // m1 (fresh delta review): useCueActions.js used to also return
+  // `cueAnnouncement`/`resetCueAnnouncement`, both permanently idle since
+  // the N18 delta review F1 hold/release retirement — removed there along
+  // with the dead calls/return field below (see that hook's own doc).
+  const { handleVoiceCue } = useCueActions({
     onCompanyCueRef,
     logEvent,
     speakerAttributionRef,
   });
 
   const live = status === "live" || status === "connecting";
-
-  // Defect 3 (regression pass): a hold must be released the instant the
-  // session leaves the live state, not only when the Stop button is
-  // pressed. `stop()` below already calls `pin.unpinQuestion()` directly,
-  // but it is not the only way `status` can reach "idle" (or "error"):
-  // lib/copilot/session.js's own CopilotSession ends itself two other ways
-  // that never call this hook's `stop` at all —
-  //   - the audio track's native "ended" event
-  //     (`stream.getAudioTracks()[0]?.addEventListener("ended", () =>
-  //     this.stop())`) calls CopilotSession's OWN stop(), which fires
-  //     `onStatus("idle")` straight from inside session.js;
-  //   - an essential source's socket erroring escalates
-  //     `aggregateStatus()` straight to `onStatus("error")`, again with no
-  //     call back into this hook at all.
-  // Both land here as nothing more than the `onStatus` callback passed into
-  // `new CopilotSession(...)` in `start()` below calling `setStatus(s)` —
-  // see that callback's own body. Before this fix, `pinnedId` survived a
-  // session that had already ended, `held` stayed true, and — because the
-  // ticking `now` clock right below is itself gated on `live` — a frozen
-  // `now` meant resolvePin's own 120s expiry (lib/copilot/questionPin.js)
-  // could never fire on this path either: the hold was permanent, with no
-  // way to self-correct.
-  //
-  // Render-phase state adjustment, not a useEffect — the same idiom
-  // CopilotClient.js's own `railCollapsed` uses for reacting to this exact
-  // `live` transition, for the same two reasons: this project's
-  // react-hooks/set-state-in-effect rule forbids the "compare in an effect,
-  // setState if it changed" version of this, and an effect would also apply
-  // the release one paint late — the held panel would keep claiming
-  // detection and drafting were still running for one extra frame after the
-  // session had already ended. Guarded on `live !== prevLiveForPin` (not
-  // unconditional) so this converges in the render pass it fires in, same
-  // as every other render-phase adjustment in this codebase.
-  const [prevLiveForPin, setPrevLiveForPin] = useState(live);
-  if (live !== prevLiveForPin) {
-    setPrevLiveForPin(live);
-    if (!live) pin.unpinQuestion();
-  }
 
   // D2: used to be gated on `!startedAt` alone, which stayed true (frozen
   // `now`) for the entire life of a session stuck "connecting" — the clock
@@ -283,11 +261,10 @@ export function useLiveSession({
     // rendering its chips as live, functional controls after Stop, for a
     // session that no longer exists to apply a correction to.
     setSpeakerSnapshot(DEFAULT_SPEAKER_SNAPSHOT);
-    pin.unpinQuestion(); // AC-T1.17: a hold must not survive the session.
     // Step 2: mirrors start's setSetupExpanded(false) — `!live` must
     // always mean "SessionSetup renders in full".
     setSetupExpanded(true);
-  }, [setSetupExpanded, setStatus, pin]);
+  }, [setSetupExpanded, setStatus]);
 
   // Unmounting (e.g. switching main tabs) must not leave the screen-share or
   // mic running — stop whatever session is active on the way out.
@@ -339,7 +316,7 @@ export function useLiveSession({
   // questions array, the draft (runDraft), the log, the session object and
   // all four refs handed in below stay owned HERE, so `start`/`clearAll`
   // remain the only places they are reset and `questionsRef` remains the one
-  // mirror the pin surface also reads.
+  // mirror onDraft/redraftCurrentAnswer also read.
   //
   // Its `addQuestion`/`acceptQuestion` are not returned — see the note beside
   // that module's own return for why the pipeline's internal half stays
@@ -415,7 +392,7 @@ export function useLiveSession({
   // belt-and-braces, not load-bearing — kept explicit so this reads
   // correctly on its own rather than depending on that coupling.)
   const identityUnsettled = speakerSnapshot.confidence !== "high" && !speakerSnapshot.overridden;
-  // AC-T1.13/T1.16.1/T1.17/T1.18/AC-V2: `handleVoiceCue` (the "act" half of
+  // AC-T1.13/T1.18/AC-V2: `handleVoiceCue` (the "act" half of
   // useVoiceCues.js's "decide vs act" split) now lives in useCueActions.js —
   // see that hook's own doc — and is already in scope from the call above.
 
@@ -457,8 +434,7 @@ export function useLiveSession({
     // callback ever firing for them — see session.js's onAttribution, which
     // only ever fires on the in-person path.
     setSpeakerAttribution(source === "inperson" ? SPEAKER_ATTRIBUTION.PENDING : SPEAKER_ATTRIBUTION.NOT_APPLICABLE);
-    pin.unpinQuestion(); // AC-T1.17: a hold must not survive into the next session.
-    resetCueAnnouncement();
+    confirm.resetConfirmed(); // AC-N18.9: a confirmed set must not survive into the next session.
     recentRef.current = [];
     pendingRef.current = [];
     lastQNormRef.current = "";
@@ -688,8 +664,7 @@ export function useLiveSession({
     logEvent,
     startLog,
     logProvider,
-    pin,
-    resetCueAnnouncement,
+    confirm,
   ]);
 
   const onDraft = useCallback(
@@ -701,7 +676,7 @@ export function useLiveSession({
       // MATERIAL-3: a MANUAL redraft of the entry that is currently "the
       // current one" (not just any card) is exactly what makes a prior
       // staleness caption false — see onCurrentEntryRedrafted's own doc.
-      if (pinnedQuestionEntry(questionsRef.current, pinnedIdRef.current)?.id === id) {
+      if (confirmedCurrentRef.current?.id === id) {
         onCurrentEntryRedrafted?.();
       }
     },
@@ -713,13 +688,15 @@ export function useLiveSession({
   // never `live` — a ref cannot freeze into a stale closure the way
   // render-scope state can, and that is what stops a BILLED model call
   // firing into an unmounted branch after a finished session: `stop()`
-  // above never clears `questions`, and pinnedQuestionEntry(list, null)
-  // falls back to the latest entry, so without this check a change made
-  // after Stop would silently re-bill for whatever was last on screen.
+  // above never clears `questions`, and the confirm gate's own stale-id
+  // fallback (questionConfirm.js) falls back to the oldest unconfirmed
+  // entry rather than throwing, so without this check a change made after
+  // Stop would silently re-bill for whatever was last on screen.
   const redraftCurrentAnswer = useCallback(() => {
     if (!sessionRef.current) return;
-    // Not pin.entry — a render value, stale inside this change callback.
-    const entry = pinnedQuestionEntry(questionsRef.current, pinnedIdRef.current);
+    // Not confirm.current — a render value, stale inside this change
+    // callback; confirmedCurrentRef mirrors it for exactly this reason.
+    const entry = confirmedCurrentRef.current;
     if (entry) {
       runDraft(entry.id, entry.question, { force: true });
       onCurrentEntryRedrafted?.(); // this redraft is ALWAYS the current entry, by construction.
@@ -733,8 +710,8 @@ export function useLiveSession({
     recentRef.current = [];
     pendingRef.current = [];
     lastQNormRef.current = "";
-    pin.unpinQuestion(); // AC-T1.17: Clear releases a hold too.
-  }, [setQuestions, pin]);
+    confirm.resetConfirmed(); // AC-N18.9: Clear resets the confirm gate too.
+  }, [setQuestions, confirm]);
 
   // BUG-6: resolves each line through resolveTranscriptLabel (current
   // identity snapshot) rather than the frozen `l.speaker` — otherwise a
@@ -843,7 +820,15 @@ export function useLiveSession({
     // up to 4000 chars each, purely to compute one boolean CopilotClient
     // never even displayed).
     sessionLogHasEvents,
-    ...pin, // AC-T1.16..T1.18: the click path; handleVoiceCue above is the voice path.
-    cueAnnouncement,
+    // N18 delta review F1: the pin/hold click path (pinnedId, held,
+    // newerQuestionCount, pinCurrentQuestion, unpinQuestion) that used to be
+    // spread in here from useQuestionPin.js is retired — the confirm gate
+    // below is the only surface left that decides which question is current.
+    // m1: `cueAnnouncement` (permanently idle since the same retirement) is
+    // no longer spread in here either — see useCueActions.js's own doc. The
+    // key is gone end to end now: CopilotClient.js's destructure default and
+    // useTypeAnnouncements' `cueText` parameter were both removed with it, so
+    // there is no caller left to cover.
+    ...confirm, // AC-N18.1..N18.12: the confirm gate — current/history/waiting plus confirmQuestion/confirmNext.
   };
 }

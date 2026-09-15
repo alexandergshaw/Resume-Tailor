@@ -19,8 +19,7 @@ import { band, useStickyTop } from "../useStickyTop";
 // CurrentQuestionPanel at all.
 //
 // Everything CopilotDashboard.js used to supply this panel BY DEFAULT — the
-// `{...LIVE_COPY, ...copy}` merge, the `held`/`newerCount`/`live` fallbacks
-// (practice passes none of the four), and the `h3` that made the panel's own
+// `{...LIVE_COPY, ...copy}` merge, and the `h3` that made the panel's own
 // `h4` legal — moves here, deliberately, rather than being re-derived ad
 // hoc: a panel that silently loses a default renders an honest-looking WRONG
 // answer rather than failing. `headingLevel="h3"` is the load-bearing one —
@@ -40,32 +39,39 @@ import { band, useStickyTop } from "../useStickyTop";
 export default function StickyQuestionStrip({
   questions,
   pinnedId,
+  // B2/BUG-3/R-121: the confirm gate's already-resolved `current` — computed
+  // ONCE in useQuestionConfirm.js (via useLiveSession.js/CopilotClient.js)
+  // and handed straight through, the same pattern CopilotDashboard.js's own
+  // `currentOverride` already uses. `undefined` (practice mode, and every
+  // existing test) falls through to the pinnedQuestionEntry derivation
+  // below, so this is purely additive. Before this prop existed, this strip
+  // derived its OWN "what's current" from `pinnedId` alone — a THIRD
+  // derivation alongside CopilotDashboard's and QuestionFeed's, which is
+  // exactly the defect BUG-3/R-121's "one decision, one place" standard
+  // exists to prevent: measured live, the strip could show a question the
+  // candidate never confirmed while the dashboard showed the confirmed one.
+  current: currentOverride,
   copy,
-  held = false,
-  newerQuestionCount: newerCount = 0,
-  onReleasePin,
-  live = true,
   // ARCH-stats-in-strip r3: the two readings, handed straight to StatsRow
   // below — this component makes no measurability decision of its own about
   // either one (StatsRow gates each on its own `measured` flag).
   pace,
   fillers,
   // The SESSION signal — CopilotClient's `live` (from its own `status`) or
-  // PracticeClient's `running` — deliberately NOT this component's existing
-  // `live` prop above, whose default of `true` drives HeldQuestionPanel's
-  // caption and would leave the row rendered after Stop if reused here
-  // (§2.4). Defaults `false`: no session signal, no row — both the
-  // unchanged behaviour for every caller that predates this prop and the
-  // SAFE value for a caller that forgets to pass it.
+  // PracticeClient's `running`. Defaults `false`: no session signal, no row
+  // — both the unchanged behaviour for every caller that predates this prop
+  // and the SAFE value for a caller that forgets to pass it.
   sessionLive = false,
   // Whether this mount has no question to show at all (the caller's own Q
-  // reason — `questions.length > 0 || held` in live, `dashboardQuestions.
-  // length > 0` in practice — came back false). A PROP rather than derived
-  // from `current`, on purpose: deriving it would silently change what this
-  // component renders for `questions: []` with no `held`, and three shipped
-  // tests assert the `noQuestion` fallback for exactly that input (this
-  // file's own test suite, `:83-87` and `:170-174`, plus
-  // copilotHeadingOrder.test.js's G-1). Defaults `false` — unchanged
+  // reason — `questions.length > 0` in live, `dashboardQuestions.length > 0`
+  // in practice — came back false). A PROP rather than derived from
+  // `current`, on purpose: deriving it would silently change what this
+  // component renders for `questions: []` even when it is the OTHER
+  // `mountStrip` disjunct (a live session with a measured reading) that
+  // brought the strip up, and three shipped tests assert the `noQuestion`
+  // fallback for exactly that input (this file's own test suite, `:83-87`
+  // and `:170-174`, plus copilotHeadingOrder.test.js's G-1). Defaults `false`
+  // — unchanged
   // behaviour, but NOT the safe value at a mount site: omitting it there
   // pins `copy.noQuestion` over SessionSetup/PracticeControls the moment a
   // live session with no question yet reaches this strip (AC 20/44).
@@ -132,9 +138,17 @@ export default function StickyQuestionStrip({
   // get stuck the way the pre-fix version could.
   if (statsOnly && measured && !showStats) return null;
 
-  // Same call, same lib/ import CopilotDashboard.js used to make for this
-  // panel — one decision, one place, unmoved by the relocation.
-  const current = pinnedQuestionEntry(questions, pinnedId);
+  // B2/AC-N18.14: `currentOverride` (undefined for every caller that
+  // predates N18, and for practice mode, which has no confirm gate) is
+  // checked explicitly against `undefined`, the same guard
+  // CopilotDashboard.js's own `current` derivation uses — `null` is a
+  // legitimate "nothing confirmed and nothing detected yet" value the
+  // confirm gate can hand through, and must not fall back to the pinnedId
+  // derivation just because it is falsy. Only when a caller never passes it
+  // at all does this strip fall back to the same lib/ call CopilotDashboard
+  // makes for ITS OWN fallback — one decision, one place, unmoved by the
+  // relocation.
+  const current = currentOverride !== undefined ? currentOverride : pinnedQuestionEntry(questions, pinnedId);
   const text = dashboardCopy(copy);
 
   return (
@@ -171,9 +185,11 @@ export default function StickyQuestionStrip({
           ARCH-stats-in-strip r3 §2.4: gated on `!statsOnly`, not on whether
           `current` resolved to something — pinnedQuestionEntry falls back
           to a non-null "no question" shape for an empty list, and
-          `held: true` with `questions: []` is a real, test-exercised path
-          (CopilotClient.js explains why the `|| held` mount disjunct exists
-          at all), so gating on `current` would silently delete the
+          `live && anyMeasured` with `questions: []` is a real,
+          test-exercised path (CopilotClient.js explains why that second
+          mount disjunct exists at all — N18 delta review D3: the `|| held`
+          disjunct this comment used to name is retired along with the hold
+          cue), so gating on `current` would silently delete the
           `noQuestion` fallback three shipped tests assert. */}
       {!statsOnly ? (
         <Box
@@ -195,15 +211,7 @@ export default function StickyQuestionStrip({
                 }
           }
         >
-          <CurrentQuestionPanel
-            current={current}
-            copy={text}
-            held={held}
-            newerCount={newerCount}
-            onReleasePin={onReleasePin}
-            live={live}
-            headingLevel="h3"
-          />
+          <CurrentQuestionPanel current={current} copy={text} headingLevel="h3" />
         </Box>
       ) : null}
       {/* ARCH-stats-in-strip r3 §2.1: OUTSIDE the cap, below the capped
@@ -230,9 +238,11 @@ export default function StickyQuestionStrip({
           OVER HERE. This is a child of the strip, so it inherits the strip's
           reachability: the `statsOnly && measured && !showStats` early return
           above renders `null`, and both clients gate the whole strip on their
-          own `mountStrip` predicate (a question, a held question, or a live
-          session with a measured reading). In every one of those states the
-          ask box does not exist either — including the pre-session state it
+          own `mountStrip` predicate (a question, or a live session with a
+          measured reading — N18 delta review D3: a third reason this used to
+          name, a held question, is retired along with the hold cue itself).
+          In both of those states the ask box does not exist either — including
+          the pre-session state it
           is most wanted in. Fixing that means mounting it as a SIBLING of
           this strip in CopilotClient.js/PracticeClient.js rather than a
           child, which is outside this change's file scope; AskAiBox.test.js

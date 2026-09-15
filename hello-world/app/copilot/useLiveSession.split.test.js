@@ -27,9 +27,9 @@ const lineCount = (src) => src.split("\n").length - (src.endsWith("\n") ? 1 : 0)
 // hard 1000-line cap. The last change to it got back under by tightening prose
 // written moments earlier, which is not repeatable — the next feature to touch
 // this file fails verification before it starts. It is the fifth extraction
-// out of this file (useSessionLogRecorder, useDraftAnswer, useQuestionPin,
-// useVoiceCues, useCueActions preceded it), and each of those records the same
-// reason in its own header.
+// out of this file (useSessionLogRecorder, useDraftAnswer, the now-retired-
+// and-deleted useQuestionPin, useVoiceCues, useCueActions preceded it), and
+// each of those records the same reason in its own header.
 //
 // WHY THE QUESTION PIPELINE IS THE SEAM. `addQuestion`, `addManualQuestion`,
 // `acceptQuestion`, `evaluateUtterance` and `handleUtterance` are one job —
@@ -56,13 +56,15 @@ describe("useLiveSession.js is under the cap with room to grow (AC-X1)", () => {
   });
 
   it("keeps every extracted module under the cap too", () => {
-    // A split that just moves the problem is not a split.
+    // A split that just moves the problem is not a split. useQuestionPin.js
+    // (a prior extraction out of this same file) is no longer in this list —
+    // the N18 delta review F1 pin retirement deleted it outright, not merely
+    // shrank it.
     for (const name of [
       CALLER,
       EXTRACTED,
       "useCueActions.js",
       "useDraftAnswer.js",
-      "useQuestionPin.js",
       "useVoiceCues.js",
       "useSessionLogRecorder.js",
     ]) {

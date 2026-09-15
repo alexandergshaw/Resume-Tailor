@@ -42,6 +42,7 @@ import { useInterviewType } from "./useInterviewType";
 import { useCodeLanguage } from "./useCodeLanguage";
 import { interviewTypeLabel } from "@/lib/copilot/interviewTypes";
 import { useTypeAnnouncements } from "./useTypeAnnouncements";
+import { confirmRevealLabel, needsDraftOnConfirm, entryById } from "@/lib/copilot/confirmReveal";
 
 // I1: 280px rail + a usable main column needs 824px minimum, so the
 // breakpoint is `md` (900), not `sm`. `noSsr: true` matches useIsMobile/useIsTablet.
@@ -303,9 +304,8 @@ export default function CopilotClient() {
     useLastSampleAt(useCopilotDashboard());
 
   // AC-T1.18/E4: declines (and reports it) when no posting is selected at
-  // all, the same way pinCurrentQuestion declines with no question yet
-  // (AC-T1.14). A posting with no company still opens the panel, which
-  // explains that itself (CompanyBriefPanel's own idle/no-company branch).
+  // all. A posting with no company still opens the panel, which explains
+  // that itself (CompanyBriefPanel's own idle/no-company branch).
   const onCompanyCue = useCallback(() => {
     if (!posting) return false;
     companyBrief.openBrief();
@@ -349,14 +349,26 @@ export default function CopilotClient() {
     // control's disabled state below, replacing a per-render deep clone of
     // the whole log (see this variable's old derivation, removed).
     sessionLogHasEvents,
-    // AC-T1.16..T1.18: the pin/hold surface, read by CopilotDashboard's held
-    // treatment and QuestionFeed's held region.
-    pinnedId,
-    newerQuestionCount: pinnedNewerCount,
-    held,
-    pinCurrentQuestion,
-    unpinQuestion,
-    cueAnnouncement = { text: "" }, // I10: voice-only; defaulted for older mocks.
+    // N18 delta review D5: `cueAnnouncement` (and the `cueText` it fed
+    // useTypeAnnouncements below) is removed entirely. useCueActions.js/
+    // useLiveSession.js have not returned this key at all since the N18
+    // delta review F1 hold/release retirement (see that hook's own doc), so
+    // it was permanently `{ text: "" }` for every caller — the destructure
+    // default that used to sit here was dead weight kept only because
+    // CopilotClient.interviewTypeWiring.test.js pinned the exact source text
+    // `cueText: cueAnnouncement.text`; that test is corrected alongside this
+    // removal, not a blocker to it.
+    // AC-N18.1..N18.12: the confirm gate — computed ONCE inside
+    // useQuestionConfirm.js (via useLiveSession.js) and threaded straight
+    // through as props from here, never re-derived (N18.14; BUG-3/R-121's
+    // "one decision, one place" lesson). `history` is renamed on the way out
+    // to avoid shadowing the DOM global of the same name.
+    current: confirmedCurrent,
+    currentIsSeed,
+    history: confirmedHistory,
+    waiting: confirmedWaiting,
+    confirmNext, // m9: wired below, into WaitingList's own control.
+    confirmQuestion, unconfirmQuestion, // M7: wired below, into the current panel's own undo control.
   } = useLiveSession({
     answerCacheRef,
     draftGenRef,
@@ -377,6 +389,23 @@ export default function CopilotClient() {
     onCurrentEntryRedrafted, // MATERIAL-3: clears the caption below on redraft.
   });
 
+  // AC-N18.9/F-A1/m9: the ONE handler behind every confirm control below —
+  // see confirmReveal.js's needsDraftOnConfirm for the idle-entry draft.
+  const onConfirmQuestion = useCallback(
+    (entry) => {
+      if (!entry) return;
+      confirmQuestion(entry.id);
+      if (needsDraftOnConfirm(entry)) onDraft(entry.id);
+    },
+    [confirmQuestion, onDraft],
+  );
+
+  // m9: wires confirmNext into the waiting list's own "confirm next" action.
+  const onConfirmNextQuestion = useCallback(() => {
+    const id = confirmNext();
+    if (id !== null) onConfirmQuestion(entryById(questions, id));
+  }, [confirmNext, questions, onConfirmQuestion]);
+
   // Headroom extraction (wave 2), NOT a feature: the type-change announcement
   // state (live + practice), the interview-type/code-language subscribers
   // that populate it, and the join that folds it into the consolidated live
@@ -391,7 +420,6 @@ export default function CopilotClient() {
     answerCacheRef,
     draftGenRef,
     setStaleTypeChangeAt,
-    cueText: cueAnnouncement.text,
     briefText: briefLiveText,
   });
 
@@ -465,17 +493,15 @@ export default function CopilotClient() {
   // column needs bounding at all.
   const { liveWrapperRef, liveHeight } = useLiveColumnHeight(live && !isMobile);
 
-  // I10: a click already changes the pin button's `aria-pressed` on its
-  // own, so this never calls announceCue — that stays useLiveSession's job,
-  // fired only for a speech-matched change. "company" opens the same brief
-  // a spoken cue opens (onCompanyCue above).
+  // N18 delta review F1: the "pin"/"unpin" branches this handler used to
+  // carry (and the I10 comment explaining why a hold click never called
+  // announceCue) are retired along with the hold cue itself — "company" is
+  // the only action VOICE_CUES still recognizes (voiceCues.js).
   const onCueActivate = useCallback(
     (action) => {
-      if (action === "pin") pinCurrentQuestion();
-      else if (action === "unpin") unpinQuestion();
-      else if (action === "company") companyBrief.openBrief();
+      if (action === "company") companyBrief.openBrief();
     },
-    [pinCurrentQuestion, unpinQuestion, companyBrief],
+    [companyBrief],
   );
 
   // I11: the brief panel takes over the rail's slot rather than opening beside it (no room for both — I1).
@@ -494,7 +520,6 @@ export default function CopilotClient() {
     <VoiceCueSidebar
       collapsed={railCollapsed}
       onToggleCollapsed={onToggleRailCollapsed}
-      pinned={held}
       onActivate={onCueActivate}
       isEmbedded={isEmbedded}
       hasCompany={hasCompany}
@@ -515,25 +540,18 @@ export default function CopilotClient() {
   // feature's own condition is therefore `questions.length > 0` — there is a
   // question to show.
   //
-  // C-4: `|| held` is redundant in production — questionPin.js:70-79
-  // guarantees that `held` implies `questions.length > 0` (`resolvePin`
-  // returns `held: false` for an empty list, and the only `held: true`
-  // returns, :98 and :139, are downstream of that guard). It is here solely
-  // so CopilotClient.wiring.test.js:243-257 can reach the held branch with
-  // `questions === []`, which it must: it mocks useLiveSession (:126), and
-  // `questions` is this component's own `useState([])` above, passed INTO
-  // the mocked hook, so there is no key its `overrides` spread could set.
-  // That test is the only end-to-end jsdom proof that `held`, `pinnedId`,
-  // `newerQuestionCount` and `onReleasePin` are actually threaded to the
-  // strip. Remove this clause only together with that test's mount strategy.
+  // N18 delta review F1: the `|| held` clause this comment used to document
+  // (C-4) is retired along with the hold cue — `questions.length > 0` alone
+  // is the ordinary mount condition now, exactly what `held` always reduced
+  // to in production.
   //
   // ARCH-stats-in-strip r3 §2.4/§2.6: `|| (live && anyMeasured)` is the
-  // THIRD mount reason — a live session with no question yet still has
+  // SECOND mount reason — a live session with no question yet still has
   // readings worth pinning. `anyMeasured` is an OR, never an AND (filler can
   // measure when pace can't) and never object truthiness (both hooks always
   // return an object, so `!!(pace || fillers)` is a constant `true`).
   const anyMeasured = !!(pace?.measured || fillers?.measured);
-  const mountStrip = questions.length > 0 || held || (live && anyMeasured);
+  const mountStrip = questions.length > 0 || (live && anyMeasured);
   // §2.7: the SAME adjusted objects go to both the strip and CopilotDashboard.
   const { paceForDisplay, fillersForDisplay } = useDeliveryReadings(pace, fillers, lastSampleAt, now);
 
@@ -665,22 +683,18 @@ export default function CopilotClient() {
           />
 
           {/* ARCH-sticky §2.4: the strip mounts only once there is a question to show — see `mountStrip`'s own comment above for the
-              full derivation and for why `|| held` stays. Above the bounded wrapper (not inside it) for the same reason LiveHearingStrip
-              is: a sticky sibling can only occlude what follows it, and SessionSetup/the Start button must never be one of those things.
-              `sessionLive={live}` is the row's OWN gate (§2.4) — never this strip's `live` prop. ARCH-ask-ai: the ask-AI box takes this
-              ternary's ELSE branch, its `pb` restating the strip's own gutter — AskAiBox.js's header has the rest of that reasoning. */}
+              full derivation. Above the bounded wrapper (not inside it) for the same reason LiveHearingStrip is: a sticky sibling can
+              only occlude what follows it, and SessionSetup/the Start button must never be one of those things. `sessionLive={live}` is
+              the row's OWN gate (§2.4) — never this strip's `live` prop. ARCH-ask-ai: the ask-AI box takes this ternary's ELSE branch,
+              its `pb` restating the strip's own gutter — AskAiBox.js's header has the rest of that reasoning. */}
           {mountStrip ? (
             <StickyQuestionStrip
               questions={questions}
-              pinnedId={pinnedId}
-              held={held}
-              live={live}
-              newerQuestionCount={pinnedNewerCount}
-              onReleasePin={unpinQuestion}
+              current={confirmedCurrent}
               pace={paceForDisplay}
               fillers={fillersForDisplay}
               sessionLive={live}
-              statsOnly={!(questions.length > 0 || held)}
+              statsOnly={!(questions.length > 0)}
               applicationId={posting?.id || ""}
               engine={engine}
             />
@@ -832,10 +846,9 @@ export default function CopilotClient() {
                 talking pace. Presentational only (every value is a prop from
                 useCopilotDashboard above); does NOT replace QuestionFeed
                 below, which stays the full question history (AC-I5.30).
-                ARCH-sticky §3.6: the current-question panel itself, and the
-                four props that only it read (held/live/newerQuestionCount/
-                onReleasePin), moved to <StickyQuestionStrip above — this call
-                keeps only what CurrentAnswerPanel/DeliveryPanel still need. */}
+                ARCH-sticky §3.6: the current-question panel itself moved to
+                <StickyQuestionStrip above — this call keeps only what
+                CurrentAnswerPanel/DeliveryPanel still need. */}
             {/* Step 3: flex:1/minHeight:0 lets this claim whatever height is
                 left after the auto-height items above it; overflow:auto is
                 the fallback if even that isn't enough — this scrolls
@@ -860,10 +873,31 @@ export default function CopilotClient() {
               <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", scrollPaddingTop: "var(--sticky-pad, 0px)" }}>
                 <CopilotDashboard
                   questions={questions}
-                  pinnedId={pinnedId}
                   pace={paceForDisplay}
                   fillers={fillersForDisplay}
                   staleTypeChangeAt={staleTypeChangeAt}
+                  // AC-N18.1..N18.14: the confirm gate's resolution, threaded
+                  // straight through (never re-derived here) — full rationale
+                  // for every prop below lives in CopilotDashboard.js's own
+                  // doc comments (CurrentAnswerPanel, WaitingList, HistoryList).
+                  current={confirmedCurrent}
+                  currentIsSeed={currentIsSeed}
+                  history={confirmedHistory}
+                  waiting={confirmedWaiting}
+                  onConfirmQuestion={onConfirmQuestion}
+                  onConfirmNext={onConfirmNextQuestion}
+                  // N18 delta review F5: no separate `answerHidden` prop here
+                  // — CopilotDashboard.js now defaults it to `currentIsSeed`
+                  // above, so passing both was two props carrying one fact.
+                  // N18 delta review F6: reverts m10's entryById(questions, id,
+                  // confirmedCurrent) detour — see CopilotDashboard.js's own
+                  // comment on the reveal button for why the race it claimed
+                  // to fix cannot occur. Confirms `confirmedCurrent` straight,
+                  // the same as every other confirm call site in this file.
+                  onRevealAnswer={confirmedCurrent ? () => onConfirmQuestion(confirmedCurrent) : undefined}
+                  revealLabel={confirmRevealLabel(confirmedCurrent?.status)}
+                  announceHiddenReadiness
+                  onUnconfirm={unconfirmQuestion}
                 />
               </Box>
               {!isRailBelowMd ? (
@@ -894,9 +928,7 @@ export default function CopilotClient() {
             identityProps={identityProps}
             questions={questions}
             onDraft={onDraft}
-            pinnedId={pinnedId}
-            held={held}
-            newerQuestionCount={pinnedNewerCount}
+            current={confirmedCurrent}
           />
         </>
       )}

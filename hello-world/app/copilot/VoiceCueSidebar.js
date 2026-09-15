@@ -3,7 +3,6 @@
 import { useId } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
-import Chip from "@mui/material/Chip";
 import Typography from "@mui/material/Typography";
 import { VOICE_CUES } from "@/lib/copilot/voiceCues";
 import { answerCompanyFactsNotice, companyResearchDestination } from "@/lib/copilot/groundingNotice";
@@ -14,11 +13,12 @@ import { TOUCH_TARGET_SX, WRAP_ROW_SX, BREAK_LONG_WORDS_SX } from "@/app/theme/m
 // every voice cue the live interview screen understands, with a one-click
 // equivalent for each — driven entirely off VOICE_CUES (lib/copilot/voiceCues.js)
 // so a new cue there needs no edit here (AC-T3.1). Purely presentational: the
-// wiring wave supplies `pinned` (whether the hold cue is currently active),
-// `onActivate` (called with a cue's `action` — "pin" | "unpin" | "company" —
-// when its one-click button is pressed), the collapse state, and — since the
-// BL-1 fix — `isEmbedded`/`hasCompany`, the two facts the company-cue
-// destination disclosure below is derived from (see groundingNotice.js).
+// wiring wave supplies `onActivate` (called with a cue's `action` — "company"
+// is the only one VOICE_CUES recognizes since the N18 delta review F1 pin
+// retirement — when its one-click button is pressed), the collapse state,
+// and — since the BL-1 fix — `isEmbedded`/`hasCompany`, the two facts the
+// company-cue destination disclosure below is derived from (see
+// groundingNotice.js).
 //
 // I1: rail width is 280px, and this component does not decide when it sits
 // beside the dashboard versus stacked below it — that's the caller's job
@@ -28,6 +28,27 @@ import { TOUCH_TARGET_SX, WRAP_ROW_SX, BREAK_LONG_WORDS_SX } from "@/app/theme/m
 // force horizontal overflow at 320px, and caps its own width at `md` so it
 // never tries to claim more than the 280px the rail arithmetic allows.
 const RAIL_SX = { width: { xs: "100%", md: 280 }, flexShrink: 0, minWidth: 0 };
+
+// B1 (adversarial delta review): the collapsed rail's one-line summary used
+// to hand-write which verbs a spoken cue understands ("Hold, release, or
+// pull up company research…"), independent of VOICE_CUES itself — so when
+// the hold/release cues were retired from the registry, the SENTENCE never
+// noticed and kept telling a live candidate to say two cues that no longer
+// exist. Deriving the verb list from VOICE_CUES's own `title` (already
+// candidate-facing copy, T3's own contract) is what makes that class of
+// defect structurally impossible: a retired action leaves the registry and
+// this sentence in the same edit, because there is only one place either of
+// them is written down.
+function joinWithOr(items) {
+  if (items.length === 0) return "";
+  if (items.length === 1) return items[0];
+  if (items.length === 2) return `${items[0]} or ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")}, or ${items[items.length - 1]}`;
+}
+
+const CUE_VERB_LIST = joinWithOr(
+  VOICE_CUES.map((cue) => cue.title.charAt(0).toLowerCase() + cue.title.slice(1)),
+);
 
 // I2/SF-6 (adversarial review, mutation harness). Rows, not cards. A card
 // per cue (heading + summary + list + button) measured 166px, so three cues
@@ -84,18 +105,12 @@ const MAX_PHRASES = 3;
 // and each row's own h4 — which, per SF-6 above, now simply IS the button)
 // rather than lexically, and its visible text IS its full accessible name.
 //
-// I5: the hold ("pin") cue's button is not a "Hold"/"Release" label swap —
-// APG's Button pattern, Roselli on dynamic accessible names, and Higley's
-// toggle matrix all agree a control changes its NAME or its STATE, never
-// both at once, because a name that changes under a screen reader mid­
-// session reads as a different control appearing, not the same one
-// changing. So this button's text (cue.title, e.g. "Hold the question")
-// never changes; only `aria-pressed` and the sibling "Currently held" badge
-// (visual + textual, never colour alone — AC-X2) carry the state.
-function isPinCue(cue) {
-  return cue.action === "pin";
-}
-
+// N18 delta review F1, OWNER RULING: the hold ("pin") cue — whose button
+// used to carry a NAME-never-changes/STATE-carries-it contract (I5) via
+// `aria-pressed` and a sibling "Currently held" badge — is fully retired.
+// VOICE_CUES (lib/copilot/voiceCues.js) recognizes only "company" now, so
+// no row this component renders is ever pressed/toggleable.
+//
 // The company cue is the one control on this screen that fires a real
 // outbound network request the instant it activates, with no confirmation
 // step (by design — AC-X3 rules out a confirmation dialog for a
@@ -115,7 +130,7 @@ function isPinCue(cue) {
 // companyResearchDestination (lib/copilot/groundingNotice.js), which is
 // where the honest, engine-by-engine reasoning and its literal-oracle tests
 // live. This component states no fact about the network on its own.
-function CueRow({ cue, pinned, onActivate, companyNotice, availabilityRowNote }) {
+function CueRow({ cue, onActivate, companyNotice, availabilityRowNote }) {
   const titleId = useId();
   // AC-V2.6.1 (accessibility audit): the id the row's degraded-state note
   // renders under, so the note can be the BUTTON's accessible description
@@ -124,7 +139,6 @@ function CueRow({ cue, pinned, onActivate, companyNotice, availabilityRowNote })
   // unconditionally because hooks cannot be called conditionally, and only
   // referenced when there is actually a note to point at.
   const noteId = useId();
-  const pressed = isPinCue(cue) ? pinned : undefined;
   const phrases = cue.phrases.slice(0, MAX_PHRASES);
   return (
     <Box component="li" sx={{ ...ROW_SX, listStyle: "none" }} aria-labelledby={titleId}>
@@ -136,12 +150,11 @@ function CueRow({ cue, pinned, onActivate, companyNotice, availabilityRowNote })
           <Button
             id={titleId}
             size="small"
-            variant={pressed ? "contained" : "outlined"}
-            aria-pressed={pressed}
+            variant="outlined"
             // AC-V2.6.1 (accessibility audit, WCAG 1.3.1): the row note used
             // to be a positional sibling <p> and nothing more — the row's own
             // aria-labelledby points only at this button, so a user tabbing
-            // the rail heard "Release the question, button" with no
+            // the rail heard "Reference the company, button" with no
             // indication that saying it does nothing this session. The state
             // was on the page and not on the control.
             //
@@ -169,17 +182,6 @@ function CueRow({ cue, pinned, onActivate, companyNotice, availabilityRowNote })
             {cue.title}
           </Button>
         </Typography>
-        {/* I6: pressed state carries three signals, none of them colour
-            alone — the border (via variant="outlined"/"contained"), the
-            aria-pressed value, and this text badge. */}
-        {pressed ? (
-          <Chip
-            label="Currently held"
-            size="small"
-            variant="outlined"
-            sx={{ height: 18, fontSize: 10.5, borderColor: "var(--warning)", color: "var(--warning)", flexShrink: 0 }}
-          />
-        ) : null}
       </Box>
       <Typography sx={{ fontSize: "0.78rem", color: "var(--text-secondary)", mt: 0.25, ...BREAK_LONG_WORDS_SX }}>
         {cue.summary}
@@ -284,7 +286,6 @@ const MIC_NOTE_SHORT =
 export default function VoiceCueSidebar({
   collapsed = false,
   onToggleCollapsed,
-  pinned = false,
   onActivate,
   isEmbedded = false,
   hasCompany = false,
@@ -363,8 +364,8 @@ export default function VoiceCueSidebar({
       {collapsed ? (
         <>
           <Typography sx={{ fontSize: "0.78rem", color: "var(--text-secondary)", mt: 0.5, ...BREAK_LONG_WORDS_SX }}>
-            {VOICE_CUES.length} voice cue{VOICE_CUES.length === 1 ? "" : "s"} available. Hold, release, or pull up
-            company research by saying it, or expand this to see how.
+            {VOICE_CUES.length} voice cue{VOICE_CUES.length === 1 ? "" : "s"} available. Say a phrase to{" "}
+            {CUE_VERB_LIST}, or expand this to see how.
           </Typography>
           {companyNotice ? (
             <Typography sx={{ fontSize: "0.7rem", color: "var(--text-secondary)", mt: 0.5, fontStyle: "italic", ...BREAK_LONG_WORDS_SX }}>
@@ -414,7 +415,6 @@ export default function VoiceCueSidebar({
               <CueRow
                 key={cue.id}
                 cue={cue}
-                pinned={pinned}
                 onActivate={onActivate}
                 companyNotice={companyNotice}
                 availabilityRowNote={cueRowNote(cue.action, speakerAttribution, {

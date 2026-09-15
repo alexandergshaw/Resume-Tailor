@@ -49,7 +49,7 @@ const BAND_BASE_DVH = "max(calc(64px + 4.25rem), calc((100dvh - var(--sticky-top
 
 describe("G-2: the relocated question panel carries no live region", () => {
   // This is what LICENSES the conditional mount. The strip is mounted only
-  // once a question exists (live: `questions.length > 0 || held`; practice:
+  // once a question exists (live: `questions.length > 0 || (live && anyMeasured)`; practice:
   // `dashboardQuestions.length > 0`), so it mounts ALREADY CARRYING its
   // final text. A live region that arrives in the DOM with its content
   // already in place announces nothing -- the failure is silent, and it is

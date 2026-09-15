@@ -97,22 +97,34 @@ describe("StickyQuestionStrip: the plain (RealPanel) state", () => {
 });
 
 describe("StickyQuestionStrip: the provisional (AccentPanel) state — [R-166]", () => {
-  it('a provisional entry gets the accent card and its "Unconfirmed" chip', async () => {
+  it('a provisional entry gets the accent card and its "Unverified speaker" chip', async () => {
     // This branch describes a REAL detected utterance of unclear speaker —
     // the opposite uncertainty from a guess about the future — and shares
     // the accent wrapper the (now-removed) prediction panels used. Removing
     // that wrapper along with its other callers would silently take this
     // with it, and the candidate's own speech would then be presented as
     // the interviewer's question with nothing to tell them apart.
+    //
+    // m11: "Unconfirmed" was renamed "Unverified speaker" — N18 uses
+    // "confirm" for the candidate's own explicit acknowledgement (WaitingList's
+    // "Waiting to show"/reveal buttons), and this chip named a different
+    // concept (a provisional SPEAKER attribution), sharing one word on one
+    // screen mid-interview.
     await render({ questions: [entry({ provisional: true })] });
-    expect(text()).toContain("Unconfirmed");
+    expect(text()).toContain("Unverified speaker");
     expect(text()).toContain(QUESTION);
     expect(text()).toContain("Not confirmed as the interviewer");
   });
 });
 
-describe("StickyQuestionStrip: the held (HeldQuestionPanel) state", () => {
-  it("shows the badge, the question, and a release control naming the arrival count", async () => {
+describe("StickyQuestionStrip: the held treatment is retired (M6, owner ruling: confirm replaces the pin)", () => {
+  // panelShells.js's HeldQuestionPanel (the "Held on screen" chip and its
+  // "Release hold" control) is gone — it used to contradict the confirm
+  // gate (AC-N18.2) by showing the PINNED question here while the confirm
+  // gate's own surfaces showed the CONFIRMED one. `held`/`newerQuestionCount`/
+  // `onReleasePin`/`live` are no longer accepted props at all; passing them
+  // is inert, which is exactly the point.
+  it("renders the plain treatment, never the badge or a release control, regardless of held/newerQuestionCount/onReleasePin", async () => {
     await render({
       questions: [entry()],
       pinnedId: "q1",
@@ -120,49 +132,36 @@ describe("StickyQuestionStrip: the held (HeldQuestionPanel) state", () => {
       newerQuestionCount: 2,
       onReleasePin: () => {},
     });
-    expect(text()).toMatch(/held on screen/i);
+    expect(text()).not.toMatch(/held on screen/i);
+    expect([...container.querySelectorAll("button")].some((b) => /release hold/i.test(b.textContent))).toBe(false);
     expect(text()).toContain(QUESTION);
-    const release = [...container.querySelectorAll("button")].find((b) => /release hold/i.test(b.textContent));
-    expect(release).toBeTruthy();
-    expect(release.textContent).toMatch(/2 newer questions/);
+    expect(heading()).toEqual({ level: 3, text: LIVE_COPY.currentQuestionTitle });
   });
 
-  it("says just \"Release hold\" with no count when nothing newer has arrived", async () => {
-    await render({ questions: [entry()], pinnedId: "q1", held: true, newerQuestionCount: 0, onReleasePin: () => {} });
-    const release = [...container.querySelectorAll("button")].find((b) => /release hold/i.test(b.textContent));
-    expect(release.textContent.trim()).toBe("Release hold");
-  });
-
-  it("calls onReleasePin when the release control is clicked", async () => {
-    let released = 0;
-    await render({
-      questions: [entry()],
-      pinnedId: "q1",
-      held: true,
-      newerQuestionCount: 1,
-      onReleasePin: () => {
-        released += 1;
-      },
-    });
-    const release = [...container.querySelectorAll("button")].find((b) => /release hold/i.test(b.textContent));
-    await act(async () => {
-      release.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
-    expect(released).toBe(1);
-  });
-
-  it("swaps the caption once the session is no longer live — Defect 3", async () => {
-    await render({ questions: [entry()], pinnedId: "q1", held: true, live: true });
-    expect(text()).toMatch(/detection and drafting keep running/i);
-
-    await render({ questions: [entry()], pinnedId: "q1", held: true, live: false });
-    expect(text()).toMatch(/this session has ended/i);
-  });
-
-  it("held is checked before provisional — a held AND provisional entry still gets the warning treatment", async () => {
+  it("a held AND provisional entry gets the provisional (AccentPanel) treatment, never a warning treatment", async () => {
     await render({ questions: [entry({ provisional: true })], pinnedId: "q1", held: true, newerQuestionCount: 0 });
-    expect(text()).toMatch(/held on screen/i);
-    expect(text()).not.toContain("Unconfirmed");
+    expect(text()).not.toMatch(/held on screen/i);
+    expect(text()).toContain("Unverified speaker");
+  });
+});
+
+describe("StickyQuestionStrip: the confirm gate's `current` (B2/BUG-3/R-121)", () => {
+  it("shows the passed `current`, not the pinnedId-derived entry, when both are given", async () => {
+    const confirmed = entry({ id: "q2", question: "Why did you leave your last role?" });
+    await render({ questions: [entry(), confirmed], pinnedId: "q1", current: confirmed });
+    expect(text()).toContain("Why did you leave your last role?");
+    expect(text()).not.toContain(QUESTION);
+  });
+
+  it("`current: null` is a real value — it must not fall back to the pinnedId derivation", async () => {
+    await render({ questions: [entry()], pinnedId: "q1", current: null });
+    expect(text()).toContain(LIVE_COPY.noQuestion);
+    expect(text()).not.toContain(QUESTION);
+  });
+
+  it("falls back to the pinnedId-derived entry when `current` is not passed at all (every caller that predates B2, and practice mode)", async () => {
+    await render({ questions: [entry()], pinnedId: "q1" });
+    expect(text()).toContain(QUESTION);
   });
 });
 
@@ -173,12 +172,12 @@ describe("StickyQuestionStrip: practice mode's own wording", () => {
     expect(text()).not.toContain(LIVE_COPY.noQuestion);
   });
 
-  it("practice mode never reaches the held branch — it passes no pinnedId/held at all", async () => {
+  it("practice mode passes neither `pinnedId`/`held` nor `current` — it renders the plain fallback", async () => {
     // PracticeClient.js's own mount site (below) passes only `questions` and
-    // `copy` — `held` defaults to `false` here exactly as it used to default
-    // on CopilotDashboard, which is what keeps practice byte-identical.
+    // `copy`, which is what keeps practice byte-identical to before B2/M6.
     await render({ questions: [entry()], copy: PRACTICE_COPY });
     expect(text()).not.toMatch(/held on screen/i);
+    expect(text()).toContain(QUESTION);
   });
 });
 
@@ -195,20 +194,17 @@ describe("both mount predicates — the strip must not pin the no-question fallb
 
   // ARCH-stats-in-strip r3 §4.1 Guard A. RESTATED for the new predicate, never
   // deleted: this is the only mechanised statement of the anti-occlusion rule
-  // the whole design leans on. The `|| held` disjunct is redundant in
-  // production (questionPin.js:70-79 guarantees held implies
-  // questions.length > 0) and exists solely so
-  // CopilotClient.wiring.test.js:243-257 can reach the held branch with
-  // questions === [] (it mocks useLiveSession, and `questions` is this
-  // component's own useState([]) rather than a hook field) — see the
-  // `mountStrip` declaration's own comment in CopilotClient.js.
-  it("live: mountStrip is `questions.length > 0 || held || (live && anyMeasured)` (A1)", () => {
+  // the whole design leans on. N18 delta review F1, OWNER RULING: the
+  // `|| held` disjunct this comment used to document is retired along with
+  // the hold cue itself (questionPin.js/useQuestionPin.js are deleted) —
+  // `questions.length > 0` alone is the ordinary mount condition now.
+  it("live: mountStrip is `questions.length > 0 || (live && anyMeasured)` (A1)", () => {
     // A1 is the SHAPE pin and is formatting-brittle by design; A2 below states
     // the same rule independently of formatting. Both are kept: A1 catches a
     // reordered or re-spelled predicate that A2's substring test would let
     // through, A2 survives a Prettier wrap that A1 would not.
     expect(CLIENT_SOURCE).toMatch(
-      /const mountStrip = questions\.length > 0 \|\| held \|\| \(live && anyMeasured\);/,
+      /const mountStrip = questions\.length > 0 \|\| \(live && anyMeasured\);/,
     );
   });
 
@@ -289,10 +285,9 @@ describe("both mount predicates — the strip must not pin the no-question fallb
   });
 
   it("practice: the mount site passes sessionLive={running} and statsOnly (B3 / AC 44)", () => {
-    // NOT the strip's existing `live` prop: it defaults to `true`, practice
-    // never passes it, and it drives HeldQuestionPanel's caption
-    // (pinned at :154-160 above). Reusing it here would make the row survive
-    // Stop in practice mode — row 5's harm through the back door. And
+    // `sessionLive`, a dedicated prop — reusing the strip's own (now-retired,
+    // M6) `live` prop here would make the row survive Stop in practice mode
+    // — row 5's harm through the back door. And
     // practice's capture stops BETWEEN answers
     // (usePracticeCaptureSession.js:121, :145), so `running` is also what
     // makes the row disappear between answers, which §2.8 point 3 rules
@@ -802,9 +797,10 @@ describe("the stats row: geometry, the truth table, and the two new props", () =
 
   it("the question panel's condition is !statsOnly, not `pinnedQuestionEntry returned something`", async () => {
     // pinnedQuestionEntry (currentQuestion.js:79-86) returns null for an empty
-    // list via latestQuestionEntry (:56-63), and `held: true` with
-    // `questions: []` is a real, test-exercised path — CopilotClient.js:520-527
-    // explains why the `|| held` disjunct exists at all. Gating the panel on
+    // list via latestQuestionEntry (:56-63). This case used to be reached via
+    // `held: true` with `questions: []`, through a `|| held` mount disjunct
+    // that N18 retired; practice mode still reaches it legitimately, which is
+    // why the panel's condition still matters. Gating the panel on
     // `current` would silently delete the noQuestion fallback in three shipped
     // tests, which is a behaviour change wearing a refactor's clothes.
     await mountWith(HOSTED, {

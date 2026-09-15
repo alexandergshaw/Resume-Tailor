@@ -6,18 +6,23 @@ import { VOICE_CUES, matchVoiceCue } from "./voiceCues.js";
 // is about OBSERVABLE behaviour: what a spoken utterance matches, not how the
 // matcher is built.
 //
-// Three of the amendments are worth stating up front, because they are what
-// the first version failed to pin:
+// N18 delta review F1, OWNER RULING: the "hold" ("pin") and "release"
+// ("unpin") cues and every test that exercised them ONLY (the hold/release
+// phrase lists, and the two-distinct-actions ambiguity cases, which needed a
+// second action to exist at all) are gone along with the registry entries —
+// see voiceCues.js's own module doc. Company remains, and every mechanism
+// test below (last-occurrence indexing, case/whitespace tolerance, repeat
+// calls being independent) is re-pointed at company phrases so the
+// underlying matcher machinery — which did not change — stays covered.
+//
+// Two amendments from that review are still worth stating up front, because
+// they are what the first version of this file failed to pin and remain true
+// of a one-action registry:
 //   - `matchedAt` is pinned to an EXACT index. Comparing it across two
 //     different inputs was satisfied by returning `text.length`.
 //   - `Object.isFrozen(VOICE_CUES)` is shallow. Emptying
 //     `VOICE_CUES[0].patterns` left the registry "frozen" and silently
-//     disabled the pin cue entirely.
-//   - An utterance carrying two DIFFERENT intents is ambiguous, not
-//     last-wins. Provider finals arrive every few seconds, so one frame
-//     holding both a pin and an unpin cue is far more likely to be narrative
-//     speech ("Good question. So, moving on from the monolith, we...") than
-//     sequential intent.
+//     disabled the company cue entirely.
 // The negative-control block at the bottom is load-bearing — a matcher that
 // says yes to everything passes every positive case in this file.
 
@@ -27,7 +32,7 @@ describe("VOICE_CUES registry (AC-T1.1)", () => {
   it("has exactly one entry per action, in the pinned order", () => {
     // Order is not decoration: it is matchVoiceCue's tie-break (AC-T1.2) and
     // the order the sidebar teaches the cues in (AC-T3.1).
-    expect(VOICE_CUES.map((c) => c.action)).toEqual(["pin", "unpin", "company"]);
+    expect(VOICE_CUES.map((c) => c.action)).toEqual(["company"]);
   });
 
   it("gives every cue an id, a title, a summary, example phrases and patterns", () => {
@@ -71,7 +76,7 @@ describe("VOICE_CUES registry (AC-T1.1)", () => {
   });
 
   // F7: the shallow version of this check was demonstrated green against a
-  // registry whose pin patterns had been emptied at runtime.
+  // registry whose patterns had been emptied at runtime.
   it("is frozen all the way down, not just at the top level", () => {
     expect(Object.isFrozen(VOICE_CUES)).toBe(true);
     for (const cue of VOICE_CUES) {
@@ -80,94 +85,6 @@ describe("VOICE_CUES registry (AC-T1.1)", () => {
       expect(Object.isFrozen(cue.patterns), `${cue.id} patterns`).toBe(true);
     }
   });
-});
-
-// AC-T1.5/6/7, REDESIGNED against two constraints the user stated directly:
-// a cue must sound NATURAL said out loud in a real interview, and it must be
-// something only the CANDIDATE would say. The second constraint is the one
-// with teeth: the copilot listens on a microphone, and on two of the three
-// sources an interviewer's voice can reach that microphone, so any phrase an
-// interviewer might plausibly utter is a phrase the interviewer can use to
-// drive the candidate's own dashboard.
-//
-// Cut for being INTERVIEWER speech: "hold that thought" (what an interviewer
-// says to interrupt you), "give me a second" ("give me a second, let me pull
-// up your resume"), "let's move on", "moving on" and "next question" — the
-// last three all already appear in questions.js's LEAD_IN_RE as interviewer
-// lead-ins, which is this codebase's own evidence about who says them.
-//
-// Cut for being UNNATURAL: "unpin", "pull up the company", "bring up the
-// company", "show me the company", "remind me about this company", "what do
-// we know about them". Those are commands addressed to an app. Nobody says
-// them in a job interview, and a cue nobody will say is a cue that does not
-// exist.
-//
-// The replacements lean on DIRECTION, which is what makes a phrase belong to
-// one speaker: an interviewer says "walk me through", a candidate says "let
-// me walk you through".
-
-describe("matchVoiceCue — hold cues, all candidate speech (AC-T1.5)", () => {
-  const pins = [
-    // The "good question" family. Kept at the user's explicit request, and
-    // the one cue here with a known residual: an interviewer does say "good
-    // question" when the CANDIDATE asks one, usually near the end. A false
-    // hold is one click to undo, and the in-person identity gate plus the
-    // tab/system channel separation cover most of the exposure.
-    "Good question.",
-    "Great question!",
-    "That's a great question.",
-    "That’s a really good question, so let me start with context.",
-    "Thats a good question",
-    "That is a very interesting question.",
-    "What a great question.",
-    "Ooh, tough question.",
-    "That's a fair question, I think.",
-    "Excellent question, thank you.",
-    // Stalls and openers only the person ANSWERING says.
-    "Let me think.",
-    "Let me think about that for a moment.",
-    "Um, let me think for a second here.",
-    "Let me take a step back.",
-    "So let me take a step back here.",
-    "Let me give you an example.",
-    "Let me give you a concrete example of that.",
-    "Let me walk you through it.",
-    "Let me walk you through how we approached that.",
-    "Off the top of my head, we ran about forty services.",
-  ];
-  for (const utterance of pins) {
-    it(`holds on "${utterance}"`, () => {
-      expect(actionOf(utterance)).toBe("pin");
-    });
-  }
-});
-
-describe("matchVoiceCue — release cues, all candidate speech (AC-T1.6)", () => {
-  // Every one of these is something said by the person who has just FINISHED
-  // answering, handing the conversation back. An interviewer says none of
-  // them.
-  // Deliberately a SHORT list. Three phrases survived the adversarial pass;
-  // three others were cut because a real interviewer says them too, and a
-  // release is the asymmetrically expensive misfire: an interviewer who
-  // accidentally triggers a HOLD merely holds the question you are already
-  // on, but an interviewer who accidentally triggers a RELEASE yanks away a
-  // hold you set deliberately, mid-answer. Strict here, tolerant on hold.
-  const unpins = [
-    "Does that answer your question?",
-    "Does that answer the question?",
-    "I hope that answers it.",
-    "Hope that answers your question.",
-    // Only the person who was ASKED a question describes how they would
-    // approach it. An interviewer has no answer of their own to close.
-    "That's how I'd approach it.",
-    "That's how I would approach it.",
-    "So that's how I'd approach it, anyway.",
-  ];
-  for (const utterance of unpins) {
-    it(`releases on "${utterance}"`, () => {
-      expect(actionOf(utterance)).toBe("unpin");
-    });
-  }
 });
 
 describe("matchVoiceCue — company cues, all candidate speech (AC-T1.7)", () => {
@@ -210,9 +127,9 @@ describe("matchVoiceCue — company cues, all candidate speech (AC-T1.7)", () =>
 });
 
 describe("matchVoiceCue — phrases the INTERVIEWER says must never fire", () => {
-  // The user's constraint, stated as a test. Each of these was a shipped cue
-  // in the previous vocabulary; each is now a hard negative control, because
-  // an interviewer saying it must never drive the candidate's dashboard.
+  // The user's constraint, stated as a test. Every one of these — including
+  // the ones shaped like the now-retired hold/release phrases — must never
+  // drive the candidate's dashboard.
   const interviewerSpeech = [
     "Hold that thought.",
     "Hold that thought, I want to come back to it.",
@@ -224,31 +141,26 @@ describe("matchVoiceCue — phrases the INTERVIEWER says must never fire", () =>
     "Moving on.",
     "Next question.",
     "Alright, next question for you.",
-    // The mirror of a candidate cue. "walk me through" is the interviewer's
-    // direction; "let me walk you through" is the candidate's. If the
-    // pronouns ever stop doing that work, this goes red.
     "Walk me through your experience with distributed systems.",
     "Tell me about a time you disagreed with your manager.",
-    // Cut from the release vocabulary after an adversarial pass produced a
-    // natural interviewer utterance for each. "back to you" is the sharpest:
-    // it has no pronoun asymmetry at all, and an interviewer saying it is
-    // OPENING a question, the exact opposite of a candidate signing off.
     "Okay, back to you, tell me about your experience.",
     "Back to you.",
     "We're happy to go deeper on comp later if you'd like.",
     "Let me know if you want more detail on the comp package.",
-    // Cut in a later round for the same reason: interviewers condense the
-    // role, the comp and the process constantly, and this is the phrase they
-    // use to signal "I am summarizing, ask if you want more".
     "That's the short version of how our team is structured.",
     "That's the short version, we can go deeper in a follow up call.",
-    // An interviewer AGREEING with an approach the candidate just described,
-    // peer to peer. The tell is the trailing "too" / "as well": someone
-    // closing their OWN answer never appends it, because there is nothing yet
-    // to agree with. That trailing word is the whole guard.
     "If I were in your seat, that's how I'd approach it too.",
     "That's how I would approach it as well, for what it's worth.",
     "Honestly, that's how I'd approach it too.",
+    // Retired hold/release phrasing — kept as negative controls now that
+    // neither action exists, so a future re-add cannot silently reuse this
+    // exact wording without a test noticing.
+    "Good question.",
+    "That's a great question.",
+    "Let me think about that for a moment.",
+    "Does that answer your question?",
+    "I hope that answers it.",
+    "That's how I'd approach it.",
   ];
   for (const utterance of interviewerSpeech) {
     it(`stays silent on "${utterance}"`, () => {
@@ -257,32 +169,23 @@ describe("matchVoiceCue — phrases the INTERVIEWER says must never fire", () =>
   }
 });
 
-describe("matchVoiceCue — two intents in one utterance are ambiguous (AC-T1.2.1)", () => {
-  // The caller must not act on these. `action` still names the last-matching
-  // cue so the session log can say what was heard.
-  it("flags a hold and a release in the same utterance", () => {
-    const hit = matchVoiceCue("Good question. So we cut latency by a third. Does that answer your question?");
-    expect(hit.ambiguous).toBe(true);
-    expect([...hit.actions].sort()).toEqual(["pin", "unpin"]);
-  });
-
-  it("flags a hold and a company cue in the same utterance", () => {
-    const hit = matchVoiceCue("Good question. I was reading about the company recently.");
-    expect(hit.ambiguous).toBe(true);
-    expect([...hit.actions].sort()).toEqual(["company", "pin"]);
-  });
-
+describe("matchVoiceCue — a single cue is never flagged ambiguous (AC-T1.2.1)", () => {
+  // The two-DIFFERENT-actions ambiguity cases this block used to carry
+  // needed a second action to exist at all (a hold plus a release, or a hold
+  // plus a company cue) — see voiceCues.js's own module doc for why that
+  // mechanism stays in matchVoiceCue unchanged even though it cannot be
+  // exercised by any real utterance today. What remains coverable is the
+  // same-action case: repeating one cue's phrase must still resolve, not
+  // read as two intents.
   it("does NOT flag an utterance that only repeats the SAME intent", () => {
-    // Two matches, one action. This must stay actionable — a candidate saying
-    // "Good question, really good question" means one thing.
-    const hit = matchVoiceCue("Good question, that's a really good question.");
+    const hit = matchVoiceCue("I was reading about the company recently. I was reading about the company recently.");
     expect(hit.ambiguous).toBe(false);
-    expect([...hit.actions]).toEqual(["pin"]);
-    expect(hit.action).toBe("pin");
+    expect([...hit.actions]).toEqual(["company"]);
+    expect(hit.action).toBe("company");
   });
 
   it("does not flag a single-cue utterance", () => {
-    expect(matchVoiceCue("Let me think about that.").ambiguous).toBe(false);
+    expect(matchVoiceCue("Tell me more about the company.").ambiguous).toBe(false);
   });
 });
 
@@ -291,39 +194,38 @@ describe("matchVoiceCue — the last occurrence is what matchedAt reports (AC-T1
   // returning `text.length`. These pin exact indices into the NORMALIZED text
   // (lowercased, whitespace collapsed — see normalizeQuestion).
   it("reports the exact index of the match", () => {
-    // "okay. good question." -> "good" begins at index 6.
-    expect(matchVoiceCue("Okay. Good question.").matchedAt).toBe(6);
+    const prefix = "okay. ";
+    expect(matchVoiceCue(`${prefix}tell me more about the company.`).matchedAt).toBe(prefix.length);
   });
 
   it("reports the LAST occurrence when a cue repeats", () => {
-    // "good question. really, good question."
-    //  ^0                     ^23
     // Same action twice, so this is deliberately NOT ambiguous — it isolates
     // the last-occurrence rule from the two-intents rule.
-    const hit = matchVoiceCue("Good question. Really, good question.");
-    expect(hit.matchedAt).toBe(23);
-    expect(hit.action).toBe("pin");
+    const prefix = "tell me more about the company. really, ";
+    const hit = matchVoiceCue(`${prefix}tell me more about the company.`);
+    expect(hit.matchedAt).toBe(prefix.length);
+    expect(hit.action).toBe("company");
     expect(hit.ambiguous).toBe(false);
   });
 
   it("names the cue it matched, not just the action", () => {
-    const hit = matchVoiceCue("Let me think about that.");
+    const hit = matchVoiceCue("Tell me more about the company.");
     expect(VOICE_CUES.some((c) => c.id === hit.id && c.action === hit.action)).toBe(true);
   });
 });
 
 describe("matchVoiceCue — position and formatting tolerance (AC-T1.3)", () => {
   it("matches a cue in the middle of an utterance", () => {
-    expect(actionOf("So, yeah, good question, I would start by scoping it.")).toBe("pin");
+    expect(actionOf("So, yeah, I was reading about the company recently, out of curiosity.")).toBe("company");
   });
 
   it("matches regardless of case", () => {
-    expect(actionOf("GOOD QUESTION")).toBe("pin");
-    expect(actionOf("good question")).toBe("pin");
+    expect(actionOf("TELL ME MORE ABOUT THE COMPANY")).toBe("company");
+    expect(actionOf("tell me more about the company")).toBe("company");
   });
 
   it("matches across a run of whitespace and a line break", () => {
-    expect(actionOf("that's   a  great\nquestion")).toBe("pin");
+    expect(actionOf("tell   me  more\nabout the company")).toBe("company");
   });
 
   it("matches with either apostrophe or none", () => {
@@ -379,15 +281,14 @@ describe("matchVoiceCue — repeat calls are independent (AC-T1.2)", () => {
   // same input. This asserts the symptom rather than the flag.
   it("gives the same answer for the same utterance every time", () => {
     for (let i = 0; i < 5; i += 1) {
-      expect(actionOf("That's a great question.")).toBe("pin");
-      expect(actionOf("Does that answer your question?")).toBe("unpin");
       expect(actionOf("I was reading about the company recently.")).toBe("company");
+      expect(actionOf("Tell me more about the company.")).toBe("company");
     }
   });
 
   it("reports the same matchedAt every time", () => {
-    const first = matchVoiceCue("Okay. Good question.").matchedAt;
-    const second = matchVoiceCue("Okay. Good question.").matchedAt;
+    const first = matchVoiceCue("Okay. Tell me more about the company.").matchedAt;
+    const second = matchVoiceCue("Okay. Tell me more about the company.").matchedAt;
     expect(second).toBe(first);
   });
 });

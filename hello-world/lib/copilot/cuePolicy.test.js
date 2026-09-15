@@ -7,6 +7,11 @@ import {
   cueAvailabilityNotice,
   cueRowNote,
 } from "./cuePolicy";
+// N18 delta review D1: the REAL registry, so the notice can be checked
+// against what it actually names rather than a hand-copied string — the
+// same anti-drift reason every other consumer of VOICE_CUES reads it
+// directly instead of restating its contents.
+import { VOICE_CUES } from "./voiceCues";
 
 // AC-V2. The policy that decides whether a spoken cue may act, extracted out
 // of app/copilot/useVoiceCues.js so it can be exercised at all and so its two
@@ -279,21 +284,23 @@ describe("qualifiesForCue — every other attribution state is untouched (AC-V2.
 });
 
 describe("resolveCueAction (AC-V2.3)", () => {
-  const pin = { id: "pin-question", action: "pin", ambiguous: false };
   const unpin = { id: "unpin-question", action: "unpin", ambiguous: false };
   const company = { id: "company-brief", action: "company", ambiguous: false };
+  // N18 delta review D4: a synthetic action this registry has never shipped
+  // — never "pin" or "unpin" — used below in place of them wherever the
+  // point of the test is that the policy behaves the same for EVERY action,
+  // not that it still remembers a retired one's name. A real retired name
+  // would only prove the old `pin` bypass (removed below) is gone; an action
+  // that never existed is what actually generalises the claim.
+  const other = { id: "other-cue", action: "other", ambiguous: false };
 
-  it("lets a hold through when nobody can tell voices apart", () => {
-    expect(
-      resolveCueAction({ match: pin, speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE }),
-    ).toEqual({ act: "pin", ignoredReason: null });
-  });
-
-  it("refuses release and company in that state, each with a reason that names the cause", () => {
-    // The cost is not symmetric. A hold the interviewer accidentally triggers
-    // is the question the candidate is already reading and expires on its
-    // own; a release they accidentally trigger takes away a deliberate hold
-    // mid-answer, and a company match spends a real outbound request.
+  it("refuses unpin and company when nobody can tell voices apart, each with a reason that names the cause", () => {
+    // N18 delta review D4: the old asymmetry ("a false hold is cheap, so pin
+    // alone passes") is gone along with the hold/release cues themselves —
+    // see resolveCueAction's own comment for why the exemption was removed
+    // rather than left unreachable. Every action is refused here now,
+    // `other` (below) included; `unpin` and `company` stay as the two named
+    // causes AC-V2.4's distinctness test cares about.
     for (const match of [unpin, company]) {
       expect(
         resolveCueAction({ match, speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE }),
@@ -304,8 +311,17 @@ describe("resolveCueAction (AC-V2.3)", () => {
     }
   });
 
-  it("allows all three when attribution is active", () => {
-    for (const match of [pin, unpin, company]) {
+  it("refuses an unrecognized action too, while attribution is unavailable — no name is exempt (D4)", () => {
+    expect(
+      resolveCueAction({ match: other, speakerAttribution: SPEAKER_ATTRIBUTION.UNAVAILABLE }),
+    ).toEqual({
+      act: null,
+      ignoredReason: CUE_IGNORED_REASONS.ATTRIBUTION_UNAVAILABLE,
+    });
+  });
+
+  it("allows every action when attribution is active", () => {
+    for (const match of [other, company]) {
       expect(
         resolveCueAction({ match, speakerAttribution: SPEAKER_ATTRIBUTION.ACTIVE }),
       ).toEqual({ act: match.action, ignoredReason: null });
@@ -337,26 +353,22 @@ describe("resolveCueAction (AC-V2.3)", () => {
   it("gives every refusal a distinct reason", () => {
     // AC-V2.4. A live region and a diagnostic log both go silent when two
     // states share a string — React does not re-announce unchanged text, and
-    // a log with one reason for four causes cannot answer "why did nothing
-    // happen when I said the phrase", which is the entire question this
-    // session's log could not answer.
+    // a log with one reason standing for two different causes cannot answer
+    // "why did nothing happen when I said the phrase", which is the entire
+    // question this session's log exists to answer.
+    //
+    // N18 delta review D7: NOTHING_HELD and NO_QUESTION used to be checked
+    // here by name, alongside this same generic loop — both named a
+    // hold/release refusal, and both are removed from CUE_IGNORED_REASONS
+    // now that neither cue exists (cuePolicy.js's own comment on the
+    // enumeration explains why keeping them was itself a defect). The
+    // generic checks below are what is left, and they still hold for every
+    // reason this module currently produces.
     const reasons = Object.values(CUE_IGNORED_REASONS);
     expect(new Set(reasons).size).toBe(reasons.length);
     for (const reason of reasons) {
       expect(reason.trim()).not.toBe("");
     }
-    // Named individually, not just counted: the loop above passes whether or
-    // not a given cause has a reason at all, so a missing member is exactly
-    // the failure it cannot see. NOTHING_HELD is the one that was missing —
-    // a matched RELEASE with no question held fell through to nothing and
-    // logged only `cue.matched`, leaving the session log unable to answer
-    // "why did nothing happen when I said the phrase" for that one case,
-    // which is the whole of AC-V2.4. NO_QUESTION is its mirror on the pin
-    // side and has always been logged; the two are separate causes ("there
-    // is no question to hold" vs "no question is being held") and must read
-    // as separate causes.
-    expect(CUE_IGNORED_REASONS.NOTHING_HELD).toBeTruthy();
-    expect(CUE_IGNORED_REASONS.NOTHING_HELD).not.toBe(CUE_IGNORED_REASONS.NO_QUESTION);
   });
 });
 
@@ -379,6 +391,37 @@ describe("the sidebar states the policy rather than restating it (AC-V2.6)", () 
     expect(notice.trim()).not.toBe("");
     // Stated as a real sentence a person can act on, not a status token.
     expect(notice).toMatch(/[.!]$/);
+  });
+
+  // N18 delta review D1: every assertion above this one is a SHAPE check
+  // (ends in punctuation, matches "below"/"expand", matches "can't tell
+  // voices apart") — none of them can see WHICH cue the sentence names, so
+  // restoring the pre-B2 claim ("only holding a question works from a
+  // spoken cue — it still works, but only from its button") left the whole
+  // suite green. Checked against the REAL registry, not a hand-copied
+  // string, so a future cue addition or rename keeps this test correct with
+  // no edit here — the same anti-drift reason VOICE_CUES-derived copy exists
+  // everywhere else in this feature.
+  it("names every registry cue's own verb, and never a retired action's (D1)", () => {
+    for (const notice of [
+      cueAvailabilityNotice(SPEAKER_ATTRIBUTION.UNAVAILABLE, { collapsed: true }),
+      cueAvailabilityNotice(SPEAKER_ATTRIBUTION.UNAVAILABLE, { collapsed: false }),
+    ]) {
+      for (const cue of VOICE_CUES) {
+        // Stemmed, not exact: cuePolicy.js's prose says "referencing" where
+        // VOICE_CUES's own title reads "Reference" — a bare-word match would
+        // fail the very sentence this test exists to protect.
+        const [verb, ...rest] = cue.title.split(" ");
+        const stem = verb.slice(0, -1); // drop the trailing vowel "-ing" replaces
+        expect(notice).toMatch(new RegExp(`\\b${stem}\\w*\\b`, "i"));
+        if (rest.length) expect(notice.toLowerCase()).toContain(rest.join(" ").toLowerCase());
+      }
+      // The retired cues' own verbs, stemmed the same way "holding" and
+      // "releasing" would need to be caught: a mutant that restores either
+      // as "the one that works from a spoken cue" must die here even though
+      // it also ends in punctuation and mentions "can't tell voices apart".
+      expect(notice).not.toMatch(/\b(hold|releas|unpin|pin)\w*\b/i);
+    }
   });
 
   // AC-V2.6.2 / C4 (accessibility audit). WCAG 3.3.2 Labels or Instructions:
@@ -417,9 +460,11 @@ describe("the sidebar states the policy rather than restating it (AC-V2.6)", () 
     });
 
     it("says the same thing about WHICH cues work, whichever rail state it is in", () => {
-      // Only the "how to reach them" clause differs. The fact being disclosed
-      // — this provider cannot tell voices apart, so hold is the only spoken
-      // cue — must not become two different claims.
+      // Only the "how to reach it" clause differs. The fact being disclosed
+      // — this provider cannot tell voices apart, so the one cue this rail
+      // ships is button-only, full stop, with nothing left that works from a
+      // spoken cue in this state (N18 delta review B2) — must not become two
+      // different claims.
       const collapsed = cueAvailabilityNotice(SPEAKER_ATTRIBUTION.UNAVAILABLE, { collapsed: true });
       const expanded = cueAvailabilityNotice(SPEAKER_ATTRIBUTION.UNAVAILABLE, { collapsed: false });
       expect(collapsed).not.toBe(expanded);
@@ -447,8 +492,11 @@ describe("the sidebar states the policy rather than restating it (AC-V2.6)", () 
     // own sentence, someone widening resolveCueAction leaves the panel
     // telling the user release is unavailable when it works, or worse, that
     // it works when it does not. Both consumers read the same module.
+    //
+    // N18 delta review D4: the `pin` exemption this used to check (a row
+    // carrying no note for that one action name) is removed along with the
+    // exemption itself — see cueRowNote's own comment.
     const state = SPEAKER_ATTRIBUTION.UNAVAILABLE;
-    expect(cueRowNote("pin", state)).toBe("");
     expect(cueRowNote("unpin", state).trim()).not.toBe("");
     expect(cueRowNote("company", state).trim()).not.toBe("");
   });
@@ -456,8 +504,12 @@ describe("the sidebar states the policy rather than restating it (AC-V2.6)", () 
   it("agrees with resolveCueAction for every action in every state", () => {
     // The anti-drift assertion, exhaustive in both directions rather than a
     // spot check: a row carries a note if and only if the policy refuses it.
+    // N18 delta review D4: "pin"/"unpin" dropped from this loop in favor of
+    // one synthetic, never-shipped action name ("other") — a retired name
+    // would only prove the removed exemption stays gone; an action that
+    // never existed is what actually generalises the claim to every name.
     for (const speakerAttribution of Object.values(SPEAKER_ATTRIBUTION)) {
-      for (const action of ["pin", "unpin", "company"]) {
+      for (const action of ["other", "company"]) {
         const { act } = resolveCueAction({
           match: { action, ambiguous: false },
           speakerAttribution,

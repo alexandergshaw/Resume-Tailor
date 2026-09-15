@@ -630,7 +630,7 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // entry point ships (claimPrepPack, writePrepPackResult and the rest are
     // reachable from route.js) and these five are what its own suites pin
     // directly instead of driving them only through the shipping surface.
-    expect(TEST_REFERENCED.length).toBe(355);
+    expect(TEST_REFERENCED.length).toBe(356);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
@@ -685,7 +685,38 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // moving the same direction is expected here, not a red flag on its own --
     // the split assertion just above is what would catch a feature built and
     // never wired, and neither half of IP3's total came from a bucket move.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(426);
+    // 426 -> 427, the orphan half unmoved -- but that total was previously
+    // recorded here as a single clean +1 (only newerQuestionCount moving),
+    // and that comment was itself wrong (M2, fresh delta review): it is a
+    // net of TWO arrivals and ONE departure, not one arrival alone. All
+    // three, by name:
+    //   => lib/copilot/cuePolicy.js#effectiveAttribution (IN, undocumented
+    //      until now): its own suite, cuePolicy.effective.test.js, is the
+    //      ONLY static importer anywhere in the tree -- every production
+    //      call (qualifiesForCue, resolveCueAction, cueAvailabilityNotice,
+    //      cueRowNote) is internal to cuePolicy.js itself, so rule TR-1's
+    //      bucket is exactly where this belongs: reachable in practice
+    //      through its own module, but not imported BY NAME from any
+    //      shipping module.
+    //   => lib/copilot/currentQuestion.js#newerQuestionCount (IN, as
+    //      before): the N18 delta review F1 pin retirement deleted
+    //      lib/copilot/questionPin.js and app/copilot/useQuestionPin.js
+    //      outright, and that deletion was the sole shipping importer of
+    //      this export -- currentQuestion.test.js already imported it
+    //      directly, so losing its production caller moved it from
+    //      "reachable" into rule TR-1's bucket rather than into
+    //      ORPHAN_EXPORTS.
+    //   <= lib/copilot/questionPin.js#PIN_SUPERSEDED_MAX_MS (OUT): the SAME
+    //      deletion did not merely leave this bucket unaffected, as the
+    //      previous comment claimed ("their own exports leave the graph
+    //      entirely, not this bucket") -- this export WAS already counted
+    //      inside it (rule TR-1's own shape: a test-only constant on a
+    //      module with a real shipping entry point), so deleting the whole
+    //      module removed it from the graph AND from this bucket. Its
+    //      departure is what masked effectiveAttribution's arrival: +2/-1
+    //      nets to the same +1 the old comment described, by coincidence,
+    //      not by the reasoning it gave.
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(427);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

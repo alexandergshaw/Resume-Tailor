@@ -152,8 +152,6 @@ function baseLiveSessionReturn(overrides = {}) {
     pinnedId: null,
     newerQuestionCount: 0,
     held: false,
-    pinCurrentQuestion: vi.fn(),
-    unpinQuestion: vi.fn(),
     cueAnnouncement: { text: "", nonce: 0 },
     ...overrides,
   };
@@ -232,48 +230,33 @@ describe("CopilotClient wiring — the voice-cue sidebar renders (AC-G1)", () =>
   });
 });
 
-describe("CopilotClient wiring — the held badge and release control (AC-T1.16/AC-G1)", () => {
-  it("renders neither the badge nor a release control while not held", async () => {
-    liveSessionReturn = baseLiveSessionReturn({ held: false });
-    await render();
-    expect(container.textContent).not.toMatch(/held on screen/i);
-    expect([...container.querySelectorAll("button")].some((b) => /release hold/i.test(b.textContent))).toBe(false);
-  });
-
-  it("renders the badge and a release control naming the arrival count while held", async () => {
+describe("CopilotClient wiring — the held badge and release control are retired (M6, owner ruling: confirm replaces the pin)", () => {
+  // The strip's own held/release treatment (panelShells.js's
+  // HeldQuestionPanel, reached via CurrentQuestionPanel.js) is gone: it used
+  // to contradict the confirm gate (AC-N18.2) by showing the PINNED question
+  // while the confirm-gate-driven surfaces showed the CONFIRMED one. Asserted
+  // with `held: true` specifically — the interesting case, since it proves
+  // retirement rather than merely the default-false state never having shown
+  // anything. Scoped to the visible MUI Chip and the release BUTTON — both
+  // unique to the retired panel — rather than a bare `/held on screen/i`
+  // page-text check, which would also match QuestionFeed's own, separate,
+  // still-shipping aria-live announcement (I9) for a hold's arrival count.
+  it("never renders a held badge or a release control, even while a hold is still active internally", async () => {
     liveSessionReturn = baseLiveSessionReturn({ held: true, pinnedId: 1, newerQuestionCount: 2 });
     await render();
-    expect(container.textContent).toMatch(/held on screen/i);
-    const release = [...container.querySelectorAll("button")].find((b) => /release hold/i.test(b.textContent));
-    expect(release).toBeTruthy();
-    expect(release.textContent).toMatch(/2/);
-    // I6: colour is never the only carrier — the release control is a real,
-    // clickable button (not a static badge), reachable by keyboard.
-    expect(release.disabled).toBe(false);
-    await act(async () => {
-      release.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true }));
-    });
-    expect(liveSessionReturn.unpinQuestion).toHaveBeenCalledTimes(1);
+    expect(
+      [...container.querySelectorAll(".MuiChip-label")].some((el) => /held on screen/i.test(el.textContent)),
+    ).toBe(false);
+    expect([...container.querySelectorAll("button")].some((b) => /release hold/i.test(b.textContent))).toBe(false);
   });
 });
 
-describe("CopilotClient wiring — QuestionFeed's aria-busy flips with the hold (AC-T1.16/I9)", () => {
-  it("carries no aria-busy region while not held", async () => {
-    liveSessionReturn = baseLiveSessionReturn({ held: false });
-    await render();
-    expect(container.querySelector('[aria-busy="true"]')).toBeNull();
-  });
-
-  it("carries aria-busy=true somewhere in the feed while held", async () => {
-    liveSessionReturn = baseLiveSessionReturn({ held: true, pinnedId: 1, newerQuestionCount: 1 });
-    await render();
-    const busy = container.querySelector('[aria-busy="true"]');
-    expect(busy).toBeTruthy();
-    // It is QuestionFeed's own container, not some unrelated MUI internal —
-    // the "Detected questions" heading lives inside the same element.
-    expect(busy.textContent).toMatch(/detected questions/i);
-  });
-});
+// N18 delta review F1, OWNER RULING: full retirement of the hold ("pin")
+// cue. QuestionFeed no longer accepts pinnedId/held/newerQuestionCount at
+// all (see QuestionFeed.js's own doc) — there is no aria-busy region left to
+// flip, on any input. This describe block used to assert that flip; it is
+// removed along with the feature rather than left asserting a permanent
+// no-op, per the reviewer's "do not leave a half-retired surface" finding.
 
 // AC-V2.8. VoiceCueSidebar is left REAL in this file, which makes it the one
 // place that can catch the specific composition defect here: the rail reading
