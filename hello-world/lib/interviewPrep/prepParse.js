@@ -122,6 +122,19 @@
 // `templateOrigin` set) is still refused once the field is cleared, the same
 // way route.js clears it.
 
+// N26: the given-name lexicon backing `containsDetectedName` below. A
+// static, bundler-resolved import (ac.r5.md WB-4) -- never `fs.readFileSync`/
+// `fs.promises.readFile` at request time, and never behind a
+// `process.env`/environment-conditional branch. This is the same loading
+// pattern `lib/llm/engines/tailor-lite/library/defaults.js:8` already uses
+// for `skills_taxonomy.json`, so there is no separate file-tracing
+// configuration for a serverless build to get right or wrong (see
+// givenNames.generated.js's own header for the full provenance chain: US
+// SSA national given-name data, public domain, sha256-pinned source archive,
+// and the disclosed, re-runnable generation script at
+// scripts/generate-given-names.mjs).
+import { GIVEN_NAMES } from "./data/givenNames.generated.js";
+
 // The exact value `pack.templateOrigin` must carry for F-1's K1-SHAPE
 // exemption to apply -- see this file's header. Exported so
 // lib/interviewPrep/prepPack.js's `buildEmbeddedPack` (the only legitimate
@@ -130,7 +143,51 @@
 // than two files agreeing on a magic string by convention alone.
 export const EMBEDDED_TEMPLATE_ORIGIN = "embedded-template";
 
-const NAME_PAIR_RE = /\b([A-Z][a-z]+)\s+([A-Z][a-z]+)\b/g;
+// N26's lexicon-backed detector, replacing the earlier lexicon-free
+// heuristic this comment used to disclose as permanently weak-by-design.
+// What actually ships (backlog N26; ac.r5.md WB-1/WB-2, ledger R-N26-9
+// through R-N26-14):
+//
+//   - a Title-Case RUN is a maximal sequence of consecutive Title-Case
+//     words separated only by whitespace (TITLE_CASE_RUN_RE below);
+//   - every CONSECUTIVE pair within a run is examined -- a SLIDING,
+//     overlapping scan (WB-2), not a run consumed two words at a time. A
+//     3-word run like "Analyst Robert Klein" is checked as (Analyst,
+//     Robert) AND (Robert, Klein), not only the first pair;
+//   - a pair counts as a detected name iff its FIRST word, lowercased, is a
+//     registered given name in the shipped SSA lexicon below AND its
+//     second word is not one of the 23 ORG_SUFFIX_WORDS (WB-1,
+//     first-word-only -- never either-word, never an unconditioned
+//     single-word scan).
+//
+// GIVEN_NAME_SET is a module-level singleton built once from the shipped,
+// full, unfiltered (threshold 0 -- WB-8) GIVEN_NAMES array, matching the
+// existing ORG_SUFFIX_WORDS pattern -- never rebuilt inside
+// containsDetectedName itself.
+//
+// DISCLOSED LIMITATIONS, not fixed by this lexicon:
+//   - coverage is bounded by SSA's own reporting floor: a name that never
+//     reached >=5 occurrences nationally in a single year, 1880-2020, is
+//     absent from the lexicon in every culture, by construction (not a
+//     tuning choice made here -- see the generated module's own header);
+//   - a hyphenated first name is caught only by luck, via whichever half
+//     lands next to a real surname in a Title-Case run; a particle-bearing
+//     name (van der / de la / von / bin / al, lowercase) breaks the
+//     adjacency this pair-scan structurally requires, so the lexicon
+//     provides zero help there;
+//   - this lexicon addresses roughly the GIVEN-NAME share of the false
+//     positives this detector used to produce over ordinary résumé/title
+//     prose (~43% of the measured residual, ac.r3.md/R-N26-9's own
+//     finding) -- the remaining ~57%, employer-PAIR-shaped prose (two
+//     ordinary words that read as a company, not a person), is NOT
+//     addressed by a given-name lexicon and remains open;
+//   - this is a backstop, not the primary control: the prompt this
+//     detector's output feeds is separately instructed never to name a
+//     real person (a sibling chunk), so a name this lexicon misses is a
+//     backstop failure, not the only line of defense (R-N26-9/R-N26-10).
+const TITLE_CASE_RUN_RE = /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b/g;
+
+const GIVEN_NAME_SET = new Set(GIVEN_NAMES);
 
 // Common organization-shaped second words in a Title-Case pair, so a
 // sentence naming a company ("Acme Robotics") is not mistaken for one
@@ -166,20 +223,29 @@ const ORG_SUFFIX_WORDS = new Set([
 
 /**
  * Detects a plausible personal name in a line of generated text: a
- * consecutive Title-Case word pair whose second word is not a common
- * organization-shaped noun. Pure, total -- never throws, always returns a
- * boolean.
+ * consecutive Title-Case word pair whose FIRST word is a registered given
+ * name in the shipped SSA lexicon and whose SECOND word is not a common
+ * organization-shaped noun (see the header above for the full mechanism and
+ * its disclosed limitations). Every consecutive pair in a Title-Case run is
+ * examined, sliding one word at a time -- not merely the even-indexed ones a
+ * run consumed two words per match would see. Pure, total -- never throws,
+ * always returns a boolean.
  *
  * @param {unknown} text
  * @returns {boolean}
  */
 export function containsDetectedName(text) {
   if (typeof text !== "string" || !text) return false;
-  NAME_PAIR_RE.lastIndex = 0;
-  let match = NAME_PAIR_RE.exec(text);
-  while (match) {
-    if (!ORG_SUFFIX_WORDS.has(match[2])) return true;
-    match = NAME_PAIR_RE.exec(text);
+  TITLE_CASE_RUN_RE.lastIndex = 0;
+  let runMatch = TITLE_CASE_RUN_RE.exec(text);
+  while (runMatch) {
+    const words = runMatch[0].split(/\s+/);
+    for (let i = 0; i < words.length - 1; i += 1) {
+      if (GIVEN_NAME_SET.has(words[i].toLowerCase()) && !ORG_SUFFIX_WORDS.has(words[i + 1])) {
+        return true;
+      }
+    }
+    runMatch = TITLE_CASE_RUN_RE.exec(text);
   }
   return false;
 }

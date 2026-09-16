@@ -330,24 +330,36 @@ describe("buildEmbeddedPack — N16 wave G: the title job-noun allow-list is del
     }
   });
 
-  // [disclosed cost of the N16 wave G ruling] Named on its own, with this
-  // comment, so nobody "fixes" this back into an allow-list without reading
-  // why the allow-list was deleted (this describe's own header, and
-  // prepPack.js's own header): "Senior Data Scientist" is an ordinary,
-  // harmless title with no detected name in it at all, and it now falls
-  // back to generic wording anyway, because `containsDetectedName` cannot
-  // tell it apart from a person's name. That is the accepted price of
-  // closing the leak above, not a bug, until backlog N26 replaces the
-  // detector with something that can tell the two apart.
-  it('[disclosed cost] "Senior Data Scientist" now falls back too, exactly like any other detected-name-shaped title', () => {
+  // [fixed by N26 -- was "[disclosed cost of the N16 wave G ruling]"] Named
+  // on its own, with this comment, so nobody "fixes" this BACK into an
+  // allow-list without reading why the allow-list was deleted (this
+  // describe's own header, and prepPack.js's own header): "Senior Data
+  // Scientist" is an ordinary, harmless title with no detected name in it at
+  // all. Before N26 it fell back to generic wording anyway, because the old
+  // `containsDetectedName` had no way to tell a job title from a person's
+  // name -- that was the accepted, disclosed price of closing the N16 wave G
+  // leak, not a bug, "until backlog N26 replaces the detector with something
+  // that can tell the two apart" (this comment's own prior wording). N26 is
+  // that replacement: neither "Senior", "Data", nor "Scientist" is a
+  // registered given name in the shipped SSA lexicon (verified while writing
+  // this test), so `containsDetectedName` no longer flags this title at all,
+  // and it now resolves BY NAME -- this is AC-N26.9's own numeric floor (9/9
+  // ordinary titles resolve), not a relaxation of the N16 wave G fix: every
+  // leak that fix closed (prepPack.test.js's "N16 wave G" describe block,
+  // just above, untouched) still falls back, because every one of those
+  // titles DOES contain a registered given name adjacent to a non-org-suffix
+  // word.
+  it('[fixed by N26] "Senior Data Scientist" now resolves by name, since none of its three words is a registered given name', () => {
     const pack = buildEmbeddedPack({
       position: { title: "Senior Data Scientist", company: "Acme Robotics" },
       digest: null,
     });
-    expect(pack.sections.aboutYou.answer.lines[0].text).toContain("this role at Acme Robotics");
+    const aboutYouText = pack.sections.aboutYou.answer.lines[0].text;
+    expect(aboutYouText).toContain("the Senior Data Scientist role at Acme Robotics");
+    expect(aboutYouText).not.toContain("this role at Acme Robotics");
   });
 
-  it("[disclosed cost] the other ordinary clean titles the deleted allow-list used to resolve now fall back too, uniformly", () => {
+  it("[fixed by N26] the other ordinary clean titles the deleted allow-list used to resolve now resolve again, uniformly -- via the lexicon, not a revived allow-list", () => {
     const ordinaryTitles = [
       "Software Engineer",
       "Data Scientist",
@@ -360,7 +372,9 @@ describe("buildEmbeddedPack — N16 wave G: the title job-noun allow-list is del
     ];
     for (const title of ordinaryTitles) {
       const pack = buildEmbeddedPack({ position: { title, company: "Acme Robotics" }, digest: null });
-      expect(pack.sections.aboutYou.answer.lines[0].text).toContain("this role at Acme Robotics");
+      const aboutYouText = pack.sections.aboutYou.answer.lines[0].text;
+      expect(aboutYouText).toContain(`the ${title} role at Acme Robotics`);
+      expect(aboutYouText).not.toContain("this role at Acme Robotics");
     }
   });
 });

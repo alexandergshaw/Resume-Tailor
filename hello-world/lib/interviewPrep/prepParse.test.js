@@ -74,7 +74,14 @@
 // here, and in the seat's own artifact, for the 4b checker to examine rather
 // than silently resolved either way.
 import { describe, it, expect } from "vitest";
-import { normalizePack, countRefusedLines, EMBEDDED_TEMPLATE_ORIGIN } from "@/lib/interviewPrep/prepParse.js";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import {
+  normalizePack,
+  countRefusedLines,
+  containsDetectedName,
+  EMBEDDED_TEMPLATE_ORIGIN,
+} from "@/lib/interviewPrep/prepParse.js";
 import { PREDICTION_CORPUS } from "./__fixtures__/predictionCorpus.js";
 
 const REDIRECT_URL = "https://vertexaisearch.cloud.google.com/redirect/abc123";
@@ -597,45 +604,44 @@ describe("countRefusedLines — a separate, decoupled count over the PRE-normali
   });
 });
 
-describe("normalizePack — AC-N8.2: the disclosed NAME_PAIR_RE false-positive residual, confronted not fixed", () => {
-  // NAME_PAIR_RE (a consecutive Title-Case pair whose second word is not in
-  // the 23-entry org-suffix list) matches "React Native" and "Google Cloud"
-  // in ordinary résumé prose, exactly as the org-suffix-list comment at the
-  // top of prepParse.js discloses. Section B wires the SAME refusesLine
-  // predicate into aboutYou that stages always had, uncited+detected =>
-  // refused, with no exception for a false positive -- and this file's own
-  // brief is explicit that widening the heuristic to special-case tech
-  // stack nouns is NOT the fix ("whack-a-mole without a corpus is how a
-  // prior defect happened").
+describe("normalizePack — AC-N8.2 residual, CLOSED by N26's lexicon-backed detector (ledger R-N26-9..R-N26-12; ac.r5.md WB-1/WB-2)", () => {
+  // NAME_PAIR_RE's OLD, lexicon-free heuristic (any consecutive Title-Case
+  // pair whose second word is not in the 23-entry org-suffix list) matched
+  // "React Native" and "Google Cloud" in ordinary résumé prose, exactly as
+  // the org-suffix-list comment at the top of prepParse.js used to disclose.
+  // N26 replaces that heuristic with a lexicon-gated, first-word-only,
+  // sliding-pair scan (ac.r5.md WB-1/WB-2): a pair counts only when its
+  // FIRST word is a registered given name in the shipped SSA lexicon.
+  // Neither "React" nor "Google" is a given name there (verified against
+  // the source archive while writing this test), so this line no longer
+  // contains a detected name at all once the lexicon lands, and
+  // normalizePack has nothing to refuse it for -- it must SURVIVE uncited,
+  // same as any other ordinary line.
   //
-  // Run as a plain assertion, this line is DROPPED (uncited, and
-  // "Native"/"Cloud" are not org-suffix words), not kept -- verified while
-  // writing this test. `it.fails` is vitest's own primitive for exactly
-  // this situation: a known, disclosed, NOT-to-be-patched limitation that
-  // must stay visible (an unexpected pass here means the residual gap
-  // closed, or reopened differently, and is worth a fresh look) without
-  // leaving a permanently red assertion in the suite. This is disclosure,
-  // not a claim that the line actually survives in production.
-  it.fails("a résumé line naming no real person still gets dropped by the Title-Case-pair false positive", () => {
+  // Before N26 this was `it.fails`: a known, disclosed, NOT-to-be-patched
+  // limitation, kept visible without a permanently red assertion. It is now
+  // an ordinary, REQUIRED assertion, landed failing (TDD hand-off, loop step
+  // 4b) before any lexicon exists -- see tests.r1.md for the executed proof
+  // that this is red on HEAD today and for the reference implementation it
+  // was checked against. An unexpected failure once the lexicon lands means
+  // either the lexicon gate stopped working, or a false-friend word is being
+  // mis-detected again.
+  it("a résumé line naming no real person survives, once neither word of a Title-Case pair is a registered given name", () => {
     const text = "Shipped the payments service on React Native and Google Cloud.";
     const input = { sections: { aboutYou: { answer: { lines: [answerLine(text, undefined)] } } }, claims: [] };
     const result = normalizePack(input);
     expect(survivingAboutYouTexts(result)).toContain(text);
   });
 
-  // F-8: the `it.fails` above stays green for ANY build that fails its one
-  // assertion -- including a build that over-refuses EVERYTHING (e.g.
-  // `refusesLine` hardwired to `true`), for a reason having nothing to do
-  // with the named Title-Case residual. `it.fails` cannot itself distinguish
-  // the two: it only asks whether the body throws, not why, and a second
-  // assertion inside that SAME body cannot add discriminating power either
-  // -- whichever assertion throws first still satisfies `it.fails` on its
-  // own, and an `expect` that already threw stops the body before any later
-  // assertion runs. A genuine, separate, ordinary test is what actually
-  // pins the "and a name-free line is NOT dropped" half: this one goes red
-  // on an over-refusing build even though the `it.fails` above stays green
-  // either way.
-  it("[companion] an ordinary aboutYou line naming no one at all survives (an over-refusing build fails THIS test, not the it.fails above)", () => {
+  // F-8, UPDATED: the test above was `it.fails` before N26 and could not
+  // distinguish "this specific residual closed" from "the detector now
+  // over-refuses everything" (an `it.fails` only asks whether its body
+  // throws, never why). Now that it is a plain assertion, an over-refusing
+  // build already fails it directly -- but this companion still stands as
+  // an INDEPENDENT check that an ordinary, name-free line is never dropped,
+  // using different text, so the two tests cannot pass or fail together by
+  // coincidence of sharing one fixture.
+  it("[companion] an ordinary aboutYou line naming no one at all survives (an over-refusing build fails THIS test too, independently)", () => {
     const controlText = "Shipped the payments service using a modern deployment pipeline.";
     const input = { sections: { aboutYou: { answer: { lines: [answerLine(controlText, undefined)] } } }, claims: [] };
     const result = normalizePack(input);
@@ -644,11 +650,23 @@ describe("normalizePack — AC-N8.2: the disclosed NAME_PAIR_RE false-positive r
 });
 
 describe("normalizePack — F-1: the embedded engine's K1-SHAPE exemption is narrow, self-declaring, and unreachable from the model path", () => {
-  // F-1's own counter-example, reproduced directly: an interpolated
-  // Title-Case job title ("Software Engineer") is detected as a name by the
-  // SAME heuristic that spots a real person, and it carries no citation --
-  // so without the exemption, an ordinary embedded-engine line is dropped.
-  const TITLE_LINE = "Lead with the experience most relevant to the Software Engineer role at Acme Robotics.";
+  // F-1's own counter-example used to be an interpolated Title-Case JOB
+  // TITLE ("Software Engineer") -- detected as a name by the OLD, lexicon-
+  // free heuristic, with no citation, so without the exemption the line was
+  // dropped. N26's lexicon-gated detector (ac.r5.md WB-1) is the whole
+  // reason that specific fixture stopped proving anything: neither
+  // "Software" nor "Engineer" is a registered given name, so this line is no
+  // longer detected as containing a name AT ALL once the lexicon lands --
+  // AC-N26.9's own goal -- which means the OLD fixture no longer exercises
+  // the F-1 exemption boundary (there is nothing left for the exemption to
+  // exempt). Per ac.r5.md §3 item 2/3 and check-ac.r5.md's own executed
+  // fix, TITLE_LINE is swapped for a line that IS detected as containing a
+  // name under the shipped mechanism -- any lexicon-registered given name
+  // adjacent to a non-org-suffix word does this; "Kevin Chen" is the exact
+  // swap check-ac.r5.md proved restores all three tests' discriminating
+  // power (tests.r1.md has the executed numbers). Only the FIXTURE changes;
+  // every assertion below is untouched.
+  const TITLE_LINE = "Lead with the experience most relevant to the Kevin Chen role at Acme Robotics.";
 
   it("[mutant this kills] WITHOUT templateOrigin set, the same uncited Title-Case line is refused (proves the exemption is opt-in, not a general loosening of K1-SHAPE)", () => {
     const input = { sections: { aboutYou: { answer: { lines: [answerLine(TITLE_LINE, undefined)] } } }, claims: [] };
@@ -968,5 +986,277 @@ describe("normalizePack — I: the F-1 exemption is keyed on pack's OWN template
     expect(Object.hasOwn(input, "templateOrigin")).toBe(true);
     const result = normalizePack(input);
     expect(survivingAboutYouTexts(result)).toContain(TITLE_LINE_TEXT);
+  });
+});
+
+// ============================================================================
+// N26 (loop step 4b, TEST seat) -- replaces NAME_PAIR_RE/ORG_SUFFIX_WORDS-only
+// detection with a given-name lexicon (100,364 SSA names, threshold 0) plus a
+// sliding/overlapping pair scan, first-word-only. Every test below is landed
+// FAILING, before lib/interviewPrep/data/givenNames.generated.js or any
+// lexicon-consulting code exists in prepParse.js. See
+// scratchpad/chunks/N26/tests.r1.md for: the full TDD rationale; the
+// reference implementation this suite was proven against (kept OUT of the
+// repo); which criteria (WB-2, WB-6, WB-7) have NO independent red test here
+// and why, with who verifies them instead; and the executed RED output.
+// ============================================================================
+
+const GENERATED_LEXICON_SPECIFIER = "@/lib/interviewPrep/data/givenNames.generated.js";
+const GENERATED_LEXICON_ABS_PATH = path.join(process.cwd(), "lib", "interviewPrep", "data", "givenNames.generated.js");
+const PREP_PARSE_ABS_PATH = path.join(process.cwd(), "lib", "interviewPrep", "prepParse.js");
+const TAXONOMY_ABS_PATH = path.join(
+  process.cwd(),
+  "lib",
+  "llm",
+  "engines",
+  "tailor-lite",
+  "data",
+  "skills_taxonomy.json",
+);
+const RESUME_HEADER_TEST_ABS_PATH = path.join(
+  process.cwd(),
+  "lib",
+  "resume",
+  "parseEmployment.headerDateSpan.test.js",
+);
+
+/** Same comment-stripping discipline as finishAttempt.test.js's and
+ *  prepTriggerSeams.test.js's own `codeOf` (loop-traps-tests.md: "prose
+ *  citing a module is read as using it" -- a comment that CITES a pattern
+ *  must never be mistaken for the pattern itself). */
+function codeOf(filePath) {
+  return readFileSync(filePath, "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .split("\n")
+    .map((line) => line.replace(/\/\/.*$/, ""))
+    .join("\n");
+}
+
+/**
+ * Extracts a `const <name> = [ ... ];` array-of-double-quoted-string-literals
+ * from a source file's text, without importing or `eval`-ing it -- so this
+ * suite never depends on that file exporting anything. Used to read
+ * PROBE_106, a PUBLIC, already-cited-in-every-N26-round résumé-line corpus
+ * (not the FN corpus R-N26-1 protects), directly out of its own source of
+ * truth (lib/resume/parseEmployment.headerDateSpan.test.js) rather than
+ * retyping 106 lines into this already-large file, where a hand-copied
+ * version could silently drift out of sync with the corpus every prior N26
+ * round measured against (loop-traps-tests.md's "a canary built from the
+ * same source as the thing under test proves consistency, not correctness"
+ * -- the risk here runs the other way: a STALE copy would prove nothing
+ * about the LIVE corpus). Comment-stripped first, matching `codeOf`'s
+ * discipline, so a `//` inside the array's own line comments cannot corrupt
+ * bracket matching.
+ *
+ * @param {string} sourceText
+ * @param {string} constName
+ * @returns {string[]}
+ */
+function extractStringArrayConst(sourceText, constName) {
+  const stripped = sourceText
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .split("\n")
+    .map((line) => line.replace(/\/\/.*$/, ""))
+    .join("\n");
+  const marker = `const ${constName} = [`;
+  const start = stripped.indexOf(marker);
+  if (start === -1) throw new Error(`could not locate "${marker}" in the given source text`);
+  const openBracket = start + marker.length - 1;
+  let depth = 0;
+  let end = -1;
+  for (let i = openBracket; i < stripped.length; i += 1) {
+    if (stripped[i] === "[") depth += 1;
+    else if (stripped[i] === "]") {
+      depth -= 1;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  if (end === -1) throw new Error(`"${constName}" array is not terminated in the given source text`);
+  const body = stripped.slice(openBracket + 1, end);
+  return [...body.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => JSON.parse(`"${m[1]}"`));
+}
+
+/**
+ * Selects up to `count` entries from `list`, spaced by a stride computed
+ * FROM `list`'s own runtime length -- never a hardcoded index, never
+ * `Math.random()` (this is a landed, repeatable suite, not a one-off probe)
+ * -- so the exact members selected can only be learned by actually running
+ * this rule against the real shipped artifact. THIS FILE'S SOURCE TEXT NAMES
+ * NO GIVEN NAME ANYWHERE: only this selection rule does (R-N26-12's
+ * non-enumerability requirement; see tests.r1.md for the full reasoning and
+ * the AC-N26.18 precedent this is designed not to repeat). The stride spans
+ * the WHOLE array from index 0, so it cannot be defeated by an attack that
+ * corrupts only a suffix or a prefix of the shipped list -- check-ac.r5.md's
+ * ATTACK 3 (corrupting everything from index 2500 on) is caught because the
+ * overwhelming majority of a full-span stride sample lands past index 2500.
+ *
+ * @param {Array<*>} list
+ * @param {number} count
+ * @returns {Array<*>}
+ */
+function strideSample(list, count) {
+  const stride = Math.max(1, Math.floor(list.length / count));
+  const picked = [];
+  for (let i = 0; i < list.length && picked.length < count; i += stride) {
+    picked.push(list[i]);
+  }
+  return picked;
+}
+
+describe("containsDetectedName — N26 WB-3 (AMENDED by ledger R-N26-12): sample MEMBERSHIP of the shipped lexicon, never Set cardinality", () => {
+  // check-ac.r5.md's ATTACK 3 (reproduced and re-executed in tests.r1.md): a
+  // build can statically import the real, full, 100,364-row artifact, keep
+  // exactly one Set, subtract nothing, hardcode no name -- and still corrupt
+  // every entry past a small "hot" prefix (`n + " "`, an INJECTIVE
+  // transform), which leaves the Set's `.size` untouched at 100364 while its
+  // CONTENTS are mostly garbage past that prefix. A wiring test that only
+  // checks `.size` cannot see this (`.size` is invariant under any injective
+  // transform). This test checks CONTENTS: a broad, index-selected sample of
+  // the shipped artifact's own rows must each be independently reachable
+  // through the real detection call site (`containsDetectedName`), not
+  // merely present somewhere in a Set of the right size.
+  it("a stride-selected sample spanning the whole shipped lexicon is each independently detected through containsDetectedName", async () => {
+    let lexiconModule;
+    try {
+      lexiconModule = await import(GENERATED_LEXICON_SPECIFIER);
+    } catch (error) {
+      throw new Error(
+        `expected ${GENERATED_LEXICON_SPECIFIER} to exist and export GIVEN_NAMES (ac.r5.md section 7, WB-5); ` +
+          `import failed with: ${error && error.message}`,
+      );
+    }
+    const shipped = lexiconModule.GIVEN_NAMES;
+    expect(Array.isArray(shipped)).toBe(true);
+    // Sanity floor, not the exact count (WB-8 pins the exact count
+    // elsewhere) -- guards against a stub/truncated file passing the loop
+    // below by having almost nothing to sample from.
+    expect(shipped.length).toBeGreaterThan(50000);
+
+    const SAMPLE_COUNT = 250;
+    const sample = strideSample(shipped, SAMPLE_COUNT);
+    let tested = 0;
+    const misses = [];
+    for (const candidate of sample) {
+      if (typeof candidate !== "string" || !/^[a-z]+$/.test(candidate)) continue;
+      tested += 1;
+      const titleCased = candidate[0].toUpperCase() + candidate.slice(1);
+      // "Qzxlon" is confirmed absent from the source SSA archive (verified
+      // while authoring this test) and is not one of the 23
+      // ORG_SUFFIX_WORDS -- its only job is to be a harmless,
+      // non-organizational second word so the pair is well-formed; it is
+      // never itself a signal this test reads.
+      const sentence = `${titleCased} Qzxlon led the initiative.`;
+      if (!containsDetectedName(sentence)) misses.push(candidate);
+    }
+    // A failed instrument is reported as invalid, never as a flattering
+    // zero (measurement-instruments.md) -- if the filter above skipped
+    // nearly everything, `tested` catches that before an empty `misses`
+    // array can look like a clean pass for the wrong reason.
+    expect(tested).toBeGreaterThan(SAMPLE_COUNT * 0.9);
+    expect(misses).toEqual([]);
+  });
+});
+
+describe("containsDetectedName — N26 WB-1: detection is FIRST-WORD-only, never either-word or an unconditioned single-word scan", () => {
+  it("a lexicon name in SECOND position, behind a confirmed non-name non-org-suffix first word, is NOT detected", async () => {
+    let lexiconModule;
+    try {
+      lexiconModule = await import(GENERATED_LEXICON_SPECIFIER);
+    } catch (error) {
+      throw new Error(
+        `expected ${GENERATED_LEXICON_SPECIFIER} to exist (ac.r5.md section 7); import failed with: ${error && error.message}`,
+      );
+    }
+    const shipped = lexiconModule.GIVEN_NAMES;
+    // Re-verified at test time against the ACTUAL shipped list (not just
+    // asserted), so a future regeneration of the archive cannot silently
+    // invalidate this test's premise that "Qzxlon" is not itself a name.
+    expect(shipped.map((n) => String(n).toLowerCase())).not.toContain("qzxlon");
+
+    const sample = strideSample(shipped, 20).filter((n) => typeof n === "string" && /^[a-z]+$/.test(n));
+    expect(sample.length).toBeGreaterThan(15);
+
+    for (const name of sample) {
+      const titleCased = name[0].toUpperCase() + name.slice(1);
+      // Positive control FIRST: proves this exact name, in FIRST position,
+      // IS reachable at all -- an absence assertion on a name the detector
+      // could never see anyway would prove nothing either way
+      // (loop-traps-tests.md: "an assertion of absence is satisfied by a
+      // dead feature"). This half is already true on HEAD today (its
+      // lexicon-free heuristic flags ANY Title-Case pair with a
+      // non-org-suffix second word), so it is a CONTROL, not new evidence --
+      // it is the second assertion below that is currently false on HEAD.
+      expect(containsDetectedName(`${titleCased} Qzxlon led the initiative.`)).toBe(true);
+      // The actual WB-1 claim: the SAME name, in SECOND position behind a
+      // confirmed non-name, non-org-suffix FIRST word, must NOT be detected.
+      // An "either-word" or unconditioned single-word implementation would
+      // still flag this (the name is present SOMEWHERE in the pair);
+      // first-word-only will not. On HEAD today this is TRUE (detected),
+      // because HEAD has no lexicon at all and flags any such pair -- so
+      // this assertion is currently RED.
+      expect(containsDetectedName(`Qzxlon ${titleCased} led the initiative.`)).toBe(false);
+    }
+  });
+});
+
+describe("containsDetectedName — N26 FP ceilings: PROBE_106 and the skills-taxonomy corpus are REGRESSION DETECTORS, not certification (R-N26-9)", () => {
+  // Per R-N26-9/ac.r5.md §4: these corpora catch a REGRESSION in this
+  // specific, already-measured class -- they do not and cannot certify the
+  // detector against a hostile build (the implementer can read this file).
+  // The ceilings below are the numbers ac.r5.md measured against the real
+  // mechanism (§0, r5-sliding-mechanism.mjs) and check-ac.r5.md
+  // independently reproduced (its own attack table, C5-1's HONEST column):
+  // 62/106 -> 9/106 and 92/270 -> 12/270. Ceilings (<=), not exact equality,
+  // so a future improvement that reduces false positives further does not
+  // spuriously break this suite -- only a regression above the measured
+  // ceiling should.
+  it("PROBE_106 (106 real résumé lines, read verbatim from lib/resume/parseEmployment.headerDateSpan.test.js): at most 9 are wrongly flagged as naming a person", () => {
+    const probeSourceText = readFileSync(RESUME_HEADER_TEST_ABS_PATH, "utf8");
+    const probeLines = extractStringArrayConst(probeSourceText, "PROBE_106");
+    // Canary: a broken extractor must fail loudly here, not silently score a
+    // wrong (possibly flattering) percentage off a truncated or empty list.
+    expect(probeLines.length).toBe(106);
+    const flagged = probeLines.filter((line) => containsDetectedName(line));
+    expect(flagged.length).toBeLessThanOrEqual(9);
+  });
+
+  it("the 270-term skills taxonomy (lib/llm/engines/tailor-lite/data/skills_taxonomy.json canonical terms): at most 12 are wrongly flagged as naming a person", () => {
+    const taxonomy = JSON.parse(readFileSync(TAXONOMY_ABS_PATH, "utf8"));
+    const canonicalTerms = (taxonomy.entries || []).map((e) => e.canonical).filter(Boolean);
+    expect(canonicalTerms.length).toBe(270);
+    const flagged = canonicalTerms.filter((term) => containsDetectedName(term));
+    expect(flagged.length).toBeLessThanOrEqual(12);
+  });
+});
+
+describe("prepParse.js — N26 WB-4/WB-5: static import, no runtime fs read, no env branch, disclosed provenance (ac.r5.md; check-ac.r5.md C5-5)", () => {
+  // check-ac.r5.md C5-5: this repo already lands source-text assertions of
+  // exactly this shape (finishAttempt.test.js:126-132,
+  // app/prepTriggerSeams.test.js:129-138) rather than leaving a structural
+  // property to a reviewer's eye alone -- WB-4 gets the same treatment here.
+  it("[WB-4] imports the generated lexicon module statically, with no fs.readFileSync/readFile call and no environment-conditional branch on the lexicon path", () => {
+    const source = codeOf(PREP_PARSE_ABS_PATH);
+    const hasStaticImport = /from\s+["'`]\.\/data\/givenNames\.generated\.js["'`]/.test(source);
+    const hasFsRead = /readFileSync|fs\.promises|readFile\s*\(/.test(source);
+    const hasEnvBranch = /process\.env|NODE_ENV|isTestEnv|import\.meta\.env/.test(source);
+    expect(hasStaticImport).toBe(true);
+    expect(hasFsRead).toBe(false);
+    expect(hasEnvBranch).toBe(false);
+  });
+
+  it("[WB-5] the generated lexicon module's header discloses the source archive's sha256 and a public-domain licence note", () => {
+    let headerText;
+    try {
+      headerText = readFileSync(GENERATED_LEXICON_ABS_PATH, "utf8").slice(0, 3000);
+    } catch (error) {
+      throw new Error(
+        `expected ${GENERATED_LEXICON_ABS_PATH} to exist with a provenance header (ac.r5.md WB-5, R-N26-8): ${error && error.message}`,
+      );
+    }
+    expect(headerText).toMatch(/67cf9c3fbbbcc18994cc071417267c48545130131112bcda83a9a36b2abcbc7e/i);
+    expect(headerText).toMatch(/public domain/i);
   });
 });
