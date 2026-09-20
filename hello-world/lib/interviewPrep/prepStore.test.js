@@ -78,6 +78,48 @@ describe("claimPrepPack — the RPC call carries the AUTHORITATIVE 3-parameter s
   });
 });
 
+// N41 (owner decision, 2026-09-20): both interview-prep spend caps are
+// removed. The DB guard `claim_prep_pack_slot`'s own top-of-function
+// `if v_attempts >= 6 or v_model_calls >= 12` (migration :496-498) is what
+// this module's own header (:259-262, unedited above) attributes the
+// non-in-flight refusal branch to -- once that guard is gone, a refusal
+// that is NOT a genuinely live lease can only be the residual lease-expiry
+// race described there, so the label must change from "attempts-spent" (a
+// state N41's own backlog text says must become PERMANENTLY UNREACHABLE)
+// to the strictly more honest "in-flight" (the lease WAS held moments
+// earlier). RED ON HEAD: prepStore.js:303 still returns "attempts-spent"
+// for this exact fixture.
+describe("claimPrepPack -- N41's reason relabeling (a refused claim can no longer report \"attempts-spent\")", () => {
+  it('[RED until N41 lands] a refused claim whose lease_until has ALREADY EXPIRED reports reason "in-flight", never "attempts-spent"', async () => {
+    const pastLease = new Date(Date.now() - 60_000).toISOString();
+    const sb = makeSupabase(
+      { interview_prep_packs: { data: { lease_until: pastLease }, error: null } },
+      { rpc: { claim_prep_pack_slot: { data: false, error: null } } },
+    );
+    const result = await claimPrepPack(sb, { applicationId: APP_ID, userId: USER_ID });
+    expect(result.claimed).toBe(false);
+    expect(result.reason).toBe("in-flight");
+    expect(result.reason).not.toBe("attempts-spent");
+  });
+
+  it('[unchanged, regression control] a refused claim whose lease is genuinely still live also reports "in-flight" -- this branch already worked and must keep working', async () => {
+    const futureLease = new Date(Date.now() + 60_000).toISOString();
+    const sb = makeSupabase(
+      { interview_prep_packs: { data: { lease_until: futureLease }, error: null } },
+      { rpc: { claim_prep_pack_slot: { data: false, error: null } } },
+    );
+    const result = await claimPrepPack(sb, { applicationId: APP_ID, userId: USER_ID });
+    expect(result.reason).toBe("in-flight");
+  });
+
+  it('[unaffected control, risk-table row for step 2] a genuine RPC error still reports reason "error", never merged into the in-flight relabeling', async () => {
+    const sb = makeSupabase({}, { rpc: { claim_prep_pack_slot: new Error("connection reset") } });
+    const result = await claimPrepPack(sb, { applicationId: APP_ID, userId: USER_ID });
+    expect(result.claimed).toBe(false);
+    expect(result.reason).toBe("error");
+  });
+});
+
 describe("K4 (corrected) -- deletePrepPackContent's write guard (design-operate.r1.md §2, OP-2)", () => {
   it("[no-op control] a real delete: exactly one .delete() against interview_prep_packs, tenant-scoped, non-zero row count -> deleted:true", async () => {
     const sb = makeSupabase({
@@ -232,7 +274,17 @@ describe("K2-FROM (widened) -- prepStore.js's own from-spy allow-list is the 3 p
   });
 });
 
-describe("the three-case post-delete read derivation (design-structure.r1.md §5.2, R-IP3-44)", () => {
+// UPDATED FOR N41 (owner decision, 2026-09-20): both interview-prep spend
+// caps are removed, so `attemptsExhausted` becomes permanently `false` --
+// per standing rule 4, this is expected maintenance of a test pinning a
+// behaviour an owner ruling explicitly changed (backlog N41(c): "the
+// 'attempts-exhausted' state disappears from the prep surface"), not a
+// silent edit of a test believed wrong. The counters (`attempts`/
+// `model_calls`) themselves REMAIN, per N41(d) -- only the two cases that
+// used to report `true` change, and a new case proves the removal is
+// unconditional (far past both former ceilings), not merely a widened
+// bound.
+describe("the post-delete read derivation, post-N41 (design-structure.r1.md §5.2, R-IP3-44; N41 supersedes the exhausted branch)", () => {
   it('case 1 -- no spend row at all -> "never attempted", offer Prepare', async () => {
     const sb = makeSupabase({
       interview_prep_packs: { data: null, error: null },
@@ -244,7 +296,7 @@ describe("the three-case post-delete read derivation (design-structure.r1.md §5
     expect(result.status).toBeNull();
   });
 
-  it('case 2 -- spend row present, BOTH caps clear, no pack row -> deliberate collapse to "never attempted", offer Prepare', async () => {
+  it('case 2 -- spend row present, both counters low, no pack row -> "never attempted", offer Prepare', async () => {
     const sb = makeSupabase({
       interview_prep_packs: { data: null, error: null },
       interview_prep_spend: { data: { application_id: APP_ID, user_id: USER_ID, attempts: 2, model_calls: 3 }, error: null },
@@ -254,46 +306,54 @@ describe("the three-case post-delete read derivation (design-structure.r1.md §5
     expect(result.pack).toBeNull();
   });
 
-  it('case 3 -- spend row present, attempts cap hit, no pack row -> "exhausted", no control offered', async () => {
+  it('[N41, RED until the cap-removal migration lands] a spend row AT the FORMER attempts ceiling (6) no longer reports exhausted -- the ceiling is gone, the counter remains', async () => {
     const sb = makeSupabase({
       interview_prep_packs: { data: null, error: null },
       interview_prep_spend: { data: { application_id: APP_ID, user_id: USER_ID, attempts: 6, model_calls: 3 }, error: null },
     });
     const result = await readPrepPack(sb, { applicationId: APP_ID, userId: USER_ID });
-    expect(result.attemptsExhausted).toBe(true);
-    // design-experience.r2.md §2's own rule: regenerateOffered = !attemptsExhausted.
-    expect(!result.attemptsExhausted).toBe(false);
+    expect(result.attemptsExhausted).toBe(false);
+    // design-experience.r1.md §0's own rule survives the ruling: the control
+    // is never blocked by this value now that it is always false.
+    expect(!result.attemptsExhausted).toBe(true);
   });
 
-  it('case 3, other cap -- spend row present, model_calls cap hit, no pack row -> "exhausted" too', async () => {
+  it('[N41, RED until the cap-removal migration lands] a spend row AT the FORMER model_calls ceiling (12) no longer reports exhausted either', async () => {
     const sb = makeSupabase({
       interview_prep_packs: { data: null, error: null },
       interview_prep_spend: { data: { application_id: APP_ID, user_id: USER_ID, attempts: 1, model_calls: 12 }, error: null },
     });
     const result = await readPrepPack(sb, { applicationId: APP_ID, userId: USER_ID });
-    expect(result.attemptsExhausted).toBe(true);
+    expect(result.attemptsExhausted).toBe(false);
   });
 
-  it("[mutant] cases 1 and 2 must be indistinguishable in attemptsExhausted (the contract's own deliberate collapse) -- and distinct from case 3", async () => {
+  it("[N41, proves the removal is UNCONDITIONAL, not a widened bound] attemptsExhausted is false even far past both former ceilings", async () => {
+    const sb = makeSupabase({
+      interview_prep_packs: { data: null, error: null },
+      interview_prep_spend: { data: { application_id: APP_ID, user_id: USER_ID, attempts: 999, model_calls: 999 }, error: null },
+    });
+    const result = await readPrepPack(sb, { applicationId: APP_ID, userId: USER_ID });
+    expect(result.attemptsExhausted).toBe(false);
+  });
+
+  it("[mutant this kills] every case above -- including the former-ceiling and far-past-ceiling ones -- must now be INDISTINGUISHABLE from case 1/2's already-false result", async () => {
     const sbCase1 = makeSupabase({
       interview_prep_packs: { data: null, error: null },
       interview_prep_spend: { data: null, error: null },
     });
-    const sbCase2 = makeSupabase({
+    const sbFormerCeiling = makeSupabase({
       interview_prep_packs: { data: null, error: null },
-      interview_prep_spend: { data: { application_id: APP_ID, user_id: USER_ID, attempts: 5, model_calls: 11 }, error: null },
+      interview_prep_spend: { data: { application_id: APP_ID, user_id: USER_ID, attempts: 6, model_calls: 12 }, error: null },
     });
-    const sbCase3 = makeSupabase({
-      interview_prep_packs: { data: null, error: null },
-      interview_prep_spend: { data: { application_id: APP_ID, user_id: USER_ID, attempts: 6, model_calls: 11 }, error: null },
-    });
-    const [r1, r2, r3] = await Promise.all([
+    const [r1, r2] = await Promise.all([
       readPrepPack(sbCase1, { applicationId: APP_ID, userId: USER_ID }),
-      readPrepPack(sbCase2, { applicationId: APP_ID, userId: USER_ID }),
-      readPrepPack(sbCase3, { applicationId: APP_ID, userId: USER_ID }),
+      readPrepPack(sbFormerCeiling, { applicationId: APP_ID, userId: USER_ID }),
     ]);
+    // Under the PRE-N41 contract these two would have DIFFERED (false vs
+    // true) -- this equality is exactly what a correct N41 implementation
+    // makes true and an unimplemented one makes false, RED on HEAD.
     expect(r1.attemptsExhausted).toBe(r2.attemptsExhausted);
-    expect(r3.attemptsExhausted).not.toBe(r1.attemptsExhausted);
+    expect(r2.attemptsExhausted).toBe(false);
   });
 });
 
