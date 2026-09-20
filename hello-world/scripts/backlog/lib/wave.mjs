@@ -1,4 +1,3 @@
-import { compareIds } from "./idOrder.mjs";
 import { isBlocked } from "./blocked.mjs";
 import { matchOwns } from "./miniglob.mjs";
 
@@ -15,19 +14,21 @@ export const DISJOINTNESS_DISCLAIMER =
 
 /**
  * Greedy, deterministic wave selection. Walks actionable, scoped (owns+verify non-null), unblocked
- * items in id order; expands each candidate's `owns` globs against the REAL file list (`allFiles`,
- * from listAllFiles — a filesystem read, not a string guess); accepts a candidate only if its
- * expanded file set does not intersect, BY EXACT PATH, any already-accepted candidate's set. Stops
- * at WAVE_CAP accepted items.
+ * items in FILE order — docs/backlog.yml's own array order, the owner's hand-set priority (R-BL-1,
+ * backlog N31; never re-sorted by id, since the cap below would otherwise silently drop the
+ * higher-priority item rather than merely misdisplay it); expands each candidate's `owns` globs
+ * against the REAL file list (`allFiles`, from listAllFiles — a filesystem read, not a string
+ * guess); accepts a candidate only if its expanded file set does not intersect, BY EXACT PATH, any
+ * already-accepted candidate's set. Stops at WAVE_CAP accepted items.
  *
  * Items with `owns == null` (unscoped — see pick.mjs) are never wave candidates: a null `owns` has
  * no files to intersect, and treating it as trivially disjoint would silently parallelize work
  * nobody has scoped yet.
  */
 export function computeWave(items, allFiles, { cap = WAVE_CAP } = {}) {
-  const candidates = items
-    .filter((it) => it.state === "actionable" && it.owns != null && it.verify != null && !isBlocked(it))
-    .sort((a, b) => compareIds(a.id, b.id));
+  const candidates = items.filter(
+    (it) => it.state === "actionable" && it.owns != null && it.verify != null && !isBlocked(it),
+  );
 
   const accepted = [];
   const skipped = [];

@@ -46,6 +46,20 @@ describe("parseBacklogYaml", () => {
     expect(items.map((it) => it.id)).toEqual(["N1", "N2"]);
   });
 
+  it("CLASS GUARD (N31): preserves literal top-to-bottom '- id:' order even when ids are NOT ascending -- never rebuilt through an id-keyed map", () => {
+    const text = ['- id: "N9"', '  title: "a"', '- id: "N30"', '  title: "b"', '- id: "N1"', '  title: "c"'].join(
+      "\n",
+    );
+    const items = parseBacklogYaml(text);
+    // Resists vacuity: a future rewrite of this parser through an id-keyed intermediate object
+    // (`byId[id.replace(/\D/g,"")] = item; Object.values(byId)`) would emit ["N1","N9","N30"] here
+    // -- integer-like string keys enumerate in ascending numeric order in JS, ahead of insertion
+    // order -- and fail this exact assertion. This is the root of the pipeline: every downstream
+    // consumer (pick.mjs, renderMarkdown.mjs, wave.mjs) trusts the array order this function hands
+    // it, so a regression here defeats all of them at once with none of their own tests noticing.
+    expect(items.map((it) => it.id)).toEqual(["N9", "N30", "N1"]);
+  });
+
   it("throws on a field line before any item has started — never silently drops it", () => {
     const text = '  title: "orphan"';
     expect(() => parseBacklogYaml(text)).toThrow(/field line before any/);

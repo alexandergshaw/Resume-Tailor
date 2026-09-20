@@ -1,6 +1,14 @@
 # docs/backlog.yml — source of truth for the backlog. docs/BACKLOG.md is GENERATED from this file
 # by hello-world/scripts/backlog/render.mjs — never hand-edit BACKLOG.md, edit this file and re-render.
 #
+# ORDERING RULE (R-BL-1, backlog N31): the array order of items IN THIS FILE is the owner's
+# hand-set priority, in ALL THREE sections below — actionable (N), owner (D) and verification (V)
+# alike. There is no `priority:` field; order IS the field. Every consumer (pick.mjs,
+# renderMarkdown.mjs, wave.mjs) reads items top to bottom and must never re-sort them by id — an id
+# is a namespaced label assigned once at creation time, not a priority, and ids are not guaranteed
+# to stay in creation order once items close (see backlog N31's own history for the defect this
+# rule replaced). Reorder an item by moving its lines; never by renumbering its id.
+#
 # Schema per item (every field present on every item; unused ones are null):
 #   id             - unique, namespaced: N = actionable, D = owner decision, V = verification owed
 #   state          - "actionable" | "owner" | "verification"

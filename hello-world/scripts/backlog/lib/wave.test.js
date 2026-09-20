@@ -107,6 +107,20 @@ describe("computeWave", () => {
     expect(result.accepted).toEqual([]);
   });
 
+  it("SITE wave.mjs:30 -- walks candidates in FILE order, not id order, so the cap keeps the array-first (higher-priority) item", () => {
+    makeFixtureTree();
+    // Non-monotonic, disjoint fixture: N30 listed FIRST in the array but numerically higher than
+    // N2. Under HEAD's `.sort(compareIds)` this cap:1 wave keeps N2 -- the exact "the cap silently
+    // drops the higher-priority item" failure named in backlog N31.
+    const items = [
+      item({ id: "N30", owns: ["lib/beta/three.js"], verify: "v" }),
+      item({ id: "N2", owns: ["lib/alpha/one.js"], verify: "v" }),
+    ];
+    const result = computeWave(items, files, { cap: 1 });
+    // Resists vacuity: reinstating the sort at wave.mjs:30 flips this to ["N2"].
+    expect(result.accepted.map((a) => a.id)).toEqual(["N30"]);
+  });
+
   it("stops accepting at the cap (3)", () => {
     makeFixtureTree();
     const items = [

@@ -29,14 +29,56 @@ describe("pick", () => {
     expect(decision).toEqual({ type: "actionable", item: items[0] });
   });
 
-  it("picks the lowest id among several scoped, unblocked items, numerically not lexically", () => {
+  it("SITE pick.mjs:30 -- picks the FIRST scoped, unblocked item in FILE order, not by numeric id", () => {
+    // Non-monotonic fixture (N30 before N2 in array order, the reverse of numeric order) --
+    // required so this test can tell "sorts by id" apart from "preserves array order" (R-BL-1,
+    // N31). A [N2, N30] fixture would pass under either implementation and prove nothing.
     const items = [
-      item({ id: "N10", owns: ["lib/a.js"], verify: "v" }),
+      item({ id: "N30", owns: ["lib/a.js"], verify: "v" }),
       item({ id: "N2", owns: ["lib/b.js"], verify: "v" }),
     ];
     const decision = pick(items);
     expect(decision.type).toBe("actionable");
-    expect(decision.item.id).toBe("N2");
+    // Resists vacuity: reinstating `.sort((a, b) => compareIds(a.id, b.id))` at pick.mjs:30 makes
+    // this "N2" again -- the exact HEAD behavior this criterion exists to catch.
+    expect(decision.item.id).toBe("N30");
+  });
+
+  it("SITE pick.mjs:38 -- reports unscoped ids in FILE order, not by numeric id", () => {
+    const items = [
+      item({ id: "N30", owns: null, verify: null }),
+      item({ id: "N2", owns: null, verify: null }),
+    ];
+    const decision = pick(items);
+    expect(decision.type).toBe("unscoped");
+    // Resists vacuity: reinstating the sort at pick.mjs:38 flips this to ["N2", "N30"].
+    expect(decision.ids).toEqual(["N30", "N2"]);
+  });
+
+  it("SITE pick.mjs:47 -- escalates to the FIRST owner item in FILE order, not by numeric/age id", () => {
+    // No actionable items at all, so this exercises the owner branch in isolation from pick.mjs:30/:38.
+    const items = [
+      item({ id: "D5", state: "owner", blocked_reason: "w5", owed_by: null, evidence: [] }),
+      item({ id: "D2", state: "owner", blocked_reason: "w2", owed_by: null, evidence: [] }),
+    ];
+    const decision = pick(items);
+    expect(decision.type).toBe("escalate");
+    // Resists vacuity: reinstating the sort at pick.mjs:47 flips this to "D2" (age/id order) --
+    // the exact ordering R-BL-1 ruled out for this section too.
+    expect(decision.item.id).toBe("D5");
+  });
+
+  it("SITE pick.mjs:50 -- escalates to the FIRST verification item in FILE order, not by numeric/age id", () => {
+    // No actionable and no owner items, so this isolates the verification branch alone -- this is
+    // the exact call site a prior round's single-site mutant left uncaught (all landed tests green).
+    const items = [
+      item({ id: "V5", state: "verification", instrument: "i5", owed_by: null, evidence: [] }),
+      item({ id: "V2", state: "verification", instrument: "i2", owed_by: null, evidence: [] }),
+    ];
+    const decision = pick(items);
+    expect(decision.type).toBe("escalate");
+    // Resists vacuity: reinstating the sort at pick.mjs:50 flips this to "V2".
+    expect(decision.item.id).toBe("V5");
   });
 
   it("skips a blocked item (blocker id present in items) in favor of the next eligible one", () => {
@@ -131,9 +173,20 @@ describe("pick", () => {
       expect(decision.ids).toContain(it.id);
     }
 
-    // Ordering rule, not values: ids come back in the file's own deterministic (numeric-by-namespace)
-    // order.
-    expect(decision.ids).toEqual([...decision.ids].sort(compareIds));
+    // Ordering rule, not values: ids come back in the file's own literal top-to-bottom order (the
+    // owner's hand-set priority), never resorted by numeric id (R-BL-1, N31).
+    //
+    // Loud precondition, not a silent one: this real-file check only has power while the live
+    // file's unscoped ids are NOT already ascending by id -- on an ascending file, "sorts by id"
+    // and "preserves file order" produce the same sequence and this assertion would pass either
+    // way (the exact zero-power trap a prior round's checker found in this same test). Fail loudly
+    // here rather than silently losing power if docs/backlog.yml ever drifts to ascending.
+    expect(
+      trulyUnscoped.map((it) => it.id),
+      "the real docs/backlog.yml's unscoped ids are currently ascending by id -- this regression check has lost its power to distinguish file order from id order and must be re-armed",
+    ).not.toEqual([...trulyUnscoped.map((it) => it.id)].sort(compareIds));
+
+    expect(decision.ids).toEqual(trulyUnscoped.map((it) => it.id));
   });
 
   it("regression: removing an item from an in-memory copy of the real backlog.yml does not break this suite (the coupling the hard-coded id list above used to create)", () => {
