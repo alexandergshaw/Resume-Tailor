@@ -27,10 +27,31 @@
 // AC-N33.16: the partial-pack copy below never says WHY a section is
 // missing ("refused" vs "gutted" vs "little to research") -- it only
 // discloses THAT the pack is incomplete and offers a way to try again.
+//
+// F-1's fix (chunk N33/N25 blocker): the names strip below now carries the
+// actual entry surface AC-N33.20 requires -- an inline "Edit"/"Add" toggle,
+// local component state only until Save, reusing the exact
+// `split(",").map(trim).filter(Boolean)` comma-field shape
+// `useApplicationDialogs.js:189-197` already ships for
+// `interview_stages.interviewer_names` (design-experience.r1.md ss1.1/DX-
+// N33.5), rather than inventing a chip-editor (none exists anywhere in this
+// repo, per that document's own search). One shared edit region for both
+// fields, one "Save" -- not the two-independent-Save mockup in design-
+// experience.r1.md ss1.1 -- deliberately: the PUT route
+// (trustedNames.js's buildTrustedNamesPayload) diffs each field
+// independently against whatever the CURRENT request body carries, so a
+// save that submitted only the just-edited field would read the OTHER
+// field's absence as "clear it" and silently wipe it (this is F-7, a
+// disclosed, separate finding this component does not attempt to fix at
+// the route level -- but a single combined Save that always submits BOTH
+// fields' current values, edited or not, sidesteps it by construction, at
+// this call site, without touching the route's own contract).
 
+import { useState } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
+import TextField from "@mui/material/TextField";
 
 const COPY = {
   absent: "No prep pack yet. Generate one from this application's tracking row when you're ready.",
@@ -40,8 +61,12 @@ const COPY = {
   failed: "The last generation attempt failed. This may be temporary — try again when you're ready.",
   unavailable:
     "Nothing to research yet — there's no job description on this posting. This isn't a failed attempt, and trying again won't help until a description is added.",
-  noCandidateName: "No name yet — Add",
-  noInterviewerNames: "No names yet — Add",
+  noCandidateName: "No name yet",
+  noInterviewerNames: "No names yet",
+  editNames: "Edit",
+  addNames: "Add",
+  saveNames: "Save",
+  cancelNames: "Cancel",
 };
 
 const SECTION_LABELS = {
@@ -165,8 +190,82 @@ function StatusBanner({ status, pack }) {
   );
 }
 
-function NamesStrip({ candidateName, interviewerNames }) {
+/** `interviewerNames` -> the exact comma-joined text the edit field seeds
+ *  itself from, and the inverse of `useApplicationDialogs.js`'s own
+ *  `split(",").map(trim).filter(Boolean)` -- reused so a round trip through
+ *  the field (load, no edit, Save) reproduces the identical stored list. */
+function joinNames(interviewerNames) {
+  return (Array.isArray(interviewerNames) ? interviewerNames.filter(Boolean) : []).join(", ");
+}
+
+function NamesStrip({ candidateName, interviewerNames, onSaveNames }) {
+  // The view state itself (below) always reads `candidateName`/
+  // `interviewerNames` straight off props, never off this local state -- so
+  // there is nothing to keep in sync while NOT editing. The edit fields only
+  // need a fresh copy of the CURRENT props at the moment editing starts,
+  // which `startEditing` already sets -- an effect re-syncing them on every
+  // prop change would fire even while the candidate is mid-edit and is not
+  // needed for anything this component renders.
+  const [editing, setEditing] = useState(false);
+  const [nameField, setNameField] = useState(candidateName || "");
+  const [namesField, setNamesField] = useState(joinNames(interviewerNames));
+
   const names = Array.isArray(interviewerNames) ? interviewerNames.filter(Boolean) : [];
+
+  function startEditing() {
+    setNameField(candidateName || "");
+    setNamesField(joinNames(interviewerNames));
+    setEditing(true);
+  }
+
+  function save() {
+    onSaveNames?.({ candidateName: nameField, interviewerNamesText: namesField });
+    setEditing(false);
+  }
+
+  if (editing) {
+    return (
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 1, mb: 1.5, fontSize: 12.5 }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
+          <Box component="span" sx={{ fontWeight: 700, minWidth: 84 }}>
+            Your name:
+          </Box>
+          <TextField
+            size="small"
+            variant="outlined"
+            value={nameField}
+            onChange={(e) => setNameField(e.target.value)}
+            placeholder="Your name"
+            slotProps={{ htmlInput: { "aria-label": "Your name" } }}
+            sx={{ flex: 1, minWidth: 160 }}
+          />
+        </Box>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
+          <Box component="span" sx={{ fontWeight: 700, minWidth: 84 }}>
+            Interviewers:
+          </Box>
+          <TextField
+            size="small"
+            variant="outlined"
+            value={namesField}
+            onChange={(e) => setNamesField(e.target.value)}
+            placeholder="Comma-separated, e.g. Priya Nair, J. Okafor"
+            slotProps={{ htmlInput: { "aria-label": "Interviewer names" } }}
+            sx={{ flex: 1, minWidth: 160 }}
+          />
+        </Box>
+        <Box sx={{ display: "flex", gap: 1 }}>
+          <Button size="small" variant="contained" onClick={save}>
+            {COPY.saveNames}
+          </Button>
+          <Button size="small" onClick={() => setEditing(false)}>
+            {COPY.cancelNames}
+          </Button>
+        </Box>
+      </Box>
+    );
+  }
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75, mb: 1.5, fontSize: 12.5 }}>
       <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
@@ -174,6 +273,9 @@ function NamesStrip({ candidateName, interviewerNames }) {
           Your name:
         </Box>
         <Box component="span">{candidateName || COPY.noCandidateName}</Box>
+        <Button size="small" onClick={startEditing}>
+          {candidateName ? COPY.editNames : COPY.addNames}
+        </Button>
       </Box>
       <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
         <Box component="span" sx={{ fontWeight: 700 }}>
@@ -184,6 +286,9 @@ function NamesStrip({ candidateName, interviewerNames }) {
         ) : (
           <Box component="span">{COPY.noInterviewerNames}</Box>
         )}
+        <Button size="small" onClick={startEditing}>
+          {names.length > 0 ? COPY.editNames : COPY.addNames}
+        </Button>
       </Box>
     </Box>
   );
@@ -196,12 +301,13 @@ export default function PrepPackPanel({
   candidateName = null,
   interviewerNames = [],
   onDownloadLog,
+  onSaveNames,
 }) {
   const hasPack = !!pack;
 
   return (
     <Box sx={{ fontSize: 14 }}>
-      <NamesStrip candidateName={candidateName} interviewerNames={interviewerNames} />
+      <NamesStrip candidateName={candidateName} interviewerNames={interviewerNames} onSaveNames={onSaveNames} />
       <StatusBanner status={status} pack={pack} />
       {hasPack ? <PackSections pack={pack} completeSections={completeSections} /> : null}
       <Box sx={{ mt: 1 }}>

@@ -32,6 +32,24 @@ import { triggerBlobDownload } from "@/lib/document/download";
 // content, section completeness, and both name fields all arrive here as
 // plain JSON from the server-only GET /api/interview-prep route instead.
 
+/** F-1's fix (chunk N33/N25 blocker): the ONLY client caller of `PUT
+ *  /api/interview-prep` -- PrepPackPanel's own header says it must never
+ *  fetch for itself, so this is the production call site `onSaveNames`
+ *  wires to below, exactly like `downloadPrepLog` below is the wiring for
+ *  `onDownloadLog`. Exported (unlike `downloadPrepLog`) so a test can call
+ *  it directly rather than mounting this whole dialog's full prop tree.
+ *  Always sends BOTH `candidateName` and `interviewerNamesText` together --
+ *  see PrepPackPanel.js's own header (F-7) for why a partial body would
+ *  silently wipe whichever field it omits. */
+export async function saveTrustedNames(applicationId, { candidateName, interviewerNamesText }) {
+  const res = await fetch("/api/interview-prep", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ applicationId, candidateName, interviewerNamesText }),
+  });
+  return res.json();
+}
+
 /** Builds the "Download prep log" content from the `events` array the GET
  *  route's own response already carries -- never a second, independent
  *  download mechanism (AC-N33.21's own bar). Hosts/outcomes only, matching
@@ -264,6 +282,25 @@ export default function AppViewDialog({
               interviewerNames={dPrep.interviewerNames ?? []}
               error={dPrep.error ?? null}
               onDownloadLog={() => downloadPrepLog(dApp, dPrep)}
+              onSaveNames={(form) => {
+                if (!dApp?.id) return;
+                saveTrustedNames(dApp.id, form)
+                  .then((result) => {
+                    if (!result?.written) return;
+                    setPrepById((prev) => ({
+                      ...prev,
+                      [dApp.id]: {
+                        ...(prev[dApp.id] || {}),
+                        candidateName: (form.candidateName || "").trim(),
+                        interviewerNames: form.interviewerNamesText
+                          .split(",")
+                          .map((name) => name.trim())
+                          .filter(Boolean),
+                      },
+                    }));
+                  })
+                  .catch(() => {});
+              }}
             />
           )
         ) : (

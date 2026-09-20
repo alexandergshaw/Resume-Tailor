@@ -249,3 +249,86 @@ describe("names strip -- the candidate's own name and interviewer names both ren
     expect(el.textContent).toContain("J. Okafor");
   });
 });
+
+// F-1's fix: the entry surface itself. Before this, PrepPackPanel had no
+// input, no change handler and no way to reach `onSaveNames` at all (the
+// verification round's exact finding) -- these cases exercise the inline
+// edit/save/cancel interaction end to end, at the component level, so a
+// regression back to plain unclickable text is caught here rather than only
+// by a human re-reading the render.
+describe("F-1 -- the name-entry control itself (add, edit, remove, cancel)", () => {
+  function nameInput(container) {
+    return container.querySelector('input[aria-label="Your name"]');
+  }
+  function interviewersInput(container) {
+    return container.querySelector('input[aria-label="Interviewer names"]');
+  }
+  function buttonNamed(container, pattern) {
+    return [...container.querySelectorAll("button")].find((b) => pattern.test(b.textContent || ""));
+  }
+  function setValue(input, value) {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    act(() => {
+      setter.call(input, value);
+      input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    });
+  }
+  function click(button) {
+    act(() => button.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
+  }
+
+  it("empty state: no text field is present until 'Add' is clicked, then both fields appear pre-filled empty", async () => {
+    const el = await render(baseProps({ candidateName: null, interviewerNames: [] }));
+    expect(nameInput(el)).toBeNull();
+    const addButton = buttonNamed(el, /^Add$/);
+    expect(addButton, "no 'Add' button found in the empty state").toBeDefined();
+    click(addButton);
+    expect(nameInput(el).value).toBe("");
+    expect(interviewersInput(el).value).toBe("");
+  });
+
+  it("add: typing a candidate name and an interviewer name, then Save, invokes onSaveNames exactly once with both current field values", async () => {
+    const onSaveNames = vi.fn();
+    const el = await render(baseProps({ candidateName: null, interviewerNames: [], onSaveNames }));
+    click(buttonNamed(el, /^Add$/));
+    setValue(nameInput(el), "Alex Shaw");
+    setValue(interviewersInput(el), "Priya Nair");
+    click(buttonNamed(el, /^Save$/));
+    expect(onSaveNames).toHaveBeenCalledTimes(1);
+    expect(onSaveNames).toHaveBeenCalledWith({ candidateName: "Alex Shaw", interviewerNamesText: "Priya Nair" });
+  });
+
+  it("edit: the edit fields are pre-filled from the CURRENT stored values, not blank, when a name is already stored", async () => {
+    const el = await render(baseProps({ candidateName: "Alex Shaw", interviewerNames: ["Priya Nair"] }));
+    click(buttonNamed(el, /^Edit$/));
+    expect(nameInput(el).value).toBe("Alex Shaw");
+    expect(interviewersInput(el).value).toBe("Priya Nair");
+  });
+
+  it("edit + remove: deleting one name out of a two-name comma list and saving submits the reduced list, and BOTH fields travel together (the F-7 partial-write hazard PrepPackPanel.js's own header names)", async () => {
+    const onSaveNames = vi.fn();
+    const el = await render(
+      baseProps({ candidateName: "Alex Shaw", interviewerNames: ["Priya Nair", "J. Okafor"], onSaveNames }),
+    );
+    click(buttonNamed(el, /^Edit$/));
+    expect(interviewersInput(el).value).toBe("Priya Nair, J. Okafor");
+    setValue(interviewersInput(el), "Priya Nair");
+    click(buttonNamed(el, /^Save$/));
+    expect(onSaveNames).toHaveBeenCalledTimes(1);
+    // The candidate name field was never touched in this edit -- it must
+    // still travel in the same call, at its CURRENT value, never omitted.
+    expect(onSaveNames).toHaveBeenCalledWith({ candidateName: "Alex Shaw", interviewerNamesText: "Priya Nair" });
+  });
+
+  it("cancel: editing then Cancel discards the typed value, invokes onSaveNames zero times, and returns to the view state showing the ORIGINAL stored name", async () => {
+    const onSaveNames = vi.fn();
+    const el = await render(baseProps({ candidateName: "Alex Shaw", interviewerNames: [], onSaveNames }));
+    click(buttonNamed(el, /^Edit$/));
+    setValue(nameInput(el), "Someone Else");
+    click(buttonNamed(el, /^Cancel$/));
+    expect(onSaveNames).not.toHaveBeenCalled();
+    expect(nameInput(el)).toBeNull();
+    expect(el.textContent).toContain("Alex Shaw");
+    expect(el.textContent).not.toContain("Someone Else");
+  });
+});

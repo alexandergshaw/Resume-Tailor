@@ -685,7 +685,13 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     //       POSITIVE CONTROL below). Rule TR-1's exact shape: a widened
     //       surface with a real, if incidental, test consumer -- not a lost
     //       feature.
-    expect(TEST_REFERENCED.length).toBe(356);
+    // 356 -> 357: AppViewDialog.js#saveTrustedNames, F-1's client-caller fix
+    // -- real call site (`onSaveNames`, fired by PrepPackPanel.js's "Save"
+    // button) is inside its OWN module, uncounted by cross-module edges (the
+    // shape `answerLocal.js#groundingCandidates` shows above); it lands
+    // here, not ORPHAN_EXPORTS (unmoved at 70), via the new
+    // AppViewDialog.wiring.test.js's by-name import.
+    expect(TEST_REFERENCED.length).toBe(357);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
@@ -786,7 +792,8 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // 427 -> 426: the same -1 net described just above, in step with
     // TEST_REFERENCED -- ORPHAN_EXPORTS is unmoved at 70 throughout, so the
     // total's -1 IS the TR-1 bucket's -1, not a second, independent change.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(426);
+    // 426 -> 427: saveTrustedNames (see the TEST_REFERENCED assertion above).
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(427);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {
