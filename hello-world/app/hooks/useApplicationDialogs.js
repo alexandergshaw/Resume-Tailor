@@ -161,9 +161,13 @@ export function useApplicationDialogs({
   const [editAppResumeFile, setEditAppResumeFile] = useState(null);
 
   async function loadStagesForApplication(applicationId) {
-    if (!applicationId) return;
+    // N37: getInterviewStages now requires userId too (it scopes its own
+    // query on it) -- this guard was missing before, unlike every other
+    // function in this hook, and an unguarded call would have silently
+    // passed userId: undefined into that filter.
+    if (!applicationId || !currentUser) return;
     const supabase = createClient();
-    const stages = await getInterviewStages(supabase, applicationId);
+    const stages = await getInterviewStages(supabase, { applicationId, userId: currentUser.id });
     setApplicationStages((prev) => ({
       ...prev,
       [applicationId]: stages,

@@ -151,10 +151,19 @@ function genLeaseToken() {
  * from the pack row alone -- O-17 made "pack absent, ledger present" an
  * ordinary, reachable state.
  *
+ * N33: `storedNames` (default `[]`) is threaded straight through to
+ * `normalizePack`, below -- resolved by THIS FUNCTION'S OWN CALLER (never
+ * internally), via `trustedNames.js`'s `readTrustedNames`/
+ * `flattenTrustedNames`, so this module's own table-touch surface (K2-FROM,
+ * prepStore.test.js) stays exactly the three prep tables it always was;
+ * `candidate_identity`/`application_trusted_names` are queried only by
+ * trustedNames.js and by whichever server-only caller resolves them.
+ *
  * @param {*} supabase
  * @param {{ applicationId: string, userId: string }} args
+ * @param {string[]} [storedNames]
  */
-export async function readPrepPack(supabase, { applicationId, userId }) {
+export async function readPrepPack(supabase, { applicationId, userId }, storedNames = []) {
   const [packResult, spendResult] = await Promise.all([
     supabase
       .from(PACKS_TABLE)
@@ -185,7 +194,7 @@ export async function readPrepPack(supabase, { applicationId, userId }) {
   }
 
   return {
-    pack: normalizePack(packRow.pack ?? null),
+    pack: normalizePack(packRow.pack ?? null, storedNames),
     status: packRow.status ?? null,
     attemptsExhausted,
     error: null,
@@ -352,6 +361,13 @@ export function checkPackByteBudget(pack, limit = PREP_PACK_MAX_BYTES) {
  * value -- this function does not pre-validate it, so a bad value fails
  * loudly at the database rather than storing un-mapped text.
  *
+ * N33: `storedNames` (default `[]`) is threaded straight through to
+ * `normalizePack`, below -- resolved by THIS FUNCTION'S OWN CALLER (never
+ * internally, and never read off `pack` itself), the same discipline
+ * `readPrepPack`'s own header states. Keeping the resolution out of this
+ * function is what keeps its own table-touch surface (K2-FROM,
+ * prepStore.test.js) unchanged at exactly the three prep tables.
+ *
  * @param {*} supabase
  */
 export async function writePrepPackResult(
@@ -371,10 +387,11 @@ export async function writePrepPackResult(
     digestResearchedAt = null,
     researchedAt = null,
     truncatedReason = null,
+    storedNames = [],
   },
 ) {
   const clearedReason = status === "ready" || status === "partial" ? null : reason;
-  const normalizedPack = pack != null ? normalizePack(pack) : pack;
+  const normalizedPack = pack != null ? normalizePack(pack, storedNames) : pack;
 
   // The byte bound this table's own CHECK used to enforce -- see
   // checkPackByteBudget's header for why `code: PG_CHECK_VIOLATION` is used

@@ -556,17 +556,25 @@ describe("the generation path computes packStatus AFTER normalizing the model's 
     expect(code).not.toMatch(/packStatus\(\s*parsed\.pack\s*\)/);
   });
 
-  it('[mutant this kills] normalizePack(parsed.pack) is computed, and packStatus is called on that same result, in that order', () => {
+  it('[mutant this kills] normalizePack(parsed.pack, storedNames) is computed, and packStatus is called on that same result, in that order', () => {
+    // N33 threaded a second argument (`storedNames`, the O-15 exemption's
+    // flattened trust anchor) through this exact call -- see prepParse.js's
+    // own header on `normalizePack(pack, storedNames)`. The literal below was
+    // widened from `normalizePack\(\s*parsed\.pack\s*\)` (which stopped
+    // matching once the call gained that second argument) to the real,
+    // current call shape; the property this test protects -- normalizePack
+    // runs first and packStatus consumes THAT SAME result, never a second,
+    // independent read of parsed.pack -- is unchanged.
     const code = codeOf(ROUTE_PATH);
-    const normIdx = code.search(/normalizePack\(\s*parsed\.pack\s*\)/);
-    expect(normIdx, "normalizePack(parsed.pack) not found in route.js").toBeGreaterThanOrEqual(0);
+    const normIdx = code.search(/normalizePack\(\s*parsed\.pack\s*,\s*storedNames\s*\)/);
+    expect(normIdx, "normalizePack(parsed.pack, storedNames) not found in route.js").toBeGreaterThanOrEqual(0);
     const statusIdx = code.indexOf("packStatus(", normIdx);
-    expect(statusIdx, "packStatus( not found after normalizePack(parsed.pack)").toBeGreaterThan(normIdx);
+    expect(statusIdx, "packStatus( not found after normalizePack(parsed.pack, storedNames)").toBeGreaterThan(normIdx);
     // The two must share a variable: whatever name normalizePack's result is
     // assigned to must be the SAME name packStatus is invoked with, not a
     // second, independent read of parsed.pack under a different name.
     const assign = code.slice(normIdx - 60, normIdx).match(/const\s+(\w+)\s*=\s*$/);
-    expect(assign, "normalizePack(parsed.pack) is not assigned to a const").not.toBeNull();
+    expect(assign, "normalizePack(parsed.pack, storedNames) is not assigned to a const").not.toBeNull();
     const varName = assign[1];
     const statusCall = code.slice(statusIdx, statusIdx + 40);
     expect(statusCall).toMatch(new RegExp(`packStatus\\(\\s*${varName}\\s*\\)`));
@@ -749,11 +757,47 @@ describe("F-1: the embedded pack survives normalizePack for a realistic Title-Ca
     expect(normalized.sections.stages.stages).toHaveLength(1);
   });
 
-  it("[control] WITHOUT templateOrigin set, the stage's own 'Why <company>' question -- the one piece E's title/company screening cannot pre-filter, since the collision is with the FIXED template word \"Why\", not the company value itself -- is dropped, proving the exemption still does real work", () => {
+  // This control's original fixture relied on "Why Acme Robotics?" being
+  // DETECTED as a name -- true under the pre-N26 detector (any Title-Case
+  // word could act as a "first name" candidate), false today: N26 gates
+  // detection on a registered given-name lexicon, and none of "why", "acme"
+  // or "robotics" is registered (confirmed against
+  // lib/interviewPrep/data/givenNames.generated.js), so the line was never
+  // going to be dropped -- the control passed for the wrong reason (nothing
+  // to drop, not "the exemption correctly withheld it").
+  //
+  // Swapping the COMPANY value for a genuine registered-name pair does not
+  // restore this fixture either -- verified directly, not assumed: E's own
+  // title/company screening (`safeInterpolationValue`, prepPack.js) runs
+  // `containsDetectedName` on `company` BEFORE interpolation, the exact same
+  // detector this exemption gates. A company value that would make
+  // "Why <company>?" detectable (e.g. "Kevin Anderson" -- both "kevin" and
+  // "anderson" are registered given/surnames, confirmed against
+  // givenNames.generated.js, and neither is an ORG_SUFFIX_WORDS entry) is
+  // therefore ALREADY caught and replaced with "this company" by
+  // buildEmbeddedPack itself, so the composed sentence this test would see is
+  // "Why this company?" -- never detected, the same false pass as the
+  // original fixture. Prepending "Why" can only ever ADD the pair
+  // (Why, company[0]) to the scan, and "why" is not registered, so a company
+  // value's own detectability is now provably IDENTICAL with or without the
+  // "Why " prefix (checked directly against the shipped functions): there is
+  // no company string left that reproduces this collision through the real
+  // producer's interpolation path.
+  //
+  // So this control now demonstrates the SAME property -- a detected,
+  // uncited line is dropped once templateOrigin is absent -- against a line
+  // planted directly on the real pack's own stage list, in the exact slot the
+  // old "Why <company>?" question occupied, rather than one buildEmbeddedPack
+  // could ever interpolate itself. "Kevin" and "Anderson" are both confirmed
+  // registered names in givenNames.generated.js (neither is an
+  // ORG_SUFFIX_WORDS entry), so the planted line is genuinely detected by the
+  // shipped mechanism, not by assumption.
+  it("[control] WITHOUT templateOrigin set, a detected-and-uncited line planted on the real pack's own stage list is dropped, proving the exemption still does real work", () => {
     const pack = buildEmbeddedPack({ position: { title: "Software Engineer", company: "Acme Robotics" }, digest: null });
+    pack.sections.stages.stages[0].questions[1] = "Kevin Anderson previously held this role.";
     delete pack.templateOrigin;
     const normalized = normalizePack(pack);
-    expect(normalized.sections.stages.stages[0].questions).not.toContain("Why Acme Robotics?");
+    expect(normalized.sections.stages.stages[0].questions).not.toContain("Kevin Anderson previously held this role.");
     expect(normalized.sections.stages.stages[0].questions).toContain("Tell me about yourself.");
   });
 

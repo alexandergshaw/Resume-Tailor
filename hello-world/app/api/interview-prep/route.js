@@ -97,10 +97,19 @@ import {
   deletePrepPackContent,
   recordModelCallIssued,
   recordPrepEvent,
+  readPrepPack,
+  listPrepEvents,
 } from "@/lib/interviewPrep/prepStore";
 import { finishAttempt } from "@/lib/interviewPrep/finishAttempt";
 import { normalizePack, countRefusedLines } from "@/lib/interviewPrep/prepParse";
-import { packStatus, buildEmbeddedPack } from "@/lib/interviewPrep/prepPack";
+import {
+  readTrustedNames,
+  flattenTrustedNames,
+  saveCandidateName,
+  saveInterviewerNames,
+  buildTrustedNamesPayload,
+} from "@/lib/interviewPrep/trustedNames";
+import { packStatus, buildEmbeddedPack, completeSections } from "@/lib/interviewPrep/prepPack";
 import { PREP_RATE_LIMIT, PREP_RATE_WINDOW_MS, PREP_GENERATION_TIMEOUT_MS } from "@/lib/interviewPrep/prepConstants";
 
 export const runtime = "nodejs";
@@ -452,7 +461,15 @@ export async function POST(request) {
   // above already strips it, at the one boundary where untrusted JSON
   // becomes a pack, so the exemption is unreachable from a model-authored
   // pack by the time `parsed.pack` reaches here.
-  const normalizedPack = normalizePack(parsed.pack);
+  // N33: resolved once here, after GATE 6 has already scoped
+  // applicationId/userId, and threaded into BOTH calls below --
+  // design-reconciled.r2.md ss4.3's reviewer property requires every
+  // normalizePack/countRefusedLines call site to resolve storedNames
+  // identically, never from `parsed`/`parsed.pack`/`body` themselves.
+  const { candidateName, interviewerNames } = await readTrustedNames(supabase, { applicationId, userId });
+  const storedNames = flattenTrustedNames({ candidateName, interviewerNames });
+
+  const normalizedPack = normalizePack(parsed.pack, storedNames);
   const computedStatus = packStatus(normalizedPack);
 
   // F-2: computed once, here, on the pre-normalization reply -- see
@@ -463,7 +480,7 @@ export async function POST(request) {
   // wave, and PREP_PACK_MAX_BYTES is exactly why this value must not be
   // written into `pack` itself) -- logged for operator visibility instead
   // of silently discarded.
-  const refusedLines = countRefusedLines(parsed.pack, normalizedPack.claims);
+  const refusedLines = countRefusedLines(parsed.pack, normalizedPack.claims, storedNames);
   if (refusedLines > 0) {
     console.warn("interview-prep: normalizePack refused line(s) in a generated pack", {
       applicationId,
@@ -496,6 +513,11 @@ export async function POST(request) {
     postingFingerprint: fingerprint,
     digestResearchedAt,
     researchedAt: new Date().toISOString(),
+    // N33: writePrepPackResult's own normalize-before-write (prepStore.js)
+    // re-runs normalizePack on this same pack -- the same storedNames
+    // already resolved above, so a name kept on this first pass survives
+    // the second (design-reconciled.r2.md ss4.3's idempotence requirement).
+    storedNames,
   });
   if (!write.written) return writeFailureResponse(write);
   return Response.json({ status });
@@ -532,4 +554,118 @@ export async function DELETE(request) {
     return Response.json({ status: "in-flight" }, { status: 409 });
   }
   return Response.json({ status: result.deleted ? "deleted" : "not-found" });
+}
+
+// GATE-6-equivalent ownership check, shared by GET/PUT below -- scoped to
+// the caller IN THE QUERY, matching POST's own GATE 6 (:299-304). Returns
+// the row or null; never throws.
+async function loadOwnedApplication(supabase, applicationId, userId) {
+  const { data } = await supabase
+    .from("applications")
+    .select("id")
+    .eq("id", applicationId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  return data || null;
+}
+
+// GET /api/interview-prep?applicationId=<uuid>
+//
+// N25/N33's sole client-reachable surface for pack content AND stored-name
+// content -- no client file imports prepStore.js/prepParse.js/prepPack.js/
+// trustedNames.js directly (the bundle constraint, design-reconciled.r2.md
+// ss4.2/ss5.1). Real getUser() auth, identical to POST/DELETE. NOT
+// kill-switch-gated (O-16's own reasoning: a read spends no model call and
+// must survive a PREP_DISABLED outage) and not rate-limited, matching
+// DELETE's own already-disclosed, non-blocking gap.
+export async function GET(request) {
+  const { supabase, userId } = await getAuth();
+  if (!userId) return unauthorized();
+
+  const url = new URL(request.url);
+  const applicationId = idOf(url.searchParams.get("applicationId"));
+  if (!applicationId) return badRequest("Missing applicationId.");
+
+  const owned = await loadOwnedApplication(supabase, applicationId, userId);
+  if (!owned) return notFound("Application not found.");
+
+  const { candidateName, interviewerNames, error: trustedError } = await readTrustedNames(supabase, {
+    applicationId,
+    userId,
+  });
+  const storedNames = flattenTrustedNames({ candidateName, interviewerNames });
+
+  const { pack, status, attemptsExhausted, error } = await readPrepPack(supabase, { applicationId, userId }, storedNames);
+  if (error) return Response.json({ error }, { status: 500 });
+
+  // AC-N33.21's "Download prep log" control reads this, client-side, off the
+  // SAME response -- never a second fetch, and never listPrepEvents called
+  // from a client file directly.
+  const { events } = await listPrepEvents(supabase, { applicationId, userId });
+
+  return Response.json({
+    pack,
+    status,
+    completeSections: Array.from(completeSections(pack)),
+    attemptsExhausted,
+    events: events || [],
+    candidateName,
+    interviewerNames,
+    error: trustedError,
+  });
+}
+
+// PUT /api/interview-prep  (body: {applicationId, candidateName?, interviewerNamesText?})
+//
+// The name-save write path, server-only, resolving SEC-N33's write-path
+// tradeoff in favour of a real route rather than a raw client Supabase
+// write -- these two tables are the O-15 exemption's own trust anchor, so a
+// code-side ownership check makes a cross-tenant write structurally
+// impossible even if RLS is ever misconfigured (the exact property N37
+// found ABSENT on `interview_stages`, and must not be reproduced here).
+// Reads the CURRENT stored row fresh (never a stale client copy) before
+// diffing, so a save with no real change issues zero writes.
+export async function PUT(request) {
+  const { supabase, userId } = await getAuth();
+  if (!userId) return unauthorized();
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return badRequest("Invalid JSON body.");
+  }
+
+  const applicationId = idOf(body?.applicationId);
+  if (!applicationId) return badRequest("Missing applicationId.");
+
+  const owned = await loadOwnedApplication(supabase, applicationId, userId);
+  if (!owned) return notFound("Application not found.");
+
+  const stored = await readTrustedNames(supabase, { applicationId, userId });
+  if (stored.error) return Response.json({ error: stored.error }, { status: 500 });
+
+  const { candidateNamePayload, interviewerNamesPayload } = buildTrustedNamesPayload({
+    form: {
+      candidateName: body?.candidateName,
+      interviewerNamesText: body?.interviewerNamesText,
+    },
+    stored,
+  });
+
+  if (candidateNamePayload !== null) {
+    const result = await saveCandidateName(supabase, { userId, candidateName: candidateNamePayload });
+    if (!result.written) return Response.json({ written: false, error: result.error }, { status: 500 });
+  }
+
+  if (interviewerNamesPayload !== null) {
+    const result = await saveInterviewerNames(supabase, {
+      applicationId,
+      userId,
+      interviewerNames: interviewerNamesPayload,
+    });
+    if (!result.written) return Response.json({ written: false, error: result.error }, { status: 500 });
+  }
+
+  return Response.json({ written: true, error: null });
 }

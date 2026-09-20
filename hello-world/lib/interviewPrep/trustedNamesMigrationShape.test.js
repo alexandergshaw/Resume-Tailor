@@ -114,15 +114,12 @@ describe("[control] the search root and extractor are live -- a canary before tr
   });
 });
 
-describe("RED on HEAD -- neither new table exists yet anywhere in supabase/migrations", () => {
-  it("candidate_identity has no CREATE TABLE anywhere in this checkout's migrations", () => {
-    expect(createTableBlock(strippedAll, "candidate_identity")).toBeNull();
-  });
-
-  it("application_trusted_names has no CREATE TABLE anywhere in this checkout's migrations", () => {
-    expect(createTableBlock(strippedAll, "application_trusted_names")).toBeNull();
-  });
-});
+// The "RED on HEAD -- neither new table exists yet" scaffolding that lived
+// here (asserting createTableBlock(...) === null for both new tables) was
+// the landing author's own proof that this suite started red. It was
+// removed once the migration below landed and those tables exist -- this is
+// not a coverage gap, the real acceptance criteria are the describe blocks
+// beneath this comment.
 
 describe("candidate_identity -- once per account, structurally IMPOSSIBLE to duplicate (RD-N33.1)", () => {
   const block = () => createTableBlock(strippedAll, "candidate_identity");

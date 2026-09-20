@@ -13,6 +13,8 @@ import { useIsMobile } from "../hooks/useResponsive";
 import FieldError from "./FieldError";
 import FormattedContent from "./FormattedContent";
 import DigestPanel from "./tracking/DigestPanel";
+import PrepPackPanel from "./tracking/PrepPackPanel";
+import { triggerBlobDownload } from "@/lib/document/download";
 
 // The digest tab's body lives in ./tracking/DigestPanel.js. It moved out
 // because it grew the thing this dialog cannot host: citation markers, three
@@ -21,6 +23,39 @@ import DigestPanel from "./tracking/DigestPanel";
 // written before the pipeline existed). None of that is falsifiable while it
 // is a private function inside a component that needs a page-sized prop tree
 // to mount.
+//
+// The interview-prep tab's body lives in ./tracking/PrepPackPanel.js, for the
+// same reason plus one more (design-reconciled.r2.md ss5.3/ss4.2): it must
+// never import prepStore.js/prepParse.js/prepPack.js/trustedNames.js, because
+// those carry the O-15 given-name lexicon at module scope, and this dialog is
+// itself a "use client" file -- so THIS file cannot import them either. Pack
+// content, section completeness, and both name fields all arrive here as
+// plain JSON from the server-only GET /api/interview-prep route instead.
+
+/** Builds the "Download prep log" content from the `events` array the GET
+ *  route's own response already carries -- never a second, independent
+ *  download mechanism (AC-N33.21's own bar). Hosts/outcomes only, matching
+ *  this repo's other feature logs' own discipline of never re-deriving pack
+ *  content into a download. */
+function downloadPrepLog(dApp, dPrep) {
+  const events = Array.isArray(dPrep?.events) ? dPrep.events : [];
+  const lines = [
+    "# Interview prep activity log",
+    "",
+    `Application: ${dApp?.id || "unknown"}`,
+    "",
+    ...events.map(
+      (e) =>
+        `- ${e.at || "unknown time"}: ${e.event_type || "event"} (${e.outcome || "unknown"})${
+          e.reason ? ` — ${e.reason}` : ""
+        }`
+    ),
+  ];
+  triggerBlobDownload(
+    new Blob([`${lines.join("\n")}\n`], { type: "text/markdown" }),
+    `interview-prep-log-${dApp?.id || "row"}.md`
+  );
+}
 
 export default function AppViewDialog({
   appDialog,
@@ -45,15 +80,38 @@ export default function AppViewDialog({
     return () => clearTimeout(id);
   }, []);
 
+  // N25/N33's read surface. Fetched on demand (only once per application,
+  // never re-fetched merely for switching pages back and forth) from the
+  // server-only GET route -- never from a client-side prepStore.js/
+  // prepParse.js import, per this file's own header.
+  const [prepById, setPrepById] = useState({});
   const dApp = appDialog.rowIndex != null ? applicationData[appDialog.rowIndex] : null;
   const dPos = dApp?.positions;
   const dResume = dApp?.generated_resumes;
   const dDigest = dApp?.id ? digestsById[dApp.id] : null;
+  const dPrep = dApp?.id ? prepById[dApp.id] : null;
+  useEffect(() => {
+    if (appDialog.kind !== "prep" || !dApp?.id || prepById[dApp.id]) return;
+    let cancelled = false;
+    fetch(`/api/interview-prep?applicationId=${encodeURIComponent(dApp.id)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled) setPrepById((prev) => ({ ...prev, [dApp.id]: data }));
+      })
+      .catch(() => {
+        if (!cancelled) setPrepById((prev) => ({ ...prev, [dApp.id]: { error: "Could not load your prep pack." } }));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [appDialog.kind, dApp?.id, prepById]);
+
   const pages = [
     dApp?.id ? "communications" : null,
     dPos?.description ? "jd" : null,
     dResume?.content ? "resume" : null,
     dDigest?.markdown ? "digest" : null,
+    dApp?.id ? "prep" : null,
   ].filter(Boolean);
   const pageIdx = pages.indexOf(appDialog.kind);
   const commsLoadedForThisApp =
@@ -65,7 +123,9 @@ export default function AppViewDialog({
         ? `Your Resume — ${dPos?.title || "Role"}`
         : appDialog.kind === "digest"
           ? `${dPos?.company || "Company"} & role — Research`
-          : `Recruiter Communications${
+          : appDialog.kind === "prep"
+            ? `Interview Prep${dPos?.company ? ` — ${dPos.company}` : ""}`
+            : `Recruiter Communications${
               dPos?.company || dPos?.title
                 ? ` — ${dPos?.company || "Unknown Company"}${dPos?.title ? ` / ${dPos.title}` : ""}`
                 : ""
@@ -186,6 +246,26 @@ export default function AppViewDialog({
             researching={!!researchingIds?.has?.(dApp?.id)}
             onResearchAgain={researchOne}
           />
+        ) : appDialog.kind === "prep" ? (
+          !dPrep ? (
+            <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
+              <CircularProgress size={24} />
+            </Box>
+          ) : dPrep.error && !dPrep.status ? (
+            <FieldError>{dPrep.error}</FieldError>
+          ) : (
+            <PrepPackPanel
+              applicationId={dApp?.id}
+              pack={dPrep.pack ?? null}
+              status={dPrep.status ?? null}
+              completeSections={dPrep.completeSections ?? []}
+              attemptsExhausted={!!dPrep.attemptsExhausted}
+              candidateName={dPrep.candidateName ?? null}
+              interviewerNames={dPrep.interviewerNames ?? []}
+              error={dPrep.error ?? null}
+              onDownloadLog={() => downloadPrepLog(dApp, dPrep)}
+            />
+          )
         ) : (
           <FormattedContent
             text={appDialog.kind === "jd" ? (dPos?.description ?? "") : (dResume?.content ?? "")}

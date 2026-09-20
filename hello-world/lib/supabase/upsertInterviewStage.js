@@ -40,11 +40,19 @@ export async function upsertInterviewStage(supabase, {
     };
 
     if (stageId) {
-      // Update existing stage
+      // Update existing stage. N37: `.eq("user_id", userId)` is the fix --
+      // without it, `payload` (shared with the INSERT branch above and
+      // therefore always carrying `user_id`/`application_id`) let a
+      // cross-account caller not merely edit someone else's row but
+      // REASSIGN its ownership outright, since the UPDATE's own WHERE
+      // clause matched on `id` alone. Precedent for this exact tenant-filter
+      // retrofit: lib/supabase/applicationStatusWriter.js's
+      // deleteApplicationForUser (`.eq("id", ...).eq("user_id", ...)`).
       const { data, error } = await supabase
         .from("interview_stages")
         .update(payload)
         .eq("id", stageId)
+        .eq("user_id", userId)
         .select("id")
         .single();
       if (error) {
@@ -72,17 +80,22 @@ export async function upsertInterviewStage(supabase, {
 }
 
 /**
- * Fetch all interview stages for an application
+ * Fetch all interview stages for an application. N37: scoped by BOTH
+ * application_id AND user_id -- an application_id-only filter let any
+ * authenticated caller who guessed an applicationId read another account's
+ * stages. Object-param signature, matching this module's own dominant
+ * convention (upsertInterviewStage already takes one).
  * @param {Object} supabase - Supabase client
- * @param {string} applicationId - Application ID
+ * @param {{applicationId: string, userId: string}} args
  * @returns {Promise<Array>} - Array of interview stages
  */
-export async function getInterviewStages(supabase, applicationId) {
+export async function getInterviewStages(supabase, { applicationId, userId }) {
   try {
     const { data, error } = await supabase
       .from("interview_stages")
       .select("*")
       .eq("application_id", applicationId)
+      .eq("user_id", userId)
       .order("scheduled_at", { ascending: false });
     if (error) {
       console.error("[getInterviewStages] failed:", error);

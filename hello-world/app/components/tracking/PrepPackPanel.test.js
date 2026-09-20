@@ -137,10 +137,19 @@ describe("AC-N33.13 -- every reachable status renders distinct, honest UI", () =
   });
 
   it("'failed' renders a distinct failure state, never the same copy as 'unavailable'", async () => {
+    // `render()` returns the shared, module-level `container` `beforeEach`
+    // creates once per test (see its own header) -- calling it twice in one
+    // `it` returns the SAME node both times, so `.textContent` must be
+    // captured into a string immediately after each render, before the next
+    // render mutates that node. Reading both `.textContent`s only after both
+    // renders complete (the previous form here) compared the same reference
+    // to itself and could never fail no matter what the component rendered.
     const failed = await render(baseProps({ pack: null, status: "failed" }));
+    const failedText = failed.textContent;
     const unavailable = await render(baseProps({ pack: null, status: "unavailable" }));
-    expect(failed.textContent.toLowerCase()).toMatch(/fail|error|try again/);
-    expect(failed.textContent).not.toBe(unavailable.textContent);
+    const unavailableText = unavailable.textContent;
+    expect(failedText.toLowerCase()).toMatch(/fail|error|try again/);
+    expect(failedText).not.toBe(unavailableText);
   });
 
   it("'unavailable' renders a distinct, honest state (nothing to research), not a generic failure", async () => {

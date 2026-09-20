@@ -250,6 +250,79 @@ export function containsDetectedName(text) {
   return false;
 }
 
+/**
+ * N33's additive sibling of `containsDetectedName`, built from the identical
+ * scan (same `TITLE_CASE_RUN_RE`, same `GIVEN_NAME_SET`/`ORG_SUFFIX_WORDS`
+ * gate) -- collects EVERY qualifying two-word span instead of returning on
+ * the first. `containsDetectedName`'s own signature and behaviour are
+ * completely unchanged by this export (N26 ledger constraint #1) -- this is
+ * a new function, not an edit to the existing one, and the two can never
+ * disagree on whether a text contains a detected name at all.
+ *
+ * @param {unknown} text
+ * @returns {string[]} every detected two-word span, in the order found;
+ *   duplicates included if the same span appears twice.
+ */
+export function detectedNameSpans(text) {
+  const spans = [];
+  if (typeof text !== "string" || !text) return spans;
+  TITLE_CASE_RUN_RE.lastIndex = 0;
+  let runMatch = TITLE_CASE_RUN_RE.exec(text);
+  while (runMatch) {
+    const words = runMatch[0].split(/\s+/);
+    for (let i = 0; i < words.length - 1; i += 1) {
+      if (GIVEN_NAME_SET.has(words[i].toLowerCase()) && !ORG_SUFFIX_WORDS.has(words[i + 1])) {
+        spans.push(`${words[i]} ${words[i + 1]}`);
+      }
+    }
+    runMatch = TITLE_CASE_RUN_RE.exec(text);
+  }
+  return spans;
+}
+
+/** AC-N33.4's comparison normalization: Unicode-NFC, trim, then collapse an
+ *  internal whitespace run to a single space. No other transform -- never
+ *  case-folded (AC-N33.5) and never punctuation-stripped (SEC row #6). A
+ *  non-string input normalizes to "", which never equals a real span (every
+ *  real span is at least two non-empty words). */
+function normalizeNameForComparison(value) {
+  if (typeof value !== "string") return "";
+  return value.normalize("NFC").trim().replace(/\s+/g, " ");
+}
+
+/**
+ * The N33 O-15 exemption (ac.r1.md AC-N33.1/1.2/1.3). Pure, total, never
+ * throws.
+ *
+ * True iff EVERY span `detectedNameSpans(text)` returns is, after the
+ * normalization above, case-sensitively (AC-N33.5) equal to at least one
+ * entry of `storedNames` (after the identical normalization). This is a
+ * UNIVERSAL quantifier over spans, never an existential substring check --
+ * "text contains a stored value somewhere" is the shape design-security.r1.md
+ * SEC-N33.2/SEC-N33.3 demonstrate is a full bypass (a co-occurring unrelated
+ * name, or a common-word stored name, both ship unrefused under that shape).
+ * A text with zero detected spans is vacuously true, but that is moot in
+ * production: the caller (`refusesLine`) only ever consults this after
+ * `containsDetectedName(text)` is already true, which guarantees at least
+ * one span exists. A missing/degenerate `storedNames` argument fails closed
+ * (coerces to `[]`, matching nothing).
+ *
+ * @param {unknown} text
+ * @param {unknown} storedNames  the flattened return of trustedNames.js's
+ *   `flattenTrustedNames` -- never `pack`, `parsed`, `body`, or anything
+ *   descending from a request body or a model reply.
+ * @returns {boolean}
+ */
+export function isUserSuppliedName(text, storedNames) {
+  const spans = detectedNameSpans(text);
+  if (spans.length === 0) return true;
+  const stored = Array.isArray(storedNames) ? storedNames : [];
+  const normalizedStored = new Set(
+    stored.map((value) => normalizeNameForComparison(value)).filter((value) => value.length > 0),
+  );
+  return spans.every((span) => normalizedStored.has(normalizeNameForComparison(span)));
+}
+
 /** A vertexaisearch redirect proxy never resolves to the publisher page it
  *  points at, so it does not count as a citation -- see
  *  [[gemini-grounding-redirects]] and contract C-46. */
@@ -337,20 +410,31 @@ const PREDICTION_PREDICATE = new RegExp(
  * never this function. Applies K1-SHAPE, then K1-PROHIBITION: a line naming
  * nobody never reaches either check.
  *
- * `exemptCitation` (F-1) skips K1-SHAPE ONLY when true. K1-PROHIBITION always
- * runs, unconditionally, regardless of this flag -- a citation, real or
- * exempted, can never license a prediction about who is in the interview.
+ * `exemptCitation` (F-1) skips K1-SHAPE ONLY when true. N33's `storedNames`
+ * (ac.r1.md AC-N33.1-9) is the SAME kind of skip, reached independently: a
+ * detected span that is entirely made up of the candidate's own stored
+ * names (`isUserSuppliedName`, above) also does not need a citation, because
+ * the candidate supplied the name themselves rather than the model
+ * asserting it as a researched fact. Either skip -- citation or
+ * user-supplied -- only ever excuses K1-SHAPE. K1-PROHIBITION always runs,
+ * unconditionally, regardless of either flag -- a citation or a
+ * correctly-exempted name can never license a prediction about who is in
+ * the interview (AC-N33.9).
  *
  * @param {unknown} text
  * @param {*} support
  * @param {Array<{id: string, sourceUrl?: string}>} claims
  * @param {boolean} [exemptCitation]
+ * @param {string[]} [storedNames]
  * @returns {boolean} true if the line must be refused.
  */
-function refusesLine(text, support, claims, exemptCitation = false) {
+function refusesLine(text, support, claims, exemptCitation = false, storedNames = []) {
   if (typeof text !== "string" || !containsDetectedName(text)) return false;
-  if (!exemptCitation && !isCitedClaim(support, claims)) return true; // K1-SHAPE
-  return PREDICTION_PREDICATE.test(text); // K1-PROHIBITION, unconditional
+  const allDetectedNamesAreUserSupplied = isUserSuppliedName(text, storedNames);
+  if (!exemptCitation && !allDetectedNamesAreUserSupplied && !isCitedClaim(support, claims)) {
+    return true; // K1-SHAPE
+  }
+  return PREDICTION_PREDICATE.test(text); // K1-PROHIBITION, unconditional -- AC-N33.9
 }
 
 /**
@@ -453,15 +537,16 @@ function isUsableTextEntry(entry) {
  * @param {Array<*>} rawList
  * @param {Array<{id: string, sourceUrl?: string}>} claims
  * @param {boolean} [exemptCitation]
+ * @param {string[]} [storedNames]
  * @returns {{list: Array<*>, refused: number}}
  */
-function normalizeDroppingList(rawList, claims, exemptCitation) {
+function normalizeDroppingList(rawList, claims, exemptCitation, storedNames) {
   let refused = 0;
   const list = [];
   for (const entry of rawList) {
     if (!isUsableTextEntry(entry)) continue;
     const { text, support } = entry;
-    if (refusesLine(text, support, claims, exemptCitation)) {
+    if (refusesLine(text, support, claims, exemptCitation, storedNames)) {
       refused += 1;
       continue;
     }
@@ -508,9 +593,10 @@ function normalizeDroppingList(rawList, claims, exemptCitation) {
  * @param {*} stageEntry
  * @param {Array<{id: string, sourceUrl?: string}>} claims
  * @param {boolean} [exemptCitation]
+ * @param {string[]} [storedNames]
  * @returns {{stage: *, refused: number}}
  */
-function normalizeStage(stageEntry, claims, exemptCitation) {
+function normalizeStage(stageEntry, claims, exemptCitation, storedNames) {
   if (!stageEntry || typeof stageEntry !== "object") {
     return { stage: stageEntry, refused: 0 };
   }
@@ -518,14 +604,17 @@ function normalizeStage(stageEntry, claims, exemptCitation) {
   let refused = 0;
   const next = { ...stageEntry };
 
-  if (typeof stageEntry.name === "string" && refusesLine(stageEntry.name, support, claims, exemptCitation)) {
+  if (
+    typeof stageEntry.name === "string" &&
+    refusesLine(stageEntry.name, support, claims, exemptCitation, storedNames)
+  ) {
     next.name = null;
     refused += 1;
   }
 
   if (Array.isArray(stageEntry.questions)) {
     next.questions = stageEntry.questions.filter((question) => {
-      if (refusesLine(question, support, claims, exemptCitation)) {
+      if (refusesLine(question, support, claims, exemptCitation, storedNames)) {
         refused += 1;
         return false;
       }
@@ -535,7 +624,7 @@ function normalizeStage(stageEntry, claims, exemptCitation) {
 
   if (
     typeof stageEntry.recommendedAnswer === "string" &&
-    refusesLine(stageEntry.recommendedAnswer, support, claims, exemptCitation)
+    refusesLine(stageEntry.recommendedAnswer, support, claims, exemptCitation, storedNames)
   ) {
     next.recommendedAnswer = null;
     refused += 1;
@@ -564,14 +653,15 @@ function normalizeStage(stageEntry, claims, exemptCitation) {
  * @param {Array<*>} rawStages
  * @param {Array<{id: string, sourceUrl?: string}>} claims
  * @param {boolean} [exemptCitation]
+ * @param {string[]} [storedNames]
  * @returns {{list: Array<*>, refused: number}}
  */
-function normalizeStageList(rawStages, claims, exemptCitation) {
+function normalizeStageList(rawStages, claims, exemptCitation, storedNames) {
   let refused = 0;
   const list = [];
   for (const stageEntry of rawStages) {
     if (!stageEntry || typeof stageEntry !== "object" || Array.isArray(stageEntry)) continue;
-    const result = normalizeStage(stageEntry, claims, exemptCitation);
+    const result = normalizeStage(stageEntry, claims, exemptCitation, storedNames);
     refused += result.refused;
     list.push(result.stage);
   }
@@ -609,20 +699,33 @@ function normalizeStageList(rawStages, claims, exemptCitation) {
  * value to double-count; `countRefusedLines` below is the correct, decoupled
  * way to get an honest count, computed once, off to the side.
  *
+ * N33: `storedNames` (default `[]`, so every existing 1-argument call site
+ * keeps behaving exactly as it does today -- no exemption applied) is
+ * resolved by the CALLER, always from `trustedNames.js`'s
+ * `readTrustedNames`/`flattenTrustedNames` scoped by the request's own
+ * `applicationId`/`userId` -- never from `pack` itself. This function never
+ * reads a `storedNames`/`candidateName`/`interviewerNames` field off `pack`
+ * (a hostile model reply could plant one to try to launder its own
+ * exemption); only the explicit second argument is ever consulted.
+ * `refusesClaimText` (claims filtering, just above) takes NO `storedNames`
+ * parameter -- it is K1-PROHIBITION-only with no citation branch to exempt
+ * (RD-N33.5), so claims filtering is identical with or without it.
+ *
  * @param {*} pack
+ * @param {string[]} [storedNames]
  * @returns {*} the same pack, with all four sections normalized into their
  *   canonical shape and `claims` guaranteed to be an array.
  */
-export function normalizePack(pack) {
+export function normalizePack(pack, storedNames = []) {
   if (!pack || typeof pack !== "object") return pack;
   const sections = asPlainObject(pack.sections);
   const claims = normalizeClaims(pack.claims).filter((claim) => !refusesClaimText(claim?.text));
   const exemptCitation = isEmbeddedTemplateOrigin(pack);
 
-  const aboutYou = normalizeDroppingList(extractAnswerLines(sections.aboutYou), claims, exemptCitation);
-  const whyRole = normalizeDroppingList(extractAnswerLines(sections.whyRole), claims, exemptCitation);
-  const askThem = normalizeDroppingList(extractQuestions(sections.askThem), claims, exemptCitation);
-  const stages = normalizeStageList(extractStageList(sections.stages), claims, exemptCitation);
+  const aboutYou = normalizeDroppingList(extractAnswerLines(sections.aboutYou), claims, exemptCitation, storedNames);
+  const whyRole = normalizeDroppingList(extractAnswerLines(sections.whyRole), claims, exemptCitation, storedNames);
+  const askThem = normalizeDroppingList(extractQuestions(sections.askThem), claims, exemptCitation, storedNames);
+  const stages = normalizeStageList(extractStageList(sections.stages), claims, exemptCitation, storedNames);
 
   return {
     ...pack,
@@ -653,11 +756,18 @@ export function normalizePack(pack) {
  * a shape-repair/K1-PROHIBITION step, not itself a refusal count, so reusing
  * it here does not change what this function counts).
  *
+ * N33: `storedNames` (default `[]`, backward compatible with every existing
+ * 2-argument call) is forwarded identically to `normalizePack`'s own
+ * threading -- see that function's own header for the source discipline
+ * (never read off `pack` itself). `refusesClaimText`'s own count, just
+ * below, is unaffected by it (RD-N33.5).
+ *
  * @param {*} pack
  * @param {Array<{id: string, sourceUrl?: string}>} claims
+ * @param {string[]} [storedNames]
  * @returns {number}
  */
-export function countRefusedLines(pack, claims) {
+export function countRefusedLines(pack, claims, storedNames = []) {
   if (!pack || typeof pack !== "object") return 0;
   const sections = asPlainObject(pack.sections);
   const resolvedClaims = Array.isArray(claims) ? claims : [];
@@ -669,10 +779,10 @@ export function countRefusedLines(pack, claims) {
   // drop) so it is not silently omitted the way it used to be.
   const claimsRefused = normalizeClaims(pack.claims).filter((claim) => refusesClaimText(claim?.text)).length;
 
-  const aboutYou = normalizeDroppingList(extractAnswerLines(sections.aboutYou), resolvedClaims, exemptCitation);
-  const whyRole = normalizeDroppingList(extractAnswerLines(sections.whyRole), resolvedClaims, exemptCitation);
-  const askThem = normalizeDroppingList(extractQuestions(sections.askThem), resolvedClaims, exemptCitation);
-  const stages = normalizeStageList(extractStageList(sections.stages), resolvedClaims, exemptCitation);
+  const aboutYou = normalizeDroppingList(extractAnswerLines(sections.aboutYou), resolvedClaims, exemptCitation, storedNames);
+  const whyRole = normalizeDroppingList(extractAnswerLines(sections.whyRole), resolvedClaims, exemptCitation, storedNames);
+  const askThem = normalizeDroppingList(extractQuestions(sections.askThem), resolvedClaims, exemptCitation, storedNames);
+  const stages = normalizeStageList(extractStageList(sections.stages), resolvedClaims, exemptCitation, storedNames);
 
   return aboutYou.refused + whyRole.refused + askThem.refused + stages.refused + claimsRefused;
 }

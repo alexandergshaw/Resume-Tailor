@@ -651,7 +651,41 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // rather than calling it) but IS imported by name from
     // prepPack.test.js -- rule TR-1's exact shape, so it lands here rather
     // than in ORPHAN_EXPORTS.
-    expect(TEST_REFERENCED.length).toBe(357);
+    //
+    // 357 -> 356, and this is TWO INDEPENDENT MOVEMENTS netting to -1, not a
+    // clean single step -- reading it as "nothing much happened" would miss
+    // the case this bucket exists to catch (N33's own wave landing route.js's
+    // GET handler and the O-15 exemption together).
+    //   -3  prepStore.js#readPrepPack, prepStore.js#listPrepEvents and
+    //       prepPack.js#completeSections all gained a REAL shipping importer:
+    //       route.js's own GET handler (implemented this round) reads an
+    //       existing pack and returns `{pack, status, completeSections,
+    //       attemptsExhausted, candidateName, interviewerNames, error}` to
+    //       PrepPackPanel.js. route.js now imports readPrepPack/
+    //       listPrepEvents from prepStore.js and completeSections from
+    //       prepPack.js, and calls all three in that handler. All three were
+    //       previously exercised only by prepStore.test.js/prepPack.test.js;
+    //       none demoted into ORPHAN_EXPORTS on the way out (their sole prior
+    //       consumer was always a test, never nothing), so this bucket is the
+    //       whole story for their departure -- this is the census working in
+    //       the GOOD direction, the same shape GlossaryProvider's own mount
+    //       demonstrated above.
+    //   +2  prepParse.js's own O-15 exemption additions, detectedNameSpans
+    //       and isUserSuppliedName (design-reconciled.r2.md ss4.2). Neither
+    //       is imported BY NAME from a static import anywhere -- their own
+    //       suite, nameExemption.test.js, reaches them only through a dynamic
+    //       `await load()` this index cannot follow (the same shape the
+    //       bullet-truncation chunk's seven used, see this file's header).
+    //       What actually lands them here is a SEPARATE static edge:
+    //       lib/interviewPrep/trustedNamesCallSites.sweep.test.js does
+    //       `import * as ... from "./prepParse.js"` for its own call-site
+    //       census, and a NAMESPACE import marks a module's ENTIRE export
+    //       surface used (exportGraph.js's own documented behaviour -- the
+    //       same mechanism app/copilot/useDraftAnswer.js demonstrates as a
+    //       POSITIVE CONTROL below). Rule TR-1's exact shape: a widened
+    //       surface with a real, if incidental, test consumer -- not a lost
+    //       feature.
+    expect(TEST_REFERENCED.length).toBe(356);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
@@ -749,7 +783,10 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // not our own text. ONE movement, OUT, none in. Stated by name because this
     // count has been bumped before with a comment naming a single movement when
     // the real delta was +2/-1.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(427);
+    // 427 -> 426: the same -1 net described just above, in step with
+    // TEST_REFERENCED -- ORPHAN_EXPORTS is unmoved at 70 throughout, so the
+    // total's -1 IS the TR-1 bucket's -1, not a second, independent change.
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(426);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {
