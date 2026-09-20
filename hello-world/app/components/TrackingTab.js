@@ -550,6 +550,7 @@ export default function TrackingTab({
                   </TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Recruiter Communications</TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Company &amp; role</TableCell>
+                  <TableCell sx={{ fontWeight: 700 }}>Interview Prep</TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Job Description</TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Your Resume</TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>Links</TableCell>
@@ -710,6 +711,16 @@ export default function TrackingTab({
                       </TableCell>
                       <TableCell sx={{ maxWidth: 220 }}>
                         {renderDigestCell(app, idx)}
+                      </TableCell>
+                      <TableCell sx={{ whiteSpace: "nowrap" }}>
+                        {/* Same door as the phone card's "Prep" button
+                            (ApplicationCard.js) -- unconditional, no
+                            per-row prefetch of pack existence, honest
+                            absent-state copy lives inside the dialog once
+                            opened. */}
+                        <Button size="small" sx={{ p: 0, minWidth: 0, fontSize: 11 }} onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "prep" })}>
+                          View prep
+                        </Button>
                       </TableCell>
                       <TableCell sx={{ maxWidth: 220 }}>
                         {pos?.description ? (

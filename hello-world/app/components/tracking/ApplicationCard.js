@@ -198,6 +198,15 @@ export default function ApplicationCard({
           </Button>
         )}
         <Button size="small" variant="outlined" sx={TOUCH_TARGET_SX} onClick={() => openCommsInAppDialog(app, idx)}>Comms</Button>
+        {/* N25/N33's prep pack read surface: AppViewDialog already renders
+            PrepPackPanel for kind "prep" (see its own `pages` array), but
+            until this button, nothing ever set that kind, so the panel was
+            unreachable. Unconditional like Comms above -- there is no
+            per-row prefetch of whether a pack exists yet (unlike the digest
+            cell's own `digestsById`), so the label never varies; opening
+            with no pack shows PrepPackPanel's own honest "No prep pack yet"
+            copy instead of a different button state. */}
+        <Button size="small" variant="outlined" sx={TOUCH_TARGET_SX} onClick={() => setAppDialog({ open: true, rowIndex: idx, kind: "prep" })}>Prep</Button>
         {postingHref && (
           <Button size="small" variant="outlined" sx={TOUCH_TARGET_SX} href={postingHref} target="_blank" rel="noopener noreferrer">Posting ↗</Button>
         )}
