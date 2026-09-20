@@ -188,10 +188,10 @@ function relPath(full) {
 // than rewriting the existing one).
 // ---------------------------------------------------------------------------
 const KNOWN_CALL_SITES = [
-  { file: "app/api/interview-prep/route.js", fn: "normalizePack", firstArg: "parsed.pack", why: "route.js:455, the model-path pre-write normalization" },
-  { file: "app/api/interview-prep/route.js", fn: "countRefusedLines", firstArg: "parsed.pack", why: "route.js:466, logging-only refused-line count" },
-  { file: "lib/interviewPrep/prepStore.js", fn: "normalizePack", firstArg: "pack", why: "prepStore.js:377, writePrepPackResult's own normalize-before-write" },
-  { file: "lib/interviewPrep/prepStore.js", fn: "normalizePack", firstArg: "packRow.pack ?? null", why: "prepStore.js:188, readPrepPack's own normalize-before-return" },
+  { file: "app/api/interview-prep/route.js", fn: "normalizePack", firstArg: "parsed.pack", existingArgCount: 1, why: "route.js:455, the model-path pre-write normalization" },
+  { file: "app/api/interview-prep/route.js", fn: "countRefusedLines", firstArg: "parsed.pack", existingArgCount: 2, why: "route.js:466, logging-only refused-line count -- takes (pack, claims) today, storedNames is the THIRD argument" },
+  { file: "lib/interviewPrep/prepStore.js", fn: "normalizePack", firstArg: "pack", existingArgCount: 1, why: "prepStore.js:377, writePrepPackResult's own normalize-before-write" },
+  { file: "lib/interviewPrep/prepStore.js", fn: "normalizePack", firstArg: "packRow.pack ?? null", existingArgCount: 1, why: "prepStore.js:188, readPrepPack's own normalize-before-return" },
 ];
 const FORBIDDEN_TRAILING_ARGS = new Set(["pack", "parsed", "parsed.pack", "body"]);
 
@@ -215,14 +215,21 @@ describe("[control] the extractor sees a real, non-empty set of call sites -- a 
     expect(sites.length).toBeGreaterThanOrEqual(4);
   });
 
-  it("[canary] this file's own prose (which names normalizePack/countRefusedLines many times in comments) contributes ZERO call sites -- proves comments are stripped, not merely present", () => {
-    const stripped = stripComments(readFileSync(SELF_PATH, "utf8"));
-    // The header above deliberately writes "normalizePack(" inside prose;
-    // stripComments must remove every line it appears on as a `//` comment,
-    // and this file excludes itself from the walk besides.
-    const commentOnlyMentions = (readFileSync(SELF_PATH, "utf8").match(/normalizePack\(/g) || []).length;
-    expect(commentOnlyMentions).toBeGreaterThan(0); // the canary really is present in the raw file
-    expect(findCalls(stripped, "normalizePack").length).toBe(0); // and gone once stripped
+  it("[canary] a comment-only mention of normalizePack( contributes ZERO call sites once stripped, even though the raw text contains it", () => {
+    const fixture = [
+      "// normalizePack(pack) is mentioned here only in prose, never called",
+      "/* another mention: normalizePack(pack) */",
+      "const unrelated = 1;",
+    ].join("\n");
+    expect(fixture).toContain("normalizePack(pack)"); // the canary really is present in the raw text
+    expect(findCalls(stripComments(fixture), "normalizePack").length).toBe(0); // and gone once stripped
+  });
+
+  it("[canary] a FUNCTION DECLARATION is not itself a call site -- prepParse.js's own `export function normalizePack(pack) {` must not be misreported as an extra call inside its defining file", () => {
+    const fixture = "export function normalizePack(pack) {\n  return pack;\n}\nconst x = normalizePack(y, z);";
+    const calls = findCalls(stripComments(fixture), "normalizePack");
+    expect(calls.length).toBe(1);
+    expect(calls[0].argsText).toBe("y, z");
   });
 });
 
@@ -249,7 +256,7 @@ describe("THREADING -- RED TODAY: each known-safe call site must pass a storedNa
       );
       expect(sites.length, `no call to ${site.fn}(${site.firstArg}, ...) found in ${site.file}`).toBeGreaterThan(0);
       for (const found of sites) {
-        const trailing = found.args[1];
+        const trailing = found.args[site.existingArgCount];
         expect(trailing, `${site.file}::${site.fn}(${site.firstArg}) has no third argument yet`).toBeTruthy();
         expect(
           FORBIDDEN_TRAILING_ARGS.has(trailing),
