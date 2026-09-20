@@ -17,6 +17,30 @@
 // measuring that the sixteen implemented literally FAIL the AC's own equality
 // (email: 87 characters against an expected 86; cover template: 15 lines
 // against an expected 14).
+//
+// ===========================================================================
+// AMENDED 2026-09-20 BY OWNER RULING (backlog N36) -- READ BEFORE EDITING B4.
+// ===========================================================================
+// The B4 row below USED to specify that an `<li>` is a bare line: "NO bullet
+// glyph, NO indent, NO numbering", with four exact-equality assertions pinning
+// it (B4's two `toBe`s and its negative-glyph loop, B7's `"A\nB\nC\nAfter"`,
+// F1's `"A\nB"`, and AC-C1.6's three bulleted corpus lines). That was a
+// deliberate reading of AC-C7 -- an app-introduced character in a field an ATS
+// keyword-matcher reads verbatim -- not an oversight.
+//
+// The owner ruled it the wrong trade, because of what the measurement round
+// found: the plain flavour is what every ATS form receives, and a resume's
+// achievement bullets arriving as undifferentiated bare lines is the harm
+// N36 reports. The four assertions are therefore UPDATED HERE, in place, to
+// the new specification -- never deleted, and each still asserting the
+// property it was originally written to protect (stated at each site).
+//
+// The marker is "\u2022 " for an unordered item and "N. " for an ordered one,
+// matching the convention this repo already ships in lib/feed/normalize.js:21,
+// lib/email/newJobsEmail.js:95 and lib/greenhouse/searchJobs.js:35. The full
+// new specification, with its own controls, lives in
+// ./htmlToPlainText.listMarkers.test.js; the rows here are the pre-existing
+// spec rows brought into line with it.
 
 import { describe, it, expect } from "vitest";
 import { htmlToPlainText } from "./htmlToPlainText.js";
@@ -29,6 +53,10 @@ import { emailPreviewLines } from "@/lib/tailor/documentScopes.js";
 // it makes the N1 assertion vacuous (AC-C1.4).
 const NBSP = String.fromCharCode(0x00a0);
 const SP = String.fromCharCode(0x0020);
+// N36's list marker, written as a code point for the same reason: a pasted
+// U+2022 and a pasted U+00B7 are indistinguishable in a diff.
+const BULLET = "\u2022";
+const MARKER = `${BULLET}${SP}`;
 
 // A negative assertion whose operand can be `undefined` is a positive
 // assertion about nothing: `expect(undefined).not.toContain("x")` PASSES.
@@ -68,18 +96,40 @@ describe("AC-C1.3 block rows", () => {
     expect(htmlToPlainText("<h1>A</h1><h2>B</h2><h3>C</h3><h4>D</h4><h5>E</h5><h6>F</h6>")).toBe("A\nB\nC\nD\nE\nF");
   });
 
-  it("B4: an <li> is a bare line -- NO bullet glyph, NO indent, NO numbering", () => {
-    // Corpus: EditorToolbar.exec("insertUnorderedList"/"insertOrderedList")'s
-    // own output. An app-introduced bullet character in a resume pasted into
-    // an ATS is AC-C7's class of harm in visible form.
+  it("B4 (AMENDED, N36): an <li> carries a MARKER -- \"\\u2022 \" unordered, \"N. \" ordered -- and still NO indent", () => {
+    // Corpus unchanged: EditorToolbar.exec("insertUnorderedList"/
+    // "insertOrderedList")'s own output, now also reachable from a native
+    // Word-numbered resume via renderModelToHtml's <ul>/<li>.
+    //
+    // WHAT THIS ROW STILL PROTECTS, property by property, from its superseded
+    // form:
+    //   1. one line per item, in document order, nothing fused;
+    //   2. NO indent of any kind -- no tab, no leading spaces. An indent in a
+    //      single-column ATS text field is noise, and the marker alone is the
+    //      signal (the same flat convention lib/feed/normalize.js uses);
+    //   3. no SUBSTITUTE glyph: "-", "*" and U+00B7 are still never emitted,
+    //      so the repo keeps exactly one bullet character;
+    //   4. unordered and ordered are still DISTINGUISHED, which is the half
+    //      the old row expressed by requiring both to be identical.
+    // What changed is only item 4's direction: they now differ by marker
+    // instead of being identical bare lines.
     const unordered = htmlToPlainText("<ul><li>Led migration</li><li>Built pipeline</li></ul>");
     const ordered = htmlToPlainText("<ol><li>Led migration</li><li>Built pipeline</li></ol>");
-    expect(unordered).toBe("Led migration\nBuilt pipeline");
-    expect(ordered).toBe("Led migration\nBuilt pipeline");
-    for (const glyph of ["\u2022", "\u00b7", "-", "*", "\t", "1."]) {
+    expect(unordered).toBe(`${MARKER}Led migration\n${MARKER}Built pipeline`);
+    expect(ordered).toBe("1. Led migration\n2. Built pipeline");
+    // The two flavours really are told apart, on the same corpus.
+    expect(unordered).not.toBe(ordered);
+    for (const glyph of ["\u00b7", "-", "*", "\t"]) {
       expect(nonEmptyString(unordered)).not.toContain(glyph);
       expect(nonEmptyString(ordered)).not.toContain(glyph);
     }
+    // No indent: every line begins with its marker and nothing before it.
+    for (const line of unordered.split("\n")) expect(line.startsWith(MARKER)).toBe(true);
+    for (const line of ordered.split("\n")) expect(line).toMatch(/^\d+\. \S/);
+    // Cross-contamination check: an unordered list is never numbered, an
+    // ordered one never gets the bullet glyph.
+    expect(nonEmptyString(unordered)).not.toContain("1.");
+    expect(nonEmptyString(ordered)).not.toContain(BULLET);
   });
 
   it("B5: <td>/<th> each contribute one line -- a docx table never reaches here AS a table (AC section 0.5)", () => {
@@ -97,7 +147,12 @@ describe("AC-C1.3 block rows", () => {
   it("B7: ul, ol, table, tbody, thead and tr contribute NOTHING of their own", () => {
     // The failure this pins: a container that also emits a terminator turns
     // a three-bullet list into a list plus a phantom blank line.
-    expect(htmlToPlainText("<ul><li>A</li><li>B</li><li>C</li></ul><p>After</p>")).toBe("A\nB\nC\nAfter");
+    //
+    // AMENDED (N36): the marker is now on each <li>; the UNCHANGED property
+    // this row exists for is that the <ul> itself still contributes nothing --
+    // no terminator, and (new, same class) no marker of its own. "After" is
+    // still on the very next line, with no blank line between.
+    expect(htmlToPlainText("<ul><li>A</li><li>B</li><li>C</li></ul><p>After</p>")).toBe(`${MARKER}A\n${MARKER}B\n${MARKER}C\nAfter`);
     expect(htmlToPlainText("<table><thead><tr><th>H</th></tr></thead><tbody><tr><td>A</td></tr></tbody></table><p>After</p>")).toBe("H\nA\nAfter");
   });
 });
@@ -273,7 +328,16 @@ describe("AC-C1.3 F1: the LAST block's terminator is dropped -- exactly one, at 
     // The other tempting form (`depth === 0`) is measurably wrong here: the
     // body's last child is a <ul>, a container, not a block, so a
     // depth-gated flag keeps the <li>'s terminator and yields "A\nB\n".
-    expect(htmlToPlainText("<ul><li>A</li><li>B</li></ul>")).toBe("A\nB");
+    //
+    // AMENDED (N36): markers added; the UNCHANGED property is that exactly
+    // one terminator is dropped at the end, at any depth -- the string ends
+    // at "B", with no trailing newline. The marker must NOT disturb the F1
+    // flag: it is content, so it sets lastWasTerminator false exactly as a
+    // text node does, and the <li>'s own terminator is still what sets it
+    // true. A marker implementation that emitted after the terminator, or
+    // that left the flag alone, is red here rather than silently shipping a
+    // trailing newline into every ATS paste.
+    expect(htmlToPlainText("<ul><li>A</li><li>B</li></ul>")).toBe(`${MARKER}A\n${MARKER}B`);
   });
 
   it("edge rows, pinned so nobody \"fixes\" them", () => {
@@ -383,6 +447,14 @@ describe("AC-C1.6: the hand-edited corpus a querySelectorAll(\"p\") implementati
     `<p>Skills: JS,${NBSP}SQL</p>`;
 
   it("carries all 9 content lines, in order, with the blank line preserved", () => {
+    // AMENDED (N36): the three <li> lines now carry the marker. The UNCHANGED
+    // property is everything else about this row -- all 9 content lines
+    // present, IN ORDER, the blank line preserved, the <br> boundary intact,
+    // the NBSP substituted -- and specifically that the six NON-<p> blocks
+    // (H2, H3, LI, LI, LI, DIV) all contribute, which is what a
+    // querySelectorAll("p") implementation cannot do. The marker is on the
+    // three LI rows ONLY: H2, H3 and DIV are still unmarked, which is the
+    // over-fire control this corpus carries for free.
     expect(htmlToPlainText(CORPUS)).toBe(
       [
         "ALEX SHAW",
@@ -390,9 +462,9 @@ describe("AC-C1.6: the hand-edited corpus a querySelectorAll(\"p\") implementati
         "Omaha, NE",
         "",
         "EXPERIENCE",
-        "Led migration",
-        "Built pipeline",
-        "Shipped v2",
+        `${MARKER}Led migration`,
+        `${MARKER}Built pipeline`,
+        `${MARKER}Shipped v2`,
         "Added by pressing Enter",
         `Skills: JS,${SP}SQL`,
       ].join("\n"),
