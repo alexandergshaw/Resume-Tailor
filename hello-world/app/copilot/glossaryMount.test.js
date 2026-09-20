@@ -14,20 +14,14 @@
 // So these cases assert from the CLIENTS, which are the things that must supply
 // the value, and they reject a hardcoded one as firmly as a missing one.
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import path from "node:path";
+import { codeOf as sharedCodeOf, stripCommentLines } from "../../test/helpers/stripComments.js";
 
 const LIVE = "app/copilot/CopilotClient.js";
 const PRACTICE = "app/copilot/practice/PracticeClient.js";
 
 /** Source with comments stripped -- prose naming a symbol is not a mount. */
 function codeOf(rel) {
-  const raw = readFileSync(path.join(process.cwd(), rel), "utf8");
-  return raw
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .split("\n")
-    .map((line) => line.replace(/^\s*\/\/.*$/, ""))
-    .join("\n");
+  return sharedCodeOf(rel, { wholeLineOnly: true });
 }
 
 const CLIENTS = [
@@ -87,10 +81,7 @@ describe("the glossary provider is actually mounted, with a real application id"
 
   it("[control] a mention inside a comment is not a mount", () => {
     const planted = `// <GlossaryProvider applicationId={posting?.id}>\nconst x = 1;`;
-    const stripped = planted
-      .split("\n")
-      .map((line) => line.replace(/^\s*\/\/.*$/, ""))
-      .join("\n");
+    const stripped = stripCommentLines(planted);
     expect(stripped).not.toMatch(/<GlossaryProvider\b/);
   });
 });

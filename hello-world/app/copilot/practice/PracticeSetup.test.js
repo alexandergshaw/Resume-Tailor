@@ -20,14 +20,9 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { stripLineComments } from "../../../test/helpers/stripComments.js";
 
 const SOURCE = readFileSync(fileURLToPath(new URL("./PracticeSetup.js", import.meta.url)), "utf8");
-
-const stripLineComments = (text) =>
-  text
-    .split("\n")
-    .map((line) => line.replace(/\/\/.*$/, ""))
-    .join("\n");
 
 const CODE = stripLineComments(SOURCE);
 

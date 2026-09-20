@@ -22,18 +22,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { needsRedraft, cachedSampleAnswerFor } from "@/lib/copilot/sampleAnswerState";
+import { stripLineComments } from "@/test/helpers/stripComments.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const readSource = (rel) => readFileSync(join(HERE, rel), "utf8");
 const RAW = readSource("./PracticeClient.js");
-
-// Line comments only — enough that prose naming a thing cannot satisfy or fail
-// an assertion about the code that names it.
-const stripLineComments = (text) =>
-  text
-    .split("\n")
-    .map((line) => line.replace(/\/\/.*$/, ""))
-    .join("\n");
 
 const CLIENT = stripLineComments(RAW);
 

@@ -31,29 +31,14 @@
 // prove the route behaves correctly end to end. That end-to-end proof is a
 // step-9/manual-check obligation once the route exists to run.
 import { describe, it, expect } from "vitest";
-import { readFileSync, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { wantsEmbedded } from "@/lib/llm/featureEngine.js";
 import { normalizePack, EMBEDDED_TEMPLATE_ORIGIN } from "@/lib/interviewPrep/prepParse.js";
 import { packStatus, buildEmbeddedPack } from "@/lib/interviewPrep/prepPack.js";
+import { codeOf } from "@/test/helpers/stripComments.js";
 
 const ROUTE_PATH = path.join(process.cwd(), "app", "api", "interview-prep", "route.js");
-
-/** Comments stripped so a prose mention of a symbol is never mistaken for
- *  code that uses it -- same discipline as app/glossaryTriggerSeams.test.js.
- *  Strips a `//` run to end-of-line wherever it starts, not only when the
- *  whole line is a comment -- a TRAILING `//` comment (code, then a comment)
- *  used to survive this and could false-fail one of the bans below. This
- *  file's own route source carries no `//` inside a string or regex literal
- *  (checked by hand), so this is safe here even though it is not a general
- *  JS tokenizer. */
-function codeOf(filePath) {
-  return readFileSync(filePath, "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .split("\n")
-    .map((line) => line.replace(/\/\/.*$/, ""))
-    .join("\n");
-}
 
 describe("O-14's gate -- a request-supplied engine must never override the server's configuration", () => {
   // This control used to prove the route's extra OR-term was NECESSARY, by

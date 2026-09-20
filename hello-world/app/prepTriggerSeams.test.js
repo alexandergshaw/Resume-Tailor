@@ -30,18 +30,14 @@
 //   runWorker                    app/hooks/useManualPostings.js    B1 (manual/JobDescriptionTab)
 //   handleToggleApplied          app/page.js                       B3 (mark-applied)
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import path from "node:path";
+import { codeOf as sharedCodeOf, stripCommentLines } from "../test/helpers/stripComments.js";
 
 const PAGE = "app/page.js";
 const MANUAL_POSTINGS = "app/hooks/useManualPostings.js";
 
+/** Whole-line comments only -- see test/helpers/stripComments.js. */
 function codeOf(rel) {
-  return readFileSync(path.join(process.cwd(), rel), "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .split("\n")
-    .map((line) => line.replace(/^\s*\/\/.*$/, ""))
-    .join("\n");
+  return sharedCodeOf(rel, { wholeLineOnly: true });
 }
 
 function bodyOf(code, name) {
@@ -162,10 +158,7 @@ describe("[control] the seam reader can fail -- proven on synthetic fixtures, ne
 
   it("a call written inside a comment does not count", () => {
     const planted = "// startInterviewPrepResearch({ applicationId, triggerClass: \"B1\" });\nconst x = 1;";
-    const stripped = planted
-      .split("\n")
-      .map((line) => line.replace(/^\s*\/\/.*$/, ""))
-      .join("\n");
+    const stripped = stripCommentLines(planted);
     expect(stripped).not.toMatch(/startInterviewPrepResearch\s*\(/);
   });
 

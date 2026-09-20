@@ -1,0 +1,26 @@
+﻿
+ RUN  v4.1.8 C:/Users/alexa/OneDrive/Documents/Projects/Resume-Tailor/hello-world
+
+node.exe : CACError: Unknown optionfatal: not a git repository (or any of the parent directories): .git
+At C:\Program Files\nodejs\npx.ps1:29 char:3
++   & $NODE_EXE $NPX_CLI_JS $args
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (CACError: Unkno...ectories): .git:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree.
+Use '--' to separate paths from revisions, like this:
+'git <command> [<revision>...] -- [<file>...]'
+Not implemented: HTMLFormElement's requestSubmit() method
+Not implemented: Window's moveTo() method
+Not implemented: Window's resizeTo() method
+Not implemented: Window's alert() method
+Not implemented: navigation to another Document
+Not implemented: Window's alert() method
+Not implemented: Window's alert() method
+Not implemented: Window's moveTo() method
+Not implemented: Window's resizeTo() method
+ ❯ lib/interviewPrep/finishAttempt.test.js (16 tests | 3 failed) 21ms
+     × has exactly the 7 members outcomeForStatus is documented against 4ms
+     × [control] the membership check below is capable of failing -- a value the migration does not list is correctly rejected 1ms
+     × every outcome a real finishAttempt call can emit stays inside the migration's own vocabulary 1ms

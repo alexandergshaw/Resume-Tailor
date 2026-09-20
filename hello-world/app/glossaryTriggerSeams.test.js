@@ -23,19 +23,14 @@
 // applied to", and tracking a job is not applying to it. Firing there would
 // spend a harvest on every row a user merely watches.
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
-import path from "node:path";
+import { codeOf as sharedCodeOf, stripCommentLines } from "../test/helpers/stripComments.js";
 
 const PAGE = "app/page.js";
 const DIALOGS = "app/hooks/useApplicationDialogs.js";
 
 /** Source with comments stripped: prose naming a symbol is not a call. */
 function codeOf(rel) {
-  return readFileSync(path.join(process.cwd(), rel), "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .split("\n")
-    .map((line) => line.replace(/^\s*\/\/.*$/, ""))
-    .join("\n");
+  return sharedCodeOf(rel, { wholeLineOnly: true });
 }
 
 /** The body of a named function declaration, brace-matched. */
@@ -139,10 +134,7 @@ describe("the glossary trigger is wired at every apply seam", () => {
 
   it("[control] a call written inside a comment does not count", () => {
     const planted = "// startPositionGlossary({ positionId });\nconst x = 1;";
-    const stripped = planted
-      .split("\n")
-      .map((line) => line.replace(/^\s*\/\/.*$/, ""))
-      .join("\n");
+    const stripped = stripCommentLines(planted);
     expect(stripped).not.toMatch(/startPositionGlossary\s*\(/);
   });
 });

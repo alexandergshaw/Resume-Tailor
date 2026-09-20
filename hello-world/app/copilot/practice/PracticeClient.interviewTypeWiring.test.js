@@ -29,6 +29,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { stripLineComments } from "../../../test/helpers/stripComments.js";
 
 // Path-based, not `fileURLToPath(new URL(rel, import.meta.url))`. This file
 // runs under node where either works, but the jsdom files in this set proved
@@ -115,14 +116,6 @@ function subscriptionHandler(src, hookName) {
   }
   return call;
 }
-
-// Line comments only — enough that prose naming a retired parameter cannot
-// fail an assertion about the parameter itself.
-const stripLineComments = (text) =>
-  text
-    .split("\n")
-    .map((line) => line.replace(/\/\/.*$/, ""))
-    .join("\n");
 
 describe("PracticeClient imports the shared store from its new home", () => {
   it("imports useInterviewType from app/copilot/, not from practice/", () => {

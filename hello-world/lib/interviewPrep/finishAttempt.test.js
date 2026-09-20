@@ -12,21 +12,13 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { finishAttempt } from "@/lib/interviewPrep/finishAttempt.js";
 import { makeSupabase } from "../../test/helpers/supabaseMock.js";
+import { codeOf } from "../../test/helpers/stripComments.js";
 
 const APP_ID = "11111111-1111-1111-1111-111111111111";
 const USER_ID = "22222222-2222-2222-2222-222222222222";
 const LEASE_TOKEN = "33333333-3333-3333-3333-333333333333";
 
 const FINISH_ATTEMPT_PATH = path.join(process.cwd(), "lib", "interviewPrep", "finishAttempt.js");
-
-/** Same comment-stripping discipline as route.test.js's own codeOf. */
-function codeOf(filePath) {
-  return readFileSync(filePath, "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .split("\n")
-    .map((line) => line.replace(/\/\/.*$/, ""))
-    .join("\n");
-}
 
 describe("finishAttempt -- the CHECK-safe fallback retry (design-structure.r1.md §8.4, N9)", () => {
   it('[mutant this kills: isCheckViolation(write.error) / "if (false && ...)" / the fallback block deleted] a first write refused as a CHECK violation triggers a SECOND write carrying status:"failed", reason:"check-violation"', async () => {

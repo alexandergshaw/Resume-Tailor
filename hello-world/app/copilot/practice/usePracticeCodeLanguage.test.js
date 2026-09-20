@@ -45,6 +45,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createElement, act } from "react";
 import { createRoot } from "react-dom/client";
+import { stripLineComments } from "@/test/helpers/stripComments.js";
 
 // Delegating spies on every composer in the module, so the destructive ones
 // can be asserted UNCALLED with the narrow one asserted called in the same
@@ -92,17 +93,6 @@ import { AUTO } from "@/lib/copilot/codeLanguages";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const readSource = (rel) => readFileSync(join(HERE, rel), "utf8");
-
-// Line comments only. A-25 REQUIRES this module's header to name the
-// composers it deliberately does not call ("why `resetAnswerState`,
-// `abandonInProgressAnswer`, `clearSessionScores` and `resetQuestions` are all
-// excluded"), so a source-text negative run over the raw file would fail a
-// correct implementation for having explained itself.
-const stripLineComments = (text) =>
-  text
-    .split("\n")
-    .map((line) => line.replace(/\/\/.*$/, ""))
-    .join("\n");
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
