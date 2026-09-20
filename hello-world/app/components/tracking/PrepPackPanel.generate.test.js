@@ -187,3 +187,43 @@ describe("the Generate/Regenerate control -- each of the four new props is exerc
     expect(onGenerateNow).toHaveBeenCalledTimes(1);
   });
 });
+
+// F-8 (owner decision 2026-09-20): the destructive-regenerate caption used to
+// read "Regenerating replaces the pack above. This can't be undone." -- true,
+// but it lets a reader believe the swap happens once the new pack exists, when
+// `claim_prep_pack_slot` actually clears the row the instant generation STARTS
+// (before any content is produced). A failed attempt then leaves nothing where
+// the old pack used to be. These cases pin the MEANING of the rewritten copy,
+// not its exact prose -- a future wording change is free to pass as long as it
+// keeps stating (a) the clearing happens at the START of the attempt, not on
+// success, and (b) the old pack is not recoverable if that attempt fails. What
+// this CANNOT catch: whether the caption's claim is actually true of the code
+// (that is pinned separately, at the database layer, by
+// interviewPrepEffectiveSchema.test.js) -- this is a copy-only test against a
+// static string, so it would not notice the component drifting out of sync
+// with a future behavior change to the claim route.
+describe("F-8 -- the destructive-regenerate caption states the actual failure mode, not just 'replaced'/'undone'", () => {
+  it("names the pack being cleared at the START of the attempt, before the new one exists", async () => {
+    const el = await render(
+      baseProps({ pack: READY_PACK, status: "ready", completeSections: ["aboutYou"], hasDescription: true }),
+    );
+    const text = el.textContent.toLowerCase();
+    expect(text).toMatch(/the moment you (start|click)|clears? the pack above.*(start|click|before)/);
+  });
+
+  it("never implies the previous pack is recoverable or safe if the attempt fails", async () => {
+    const el = await render(
+      baseProps({ pack: READY_PACK, status: "ready", completeSections: ["aboutYou"], hasDescription: true }),
+    );
+    const text = el.textContent.toLowerCase();
+    expect(text).not.toMatch(/recover|restore|old (version|pack) (is|remains) (safe|saved|kept)/);
+  });
+
+  it("does not put the candidate's own typed data (their name/interviewer names) at risk in this warning's wording", async () => {
+    const el = await render(
+      baseProps({ pack: READY_PACK, status: "ready", completeSections: ["aboutYou"], hasDescription: true }),
+    );
+    const text = el.textContent.toLowerCase();
+    expect(text).not.toMatch(/your (name|names|data) (is|are|will be)? ?(lost|deleted|cleared|at risk)/);
+  });
+});

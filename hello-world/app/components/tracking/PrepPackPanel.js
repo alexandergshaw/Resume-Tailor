@@ -212,7 +212,22 @@ export function prepActionState({ status, generating, hasDescription }) {
 
 const NO_DESCRIPTION_COPY =
   "This posting has no job description on file, so there's nothing to generate a prep pack from. Add one from this application's Edit form, then come back here.";
-const DESTRUCTIVE_REGENERATE_CAPTION = "Regenerating replaces the pack above. This can't be undone.";
+// F-8 (owner decision 2026-09-20): `claim_prep_pack_slot` clears the pack
+// row to `{}` UNCONDITIONALLY the moment a generation attempt starts --
+// before any content is produced, before the prompt is even built -- because
+// `interview_prep_packs_running_has_no_content` forbids a `running` row from
+// holding content (supabase/migrations/20260922000000_..., :86-97 and
+// 20260914000000_interview_prep.sql:179-180). The prior copy ("Regenerating
+// replaces the pack above. This can't be undone.") read as "the new version
+// swaps in for the old", which implies the old one survives until the new
+// one exists. It does not: a failed attempt (model error, network, kill
+// switch, timeout, a refusal) leaves nothing where the old pack used to be.
+// This does NOT put the candidate's own typed data at risk -- their name and
+// interviewer names live in separate tables this action never touches, and
+// the pack itself is always regenerable -- so the copy names lost time, not
+// lost data, and stays calm rather than alarming.
+const DESTRUCTIVE_REGENERATE_CAPTION =
+  "Regenerating clears the pack above the moment you start — before the new one is ready. If this attempt fails, there's nothing to fall back to. This can't be undone, but you can regenerate again anytime.";
 
 /** The meta-actions row's Generate/Regenerate control. Never a disabled
  *  `Button` (DX §8's a11y rule) -- a blocked state replaces the button with
