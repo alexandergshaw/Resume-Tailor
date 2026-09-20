@@ -484,6 +484,157 @@ describe("N36 render: a maximal run of ADJACENT same-numId paragraphs is ONE lis
 });
 
 // ===========================================================================
+// SPACING REGRESSION -- the list wrapper must not inherit a browser default
+// vertical margin. Owner-reported, diagnosed from the owner's own pasted
+// document (Untitled document.docx): the position-header paragraph carries no
+// spacing, the FIRST bullet of each run carries <w:spacing w:before="240"/>
+// (12pt), the LAST carries w:after="240", and a single-bullet run carries
+// both -- the signature of a block-level margin on the LIST WRAPPER, not
+// per-item spacing. Cause: renderModelToHtml emitted a bare <ul>/<ol> with no
+// inline style, so it inherited the browser default `margin: 1em 0`, which
+// Word/Google Docs convert into that before/after spacing on the first and
+// last items.
+// ===========================================================================
+
+describe("spacing regression: the list wrapper must not inherit a browser default vertical margin", () => {
+  it("the <ul>/<ol> wrapper carries an explicit zero vertical margin", async () => {
+    const model = await parseDocxToModel(
+      await makeDocx(listP("Led migration", "1") + listP("Built CI pipeline", "1"), numbering({ 1: "bullet" })),
+    );
+    const html = nonEmptyString(renderModelToHtml(model));
+    const openTag = (html.match(/<ul\b[^>]*>/) || [])[0];
+    expect(openTag).toBeDefined();
+    // Explicit `margin:0` -- not absent, and not left to the browser default
+    // `margin: 1em 0` that produced the owner's w:before="240"/w:after="240"
+    // signature.
+    expect(openTag).toMatch(/style="[^"]*\bmargin:\s*0\b/);
+  });
+
+  it("the wrapper still sets an explicit horizontal padding, so bullet markers stay indented instead of sitting flush left", async () => {
+    const model = await parseDocxToModel(await makeDocx(listP("Led migration", "1"), numbering({ 1: "bullet" })));
+    const html = nonEmptyString(renderModelToHtml(model));
+    const openTag = (html.match(/<ul\b[^>]*>/) || [])[0];
+    const m = openTag.match(/padding-left:\s*([0-9.]+)px/);
+    expect(m).not.toBeNull();
+    expect(Number.parseFloat(m[1])).toBeGreaterThan(0);
+  });
+
+  it("a header paragraph immediately after a list still carries its OWN spacing -- the fix removes the wrapper's inherited default, not the next paragraph's explicit spaceBeforePt", async () => {
+    const model = await parseDocxToModel(
+      await makeDocx(
+        listP("Bullet one", "1") +
+          listP("Bullet two", "1") +
+          '<w:p><w:pPr><w:spacing w:before="240"/></w:pPr><w:r><w:t>Next Job Title</w:t></w:r></w:p>',
+        numbering({ 1: "bullet" }),
+      ),
+    );
+    const html = nonEmptyString(renderModelToHtml(model));
+    // ANTI-VACUITY: the corpus really does form one list ahead of the header.
+    expect(countOpen(html, "ul")).toBe(1);
+    const afterList = html.slice(html.indexOf("</ul>"));
+    expect(afterList).toMatch(/<p style="[^"]*margin:12pt 0 0pt[^"]*"[^>]*>[\s\S]*Next Job Title/);
+  });
+});
+
+// ===========================================================================
+// SPACING REGRESSION CLASS GUARD -- every block-level element
+// renderModelToHtml can emit must carry an EXPLICIT vertical margin, so a
+// FUTURE new element cannot silently repeat this same defect by relying on a
+// browser default the way the unstyled <ul>/<ol> did. Renders a model that
+// exercises every element shape the renderer produces today: an ordinary
+// paragraph, the empty-paragraph <br> placeholder, a list wrapper and a list
+// item.
+//
+// WHAT THIS GUARD CAN CATCH: a block element whose inline style declares no
+// `margin` (or no `margin-top`+`margin-bottom` pair) at all -- the exact
+// shape of this regression, an unstyled element falling back to the
+// browser's UA stylesheet.
+// WHAT THIS GUARD CANNOT CATCH: an element that DOES declare a margin but
+// declares the WRONG value (e.g. a <ul> shipped with `margin:8px 0` instead
+// of `margin:0`). Value correctness for the list wrapper specifically is
+// what the two rows above already pin; this guard only answers "explicit, or
+// inherited".
+// ===========================================================================
+
+// True when `style` sets margin-top AND margin-bottom explicitly, whether via
+// the `margin` shorthand or the two longhands together.
+function hasExplicitVerticalMargin(style) {
+  if (/\bmargin\s*:/.test(style)) return true;
+  return /\bmargin-top\s*:/.test(style) && /\bmargin-bottom\s*:/.test(style);
+}
+
+// The exact extraction the guard runs against renderer output: every
+// (p|ul|ol|li) open tag's style attribute, filtered down to the ones missing
+// an explicit vertical margin. Factored out so the synthetic-corpus proof
+// below and the real-corpus row after it exercise the SAME mechanism.
+const scanForMissingMargin = (html) =>
+  [...html.matchAll(/<(p|ul|ol|li)\b([^>]*)>/g)]
+    .map((m) => ({ tag: m[1], style: (m[2].match(/style="([^"]*)"/) || [])[1] || "" }))
+    .filter(({ style }) => !hasExplicitVerticalMargin(style));
+
+describe("spacing regression class guard: no block element may inherit a browser-default margin", () => {
+  it("harness control: the margin checker distinguishes explicit from inherited, and rejects a lone longhand", () => {
+    // Synthetic style strings, not the renderer's own output -- proves the
+    // checker function itself discriminates before it is ever pointed at real
+    // markup. The last two rows are the "omits its margin" shape: a bare
+    // style with no margin property at all, and one with only HALF the pair
+    // set (a plausible near-miss a future author could actually write).
+    expect(hasExplicitVerticalMargin("margin:0;padding-left:40px")).toBe(true);
+    expect(hasExplicitVerticalMargin("margin-top:0;margin-bottom:4pt;color:red")).toBe(true);
+    expect(hasExplicitVerticalMargin("padding-left:40px;white-space:pre-wrap")).toBe(false);
+    expect(hasExplicitVerticalMargin("margin-top:0;white-space:pre-wrap")).toBe(false);
+  });
+
+  it("PROOF THE GUARD BITES on a NEW element, never on the <ul>/<li> this chunk just fixed: a hand-built corpus with an extra unstyled <p> the guard has never seen", () => {
+    // Deliberately NOT run through renderModelToHtml or docxPreview.js --
+    // this is a hand-built HTML string standing in for "a future author adds
+    // another block-rendering branch and forgets the margin", exercised
+    // through the identical scan the real-corpus row below uses. This is how
+    // this seat proves the guard discriminates without editing the shared
+    // source file to inject a mutant (forbidden: sabotaging source, even
+    // temporarily, is a separate seat's job under its own hash-and-restore
+    // protocol).
+    const missingMargin =
+      '<p style="margin:0">Styled paragraph</p>' +
+      '<ul style="margin:0;padding-left:40px"><li style="margin:0">Styled item</li></ul>' +
+      "<p>A brand-new block a future author adds, forgetting the margin</p>";
+    expect(scanForMissingMargin(missingMargin)).toEqual([{ tag: "p", style: "" }]);
+
+    // THE CONTROL: the same new block, styled correctly, passes -- so the row
+    // above is measuring the missing margin and not merely "a second <p> in
+    // the document".
+    const allStyled =
+      '<p style="margin:0">Styled paragraph</p>' +
+      '<ul style="margin:0;padding-left:40px"><li style="margin:0">Styled item</li></ul>' +
+      '<p style="margin:4pt 0 0">A brand-new block, done right</p>';
+    expect(scanForMissingMargin(allStyled)).toEqual([]);
+  });
+
+  it("every block-level element the renderer emits (paragraph, empty-paragraph placeholder, list wrapper, list item) declares its own vertical margin", async () => {
+    const model = await parseDocxToModel(
+      await makeDocx(
+        plainP("A heading") +
+          "<w:p></w:p>" + // the empty-paragraph <br> placeholder
+          listP("A bullet", "1") +
+          listP("Another bullet", "1"),
+        numbering({ 1: "bullet" }),
+      ),
+    );
+    const html = nonEmptyString(renderModelToHtml(model));
+
+    // ANTI-VACUITY: the corpus really does exercise all four shapes.
+    expect(countOpen(html, "p")).toBe(2);
+    expect(countOpen(html, "ul")).toBe(1);
+    expect(liElements(html)).toHaveLength(2);
+
+    const openTags = [...html.matchAll(/<(p|ul|ol|li)\b[^>]*>/g)];
+    expect(openTags.length).toBe(5); // 2 <p> + 1 <ul> + 2 <li>
+
+    expect(scanForMissingMargin(html)).toEqual([]);
+  });
+});
+
+// ===========================================================================
 // THE DOWNLOAD FENCE -- modelToLines must never learn about lists
 // ===========================================================================
 //

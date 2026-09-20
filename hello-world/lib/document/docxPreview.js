@@ -251,10 +251,23 @@ function renderParagraphHtml(p) {
 // paragraph would, a <br> placeholder, so the item stays visible and the
 // list's item count is preserved rather than silently dropping the line.
 function renderListItemHtml(p) {
-  const style = `white-space:pre-wrap;${p.list.ilvl > 0 ? `margin-left:${p.list.ilvl * 1.5}em;` : ""}`;
+  // `margin:0` first, so a later `margin-left` (the ilvl indent below) can
+  // still override just that one side -- CSS resolves same-property inline
+  // declarations in order, so the shorthand's other three sides stay zero.
+  const style = `margin:0;white-space:pre-wrap;${p.list.ilvl > 0 ? `margin-left:${p.list.ilvl * 1.5}em;` : ""}`;
   const inner = p.runs.length ? renderRunsHtml(p.runs) : "<br>";
   return `<li style="${style}">${inner}</li>`;
 }
+
+// Every ordinary paragraph sets its vertical margin explicitly (see
+// renderParagraphHtml below), so a <ul>/<ol> with no style of its own was the
+// one gap: it fell back to the browser/Word/Google-Docs default `margin: 1em
+// 0`, which is exactly the unwanted gap a user sees between a position header
+// and its bullets. `padding-left:40px` reproduces the browser UA stylesheet's
+// own default indent (Chrome/Firefox both default <ul>/<ol> to
+// `padding-inline-start: 40px`), so zeroing the margin does not also flatten
+// the marker indent.
+const LIST_WRAPPER_STYLE = "margin:0;padding-left:40px;";
 
 // Render a parsed model to an HTML string with inline styles, so the preview
 // reads like the document. Used both for the read-only view and to seed the
@@ -278,7 +291,7 @@ export function renderModelToHtml(model) {
         items.push(renderListItemHtml(paragraphs[i]));
         i += 1;
       }
-      parts.push(`<${tag}>${items.join("")}</${tag}>`);
+      parts.push(`<${tag} style="${LIST_WRAPPER_STYLE}">${items.join("")}</${tag}>`);
     } else {
       parts.push(renderParagraphHtml(p));
       i += 1;
