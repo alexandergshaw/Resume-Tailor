@@ -60,7 +60,7 @@
 //   ever issues the one `UPDATE` it is asked for.
 
 import { normalizePack } from "./prepParse.js";
-import { PREP_MAX_ATTEMPTS, PREP_MODEL_CALLS_MAX, PREP_LEASE_MS, PREP_PACK_MAX_BYTES } from "./prepConstants.js";
+import { PREP_LEASE_MS, PREP_PACK_MAX_BYTES } from "./prepConstants.js";
 import { PREP_LIST_PROJECTION, PREP_SPEND_PROJECTION } from "./prepContract.js";
 
 const PACKS_TABLE = "interview_prep_packs";
@@ -113,17 +113,17 @@ export function isCheckViolation(result) {
   return result?.code === PG_CHECK_VIOLATION;
 }
 
-// The one place `attemptsExhausted` is computed (design-structure.r1.md
-// §5.2): "false if no ledger row exists, or one exists with attempts < 6 and
-// model_calls < 12; true if either cap is hit." Shared by readPrepPack and
-// listPrepPacks so the three call sites the design names (readPrepPack's
-// top-level field, listPrepPacks' per-item field, and Pack's own field
-// downstream) can never independently drift.
-function isAttemptsExhausted(spendRow) {
-  if (!spendRow) return false;
-  const attempts = Number(spendRow.attempts) || 0;
-  const modelCalls = Number(spendRow.model_calls) || 0;
-  return attempts >= PREP_MAX_ATTEMPTS || modelCalls >= PREP_MODEL_CALLS_MAX;
+// N41 (owner decision, 2026-09-20): both interview-prep spend caps are
+// removed, so this always returns false now -- the "attempts-exhausted"
+// state is permanently unreachable (N41(c)'s own text). Still shared by
+// readPrepPack and listPrepPacks, and still exported in shape via both
+// call sites' `attemptsExhausted` field, so nothing downstream (the GET
+// route, PrepPackPanel's prop list) needs to change to accommodate the
+// removal -- only this function's body does. `spendRow` is accepted,
+// unused beyond the shape of the call, so a future re-introduction of a cap
+// has exactly one function to change back.
+function isAttemptsExhausted(_spendRow) {
+  return false;
 }
 
 // A `lease_token`/`interview_prep_packs.application_id`-style column is a
@@ -254,12 +254,20 @@ export async function listPrepPacks(supabase, { applicationIds, userId }) {
 
 /**
  * Claims a run slot via the corrected, 3-parameter `claim_prep_pack_slot` RPC
- * -- never a `p_user_id` argument (R-IP3-53/R-IP3-61). A refused claim
- * (`data !== true`) is disambiguated by a follow-up read of the pack row's
- * current `lease_until`, exactly as design-structure.r1.md §4.2 (unchanged
- * from r3/r4) specifies: a still-future lease means another invocation is
- * genuinely mid-run ("in-flight"); otherwise the RPC's own top-of-function
- * cap check refused it ("attempts-spent").
+ * -- never a `p_user_id` argument (R-IP3-53/R-IP3-61).
+ *
+ * N41 (owner decision, 2026-09-20): both spend caps are removed from the RPC
+ * itself (supabase/migrations/20260922000000_interview_prep_remove_spend_caps.sql),
+ * so a refused claim (`data !== true`, no RPC-level error) can now only mean
+ * one thing -- the packs upsert's own `ON CONFLICT ... WHERE (status <>
+ * 'running' OR lease_until < now())` matched zero rows, i.e. another
+ * invocation genuinely holds a live (or just-expired) lease on this row.
+ * There is nothing left to disambiguate: the follow-up read of the pack
+ * row's own `lease_until` this function used to perform existed ONLY to
+ * tell that state apart from "the RPC's cap check refused it" -- a state
+ * N41's own text requires become PERMANENTLY UNREACHABLE. That read is
+ * removed along with the branch it fed; every non-error refusal reports
+ * `reason: "in-flight"` directly off the RPC's own boolean result.
  *
  * @param {*} supabase
  * @param {{ applicationId: string, userId: string }} args
@@ -282,27 +290,7 @@ export async function claimPrepPack(supabase, { applicationId, userId }) {
     return { claimed: true, leaseToken, attempts: null, reason: "claimed", error: null };
   }
 
-  const { data: packRow, error: readError } = await supabase
-    .from(PACKS_TABLE)
-    .select("lease_until")
-    .eq("application_id", applicationId)
-    .eq("user_id", userId)
-    .maybeSingle();
-
-  if (readError) {
-    return { claimed: false, leaseToken: null, attempts: null, reason: "error", error: errMessage(readError) };
-  }
-
-  const leaseUntilMs = packRow?.lease_until ? new Date(packRow.lease_until).getTime() : NaN;
-  const inFlight = Number.isFinite(leaseUntilMs) && leaseUntilMs > Date.now();
-
-  return {
-    claimed: false,
-    leaseToken: null,
-    attempts: null,
-    reason: inFlight ? "in-flight" : "attempts-spent",
-    error: null,
-  };
+  return { claimed: false, leaseToken: null, attempts: null, reason: "in-flight", error: null };
 }
 
 /**

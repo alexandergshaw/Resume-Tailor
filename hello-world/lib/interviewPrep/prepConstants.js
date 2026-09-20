@@ -1,21 +1,20 @@
 // Budget and lifecycle constants for interview-prep research (IP3). Single
 // source of truth for every cap, timeout and rate-limit window this feature
-// enforces in application code. SQL cannot import a JS constant, so the
-// migration's own CHECK constraints and `claim_prep_pack_slot`'s plpgsql body
-// carry the numeric values of PREP_MAX_ATTEMPTS/PREP_MODEL_CALLS_MAX as
-// literals too -- see supabase/migrations/<TS>_interview_prep.sql. Values are
-// 1-0-contract.r8.md's own concrete-noun table (Named JS constants),
-// unchanged from r7 through r8.
-
-/** `interview_prep_spend.attempts`'s CHECK upper bound -- a retry-opportunity
- *  counter, not consumed by the route's own `23514` handling. */
-export const PREP_MAX_ATTEMPTS = 6;
-
-/** The value `claim_prep_pack_slot` compares `interview_prep_spend.model_calls`
- *  against to refuse a new claim. A spend counter, incremented unconditionally
- *  whenever a model call is issued -- whichever of this cap or
- *  PREP_MAX_ATTEMPTS is hit first is terminal. */
-export const PREP_MODEL_CALLS_MAX = 12;
+// enforces in application code. Values are 1-0-contract.r8.md's own
+// concrete-noun table (Named JS constants), unchanged from r7 through r8,
+// except where a later owner ruling superseded that table (see below).
+//
+// N41 (owner decision, 2026-09-20): both interview-prep spend caps were
+// REMOVED, not merely raised -- `interview_prep_spend.attempts`'s own CHECK
+// upper bound (supabase/migrations/20260922000000_interview_prep_remove_spend_caps.sql)
+// and `claim_prep_pack_slot`'s `model_calls >= 12` guard (same migration).
+// `PREP_MAX_ATTEMPTS`/`PREP_MODEL_CALLS_MAX` -- the JS-side ceiling values
+// this module used to export for lib/interviewPrep/prepStore.js's own
+// `isAttemptsExhausted` to compare against -- are deleted along with the
+// ceilings they described, not left behind as dead exports: nothing in this
+// codebase compares a counter to either value any more. The two COUNTERS
+// themselves (`interview_prep_spend.attempts`/`.model_calls`) remain,
+// unbounded, per N41(d)'s own text.
 
 /** IP3's own generation call is issued at most once per attempt. This is a
  *  structural property of the shared Gemini client's own construction

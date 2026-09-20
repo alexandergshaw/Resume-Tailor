@@ -691,7 +691,30 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // shape `answerLocal.js#groundingCandidates` shows above); it lands
     // here, not ORPHAN_EXPORTS (unmoved at 70), via the new
     // AppViewDialog.wiring.test.js's by-name import.
-    expect(TEST_REFERENCED.length).toBe(357);
+    // 357 -> 361: N29 (the manual "prepare me for this interview" trigger)
+    // and N41 (removing both interview-prep spend caps) widened four
+    // modules' export surfaces the same way `saveTrustedNames` did just
+    // above -- each symbol has a real call site inside its OWN module, and
+    // its only CROSS-module consumer is the by-name import in the RED
+    // acceptance test its own chunk landed with:
+    //   app/api/interview-prep/route.js#triggerClassOf -- the allowlist/
+    //     fail-safe-default helper the POST handler calls at route.js:311;
+    //     route.triggerClass.test.js's `import { triggerClassOf } from
+    //     "./route.js"` is the sole cross-module edge.
+    //   app/components/AppViewDialog.js#messageFor and #fetchPrep --
+    //     messageFor maps a usePrepGeneration result to the transient
+    //     banner text (called at :201); fetchPrep re-reads a pack after a
+    //     manual generate (called at :170 and :190). Both are imported by
+    //     name from the same file, AppViewDialog.messageFor.test.js.
+    //   app/components/tracking/PrepPackPanel.js#prepActionState -- the
+    //     Generate control's status-to-label precedence, called at :363;
+    //     PrepPackPanel.generate.test.js's by-name import lands it here.
+    // Checked the opposite direction too: app/hooks/usePrepGeneration.js's
+    // own export, `usePrepGeneration` -- the hook these four actually wire
+    // the Generate control through -- is reachable and in NEITHER bucket:
+    // AppViewDialog.js imports and calls it directly (:13, :174), so this
+    // is a widened surface around a real feature, not a stranded one.
+    expect(TEST_REFERENCED.length).toBe(361);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
@@ -793,7 +816,11 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // TEST_REFERENCED -- ORPHAN_EXPORTS is unmoved at 70 throughout, so the
     // total's -1 IS the TR-1 bucket's -1, not a second, independent change.
     // 426 -> 427: saveTrustedNames (see the TEST_REFERENCED assertion above).
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(427);
+    // 427 -> 431: the same four described just above at the TEST_REFERENCED
+    // assertion (triggerClassOf, messageFor, fetchPrep, prepActionState),
+    // with ORPHAN_EXPORTS unmoved at 70 -- this total's +4 IS the TR-1
+    // bucket's +4, not a second, independent change.
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(431);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

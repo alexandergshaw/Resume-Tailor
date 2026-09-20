@@ -51,13 +51,22 @@ import { useState } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
+import CircularProgress from "@mui/material/CircularProgress";
 import TextField from "@mui/material/TextField";
+import { TOUCH_TARGET_SX, WRAP_ROW_SX, BREAK_LONG_WORDS_SX } from "@/app/theme/mobileSx";
 
+// AC-N29.14: rewritten now that N29 gives this panel its own
+// Generate/Regenerate control (design-experience.r1.md §1's Option B) --
+// both strings used to describe a control that did not exist anywhere in
+// the codebase (`absent`'s own "Generate one from this application's
+// tracking row" was Option A phrasing; `partial`'s "Generate again to try
+// for the rest" pointed at nothing). Neither names a location any more,
+// since the control now renders directly beneath this text.
 const COPY = {
-  absent: "No prep pack yet. Generate one from this application's tracking row when you're ready.",
+  absent: "No prep pack yet.",
   running: "Generating your interview prep pack now…",
   ready: "Your interview prep pack is ready.",
-  partial: "This pack is partial — some sections aren't ready yet. Generate again to try for the rest.",
+  partial: "This pack is partial — some sections couldn't be generated.",
   failed: "The last generation attempt failed. This may be temporary — try again when you're ready.",
   unavailable:
     "Nothing to research yet — there's no job description on this posting. This isn't a failed attempt, and trying again won't help until a description is added.",
@@ -190,6 +199,49 @@ function StatusBanner({ status, pack }) {
   );
 }
 
+// N29's Generate/Regenerate control -- design-experience.r1.md §4.1's own
+// precedence, evaluated in this order: a running/generating attempt wins
+// over everything else, then a missing job description, else the control is
+// idle and activatable. Exported (mirroring AppViewDialog.js's own
+// `messageFor`) so it is directly testable without mounting the component.
+export function prepActionState({ status, generating, hasDescription }) {
+  if (status === "running" || generating) return "in-flight";
+  if (!hasDescription) return "no-description";
+  return "idle";
+}
+
+const NO_DESCRIPTION_COPY =
+  "This posting has no job description on file, so there's nothing to generate a prep pack from. Add one from this application's Edit form, then come back here.";
+const DESTRUCTIVE_REGENERATE_CAPTION = "Regenerating replaces the pack above. This can't be undone.";
+
+/** The meta-actions row's Generate/Regenerate control. Never a disabled
+ *  `Button` (DX §8's a11y rule) -- a blocked state replaces the button with
+ *  explanatory text instead, so nothing looks interactive while silently
+ *  doing nothing. `hasPack` decides ONLY the label/caption, never the
+ *  action-state itself (DX §4.1: a failed regeneration leaves a pre-existing
+ *  pack's content untouched, so "something to lose" tracks `hasPack`
+ *  exactly the same way for a `failed` status as for `ready`/`partial`). */
+function GenerateControl({ actionState, hasPack, onGenerateNow }) {
+  if (actionState === "in-flight") {
+    return (
+      <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, fontSize: 12.5, color: "var(--text-secondary)" }}>
+        <CircularProgress size={14} />
+        Generating…
+      </Box>
+    );
+  }
+  if (actionState === "no-description") {
+    return (
+      <Box sx={{ fontSize: 12.5, color: "var(--text-secondary)" }}>{NO_DESCRIPTION_COPY}</Box>
+    );
+  }
+  return (
+    <Button size="small" variant="contained" sx={TOUCH_TARGET_SX} onClick={() => onGenerateNow?.()}>
+      {hasPack ? "Regenerate" : "Prepare me for this interview"}
+    </Button>
+  );
+}
+
 /** `interviewerNames` -> the exact comma-joined text the edit field seeds
  *  itself from, and the inverse of `useApplicationDialogs.js`'s own
  *  `split(",").map(trim).filter(Boolean)` -- reused so a round trip through
@@ -302,18 +354,34 @@ export default function PrepPackPanel({
   interviewerNames = [],
   onDownloadLog,
   onSaveNames,
+  generating = false,
+  triggerMessage = null,
+  onGenerateNow,
+  hasDescription = true,
 }) {
   const hasPack = !!pack;
+  const actionState = prepActionState({ status, generating, hasDescription });
 
   return (
     <Box sx={{ fontSize: 14 }}>
       <NamesStrip candidateName={candidateName} interviewerNames={interviewerNames} onSaveNames={onSaveNames} />
       <StatusBanner status={status} pack={pack} />
       {hasPack ? <PackSections pack={pack} completeSections={completeSections} /> : null}
-      <Box sx={{ mt: 1 }}>
-        <Button size="small" onClick={() => onDownloadLog?.()}>
-          Download prep log
-        </Button>
+      <Box sx={{ mt: 1, display: "flex", flexDirection: "column", gap: 1 }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, ...WRAP_ROW_SX }}>
+          <Button size="small" sx={TOUCH_TARGET_SX} onClick={() => onDownloadLog?.()}>
+            Download prep log
+          </Button>
+          <GenerateControl actionState={actionState} hasPack={hasPack} onGenerateNow={onGenerateNow} />
+        </Box>
+        {actionState === "idle" && hasPack ? (
+          <Box sx={{ fontSize: 12, color: "var(--text-secondary)" }}>{DESTRUCTIVE_REGENERATE_CAPTION}</Box>
+        ) : null}
+        {triggerMessage ? (
+          <Box role="alert" sx={{ fontSize: 12.5, color: "var(--text-secondary)", ...BREAK_LONG_WORDS_SX }}>
+            {triggerMessage}
+          </Box>
+        ) : null}
       </Box>
     </Box>
   );

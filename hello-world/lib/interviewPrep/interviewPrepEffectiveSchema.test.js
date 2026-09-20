@@ -68,6 +68,7 @@ const MIGRATIONS_DIR = path.join(ROOT, "supabase/migrations");
 
 const ORIGINAL_MIGRATION = "20260914000000_interview_prep.sql";
 const LOCKDOWN_MIGRATION = "20260915000000_interview_prep_spend_lockdown.sql";
+const CAP_REMOVAL_MIGRATION = "20260922000000_interview_prep_remove_spend_caps.sql"; // N41: also touches this table
 
 // An independently-authored function this suite does NOT own, used as the
 // control for the security-mode replay below -- it predates IP3 entirely and
@@ -101,7 +102,7 @@ describe("[control] the migrations directory was actually read and is non-trivia
   });
 });
 
-describe("exactly the two known migrations touch interview_prep_spend", () => {
+describe("exactly the three known migrations touch interview_prep_spend", () => {
   // mentionsTableLiterally is comment-aware, matching this repo's own
   // convention (lib/applications/statusMigrationShape.test.js,
   // lib/supabase/applicationDigestsMigrationShape.test.js): a migration
@@ -115,11 +116,11 @@ describe("exactly the two known migrations touch interview_prep_spend", () => {
     expect(mentionsTableLiterally("alter table public.interview_prep_spend add column x int;", "interview_prep_spend")).toBe(true);
   });
 
-  it("the matching set is exactly [ORIGINAL_MIGRATION, LOCKDOWN_MIGRATION] -- a third file fails loudly here", () => {
+  it("the matching set is exactly [ORIGINAL_MIGRATION, LOCKDOWN_MIGRATION, CAP_REMOVAL_MIGRATION] -- a fourth file fails loudly here", () => {
     const matching = migrationFiles.filter((f) =>
       mentionsTableLiterally(readFileSync(path.join(MIGRATIONS_DIR, f), "utf8"), "interview_prep_spend"),
     );
-    expect(matching).toEqual([ORIGINAL_MIGRATION, LOCKDOWN_MIGRATION]);
+    expect(matching).toEqual([ORIGINAL_MIGRATION, LOCKDOWN_MIGRATION, CAP_REMOVAL_MIGRATION]);
   });
 });
 

@@ -604,6 +604,95 @@ export function lastFunctionDefinition(texts, name) {
   };
 }
 
+/** N29/N41 -- the CHECK-constraint analogue of lastFunctionDefinition above:
+ *  finds the LAST add/drop action against a named constraint across the
+ *  given texts, in order, and returns `{ clause }` (the constraint's
+ *  CURRENT, effective `check (...)` text) or `null` if the constraint does
+ *  not exist in the replayed end state (either never declared, or dropped
+ *  last with no later add -- N41(a)'s own "drop" option for
+ *  `interview_prep_spend_attempts_check`).
+ *
+ *  Handles BOTH shapes a `constraint <name>` clause can appear in, because
+ *  they share an identical grammar immediately after the name --
+ *  `check (...)` -- and nothing else needs to tell them apart:
+ *    - the INLINE `create table` form (`constraint <name>\n check (...)`),
+ *      which is how every CHECK in the ORIGINAL migration
+ *      (20260914000000_interview_prep.sql) is declared;
+ *    - the `alter table ... add constraint <name> check (...)` form, this
+ *      repo's own idiom for widening or replacing a CHECK without editing an
+ *      already-applied migration in place
+ *      (20260610020000_applications_status_auto_queued.sql's own
+ *      precedent).
+ *  A bare `drop constraint if exists <name>` (no following `check(`) is
+ *  recognised separately as a REMOVAL -- there is no `create or replace`
+ *  for a CHECK constraint, so "drop, then add" is this repo's own idiom for
+ *  "replace," and the same "last one wins" property lastFunctionDefinition
+ *  already established for a function applies here once every add/drop
+ *  action across every text is placed in one time-ordered sequence.
+ *
+ *  The clause itself is found with a balanced-parenthesis scan starting at
+ *  the `check`'s own opening `(` -- not a non-greedy regex -- because a real
+ *  clause routinely nests parentheses of its own (`... in ('B1', 'B3')`),
+ *  which a `\([^)]*\)`-shaped regex would truncate at the first inner `)`.
+ *
+ *  Deliberately NOT comment-aware on its own: unlike lastFunctionDefinition
+ *  (which recurses through blankStringLiterals to protect against a prose
+ *  match), a constraint's own name is a plain identifier, never plausible
+ *  prose on its own, and every caller of this function already reads from
+ *  the same `orderedTexts` this file's sibling test file
+ *  (interviewPrepSpendCapRemoval.effectiveSchema.test.js) built from real,
+ *  on-disk migration files -- a corpus that does not contain a migration
+ *  quoting a fake CHECK inside a comment or string literal. A future caller
+ *  reading untrusted or prose-heavy text should not assume this guard for
+ *  free.
+ *
+ *  @param {string[]} texts
+ *  @param {string} constraintName
+ *  @returns {{ clause: string } | null}
+ */
+export function lastConstraintClause(texts, constraintName) {
+  const escapedName = constraintName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const addAnchorRe = new RegExp(`\\bconstraint\\s+${escapedName}\\b`, "gi");
+  const dropRe = new RegExp(`\\bdrop\\s+constraint\\s+(?:if\\s+exists\\s+)?${escapedName}\\b`, "gi");
+
+  let state = null;
+  for (const rawText of texts) {
+    const stripped = stripSqlComments(rawText);
+    const events = [];
+
+    let m;
+    const localAddRe = new RegExp(addAnchorRe.source, addAnchorRe.flags);
+    while ((m = localAddRe.exec(stripped))) {
+      const afterName = stripped.slice(m.index + m[0].length);
+      const checkMatch = /^\s*check\s*\(/i.exec(afterName);
+      if (!checkMatch) continue; // a bare "drop constraint <name>" also
+      // matches this anchor -- it has no following "check(" and is left to
+      // the drop scan below instead.
+      const openIdx = m.index + m[0].length + checkMatch[0].length - 1;
+      let depth = 0;
+      let clause = null;
+      for (let i = openIdx; i < stripped.length; i += 1) {
+        if (stripped[i] === "(") depth += 1;
+        else if (stripped[i] === ")") {
+          depth -= 1;
+          if (depth === 0) {
+            clause = stripped.slice(openIdx, i + 1);
+            break;
+          }
+        }
+      }
+      if (clause !== null) events.push({ index: m.index, type: "add", clause });
+    }
+
+    const localDropRe = new RegExp(dropRe.source, dropRe.flags);
+    while ((m = localDropRe.exec(stripped))) events.push({ index: m.index, type: "drop" });
+
+    events.sort((a, b) => a.index - b.index);
+    for (const event of events) state = event.type === "drop" ? null : { clause: event.clause };
+  }
+  return state;
+}
+
 /** Normalises a function signature ("public.foo(uuid, uuid)",
  *  "foo(p_id uuid)", "foo(uuid,uuid)") into a canonical
  *  "schema.name(type,type)" key: schema defaulted to public (same rule as

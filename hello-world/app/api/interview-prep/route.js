@@ -145,8 +145,16 @@ function idOf(value) {
   return text || "";
 }
 
-function triggerClassOf(value) {
-  return value === "B3" ? "B3" : "B1";
+// N29: "B2" is the manual "prepare me for this interview" control's own
+// trigger class (supabase/migrations/20260922010000_interview_prep_manual_trigger_class.sql
+// widens interview_prep_events_trigger_class_check to match). Exported so
+// app/api/interview-prep/route.triggerClass.test.js can exercise it directly
+// -- widening the database CHECK alone would be insufficient, since this
+// allowlist independently collapses any value it does not recognize to
+// "B1" BEFORE it ever reaches that CHECK.
+const TRIGGER_CLASSES = new Set(["B1", "B2", "B3"]);
+export function triggerClassOf(value) {
+  return TRIGGER_CLASSES.has(value) ? value : "B1";
 }
 
 // listDigests' contract is "keyed by application_id" -- Object.values() walks

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
@@ -10,6 +10,7 @@ import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogTitle from "@mui/material/DialogTitle";
 import { useIsMobile } from "../hooks/useResponsive";
+import { usePrepGeneration } from "../hooks/usePrepGeneration";
 import FieldError from "./FieldError";
 import FormattedContent from "./FormattedContent";
 import DigestPanel from "./tracking/DigestPanel";
@@ -48,6 +49,47 @@ export async function saveTrustedNames(applicationId, { candidateName, interview
     body: JSON.stringify({ applicationId, candidateName, interviewerNamesText }),
   });
   return res.json();
+}
+
+/** N29/DS-N29.7: the interview-prep GET fetch, extracted from the mount
+ *  effect's own body so it is callable from two sites -- the mount/reopen
+ *  effect below, and `handleGenerateNow`'s own post-success refetch -- with
+ *  exactly one implementation, not two independently-maintained copies. The
+ *  setter is threaded in as a parameter, not closed over, so this stays a
+ *  plain, directly-testable module function (mirroring `saveTrustedNames`
+ *  above), rather than a closure only reachable by mounting the whole
+ *  dialog. Every POST branch this route can return carries no pack content
+ *  of its own (route.js's own terminal writes are `{status}` only), so a
+ *  completed generation is only ever reflected by re-running this GET. */
+export function fetchPrep(applicationId, setPrepById) {
+  return fetch(`/api/interview-prep?applicationId=${encodeURIComponent(applicationId)}`)
+    .then((res) => res.json())
+    .then((data) => setPrepById((prev) => ({ ...prev, [applicationId]: data })))
+    .catch(() => setPrepById((prev) => ({ ...prev, [applicationId]: { error: "Could not load your prep pack." } })));
+}
+
+/** N29: maps a `usePrepGeneration` result to the transient message
+ *  `PrepPackPanel` shows for an outcome that leaves no trace in the
+ *  persisted pack row (disabled / refused / a bare error) -- a normal
+ *  terminal status (ready/partial/failed/unavailable) needs no message of
+ *  its own, since the panel's own `StatusBanner` already renders it off the
+ *  refetched pack (`handleGenerateNow` below never calls this for that
+ *  branch). Total: never throws, never returns `undefined`, so its caller
+ *  can always render the return value directly. `"attempts-spent"` is no
+ *  longer a value the server can produce once N41's cap-removal migration
+ *  lands, so it is not special-cased here -- an unrecognized `reason` falls
+ *  to the same generic "refused" copy as a genuine claim-RPC error. */
+export function messageFor(result) {
+  if (result?.status === "disabled") {
+    return "Interview prep isn't available right now. Nothing was generated — try again later.";
+  }
+  if (result?.status === "refused") {
+    if (result.reason === "in-flight") {
+      return "A prep pack is already being generated for this application. Wait for it to finish, then check back.";
+    }
+    return "Something went wrong starting this attempt. Try again.";
+  }
+  return result?.error || "Something went wrong. Try again.";
 }
 
 /** Builds the "Download prep log" content from the `events` array the GET
@@ -108,21 +150,56 @@ export default function AppViewDialog({
   const dResume = dApp?.generated_resumes;
   const dDigest = dApp?.id ? digestsById[dApp.id] : null;
   const dPrep = dApp?.id ? prepById[dApp.id] : null;
+  // N29's coordinator-named defect: the id "last fetched fresh for, since
+  // the dialog was last opened" -- reset to null on close, so the very next
+  // "prep" open (same row or a different one) always fetches fresh, instead
+  // of the old guard's `|| prepById[dApp.id]) return`, which never refetched
+  // a cached snapshot once one existed (including a stale `status:"running"`
+  // left behind by an automatic B1/B3 trigger nobody in this session is
+  // watching). Paging between kinds within one open session still never
+  // refetches -- the ref stays equal to `dApp.id` for the whole time the
+  // dialog stays open.
+  const prepFetchedForRef = useRef(null);
   useEffect(() => {
-    if (appDialog.kind !== "prep" || !dApp?.id || prepById[dApp.id]) return;
-    let cancelled = false;
-    fetch(`/api/interview-prep?applicationId=${encodeURIComponent(dApp.id)}`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (!cancelled) setPrepById((prev) => ({ ...prev, [dApp.id]: data }));
-      })
-      .catch(() => {
-        if (!cancelled) setPrepById((prev) => ({ ...prev, [dApp.id]: { error: "Could not load your prep pack." } }));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [appDialog.kind, dApp?.id, prepById]);
+    if (!appDialog.open) {
+      prepFetchedForRef.current = null;
+      return;
+    }
+    if (appDialog.kind !== "prep" || !dApp?.id || prepFetchedForRef.current === dApp.id) return;
+    prepFetchedForRef.current = dApp.id;
+    fetchPrep(dApp.id, setPrepById);
+  }, [appDialog.kind, appDialog.open, dApp?.id]);
+
+  // N29: the manual "prepare me for this interview" control (usePrepGeneration.js).
+  const { generatingIds, generateNow } = usePrepGeneration();
+  // Widens the in-flight signal to also cover the post-success refetch
+  // (design-experience.r1.md §5's own named sequencing gap) -- `generating`
+  // stays true from the moment `generateNow` starts until the refetch below
+  // has actually landed, not merely until the POST itself settles.
+  const [refreshingIds, setRefreshingIds] = useState(() => new Set());
+  const [prepMessageById, setPrepMessageById] = useState({});
+
+  async function handleGenerateNow() {
+    if (!dApp?.id) return;
+    const id = dApp.id;
+    const result = await generateNow(id);
+    if (result?.skipped) return;
+    if (result?.status && result.status !== "disabled" && result.status !== "refused") {
+      setRefreshingIds((prev) => new Set(prev).add(id));
+      try {
+        await fetchPrep(id, setPrepById);
+      } finally {
+        setRefreshingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+      setPrepMessageById((prev) => ({ ...prev, [id]: null }));
+      return;
+    }
+    setPrepMessageById((prev) => ({ ...prev, [id]: messageFor(result) }));
+  }
 
   const pages = [
     dApp?.id ? "communications" : null,
@@ -282,6 +359,10 @@ export default function AppViewDialog({
               interviewerNames={dPrep.interviewerNames ?? []}
               error={dPrep.error ?? null}
               onDownloadLog={() => downloadPrepLog(dApp, dPrep)}
+              generating={generatingIds.has(dApp?.id) || refreshingIds.has(dApp?.id)}
+              triggerMessage={dApp?.id ? (prepMessageById[dApp.id] ?? null) : null}
+              onGenerateNow={handleGenerateNow}
+              hasDescription={!!String(dPos?.description || "").trim()}
               onSaveNames={(form) => {
                 if (!dApp?.id) return;
                 saveTrustedNames(dApp.id, form)
