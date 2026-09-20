@@ -3,11 +3,7 @@
 // candidate-initiated attempt is distinguishable from an automatic B1/B3
 // one in interview_prep_events (the "Download prep log" control's own
 // source, AC-N33.21). Two independent gates constrain this value; this
-// file owns the ROUTE-level one, `triggerClassOf`, which TODAY collapses
-// ANY value that is not the literal string "B3" to "B1"
-// (route.js:148-150) -- so widening only the database CHECK (this repo's
-// sibling effective-schema test) would still ship every manual attempt
-// mislabelled as "B1", with no error anywhere.
+// file owns the ROUTE-level one, `triggerClassOf`.
 //
 // plan.r1.md §0.6's own canary: `grep triggerClassOf` repo-wide -> 1 file
 // (route.js, the definition itself) -- ZERO existing test exercises this
@@ -15,35 +11,59 @@
 // instrument (its own header, :1-32) and never imports route.js at all, so
 // it cannot and does not cover this.
 //
-// RED ON HEAD, confirmed this round by direct probe: `triggerClassOf` has
-// no `export` keyword (route.js:148-150), so `import { triggerClassOf }
-// from "./route.js"` binds it to `undefined` -- importing route.js itself
-// does not throw (probed directly; the route has no import-time env-var
-// crash), but every call below throws "triggerClassOf is not a function"
-// the instant a test invokes it. Once route.js exports the widened,
-// three-member-allowlist version plan.r1.md §1/§2 specifies, every case
-// below becomes a real runtime assertion.
+// V-8 fix (N29/N41 verification round 2, owner ruling): `triggerClassOf`
+// used to COLLAPSE any value outside {B1,B2,B3} to "B1" -- indistinguishable
+// from a genuine automatic post-tailor trigger in interview_prep_events, a
+// telemetry lie the "Download prep log" surface (AC-N33.21) would read as
+// true. The owner's ruling: "an unknown class is a programming error, not a
+// value to normalise" -- reject rather than coerce. The three known values
+// still round-trip to themselves, UNCHANGED; every other input now THROWS,
+// caught at route.js's own GATE 5 and turned into a 400
+// (route.triggerClassReject.test.js drives that end of the seam through the
+// real POST handler). The property this file has always pinned --  an
+// unrecognized class must never silently round-trip as "B1" -- is preserved
+// in a strictly stronger form: it now never round-trips as anything at all.
+//
+// Correction (regression fix, same day): the first cut of the V-8 ruling
+// conflated "absent" with "unrecognized" and made `triggerClassOf(undefined)`
+// throw too, which broke every caller that legitimately omits the field --
+// caught by route.trustedNamesWiring.test.js failing both of its cases,
+// including its own negative control. The owner's corrected ruling: an
+// ABSENT value (undefined, null, or the key simply missing from the request
+// body) is not a lie -- the caller said nothing, and "B1" is the documented
+// default -- so it still defaults exactly as it did before the V-8 fix ever
+// shipped. Only a value that was actually SUPPLIED and does not match the
+// allowlist is the telemetry lie worth rejecting.
 import { describe, it, expect } from "vitest";
 import { triggerClassOf } from "./route.js";
 
-describe("triggerClassOf -- allowlist membership, fail-safe default to B1", () => {
+describe("triggerClassOf -- allowlist membership, reject rather than coerce", () => {
   it.each([
     ["B1", "B1"],
     ["B2", "B2"],
     ["B3", "B3"],
-  ])("a known class %s round-trips to itself", (input, expected) => {
+  ])("a known class %s round-trips to itself, exactly as before", (input, expected) => {
     expect(triggerClassOf(input)).toBe(expected);
   });
 
   it.each([
-    ["bogus", "B1"],
-    [undefined, "B1"],
-    [null, "B1"],
-    ["", "B1"],
-    ["b2", "B1"], // membership is exact, not case-insensitive
-    ["manual", "B1"], // a plausible-sounding but non-member string
-  ])("collapses %s to the fail-safe default B1, never throws", (input, expected) => {
-    expect(triggerClassOf(input)).toBe(expected);
+    [undefined],
+    [null],
+  ])("absent (%p) defaults to B1, exactly as it did before the V-8 fix", (input) => {
+    expect(triggerClassOf(input)).toBe("B1");
+  });
+
+  it("absent -- the key missing from the call entirely -- also defaults to B1", () => {
+    expect(triggerClassOf()).toBe("B1");
+  });
+
+  it.each([
+    ["bogus"],
+    [""],
+    ["b2"], // membership is exact, not case-insensitive
+    ["manual"], // a plausible-sounding but non-member string
+  ])("rejects %s -- a SUPPLIED but unrecognized value throws rather than silently coercing to B1", (input) => {
+    expect(() => triggerClassOf(input)).toThrow();
   });
 
   it("[the mutant this whole file guards against] a widened CHECK with no matching route-level widening would silently mislabel B2 as B1 -- this assertion is what makes that visible", () => {

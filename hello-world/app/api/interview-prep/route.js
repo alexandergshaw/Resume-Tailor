@@ -150,11 +150,32 @@ function idOf(value) {
 // widens interview_prep_events_trigger_class_check to match). Exported so
 // app/api/interview-prep/route.triggerClass.test.js can exercise it directly
 // -- widening the database CHECK alone would be insufficient, since this
-// allowlist independently collapses any value it does not recognize to
-// "B1" BEFORE it ever reaches that CHECK.
+// allowlist independently governs the value BEFORE it ever reaches that
+// CHECK.
+//
+// V-8 fix (N29/N41 verification round 2): this used to collapse any
+// unrecognized value to "B1" -- indistinguishable, in interview_prep_events,
+// from a genuine automatic post-tailor trigger, which the "Download prep
+// log" surface (AC-N33.21) reads as if it were true. Every real caller in
+// this tree (prepTrigger.js's startInterviewPrepResearch, and
+// usePrepGeneration.js's own default) always supplies an exact member of
+// this allowlist, so a value outside it can only be a malformed or
+// malicious request body, never a legitimate omission -- REJECTING it
+// (thrown here, turned into a 400 at GATE 5 below, never silently
+// normalised) is the owner's own ruling: "an unknown class is a programming
+// error, not a value to normalise."
 const TRIGGER_CLASSES = new Set(["B1", "B2", "B3"]);
 export function triggerClassOf(value) {
-  return TRIGGER_CLASSES.has(value) ? value : "B1";
+  // ABSENT (undefined, null, or the key simply missing from the body) is not
+  // the same claim as PRESENT-BUT-UNRECOGNIZED: a caller that said nothing
+  // gets the documented historical default, "B1", exactly as before this
+  // function ever threw. Only a value that was actually supplied and does
+  // not match the allowlist is the telemetry lie the V-8 fix targets.
+  if (value === undefined || value === null) return "B1";
+  if (!TRIGGER_CLASSES.has(value)) {
+    throw new Error(`Unrecognized interview-prep trigger class: ${JSON.stringify(value)}`);
+  }
+  return value;
 }
 
 // listDigests' contract is "keyed by application_id" -- Object.values() walks
@@ -308,7 +329,16 @@ export async function POST(request) {
   // GATE 5.
   const applicationId = idOf(body?.applicationId);
   if (!applicationId) return badRequest("Missing applicationId.");
-  const triggerClass = triggerClassOf(body?.triggerClass);
+  // V-8 fix: triggerClassOf now THROWS on an unrecognized value instead of
+  // silently normalising it -- caught here, at the seam where the request
+  // body is read, and turned into a 400 before GATE 6 ever queries the
+  // database.
+  let triggerClass;
+  try {
+    triggerClass = triggerClassOf(body?.triggerClass);
+  } catch {
+    return badRequest("Unknown triggerClass.");
+  }
 
   // GATE 6. Scoped to the caller IN THE QUERY, not just checked after the
   // fact -- RLS would return nothing for someone else's row; a query that

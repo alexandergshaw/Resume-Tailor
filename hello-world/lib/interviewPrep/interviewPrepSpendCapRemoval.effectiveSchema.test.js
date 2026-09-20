@@ -44,6 +44,8 @@ import {
   lastConstraintClause,
   lastFunctionDefinition,
   textsExcludingFile,
+  droppedConstraintName,
+  constraintNameByBodyFragment,
 } from "@/lib/interviewPrep/migrationGrantReplay.js";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -61,6 +63,16 @@ beforeAll(() => {
 
 const CAP_REMOVAL_MIGRATION = "20260922000000_interview_prep_remove_spend_caps.sql";
 const TRIGGER_CLASS_MIGRATION = "20260922010000_interview_prep_manual_trigger_class.sql";
+const ORIGINAL_MIGRATION = "20260914000000_interview_prep.sql";
+
+/** Looks up one migration's own raw text by filename, out of the same
+ *  `migrationFiles`/`orderedTexts` pair every other describe block in this
+ *  file already builds from the real, on-disk migrations directory. */
+function textFor(filename) {
+  const idx = migrationFiles.indexOf(filename);
+  if (idx === -1) throw new Error(`textFor: migration not found in the real migrations directory: ${filename}`);
+  return orderedTexts[idx];
+}
 
 describe("[control] the migrations directory was actually read and is non-trivial", () => {
   it("more than 10 migration files exist, lexicographically sorted", () => {
@@ -171,5 +183,87 @@ describe("DS-N29.3 -- the manual trigger_class ('B2') CHECK widening, replayed",
     // the risk plan.r1.md §4's risk table names for steps 3/4. Recorded as
     // its own case so a reviewer sees the pairing was deliberate.
     expect(migrationFiles.length).toBeGreaterThan(0);
+  });
+});
+
+// V-3 fix (verify.r1.md, N29/N41 fix round 2): "the CHECK no longer bounds
+// attempts" and "claim_prep_pack_slot no longer refuses on either counter"
+// (both proved above) say NOTHING about whether the counters THEMSELVES
+// still increment -- the migration's own header says this removes the
+// CEILING, not the counters, but nothing enforced that until now. Mutant M7
+// (verify.r1.md) deleted `attempts + 1`'s own `+ 1` from the cap-removal
+// migration and 530 tests stayed green.
+describe("V-3 -- the spend counters (attempts, model_calls) still increment on every claim/model call", () => {
+  it("claim_prep_pack_slot's EFFECTIVE (replayed) body still increments attempts by exactly 1 on every successful claim", () => {
+    const def = lastFunctionDefinition(orderedTexts, "claim_prep_pack_slot");
+    expect(def).not.toBeNull();
+    expect(def.body).toMatch(/set\s+attempts\s*=\s*interview_prep_spend\.attempts\s*\+\s*1/i);
+  });
+
+  it("record_prep_model_call's own model_calls increment is untouched by either new migration (neither migration re-creates this function)", () => {
+    const def = lastFunctionDefinition(orderedTexts, "record_prep_model_call");
+    expect(def).not.toBeNull();
+    expect(def.body).toMatch(/set\s+model_calls\s*=\s*interview_prep_spend\.model_calls\s*\+\s*1/i);
+  });
+
+  it("[canary, hand-built fixture -- never the real migrations on disk, per this repo's own instrument-destination rule] the SAME pattern above genuinely fails once the '+ 1' is removed, proving these assertions are not vacuously true", () => {
+    const mutatedBody = `
+      insert into public.interview_prep_spend (application_id, user_id, attempts, model_calls)
+      values (p_application_id, auth.uid(), 1, 0)
+      on conflict (application_id) do update
+        set attempts = interview_prep_spend.attempts,
+            updated_at = now()
+        where interview_prep_spend.user_id = auth.uid();
+    `;
+    expect(mutatedBody).not.toMatch(/set\s+attempts\s*=\s*interview_prep_spend\.attempts\s*\+\s*1/i);
+    const realDef = lastFunctionDefinition(orderedTexts, "claim_prep_pack_slot");
+    expect(realDef.body).toMatch(/set\s+attempts\s*=\s*interview_prep_spend\.attempts\s*\+\s*1/i);
+  });
+});
+
+// V-4 fix (verify.r1.md, N29/N41 fix round 2): a misspelled `drop constraint
+// if exists <name>` silently no-ops in real Postgres (no error, nothing
+// dropped) and lastConstraintClause's own "last add wins" replay cannot tell
+// the difference from a genuine drop+add pair -- the later, correctly-named
+// ADD still wins the replay either way (mutant M9, verify.r1.md, survived
+// 457 tests). The fix is NOT "assert the drop happened" via a boolean this
+// replay cannot honestly produce from a name mismatch alone; it is proving
+// the name actually dropped is the SAME name the constraint was originally
+// created under -- both read out of source text, never the same string
+// literal typed twice into this test (which would catch neither side's
+// typo, only their disagreement with a THIRD, hand-typed expectation).
+describe("V-4 -- a DROP CONSTRAINT statement targets the exact name the constraint was originally CREATED under", () => {
+  it("the cap-removal migration's DROP targets interview_prep_spend's own originally-created attempts-check name", () => {
+    const createdName = constraintNameByBodyFragment(textFor(ORIGINAL_MIGRATION), "attempts >= 0 and attempts <= 6");
+    expect(createdName, "could not find the original attempts CHECK's name in 20260914000000 -- fixture drifted").not.toBeNull();
+    const droppedName = droppedConstraintName(textFor(CAP_REMOVAL_MIGRATION), "interview_prep_spend");
+    expect(droppedName, "no ALTER TABLE ... DROP CONSTRAINT found against interview_prep_spend").not.toBeNull();
+    expect(droppedName).toBe(createdName);
+  });
+
+  it("the trigger-class migration's DROP targets interview_prep_events' own originally-created trigger_class-check name", () => {
+    const createdName = constraintNameByBodyFragment(textFor(ORIGINAL_MIGRATION), "trigger_class in ('B1', 'B3')");
+    expect(createdName, "could not find the original trigger_class CHECK's name in 20260914000000 -- fixture drifted").not.toBeNull();
+    const droppedName = droppedConstraintName(textFor(TRIGGER_CLASS_MIGRATION), "interview_prep_events");
+    expect(droppedName, "no ALTER TABLE ... DROP CONSTRAINT found against interview_prep_events").not.toBeNull();
+    expect(droppedName).toBe(createdName);
+  });
+
+  it("[mutant-kill proof, hand-built fixture -- never the real repo migrations] a misspelled drop name is caught by THIS instrument even though lastConstraintClause's own replay still reports the correctly-named ADD as effective", () => {
+    const originalFixture = `create table public.t (\n  x text,\n  constraint t_x_check\n    check (x in ('A'))\n);`;
+    const migrationFixture = [
+      "alter table public.t drop constraint if exists t_x_chk;", // misspelled
+      "alter table public.t add constraint t_x_check check (x in ('A','B'));",
+    ].join("\n");
+    // This is M9's exact failure mode, reproduced against a controlled
+    // fixture: the misspelled drop never matches "t_x_check", so the replay
+    // still sees the later, correctly-named ADD as effective.
+    expect(lastConstraintClause([originalFixture, migrationFixture], "t_x_check")).not.toBeNull();
+    // This instrument catches it anyway: the name actually dropped does not
+    // match the name actually created.
+    const createdName = constraintNameByBodyFragment(originalFixture, "x in ('A')");
+    const droppedName = droppedConstraintName(migrationFixture, "t");
+    expect(createdName).toBe("t_x_check");
+    expect(droppedName).not.toBe(createdName);
   });
 });

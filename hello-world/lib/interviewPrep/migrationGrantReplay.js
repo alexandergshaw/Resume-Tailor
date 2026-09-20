@@ -920,3 +920,68 @@ export const SPEND_DELETE_RE =
   /^delete from public\.interview_prep_spend spend using public\.applications app where spend\.application_id\s*=\s*app\.id and spend\.user_id\s*<>\s*app\.user_id;$/i;
 export const PACKS_DELETE_RE =
   /^delete from public\.interview_prep_packs packs using public\.applications app where packs\.application_id\s*=\s*app\.id and packs\.user_id\s*<>\s*app\.user_id;$/i;
+
+/** V-4 fix (N29/N41 verification round 2) -- extracts the constraint name an
+ *  `alter table <tableName> ... drop constraint [if exists] <name>`
+ *  statement targets. Paired with `constraintNameByBodyFragment` below so a
+ *  caller can prove a drop+add migration's DROP targets the SAME name the
+ *  constraint was originally CREATED under, with NEITHER name hardcoded as a
+ *  string literal in the test -- both are read out of source text instead,
+ *  so a misspelling on either side (the drop's own name, or a copy-pasted
+ *  "expected" literal) is caught by disagreement rather than by one side
+ *  quietly matching itself. Returns null if no such statement exists for
+ *  that table in the given text. */
+export function droppedConstraintName(text, tableName) {
+  const re = new RegExp(
+    `alter\\s+table\\s+(?:public\\.)?${tableName}\\b[\\s\\S]{0,80}?drop\\s+constraint\\s+(?:if\\s+exists\\s+)?(\\w+)`,
+    "i",
+  );
+  const m = re.exec(stripSqlComments(text));
+  return m ? m[1] : null;
+}
+
+/** V-4 fix's other half: finds a `constraint <name> check (...)` clause by a
+ *  distinctive fragment of its OWN check body (e.g. `attempts <= 6`, or
+ *  `trigger_class in ('B1', 'B3')`) and returns the name it was declared
+ *  under -- the caller never spells the constraint's NAME out to find it,
+ *  only its body, so the name returned here is genuinely independent of
+ *  whatever name `droppedConstraintName` reads out of a later migration.
+ *
+ *  Scans every `constraint <name> check (` anchor in the text (there are
+ *  several per CREATE TABLE, comma-separated, all inside ONE statement
+ *  terminated by a single trailing `;`) and, for EACH one, takes a
+ *  balanced-parenthesis slice of just THAT clause -- mirroring
+ *  `lastConstraintClause`'s own add-event scan above -- before testing
+ *  whether the fragment appears inside it. A non-greedy `[^;]*?` bound
+ *  instead of this per-clause balanced scan would cross past the FIRST
+ *  constraint's own closing paren and match a fragment belonging to a LATER
+ *  sibling constraint in the same CREATE TABLE, silently returning the
+ *  wrong name (measured: `interview_prep_events_event_type_check`, the
+ *  table's first constraint, when searching for the trigger_class check's
+ *  own body a few constraints later). Returns the name of the first
+ *  constraint whose OWN clause contains the fragment, or null if none does. */
+export function constraintNameByBodyFragment(text, bodyFragment) {
+  const stripped = stripSqlComments(text);
+  const anchorRe = /\bconstraint\s+(\w+)\b/gi;
+  let m;
+  while ((m = anchorRe.exec(stripped))) {
+    const afterName = stripped.slice(m.index + m[0].length);
+    const checkMatch = /^\s*check\s*\(/i.exec(afterName);
+    if (!checkMatch) continue;
+    const openIdx = m.index + m[0].length + checkMatch[0].length - 1;
+    let depth = 0;
+    let clause = null;
+    for (let i = openIdx; i < stripped.length; i += 1) {
+      if (stripped[i] === "(") depth += 1;
+      else if (stripped[i] === ")") {
+        depth -= 1;
+        if (depth === 0) {
+          clause = stripped.slice(openIdx, i + 1);
+          break;
+        }
+      }
+    }
+    if (clause !== null && clause.includes(bodyFragment)) return m[1];
+  }
+  return null;
+}

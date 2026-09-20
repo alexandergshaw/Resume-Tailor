@@ -160,6 +160,30 @@ export default function AppViewDialog({
   // refetches -- the ref stays equal to `dApp.id` for the whole time the
   // dialog stays open.
   const prepFetchedForRef = useRef(null);
+  // V-1 fix (N29/N41 verification round 2): guards a fetchPrep write against
+  // a SLOWER, now-superseded GET for the same application landing AFTER a
+  // fresher one already has -- restoring the staleness protection the
+  // pre-N29 effect held via `let cancelled = false` (dropped when the
+  // reopen-refetch fix above landed), without reinstating that effect's OWN
+  // bug (prepFetchedForRef, just above, already fixes the
+  // never-refetches-once-cached defect and is untouched by this). A
+  // monotonic counter per applicationId, not a single boolean, since more
+  // than one request for the same id can be reachable at once (this effect
+  // and handleGenerateNow's own post-success refetch both call this). Lives
+  // OUTSIDE `fetchPrep` itself -- that function stays the plain,
+  // unconditional `(applicationId, setPrepById)` module export
+  // AppViewDialog.messageFor.test.js already pins directly as its own
+  // contract, so the guard wraps the SETTER this component passes in,
+  // rather than changing fetchPrep's own behavior.
+  const prepRequestSeqRef = useRef({});
+  function fetchPrepForRow(applicationId) {
+    const seq = (prepRequestSeqRef.current[applicationId] || 0) + 1;
+    prepRequestSeqRef.current[applicationId] = seq;
+    return fetchPrep(applicationId, (updater) => {
+      if (prepRequestSeqRef.current[applicationId] !== seq) return;
+      setPrepById(updater);
+    });
+  }
   useEffect(() => {
     if (!appDialog.open) {
       prepFetchedForRef.current = null;
@@ -167,7 +191,7 @@ export default function AppViewDialog({
     }
     if (appDialog.kind !== "prep" || !dApp?.id || prepFetchedForRef.current === dApp.id) return;
     prepFetchedForRef.current = dApp.id;
-    fetchPrep(dApp.id, setPrepById);
+    fetchPrepForRow(dApp.id);
   }, [appDialog.kind, appDialog.open, dApp?.id]);
 
   // N29: the manual "prepare me for this interview" control (usePrepGeneration.js).
@@ -187,7 +211,7 @@ export default function AppViewDialog({
     if (result?.status && result.status !== "disabled" && result.status !== "refused") {
       setRefreshingIds((prev) => new Set(prev).add(id));
       try {
-        await fetchPrep(id, setPrepById);
+        await fetchPrepForRow(id);
       } finally {
         setRefreshingIds((prev) => {
           const next = new Set(prev);
