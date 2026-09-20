@@ -81,7 +81,79 @@ function parseRun(runXml) {
 
 const ALIGN_MAP = { center: "center", right: "right", both: "justify", left: "left", start: "left", end: "right" };
 
-function parseParagraph(blockXml) {
+// numFmt values that count rather than bullet. Anything else (bullet, none,
+// or an unrecognized/absent numFmt) resolves to unordered -- the safer
+// default when a list's format can't be determined (see parseListInfo).
+const ORDERED_NUM_FMTS = new Set([
+  "decimal", "decimalZero", "lowerRoman", "upperRoman", "lowerLetter", "upperLetter",
+]);
+
+const ABSTRACT_NUM_RE = /<w:abstractNum\b[^>]*\bw:abstractNumId="(\w+)"[^>]*>([\s\S]*?)<\/w:abstractNum>/g;
+const LVL_RE = /<w:lvl\b[^>]*\bw:ilvl="(\d+)"[^>]*>([\s\S]*?)<\/w:lvl>/g;
+const NUM_RE = /<w:num\b[^>]*\bw:numId="(\w+)"[^>]*>([\s\S]*?)<\/w:num>/g;
+const NUMPR_RE = /<w:numPr\b[^>]*>([\s\S]*?)<\/w:numPr>/;
+
+// Parse a .docx's word/numbering.xml part (or "" if the part is absent) into
+// a lookup from "<numId>:<ilvl>" to whether that level is an ORDERED list.
+// Pure; never throws; empty/malformed input returns an empty Map. Ignores
+// <w:lvlOverride> and <w:numStart>/<w:startOverride> -- this design always
+// uses the abstractNum's own base level definition and always starts an
+// ordered run's count at 1.
+function parseNumberingFormats(numberingXml) {
+  const formats = new Map();
+  if (!numberingXml) return formats;
+
+  const abstractFormats = new Map(); // "<abstractNumId>:<ilvl>" -> ordered
+  let am;
+  ABSTRACT_NUM_RE.lastIndex = 0;
+  while ((am = ABSTRACT_NUM_RE.exec(numberingXml)) !== null) {
+    const abstractId = am[1];
+    const body = am[2];
+    let lm;
+    LVL_RE.lastIndex = 0;
+    while ((lm = LVL_RE.exec(body)) !== null) {
+      const ilvl = lm[1];
+      const fmt = (lm[2].match(/<w:numFmt\b[^>]*\bw:val="(\w+)"/) || [])[1];
+      abstractFormats.set(`${abstractId}:${ilvl}`, ORDERED_NUM_FMTS.has(fmt));
+    }
+  }
+
+  let nm;
+  NUM_RE.lastIndex = 0;
+  while ((nm = NUM_RE.exec(numberingXml)) !== null) {
+    const numId = nm[1];
+    const abstractId = (nm[2].match(/<w:abstractNumId\b[^>]*\bw:val="(\w+)"/) || [])[1];
+    if (abstractId == null) continue;
+    for (const [key, ordered] of abstractFormats) {
+      if (key.startsWith(`${abstractId}:`)) {
+        formats.set(`${numId}:${key.slice(abstractId.length + 1)}`, ordered);
+      }
+    }
+  }
+  return formats;
+}
+
+// Extract this paragraph's list membership from its already-sliced <w:pPr>
+// inner XML. Returns null for "no <w:numPr>" AND for the OOXML
+// "<w:numId w:val="0"/>" explicit no-list override. `ilvl` defaults to 0 when
+// <w:ilvl> is absent (OOXML's own default). `ordered` defaults to `false`
+// when the (numId, ilvl) pair is not found in `numberingFormats` (numbering.xml
+// absent, malformed, or the numId simply not declared there) -- membership and
+// ilvl always survive from <w:numPr> alone; only ordered-vs-unordered needs
+// numbering.xml, so its absence costs the ordering, never the bullet.
+function parseListInfo(pPrXml, numberingFormats) {
+  const m = pPrXml.match(NUMPR_RE);
+  if (!m) return null;
+  const body = m[1];
+  const numId = (body.match(/<w:numId\b[^>]*\bw:val="(\w+)"/) || [])[1];
+  if (numId == null || numId === "0") return null;
+  const ilvlRaw = (body.match(/<w:ilvl\b[^>]*\bw:val="(\d+)"/) || [])[1];
+  const ilvl = ilvlRaw != null ? Number.parseInt(ilvlRaw, 10) : 0;
+  const ordered = numberingFormats.get(`${numId}:${ilvl}`) === true;
+  return { numId, ilvl, ordered };
+}
+
+function parseParagraph(blockXml, numberingFormats) {
   const pPr = (blockXml.match(PPR_RE) || [])[1] || "";
   const jc = (pPr.match(/<w:jc\b[^>]*\bw:val="(\w+)"/) || [])[1];
   // w:spacing before/after are in twentieths of a point.
@@ -101,20 +173,25 @@ function parseParagraph(blockXml) {
     align: (jc && ALIGN_MAP[jc]) || "left",
     spaceBeforePt: beforeTwips ? Number.parseInt(beforeTwips, 10) / 20 : 0,
     spaceAfterPt: afterRaw ? Number.parseInt(afterRaw, 10) / 20 : 0,
+    list: parseListInfo(pPr, numberingFormats),
   };
 }
 
 // Parse a .docx (ArrayBuffer | Uint8Array | Buffer | Blob) into
-// { paragraphs: [{ runs, align, spaceBeforePt, spaceAfterPt }] } in document
-// order, including paragraphs nested in tables.
+// { paragraphs: [{ runs, align, spaceBeforePt, spaceAfterPt, list }] } in
+// document order, including paragraphs nested in tables. `list` is `null` or
+// `{ numId, ilvl, ordered }`, resolved by also reading word/numbering.xml from
+// the same zip.
 export async function parseDocxToModel(input) {
   const zip = await JSZip.loadAsync(input);
   const xml = (await zip.file("word/document.xml")?.async("string")) || "";
+  const numberingXml = (await zip.file("word/numbering.xml")?.async("string")) || "";
+  const numberingFormats = parseNumberingFormats(numberingXml);
   const paragraphs = [];
   PARAGRAPH_RE.lastIndex = 0;
   let pm;
   while ((pm = PARAGRAPH_RE.exec(xml)) !== null) {
-    paragraphs.push(parseParagraph(pm[0]));
+    paragraphs.push(parseParagraph(pm[0], numberingFormats));
   }
   return { paragraphs };
 }
@@ -136,40 +213,85 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;");
 }
 
-// Render a parsed model to an HTML string with inline styles, so the preview
-// reads like the document. Used both for the read-only view and to seed the
-// rich-text editor. Whitespace is preserved (white-space: pre-wrap) so runs of
-// spaces and tabs match the document.
-export function renderModelToHtml(model) {
-  return (model?.paragraphs || [])
-    .map((p) => {
-      const pStyle = `text-align:${p.align};margin:${p.spaceBeforePt || 0}pt 0 ${p.spaceAfterPt || 0}pt;white-space:pre-wrap;`;
-      if (!p.runs.length) return `<p style="${pStyle}min-height:0.9em;"><br></p>`;
-      const inner = p.runs
-        .map((r) => {
-          const style = [
-            r.bold ? "font-weight:700" : "",
-            r.italic ? "font-style:italic" : "",
-            r.underline ? "text-decoration:underline" : "",
-            r.sizePt ? `font-size:${r.sizePt}pt` : "",
-            r.color ? `color:${r.color}` : "",
-            // Version-diff highlight (lib/document/versionDiff.js sets this on
-            // added/modified lines). Matches the app's existing highlight
-            // treatment (CompanyResearchDialog's inserted-text `mark`).
-            r.mark ? "background-color:rgba(255,213,79,0.55)" : "",
-          ]
-            .filter(Boolean)
-            .join(";");
-          return `<span${style ? ` style="${style}"` : ""}>${escapeHtml(r.text)}</span>`;
-        })
-        .join("");
-      return `<p style="${pStyle}">${inner}</p>`;
+// Inner run markup shared by a plain paragraph and a list item, so bold/
+// italic/underline/size/color/mark rendering is never duplicated between the
+// two.
+function renderRunsHtml(runs) {
+  return runs
+    .map((r) => {
+      const style = [
+        r.bold ? "font-weight:700" : "",
+        r.italic ? "font-style:italic" : "",
+        r.underline ? "text-decoration:underline" : "",
+        r.sizePt ? `font-size:${r.sizePt}pt` : "",
+        r.color ? `color:${r.color}` : "",
+        // Version-diff highlight (lib/document/versionDiff.js sets this on
+        // added/modified lines). Matches the app's existing highlight
+        // treatment (CompanyResearchDialog's inserted-text `mark`).
+        r.mark ? "background-color:rgba(255,213,79,0.55)" : "",
+      ]
+        .filter(Boolean)
+        .join(";");
+      return `<span${style ? ` style="${style}"` : ""}>${escapeHtml(r.text)}</span>`;
     })
     .join("");
 }
 
+function renderParagraphHtml(p) {
+  const pStyle = `text-align:${p.align};margin:${p.spaceBeforePt || 0}pt 0 ${p.spaceAfterPt || 0}pt;white-space:pre-wrap;`;
+  if (!p.runs.length) return `<p style="${pStyle}min-height:0.9em;"><br></p>`;
+  return `<p style="${pStyle}">${renderRunsHtml(p.runs)}</p>`;
+}
+
+// A list paragraph's own <li>. ilvl becomes indentation on a flat <li>, never
+// a nested <ul>/<ol> -- deliberately, so this fix can never produce the
+// <ul>-inside-<li> shape that triggers htmlToPlainText's separately-filed
+// nested-list fusion defect. A paragraph with no runs (an empty native
+// bullet -- unspecified by the design) renders exactly as an empty ordinary
+// paragraph would, a <br> placeholder, so the item stays visible and the
+// list's item count is preserved rather than silently dropping the line.
+function renderListItemHtml(p) {
+  const style = `white-space:pre-wrap;${p.list.ilvl > 0 ? `margin-left:${p.list.ilvl * 1.5}em;` : ""}`;
+  const inner = p.runs.length ? renderRunsHtml(p.runs) : "<br>";
+  return `<li style="${style}">${inner}</li>`;
+}
+
+// Render a parsed model to an HTML string with inline styles, so the preview
+// reads like the document. Used both for the read-only view and to seed the
+// rich-text editor. Whitespace is preserved (white-space: pre-wrap) so runs of
+// spaces and tabs match the document. A maximal run of ADJACENT paragraphs
+// sharing the same non-null `list.numId` is wrapped in one <ul>/<ol> of flat
+// <li>s; a paragraph with `list: null`, or a different numId, closes the
+// current group (if any) and is/starts unaffected -- so document order is
+// always preserved and two non-adjacent uses of the same numId never merge.
+export function renderModelToHtml(model) {
+  const paragraphs = model?.paragraphs || [];
+  const parts = [];
+  let i = 0;
+  while (i < paragraphs.length) {
+    const p = paragraphs[i];
+    if (p.list) {
+      const numId = p.list.numId;
+      const tag = p.list.ordered ? "ol" : "ul";
+      const items = [];
+      while (i < paragraphs.length && paragraphs[i].list && paragraphs[i].list.numId === numId) {
+        items.push(renderListItemHtml(paragraphs[i]));
+        i += 1;
+      }
+      parts.push(`<${tag}>${items.join("")}</${tag}>`);
+    } else {
+      parts.push(renderParagraphHtml(p));
+      i += 1;
+    }
+  }
+  return parts.join("");
+}
+
 // Build a plain-text model from raw lines, for resumes with no .docx template
 // (e.g. a .txt upload) so the preview still renders something readable.
+// `list` is always null -- a .txt/no-template upload never carries native
+// Word numbering -- which is what keeps the model shape uniform across both
+// producers.
 export function linesToModel(lines = []) {
   return {
     paragraphs: (Array.isArray(lines) ? lines : String(lines).split("\n")).map((line) => ({
@@ -177,6 +299,7 @@ export function linesToModel(lines = []) {
       align: "left",
       spaceBeforePt: 0,
       spaceAfterPt: 4,
+      list: null,
     })),
   };
 }
