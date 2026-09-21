@@ -28,6 +28,7 @@ import {
   mintClaimId,
   claimOwner,
   mintSectionClaims,
+  mintUnownedReferencedClaims,
   claimOwnershipViolations,
 } from "./prepClaims.js";
 
@@ -247,5 +248,67 @@ describe("claimOwnershipViolations -- INV-CLAIM-1 (AC-CLAIM.1-5)", () => {
     const uncited = packWith({ askThemClaimId: own, claims: [claim(own)] });
     uncited.sections.askThem.questions = [{ text: "Uncited question", support: null }];
     expect(claimOwnershipViolations(uncited)).toEqual([]);
+  });
+});
+
+describe("mintUnownedReferencedClaims -- F-B1 residual (fix round, verify.r3.md BLOCKER)", () => {
+  it("re-mints a legacy free-form claim the section's own content references, into that section's own namespace", () => {
+    const content = { answer: { lines: [supported("Maria Lopez leads the platform team.", "legacy-1")] } };
+    const pool = [claim("legacy-1", "Maria Lopez leads the platform team.", "https://acme.example/team")];
+
+    const out = mintUnownedReferencedClaims("aboutYou", content, pool);
+
+    expect(out.claims).toHaveLength(1);
+    expect(out.claims[0].id).toMatch(/^c\/aboutYou\/[0-9a-f]{16}$/);
+    expect(out.claims[0].sourceUrl).toBe("https://acme.example/team");
+    expect(out.content.answer.lines[0].support.claimId).toBe(out.claims[0].id);
+    expect(out.content.answer.lines[0].support.claimId).not.toBe("legacy-1");
+  });
+
+  it("a claim referenced by TWO different sections mints a distinct id in each section's own namespace", () => {
+    const pool = [claim("shared", "Acme runs a four-stage loop.", "https://acme.example/careers")];
+    const aboutYou = mintUnownedReferencedClaims("aboutYou", supported("Line A", "shared"), pool);
+    const whyRole = mintUnownedReferencedClaims("whyRole", supported("Line B", "shared"), pool);
+
+    expect(claimOwner(aboutYou.claims[0].id)).toBe("aboutYou");
+    expect(claimOwner(whyRole.claims[0].id)).toBe("whyRole");
+    expect(aboutYou.claims[0].id).not.toBe(whyRole.claims[0].id);
+    expect(aboutYou.content.support.claimId).toBe(aboutYou.claims[0].id);
+    expect(whyRole.content.support.claimId).toBe(whyRole.claims[0].id);
+  });
+
+  it("[no-op control] content whose refs are already owned by this same section is left completely untouched", () => {
+    // The safety property `buildRevisionSections` (prepGenerationMerge.js)
+    // depends on: calling this unconditionally for a section that was just
+    // regenerated (never seeded) must not touch its already-correct ids, and
+    // must not null them the way `mintSectionClaims`'s own unmatched-ref
+    // discipline would.
+    const ownId = "c/askThem/0123456789abcdef";
+    const content = supported("Already minted question", ownId);
+    const pool = [claim(ownId)];
+
+    const out = mintUnownedReferencedClaims("askThem", content, pool);
+
+    expect(out.claims).toEqual([]);
+    expect(out.content).toEqual(content);
+    expect(out.content.support.claimId).toBe(ownId);
+  });
+
+  it("a reference this function was not asked to touch (unresolvable, or owned by a different section) is left in place, never nulled", () => {
+    const content = { answer: { lines: [supported("Dangling", "nothing-matches"), supported("Cross-owned", "c/whyRole/0123456789abcdef")] } };
+    const out = mintUnownedReferencedClaims("aboutYou", content, []);
+    expect(out.claims).toEqual([]);
+    expect(out.content.answer.lines[0].support.claimId).toBe("nothing-matches");
+    expect(out.content.answer.lines[1].support.claimId).toBe("c/whyRole/0123456789abcdef");
+  });
+
+  it("never mutates its arguments", () => {
+    const content = supported("Line", "legacy-x");
+    const pool = [claim("legacy-x")];
+    const contentSnapshot = JSON.stringify(content);
+    const poolSnapshot = JSON.stringify(pool);
+    mintUnownedReferencedClaims("aboutYou", content, pool);
+    expect(JSON.stringify(content)).toBe(contentSnapshot);
+    expect(JSON.stringify(pool)).toBe(poolSnapshot);
   });
 });

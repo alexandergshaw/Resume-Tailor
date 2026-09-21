@@ -11,7 +11,7 @@
 // Pure, no I/O: every export here takes plain objects and returns plain
 // objects, never touches `supabase` or `Response`.
 
-import { mintSectionClaims, claimOwner } from "./prepClaims.js";
+import { mintSectionClaims, claimOwner, mintUnownedReferencedClaims } from "./prepClaims.js";
 import { buildPackDocument, baseProvenanceFromPack } from "./prepMerge.js";
 import { PREP_SECTION_NAMES } from "./prepContract.js";
 
@@ -82,9 +82,24 @@ export function buildSectionCandidate({ currentPack, section, content, claims, e
  * The per-section revision-row shape S7c/S8 both append after a successful
  * merge. `content`/`claims` read straight off the ALREADY-normalized
  * candidate (never the pre-normalization reply), so a later restore reads
- * back exactly what the live pack showed. `claims` is partitioned by
- * OWNERSHIP (`claimOwner`), never by which section the model happened to
- * answer for, so a revision row never carries another section's claims.
+ * back exactly what the live pack showed. `claims` starts from a partition
+ * by OWNERSHIP (`claimOwner`), never by which section the model happened to
+ * answer for, so a revision row never carries another section's claims --
+ * PLUS, for every name, `mintUnownedReferencedClaims` (prepClaims.js): a
+ * name being SEEDED (F-B1, fix round, verify.r3.md BLOCKER) carries a
+ * section's PRIOR content verbatim, which for any pre-N45 row still cites
+ * legacy free-form claim ids that own-partitioning alone can never match
+ * (their owner is `null`). Re-minting those into `c/<name>/<hex>` here, at
+ * the SAME write that first seeds the row, is what keeps a seeded row's
+ * claims in step with what its own content cites -- left undone, the next
+ * restore built from that row alone deletes every cited line naming a
+ * person (K1-SHAPE) and drops every other line's citation. For a name that
+ * was NOT seeded -- the section this attempt actually regenerated, or any
+ * whole-pack write -- its content already cites only ids this call's own
+ * ownership filter already resolves, so `mintUnownedReferencedClaims` finds
+ * nothing to re-mint and is a no-op; that is what makes it safe to call
+ * unconditionally for every name rather than needing to know which ones
+ * were seeded.
  *
  * `engine` is either ONE value applied to every name (every existing caller)
  * or a `(name) => engine` resolver -- fix round F-B1's seeding call site
@@ -103,9 +118,10 @@ export function buildRevisionSections(normalizedPack, engine, names, newestBySec
   const engineFor = typeof engine === "function" ? engine : () => engine;
   const out = {};
   for (const name of names) {
+    const minted = mintUnownedReferencedClaims(name, sections[name], claims);
     out[name] = {
-      content: sections[name],
-      claims: claims.filter((c) => claimOwner(c?.id) === name),
+      content: minted.content,
+      claims: claims.filter((c) => claimOwner(c?.id) === name).concat(minted.claims),
       engine: engineFor(name),
       revision: (newestBySection[name] || 0) + 1,
     };
@@ -147,10 +163,14 @@ export function sectionWriteNames(section, pack, liveRevisions) {
  * provenance, never this attempt's. `baseProvenanceFromPack` (prepMerge.js)
  * is the only signal available for a pre-N45 row with no revision rows of
  * its own -- "embedded" when the base document carries its own
- * `templateOrigin`, "gemini" otherwise. That "otherwise" is not a guess:
- * `buildEmbeddedPack` stamps `templateOrigin` on every document it ever
- * produces, so a base with none was necessarily written by the ONE other
- * engine this route has ever had.
+ * `templateOrigin`, "gemini" otherwise. That "otherwise" is a DELIBERATE
+ * fail-closed default, not a proven fact: `buildEmbeddedPack` only started
+ * stamping `templateOrigin` in `0e83c97`, a day after it was introduced in
+ * `8e780b0`, so a base written by the embedded engine in that window carries
+ * no `templateOrigin` and is seeded here as "gemini" too. That mislabels the
+ * row, but only in the direction that REMOVES the K1-SHAPE citation
+ * exemption from content that (falsely) has none -- it can never GRANT the
+ * exemption to content that lacks it, so it is not an O-15 escape.
  *
  * @param {*} currentPack the pre-attempt document
  * @param {string} section the section THIS attempt regenerated

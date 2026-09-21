@@ -648,3 +648,187 @@ describe("AC-O15.3 -- the section path adds no second spend site", () => {
     expect(sent).not.toContain("This role matches my background in payments.");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Fix round 2 (verify.r3.md): F-B1's own residual -- seeding carried NO
+// claims, so the very next failed attempt still deleted a cited
+// person-naming line and stripped every other cited line's citation --
+// plus F-M1/F-M2, the untested provenance resolver an O-15 bypass depends
+// on. This fixture, unlike `seedTree`'s BODIES-based one, carries real
+// legacy free-form claim ids (never `c/<section>/<hex>` shaped), including
+// one a person-naming line depends on, so `claimOwner` assigns it to no
+// section -- exactly the gap the landed F-B1 test's claims-free fixture
+// could not see.
+// ---------------------------------------------------------------------------
+
+function legacyPackWithClaims() {
+  return normalizePack(
+    {
+      version: 1,
+      sections: {
+        aboutYou: {
+          answer: {
+            lines: [{ text: "Maria Lopez leads the platform team.", support: { kind: "claim", claimId: "legacy-name" } }],
+          },
+        },
+        whyRole: {
+          answer: {
+            lines: [
+              { text: "This role matches my background in payments.", support: { kind: "claim", claimId: "legacy-role" } },
+            ],
+          },
+        },
+        askThem: BODIES.askThem,
+        stages: BODIES.stages,
+      },
+      claims: [
+        { id: "legacy-name", text: "Maria Lopez leads the platform team.", sourceUrl: "https://acme.example/team" },
+        { id: "legacy-role", text: "The posting emphasizes payments experience.", sourceUrl: "https://acme.example/jobs" },
+      ],
+    },
+    [],
+  );
+}
+
+function seedLegacyClaimsTree() {
+  userCounter += 1;
+  const userId = `user-section-legacy-${userCounter}`;
+  const pack = legacyPackWithClaims();
+  const sb = makeStatefulSupabase(
+    {
+      applications: [{ id: APP_ID, user_id: userId, position_id: POSITION.id }],
+      positions: [POSITION],
+      candidate_identity: [],
+      application_trusted_names: [],
+      [PACKS_TABLE]: [
+        {
+          id: `pack-${APP_ID}`,
+          application_id: APP_ID,
+          user_id: userId,
+          status: "ready",
+          lease_token: null,
+          lease_until: null,
+          pack,
+          live_revisions: {},
+          researched_at: "2026-09-01T00:00:00.000Z",
+          reason: null,
+          updated_at: "2026-09-01T00:00:00.000Z",
+        },
+      ],
+      [REVISIONS_TABLE]: [],
+      [EVENTS_TABLE]: [],
+    },
+    {
+      user: { id: userId },
+      relationships: { "applications.positions": { localKey: "position_id", table: "positions", foreignKey: "id" } },
+    },
+  );
+  sb.rpc = vi.fn(async (fn, args) => {
+    sb.calls.push({ table: null, verb: "rpc", fn, args });
+    if (fn === "claim_prep_pack_slot") {
+      return {
+        data: applyClaimSlot(sb, {
+          applicationId: args.p_application_id,
+          userId,
+          leaseToken: args.p_lease_token,
+          leaseUntil: args.p_lease_until,
+        }),
+        error: null,
+      };
+    }
+    if (fn === "record_prep_model_call") return { data: true, error: null };
+    throw new Error(`[route.section legacy claims] unmodelled rpc "${fn}"`);
+  });
+  return { sb, userId, pack };
+}
+
+describe("F-B1 (fix round 2) -- residual: seeded revision rows must carry the claims their own lines reference", () => {
+  it("a cited legacy line survives a later failed attempt, and INV-CLAIM-1 holds throughout", async () => {
+    const { sb, pack } = seedLegacyClaimsTree();
+    expect(sectionJson(pack, "aboutYou"), "fixture must actually carry the cited person-naming line").toContain(
+      "Maria Lopez",
+    );
+
+    replyingGemini(sectionReply("askThem", { questions: [{ text: NEW_QUESTION, support: null }] }));
+    const first = await post(sb, { section: "askThem" });
+    expect(first.body.sectionProduced, `first regeneration did not succeed: ${JSON.stringify(first.body)}`).toBe(true);
+
+    const seededRow = sb.rows(REVISIONS_TABLE).find((r) => r.section === "aboutYou" && r.revision === 1);
+    expect(seededRow, "aboutYou was not seeded a revision row at all").toBeTruthy();
+    expect(
+      seededRow.claims,
+      "the seeded aboutYou revision was written with none of the legacy claims its own line references",
+    ).not.toEqual([]);
+    expect(claimOwner(seededRow.claims[0].id)).toBe("aboutYou");
+
+    rejectingGemini();
+    const second = await post(sb, { section: "whyRole" });
+    expect(second.body.section).toBe("whyRole");
+
+    const after = await readBack(sb);
+    expect(
+      sectionJson(after.pack, "aboutYou"),
+      "the cited person-naming line was deleted after seeding lost its claim",
+    ).toContain("Maria Lopez");
+    const aboutYouSupport = after.pack.sections.aboutYou.answer.lines[0].support;
+    expect(aboutYouSupport, "the surviving line lost its citation").not.toBeNull();
+    const whyRoleSupport = after.pack.sections.whyRole.answer.lines[0].support;
+    expect(whyRoleSupport, "the whyRole line lost its citation after seeding").not.toBeNull();
+    expect(claimOwnershipViolations(after.pack)).toEqual([]);
+  });
+});
+
+describe("F-B2/F-M2 (fix round 2) -- residual: the embedded engine also seeds a legacy row's other sections into the pointer", () => {
+  it("the pointer covers all four sections after the FIRST embedded section regeneration on a legacy row", async () => {
+    const { sb, pack } = seedTree({ withRevisions: false });
+    const before = SECTION_NAMES.map((s) => sectionJson(pack, s));
+
+    const first = await post(sb, { section: "askThem", engine: "embedded" });
+    expect(first.body.sectionProduced, `embedded regeneration did not succeed: ${JSON.stringify(first.body)}`).toBe(true);
+
+    const packRowAfterFirst = sb.row(PACKS_TABLE, (r) => r.application_id === APP_ID);
+    expect(
+      Object.keys(packRowAfterFirst.live_revisions).sort(),
+      "the pointer is still partial after the first embedded section-scoped write on a legacy row",
+    ).toEqual([...SECTION_NAMES].sort());
+
+    rejectingGemini();
+    await post(sb, { section: "aboutYou" });
+
+    const after = await readBack(sb);
+    for (const [i, section] of SECTION_NAMES.entries()) {
+      if (section === "askThem") continue;
+      expect(
+        sectionJson(after.pack, section),
+        `${section} was destroyed by a failed attempt following the first embedded per-section regeneration`,
+      ).toBe(before[i]);
+    }
+  });
+});
+
+describe("F-M1 (fix round 2) -- residual: an embedded regeneration on a legacy gemini pack cannot forge templateOrigin through the seeded sections", () => {
+  it("seeded sections are written 'gemini', and a later restore carries no templateOrigin and no uncited person-naming line", async () => {
+    const { sb } = seedLegacyClaimsTree();
+
+    const first = await post(sb, { section: "askThem", engine: "embedded" });
+    expect(first.body.sectionProduced, `embedded regeneration did not succeed: ${JSON.stringify(first.body)}`).toBe(true);
+
+    const seededAboutYou = sb.rows(REVISIONS_TABLE).find((r) => r.section === "aboutYou" && r.revision === 1);
+    expect(
+      seededAboutYou.engine,
+      "a seeded section on an unknown-provenance base was labelled 'embedded' -- the O-15 bypass",
+    ).toBe("gemini");
+
+    rejectingGemini();
+    await post(sb, { section: "whyRole" });
+
+    const after = await readBack(sb);
+    expect(after.pack.templateOrigin, "the restored pack was falsely exempted from K1-SHAPE").toBeUndefined();
+    const aboutYouLine = after.pack.sections.aboutYou.answer.lines[0];
+    expect(aboutYouLine, "a person-naming line was dropped instead of surviving cited").toBeTruthy();
+    expect(
+      aboutYouLine.support,
+      "the person-naming line has no citation -- rendering it at all in that state is the O-15 bypass",
+    ).not.toBeNull();
+  });
+});

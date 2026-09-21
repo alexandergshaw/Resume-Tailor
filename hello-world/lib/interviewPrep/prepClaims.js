@@ -118,19 +118,24 @@ function collectClaimRefs(node, onRef) {
 }
 
 /** Rebuilds `node` with every `{kind: "claim", claimId}` node rewritten
- *  through `idMap` -- matched entries get the new id, unmatched ones become
- *  `null` (the same "dangling support is nulled" discipline
- *  `normalizeDroppingList`/`normalizeStage` already apply in prepParse.js).
- *  Never mutates `node`. */
-function rewriteClaimRefs(node, idMap) {
-  if (Array.isArray(node)) return node.map((item) => rewriteClaimRefs(item, idMap));
+ *  through `idMap`. An unmatched ref becomes `null` by default (the same
+ *  "dangling support is nulled" discipline `normalizeDroppingList`/
+ *  `normalizeStage` already apply in prepParse.js) -- unless
+ *  `keepUnmatched` is set, in which case an unmatched ref is returned
+ *  UNCHANGED rather than nulled (`mintUnownedReferencedClaims` below is the
+ *  one caller that needs this: it re-mints only the LEGACY refs a caller
+ *  hands it, and must not null a ref it was never asked to touch). Never
+ *  mutates `node`. */
+function rewriteClaimRefs(node, idMap, { keepUnmatched = false } = {}) {
+  if (Array.isArray(node)) return node.map((item) => rewriteClaimRefs(item, idMap, { keepUnmatched }));
   if (!isPlainObject(node)) return node;
   if (node.kind === "claim" && Object.hasOwn(node, "claimId")) {
     const newId = idMap.get(node.claimId);
-    return newId ? { ...node, claimId: newId } : null;
+    if (newId) return { ...node, claimId: newId };
+    return keepUnmatched ? node : null;
   }
   const next = {};
-  for (const key of Object.keys(node)) next[key] = rewriteClaimRefs(node[key], idMap);
+  for (const key of Object.keys(node)) next[key] = rewriteClaimRefs(node[key], idMap, { keepUnmatched });
   return next;
 }
 
@@ -169,6 +174,55 @@ export function mintSectionClaims(section, content, rawClaims) {
   }
 
   return { content: rewriteClaimRefs(content, idMap), claims };
+}
+
+/**
+ * F-B1 residual (fix round, verify.r3.md BLOCKER): mints section-owned ids
+ * for the UNOWNED (legacy, pre-N45 free-form) claims `content` references,
+ * exactly like `mintSectionClaims`, but LEAVES every other claim reference
+ * untouched -- never nulled -- instead of dropping it. For `mintSectionClaims`
+ * the caller supplies content the section itself just produced, so an
+ * unmatched ref really is dangling and nulling it is correct. This function's
+ * one caller (`buildRevisionSections`, prepGenerationMerge.js) calls it for a
+ * section that was NOT just regenerated -- a seeded revision row carrying a
+ * section's PRIOR content verbatim -- where an unmatched ref is either
+ * already correctly owned by this same section (nothing to do) or a shape
+ * only `normalizePack`'s own K1-SHAPE pass gets to null, at read time, from
+ * real data, never this pure write-time minting step guessing at it.
+ *
+ * `rawClaims` may be the FULL claims pool; only entries whose OWN id is
+ * unowned (`claimOwner(id) === null`) are ever eligible, so a claim already
+ * minted for another section can never be re-owned here. Calling this once
+ * per section, as `buildRevisionSections` does, is what makes a legacy claim
+ * referenced by TWO sections mint into two distinct, independently-owned
+ * ids -- the same duplication `mintSectionClaims` already produces across
+ * sections.
+ *
+ * Pure and total: never throws, never mutates its arguments.
+ *
+ * @param {"aboutYou"|"whyRole"|"askThem"|"stages"} section
+ * @param {*} content
+ * @param {*} rawClaims
+ * @returns {{content: *, claims: Array<{id: string, text: string, sourceUrl: string}>}}
+ */
+export function mintUnownedReferencedClaims(section, content, rawClaims) {
+  const claimsList = asClaimsList(rawClaims).filter((entry) => isPlainObject(entry) && claimOwner(entry.id) === null);
+
+  const referenced = new Set();
+  collectClaimRefs(content, (id) => referenced.add(id));
+
+  const usedIds = new Set();
+  const idMap = new Map();
+  const claims = [];
+  for (const entry of claimsList) {
+    const rawId = entry.id;
+    if (typeof rawId !== "string" || !referenced.has(rawId) || idMap.has(rawId)) continue;
+    const newId = mintUniqueClaimId(section, usedIds);
+    idMap.set(rawId, newId);
+    claims.push({ ...entry, id: newId });
+  }
+
+  return { content: rewriteClaimRefs(content, idMap, { keepUnmatched: true }), claims };
 }
 
 /**
