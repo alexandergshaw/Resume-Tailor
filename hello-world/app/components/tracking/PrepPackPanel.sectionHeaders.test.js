@@ -44,6 +44,25 @@
 //     (no list element, empty or otherwise, and no childless element inside
 //     an empty section body).
 //   * Colour contrast of the empty-state text. No instrument here.
+//
+// N50 NARROWINGS (applied by the N50 4b seat under ORCHESTRATOR RULING 1:
+// "I, the orchestrator, adopt the narrowings C1, C2, C4 and C5 (with C5 as
+// amended by M3). The TDD seat applies them." -- plan.r2.md section 0.3/4,
+// ledger PL-N50.12, .13, .15, .16). Nothing broader was changed:
+//   * C1 -- N50 makes every named stage an h4 (AC-N50.5), so "exactly four
+//     headings at one level" now means the SHALLOWEST level. `sectionHeadings`
+//     below returns those, and THROWS on a skipped level or an outline that
+//     opens deeper than its own top (plan M4), with its own canary. It
+//     replaces `headingElements` at exactly the eight call sites the plan
+//     names; the AC-N44.1 null/empty-pack loops keep `headingElements` (no h4
+//     can exist there). The tautological `levels.size` assertion is gone (m2).
+//   * C2 -- LABELS_IN_ORDER is the interview's own order (AC-N50.6).
+//     SECTION_NAMES, the schema order, is unchanged. RED ON HEAD by design.
+//   * C5 -- the rhythm case re-pins the NEW values rather than dropping them
+//     (M3): heading 4px, section wrapper 8px, and every section GROUP 16px,
+//     read through closest('[role="group"]') with its label checked against
+//     the heading. RED ON HEAD by design (no group; wrapper still 16px).
+// C3 was NOT authorised and is not applied.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createElement, act } from "react";
@@ -92,9 +111,13 @@ async function renderFixture(element) {
   return container;
 }
 
-// PrepPackPanel.js:81-86, verbatim, in the file's own key order -- which is
-// also `prepPack.js:34`'s SECTION_NAMES order and the only order
-// `route.js:647`'s `Array.from(completeSections(pack))` can ever emit.
+// PrepPackPanel.js SECTION_LABELS, verbatim. SECTION_NAMES is the SCHEMA
+// order -- `prepPack.js:34`'s SECTION_NAMES and the only order
+// `route.js:647`'s `Array.from(completeSections(pack))` can ever emit -- and
+// fixtures still use it as their `completeSections`. LABELS_IN_ORDER is the
+// DISPLAY order, which N50 changed to the interview's own order (AC-N50.6,
+// narrowing C2 under Ruling 1): the invariance these cases test (display
+// order independent of `completeSections`) is untouched.
 const SECTION_NAMES = ["aboutYou", "whyRole", "askThem", "stages"];
 const SECTION_LABELS = {
   aboutYou: "Tell me about yourself",
@@ -102,7 +125,7 @@ const SECTION_LABELS = {
   askThem: "Questions to ask them",
   stages: "Interview stages",
 };
-const LABELS_IN_ORDER = SECTION_NAMES.map((n) => SECTION_LABELS[n]);
+const LABELS_IN_ORDER = ["aboutYou", "whyRole", "stages", "askThem"].map((n) => SECTION_LABELS[n]);
 
 // The shape `readPrepPack` returns for every state except `absent`: the claim
 // row's `pack` defaults to `'{}'::jsonb`, and `normalizePack({}, ...)` turns
@@ -238,6 +261,29 @@ function headingLevel(node) {
   return 2;
 }
 
+/** N50 narrowing C1 (Ruling 1): the SECTION headings -- every heading at the
+ *  shallowest level the panel exposes. Stage names are h4s under N50, so the
+ *  full outline is no longer one level; the four section headings are its top
+ *  level. It REFUSES, by throwing, an outline that skips a level anywhere or
+ *  opens deeper than its own top (plan M4): a narrowing that merely filtered
+ *  would let an h3 -> h5 -> h4 outline through every case below. Canaried in
+ *  the INSTRUMENT CANARIES block. */
+function sectionHeadings(el) {
+  const all = headingElements(el);
+  if (all.length === 0) return all;
+  const levels = all.map(headingLevel);
+  const top = Math.min(...levels);
+  if (levels[0] !== top) {
+    throw new Error(`heading outline opens at h${levels[0]}, deeper than its own top level h${top}`);
+  }
+  for (let i = 1; i < levels.length; i += 1) {
+    if (levels[i] > levels[i - 1] + 1) {
+      throw new Error(`heading level skipped: h${levels[i - 1]} -> h${levels[i]} ("${accessibleName(all[i])}")`);
+    }
+  }
+  return all.filter((node) => headingLevel(node) === top);
+}
+
 /** The section wrapper a heading belongs to, and the body nodes beneath it.
  *  Structural assumption, stated because it is one: `Section`
  *  (PrepPackPanel.js:108-117) puts the heading and the section body as
@@ -268,7 +314,7 @@ function sectionBodyElements(headingEl) {
 /** Map of accessible name -> heading element, for the four labels. */
 function headingByLabel(el) {
   const map = new Map();
-  for (const node of headingElements(el)) map.set(accessibleName(node), node);
+  for (const node of sectionHeadings(el)) map.set(accessibleName(node), node);
   return map;
 }
 
@@ -383,6 +429,23 @@ describe("INSTRUMENT CANARIES -- these prove the helpers above discriminate; the
     expect(verticalMargins(paragraphs[0]).marginTop).toBe("0px");
     expect(isDeclaredLength(verticalMargins(paragraphs[2]).marginTop)).toBe(false);
   });
+
+  it("sectionHeadings returns only the shallowest level, and REFUSES an outline that skips a level or opens deeper than its top", async () => {
+    // N50 narrowing C1's own canary (Ruling 1; plan M4). Without the refusal
+    // halves, an h3 -> h5 -> h4 outline passes every narrowed case.
+    const ok = await renderFixture(
+      createElement("div", null, createElement("h3", null, "A"), createElement("h4", null, "A1"), createElement("h3", null, "B")),
+    );
+    expect(sectionHeadings(ok).map(accessibleName)).toEqual(["A", "B"]);
+    const skipped = await renderFixture(
+      createElement("div", null, createElement("h3", null, "A"), createElement("h5", null, "A0"), createElement("h4", null, "A1")),
+    );
+    expect(() => sectionHeadings(skipped)).toThrow(/skipped/);
+    const deepFirst = await renderFixture(
+      createElement("div", null, createElement("h4", null, "stray"), createElement("h3", null, "A")),
+    );
+    expect(() => sectionHeadings(deepFirst)).toThrow(/opens at h4/);
+  });
 });
 
 describe("AC-N44.1 -- all four section headings render in every state, for BOTH pack shapes a real GET can deliver", () => {
@@ -402,7 +465,7 @@ describe("AC-N44.1 -- all four section headings render in every state, for BOTH 
     const el = await render(
       baseProps({ pack: READY_PACK, status: "ready", completeSections: [...SECTION_NAMES] }),
     );
-    expect(headingElements(el).map(accessibleName)).toEqual(LABELS_IN_ORDER);
+    expect(sectionHeadings(el).map(accessibleName)).toEqual(LABELS_IN_ORDER);
     // The control's point: this one is GREEN on HEAD. If it were ever red at
     // the same time as the cases above, the failure is a fixture defect, not
     // the N44 gap.
@@ -416,11 +479,11 @@ describe("AC-N44.2 -- heading order is the fixed schema order, never completeSec
   // because four headings do not exist yet. Its real job is as a
   // NON-REGRESSION guard against a `completeSections.map(renderSection)`
   // rewrite, which is a plausible way to make AC-N44.1 pass.
-  it("a scrambled completeSections (stages first, whyRole and askThem absent) still yields aboutYou, whyRole, askThem, stages in DOM order", async () => {
+  it("a scrambled completeSections (stages first, whyRole and askThem absent) still yields aboutYou, whyRole, stages, askThem in DOM order", async () => {
     const el = await render(
       baseProps({ pack: READY_PACK, status: "partial", completeSections: ["stages", "aboutYou"] }),
     );
-    expect(headingElements(el).map(accessibleName)).toEqual(LABELS_IN_ORDER);
+    expect(sectionHeadings(el).map(accessibleName)).toEqual(LABELS_IN_ORDER);
   });
 
   it("the two sections that DO have content still render it, in their canonical slots -- so the order above is not achieved by dropping content", async () => {
@@ -580,11 +643,13 @@ describe("AC-N44.7 -- the heading outline: exactly four, one level, exact access
       const pack = state === "ready" ? READY_PACK : emptyNormalizedPack();
       const completeSections = state === "ready" ? [...SECTION_NAMES] : [];
       const el = await render(baseProps({ pack, status, completeSections }));
-      const headings = headingElements(el);
+      // C1/m2 (Ruling 1): sectionHeadings returns ONE level by construction
+      // and throws on a skipped level, so the old per-state `levels.size`
+      // assertion was tautological and is removed; the count and the
+      // every-state same-level assertion below carry the criterion.
+      const headings = sectionHeadings(el);
       expect(headings, `state ${state} did not expose four headings`).toHaveLength(4);
-      const levels = new Set(headings.map(headingLevel));
-      expect(levels.size, `state ${state} mixed heading levels: ${[...levels]}`).toBe(1);
-      levelsByState.set(state, [...levels][0]);
+      levelsByState.set(state, headingLevel(headings[0]));
     }
     // The same level in EVERY state, not merely a consistent level within each
     // one -- the outline must not re-nest itself between two fetches.
@@ -606,9 +671,9 @@ describe("AC-N44.7 -- the heading outline: exactly four, one level, exact access
     const populated = await render(
       baseProps({ pack: READY_PACK, status: "ready", completeSections: [...SECTION_NAMES] }),
     );
-    const populatedRows = headingElements(populated).map((node) => [accessibleName(node), headingLevel(node), node.tagName.toLowerCase()]);
+    const populatedRows = sectionHeadings(populated).map((node) => [accessibleName(node), headingLevel(node), node.tagName.toLowerCase()]);
     const empty = await render(baseProps({ pack: emptyNormalizedPack(), status: "failed", completeSections: [] }));
-    const emptyRows = headingElements(empty).map((node) => [accessibleName(node), headingLevel(node), node.tagName.toLowerCase()]);
+    const emptyRows = sectionHeadings(empty).map((node) => [accessibleName(node), headingLevel(node), node.tagName.toLowerCase()]);
     expect(emptyRows).toEqual(populatedRows);
   });
 });
@@ -757,7 +822,7 @@ describe("AC-N44.6 -- a legacy (pre-N16) pack shows three empty headers as the C
 
   it("shows all four headings, the recovered stages content, and none of the orphaned top-level keys", async () => {
     const el = await render(baseProps({ pack: legacyPack(), status: "partial", completeSections: ["stages"] }));
-    expect(headingElements(el).map(accessibleName)).toEqual(LABELS_IN_ORDER);
+    expect(sectionHeadings(el).map(accessibleName)).toEqual(LABELS_IN_ORDER);
     expect(el.textContent).toContain("Tell me about yourself.");
     expect(el.textContent).not.toContain("orphaned, never rendered");
     expect(el.textContent).not.toContain("also orphaned");
@@ -809,7 +874,7 @@ describe("AC-N44.9 -- vertical spacing is stated by this component, never inheri
       const pack = state === "ready" ? READY_PACK : emptyNormalizedPack();
       const completeSections = state === "ready" ? [...SECTION_NAMES] : [];
       const el = await render(baseProps({ pack, status, completeSections }));
-      expect(headingElements(el), `state ${state} rendered no headings, so this guard had nothing to check`).toHaveLength(4);
+      expect(sectionHeadings(el), `state ${state} rendered no headings, so this guard had nothing to check`).toHaveLength(4);
       expect(unpinnedVerticalMargins(el)).toEqual([]);
     });
   }
@@ -820,18 +885,27 @@ describe("AC-N44.9 -- vertical spacing is stated by this component, never inheri
     expect(unpinnedVerticalMargins(el)).toEqual([]);
   });
 
-  it("the four headings share one explicit vertical rhythm, and the section wrapper's own gap is the value this file already uses", async () => {
+  it("the four headings share one explicit vertical rhythm, and the section wrapper's and section group's gaps are the values N50 chose", async () => {
     const el = await render(baseProps({ pack: emptyNormalizedPack(), status: "failed", completeSections: [] }));
     const headings = headingElements(el);
     expect(headings).toHaveLength(4);
     const rhythms = new Set(headings.map((h) => JSON.stringify(verticalMargins(h))));
     expect(rhythms.size, `the four headings did not share one vertical rhythm: ${[...rhythms]}`).toBe(1);
-    // The numeric values chosen, pinned -- `Section`'s existing `mb: 0.5` on
-    // the heading and `mb: 2` on the wrapper (PrepPackPanel.js:110-111), so an
-    // always-present header cannot silently become tighter or looser than the
-    // populated sections it sits beside.
+    // The numeric values chosen, pinned -- narrowing C5 as amended by M3
+    // (Ruling 1): the values moved, the need to pin them did not. Three
+    // values, three owners:
+    //   * the heading's own gap, `Section`'s h3 `mb: 0.5` -> "4px";
+    //   * the `Section` wrapper, `mb: 1` -> "8px" (was 16px before N50: the
+    //     gap BETWEEN sections moved to the group);
+    //   * every section's role="group", `mb: 2` -> "16px" -- the only thing
+    //     between two sections now, and a <div>, so the UA-margin class guard
+    //     above never sees it. Without this pin a build with no gap between
+    //     sections passes (M3, measured).
     expect(verticalMargins(headings[0]).marginBottom).toBe("4px");
-    expect(verticalMargins(sectionWrapper(headings[0])).marginBottom).toBe("16px");
+    expect(verticalMargins(sectionWrapper(headings[0])).marginBottom).toBe("8px");
+    const groups = headings.map((h) => sectionWrapper(h).closest('[role="group"]'));
+    expect(groups.map((g) => g && g.getAttribute("aria-label"))).toEqual(headings.map(accessibleName));
+    expect([...new Set(groups.map((g) => verticalMargins(g).marginBottom))]).toEqual(["16px"]);
   });
 
   it("every empty section's body element states both vertical margins explicitly", async () => {

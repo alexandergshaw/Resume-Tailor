@@ -142,7 +142,12 @@ describe("the Generate/Regenerate control -- each of the four new props is exerc
     const el = await render(
       baseProps({ pack: READY_PACK, status: "ready", completeSections: ["aboutYou"], hasDescription: true }),
     );
-    expect(el.textContent.toLowerCase()).toMatch(/replaces the pack above|can't be undone/);
+    // N50 narrowing C4 (ORCHESTRATOR RULING 1, plan.r2.md section 4, ledger
+    // PL-N50.14): the old `/replaces the pack above|can't be undone/` pinned
+    // the word "above", which AC-N50.14 bans ("can't be undone" is already
+    // banned by sectionActions.test.js AC-UX.6). The property kept: the
+    // caption still says the pack is REPLACED. Deleting the caption fails it.
+    expect(el.textContent.toLowerCase()).toMatch(/replaces (the|this|your) (prep )?pack/);
   });
 
   it("[hasPack=false] the destructive-overwrite caption never renders -- there is nothing to lose", async () => {
