@@ -78,7 +78,12 @@ const VENDOR_REDIRECT_HOST = "vertexaisearch.cloud.google.com";
 const VENDOR_REDIRECT_PARENT = "cloud.google.com";
 const VENDOR_REDIRECT_PATH = "grounding-api-redirect";
 
-function servesGroundingRedirect(host, href) {
+// Exported (N43 ac.r1.md ss4): lib/interviewPrep/prepParse.js's own K1-SHAPE
+// redirect guard used to be a narrower, standalone substring regex matching
+// only the literal `vertexaisearch.cloud.google.com` host -- a divergent,
+// narrower copy of this exact hazard. It now imports this function directly
+// rather than carrying a second definition that could drift from this one.
+export function servesGroundingRedirect(host, href) {
   if (host === VENDOR_REDIRECT_HOST) return true;
   if (host !== VENDOR_REDIRECT_PARENT && !host.endsWith(`.${VENDOR_REDIRECT_PARENT}`)) return false;
   try {

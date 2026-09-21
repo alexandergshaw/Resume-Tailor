@@ -54,6 +54,8 @@ import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
 import TextField from "@mui/material/TextField";
 import { TOUCH_TARGET_SX, WRAP_ROW_SX, BREAK_LONG_WORDS_SX } from "@/app/theme/mobileSx";
+import { resolveSupport, numberResolved, sourcedOrphanVariant } from "@/lib/interviewPrep/prepCitations";
+import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 // AC-N29.14: rewritten now that N29 gives this panel its own
 // Generate/Regenerate control (design-experience.r1.md §1's Option B) --
@@ -105,6 +107,198 @@ function stageList(pack) {
   return Array.isArray(section.stages) ? section.stages : [];
 }
 
+function packClaims(pack) {
+  return Array.isArray(pack?.claims) ? pack.claims : [];
+}
+
+/** Every `support` in the pack, from all four sections, in no particular
+ *  order -- AC-N43.5's disclosure only needs which claim ids were
+ *  referenced anywhere, never where. */
+function allSupports(pack) {
+  return [
+    ...answerLines(pack, "aboutYou").map((line) => line?.support),
+    ...answerLines(pack, "whyRole").map((line) => line?.support),
+    ...askThemQuestions(pack).map((question) => question?.support),
+    ...stageList(pack).map((stage) => stage?.support),
+  ];
+}
+
+// N43: a bracketed superscript, reused verbatim from DigestPanel.js's own
+// MARKER_SX/FOCUS_SX (measured there in a real Chromium layout -- see that
+// file's header for the 24x24 WCAG 2.5.8 floor and the `marginBlock: -6px`
+// line-height compensation) rather than re-derived here. DigestPanel.js does
+// not export either object, so this is an identical copy, not an import --
+// design-experience.r1.md ss1 leaves promoting the shared copy to a
+// structure seat.
+const FOCUS_SX = {
+  outlineWidth: "2px",
+  outlineStyle: "solid",
+  outlineColor: "var(--accent)",
+  outlineOffset: "2px",
+  borderRadius: "2px",
+};
+
+const MARKER_SX = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  boxSizing: "border-box",
+  minWidth: 24,
+  minHeight: 24,
+  marginBlock: "-6px",
+  fontSize: "0.75em",
+  lineHeight: 0,
+  verticalAlign: "super",
+  fontWeight: 600,
+  fontVariantNumeric: "tabular-nums",
+  padding: "0.5em 0.15em",
+  color: "currentColor",
+  textDecorationLine: "none",
+  "&::before": { content: '"["' },
+  "&::after": { content: '"]"' },
+  "&:hover": { textDecorationLine: "underline" },
+  "&:focus-visible": FOCUS_SX,
+};
+
+/** The citation marker itself. `resolved` is one `resolveSupport(...)`
+ *  result and `n` its assigned per-section number -- both come from the
+ *  caller's own `numberResolved(...)` pass, never computed here, so there is
+ *  exactly one numbering implementation.
+ *
+ *  A cited marker is a real link, reachable by keyboard, named
+ *  "Source {n}: {claim.text}" -- never the bare digit, which is decorative.
+ *  An unsafe marker (AC-N43.7(b): `support` resolves but the claim's
+ *  `sourceUrl` fails `safeExternalHref`) is a `<span>`, never an `<a>` stub:
+ *  no `href`, no tabindex, no interactive role, and its own name discloses
+ *  the link is unavailable rather than pretending to be a working source. */
+function CitationMarker({ resolved, n }) {
+  if (!resolved || resolved.state === "none" || n == null) return null;
+  if (resolved.state === "unsafe") {
+    return (
+      <Box
+        component="span"
+        aria-label={`Citation ${n}: link unavailable`}
+        data-citation-marker={String(n)}
+        sx={MARKER_SX}
+      >
+        {String(n)}
+      </Box>
+    );
+  }
+  // The href attribute is recomputed here, at the point of use, through
+  // safeExternalHref directly -- rather than trusting `resolved.href` (which
+  // prepCitations.js already computed the same way) -- so
+  // app/components/hrefSafety.sweep.test.js's own source-text sweep, which
+  // can only see gating within ONE file, finds the gate on this line too.
+  return (
+    <Box
+      component="a"
+      href={safeExternalHref(resolved.claim.sourceUrl)}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={`Source ${n}: ${resolved.claim.text}`}
+      data-citation-marker={String(n)}
+      sx={MARKER_SX}
+    >
+      {String(n)}
+    </Box>
+  );
+}
+
+/** A section's own numbered source list -- rendered only when that section
+ *  resolved at least one citation (AC-N43.1); gated, never an empty
+ *  heading. Per-section, never a combined list (owner ruling): each of the
+ *  four sections gets its own "Sources for {label}" list, and the same
+ *  claim cited from two sections earns two independent entries. The unsafe
+ *  branch shows the claim's own text as inert content -- never a raw
+ *  `href` built from the unvalidated string -- with something beyond the
+ *  bare claim text so the reader is not left wondering why it isn't a link
+ *  (design-experience.r1.md ss9 gates the exact wording, not the shape). */
+function SourceList({ label, entries }) {
+  if (entries.length === 0) return null;
+  return (
+    <Box sx={{ mt: 1.5, mb: 0 }}>
+      <Box component="h4" sx={{ fontSize: 12, fontWeight: 700, mt: 0, mb: 0.5, color: "var(--text-secondary)" }}>
+        Sources for {label}
+      </Box>
+      <Box component="ol" sx={{ m: 0, pl: 2.5, display: "flex", flexDirection: "column", rowGap: 0.75 }}>
+        {entries.map((entry) => {
+          // Same discipline as CitationMarker above: recomputed here, in
+          // this file, through safeExternalHref directly, rather than
+          // trusting the `href` prepCitations.js already resolved.
+          const href = safeExternalHref(entry.claim.sourceUrl);
+          return (
+            <Box component="li" key={entry.claim.id} sx={{ fontSize: 12.5, ...BREAK_LONG_WORDS_SX }}>
+              {href ? (
+                <Box component="a" href={href} target="_blank" rel="noopener noreferrer" sx={{ color: "inherit", display: "block" }}>
+                  {entry.claim.text}
+                </Box>
+              ) : (
+                <Box>
+                  {entry.claim.text}
+                  <Box component="span" sx={{ color: "var(--text-secondary)" }}>
+                    {" "}
+                    (source link unavailable)
+                  </Box>
+                </Box>
+              )}
+            </Box>
+          );
+        })}
+      </Box>
+    </Box>
+  );
+}
+
+const RECOMMENDED_ANSWER_LABEL_SX = { fontWeight: 700, fontSize: 11.5, color: "var(--text-secondary)" };
+const RECOMMENDED_ANSWER_BODY_SX = { fontSize: 12.5, color: "var(--text-secondary)", mt: 0.25, mb: 0 };
+
+/** N48: the model generates a `recommendedAnswer` for every stage and it was
+ *  discarded at the last hop to a human -- the same defect class this chunk
+ *  keeps shipping (a complete, correct mechanism with nothing rendering its
+ *  output). Always visible, in full, never behind a disclosure control or a
+ *  truncation: design-experience.r1.md ss3 argues a click-gate here is a
+ *  stronger minimize-clicks violation than the usual "hide the details"
+ *  case, because this is the section's primary payload, not optional detail.
+ *  Demoted typographically instead -- smaller, secondary colour, labelled --
+ *  so it reads as reference material after the questions rather than
+ *  competing with them. `null`/blank renders nothing, same discipline as
+ *  every other optional field in this file. */
+function RecommendedAnswer({ text }) {
+  if (typeof text !== "string" || text.trim() === "") return null;
+  return (
+    <Box sx={{ mt: 0.75, mb: 0 }}>
+      <Box component="span" sx={RECOMMENDED_ANSWER_LABEL_SX}>
+        Suggested answer:
+      </Box>
+      <Box sx={RECOMMENDED_ANSWER_BODY_SX}>{text}</Box>
+    </Box>
+  );
+}
+
+const ORPHAN_NOTICE_TEXT = {
+  empty: "This pack's research produced source material that isn't tied to anything shown below.",
+  partial: "This pack's research also produced source material beyond what's tied to the citations below.",
+};
+
+/** AC-N43.5: "citations arrived, none placed" is ONE pack-level sentence,
+ *  never a disguised bibliography -- the owner's own ban on a combined
+ *  Sources list. A claim the model researched but never tied to a
+ *  fact/question/stage cannot be honestly attributed to any one section
+ *  (claims are not tagged by section), so it is disclosed once, pack-wide,
+ *  reusing StatusBanner's own visual treatment so it reads as one more
+ *  disclosure banner rather than a new visual register. */
+function OrphanClaimsNotice({ variant }) {
+  if (!variant) return null;
+  return (
+    <Box
+      sx={{ fontSize: 12.5, color: "var(--text-secondary)", bgcolor: "var(--bg-soft)", p: 1, borderRadius: 1, mb: 1.5 }}
+    >
+      {ORPHAN_NOTICE_TEXT[variant]}
+    </Box>
+  );
+}
+
 function Section({ heading, children }) {
   return (
     <Box sx={{ mb: 2 }}>
@@ -123,13 +317,17 @@ function Section({ heading, children }) {
 function AnswerSection({ name, pack }) {
   const lines = answerLines(pack, name);
   if (lines.length === 0) return null;
+  const resolvedList = lines.map((line) => resolveSupport(line?.support, packClaims(pack)));
+  const { numbers, entries } = numberResolved(resolvedList);
   return (
     <Section heading={SECTION_LABELS[name]}>
       {lines.map((line, i) => (
         <Box key={i} sx={{ fontSize: 13.5, mb: 0.5 }}>
           {line?.text}
+          <CitationMarker resolved={resolvedList[i]} n={numbers[i]} />
         </Box>
       ))}
+      <SourceList label={SECTION_LABELS[name]} entries={entries} />
     </Section>
   );
 }
@@ -137,15 +335,19 @@ function AnswerSection({ name, pack }) {
 function AskThemSection({ pack }) {
   const questions = askThemQuestions(pack);
   if (questions.length === 0) return null;
+  const resolvedList = questions.map((question) => resolveSupport(question?.support, packClaims(pack)));
+  const { numbers, entries } = numberResolved(resolvedList);
   return (
     <Section heading={SECTION_LABELS.askThem}>
       <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
         {questions.map((question, i) => (
           <Box component="li" key={i} sx={{ fontSize: 13.5 }}>
             {question?.text}
+            <CitationMarker resolved={resolvedList[i]} n={numbers[i]} />
           </Box>
         ))}
       </Box>
+      <SourceList label={SECTION_LABELS.askThem} entries={entries} />
     </Section>
   );
 }
@@ -153,11 +355,28 @@ function AskThemSection({ pack }) {
 function StagesSection({ pack }) {
   const stages = stageList(pack);
   if (stages.length === 0) return null;
+  const resolvedList = stages.map((stage) => resolveSupport(stage?.support, packClaims(pack)));
+  const { numbers, entries } = numberResolved(resolvedList);
   return (
     <Section heading={SECTION_LABELS.stages}>
       {stages.map((stage, i) => (
         <Box key={i} sx={{ mb: 1 }}>
-          {stage?.name ? <Box sx={{ fontWeight: 600, fontSize: 13 }}>{stage.name}</Box> : null}
+          {stage?.name ? (
+            <Box sx={{ fontWeight: 600, fontSize: 13 }}>
+              {stage.name}
+              <CitationMarker resolved={resolvedList[i]} n={numbers[i]} />
+            </Box>
+          ) : numbers[i] != null ? (
+            // AC-N43.3's own fallback: a stage can carry a resolved citation
+            // with no name to attach it to. Rather than dropping the
+            // citation or migrating it onto a question -- either of which
+            // would misrepresent what it covers -- it gets a small
+            // standalone line of its own.
+            <Box sx={{ fontWeight: 600, fontSize: 13 }}>
+              Source for this stage
+              <CitationMarker resolved={resolvedList[i]} n={numbers[i]} />
+            </Box>
+          ) : null}
           {Array.isArray(stage?.questions) ? (
             <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
               {stage.questions.map((question, qi) => (
@@ -167,8 +386,10 @@ function StagesSection({ pack }) {
               ))}
             </Box>
           ) : null}
+          <RecommendedAnswer text={stage?.recommendedAnswer} />
         </Box>
       ))}
+      <SourceList label={SECTION_LABELS.stages} entries={entries} />
     </Section>
   );
 }
@@ -414,11 +635,13 @@ export default function PrepPackPanel({
 }) {
   const hasPack = !!pack;
   const actionState = prepActionState({ status, generating, hasDescription });
+  const orphanVariant = sourcedOrphanVariant(packClaims(pack), allSupports(pack));
 
   return (
     <Box sx={{ fontSize: 14 }}>
       <NamesStrip candidateName={candidateName} interviewerNames={interviewerNames} onSaveNames={onSaveNames} />
       <StatusBanner status={status} pack={pack} />
+      <OrphanClaimsNotice variant={orphanVariant} />
       {/* N44/AC-N44.1: unconditional -- `hasPack` no longer gates the header
        *  block. `PackSections` itself always renders all four slots, each
        *  independently falling back to `EmptySection` when its own content

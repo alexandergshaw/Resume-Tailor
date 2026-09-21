@@ -134,6 +134,7 @@
 // and the disclosed, re-runnable generation script at
 // scripts/generate-given-names.mjs).
 import { GIVEN_NAMES } from "./data/givenNames.generated.js";
+import { servesGroundingRedirect } from "@/lib/tracking/citationHref.js";
 
 // The exact value `pack.templateOrigin` must carry for F-1's K1-SHAPE
 // exemption to apply -- see this file's header. Exported so
@@ -325,9 +326,23 @@ export function isUserSuppliedName(text, storedNames) {
 
 /** A vertexaisearch redirect proxy never resolves to the publisher page it
  *  points at, so it does not count as a citation -- see
- *  [[gemini-grounding-redirects]] and contract C-46. */
+ *  [[gemini-grounding-redirects]] and contract C-46. Widened (N43 ac.r1.md
+ *  ss4) to reuse citationHref.js's own `servesGroundingRedirect` -- any
+ *  `*.cloud.google.com` host whose path carries `grounding-api-redirect`,
+ *  not just the literal `vertexaisearch.cloud.google.com` host -- rather
+ *  than carry a second, narrower definition of the same hazard. A URL that
+ *  fails to parse is not treated as a redirect: that is a DIFFERENT,
+ *  orthogonal gap (this function's caller, `isCitedClaim`, never validates
+ *  well-formedness at all -- the client's own `safeExternalHref` re-check
+ *  is what actually closes that one; see N43's own AC-N43.7(b)). */
 function isRedirectUrl(url) {
-  return /vertexaisearch\.cloud\.google\.com/i.test(url);
+  let host;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return servesGroundingRedirect(host, url);
 }
 
 /** K1-SHAPE: does `support` resolve, through `claims`, to a genuine,
