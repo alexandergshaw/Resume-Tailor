@@ -118,7 +118,7 @@ import { packStatus, buildEmbeddedPack, completeSections } from "@/lib/interview
 import { restorePayload } from "@/lib/interviewPrep/prepMerge";
 import { mintSectionClaims } from "@/lib/interviewPrep/prepClaims";
 import { buildSectionPrompt, parseSectionResponse } from "@/lib/interviewPrep/prepSection";
-import { buildWholeCandidate, buildSectionCandidate, buildRevisionSections } from "@/lib/interviewPrep/prepGenerationMerge";
+import { buildWholeCandidate, buildSectionCandidate, buildRevisionSections, sectionWriteNames, seedEngineResolver, buildEmbeddedCandidate } from "@/lib/interviewPrep/prepGenerationMerge";
 import { PREP_SECTION_NAMES } from "@/lib/interviewPrep/prepContract";
 import { PREP_RATE_LIMIT, PREP_RATE_WINDOW_MS, PREP_GENERATION_TIMEOUT_MS } from "@/lib/interviewPrep/prepConstants";
 
@@ -427,6 +427,8 @@ export async function POST(request) {
   // a `running` base (this read racing a still-live attempt) is refused
   // outright rather than restored.
   const base = await readLiveSectionRevisions(supabase, { applicationId, userId });
+  // F-B3 (fix round): a failed base read is a terminal refusal, never an empty base -- refused before the claim.
+  if (base.error) return Response.json({ error: base.error || "Could not load this application's prep pack." }, { status: 500 });
   const restore = restorePayload(base);
   // The section-scoped merge's own base document (S8), and the status a
   // section-scoped "nothing usable" write mirrors (AC-LOG.1) instead of
@@ -473,21 +475,21 @@ export async function POST(request) {
     return sectionAwareResponse(write, status, null, false);
   }
 
-  // GATE 11. The embedded path. Terminal status is 'partial', not 'ready' --
-  // see buildEmbeddedPack's own header for why. S7c: this write goes through
-  // the SAME minting + history mechanism as the model path
-  // (lib/interviewPrep/prepGenerationMerge.js), so an embedded pack is
-  // exactly as regenerable, section by section, as a gemini one. `restore`
-  // (not `...restore`) rides along as its OWN field -- F-M2: this write
-  // carries its own fresh `pack`, so `restore` is never spread into it, but
-  // the CHECK-safe fallback retry needs somewhere to fall back to.
+  // GATE 11. The embedded path, 'partial' not 'ready' (buildEmbeddedPack's
+  // own header). F-B2 (fix round): buildEmbeddedCandidate now honours
+  // `section`, merging only the named section and leaving the other three
+  // byte-identical, through the SAME minting + history mechanism the model
+  // path uses. `restore` (not `...restore`) rides along as its own field --
+  // F-M2: this write's own `pack` is fresh, but the CHECK-safe fallback
+  // retry still needs it.
   if (useEmbedded) {
-    const embeddedPack = buildWholeCandidate(buildEmbeddedPack({ position, digest }), "embedded");
-    const embeddedNames = Object.keys(embeddedPack.sections || {});
+    const embeddedPack = buildEmbeddedCandidate({ currentPack, section, embeddedRaw: buildEmbeddedPack({ position, digest }) });
+    const embeddedNames = section ? sectionWriteNames(section, embeddedPack, base.liveRevisions) : Object.keys(embeddedPack.sections || {});
+    const embeddedEngine = section ? seedEngineResolver(currentPack, section, "embedded") : "embedded";
     const embeddedAppended = await appendSectionRevisions(supabase, {
       applicationId,
       userId,
-      sections: buildRevisionSections(embeddedPack, "embedded", embeddedNames, base.newestBySection),
+      sections: buildRevisionSections(embeddedPack, embeddedEngine, embeddedNames, base.newestBySection),
     });
     if (embeddedAppended.reason) {
       const { write, status } = await finishAttempt(supabase, {
@@ -497,17 +499,18 @@ export async function POST(request) {
         error: embeddedAppended.error || "Could not save this attempt's history.",
         ...restore,
       });
-      return sectionAwareResponse(write, status, null, false);
+      return sectionAwareResponse(write, status, section, false);
     }
+    const embeddedLiveRevisions = section ? { ...base.liveRevisions, ...embeddedAppended.revisions } : embeddedAppended.revisions;
     const { write, status } = await finishAttempt(supabase, {
       ...attemptCtx,
       status: "partial",
       pack: embeddedPack,
-      liveRevisions: embeddedAppended.revisions,
+      liveRevisions: embeddedLiveRevisions,
       researchedAt: new Date().toISOString(),
       restore,
     });
-    return sectionAwareResponse(write, status, null, false);
+    return sectionAwareResponse(write, status, section, Boolean(section));
   }
 
   let client;
@@ -681,11 +684,13 @@ export async function POST(request) {
   // actually produced, BEFORE the packs-row UPDATE, so a write that fails
   // partway never leaves a live pointer naming a revision that was never
   // saved.
-  const replacedNames = section ? [section] : Object.keys(normalizedPack.sections || {});
+  // F-B1 (fix round): also seeds any OTHER section the pointer lacks (sectionWriteNames), so it never stays partial.
+  const replacedNames = section ? sectionWriteNames(section, normalizedPack, base.liveRevisions) : Object.keys(normalizedPack.sections || {});
+  const revisionEngine = section ? seedEngineResolver(currentPack, section, engine) : engine;
   const appended = await appendSectionRevisions(supabase, {
     applicationId,
     userId,
-    sections: buildRevisionSections(normalizedPack, engine, replacedNames, base.newestBySection),
+    sections: buildRevisionSections(normalizedPack, revisionEngine, replacedNames, base.newestBySection),
   });
   if (appended.reason) {
     const { write, status } = await finishAttempt(supabase, {

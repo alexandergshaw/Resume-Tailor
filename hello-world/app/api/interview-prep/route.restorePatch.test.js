@@ -367,6 +367,56 @@ describe("AC-CONC.3 -- two concurrent restores of the same section", () => {
   });
 });
 
+describe("F-M4 (fix round) -- the PATCH ownership gate is a real, tested defence", () => {
+  // Every downstream query PATCH issues (readLiveSectionRevisions,
+  // readSectionRevision, writePrepPackResult's own `.update(`) ALSO scopes
+  // by the session's own user_id, so an ordinary cross-tenant PATCH 404s
+  // even with `loadOwnedApplication` deleted -- that redundancy is exactly
+  // why the mutant survived 407 tests with no instrument catching it
+  // (verify.r2.md F-M4). To exercise the gate ITSELF -- the thing its own
+  // header claims defends against "even if RLS is ever misconfigured" -- this
+  // drops every OTHER query's own user_id scoping, simulating exactly that
+  // misconfiguration, so `loadOwnedApplication` is the ONLY thing left
+  // standing between an authenticated stranger and someone else's pack.
+  function dropUserScoping(sb, tables) {
+    const realFrom = sb.from;
+    sb.from = vi.fn((table) => {
+      const builder = realFrom(table);
+      if (!tables.includes(table)) return builder;
+      const realEq = builder.eq;
+      builder.eq = vi.fn((column, value) => (column === "user_id" ? builder : realEq(column, value)));
+      return builder;
+    });
+  }
+
+  it("refuses a cross-tenant restore even when every OTHER query's own user_id scoping is gone (simulated RLS gap)", async () => {
+    const { sb } = seedTree();
+    dropUserScoping(sb, ["interview_prep_packs", REVISIONS_TABLE]);
+    // Re-authenticate as a stranger to the row seedTree built -- `applications`
+    // keeps its own real user_id scoping (untouched above), so the gate is
+    // the only thing that can still catch this.
+    sb.auth.getUser = vi.fn(async () => ({ data: { user: { id: "attacker-user" } }, error: null }));
+
+    const before = sb.rows(REVISIONS_TABLE).filter((r) => r.section === SECTION).map((r) => r.revision).sort();
+    const { res } = await restore(sb);
+    expect(res.status, "a cross-tenant restore was not refused with a 404").toBe(404);
+
+    const after = sb.rows(REVISIONS_TABLE).filter((r) => r.section === SECTION).map((r) => r.revision).sort();
+    expect(after, "a cross-tenant restore appended a revision row").toEqual(before);
+    const row = sb.row("interview_prep_packs", (r) => r.application_id === APP_ID);
+    expect(row.live_revisions.aboutYou, "a cross-tenant restore moved the live pointer").toBe(2);
+  });
+
+  it("[no-op control] the SAME simulated RLS gap, with the real owner's own session, still restores normally", async () => {
+    // Without this, a gate-removal that ALSO broke ordinary same-tenant
+    // restores would pass the test above for the wrong reason.
+    const { sb } = seedTree();
+    dropUserScoping(sb, ["interview_prep_packs", REVISIONS_TABLE]);
+    const { body } = await restore(sb);
+    expect(body.status).toBe("restored");
+  });
+});
+
 describe("AC-UX.4 / AC-UX.5 -- restore spends nothing and survives a spend outage", () => {
   it("[RED: PATCH does not exist -- AC-UX.4] restore works with PREP_DISABLED=1", async () => {
     // Mirrors GET/DELETE's existing O-16 exemption: a read or a removal

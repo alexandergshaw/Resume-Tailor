@@ -473,6 +473,152 @@ describe("GATE 5 -- an unrecognized section is refused before anything is spent"
   });
 });
 
+describe("F-B1 (fix round) -- a legacy row's first per-section regeneration must not leave a partial pointer", () => {
+  it("a failed attempt AFTER the first per-section regeneration on a legacy row leaves all four sections intact", async () => {
+    // Legacy row: no revision rows at all, live_revisions {} -- every row in
+    // production before this chunk. The first section-scoped write on it
+    // must bring EVERY section under the pointer, not just the one it
+    // regenerated -- otherwise the very next failed attempt's restore can
+    // only rebuild the section the pointer names and silently drops the
+    // other three (verify.r2.md F-B1).
+    const { sb, pack } = seedTree({ withRevisions: false });
+    const before = SECTION_NAMES.map((s) => sectionJson(pack, s));
+
+    replyingGemini(sectionReply("askThem", { questions: [{ text: NEW_QUESTION, support: null }] }));
+    const first = await post(sb, { section: "askThem" });
+    expect(first.body.sectionProduced, `first regeneration did not succeed: ${JSON.stringify(first.body)}`).toBe(true);
+
+    const packRowAfterFirst = sb.row(PACKS_TABLE, (r) => r.application_id === APP_ID);
+    expect(
+      Object.keys(packRowAfterFirst.live_revisions).sort(),
+      "the pointer is still partial after the first section-scoped write on a legacy row",
+    ).toEqual([...SECTION_NAMES].sort());
+
+    rejectingGemini();
+    await post(sb, { section: "aboutYou" });
+
+    const after = await readBack(sb);
+    expect(askThemTexts(after.pack), "the earlier successful regeneration was lost").toEqual([NEW_QUESTION]);
+    for (const [i, section] of SECTION_NAMES.entries()) {
+      if (section === "askThem") continue;
+      expect(
+        sectionJson(after.pack, section),
+        `${section} was destroyed by a failed attempt following the first per-section regeneration`,
+      ).toBe(before[i]);
+    }
+  });
+});
+
+describe("F-B2 (fix round) -- the embedded engine honours `section`", () => {
+  it("a section-scoped POST on the embedded engine regenerates only that section", async () => {
+    const { sb, pack } = seedTree();
+    const before = SECTION_NAMES.map((s) => sectionJson(pack, s));
+
+    const { res, body } = await post(sb, { section: "askThem", engine: "embedded" });
+    expect(res.status, `embedded section POST was refused: ${JSON.stringify(body)}`).toBe(200);
+    expect(body.section, "the embedded reply does not name the section it regenerated").toBe("askThem");
+    expect(body.sectionProduced).toBe(true);
+
+    const after = await readBack(sb);
+    expect(sectionJson(after.pack, "askThem"), "the embedded engine did not change the requested section").not.toBe(
+      before[2],
+    );
+    for (const [i, section] of SECTION_NAMES.entries()) {
+      if (section === "askThem") continue;
+      expect(
+        sectionJson(after.pack, section),
+        `${section} changed on an embedded engine's section-scoped regeneration`,
+      ).toBe(before[i]);
+    }
+  });
+
+  it("[under-fire control] a WHOLE-PACK POST on the embedded engine still replaces all four sections", async () => {
+    // Without this, "honour section" satisfied by never touching more than
+    // one section would quietly break the embedded engine's own whole-pack
+    // behaviour, which this control still exercises.
+    const { sb, pack } = seedTree();
+    const before = SECTION_NAMES.map((s) => sectionJson(pack, s));
+    const { body } = await post(sb, { engine: "embedded" });
+    expect(body.status).toBe("partial");
+    const after = await readBack(sb);
+    for (const [i, section] of SECTION_NAMES.entries()) {
+      expect(sectionJson(after.pack, section), `${section} was not replaced by a whole-pack embedded regeneration`).not.toBe(
+        before[i],
+      );
+    }
+  });
+});
+
+describe("F-B3 (fix round) -- a failed base read refuses the attempt before the claim, leaving the pack untouched", () => {
+  function seedPoisonedTree() {
+    userCounter += 1;
+    const userId = `user-section-poison-${userCounter}`;
+    const pack = storedPack();
+    const sb = makeStatefulSupabase(
+      {
+        applications: [{ id: APP_ID, user_id: userId, position_id: POSITION.id }],
+        positions: [POSITION],
+        candidate_identity: [],
+        application_trusted_names: [],
+        [PACKS_TABLE]: [
+          {
+            id: `pack-${APP_ID}`,
+            application_id: APP_ID,
+            user_id: userId,
+            status: "ready",
+            lease_token: null,
+            lease_until: null,
+            pack,
+            live_revisions: { aboutYou: 1, whyRole: 1, askThem: 1, stages: 1 },
+            researched_at: "2026-09-01T00:00:00.000Z",
+            reason: null,
+            updated_at: "2026-09-01T00:00:00.000Z",
+          },
+        ],
+        [REVISIONS_TABLE]: [],
+        [EVENTS_TABLE]: [],
+      },
+      {
+        user: { id: userId },
+        relationships: { "applications.positions": { localKey: "position_id", table: "positions", foreignKey: "id" } },
+        errors: { [REVISIONS_TABLE]: { select: { message: "PGRST205 schema cache" } } },
+      },
+    );
+    // A base read that fails must refuse BEFORE the claim -- this stub makes
+    // that observable directly instead of only inferring it from a status
+    // code: if the route ever reaches the claim anyway, this is what runs.
+    sb.rpc = vi.fn(async (fn) => {
+      sb.calls.push({ table: null, verb: "rpc", fn });
+      return { data: null, error: { message: `[F-B3 instrument] unexpected rpc "${fn}" -- the base-read refusal did not fire` } };
+    });
+    return { sb, pack };
+  }
+
+  it("a poisoned revisions read is refused with a real error, no claim, and the pack untouched", async () => {
+    const { sb, pack } = seedPoisonedTree();
+    const before = SECTION_NAMES.map((s) => sectionJson(pack, s));
+
+    const { res } = await post(sb, { section: "askThem" });
+    expect(res.status, "a failed base read was not refused as a terminal error").toBe(500);
+    expect(sb.calls.filter((c) => c.verb === "rpc"), "the claim RPC was reached despite the base read failing").toEqual([]);
+
+    const packRow = sb.row(PACKS_TABLE, (r) => r.application_id === APP_ID);
+    expect(packRow.status, "status changed even though the request was refused before the claim").toBe("ready");
+    for (const [i, section] of SECTION_NAMES.entries()) {
+      expect(sectionJson(packRow.pack, section), `${section} changed even though the request was refused before the claim`).toBe(
+        before[i],
+      );
+    }
+  });
+
+  it("[no-op control] the identical tree with an UNPOISONED revisions read is not refused", async () => {
+    const { sb } = seedTree({ withRevisions: false });
+    replyingGemini(sectionReply("askThem", { questions: [{ text: NEW_QUESTION, support: null }] }));
+    const { res } = await post(sb, { section: "askThem" });
+    expect(res.status, "the no-op control itself was refused -- the 500 above is not proven caused by the poisoned read").toBe(200);
+  });
+});
+
 describe("AC-O15.3 -- the section path adds no second spend site", () => {
   it("one section-scoped POST issues exactly one model call and exactly one record_prep_model_call", async () => {
     const { sb } = seedTree();

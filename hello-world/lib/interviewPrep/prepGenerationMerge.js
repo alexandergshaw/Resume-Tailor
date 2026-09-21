@@ -15,6 +15,10 @@ import { mintSectionClaims, claimOwner } from "./prepClaims.js";
 import { buildPackDocument, baseProvenanceFromPack } from "./prepMerge.js";
 import { PREP_SECTION_NAMES } from "./prepContract.js";
 
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 /**
  * Mints section-owned claim ids for EVERY section present in a
  * freshly-produced WHOLE pack -- the model's own reply or
@@ -82,22 +86,100 @@ export function buildSectionCandidate({ currentPack, section, content, claims, e
  * OWNERSHIP (`claimOwner`), never by which section the model happened to
  * answer for, so a revision row never carries another section's claims.
  *
+ * `engine` is either ONE value applied to every name (every existing caller)
+ * or a `(name) => engine` resolver -- fix round F-B1's seeding call site
+ * needs a DIFFERENT engine per name (the section this attempt actually
+ * produced vs. a section seeded from the base document, whose own
+ * provenance is not this attempt's).
+ *
  * @param {*} normalizedPack
- * @param {"gemini"|"embedded"} engine
+ * @param {"gemini"|"embedded"|((name: string) => "gemini"|"embedded")} engine
  * @param {string[]} names the sections this attempt actually produced
  * @param {Record<string, number>} newestBySection
  */
 export function buildRevisionSections(normalizedPack, engine, names, newestBySection) {
   const sections = normalizedPack.sections || {};
   const claims = Array.isArray(normalizedPack.claims) ? normalizedPack.claims : [];
+  const engineFor = typeof engine === "function" ? engine : () => engine;
   const out = {};
   for (const name of names) {
     out[name] = {
       content: sections[name],
       claims: claims.filter((c) => claimOwner(c?.id) === name),
-      engine,
+      engine: engineFor(name),
       revision: (newestBySection[name] || 0) + 1,
     };
   }
   return out;
+}
+
+/**
+ * F-B1 (fix round, verify.r2.md BLOCKER 1): the names to append revision
+ * rows for on a SECTION-SCOPED write -- the regenerated section itself, plus
+ * any OTHER section already present in the merged document that
+ * `live_revisions` does not yet name. Seeding those here, at the SAME write
+ * that first touches a legacy row's pointer, is what keeps the pointer's own
+ * coverage in step with the document it points at. Left partial (the
+ * pre-fix behaviour), the very next failed attempt's `restorePayload`
+ * (prepMerge.js) rebuilds ONLY the sections the pointer names and silently
+ * drops the rest -- the exact data-loss path this fixes.
+ *
+ * Pure and total. A section not present in `pack.sections` at all (a
+ * pre-N45 pack thinner than four sections) is never invented here.
+ *
+ * @param {string} section the section this attempt just regenerated
+ * @param {*} pack the merged candidate this attempt is about to write
+ * @param {Record<string, number>} liveRevisions the pointer AS READ before this write
+ * @returns {string[]}
+ */
+export function sectionWriteNames(section, pack, liveRevisions) {
+  const sections = isPlainObject(pack) && isPlainObject(pack.sections) ? pack.sections : {};
+  const pointer = isPlainObject(liveRevisions) ? liveRevisions : {};
+  const seeded = PREP_SECTION_NAMES.filter(
+    (name) => name !== section && !Object.hasOwn(pointer, name) && Object.hasOwn(sections, name),
+  );
+  return [section, ...seeded];
+}
+
+/**
+ * F-B1's companion: the per-name engine resolver `buildRevisionSections`
+ * needs to seed a section this attempt did NOT produce with ITS OWN
+ * provenance, never this attempt's. `baseProvenanceFromPack` (prepMerge.js)
+ * is the only signal available for a pre-N45 row with no revision rows of
+ * its own -- "embedded" when the base document carries its own
+ * `templateOrigin`, "gemini" otherwise. That "otherwise" is not a guess:
+ * `buildEmbeddedPack` stamps `templateOrigin` on every document it ever
+ * produces, so a base with none was necessarily written by the ONE other
+ * engine this route has ever had.
+ *
+ * @param {*} currentPack the pre-attempt document
+ * @param {string} section the section THIS attempt regenerated
+ * @param {"gemini"|"embedded"} engine THIS attempt's own engine
+ * @returns {(name: string) => "gemini"|"embedded"}
+ */
+export function seedEngineResolver(currentPack, section, engine) {
+  const provenance = baseProvenanceFromPack(currentPack);
+  return (name) => (name === section ? engine : provenance[name] === "embedded" ? "embedded" : "gemini");
+}
+
+/**
+ * F-B2 (fix round, verify.r2.md BLOCKER 2): the embedded engine's own
+ * candidate, honouring `section` exactly like the gemini path -- merges
+ * ONLY the named section's deterministic template body into `currentPack`,
+ * leaving the other three byte-identical, rather than always replacing the
+ * whole document regardless of what was asked for. `embeddedRaw` is
+ * `buildEmbeddedPack`'s own output, never minted itself -- minting still
+ * runs through the SAME `mintSectionClaims`/`mintWholeReplace` machinery the
+ * gemini path uses, so both engines share exactly one path.
+ *
+ * @param {{currentPack: *, section: string|null, embeddedRaw: *}} args
+ * @returns {*}
+ */
+export function buildEmbeddedCandidate({ currentPack, section, embeddedRaw }) {
+  if (!section) return buildWholeCandidate(embeddedRaw, "embedded");
+  const rawSections = isPlainObject(embeddedRaw) ? embeddedRaw.sections : null;
+  const rawContent = isPlainObject(rawSections) ? rawSections[section] : undefined;
+  const rawClaims = isPlainObject(embeddedRaw) ? embeddedRaw.claims : [];
+  const minted = mintSectionClaims(section, rawContent, rawClaims);
+  return buildSectionCandidate({ currentPack, section, content: minted.content, claims: minted.claims, engine: "embedded" });
 }
