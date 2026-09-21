@@ -719,20 +719,27 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // the Generate control through -- is reachable and in NEITHER bucket:
     // AppViewDialog.js imports and calls it directly (:13, :174), so this
     // is a widened surface around a real feature, not a stranded one.
-    // 361 -> 364 (N45/N46): three pure helpers with a real call site inside
-    // their OWN module and a by-name test importer, same shape as the four
-    // just above:
+    // 361 -> 364 (N45/N46 substrate): three pure helpers with a real call
+    // site inside their OWN module and a by-name test importer:
     //   lib/interviewPrep/prepClaims.js#mintClaimId -- called internally by
     //     mintUniqueClaimId; prepClaims.test.js imports it directly to pin
-    //     the `c/<section>/<hex>` shape and the section-name THROW.
+    //     the `c/<section>/<hex>` shape and the section-name THROW. STILL
+    //     here -- route.js never calls it directly, only mintSectionClaims.
     //   lib/interviewPrep/prepClaims.js#mintSectionClaims -- AC-CLAIM.9's own
-    //     unit, imported by name only from prepClaims.test.js; not yet wired
-    //     into route.js's generation path (that wiring is a later wave's).
+    //     unit, imported by name only from prepClaims.test.js at the time.
     //   lib/interviewPrep/prepStore.js#pruneSectionRevisions -- AC-RET.1-3's
     //     retention unit, imported by name only from
     //     prepSectionRevisions.test.js; not yet triggered from any route
-    //     handler in this wave.
-    expect(TEST_REFERENCED.length).toBe(364);
+    //     handler in this wave (S7c's own history-append wiring landed
+    //     without it -- retention is real, disclosed, deferred work, not
+    //     this round's to add unasked).
+    // 364 -> 363 (N45/N46 S7c/S8): mintSectionClaims LEAVES this bucket --
+    // route.js now imports it directly (both the whole-pack path, via
+    // lib/interviewPrep/prepGenerationMerge.js's buildWholeCandidate, and
+    // the section-scoped path, which calls it inline) -- a real shipping
+    // consumer, not merely a test one. mintClaimId and pruneSectionRevisions
+    // are unmoved; route.js still never calls either directly.
+    expect(TEST_REFERENCED.length).toBe(363);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
@@ -838,11 +845,20 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // assertion (triggerClassOf, messageFor, fetchPrep, prepActionState),
     // with ORPHAN_EXPORTS unmoved at 70 -- this total's +4 IS the TR-1
     // bucket's +4, not a second, independent change.
-    // 431 -> 436 (N45/N46): TR-1's own +3 (mintClaimId, mintSectionClaims,
-    // pruneSectionRevisions) plus ORPHAN_EXPORTS' own +2
+    // 431 -> 436 (N45/N46 substrate): TR-1's own +3 (mintClaimId,
+    // mintSectionClaims, pruneSectionRevisions) plus ORPHAN_EXPORTS' own +2
     // (PREP_REVISION_COLUMNS, PREP_REVISION_LIST_COLUMNS) -- both described
-    // at their own assertions above; this total is exactly their sum.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(436);
+    // at their own assertions above; this total was exactly their sum.
+    // 436 -> 435 (N45/N46 S7c/S8): TR-1's own -1 (mintSectionClaims wired
+    // into route.js -- see that assertion above), ORPHAN_EXPORTS unmoved at
+    // 72. The new pure modules this wave adds (lib/interviewPrep/
+    // prepSection.js, lib/interviewPrep/prepGenerationMerge.js) contribute
+    // NOTHING to either bucket: every export of both is imported by name
+    // from route.js (a real shipping consumer) -- prepGenerationMerge.js's
+    // own `mintWholeReplace` is deliberately module-private rather than
+    // exported for exactly this reason, since its only caller is inside the
+    // same file.
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(435);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

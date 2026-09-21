@@ -101,7 +101,7 @@ function outcomeForStatus(status, reason) {
  * @param {*} supabase
  * @param {{ applicationId: string, userId: string, leaseToken: string, triggerClass?: string, engine?: string,
  *           restore?: {}|{pack: object, liveRevisions: Record<string, number>}, storedNames?: string[],
- *           [key: string]: * }} ctx
+ *           section?: string|null, attemptOutcome?: string, [key: string]: * }} ctx
  *   `triggerClass`/`engine` are consumed only by the event write below;
  *   every other field is forwarded to `writePrepPackResult` as-is.
  *
@@ -126,6 +126,23 @@ function outcomeForStatus(status, reason) {
  *   name exemption had preserved. Forwarded unconditionally -- whether or
  *   not `restore` is also present -- so there is no state in which a
  *   restore carries content but no names to screen it against.
+ *
+ *   `section` (N45 step S8) rides through ctx to the event write ONLY --
+ *   destructured out here, exactly like `restore`/`storedNames`, so it can
+ *   NEVER reach `writePrepPackResult`'s payload: the packs row has no such
+ *   column, and a real Postgres would answer an un-destructured field with
+ *   42703. DEFAULT null -- a whole-pack attempt's event always carries a
+ *   null section, never a leftover value from a prior call.
+ *
+ *   `attemptOutcome`, when supplied, is written to
+ *   `interview_prep_events.outcome` INSTEAD of `outcomeForStatus(status,
+ *   reason)` -- the fix for the telemetry lie a section-scoped failure would
+ *   otherwise tell: the packs row's own `status` stays `ready`/`partial`
+ *   (the other three sections are untouched), so an event that MIRRORS that
+ *   status would report success for an attempt that produced nothing.
+ *   Consumed only by the event write; never forwarded to
+ *   `writePrepPackResult`. DEFAULT undefined -> today's behaviour on every
+ *   existing call site.
  * @param {{ writePrepPackResult?: Function, recordPrepEvent?: Function, isCheckViolation?: Function }} [deps]
  *   The three prepStore.js functions this orchestration calls, injectable so
  *   a test can substitute them without a real Supabase client -- default to
@@ -133,7 +150,7 @@ function outcomeForStatus(status, reason) {
  */
 export async function finishAttempt(
   supabase,
-  { applicationId, userId, leaseToken, triggerClass, engine, restore, storedNames, ...payload },
+  { applicationId, userId, leaseToken, triggerClass, engine, restore, storedNames, section = null, attemptOutcome, ...payload },
   {
     writePrepPackResult = defaultWritePrepPackResult,
     recordPrepEvent = defaultRecordPrepEvent,
@@ -166,8 +183,9 @@ export async function finishAttempt(
       eventType: "attempt",
       triggerClass,
       engine,
-      outcome: outcomeForStatus(status, reason),
+      outcome: attemptOutcome ?? outcomeForStatus(status, reason),
       reason,
+      section,
     });
   } else if (write.reason === "stale-token") {
     // The write matched zero rows -- see outcomeForStatus's own header on
@@ -188,6 +206,7 @@ export async function finishAttempt(
       engine,
       outcome: "stale-token",
       reason: null,
+      section,
     });
   }
 

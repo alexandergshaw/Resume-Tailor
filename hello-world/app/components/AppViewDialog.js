@@ -68,6 +68,25 @@ export function fetchPrep(applicationId, setPrepById) {
     .catch(() => setPrepById((prev) => ({ ...prev, [applicationId]: { error: "Could not load your prep pack." } })));
 }
 
+/** N46's restore control -- the ONLY client caller of `PATCH
+ *  /api/interview-prep`. Body is exactly `{applicationId, section,
+ *  revision}`: `expectedUpdatedAt` is read server-side, in the same request
+ *  (route.js's own PATCH handler), never supplied by the client -- see that
+ *  handler's own header (plan risk R13) for why. Module-private, unlike
+ *  `saveTrustedNames`/`fetchPrep` above: this one's own reachability test
+ *  (AppViewDialog.prepRestore.reachability.test.js) drives it through the
+ *  real rendered control, never by name, so exporting it would only add an
+ *  unreachable export (lib/sourceScan/exportReachability.sweep.test.js's
+ *  own ORPHAN_EXPORTS bucket). */
+async function restoreSectionRevision(applicationId, section, revision) {
+  const res = await fetch("/api/interview-prep", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ applicationId, section, revision }),
+  });
+  return res.json();
+}
+
 /** N29: maps a `usePrepGeneration` result to the transient message
  *  `PrepPackPanel` shows for an outcome that leaves no trace in the
  *  persisted pack row (disabled / refused / a bare error) -- a normal
@@ -203,10 +222,23 @@ export default function AppViewDialog({
   const [refreshingIds, setRefreshingIds] = useState(() => new Set());
   const [prepMessageById, setPrepMessageById] = useState({});
 
-  async function handleGenerateNow() {
+  // N45 step S10: the sections of THIS application currently regenerating --
+  // read off usePrepGeneration's own composite `id:section` keys (AC-UX.7),
+  // never the bare id, so a section control's own "Generating…" is its own,
+  // not lit for all four at once.
+  const generatingSections = dApp?.id
+    ? [...generatingIds].filter((key) => key.startsWith(`${dApp.id}:`)).map((key) => key.slice(dApp.id.length + 1))
+    : [];
+
+  // N45 step S10: `opts` is forwarded to `generateNow` as-is -- `undefined`
+  // (the whole-pack GenerateControl's own call) means today's whole-pack
+  // behaviour unchanged; `{section}` (a per-section control's call) is the
+  // ONLY thing that distinguishes a section-scoped request from a whole-pack
+  // one, all the way down to usePrepGeneration's own composite in-flight key.
+  async function handleGenerateNow(opts) {
     if (!dApp?.id) return;
     const id = dApp.id;
-    const result = await generateNow(id);
+    const result = await generateNow(id, opts);
     if (result?.skipped) return;
     if (result?.status && result.status !== "disabled" && result.status !== "refused") {
       setRefreshingIds((prev) => new Set(prev).add(id));
@@ -223,6 +255,20 @@ export default function AppViewDialog({
       return;
     }
     setPrepMessageById((prev) => ({ ...prev, [id]: messageFor(result) }));
+  }
+
+  // N46 step S10: one click, one PATCH (AC-UX.3 -- no confirmation dialog),
+  // followed by the SAME refetch discipline `handleGenerateNow` already
+  // uses -- the PATCH response carries no pack content (route.js's own
+  // `{status: "restored"}`), so a restore a candidate cannot SEE is the same
+  // defect N29's own generate control already closed once.
+  async function handleRestoreRevision(section, revision) {
+    if (!dApp?.id) return;
+    const id = dApp.id;
+    const result = await restoreSectionRevision(id, section, revision);
+    if (result?.status === "restored") {
+      await fetchPrepForRow(id);
+    }
   }
 
   const pages = [
@@ -387,6 +433,11 @@ export default function AppViewDialog({
               triggerMessage={dApp?.id ? (prepMessageById[dApp.id] ?? null) : null}
               onGenerateNow={handleGenerateNow}
               hasDescription={!!String(dPos?.description || "").trim()}
+              onRegenerateSection={(section) => handleGenerateNow({ section })}
+              onRestoreRevision={handleRestoreRevision}
+              sectionRevisions={dPrep.sectionRevisions ?? {}}
+              liveRevisions={dPrep.liveRevisions ?? {}}
+              generatingSections={generatingSections}
               onSaveNames={(form) => {
                 if (!dApp?.id) return;
                 saveTrustedNames(dApp.id, form)

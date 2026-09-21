@@ -859,11 +859,17 @@ export async function recordModelCallIssued(supabase, { applicationId }) {
  * convention. FK targets `applications`, not the packs table (Table 3), so
  * this row survives a candidate's own pack delete.
  *
+ * N45/N46 step S8 (AC-LOG.1/LOG.2): `section` is null for a whole-pack
+ * attempt and every delete event, and names the ONE section a section-scoped
+ * attempt was for otherwise -- so a candidate's downloaded prep log can tell
+ * which section an attempt was about, not just what the pack's own status
+ * became.
+ *
  * @param {*} supabase
  */
 export async function recordPrepEvent(
   supabase,
-  { applicationId, userId, eventType, triggerClass = null, engine = null, outcome, reason = null },
+  { applicationId, userId, eventType, triggerClass = null, engine = null, outcome, reason = null, section = null },
 ) {
   try {
     const { error } = await supabase.from(EVENTS_TABLE).insert({
@@ -874,6 +880,7 @@ export async function recordPrepEvent(
       engine,
       outcome,
       reason,
+      section,
     });
     if (error) return { recorded: false, error: errMessage(error) };
     return { recorded: true, error: null };
@@ -887,13 +894,18 @@ export async function recordPrepEvent(
  * log", design-structure.r1.md §10) -- reads the durable events log,
  * ordered oldest-first.
  *
+ * N45/N46: `section` is added to this EXPLICIT projection (never
+ * `select("*")`) -- the column existing on the table and being written
+ * correctly still leaves it invisible to every consumer (this download
+ * included) if this one string is not touched (plan risk R6).
+ *
  * @param {*} supabase
  * @param {{ applicationId: string, userId: string }} args
  */
 export async function listPrepEvents(supabase, { applicationId, userId }) {
   const { data, error } = await supabase
     .from(EVENTS_TABLE)
-    .select("id, application_id, event_type, trigger_class, engine, outcome, reason, at")
+    .select("id, application_id, event_type, trigger_class, engine, outcome, reason, section, at")
     .eq("application_id", applicationId)
     .eq("user_id", userId)
     .order("id", { ascending: true });

@@ -424,6 +424,75 @@ function EmptySection({ name }) {
   );
 }
 
+// N45/N46: the standard "visually hidden but not display:none" technique --
+// clipped to a 1px box rather than removed from the accessibility tree, so a
+// screen reader (and this repo's own accessibleName() test helpers, which
+// strip only `aria-hidden` subtrees) still reads it as part of the control's
+// name. Never `aria-hidden` -- that would remove it from the very name it
+// exists to extend (MUI a11y traps note: a Tooltip's `title` is NOT a
+// control's accessible name; this is the opposite failure mode, a label
+// present but excluded).
+const VISUALLY_HIDDEN_SX = {
+  position: "absolute",
+  width: "1px",
+  height: "1px",
+  padding: 0,
+  margin: "-1px",
+  overflow: "hidden",
+  clip: "rect(0,0,0,0)",
+  whiteSpace: "nowrap",
+  border: 0,
+};
+
+/** N45's per-section regenerate control, and N46's version history/restore
+ *  list -- rendered identically for a POPULATED section and an EMPTY one
+ *  (this component takes no `pack` binding, matching `EmptySection`'s own
+ *  AC-N44.3/.8 discipline), so the section a candidate most wants to
+ *  regenerate -- the one with nothing in it -- always carries the control.
+ *
+ *  Visible text is the bare word "Regenerate"/"Restore" plus a
+ *  visually-hidden span naming the section (and, for restore, the version
+ *  number) -- never a bare "Regenerate" repeated four times indistinguishably,
+ *  and never colliding with `PrepPackPanel.generate.test.js`'s own
+ *  `/^regenerate$/i` matcher for the WHOLE-PACK control, since this
+ *  control's own trimmed textContent is never exactly "Regenerate" alone. */
+function SectionActions({ section, sectionsEnabled, generating, onRegenerateSection, revisions, liveRevision, onRestoreRevision }) {
+  const restorable = (Array.isArray(revisions) ? revisions : []).filter((rev) => rev.revision !== liveRevision);
+  const label = SECTION_LABELS[section];
+  return (
+    <Box sx={{ mt: 0.5, mb: 1.5, display: "flex", flexDirection: "column", gap: 0.5 }}>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, mt: 0, mb: 0, ...WRAP_ROW_SX }}>
+        {generating ? (
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mt: 0, mb: 0, fontSize: 11.5, color: "var(--text-secondary)" }}>
+            <CircularProgress size={12} />
+            Regenerating {label}…
+          </Box>
+        ) : sectionsEnabled ? (
+          <Button size="small" sx={TOUCH_TARGET_SX} onClick={() => onRegenerateSection?.(section)}>
+            Regenerate
+            <Box component="span" sx={VISUALLY_HIDDEN_SX}>{` ${label}`}</Box>
+          </Button>
+        ) : null}
+      </Box>
+      {sectionsEnabled && restorable.length > 0 ? (
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 0.375, mt: 0, mb: 0 }}>
+          {restorable.map((rev) => (
+            <Box key={rev.revision} sx={{ display: "flex", alignItems: "center", gap: 0.5, mt: 0, mb: 0, fontSize: 11.5 }}>
+              <Button size="small" sx={TOUCH_TARGET_SX} onClick={() => onRestoreRevision?.(section, rev.revision)}>
+                Restore
+                <Box component="span" sx={VISUALLY_HIDDEN_SX}>{` ${label} version ${rev.revision}`}</Box>
+              </Button>
+              <Box component="span" sx={{ mt: 0, mb: 0, color: "var(--text-secondary)" }}>
+                {rev.restoredFrom != null ? "restored version" : "earlier version"} {rev.revision}
+              </Box>
+            </Box>
+          ))}
+        </Box>
+      ) : null}
+    </Box>
+  );
+}
+
 /** N44: renders exactly four fixed-order slots, always -- one per
  *  `SECTION_LABELS` key -- so the header outline never depends on `status`
  *  or on `completeSections` having anything in it. Each slot still gates its
@@ -433,15 +502,51 @@ function EmptySection({ name }) {
  *  absent from `completeSections` (a partial pack's own missing section, or
  *  a legacy pack's orphaned top-level keys) still never has its content
  *  rendered here -- the exact invariant AC-N33.13/15 require -- it renders
- *  `EmptySection` instead of nothing. */
-function PackSections({ pack, completeSections }) {
+ *  `EmptySection` instead of nothing.
+ *
+ *  N45/N46: each slot is followed by its own `SectionActions` -- the
+ *  regenerate control and the restore list -- OUTSIDE `Section`'s own
+ *  heading/children wrapper, so it never perturbs that component's citation
+ *  numbering. */
+function PackSections({
+  pack,
+  completeSections,
+  sectionsEnabled,
+  generatingSections,
+  onRegenerateSection,
+  sectionRevisions,
+  liveRevisions,
+  onRestoreRevision,
+}) {
   const complete = new Set(Array.isArray(completeSections) ? completeSections : []);
+  const generating = new Set(Array.isArray(generatingSections) ? generatingSections : []);
+  const revisionsBySection = sectionRevisions || {};
+  const liveBySection = liveRevisions || {};
+
+  function actions(name) {
+    return (
+      <SectionActions
+        section={name}
+        sectionsEnabled={sectionsEnabled}
+        generating={generating.has(name)}
+        onRegenerateSection={onRegenerateSection}
+        revisions={revisionsBySection[name]}
+        liveRevision={liveBySection[name]}
+        onRestoreRevision={onRestoreRevision}
+      />
+    );
+  }
+
   return (
     <Box>
       {complete.has("aboutYou") ? <AnswerSection name="aboutYou" pack={pack} /> : <EmptySection name="aboutYou" />}
+      {actions("aboutYou")}
       {complete.has("whyRole") ? <AnswerSection name="whyRole" pack={pack} /> : <EmptySection name="whyRole" />}
+      {actions("whyRole")}
       {complete.has("askThem") ? <AskThemSection pack={pack} /> : <EmptySection name="askThem" />}
+      {actions("askThem")}
       {complete.has("stages") ? <StagesSection pack={pack} /> : <EmptySection name="stages" />}
+      {actions("stages")}
     </Box>
   );
 }
@@ -471,22 +576,23 @@ export function prepActionState({ status, generating, hasDescription }) {
 
 const NO_DESCRIPTION_COPY =
   "This posting has no job description on file, so there's nothing to generate a prep pack from. Add one from this application's Edit form, then come back here.";
-// F-8 (owner decision 2026-09-20): `claim_prep_pack_slot` clears the pack
-// row to `{}` UNCONDITIONALLY the moment a generation attempt starts --
-// before any content is produced, before the prompt is even built -- because
-// `interview_prep_packs_running_has_no_content` forbids a `running` row from
-// holding content (supabase/migrations/20260922000000_..., :86-97 and
-// 20260914000000_interview_prep.sql:179-180). The prior copy ("Regenerating
-// replaces the pack above. This can't be undone.") read as "the new version
-// swaps in for the old", which implies the old one survives until the new
-// one exists. It does not: a failed attempt (model error, network, kill
-// switch, timeout, a refusal) leaves nothing where the old pack used to be.
+// F-8 (owner decision 2026-09-20), UPDATED for N45/N46: `claim_prep_pack_slot`
+// still clears the pack row to `{}` UNCONDITIONALLY the moment a generation
+// attempt starts -- before any content is produced, before the prompt is
+// even built -- because `interview_prep_packs_running_has_no_content`
+// forbids a `running` row from holding content
+// (supabase/migrations/20260922000000_..., :86-97 and
+// 20260914000000_interview_prep.sql:179-180). Two prior copies described
+// this wrongly, in opposite directions: the FIRST implied the old pack
+// survives until the new one exists (it does not); a SECOND revision, after
+// that was fixed, went on to claim nothing at all could be salvaged from a
+// failed attempt -- also now false, since the storage layer this caption
+// describes (route.js's own restore-on-failure write, plus this chunk's
+// per-section revision history) puts the prior document back on its own.
 // This does NOT put the candidate's own typed data at risk -- their name and
-// interviewer names live in separate tables this action never touches, and
-// the pack itself is always regenerable -- so the copy names lost time, not
-// lost data, and stays calm rather than alarming.
+// interviewer names live in separate tables this action never touches.
 const DESTRUCTIVE_REGENERATE_CAPTION =
-  "Regenerating clears the pack above the moment you start — before the new one is ready. If this attempt fails, there's nothing to fall back to. This can't be undone, but you can regenerate again anytime.";
+  "Regenerating replaces the pack above the moment you start — before the new one is ready. If this attempt fails, your previous content comes back on its own, and every section keeps a history of its earlier versions.";
 
 /** The meta-actions row's Generate/Regenerate control. Never a disabled
  *  `Button` (DX §8's a11y rule) -- a blocked state replaces the button with
@@ -632,6 +738,14 @@ export default function PrepPackPanel({
   triggerMessage = null,
   onGenerateNow,
   hasDescription = true,
+  // N45/N46 (S10): additive. Every existing call site (and every landed
+  // test of this component) keeps working unchanged with none of these
+  // supplied -- see PrepPackPanel.sectionActions.test.js's own header.
+  onRegenerateSection,
+  onRestoreRevision,
+  sectionRevisions = {},
+  liveRevisions = {},
+  generatingSections = [],
 }) {
   const hasPack = !!pack;
   const actionState = prepActionState({ status, generating, hasDescription });
@@ -649,7 +763,16 @@ export default function PrepPackPanel({
        *  `pack` is `null`. `hasPack` still decides everything below (the
        *  Generate/Regenerate label and the destructive-regenerate caption)
        *  -- only this one render site changes. */}
-      <PackSections pack={pack} completeSections={completeSections} />
+      <PackSections
+        pack={pack}
+        completeSections={completeSections}
+        sectionsEnabled={actionState === "idle"}
+        generatingSections={generatingSections}
+        onRegenerateSection={onRegenerateSection}
+        sectionRevisions={sectionRevisions}
+        liveRevisions={liveRevisions}
+        onRestoreRevision={onRestoreRevision}
+      />
       <Box sx={{ mt: 1, display: "flex", flexDirection: "column", gap: 1 }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, ...WRAP_ROW_SX }}>
           <Button size="small" sx={TOUCH_TARGET_SX} onClick={() => onDownloadLog?.()}>
@@ -658,7 +781,9 @@ export default function PrepPackPanel({
           <GenerateControl actionState={actionState} hasPack={hasPack} onGenerateNow={onGenerateNow} />
         </Box>
         {actionState === "idle" && hasPack ? (
-          <Box sx={{ fontSize: 12, color: "var(--text-secondary)" }}>{DESTRUCTIVE_REGENERATE_CAPTION}</Box>
+          <Box data-testid="regenerate-caption" sx={{ fontSize: 12, color: "var(--text-secondary)" }}>
+            {DESTRUCTIVE_REGENERATE_CAPTION}
+          </Box>
         ) : null}
         {triggerMessage ? (
           <Box role="alert" sx={{ fontSize: 12.5, color: "var(--text-secondary)", ...BREAK_LONG_WORDS_SX }}>

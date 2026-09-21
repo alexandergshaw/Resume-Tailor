@@ -115,7 +115,10 @@ import {
   buildTrustedNamesPayload,
 } from "@/lib/interviewPrep/trustedNames";
 import { packStatus, buildEmbeddedPack, completeSections } from "@/lib/interviewPrep/prepPack";
-import { restorePayload, buildPackDocument, baseProvenanceFromPack } from "@/lib/interviewPrep/prepMerge";
+import { restorePayload } from "@/lib/interviewPrep/prepMerge";
+import { mintSectionClaims } from "@/lib/interviewPrep/prepClaims";
+import { buildSectionPrompt, parseSectionResponse } from "@/lib/interviewPrep/prepSection";
+import { buildWholeCandidate, buildSectionCandidate, buildRevisionSections } from "@/lib/interviewPrep/prepGenerationMerge";
 import { PREP_SECTION_NAMES } from "@/lib/interviewPrep/prepContract";
 import { PREP_RATE_LIMIT, PREP_RATE_WINDOW_MS, PREP_GENERATION_TIMEOUT_MS } from "@/lib/interviewPrep/prepConstants";
 
@@ -298,17 +301,27 @@ function writeFailureResponse(write) {
   return Response.json({ error: write.error || "Could not save this attempt." }, { status: 500 });
 }
 
+// N45 step S8: the RESPONSE shape shared by every terminal write below,
+// never a substitute for calling finishAttempt( itself (every caller still
+// does that literally, which is what route.restore.sweep.test.js's own
+// census reads).
+function sectionAwareResponse(write, status, section, sectionProduced) {
+  if (!write.written) return writeFailureResponse(write);
+  return section ? Response.json({ status, section, sectionProduced }) : Response.json({ status });
+}
+
 // The spend gate's own refusal, factored out so the guard above it is a
 // single `return` -- OP-9's requirement is that the guard's OWN condition
 // tests `.recorded` and is immediately followed by the early exit, not merely
 // co-occurs with one.
 async function refuseRecordingFailure(supabase, ctx) {
-  // `ctx.restore` rides in as an ordinary property (the caller below spreads
-  // it into `ctx` itself) -- pulled out here, by name, and spread
-  // EXPLICITLY into this call's own payload, matching every other failure
-  // call site (plan §2.2). finishAttempt's own destructuring then removes
-  // the redundant `restore` property `...ctx` also carried before anything
-  // reaches writePrepPackResult.
+  // `ctx.restore` is pulled out here, by name, and spread EXPLICITLY into
+  // this call's own payload, matching every other failure call site (plan
+  // §2.2). `ctx.section` (N45 S8), if present, rides through `...ctx`
+  // unchanged -- a spend-record refusal is a genuine mechanical failure, not
+  // a "this section produced nothing" telemetry case, so it keeps the SAME
+  // literal "failed" status regardless of whether the request named a
+  // section.
   const { restore } = ctx;
   await finishAttempt(supabase, { ...ctx, status: "failed", reason: "spend-record-failed", ...restore });
   return Response.json({ error: "Could not record this attempt. Try again." }, { status: 500 });
@@ -352,6 +365,16 @@ export async function POST(request) {
     triggerClass = triggerClassOf(body?.triggerClass);
   } catch {
     return badRequest("Unknown triggerClass.");
+  }
+  // N45 step S8: absent/null `section` means today's whole-pack behaviour.
+  // Present-but-unrecognized is refused HERE, before any query or claim --
+  // the same "reject, never normalise" ruling triggerClassOf already
+  // applies to its own sibling field.
+  const rawSection = body?.section;
+  let section = null;
+  if (rawSection !== undefined && rawSection !== null) {
+    if (!PREP_SECTION_NAMES.includes(rawSection)) return badRequest("Unknown section.");
+    section = rawSection;
   }
 
   // GATE 6. Scoped to the caller IN THE QUERY, not just checked after the
@@ -405,6 +428,11 @@ export async function POST(request) {
   // outright rather than restored.
   const base = await readLiveSectionRevisions(supabase, { applicationId, userId });
   const restore = restorePayload(base);
+  // The section-scoped merge's own base document (S8), and the status a
+  // section-scoped "nothing usable" write mirrors (AC-LOG.1) instead of
+  // lying that the whole pack failed when only one section did.
+  const currentPack = base.pack && typeof base.pack === "object" ? base.pack : {};
+  const unaffectedStatus = base.status && base.status !== "running" ? base.status : "failed";
 
   // GATE 9. Serializes concurrent attempts on this row and enforces both
   // spend caps -- see lib/interviewPrep/prepStore.js's claimPrepPack.
@@ -418,7 +446,18 @@ export async function POST(request) {
   const digestResearchedAt =
     digest?.status === "ready" && typeof digest.researched_at === "string" ? digest.researched_at : null;
   const description = String(position.description || "").trim();
-  const attemptCtx = { applicationId, userId, leaseToken: claim.leaseToken, triggerClass, engine };
+  // Resolved ONCE, spread into every finishAttempt call below.
+  const attemptCtx = {
+    applicationId,
+    userId,
+    leaseToken: claim.leaseToken,
+    triggerClass,
+    engine,
+    section,
+    postingFingerprint: fingerprint,
+    digestResearchedAt,
+    storedNames,
+  };
 
   // GATE 10. Nothing to research: a deliberate, terminal row with NO model
   // call. N47's own defect: this is a SUCCESSFUL path (no provider call, no
@@ -429,37 +468,46 @@ export async function POST(request) {
       ...attemptCtx,
       status: "unavailable",
       reason: "refused-posting",
-      postingFingerprint: fingerprint,
-      digestResearchedAt,
-      storedNames,
       ...restore,
     });
-    if (!write.written) return writeFailureResponse(write);
-    return Response.json({ status });
+    return sectionAwareResponse(write, status, null, false);
   }
 
   // GATE 11. The embedded path. Terminal status is 'partial', not 'ready' --
-  // see buildEmbeddedPack's own header for why. `restore` (not `...restore`)
-  // rides along as its OWN field here -- fix round, F-M2: this write carries
-  // its own fresh `pack`, so `restore` is never spread into it, but the
-  // CHECK-safe fallback retry needs somewhere to fall back to if THIS pack
-  // (however unlikely for a deterministic embedded document) ever trips a
-  // CHECK. Without it, that retry runs with no prior document and blanks
-  // the row exactly like the bug this whole fix round exists to close.
+  // see buildEmbeddedPack's own header for why. S7c: this write goes through
+  // the SAME minting + history mechanism as the model path
+  // (lib/interviewPrep/prepGenerationMerge.js), so an embedded pack is
+  // exactly as regenerable, section by section, as a gemini one. `restore`
+  // (not `...restore`) rides along as its OWN field -- F-M2: this write
+  // carries its own fresh `pack`, so `restore` is never spread into it, but
+  // the CHECK-safe fallback retry needs somewhere to fall back to.
   if (useEmbedded) {
-    const pack = buildEmbeddedPack({ position, digest });
+    const embeddedPack = buildWholeCandidate(buildEmbeddedPack({ position, digest }), "embedded");
+    const embeddedNames = Object.keys(embeddedPack.sections || {});
+    const embeddedAppended = await appendSectionRevisions(supabase, {
+      applicationId,
+      userId,
+      sections: buildRevisionSections(embeddedPack, "embedded", embeddedNames, base.newestBySection),
+    });
+    if (embeddedAppended.reason) {
+      const { write, status } = await finishAttempt(supabase, {
+        ...attemptCtx,
+        status: "failed",
+        reason: "provider-error",
+        error: embeddedAppended.error || "Could not save this attempt's history.",
+        ...restore,
+      });
+      return sectionAwareResponse(write, status, null, false);
+    }
     const { write, status } = await finishAttempt(supabase, {
       ...attemptCtx,
       status: "partial",
-      pack,
-      postingFingerprint: fingerprint,
-      digestResearchedAt,
+      pack: embeddedPack,
+      liveRevisions: embeddedAppended.revisions,
       researchedAt: new Date().toISOString(),
-      storedNames,
       restore,
     });
-    if (!write.written) return writeFailureResponse(write);
-    return Response.json({ status });
+    return sectionAwareResponse(write, status, null, false);
   }
 
   let client;
@@ -470,21 +518,13 @@ export async function POST(request) {
   } catch {
     // F-M1 (fix round): this catch is a POST-CLAIM terminal exit exactly
     // like every failure branch below it -- GATE 9's claim has already
-    // blanked `pack` unconditionally. A bare early return here (the old
-    // behaviour) left the row `status: "running"` with an empty document
-    // until the lease expired, with no terminal write at all -- worse than
-    // every other gap this round closes, since nothing here even tried.
-    // `finishAttempt` matches the shape of every other failure site:
-    // `...restore` puts the prior document back, and the attempt is still
-    // recorded durably.
+    // blanked `pack` unconditionally. `...restore` puts the prior document
+    // back, and the attempt is still recorded durably.
     const { write } = await finishAttempt(supabase, {
       ...attemptCtx,
       status: "failed",
       reason: "provider-error",
       error: NO_KEY_REFUSAL,
-      postingFingerprint: fingerprint,
-      digestResearchedAt,
-      storedNames,
       ...restore,
     });
     if (!write.written) return writeFailureResponse(write);
@@ -498,24 +538,19 @@ export async function POST(request) {
   // actually issued is not a bound on those calls (design-operate.r1.md §6).
   const recordResult = await recordModelCallIssued(supabase, { applicationId, userId });
   if (!recordResult.recorded) {
-    return await refuseRecordingFailure(supabase, {
-      ...attemptCtx,
-      postingFingerprint: fingerprint,
-      digestResearchedAt,
-      error: recordResult.error,
-      storedNames,
-      restore,
-    });
+    return await refuseRecordingFailure(supabase, { ...attemptCtx, error: recordResult.error, restore });
   }
 
   // GATE 13. THE GENERATION CALL. See this file's header for the transport
-  // and timeout-position discipline.
+  // and timeout-position discipline. S8: the section path sends
+  // buildSectionPrompt's own one-section prompt instead of the whole-pack
+  // one -- still the ONE `generateContent(` site this route makes (AC-O15.3).
   let response;
   let generationError = null;
   try {
     response = await client.models.generateContent({
       model,
-      contents: buildPrepPrompt({ position, digest }),
+      contents: section ? buildSectionPrompt({ position, digest, section }) : buildPrepPrompt({ position, digest }),
       config: {
         responseMimeType: "application/json",
         httpOptions: { timeout: PREP_GENERATION_TIMEOUT_MS },
@@ -533,29 +568,9 @@ export async function POST(request) {
       status: "failed",
       reason: timedOut ? "provider-timeout" : "provider-error",
       error: generationError?.message || "The model call did not complete.",
-      postingFingerprint: fingerprint,
-      digestResearchedAt,
-      storedNames,
       ...restore,
     });
-    if (!write.written) return writeFailureResponse(write);
-    return Response.json({ status });
-  }
-
-  const parsed = parsePrepResponse(response);
-  if (!parsed.ok) {
-    const { write, status } = await finishAttempt(supabase, {
-      ...attemptCtx,
-      status: "failed",
-      reason: "provider-error",
-      error: parsed.error,
-      postingFingerprint: fingerprint,
-      digestResearchedAt,
-      storedNames,
-      ...restore,
-    });
-    if (!write.written) return writeFailureResponse(write);
-    return Response.json({ status });
+    return sectionAwareResponse(write, status, section, false);
   }
 
   // The route normalizes the model's reply ITSELF, and computes packStatus
@@ -567,22 +582,47 @@ export async function POST(request) {
   // model merely claimed to return. Computing status on the raw reply is
   // exactly how a 'ready' pack full of dropped lines gets written; running
   // normalizePack twice IS safe (idempotent) -- see that function's own
-  // header (F-2) for why that claim used to be false for one field
-  // (`refusedLines`) and is not, any more, now that field is gone.
+  // header (F-2).
   //
-  // F-1's own K1-SHAPE exemption keys off `pack.templateOrigin` -- a field
-  // ONLY buildEmbeddedPack's literal ever legitimately sets. The model's
-  // reply is free-form JSON, so nothing stops a hostile reply from including
-  // that exact key to claim the exemption for itself; parsePrepResponse
-  // above already strips it, at the one boundary where untrusted JSON
-  // becomes a pack, so the exemption is unreachable from a model-authored
-  // pack by the time `parsed.pack` reaches here.
-  // N33: resolved once, right after GATE 6 (see the comment there) --
-  // design-reconciled.r2.md ss4.3's reviewer property requires every
-  // normalizePack/countRefusedLines call site to resolve storedNames
-  // identically, never from `parsed`/`parsed.pack`/`body` themselves. N45/N46
-  // G2 moved that single resolution earlier in this same function; it is not
-  // re-resolved here.
+  // S7c/S8: for BOTH the whole-pack and the section-scoped path, `parsed`
+  // ends up in the SAME shape parsePrepResponse always returned --
+  // `{ok:true, pack}` or `{ok:false, error}` -- with `.pack` reassigned to
+  // the MERGED, claim-minted candidate (lib/interviewPrep/
+  // prepGenerationMerge.js) before normalization ever sees it, never the
+  // raw reply. That keeps this file at exactly ONE `normalizePack(` call
+  // site (R-N45-10) with both write paths falling through the SAME
+  // normalize / packStatus / countRefusedLines sequence (plan §7.3).
+  // `parsePrepResponse` already strips `templateOrigin` (F-1's K1-SHAPE
+  // exemption) and `parseSectionResponse` never reads it, so neither
+  // `buildWholeCandidate` nor `mintSectionClaims` can carry it forward.
+  let parsed;
+  if (section) {
+    const sectionResult = parseSectionResponse(response, section);
+    if (!sectionResult.ok) {
+      parsed = { ok: false, error: sectionResult.error };
+    } else {
+      const minted = mintSectionClaims(section, sectionResult.content, sectionResult.claims);
+      parsed = {
+        ok: true,
+        pack: buildSectionCandidate({ currentPack, section, content: minted.content, claims: minted.claims, engine }),
+      };
+    }
+  } else {
+    parsed = parsePrepResponse(response);
+    if (parsed.ok) parsed.pack = buildWholeCandidate(parsed.pack, engine);
+  }
+
+  if (!parsed.ok) {
+    const { write, status } = await finishAttempt(supabase, {
+      ...attemptCtx,
+      status: "failed",
+      reason: "provider-error",
+      error: parsed.error,
+      ...restore,
+    });
+    return sectionAwareResponse(write, status, section, false);
+  }
+
   const normalizedPack = normalizePack(parsed.pack, storedNames);
   const computedStatus = packStatus(normalizedPack);
 
@@ -602,7 +642,25 @@ export async function POST(request) {
     });
   }
 
-  if (computedStatus === null) {
+  // AC-LOG.1: "nothing usable" for a section-scoped attempt means THIS
+  // section did not survive normalization -- never the whole pack's own
+  // completeness, which the other three untouched sections keep. Unlike
+  // every failure branch above, `status` here is the pack's real,
+  // UNAFFECTED status (GATE 8b), never the literal "failed" -- the EVENT
+  // alone records the true outcome, via `attemptOutcome`.
+  const sectionProduced = section ? completeSections(normalizedPack).has(section) : null;
+  if (section && !sectionProduced) {
+    const { write, status } = await finishAttempt(supabase, {
+      ...attemptCtx,
+      status: unaffectedStatus,
+      attemptOutcome: "failed",
+      reason: "provider-error",
+      error: "The model's reply for this section contained no usable content after normalization.",
+      ...restore,
+    });
+    return sectionAwareResponse(write, status, section, false);
+  }
+  if (!section && computedStatus === null) {
     // Zero of the four sections survived normalization -- a model that
     // returned parseable JSON with no usable content is a provider failure
     // ('provider-error' is already a PREP_REASON_VALUES member), never the
@@ -613,36 +671,51 @@ export async function POST(request) {
       status: "failed",
       reason: "provider-error",
       error: "The model's reply contained no usable section after normalization.",
-      postingFingerprint: fingerprint,
-      digestResearchedAt,
-      storedNames,
       ...restore,
     });
-    if (!write.written) return writeFailureResponse(write);
-    return Response.json({ status });
+    return sectionAwareResponse(write, status, section, false);
   }
+
+  // S7c/S8: the write that makes a generation's content live also appends
+  // its own immutable history -- one revision row per section this attempt
+  // actually produced, BEFORE the packs-row UPDATE, so a write that fails
+  // partway never leaves a live pointer naming a revision that was never
+  // saved.
+  const replacedNames = section ? [section] : Object.keys(normalizedPack.sections || {});
+  const appended = await appendSectionRevisions(supabase, {
+    applicationId,
+    userId,
+    sections: buildRevisionSections(normalizedPack, engine, replacedNames, base.newestBySection),
+  });
+  if (appended.reason) {
+    const { write, status } = await finishAttempt(supabase, {
+      ...attemptCtx,
+      status: "failed",
+      reason: "provider-error",
+      error: appended.error || "Could not save this attempt's history.",
+      ...restore,
+    });
+    return sectionAwareResponse(write, status, section, false);
+  }
+  // A section-scoped write moves ONLY its own section's pointer entry; the
+  // whole-pack write REPLACES the pointer outright, matching
+  // buildWholeCandidate's own destructive wholePack:true semantics -- a
+  // section this generation did not return is not merely un-pointed-to, it
+  // is gone from `pack.sections` too.
+  const liveRevisions = section ? { ...base.liveRevisions, ...appended.revisions } : appended.revisions;
 
   const { write, status } = await finishAttempt(supabase, {
     ...attemptCtx,
     status: computedStatus,
     pack: normalizedPack,
-    postingFingerprint: fingerprint,
-    digestResearchedAt,
+    liveRevisions,
     researchedAt: new Date().toISOString(),
-    // N33: writePrepPackResult's own normalize-before-write (prepStore.js)
-    // re-runs normalizePack on this same pack -- the same storedNames
-    // already resolved above, so a name kept on this first pass survives
-    // the second (design-reconciled.r2.md ss4.3's idempotence requirement).
-    storedNames,
-    // `restore` (not `...restore`) -- fix round, F-M2: this write carries
-    // its own fresh `normalizedPack`, so `restore` is never spread into it,
-    // but the CHECK-safe fallback retry (a real reply that is valid JSON yet
-    // over PREP_PACK_MAX_BYTES) needs the prior document to fall back to.
-    // Without it, that retry runs with no restore at all and blanks the row.
+    // `restore` (not `...restore`) -- F-M2: this write carries its own fresh
+    // `normalizedPack`, but the CHECK-safe fallback retry still needs the
+    // prior document to fall back to if this write itself trips a CHECK.
     restore,
   });
-  if (!write.written) return writeFailureResponse(write);
-  return Response.json({ status });
+  return sectionAwareResponse(write, status, section, true);
 }
 
 // NEVER kill-switch-gated (O-16) -- the clear/delete control must survive a
@@ -890,11 +963,12 @@ export async function PATCH(request) {
   // (prepStore.js), the SAME single choke point every other write already
   // uses -- this route file adds no second one.
   const currentPack = base.pack && typeof base.pack === "object" ? base.pack : {};
-  const mergedPack = buildPackDocument({
-    base: currentPack,
-    baseProvenance: baseProvenanceFromPack(currentPack),
-    replace: { [section]: { content: target.content, claims: target.claims, engine: target.engine } },
-    wholePack: false,
+  const mergedPack = buildSectionCandidate({
+    currentPack,
+    section,
+    content: target.content,
+    claims: target.claims,
+    engine: target.engine,
   });
 
   // Residual, disclosed rather than engineered around (matching plan

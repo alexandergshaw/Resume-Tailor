@@ -36,26 +36,47 @@ async function readJson(res) {
 // body on every gate (app/api/interview-prep/route.js's own POST handler),
 // so a non-JSON body only happens on a genuine network/framework failure,
 // which generateNow below maps to a networkError result.
-async function requestPrepGeneration(applicationId, { triggerClass = "B2" } = {}) {
+//
+// N45 step S10: `section` is added to the body ONLY when supplied -- never
+// `section: null` -- so a whole-pack request's body stays byte-identical to
+// what usePrepGeneration.test.js and
+// AppViewDialog.prepGenerate.reachability.test.js already pin with
+// `toEqual`.
+async function requestPrepGeneration(applicationId, { triggerClass = "B2", section } = {}) {
+  const body = { applicationId, triggerClass };
+  if (section) body.section = section;
   const res = await fetch("/api/interview-prep", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ applicationId, triggerClass }),
+    body: JSON.stringify(body),
   });
   return readJson(res);
+}
+
+// N45 step S10 (AC-UX.7): the in-flight/generating KEY for one request --
+// the bare applicationId for a whole-pack request (unchanged, so
+// usePrepGeneration.test.js's `generatingIds.has("app-1")` and
+// AppViewDialog.js's own `generatingIds.has(dApp?.id)` both keep working),
+// `applicationId + ":" + section` for a section-scoped one. A deliberate
+// departure from plan §6.1's proposed `id + ":" + (section ?? "")`, which
+// would key a whole-pack request as `"app-1:"` and break both of those.
+function generationKey(applicationId, section) {
+  return section ? `${applicationId}:${section}` : applicationId;
 }
 
 /**
  * @returns {{
  *   generatingIds: Set<string>,
- *   generateNow: (applicationId: string) => Promise<object>
+ *   generateNow: (applicationId: string, opts?: {section?: string, triggerClass?: string}) => Promise<object>
  * }}
  *
  * `generateNow`'s promise never rejects and never resolves to `undefined`.
  * It resolves to one of:
- *   {status: "ready"|"partial"|"failed"|"unavailable"} -- a normal terminal
- *     write happened; the caller must re-fetch GET to see it, since this
- *     route's POST response never carries pack content.
+ *   {status: "ready"|"partial"|"failed"|"unavailable", section?, sectionProduced?} --
+ *     a normal terminal write happened; the caller must re-fetch GET to see
+ *     it, since this route's POST response never carries pack content.
+ *     `section`/`sectionProduced` ride through unchanged from the route's
+ *     own reply, present only for a section-scoped request.
  *   {status: "disabled"} -- GATE 1, the kill switch.
  *   {status: "refused", reason: "in-flight"|"error"} -- GATE 9's claim
  *     refusal ("attempts-spent" is no longer a value the server can produce
@@ -66,38 +87,39 @@ async function requestPrepGeneration(applicationId, { triggerClass = "B2" } = {}
  *   {error: string, networkError: true} -- fetch rejected, threw
  *     synchronously, or the response body was not JSON.
  *   {skipped: true} -- a synchronous no-op: a request for this exact
- *     applicationId was already in flight.
+ *     (applicationId, section) pair was already in flight.
  */
 export function usePrepGeneration() {
   const inFlightRef = useRef(new Set());
   const [generatingIds, setGeneratingIds] = useState(() => new Set());
 
-  const markGenerating = useCallback((applicationId, on) => {
+  const markGenerating = useCallback((key, on) => {
     setGeneratingIds((prev) => {
-      const has = prev.has(applicationId);
+      const has = prev.has(key);
       if (on === has) return prev;
       const next = new Set(prev);
-      if (on) next.add(applicationId);
-      else next.delete(applicationId);
+      if (on) next.add(key);
+      else next.delete(key);
       return next;
     });
   }, []);
 
   const generateNow = useCallback(
-    async (applicationId) => {
+    async (applicationId, { section, triggerClass } = {}) => {
       if (!applicationId) return { error: "Missing applicationId." };
-      if (inFlightRef.current.has(applicationId)) return { skipped: true };
-      inFlightRef.current.add(applicationId);
-      markGenerating(applicationId, true);
+      const key = generationKey(applicationId, section);
+      if (inFlightRef.current.has(key)) return { skipped: true };
+      inFlightRef.current.add(key);
+      markGenerating(key, true);
       try {
-        const json = await requestPrepGeneration(applicationId);
+        const json = await requestPrepGeneration(applicationId, { triggerClass, section });
         if (json && (json.status || json.error)) return json;
         return { error: "Could not start generation.", networkError: true };
       } catch (err) {
         return { error: err?.message || "Could not start generation.", networkError: true };
       } finally {
-        markGenerating(applicationId, false);
-        inFlightRef.current.delete(applicationId);
+        markGenerating(key, false);
+        inFlightRef.current.delete(key);
       }
     },
     [markGenerating],

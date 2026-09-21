@@ -211,11 +211,19 @@ describe("F-8 -- the destructive-regenerate caption states the actual failure mo
     expect(text).toMatch(/the moment you (start|click)|clears? the pack above.*(start|click|before)/);
   });
 
-  it("never implies the previous pack is recoverable or safe if the attempt fails", async () => {
+  // N45/N46 owner ruling: narrowed from the WHOLE PANEL to the destructive
+  // regenerate caption itself. Restore now exists for section REVISIONS
+  // (AC-UX.6), so the panel as a whole is allowed to say "restore" -- what
+  // it must never do is have THIS caption claim the in-flight pack being
+  // cleared is recoverable. Still an exact-text assertion, just scoped to
+  // the caption element rather than the panel's entire textContent.
+  it("the destructive-regenerate CAPTION never implies the pack being cleared is recoverable or safe if the attempt fails", async () => {
     const el = await render(
       baseProps({ pack: READY_PACK, status: "ready", completeSections: ["aboutYou"], hasDescription: true }),
     );
-    const text = el.textContent.toLowerCase();
+    const caption = el.querySelector('[data-testid="regenerate-caption"]');
+    expect(caption, "no destructive-regenerate caption rendered").toBeTruthy();
+    const text = (caption.textContent || "").toLowerCase();
     expect(text).not.toMatch(/recover|restore|old (version|pack) (is|remains) (safe|saved|kept)/);
   });
 
