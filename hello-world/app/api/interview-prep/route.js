@@ -439,7 +439,13 @@ export async function POST(request) {
   }
 
   // GATE 11. The embedded path. Terminal status is 'partial', not 'ready' --
-  // see buildEmbeddedPack's own header for why.
+  // see buildEmbeddedPack's own header for why. `restore` (not `...restore`)
+  // rides along as its OWN field here -- fix round, F-M2: this write carries
+  // its own fresh `pack`, so `restore` is never spread into it, but the
+  // CHECK-safe fallback retry needs somewhere to fall back to if THIS pack
+  // (however unlikely for a deterministic embedded document) ever trips a
+  // CHECK. Without it, that retry runs with no prior document and blanks
+  // the row exactly like the bug this whole fix round exists to close.
   if (useEmbedded) {
     const pack = buildEmbeddedPack({ position, digest });
     const { write, status } = await finishAttempt(supabase, {
@@ -450,6 +456,7 @@ export async function POST(request) {
       digestResearchedAt,
       researchedAt: new Date().toISOString(),
       storedNames,
+      restore,
     });
     if (!write.written) return writeFailureResponse(write);
     return Response.json({ status });
@@ -461,6 +468,26 @@ export async function POST(request) {
     model = getServerEnv().geminiModel;
     client = getGeminiClient();
   } catch {
+    // F-M1 (fix round): this catch is a POST-CLAIM terminal exit exactly
+    // like every failure branch below it -- GATE 9's claim has already
+    // blanked `pack` unconditionally. A bare early return here (the old
+    // behaviour) left the row `status: "running"` with an empty document
+    // until the lease expired, with no terminal write at all -- worse than
+    // every other gap this round closes, since nothing here even tried.
+    // `finishAttempt` matches the shape of every other failure site:
+    // `...restore` puts the prior document back, and the attempt is still
+    // recorded durably.
+    const { write } = await finishAttempt(supabase, {
+      ...attemptCtx,
+      status: "failed",
+      reason: "provider-error",
+      error: NO_KEY_REFUSAL,
+      postingFingerprint: fingerprint,
+      digestResearchedAt,
+      storedNames,
+      ...restore,
+    });
+    if (!write.written) return writeFailureResponse(write);
     return Response.json({ error: NO_KEY_REFUSAL }, { status: 503 });
   }
 
@@ -607,6 +634,12 @@ export async function POST(request) {
     // already resolved above, so a name kept on this first pass survives
     // the second (design-reconciled.r2.md ss4.3's idempotence requirement).
     storedNames,
+    // `restore` (not `...restore`) -- fix round, F-M2: this write carries
+    // its own fresh `normalizedPack`, so `restore` is never spread into it,
+    // but the CHECK-safe fallback retry (a real reply that is valid JSON yet
+    // over PREP_PACK_MAX_BYTES) needs the prior document to fall back to.
+    // Without it, that retry runs with no restore at all and blanks the row.
+    restore,
   });
   if (!write.written) return writeFailureResponse(write);
   return Response.json({ status });

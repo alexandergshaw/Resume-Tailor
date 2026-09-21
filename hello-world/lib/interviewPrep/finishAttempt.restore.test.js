@@ -113,10 +113,17 @@ describe("P2 -- the CHECK-safe fallback retry restores the prior document", () =
     expect(firstPayload.liveRevisions).toEqual(restore.liveRevisions);
   });
 
-  it("[no-op control -- HEAD-GREEN] with NO `restore` in ctx, the retry payload is byte-identical to today's", async () => {
+  it("[no-op control -- fix round B2] with NO `restore` in ctx, the retry payload is byte-identical to today's PLUS `storedNames`, never a subset", async () => {
     // Every existing call site omits `restore`, so this pins the default:
-    // additive, with today's behaviour unchanged. Without it, an
+    // additive, with today's behaviour otherwise unchanged. Without it, an
     // implementation that injects a pack unconditionally would look correct.
+    //
+    // B2 (fix round): `storedNames` is now ALWAYS forwarded to the retry,
+    // whether or not `restore` is present -- see finishAttempt's own header.
+    // This is the ONE assertion this fix round is authorised to amend
+    // (loop-traps: a landed test pins the omission it was written to catch;
+    // widening it to a subset check would defeat that, so the key set stays
+    // EXACT, just with the corrected members).
     const { writePrepPackResult, recordPrepEvent } = deps(CHECK_VIOLATION, WRITTEN);
 
     await finishAttempt(
@@ -135,7 +142,7 @@ describe("P2 -- the CHECK-safe fallback retry restores the prior document", () =
     expect(retryPayload).not.toHaveProperty("pack");
     expect(retryPayload).not.toHaveProperty("liveRevisions");
     expect(Object.keys(retryPayload).sort()).toEqual(
-      ["applicationId", "error", "leaseToken", "reason", "status", "userId"].sort(),
+      ["applicationId", "error", "leaseToken", "reason", "status", "storedNames", "userId"].sort(),
     );
   });
 

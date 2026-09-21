@@ -168,3 +168,194 @@ describe("P3 -- EVERY terminal failure/unavailable finishAttempt payload in rout
     ).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// FIX ROUND EXTENSION (verify.r1's F-M1/F-M2): the census above only ever
+// looked at finishAttempt( PAYLOADS carrying a "failed"/"unavailable" status
+// -- it could not see (a) a SUCCESS write whose own CHECK-safe retry has
+// nothing to fall back to, because a success payload is deliberately out of
+// this file's own P3 scope ("the success and embedded sites pass their own
+// real `pack` and are deliberately out of scope"), or (b) a post-claim exit
+// that never calls finishAttempt( AT ALL, because a census over finishAttempt
+// CALLS cannot see a branch that makes none. Both are exactly the shape three
+// live gaps took (the no-key 503, and both success sites' own retry). The two
+// blocks below close each independently.
+// ---------------------------------------------------------------------------
+
+/** A standalone `restore` FIELD (as opposed to a `...restore` SPREAD) --
+ *  route.js's own fix for a SUCCESS write (:454ish, :606ish): the write
+ *  itself carries fresh content, so `restore` is never spread into it, but
+ *  the CHECK-safe fallback retry still needs it. Computed by stripping every
+ *  `...restore` occurrence first, then checking whether a bare `restore`
+ *  identifier (immediately followed by `,` or `}`) survives -- so a spread
+ *  can never be double-counted as a standalone field. */
+function hasRestoreField(argsText) {
+  const withoutSpread = argsText.replace(/\.\.\.\s*restore\b/g, "");
+  return /\brestore\b\s*(?=[,}])/.test(withoutSpread);
+}
+
+describe("P3-EXT (fix round) -- every finishAttempt call in route.js can reach `restore`, spread or standalone", () => {
+  it("[canary] hasRestoreField tells a `restore,` field apart from a `...restore` spread and from neither", () => {
+    const spreadOnly = 'finishAttempt(supabase, { ...attemptCtx, status: "failed", ...restore })';
+    const fieldOnly = 'finishAttempt(supabase, { ...attemptCtx, status: "partial", pack, restore })';
+    const neither = 'finishAttempt(supabase, { ...attemptCtx, status: "partial", pack })';
+
+    const spreadArgs = findCalls(tokenizeSource(spreadOnly).readable, "finishAttempt")[0].argsText;
+    const fieldArgs = findCalls(tokenizeSource(fieldOnly).readable, "finishAttempt")[0].argsText;
+    const neitherArgs = findCalls(tokenizeSource(neither).readable, "finishAttempt")[0].argsText;
+
+    expect(hasRestoreField(spreadArgs), "a ...restore spread must not ALSO read as a standalone field").toBe(false);
+    expect(hasRestoreField(fieldArgs)).toBe(true);
+    expect(hasRestoreField(neitherArgs)).toBe(false);
+  });
+
+  it("[RED before this fix round: GATE 11's embedded success and the final gemini success carried neither] every finishAttempt payload names restore -- spread (a failure/unavailable write reusing the prior document as its own) or standalone (a success write giving its own CHECK-safe retry something to fall back to)", () => {
+    const offenders = finishAttemptCalls()
+      .filter((c) => !RESTORE_SPREAD.test(c.argsText) && !hasRestoreField(c.argsText))
+      .map((c) => `route.js:${c.line}`);
+    expect(offenders, `these finishAttempt calls cannot reach restore at all: ${offenders.join(", ")}`).toEqual([]);
+  });
+});
+
+/** Helpers/functions defined ELSEWHERE in route.js that a post-claim branch
+ *  may delegate to instead of calling finishAttempt( directly, PROVIDED that
+ *  helper itself always calls finishAttempt before returning -- an explicit,
+ *  reviewed allowlist (the same discipline
+ *  trustedNamesCallSites.sweep.test.js's own KNOWN_CALL_SITES uses), not a
+ *  generic call-graph walk. `refuseRecordingFailure` is the one delegate
+ *  route.js has today (GATE 12's spend-record refusal, route.js:305-315,
+ *  which itself spreads `...restore` into its own finishAttempt call). A
+ *  future delegate must be added here in the SAME step that adds it. */
+const FINISH_ATTEMPT_DELEGATES = ["refuseRecordingFailure"];
+
+/** Is the `{` at `braceIndex` a STATEMENT block (an if/try/catch/else/
+ *  finally/do body) rather than an OBJECT LITERAL or destructuring pattern?
+ *  Decided by the single non-whitespace token immediately before it: `)`
+ *  (closes an `if(...)`/`while(...)`/`catch(...)` condition) or the bare
+ *  keyword `try`/`else`/`finally`/`do`/`catch` (a paren-less catch). Anything
+ *  else -- `(`, `,`, `=`, `:`, `return`, the start of `const {` -- is an
+ *  expression brace. This is the one piece of real JS-shape knowledge the
+ *  census below needs; everything else is plain depth counting. */
+function isBlockBrace(text, braceIndex) {
+  let k = braceIndex - 1;
+  while (k >= 0 && /\s/.test(text[k])) k -= 1;
+  if (k < 0) return true;
+  if (text[k] === ")") return true;
+  let wordStart = k + 1;
+  while (wordStart > 0 && /[A-Za-z]/.test(text[wordStart - 1])) wordStart -= 1;
+  const word = text.slice(wordStart, k + 1);
+  return ["try", "else", "finally", "do", "catch"].includes(word);
+}
+
+/** Splits `body` into its own top-level STATEMENT blocks, interleaved with
+ *  the flat code between them, in source order. An expression brace (an
+ *  object literal or destructuring pattern) is still walked past in a
+ *  depth-balanced way -- so nothing inside it is ever miscounted -- but it
+ *  does NOT start a new segment; only a genuine statement block does. This
+ *  is what keeps `finishAttempt(supabase, { ...restore })` and the `return`
+ *  that follows it in the SAME segment as each other. */
+function splitTopLevelSegments(body) {
+  const segments = [];
+  let i = 0;
+  let segStart = 0;
+  while (i < body.length) {
+    if (body[i] === "{") {
+      const blockBrace = isBlockBrace(body, i);
+      let depth = 1;
+      let j = i + 1;
+      for (; j < body.length && depth > 0; j += 1) {
+        if (body[j] === "{") depth += 1;
+        else if (body[j] === "}") depth -= 1;
+      }
+      if (blockBrace) {
+        segments.push(body.slice(segStart, i));
+        segments.push(body.slice(i, j));
+        segStart = j;
+      }
+      i = j;
+    } else {
+      i += 1;
+    }
+  }
+  segments.push(body.slice(segStart));
+  return segments;
+}
+
+/** The `POST` handler's own body (braces of the function signature itself
+ *  stripped), from the comment-blanked view. */
+function postHandlerBody() {
+  const src = readableOf(ROUTE_PATH);
+  const marker = "export async function POST";
+  const start = src.indexOf(marker);
+  if (start < 0) throw new Error("export async function POST was not found in route.js");
+  const braceStart = src.indexOf("{", start);
+  let depth = 0;
+  let i = braceStart;
+  for (; i < src.length; i += 1) {
+    if (src[i] === "{") depth += 1;
+    else if (src[i] === "}") {
+      depth -= 1;
+      if (depth === 0) break;
+    }
+  }
+  return src.slice(braceStart + 1, i);
+}
+
+/** Every top-level segment of `POST`, from the claim onward, that contains a
+ *  `return` but neither `finishAttempt(` nor a call to a FINISH_ATTEMPT_DELEGATES
+ *  member -- exempting the claim's OWN immediate refusal (`claim.reason`),
+ *  since a refused claim never blanked anything. This is F-M1's exact shape:
+ *  a post-claim exit that calls finishAttempt zero times has no payload for
+ *  the payload-only census (above) to ever examine. */
+function orphanTerminalSegments(body) {
+  const claimIdx = body.indexOf("claimPrepPack(");
+  const afterClaim = claimIdx >= 0 ? body.slice(claimIdx) : body;
+  const offenders = [];
+  for (const segment of splitTopLevelSegments(afterClaim)) {
+    if (!/\breturn\b/.test(segment)) continue;
+    if (segment.includes("claim.reason")) continue;
+    const covered =
+      segment.includes("finishAttempt(") || FINISH_ATTEMPT_DELEGATES.some((name) => segment.includes(`${name}(`));
+    if (!covered) offenders.push(segment.trim().slice(0, 160));
+  }
+  return offenders;
+}
+
+describe("post-claim terminal-exit census (fix round, F-M1) -- no return after the claim is orphaned", () => {
+  it("[canary, synthetic] the segment splitter + orphan detector tell a covered exit from an orphaned one, and are not fooled by nested object-literal braces", () => {
+    const covered = `
+      const claim = await claimPrepPack(supabase, { applicationId, userId });
+      if (!claim.claimed) {
+        return Response.json({ status: "refused", reason: claim.reason }, { status: 409 });
+      }
+      try {
+        client = getGeminiClient();
+      } catch {
+        const { write } = await finishAttempt(supabase, { ...attemptCtx, status: "failed", ...restore });
+        if (!write.written) return writeFailureResponse(write);
+        return Response.json({ error: NO_KEY_REFUSAL }, { status: 503 });
+      }
+    `;
+    const orphaned = `
+      const claim = await claimPrepPack(supabase, { applicationId, userId });
+      if (!claim.claimed) {
+        return Response.json({ status: "refused", reason: claim.reason }, { status: 409 });
+      }
+      try {
+        client = getGeminiClient();
+      } catch {
+        return Response.json({ error: NO_KEY_REFUSAL }, { status: 503 });
+      }
+    `;
+    expect(orphanTerminalSegments(tokenizeSource(covered).readable)).toEqual([]);
+    expect(orphanTerminalSegments(tokenizeSource(orphaned).readable).length).toBeGreaterThan(0);
+  });
+
+  it("[proof this census bites, no source mutation needed: the SAME check against the pre-fix route.js (git HEAD) finds exactly the no-key catch block] every return in today's POST, after the claim, is backed by finishAttempt(, a named delegate, or is the claim's own refusal", () => {
+    const offenders = orphanTerminalSegments(postHandlerBody());
+    expect(
+      offenders,
+      `these POST segments return after the claim with no finishAttempt reachable: ${JSON.stringify(offenders)}`,
+    ).toEqual([]);
+  });
+});

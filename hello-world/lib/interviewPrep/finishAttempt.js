@@ -28,6 +28,15 @@
 // (plan §2.2, the F2 resolution) closes that: when the caller supplies one,
 // this retry restores the candidate's prior document instead of leaving it
 // empty.
+//
+// FIX ROUND UPDATE (B2): the paragraph above was itself incomplete. `restore`
+// landed, but `storedNames` did not travel with it -- the retry rebuilt its
+// payload from scratch and never named `storedNames`, so
+// `writePrepPackResult` applied its own `storedNames = []` default and
+// re-normalized the restored pack with NO trusted names, silently dropping
+// every line the O-15 name exemption had preserved. `storedNames` is now
+// destructured out of ctx explicitly, the same way `restore` is, and
+// forwarded to BOTH writes below.
 import {
   writePrepPackResult as defaultWritePrepPackResult,
   recordPrepEvent as defaultRecordPrepEvent,
@@ -91,7 +100,8 @@ function outcomeForStatus(status, reason) {
 /**
  * @param {*} supabase
  * @param {{ applicationId: string, userId: string, leaseToken: string, triggerClass?: string, engine?: string,
- *           restore?: {}|{pack: object, liveRevisions: Record<string, number>}, [key: string]: * }} ctx
+ *           restore?: {}|{pack: object, liveRevisions: Record<string, number>}, storedNames?: string[],
+ *           [key: string]: * }} ctx
  *   `triggerClass`/`engine` are consumed only by the event write below;
  *   every other field is forwarded to `writePrepPackResult` as-is.
  *
@@ -103,7 +113,19 @@ function outcomeForStatus(status, reason) {
  *   caller's behalf. A `finishAttempt` that silently added content to a
  *   write its caller did not ask for would be a second, hidden writer of
  *   `interview_prep_packs.pack` and would falsify R-N45-CLAIMS. DEFAULT
- *   undefined -> the retry payload is byte-identical to today's.
+ *   undefined -> the retry payload is byte-identical to today's, apart from
+ *   `storedNames` immediately below, which the retry now always carries.
+ *
+ *   `storedNames` (fix round, B2) is ALSO destructured out of ctx, unlike
+ *   every other field. The FIRST write's behaviour is unchanged by this --
+ *   it is forwarded there exactly as it always was, just explicitly now
+ *   instead of riding through `...payload`. What changes is the RETRY: it
+ *   used to omit `storedNames` entirely, so `writePrepPackResult` applied
+ *   its own `storedNames = []` default and re-normalized a restored pack
+ *   against no trusted names at all, silently dropping every line the O-15
+ *   name exemption had preserved. Forwarded unconditionally -- whether or
+ *   not `restore` is also present -- so there is no state in which a
+ *   restore carries content but no names to screen it against.
  * @param {{ writePrepPackResult?: Function, recordPrepEvent?: Function, isCheckViolation?: Function }} [deps]
  *   The three prepStore.js functions this orchestration calls, injectable so
  *   a test can substitute them without a real Supabase client -- default to
@@ -111,14 +133,14 @@ function outcomeForStatus(status, reason) {
  */
 export async function finishAttempt(
   supabase,
-  { applicationId, userId, leaseToken, triggerClass, engine, restore, ...payload },
+  { applicationId, userId, leaseToken, triggerClass, engine, restore, storedNames, ...payload },
   {
     writePrepPackResult = defaultWritePrepPackResult,
     recordPrepEvent = defaultRecordPrepEvent,
     isCheckViolation = defaultIsCheckViolation,
   } = {},
 ) {
-  let write = await writePrepPackResult(supabase, { applicationId, userId, leaseToken, ...payload });
+  let write = await writePrepPackResult(supabase, { applicationId, userId, leaseToken, storedNames, ...payload });
   let status = payload.status;
   let reason = payload.reason ?? null;
 
@@ -132,6 +154,7 @@ export async function finishAttempt(
       status: "failed",
       reason: "check-violation",
       error: write.error,
+      storedNames,
       ...(restore || {}),
     });
   }
