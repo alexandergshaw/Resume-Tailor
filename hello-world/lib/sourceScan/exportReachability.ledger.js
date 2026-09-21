@@ -69,6 +69,10 @@ export const ALLOWED_UNREACHABLE_MODULES = [
     file: "lib/interviewPrep/__fixtures__/predictionCorpus.js",
     why: "the held-out K1-PROHIBITION fixture for prepParse.test.js -- PREDICTION_CORPUS is the corpus that suite imports directly by name; a plain .js beside the test it feeds, same shape as practiceSessionTestDoubles.js and driveWireProbe.js above, and never ships to a browser",
   },
+  {
+    file: "lib/sourceScan/migrationDivergence.js",
+    why: "11 -> 12 (N30a): the applied-vs-committed migration ledger and its appliedMigrationTexts/textsBefore helpers -- a test-only instrument (no shipping code models divergence between a migration's committed text and what actually ran) imported only by migrationDivergence.test.js, interviewPrepAppliedSchema.test.js and the two effective-schema suites it now feeds orderedTexts through",
+  },
 ];
 
 // ---------------------------------------------------------------------------

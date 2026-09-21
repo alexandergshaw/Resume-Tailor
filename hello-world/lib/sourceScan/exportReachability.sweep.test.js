@@ -91,8 +91,8 @@
 //       before cutting. docx.js#buildDocxFromUploadedTemplate is the worked
 //       example of exactly that near-miss.
 //
-//   ALLOWED_UNREACHABLE_MODULES (11) / UNWIRED_MODULES (0)  whole files no
-//       entry point can reach. The eleven are sweep and test infrastructure
+//   ALLOWED_UNREACHABLE_MODULES (12) / UNWIRED_MODULES (0)  whole files no
+//       entry point can reach. The twelve are sweep and test infrastructure
 //       (including this sweep's own ledger module -- see its self-entry
 //       there) and are justified one by one. The findings bucket is empty
 //       because all three of its entries were reviewed and deleted -- see
@@ -358,7 +358,7 @@ describe("every module is reachable from something that ships, or is on a ledger
     // because this count has been bumped before with a comment naming a single
     // movement when the real delta was +2/-1, and a count that is right by
     // coincidence is worse than a red one.
-    expect(ALLOWED_UNREACHABLE_MODULES).toHaveLength(11);
+    expect(ALLOWED_UNREACHABLE_MODULES).toHaveLength(12);
   });
 
   it("keeps the unwired-feature findings visible and described", () => {

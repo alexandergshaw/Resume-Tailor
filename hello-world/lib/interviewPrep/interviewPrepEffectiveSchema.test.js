@@ -40,12 +40,15 @@
 // minors 7-9's own mutant-kill coverage landed here. Every assertion below
 // is still authored and owned in this file; only the functions under test
 // moved, unchanged in behaviour except where a numbered item above names a
-// fix.
+// fix. orderedTexts (N30a) IS THE APPLIED VIEW: migrationDivergence.js's
+// appliedMigrationTexts with NEVER_APPLIED_STATEMENTS subtracted;
+// lockdownStripped stays this file's RAW COMMITTED text, read directly.
 import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { stripSqlComments } from "@/lib/sourceScan/stripSqlComments.js";
+import { appliedMigrationTexts } from "@/lib/sourceScan/migrationDivergence.js";
 import {
   replayTableGrants,
   replayFunctionExecute,
@@ -65,7 +68,6 @@ import {
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const MIGRATIONS_DIR = path.join(ROOT, "supabase/migrations");
-
 const ORIGINAL_MIGRATION = "20260914000000_interview_prep.sql";
 const LOCKDOWN_MIGRATION = "20260915000000_interview_prep_spend_lockdown.sql";
 const CAP_REMOVAL_MIGRATION = "20260922000000_interview_prep_remove_spend_caps.sql"; // N41: also touches this table
@@ -89,7 +91,7 @@ beforeAll(() => {
   migrationFiles = readdirSync(MIGRATIONS_DIR)
     .filter((f) => f.endsWith(".sql"))
     .sort();
-  orderedTexts = migrationFiles.map((f) => readFileSync(path.join(MIGRATIONS_DIR, f), "utf8"));
+  orderedTexts = appliedMigrationTexts(migrationFiles, migrationFiles.map((f) => readFileSync(path.join(MIGRATIONS_DIR, f), "utf8")));
   originalRaw = readFileSync(path.join(MIGRATIONS_DIR, ORIGINAL_MIGRATION), "utf8");
   originalStripped = stripSqlComments(originalRaw);
   lockdownStripped = stripSqlComments(readFileSync(path.join(MIGRATIONS_DIR, LOCKDOWN_MIGRATION), "utf8"));
@@ -763,21 +765,19 @@ describe("execute-grant replay -- a malformed to/from pairing is rejected, not h
 });
 
 // ===========================================================================
-// anon: a bare `revoke ... from public` narrows the DEFAULT PUBLIC-wide
-// grant, but does NOT remove an explicit grant a MORE SPECIFIC role such as
-// `anon` might separately hold -- so naming `public` alone in the lockdown
-// migration would not actually prove `anon` has no path to either function
-// or to interview_prep_spend. Both precedents this file's own header cites
-// revoke `anon` as its own, separate statement:
-// 20260612000000_feed_postings_retention.sql:33-34 (`from public;` AND
-// `from anon, authenticated;`) and
-// 20260908000000_positions_policy_hardening.sql:274 (`revoke all on table
-// public.positions from anon;`). Asserted here as a source-text presence
-// check, not a replay -- these are independent statements the migration
-// either contains or does not, not a sequence a later file could override.
+// anon: a bare `revoke ... from public` narrows the DEFAULT PUBLIC-wide grant, but
+// does NOT remove an explicit grant a MORE SPECIFIC role such as `anon` might
+// separately hold -- so naming `public` alone would not prove `anon` has no path
+// to either function or to interview_prep_spend. Both precedents this file's own
+// header cites revoke `anon` as its own, separate statement:
+// 20260612000000_feed_postings_retention.sql:33-34 (`from public;` AND `from anon,
+// authenticated;`) and 20260908000000_positions_policy_hardening.sql:274 (`revoke
+// all on table public.positions from anon;`). Asserted here as a source-text
+// presence check against the committed text's claim; the executed anon revoke is
+// 20260923020000 (see lib/sourceScan/interviewPrepAppliedSchema.test.js T-A4.1).
 // ===========================================================================
 
-describe("the lockdown migration explicitly revokes anon, not only public/authenticated", () => {
+describe("the COMMITTED TEXT of 20260915 explicitly revokes anon, not only public/authenticated -- this exact statement was never applied (lib/sourceScan/migrationDivergence.js)", () => {
   it("[canary] the presence check below is capable of failing -- a text missing the anon revoke does not match", () => {
     const noAnon = "revoke execute on function public.claim_prep_pack_slot(uuid, uuid, timestamptz) from public;";
     expect(noAnon).not.toMatch(
@@ -785,19 +785,19 @@ describe("the lockdown migration explicitly revokes anon, not only public/authen
     );
   });
 
-  it("revokes claim_prep_pack_slot's execute grant from anon explicitly", () => {
+  it("the committed text revokes claim_prep_pack_slot's execute grant from anon explicitly, never applied", () => {
     expect(lockdownStripped).toMatch(
       /revoke\s+execute\s+on\s+function\s+public\.claim_prep_pack_slot\([^)]*\)\s+from\s+anon\s*;/i,
     );
   });
 
-  it("revokes record_prep_model_call's execute grant from anon explicitly", () => {
+  it("the committed text revokes record_prep_model_call's execute grant from anon explicitly, never applied", () => {
     expect(lockdownStripped).toMatch(
       /revoke\s+execute\s+on\s+function\s+public\.record_prep_model_call\([^)]*\)\s+from\s+anon\s*;/i,
     );
   });
 
-  it("revokes every table privilege on interview_prep_spend from anon explicitly", () => {
+  it("the committed text revokes every table privilege on interview_prep_spend from anon explicitly, never applied", () => {
     expect(lockdownStripped).toMatch(/revoke\s+all\s+on\s+table\s+public\.interview_prep_spend\s+from\s+anon\s*;/i);
   });
 });
@@ -818,7 +818,7 @@ describe("the lockdown migration explicitly revokes anon, not only public/authen
 // cleanup actually runs, or how many rows it finds, on the live project.
 // ===========================================================================
 
-describe("the lockdown migration cleans up cross-tenant rows BEFORE replacing claim_prep_pack_slot", () => {
+describe("the COMMITTED TEXT of 20260915 cleans up cross-tenant rows BEFORE replacing claim_prep_pack_slot -- this cleanup block was never applied (lib/sourceScan/migrationDivergence.js)", () => {
   const REPLACE_MARKER = "create or replace function public.claim_prep_pack_slot(";
 
   it("[canary] the ordering assertions below are sensitive to real ordering, not vacuously true", () => {
@@ -864,7 +864,7 @@ describe("the lockdown migration cleans up cross-tenant rows BEFORE replacing cl
 // those two DELETEs and nothing else.
 // ===========================================================================
 
-describe("the cleanup DELETE statements are guarded by their exact join and predicate (BLOCKER-2)", () => {
+describe("the cleanup DELETE statements, in the COMMITTED TEXT of 20260915 (never applied), are guarded by their exact join and predicate (BLOCKER-2)", () => {
   let cleanupBlock;
 
   beforeAll(() => {
@@ -967,7 +967,7 @@ describe("the cleanup DELETE statements are guarded by their exact join and pred
   });
 });
 
-describe("MAJOR-D: the force-RLS guard's condition, polarity, verb and message are pinned TOGETHER, not read separately", () => {
+describe("MAJOR-D: in the COMMITTED TEXT of 20260915 (never applied), the force-RLS guard's condition, polarity, verb and message are pinned TOGETHER, not read separately", () => {
   it.each(["spend", "packs"])("[mutant this kills, control included] inverting the %s guard's polarity is caught", (v) => {
     const re = forceRlsGuardPattern(v);
     expect(lockdownStripped).toMatch(re);
@@ -988,7 +988,7 @@ describe("MAJOR-D: the force-RLS guard's condition, polarity, verb and message a
   );
 });
 
-it("N22 wave-4: F1 (splice preserves intra-file order), F2 (the format() guard also covers tracked functions), F3 (format() caught without literal 'execute format('), F5 (destructive-keyword count runs over blanked text) and F6 ($$ delimiter search runs over blanked text) each have an executed mutant that fails without the fix and a no-op control that passes with it", () => {
+it("N22 wave-4 (uses the committed text of 20260915 as fixture, never applied): F1 (splice preserves intra-file order), F2 (the format() guard also covers tracked functions), F3 (format() caught without literal 'execute format('), F5 (destructive-keyword count runs over blanked text) and F6 ($$ delimiter search runs over blanked text) each have an executed mutant that fails without the fix and a no-op control that passes with it", () => {
   expect([...(replayTableGrants([...orderedTexts, "do $$ begin execute 'revoke update on table public.interview_prep_spend from authenticated'; end $$;\ngrant update on table public.interview_prep_spend to authenticated;"]).get("public.interview_prep_spend|authenticated") || [])].sort()).toEqual(["select", "update"]);
   expect(() => replayFunctionExecute([...orderedTexts, "do $$ begin execute format('grant execute on function public.claim_prep_pack_slot(uuid, uuid, timestamptz) to %I;', 'public'); end $$;"], "claim_prep_pack_slot", "public.claim_prep_pack_slot(uuid, uuid, timestamptz)")).toThrow(/claim_prep_pack_slot/);
   expect(() => replayTableGrants([...orderedTexts, "do $$ declare v_sql text; begin v_sql := format('grant update on table public.interview_prep_spend to %I;', 'authenticated'); execute v_sql; end $$;"])).toThrow(/interview_prep_spend/);

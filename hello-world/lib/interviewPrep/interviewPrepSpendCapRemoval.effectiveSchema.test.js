@@ -47,6 +47,7 @@ import {
   droppedConstraintName,
   constraintNameByBodyFragment,
 } from "@/lib/interviewPrep/migrationGrantReplay.js";
+import { appliedMigrationTexts } from "@/lib/sourceScan/migrationDivergence.js";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const MIGRATIONS_DIR = path.join(ROOT, "supabase/migrations");
@@ -58,7 +59,7 @@ beforeAll(() => {
   migrationFiles = readdirSync(MIGRATIONS_DIR)
     .filter((f) => f.endsWith(".sql"))
     .sort();
-  orderedTexts = migrationFiles.map((f) => readFileSync(path.join(MIGRATIONS_DIR, f), "utf8"));
+  orderedTexts = appliedMigrationTexts(migrationFiles, migrationFiles.map((f) => readFileSync(path.join(MIGRATIONS_DIR, f), "utf8")));
 });
 
 const CAP_REMOVAL_MIGRATION = "20260922000000_interview_prep_remove_spend_caps.sql";
