@@ -344,6 +344,16 @@ export const ORPHAN_EXPORTS = [
     why: "same shape as PREP_LIST_COLUMNS: used once inside this module to build PREP_SPEND_PROJECTION (which prepStore.js's spend read imports); nothing outside asks for the column array on its own",
   },
   {
+    file: "lib/interviewPrep/prepContract.js",
+    name: "PREP_REVISION_COLUMNS",
+    why: "N45/N46: same shape as PREP_LIST_COLUMNS -- used once inside this module to build PREP_REVISION_PROJECTION (which prepStore.js's readLiveSectionRevisions/readSectionRevision import); nothing outside asks for the column array itself",
+  },
+  {
+    file: "lib/interviewPrep/prepContract.js",
+    name: "PREP_REVISION_LIST_COLUMNS",
+    why: "N45/N46: same shape as PREP_SPEND_COLUMNS -- used once inside this module to build PREP_REVISION_LIST_PROJECTION (which prepStore.js's listSectionRevisions imports); nothing outside asks for the column array on its own",
+  },
+  {
     file: "lib/llm/engines/tailor-lite/docxModel.js",
     name: "decodeXml",
     why: "used twice more inside docxModel.js; the deletable tailor-lite folder exports it, but ImportToLibraryDialog and engine.js import only loadDocx/documentLines/findPlaceholders/FIXED_ENTRY_DATE",

@@ -30,8 +30,14 @@
 // lib/sourceScan/exportReachability.sweep.test.js churn.
 
 import { containsDetectedName, EMBEDDED_TEMPLATE_ORIGIN } from "./prepParse.js";
+import { PREP_SECTION_NAMES } from "./prepContract.js";
 
-const SECTION_NAMES = ["aboutYou", "whyRole", "askThem", "stages"];
+// N45/N46 plan §S1: this constant now lives in prepContract.js (as
+// PREP_SECTION_NAMES) so lib/interviewPrep/prepClaims.js and
+// lib/interviewPrep/prepMerge.js can share it without importing this module
+// or prepParse.js. Re-bound to the old local name so nothing below this line
+// changes.
+const SECTION_NAMES = PREP_SECTION_NAMES;
 
 function asPlainObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};

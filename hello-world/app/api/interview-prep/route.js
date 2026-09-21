@@ -99,6 +99,11 @@ import {
   recordPrepEvent,
   readPrepPack,
   listPrepEvents,
+  readLiveSectionRevisions,
+  listSectionRevisions,
+  readSectionRevision,
+  appendSectionRevisions,
+  writePrepPackResult,
 } from "@/lib/interviewPrep/prepStore";
 import { finishAttempt } from "@/lib/interviewPrep/finishAttempt";
 import { normalizePack, countRefusedLines } from "@/lib/interviewPrep/prepParse";
@@ -110,6 +115,8 @@ import {
   buildTrustedNamesPayload,
 } from "@/lib/interviewPrep/trustedNames";
 import { packStatus, buildEmbeddedPack, completeSections } from "@/lib/interviewPrep/prepPack";
+import { restorePayload, buildPackDocument, baseProvenanceFromPack } from "@/lib/interviewPrep/prepMerge";
+import { PREP_SECTION_NAMES } from "@/lib/interviewPrep/prepContract";
 import { PREP_RATE_LIMIT, PREP_RATE_WINDOW_MS, PREP_GENERATION_TIMEOUT_MS } from "@/lib/interviewPrep/prepConstants";
 
 export const runtime = "nodejs";
@@ -296,7 +303,14 @@ function writeFailureResponse(write) {
 // tests `.recorded` and is immediately followed by the early exit, not merely
 // co-occurs with one.
 async function refuseRecordingFailure(supabase, ctx) {
-  await finishAttempt(supabase, { ...ctx, status: "failed", reason: "spend-record-failed" });
+  // `ctx.restore` rides in as an ordinary property (the caller below spreads
+  // it into `ctx` itself) -- pulled out here, by name, and spread
+  // EXPLICITLY into this call's own payload, matching every other failure
+  // call site (plan §2.2). finishAttempt's own destructuring then removes
+  // the redundant `restore` property `...ctx` also carried before anything
+  // reaches writePrepPackResult.
+  const { restore } = ctx;
+  await finishAttempt(supabase, { ...ctx, status: "failed", reason: "spend-record-failed", ...restore });
   return Response.json({ error: "Could not record this attempt. Try again." }, { status: 500 });
 }
 
@@ -352,6 +366,18 @@ export async function POST(request) {
   if (appErr) return Response.json({ error: appErr.message || "Could not load this application." }, { status: 500 });
   if (!appRow) return notFound("Application not found.");
 
+  // N45/N46 G2 (plan §2.5): resolved HERE, immediately after GATE 6, rather
+  // than after generation as it used to be. Every failure/unavailable
+  // finishAttempt call this route makes below -- GATE 10, the spend-record
+  // refusal, and GATE 13's provider/parse/zero-content failures -- now runs
+  // AFTER this resolution, so a restore built from any of them is screened
+  // against the candidate's REAL current stored names, never an empty
+  // default (writePrepPackResult's own `storedNames = []` fallback). A move,
+  // not an added round trip: this used to run once, later; it now runs once,
+  // earlier.
+  const { candidateName, interviewerNames } = await readTrustedNames(supabase, { applicationId, userId });
+  const storedNames = flattenTrustedNames({ candidateName, interviewerNames });
+
   // GATE 7. O-14: the server's own configuration must ALWAYS beat a
   // request-supplied engine. The server-forced term is computed first, ORed
   // in, and never the request-scoped call alone (SEC-1 owns the shared
@@ -367,6 +393,19 @@ export async function POST(request) {
     ensureCompanyDigest(request, applicationId);
   }
 
+  // GATE 8b (plan §2.5, gap G1). MUST run BEFORE GATE 9's claim --
+  // claim_prep_pack_slot blanks `pack` to '{}' unconditionally on its own
+  // re-claim branch, so a base read taken AFTER it would see only the
+  // already-blanked value and "restore" would write back nothing, silently,
+  // for every legacy row (every row in production today). `restorePayload`
+  // (lib/interviewPrep/prepMerge.js) turns this base into the exact fields a
+  // terminal failure/unavailable write needs to put the prior document back
+  // -- see that function's own header for the full contract, including why
+  // a `running` base (this read racing a still-live attempt) is refused
+  // outright rather than restored.
+  const base = await readLiveSectionRevisions(supabase, { applicationId, userId });
+  const restore = restorePayload(base);
+
   // GATE 9. Serializes concurrent attempts on this row and enforces both
   // spend caps -- see lib/interviewPrep/prepStore.js's claimPrepPack.
   const claim = await claimPrepPack(supabase, { applicationId, userId });
@@ -381,7 +420,10 @@ export async function POST(request) {
   const description = String(position.description || "").trim();
   const attemptCtx = { applicationId, userId, leaseToken: claim.leaseToken, triggerClass, engine };
 
-  // GATE 10. Nothing to research: a deliberate, terminal row with NO model call.
+  // GATE 10. Nothing to research: a deliberate, terminal row with NO model
+  // call. N47's own defect: this is a SUCCESSFUL path (no provider call, no
+  // error) that used to still destroy the pack, because claim_prep_pack_slot
+  // had already blanked it at GATE 9. `...restore` (GATE 8b) puts it back.
   if (!description) {
     const { write, status } = await finishAttempt(supabase, {
       ...attemptCtx,
@@ -389,6 +431,8 @@ export async function POST(request) {
       reason: "refused-posting",
       postingFingerprint: fingerprint,
       digestResearchedAt,
+      storedNames,
+      ...restore,
     });
     if (!write.written) return writeFailureResponse(write);
     return Response.json({ status });
@@ -405,6 +449,7 @@ export async function POST(request) {
       postingFingerprint: fingerprint,
       digestResearchedAt,
       researchedAt: new Date().toISOString(),
+      storedNames,
     });
     if (!write.written) return writeFailureResponse(write);
     return Response.json({ status });
@@ -431,6 +476,8 @@ export async function POST(request) {
       postingFingerprint: fingerprint,
       digestResearchedAt,
       error: recordResult.error,
+      storedNames,
+      restore,
     });
   }
 
@@ -461,6 +508,8 @@ export async function POST(request) {
       error: generationError?.message || "The model call did not complete.",
       postingFingerprint: fingerprint,
       digestResearchedAt,
+      storedNames,
+      ...restore,
     });
     if (!write.written) return writeFailureResponse(write);
     return Response.json({ status });
@@ -475,6 +524,8 @@ export async function POST(request) {
       error: parsed.error,
       postingFingerprint: fingerprint,
       digestResearchedAt,
+      storedNames,
+      ...restore,
     });
     if (!write.written) return writeFailureResponse(write);
     return Response.json({ status });
@@ -499,14 +550,12 @@ export async function POST(request) {
   // above already strips it, at the one boundary where untrusted JSON
   // becomes a pack, so the exemption is unreachable from a model-authored
   // pack by the time `parsed.pack` reaches here.
-  // N33: resolved once here, after GATE 6 has already scoped
-  // applicationId/userId, and threaded into BOTH calls below --
+  // N33: resolved once, right after GATE 6 (see the comment there) --
   // design-reconciled.r2.md ss4.3's reviewer property requires every
   // normalizePack/countRefusedLines call site to resolve storedNames
-  // identically, never from `parsed`/`parsed.pack`/`body` themselves.
-  const { candidateName, interviewerNames } = await readTrustedNames(supabase, { applicationId, userId });
-  const storedNames = flattenTrustedNames({ candidateName, interviewerNames });
-
+  // identically, never from `parsed`/`parsed.pack`/`body` themselves. N45/N46
+  // G2 moved that single resolution earlier in this same function; it is not
+  // re-resolved here.
   const normalizedPack = normalizePack(parsed.pack, storedNames);
   const computedStatus = packStatus(normalizedPack);
 
@@ -539,6 +588,8 @@ export async function POST(request) {
       error: "The model's reply contained no usable section after normalization.",
       postingFingerprint: fingerprint,
       digestResearchedAt,
+      storedNames,
+      ...restore,
     });
     if (!write.written) return writeFailureResponse(write);
     return Response.json({ status });
@@ -633,13 +684,23 @@ export async function GET(request) {
   });
   const storedNames = flattenTrustedNames({ candidateName, interviewerNames });
 
-  const { pack, status, attemptsExhausted, error } = await readPrepPack(supabase, { applicationId, userId }, storedNames);
+  const { pack, status, liveRevisions, attemptsExhausted, error } = await readPrepPack(
+    supabase,
+    { applicationId, userId },
+    storedNames,
+  );
   if (error) return Response.json({ error }, { status: 500 });
 
   // AC-N33.21's "Download prep log" control reads this, client-side, off the
   // SAME response -- never a second fetch, and never listPrepEvents called
   // from a client file directly.
   const { events } = await listPrepEvents(supabase, { applicationId, userId });
+
+  // N45/N46: additive (design constraint, plan §8) -- these two fields must
+  // never replace anything an existing consumer already reads. AC-UX.1/UX.2:
+  // the list carries no `content`/`claims`, so a candidate paging through
+  // "which version" never downloads ten full bodies.
+  const { revisions: sectionRevisions } = await listSectionRevisions(supabase, { applicationId, userId });
 
   return Response.json({
     pack,
@@ -650,6 +711,8 @@ export async function GET(request) {
     candidateName,
     interviewerNames,
     error: trustedError,
+    liveRevisions,
+    sectionRevisions: sectionRevisions || {},
   });
 }
 
@@ -706,4 +769,117 @@ export async function PUT(request) {
   }
 
   return Response.json({ written: true, error: null });
+}
+
+// PATCH /api/interview-prep  (body: {applicationId, section, revision})
+//
+// N45/N46's restore surface. `updated_at` is deliberately NOT a body field
+// (plan risk R13): the optimistic-concurrency precondition is read in THIS
+// SAME REQUEST (`readLiveSectionRevisions`'s own read, a few lines below),
+// never supplied by the client, which could get it wrong or replay it.
+//
+// NEVER kill-switch-gated (AC-UX.4/UX.5) -- mirrors GET/DELETE's own O-16
+// exemption: restore spends no model call (no claim RPC, no
+// recordModelCallIssued) and must survive a PREP_DISABLED spend outage.
+//
+// Reaches `interview_prep_packs` through writePrepPackResult ONLY -- never a
+// second `.update(` site on that table -- so R-N45-CLAIMS' single-writer
+// premise (prepClaims.sweep.test.js) holds for this write too. The
+// lease-token predicate that write uses for every OTHER caller is swapped
+// for an optimistic one here (`expectedUpdatedAt`), since a restore never
+// claims a lease at all.
+export async function PATCH(request) {
+  const { supabase, userId } = await getAuth();
+  if (!userId) return unauthorized();
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return badRequest("Invalid JSON body.");
+  }
+
+  const applicationId = idOf(body?.applicationId);
+  if (!applicationId) return badRequest("Missing applicationId.");
+  const section = body?.section;
+  if (!PREP_SECTION_NAMES.includes(section)) return badRequest("Unknown section.");
+  const revision = Number(body?.revision);
+  if (!Number.isInteger(revision) || revision < 1) return badRequest("Missing or invalid revision.");
+
+  const owned = await loadOwnedApplication(supabase, applicationId, userId);
+  if (!owned) return notFound("Application not found.");
+
+  // The pre-write base, read fresh -- this row's OWN `updated_at` is the
+  // optimistic-concurrency token below (AC-CONC.3), and `status` is the
+  // "genuinely running" guard (AC-UX.5's own sibling test).
+  const base = await readLiveSectionRevisions(supabase, { applicationId, userId });
+  if (base.error) return Response.json({ error: base.error }, { status: 500 });
+  if (base.status === null) return notFound("No prep pack for this application.");
+  if (base.status === "running") return Response.json({ status: "refused", reason: "in-flight" }, { status: 409 });
+
+  const target = await readSectionRevision(supabase, { applicationId, userId, section, revision });
+  if (target.error) return Response.json({ error: target.error }, { status: 500 });
+  if (target.content === null) return notFound("That revision does not exist.");
+
+  // AC-UX.1: a restore APPENDS a copy with `restored_from` set -- it never
+  // rewinds, which is what makes restore itself reversible (AC-UX.3's own
+  // reasoning for skipping a confirmation dialog).
+  const newRevision = (base.newestBySection[section] || 0) + 1;
+  const appended = await appendSectionRevisions(supabase, {
+    applicationId,
+    userId,
+    sections: {
+      [section]: {
+        content: target.content,
+        claims: target.claims,
+        engine: target.engine,
+        revision: newRevision,
+        restoredFrom: revision,
+        contentVersion: target.contentVersion ?? 1,
+      },
+    },
+  });
+  if (appended.reason) {
+    return Response.json({ error: appended.error || "Could not save this restore." }, { status: 500 });
+  }
+
+  // AC-O15.6 (H2): resolved fresh, HERE, at restore time -- never snapshotted
+  // into the revision row -- so a name added to trusted names AFTER this
+  // revision was originally generated exempts it now.
+  const { candidateName, interviewerNames } = await readTrustedNames(supabase, { applicationId, userId });
+  const storedNames = flattenTrustedNames({ candidateName, interviewerNames });
+
+  // `base.pack` is the row's own current (already-normalized) document --
+  // the merge base for the three untouched sections. Provenance comes from
+  // it via baseProvenanceFromPack (never `interview_prep_packs.engine`,
+  // which describes the last ATTEMPT, not the content -- plan §2.6.2).
+  // Screening happens inside writePrepPackResult's own normalizePack call
+  // (prepStore.js), the SAME single choke point every other write already
+  // uses -- this route file adds no second one.
+  const currentPack = base.pack && typeof base.pack === "object" ? base.pack : {};
+  const mergedPack = buildPackDocument({
+    base: currentPack,
+    baseProvenance: baseProvenanceFromPack(currentPack),
+    replace: { [section]: { content: target.content, claims: target.claims, engine: target.engine } },
+    wholePack: false,
+  });
+
+  // Residual, disclosed rather than engineered around (matching plan
+  // §2.6.1's identical treatment of `researched_at`): `engine`/`resume_id`/
+  // `cover_letter_id`/`digest_researched_at`/`truncated_reason` describe the
+  // last ATTEMPT, not this restore, and writePrepPackResult's own
+  // unconditional columns reset them on every terminal write. Nothing today
+  // renders any of them off this row for a restored pack.
+  const write = await writePrepPackResult(supabase, {
+    applicationId,
+    userId,
+    status: base.status,
+    pack: mergedPack,
+    liveRevisions: { ...base.liveRevisions, [section]: newRevision },
+    storedNames,
+    expectedUpdatedAt: base.updatedAt,
+  });
+
+  if (!write.written) return Response.json({ status: "conflict" }, { status: 409 });
+  return Response.json({ status: "restored" });
 }

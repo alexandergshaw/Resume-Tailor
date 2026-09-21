@@ -474,7 +474,12 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // orphan -- buildEmbeddedPack screens position.title/company through it before
     // interpolating, so it has a real shipping consumer now. ONE entry removed,
     // none added; the same single movement as the TR-1 bump above.
-    expect(ORPHAN_EXPORTS).toHaveLength(70);
+    // 70 -> 72 (N45/N46): prepContract.js's two new PREP_REVISION_COLUMNS and
+    // PREP_REVISION_LIST_COLUMNS, the exact same shape as the already-listed
+    // PREP_LIST_COLUMNS/PREP_SPEND_COLUMNS pair -- each used once, internally,
+    // to build the *_PROJECTION string prepStore.js's new revision reads
+    // actually import. Two entries added, none removed.
+    expect(ORPHAN_EXPORTS).toHaveLength(72);
   });
 
   it("[RULE TR-1] counts the exports whose only consumer is a test, exactly", () => {
@@ -714,7 +719,20 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // the Generate control through -- is reachable and in NEITHER bucket:
     // AppViewDialog.js imports and calls it directly (:13, :174), so this
     // is a widened surface around a real feature, not a stranded one.
-    expect(TEST_REFERENCED.length).toBe(361);
+    // 361 -> 364 (N45/N46): three pure helpers with a real call site inside
+    // their OWN module and a by-name test importer, same shape as the four
+    // just above:
+    //   lib/interviewPrep/prepClaims.js#mintClaimId -- called internally by
+    //     mintUniqueClaimId; prepClaims.test.js imports it directly to pin
+    //     the `c/<section>/<hex>` shape and the section-name THROW.
+    //   lib/interviewPrep/prepClaims.js#mintSectionClaims -- AC-CLAIM.9's own
+    //     unit, imported by name only from prepClaims.test.js; not yet wired
+    //     into route.js's generation path (that wiring is a later wave's).
+    //   lib/interviewPrep/prepStore.js#pruneSectionRevisions -- AC-RET.1-3's
+    //     retention unit, imported by name only from
+    //     prepSectionRevisions.test.js; not yet triggered from any route
+    //     handler in this wave.
+    expect(TEST_REFERENCED.length).toBe(364);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
@@ -820,7 +838,11 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // assertion (triggerClassOf, messageFor, fetchPrep, prepActionState),
     // with ORPHAN_EXPORTS unmoved at 70 -- this total's +4 IS the TR-1
     // bucket's +4, not a second, independent change.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(431);
+    // 431 -> 436 (N45/N46): TR-1's own +3 (mintClaimId, mintSectionClaims,
+    // pruneSectionRevisions) plus ORPHAN_EXPORTS' own +2
+    // (PREP_REVISION_COLUMNS, PREP_REVISION_LIST_COLUMNS) -- both described
+    // at their own assertions above; this total is exactly their sum.
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(436);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

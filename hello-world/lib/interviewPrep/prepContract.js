@@ -73,3 +73,45 @@ export const PREP_LIST_PROJECTION = PREP_LIST_COLUMNS.join(", ");
 
 /** Joined form of PREP_SPEND_COLUMNS, for the `.select()` call itself. */
 export const PREP_SPEND_PROJECTION = PREP_SPEND_COLUMNS.join(", ");
+
+/**
+ * The four Pack sections, in render order (N45/N46 plan §S1). Moved here
+ * from `lib/interviewPrep/prepPack.js` (formerly a module-private
+ * `SECTION_NAMES` constant) so `lib/interviewPrep/prepClaims.js` and
+ * `lib/interviewPrep/prepMerge.js` can share the exact same order and
+ * vocabulary without either of those pure modules importing
+ * `prepPack.js`/`prepParse.js` (prepClaims.js's own header states why: it
+ * must carry no given-name lexicon). ORDER IS LOAD-BEARING --
+ * `PrepPackPanel.sectionHeaders.test.js`'s `LABELS_IN_ORDER` depends on it.
+ */
+export const PREP_SECTION_NAMES = Object.freeze(["aboutYou", "whyRole", "askThem", "stages"]);
+
+/**
+ * `interview_prep_section_revisions`' own full projection (N45/N46 plan
+ * §6.2) -- the one-revision read (`readSectionRevision`) and the pre-claim
+ * merge-base read (`readLiveSectionRevisions`) both use this; a list view
+ * must NOT (see PREP_REVISION_LIST_COLUMNS below).
+ */
+export const PREP_REVISION_COLUMNS = Object.freeze([
+  "section",
+  "revision",
+  "content",
+  "claims",
+  "engine",
+  "restored_from",
+  "content_version",
+  "created_at",
+]);
+
+/** Joined form of PREP_REVISION_COLUMNS, for the `.select()` call itself. */
+export const PREP_REVISION_PROJECTION = PREP_REVISION_COLUMNS.join(", ");
+
+/**
+ * The picker's own projection (AC-UX.2) -- deliberately excludes `content`/
+ * `claims`, so listing a section's history never ships ten full bodies for a
+ * candidate paging through "which version".
+ */
+export const PREP_REVISION_LIST_COLUMNS = Object.freeze(["section", "revision", "engine", "restored_from", "created_at"]);
+
+/** Joined form of PREP_REVISION_LIST_COLUMNS, for the `.select()` call itself. */
+export const PREP_REVISION_LIST_PROJECTION = PREP_REVISION_LIST_COLUMNS.join(", ");

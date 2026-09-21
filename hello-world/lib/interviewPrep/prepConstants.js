@@ -65,3 +65,17 @@ export const PREP_ROUTE_RESERVE_MS = 20_000;
  *  as usably expired, so a lease is never raced by reading `now()` a moment
  *  before the database does. */
 export const PREP_LEASE_SLACK_MS = 30_000;
+
+/** N45/N46: the most revision rows `pruneSectionRevisions` keeps per
+ *  (application, section) -- an owner-set tuning number (plan §12), not a
+ *  correctness bound; AC-RET.1's exact counts are written against this
+ *  value. */
+export const PREP_SECTION_REVISIONS_MAX = 10;
+
+/** N45/N46: the byte cap `appendSectionRevisions` enforces on ONE section's
+ *  `{content, claims}` before any statement runs, measured with
+ *  `TextEncoder` (never `Buffer`) -- the same browser-safe discipline
+ *  `checkPackByteBudget` (prepStore.js) already uses. A per-section bound,
+ *  not a count bound -- N49 can add many claims to one `stages` revision
+ *  without a migration. */
+export const PREP_SECTION_REVISION_MAX_BYTES = 65_536;

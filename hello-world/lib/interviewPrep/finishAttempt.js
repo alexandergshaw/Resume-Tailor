@@ -16,15 +16,18 @@
 // `pack` content, so the size/shape CHECK that could reject a real pack
 // cannot reject it.
 //
-// THAT IS NOT THE SAME AS "always satisfiable", and the original comment
-// here claimed it was. Because `writePrepPackResult` writes `pack` into its
-// UPDATE SET list unconditionally, a payload carrying no pack writes
-// `pack = NULL` -- and the column is declared `not null` (supabase/
-// migrations/20260914000000_interview_prep.sql:155). Against a real
-// database this retry raises 23502, which this function's own predicate
-// deliberately excludes, so the fallback cannot currently succeed. Recorded
-// as backlog item N14, unfixed here and read off the declared DDL rather
-// than executed -- no live Postgres is reachable from this checkout.
+// N45/N46 UPDATE: the paragraph above described a defect that no longer
+// exists. `writePrepPackResult` (prepStore.js:~490) now guards the column
+// with `if (pack !== undefined) updateSet.pack = normalizedPack;` -- a
+// payload carrying no `pack` OMITS the column from the UPDATE rather than
+// nulling it, so this retry has always been reachable and safe since that
+// guard landed. What the retry could not do until now is carry content BACK:
+// it always ran with no `pack` at all, so a CHECK-safe recovery from a
+// too-large/malformed write left the row's `pack` exactly as
+// `claim_prep_pack_slot` had already blanked it to `'{}'`. `restore` below
+// (plan §2.2, the F2 resolution) closes that: when the caller supplies one,
+// this retry restores the candidate's prior document instead of leaving it
+// empty.
 import {
   writePrepPackResult as defaultWritePrepPackResult,
   recordPrepEvent as defaultRecordPrepEvent,
@@ -87,9 +90,20 @@ function outcomeForStatus(status, reason) {
 
 /**
  * @param {*} supabase
- * @param {{ applicationId: string, userId: string, leaseToken: string, triggerClass?: string, engine?: string, [key: string]: * }} ctx
+ * @param {{ applicationId: string, userId: string, leaseToken: string, triggerClass?: string, engine?: string,
+ *           restore?: {}|{pack: object, liveRevisions: Record<string, number>}, [key: string]: * }} ctx
  *   `triggerClass`/`engine` are consumed only by the event write below;
  *   every other field is forwarded to `writePrepPackResult` as-is.
+ *
+ *   `restore` (plan §2.2) is destructured out of ctx beside
+ *   triggerClass/engine and is consumed ONLY by the CHECK-safe fallback
+ *   retry below. It is NEVER spread into the first write: route.js's own
+ *   failure call sites spread it into their own payloads, explicitly, so
+ *   that `pack` is never written by a value this function injected on its
+ *   caller's behalf. A `finishAttempt` that silently added content to a
+ *   write its caller did not ask for would be a second, hidden writer of
+ *   `interview_prep_packs.pack` and would falsify R-N45-CLAIMS. DEFAULT
+ *   undefined -> the retry payload is byte-identical to today's.
  * @param {{ writePrepPackResult?: Function, recordPrepEvent?: Function, isCheckViolation?: Function }} [deps]
  *   The three prepStore.js functions this orchestration calls, injectable so
  *   a test can substitute them without a real Supabase client -- default to
@@ -97,7 +111,7 @@ function outcomeForStatus(status, reason) {
  */
 export async function finishAttempt(
   supabase,
-  { applicationId, userId, leaseToken, triggerClass, engine, ...payload },
+  { applicationId, userId, leaseToken, triggerClass, engine, restore, ...payload },
   {
     writePrepPackResult = defaultWritePrepPackResult,
     recordPrepEvent = defaultRecordPrepEvent,
@@ -118,6 +132,7 @@ export async function finishAttempt(
       status: "failed",
       reason: "check-violation",
       error: write.error,
+      ...(restore || {}),
     });
   }
 
