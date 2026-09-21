@@ -108,7 +108,11 @@ function stageList(pack) {
 function Section({ heading, children }) {
   return (
     <Box sx={{ mb: 2 }}>
-      <Box component="h3" sx={{ fontSize: 13, fontWeight: 700, mb: 0.5 }}>
+      {/* N44/AC-N44.9: `margin-top` is stated explicitly (never left to the
+       *  browser's UA default `1em` on an `<h3>`) -- the same defect class
+       *  070e1ec fixed in a sibling file, now four times as visible because
+       *  this heading renders unconditionally in every state. */}
+      <Box component="h3" sx={{ fontSize: 13, fontWeight: 700, mt: 0, mb: 0.5 }}>
         {heading}
       </Box>
       {children}
@@ -169,20 +173,54 @@ function StagesSection({ pack }) {
   );
 }
 
-/** Renders only the sections `completeSections` names -- the authoritative
- *  set `prepPack.js`'s own `completeSections` already computed server-side.
- *  Never re-derives it from `pack` itself: a section present in `pack` but
+// N44: the empty-state text for an excluded section, keyed by section NAME
+// only -- never by `status`, never by legacy-ness. This is what makes
+// AC-N44.6's "same generic text for a legacy pack's unresolvable sections"
+// hold by construction: there is only one string per section anywhere in
+// this file. Each sentence states only the one fact this component can
+// verify (the section isn't in `completeSections`) and claims no cause and
+// no future promise -- see AC-N44.4/.5. "Yet" mirrors this file's own idiom
+// (`COPY.absent`, `COPY.unavailable`) without committing to "will arrive."
+const EMPTY_SECTION_TEXT = {
+  aboutYou: "No self-introduction here yet.",
+  whyRole: "No role-specific reasoning here yet.",
+  askThem: "No candidate questions here yet.",
+  stages: "No interview-stage breakdown here yet.",
+};
+
+/** The excluded-section placeholder. Takes ONLY `name` -- never `pack` -- so
+ *  there is no binding in scope this component could use to read
+ *  `pack.sections.<name>`'s array or emit that section's own list/box
+ *  markup (AC-N44.3/.8). The body is a plain `Box` (renders `<div>`), never
+ *  a list, with an explicit `m: 0` per the AC-N44.9 discipline. Reuses
+ *  `Section` unmodified, so the heading level and accessible name are
+ *  identical to a populated section's by construction (AC-N44.7). */
+function EmptySection({ name }) {
+  return (
+    <Section heading={SECTION_LABELS[name]}>
+      <Box sx={{ fontSize: 12.5, color: "var(--text-secondary)", m: 0 }}>{EMPTY_SECTION_TEXT[name]}</Box>
+    </Section>
+  );
+}
+
+/** N44: renders exactly four fixed-order slots, always -- one per
+ *  `SECTION_LABELS` key -- so the header outline never depends on `status`
+ *  or on `completeSections` having anything in it. Each slot still gates its
+ *  CONTENT on `complete.has(name)` exactly as before: the authoritative set
+ *  `prepPack.js`'s own `completeSections` already computed server-side,
+ *  never re-derived from `pack` itself. A section present in `pack` but
  *  absent from `completeSections` (a partial pack's own missing section, or
- *  a legacy pack's orphaned top-level keys) is never rendered here, which is
- *  the exact invariant AC-N33.13/15 require. */
+ *  a legacy pack's orphaned top-level keys) still never has its content
+ *  rendered here -- the exact invariant AC-N33.13/15 require -- it renders
+ *  `EmptySection` instead of nothing. */
 function PackSections({ pack, completeSections }) {
   const complete = new Set(Array.isArray(completeSections) ? completeSections : []);
   return (
     <Box>
-      {complete.has("aboutYou") ? <AnswerSection name="aboutYou" pack={pack} /> : null}
-      {complete.has("whyRole") ? <AnswerSection name="whyRole" pack={pack} /> : null}
-      {complete.has("askThem") ? <AskThemSection pack={pack} /> : null}
-      {complete.has("stages") ? <StagesSection pack={pack} /> : null}
+      {complete.has("aboutYou") ? <AnswerSection name="aboutYou" pack={pack} /> : <EmptySection name="aboutYou" />}
+      {complete.has("whyRole") ? <AnswerSection name="whyRole" pack={pack} /> : <EmptySection name="whyRole" />}
+      {complete.has("askThem") ? <AskThemSection pack={pack} /> : <EmptySection name="askThem" />}
+      {complete.has("stages") ? <StagesSection pack={pack} /> : <EmptySection name="stages" />}
     </Box>
   );
 }
@@ -381,7 +419,14 @@ export default function PrepPackPanel({
     <Box sx={{ fontSize: 14 }}>
       <NamesStrip candidateName={candidateName} interviewerNames={interviewerNames} onSaveNames={onSaveNames} />
       <StatusBanner status={status} pack={pack} />
-      {hasPack ? <PackSections pack={pack} completeSections={completeSections} /> : null}
+      {/* N44/AC-N44.1: unconditional -- `hasPack` no longer gates the header
+       *  block. `PackSections` itself always renders all four slots, each
+       *  independently falling back to `EmptySection` when its own content
+       *  is absent, so the outline shows even for the `absent` state where
+       *  `pack` is `null`. `hasPack` still decides everything below (the
+       *  Generate/Regenerate label and the destructive-regenerate caption)
+       *  -- only this one render site changes. */}
+      <PackSections pack={pack} completeSections={completeSections} />
       <Box sx={{ mt: 1, display: "flex", flexDirection: "column", gap: 1 }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, ...WRAP_ROW_SX }}>
           <Button size="small" sx={TOUCH_TARGET_SX} onClick={() => onDownloadLog?.()}>
