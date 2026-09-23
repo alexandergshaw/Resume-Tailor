@@ -27,6 +27,32 @@
 // Every held deferred is released before its case ends.
 
 import { describe, it, expect, beforeAll, vi } from "vitest";
+// m-2 (N50 fix round 4, verify4.md): PREP_LEASE_MS, unlike
+// PREP_ROUTE_MAX_DURATION_S below, is a REAL import, not a literal --
+// verify4.md measured that the stated reason for keeping it a literal was
+// false FOR THIS constant: `lib/interviewPrep/prepStore.js:73` already
+// imports it in production, so it was never on ORPHAN_EXPORTS to begin
+// with, and re-measuring here (this round) confirms importing it leaves
+// lib/sourceScan green. Importing it also lets the assertion below track
+// the real value if it ever changes, rather than silently pinning a copy
+// that has drifted from it.
+import { PREP_LEASE_MS } from "@/lib/interviewPrep/prepConstants.js";
+
+// B-1/m-5 (N50 fix round 3): PREP_ROUTE_MAX_DURATION_S (prepConstants.js) is
+// a LITERAL below, deliberately NOT imported. Measured: importing it here
+// moves lib/sourceScan/exportReachability.sweep.test.js's own pinned counts
+// -- that export sat on ORPHAN_EXPORTS as a genuine ZERO-reference export
+// (prepActionQueue.js's own header already explains why route.js and this
+// module both restate it as a literal rather than importing it), and a
+// `.test.js` importer moves it out of that bucket into TEST_REFERENCED,
+// which the ledger's hand-maintained list does not expect (exportGraph.js's
+// own "a `.test.js` file is not a caller" is about PRODUCTION reachability,
+// not about whether an export leaves the zero-reference orphan bucket).
+// lib/sourceScan is out of scope for this round, so the ledger cannot be
+// updated to match -- an earlier round hit this exact conflict and reverted
+// to a literal for the same reason. 120 is today's real value
+// (prepConstants.js); if it changes there, this must be updated by hand.
+const PREP_ROUTE_MAX_DURATION_S = 120;
 
 let mod = null;
 let modError = null;
@@ -56,11 +82,13 @@ async function settle(n = 6) {
 }
 
 describe("the module's surface", () => {
-  it("exports createPrepActionQueue, and every queue carries exactly the six documented functions", () => {
+  it("exports createPrepActionQueue, and every queue carries exactly the seven documented functions", () => {
+    // N50 fix round 5 (verify.r5.md M-1/M-2): retireStaleTimedOut joins the
+    // six the module already carried.
     const queue = q();
     expect(Object.keys(mod)).toEqual(["createPrepActionQueue"]);
     expect(Object.keys(queue).sort()).toEqual(
-      ["dropSeenOutcomes", "enqueue", "getAppState", "markOutcomesSeen", "setSettledHandler", "subscribe"].sort(),
+      ["dropSeenOutcomes", "enqueue", "getAppState", "markOutcomesSeen", "retireStaleTimedOut", "setSettledHandler", "subscribe"].sort(),
     );
   });
 });
@@ -297,6 +325,82 @@ describe("U-9 -- the settled handler: latest registration wins; a stale unregist
   });
 });
 
+describe("m1 (N50 fix round 1) -- a send that never settles times out, so the queue moves on", () => {
+  it("a hung send settles as a failed, honest outcome once the timeout elapses, and the next queued entry is sent", async () => {
+    const queue = mod.createPrepActionQueue({ timeoutMs: 5 });
+    const next = vi.fn(() => Promise.resolve({ status: "ready" }));
+    queue.enqueue({ applicationId: "a1", target: "aboutYou", kind: "generate", send: () => new Promise(() => {}) });
+    queue.enqueue({ applicationId: "a1", target: "whyRole", kind: "generate", send: next });
+    await settle(10);
+    const outcome = queue.getAppState("a1").outcomes.aboutYou;
+    expect(outcome, "the hung action never recorded an outcome").toBeTruthy();
+    expect(outcome.result.networkError).toBe(true);
+    expect(typeof outcome.result.error).toBe("string");
+    expect(outcome.result.error.length).toBeGreaterThan(0);
+    expect(next, "the next queued entry must still be sent").toHaveBeenCalledTimes(1);
+    expect(queue.getAppState("a1").active).toBe(null);
+  });
+
+  it("[positive control] a bare createPrepActionQueue() call keeps the default -- no early timeout inside this test's own window", async () => {
+    const queue = q();
+    let sentA = false;
+    queue.enqueue({ applicationId: "a1", target: "aboutYou", kind: "generate", send: () => ((sentA = true), new Promise(() => {})) });
+    await settle(10);
+    expect(sentA).toBe(true);
+    expect(queue.getAppState("a1").outcomes.aboutYou, "no timeout should have fired yet at the default duration").toBeUndefined();
+  });
+
+  it("m-b (N50 fix round 2) -- the default clears the route's own maxDuration (120s), never a bare 60s or 120s", async () => {
+    // PREP_ROUTE_MAX_DURATION_S (prepConstants.js) is 120 today. A default at
+    // or below that abandons a legitimate 60-120s generation and lets the
+    // next queued entry POST into a claim that is still live server-side --
+    // a guaranteed 409 that has already spent a rate-limit token. Fake
+    // timers, not a small injected timeoutMs, because this is pinning the
+    // BARE createPrepActionQueue() default itself.
+    vi.useFakeTimers();
+    try {
+      const queue = q();
+      queue.enqueue({ applicationId: "a1", target: "aboutYou", kind: "generate", send: () => new Promise(() => {}) });
+      await vi.advanceTimersByTimeAsync(PREP_ROUTE_MAX_DURATION_S * 1000 + 10_000);
+      expect(
+        queue.getAppState("a1").outcomes.aboutYou,
+        "timed out at or before the route's own 120s deadline -- no margin for transit",
+      ).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("B-1 (N50 fix round 3, verify.r3.md) -- the default must clear the server's own claim LEASE (PREP_LEASE_MS), not merely the route's maxDuration", async () => {
+    // m-b (above) only pinned the margin against the ROUTE's own function
+    // budget (120s). The constant that actually decides what a post-timeout
+    // refetch can observe is the server's own claim LEASE (150s today): a
+    // generation can still be mid-flight, holding its claim, well after
+    // 120s. At the OLD 135s default (120s route maxDuration + 15s margin),
+    // the timeout fired before the lease could have cleared, so the refetch
+    // it schedules was guaranteed, by arithmetic, to land on a row the
+    // database's own CHECK constraint
+    // (interview_prep_packs_running_has_no_content) forces to be `running`
+    // and empty -- this is B-1, the blocker verify.r3.md raised. This test
+    // fails on that old default: at PREP_LEASE_MS (150s) it would already
+    // have timed out.
+    vi.useFakeTimers();
+    try {
+      const queue = q();
+      queue.enqueue({ applicationId: "a1", target: "aboutYou", kind: "generate", send: () => new Promise(() => {}) });
+      await vi.advanceTimersByTimeAsync(PREP_LEASE_MS);
+      expect(
+        queue.getAppState("a1").outcomes.aboutYou,
+        "timed out at or before the server's own lease -- the refetch it schedules can only read a still-live, empty-pack claim",
+      ).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(queue.getAppState("a1").outcomes.aboutYou, "the default must still eventually fire").toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("U-11 (M5) -- outcome lifetime bookkeeping: seen, then dropped", () => {
   async function queueWithTwoOutcomes() {
     const queue = q();
@@ -361,5 +465,125 @@ describe("U-11 (M5) -- outcome lifetime bookkeeping: seen, then dropped", () => 
     expect(after.outcomes).toEqual({});
     held.resolve({ status: "ready" });
     await settle();
+  });
+});
+
+describe("B-1 (N50 fix round 4, verify4.md) -- a timedOut outcome survives dropSeenOutcomes; only a fresh action on that target clears it", () => {
+  // verify4.md's blocker: three ordinary paths (close+reopen, a bare
+  // remount, and a retry) each rediscovered the SAME dead end -- a `timedOut`
+  // outcome, once seen, was dropped by the very next fresh open, so the
+  // cache/retry state B-1's round 3 fix restored never survived past the
+  // first render. The fix (prepActionQueue.js's own dropSeenOutcomes) is a
+  // pure queue-level change, so it is proven here at the unit level, not
+  // only through the dialog.
+  async function queueWithTimedOutOutcome() {
+    const queue = mod.createPrepActionQueue({ timeoutMs: 5 });
+    queue.enqueue({ applicationId: "a1", target: "aboutYou", kind: "generate", send: () => new Promise(() => {}) });
+    await settle(10);
+    const outcome = queue.getAppState("a1").outcomes.aboutYou;
+    expect(outcome?.result?.timedOut, "precondition: the send actually timed out").toBe(true);
+    return queue;
+  }
+
+  it("a SEEN timedOut outcome survives dropSeenOutcomes -- a close+reopen or a bare remount must not erase it", async () => {
+    const queue = await queueWithTimedOutOutcome();
+    queue.markOutcomesSeen("a1");
+    expect(queue.getAppState("a1").outcomes.aboutYou.seen).toBe(true);
+    queue.dropSeenOutcomes("a1");
+    expect(
+      queue.getAppState("a1").outcomes.aboutYou,
+      "a timedOut outcome must survive dropSeenOutcomes once seen",
+    ).toBeTruthy();
+    expect(queue.getAppState("a1").outcomes.aboutYou.result.timedOut).toBe(true);
+  });
+
+  it("dropSeenOutcomes still drops an ordinary SEEN outcome alongside a surviving timedOut one", async () => {
+    const queue = await queueWithTimedOutOutcome();
+    queue.enqueue({
+      applicationId: "a1",
+      target: "whyRole",
+      kind: "generate",
+      send: () => Promise.resolve({ status: "refused", reason: "error" }),
+    });
+    await settle();
+    queue.markOutcomesSeen("a1");
+    queue.dropSeenOutcomes("a1");
+    expect(Object.keys(queue.getAppState("a1").outcomes)).toEqual(["aboutYou"]);
+  });
+
+  it("only a FRESH action on that exact target clears a timedOut outcome -- never merely seeing or dropping it", async () => {
+    const queue = await queueWithTimedOutOutcome();
+    queue.markOutcomesSeen("a1");
+    queue.dropSeenOutcomes("a1");
+    expect(queue.getAppState("a1").outcomes.aboutYou, "precondition: it survived").toBeTruthy();
+    queue.enqueue({ applicationId: "a1", target: "aboutYou", kind: "generate", send: () => new Promise(() => {}) });
+    expect(
+      queue.getAppState("a1").outcomes.aboutYou,
+      "a fresh action on the SAME target must still clear its old outcome",
+    ).toBeUndefined();
+  });
+});
+
+describe("N50 fix round 5 (verify.r5.md M-1/M-2) -- retireStaleTimedOut", () => {
+  async function queueWithTimedOutOutcome() {
+    const queue = mod.createPrepActionQueue({ timeoutMs: 5 });
+    queue.enqueue({ applicationId: "a1", target: "aboutYou", kind: "generate", send: () => new Promise(() => {}) });
+    await settle(10);
+    const outcome = queue.getAppState("a1").outcomes.aboutYou;
+    expect(outcome?.result?.timedOut, "precondition: the send actually timed out").toBe(true);
+    expect(typeof outcome.settledAt, "precondition: the outcome is stamped with when it settled").toBe("number");
+    return queue;
+  }
+
+  it("stillRunning=false (a fresher GET already proved the claim is over) retires it immediately, seen or not", async () => {
+    const queue = await queueWithTimedOutOutcome();
+    queue.retireStaleTimedOut("a1", false);
+    expect(queue.getAppState("a1").outcomes.aboutYou, "a settled claim must not keep the timedOut outcome alive").toBeUndefined();
+  });
+
+  it("stillRunning=true and not yet aged out leaves the outcome alone", async () => {
+    const queue = await queueWithTimedOutOutcome();
+    queue.retireStaleTimedOut("a1", true);
+    expect(queue.getAppState("a1").outcomes.aboutYou, "a still-plausibly-live claim must survive").toBeTruthy();
+  });
+
+  it("stillRunning=true but aged past the bounded lifetime retires it -- the 'an hour later, a different run' case", async () => {
+    vi.useFakeTimers();
+    try {
+      const queue = mod.createPrepActionQueue({ timeoutMs: 5 });
+      queue.enqueue({ applicationId: "a1", target: "aboutYou", kind: "generate", send: () => new Promise(() => {}) });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(queue.getAppState("a1").outcomes.aboutYou?.result?.timedOut, "precondition: timed out").toBe(true);
+      await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+      queue.retireStaleTimedOut("a1", true);
+      expect(
+        queue.getAppState("a1").outcomes.aboutYou,
+        "an outcome this old must not still be read as the same claim",
+      ).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves a non-timedOut outcome untouched either way, and is a no-op (no notification) when nothing is stale", async () => {
+    const queue = q();
+    queue.enqueue({ applicationId: "a1", target: "whyRole", kind: "generate", send: () => Promise.resolve({ status: "refused", reason: "error" }) });
+    await settle();
+    const listener = vi.fn();
+    queue.subscribe(listener);
+    const before = queue.getAppState("a1");
+    queue.retireStaleTimedOut("a1", false);
+    expect(listener).not.toHaveBeenCalled();
+    expect(queue.getAppState("a1")).toBe(before);
+    expect(queue.getAppState("a1").outcomes.whyRole).toBeTruthy();
+  });
+
+  it("retires ONLY the stale entries, leaving a fresher timedOut outcome (on a different target) alone", async () => {
+    const queue = await queueWithTimedOutOutcome();
+    queue.enqueue({ applicationId: "a1", target: "whyRole", kind: "generate", send: () => Promise.resolve({ status: "refused", reason: "error" }) });
+    await settle();
+    queue.retireStaleTimedOut("a1", false);
+    expect(queue.getAppState("a1").outcomes.aboutYou).toBeUndefined();
+    expect(queue.getAppState("a1").outcomes.whyRole, "an ordinary outcome must survive a timedOut-only retirement").toBeTruthy();
   });
 });

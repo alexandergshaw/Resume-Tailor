@@ -139,12 +139,22 @@ const buttons = (el) => [...el.querySelectorAll('button, [role="button"]')];
 const buttonNamed = (el, re) => buttons(el).find((b) => re.test(controlName(b)));
 const sectionHeadingsOf = (el) => headingElements(el).filter((h) => headingLevel(h) === 3);
 const generateButton = (el) => buttonNamed(el, /^prepare me for this interview$/i);
-const wholePackRegenerate = (el) => buttonNamed(el, /^regenerate$/i);
+// M1 (N50 fix round 1): was `/^regenerate$/i` -- the exact bare word a
+// section's own control also carried, which is the defect M1 fixes. The
+// whole-pack control's own accessible name is now "Regenerate whole pack".
+const wholePackRegenerate = (el) => buttonNamed(el, /^regenerate whole pack$/i);
 const groups = (el) => [...el.querySelectorAll('[role="group"]')];
 const groupFor = (el, section) => groups(el).find((g) => accessibleName(g) === LABELS[section]);
 const namesOf = (nodes) => nodes.map((n) => `<${n.tagName.toLowerCase()}> ${controlName(n)}`);
-const sectionScopedControls = (el) =>
-  buttons(el).filter((b) => ALL.some((s) => controlName(b).includes(LABELS[s])) && !/^regenerate$/i.test(controlName(b)));
+// m-1 (N50 fix round 3): the `!/^regenerate whole pack$/i` conjunct this
+// filter used to carry was zero-power -- the whole-pack control's own
+// accessible name ("Regenerate whole pack") never includes any section
+// label, so the FIRST conjunct already excludes it on its own; deleting the
+// second changed nothing (verify.r3.md m-1, mutant X1 SURVIVED 0/482).
+// Removed rather than renamed; the positive assertion this exclusion was
+// meant to buy now lives explicitly below, in "the whole-pack control's own
+// accessible name never equals a section's own Regenerate control".
+const sectionScopedControls = (el) => buttons(el).filter((b) => ALL.some((s) => controlName(b).includes(LABELS[s])));
 
 // ---------------------------------------------------------------------------
 // H-3's outline walker (AC-N50.5, plan M4): EVERY heading in the panel must be
@@ -443,6 +453,53 @@ describe("the history disclosure is keyboard-reachable by construction", () => {
       expect(controlName(summary)).toMatch(/version|history|earlier|previous/i);
       expect(controlName(summary)).toContain(groupNameOf(summary));
     }
+  });
+});
+
+describe("M1 (N50 fix round 1) -- the whole-pack controls sit in their own clearly separated, labelled region", () => {
+  it("[maximal idle] a role=region named 'Whole pack', with its own visible label, holds the whole-pack control -- and never joins the four role=group section landmarks", async () => {
+    const el = await render(maximalPanelProps({ transients: false }));
+    const region = el.querySelector('[role="region"]');
+    expect(region, "no role=region for the whole-pack area").toBeTruthy();
+    expect(accessibleName(region)).toBe("Whole pack");
+    expect(norm(region.textContent)).toContain("Whole pack");
+    const regen = wholePackRegenerate(el);
+    expect(regen, "the whole-pack control must live inside this region").toBeTruthy();
+    expect(region.contains(regen)).toBe(true);
+    // AC-N50.7 counts "exactly four role=group elements" as the section
+    // landmarks; the whole-pack region must never become a fifth.
+    expect(region.getAttribute("role")).not.toBe("group");
+    expect(groups(el)).toHaveLength(4);
+  });
+
+  it("[maximal idle] the gap above the whole-pack region is LARGER than the gap between two sections (32px vs 16px)", async () => {
+    const el = await render(maximalPanelProps({ transients: false }));
+    const region = el.querySelector('[role="region"]');
+    expect(region).toBeTruthy();
+    const regionTop = parseFloat(getComputedStyle(region).marginTop);
+    const sectionGroups = groups(el);
+    expect(sectionGroups).toHaveLength(4);
+    const interSectionGap = parseFloat(getComputedStyle(sectionGroups[0]).marginBottom);
+    expect(Number.isFinite(regionTop) && Number.isFinite(interSectionGap)).toBe(true);
+    expect(regionTop, "the region's own top gap").toBe(32);
+    expect(interSectionGap, "the gap between two sections").toBe(16);
+    expect(regionTop).toBeGreaterThan(interSectionGap);
+  });
+
+  it("[maximal idle] the whole-pack control's own accessible name never equals a section's own Regenerate control", async () => {
+    const el = await render(maximalPanelProps({ transients: false }));
+    const regen = wholePackRegenerate(el);
+    expect(regen).toBeTruthy();
+    // m-1 (N50 fix round 3): the positive control the filter's own dead
+    // clause never gave real power to -- proves sectionScopedControls truly
+    // excludes the whole-pack control BY REFERENCE, not merely that its name
+    // happens to differ (the assertion two lines below).
+    expect(sectionScopedControls(el)).not.toContain(regen);
+    const wholeName = controlName(regen);
+    expect(wholeName).toBe("Regenerate whole pack");
+    const sectionNames = sectionScopedControls(el).map(controlName).filter((n) => /^regenerate/i.test(n));
+    expect(sectionNames.length, "positive control: section regenerate controls exist").toBeGreaterThan(0);
+    for (const name of sectionNames) expect(name).not.toBe(wholeName);
   });
 });
 

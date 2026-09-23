@@ -323,6 +323,23 @@ describe("AC-N45.1 (panel) -- every section carries its own regenerate control",
     const present = SECTION_NAMES.filter((section) => sectionControl(el, section));
     expect(present, `controls rendered with no job description: ${present.join(", ")}`).toEqual([]);
   });
+
+  it("m2 (N50 fix round 1) -- focus moves to the section's own status line once Regenerate activates it, not the document body", async () => {
+    const el = await render(baseProps({ generatingSections: [] }));
+    const control = sectionControl(el, "askThem");
+    expect(control, "no askThem control").toBeTruthy();
+    await click(control);
+    // AppViewDialog.js reports the new in-progress state back down as a prop
+    // update -- mirrored here on the SAME mounted instance, the same shape
+    // its own `generatingSections`/`sectionActivity` already produce.
+    const withActivity = await render(baseProps({ generatingSections: ["askThem"] }));
+    const group = [...withActivity.querySelectorAll('[role="group"]')].find((g) => accessibleName(g) === SECTION_LABELS.askThem);
+    expect(group, "no askThem group").toBeTruthy();
+    const status = group.querySelector('[role="status"]');
+    expect(status, "no askThem status region").toBeTruthy();
+    expect(document.activeElement).toBe(status);
+    expect(document.activeElement).not.toBe(document.body);
+  });
 });
 
 describe("AC-N46.1 / AC-UX.1 (panel) -- a section's earlier versions and the restore action", () => {
@@ -358,6 +375,56 @@ describe("AC-N46.1 / AC-UX.1 (panel) -- a section's earlier versions and the res
   it("a revision created by a restore is disclosed as one", async () => {
     const el = await render(baseProps());
     expect((el.textContent || "").toLowerCase()).toMatch(/restored/);
+  });
+});
+
+describe("N45 hand-off (N50 fix round 2) -- rev.restorable === false hides the Restore control, never disables it", () => {
+  // A missing field (every fixture above, and every revision row this repo
+  // has shipped before N45's own field existed) counts as restorable --
+  // PrepSectionActions.js:121's own rename comment states this contract.
+  function revisionsWith(restorable) {
+    const rev2 = { revision: 2, engine: "gemini", restoredFrom: null, createdAt: "2026-09-02T00:00:00.000Z" };
+    if (restorable !== undefined) rev2.restorable = restorable;
+    return { aboutYou: [{ revision: 3, engine: "gemini", restoredFrom: null, createdAt: "2026-09-03T00:00:00.000Z" }, rev2] };
+  }
+
+  function text(el) {
+    return (el.textContent || "").replace(/\s+/g, " ");
+  }
+
+  it("restorable: false -- no Restore control for that revision, but its metadata line still renders", async () => {
+    const el = await render(baseProps({ sectionRevisions: revisionsWith(false), liveRevisions: { aboutYou: 3 } }));
+    const controls = restoreControls(el, "aboutYou");
+    expect(controls.map((r) => revisionInName(r.name))).not.toContain(2);
+    expect(text(el)).toMatch(/earlier version 2/i);
+    expect(text(el)).toMatch(/can.?t be restored/i);
+  });
+
+  it("restorable: true -- the Restore control renders exactly as it does for an unmarked revision", async () => {
+    const el = await render(baseProps({ sectionRevisions: revisionsWith(true), liveRevisions: { aboutYou: 3 } }));
+    const controls = restoreControls(el, "aboutYou");
+    expect(controls.map((r) => revisionInName(r.name))).toContain(2);
+    expect(text(el)).not.toMatch(/can.?t be restored/i);
+  });
+
+  it("restorable missing (undefined) -- counts as restorable", async () => {
+    const el = await render(baseProps({ sectionRevisions: revisionsWith(undefined), liveRevisions: { aboutYou: 3 } }));
+    const controls = restoreControls(el, "aboutYou");
+    expect(controls.map((r) => revisionInName(r.name))).toContain(2);
+    expect(text(el)).not.toMatch(/can.?t be restored/i);
+  });
+});
+
+describe("m-c (N50 fix round 2) -- focus only ever moves on a REAL idle -> active transition, never on mount", () => {
+  it("mounting (a reopened dialog, a main-tab remount) with activity ALREADY present does not steal focus", async () => {
+    const before = document.activeElement;
+    const el = await render(baseProps({ generatingSections: ["askThem"] }));
+    const group = [...el.querySelectorAll('[role="group"]')].find((g) => accessibleName(g) === SECTION_LABELS.askThem);
+    expect(group, "no askThem group").toBeTruthy();
+    const status = group.querySelector('[role="status"]');
+    expect(status, "no askThem status region").toBeTruthy();
+    expect(document.activeElement).not.toBe(status);
+    expect(document.activeElement).toBe(before);
   });
 });
 

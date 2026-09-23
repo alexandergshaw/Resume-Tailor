@@ -199,6 +199,40 @@ describe("D-4 -- an outcome is reported INSIDE the group where the action was ta
     });
   }
 
+  describe("M3 (N50 fix round 1) -- a genuine server error message is shown, a network failure's raw text is not", () => {
+    it("[429] a generate outcome with the server's own error text shows that text, not just 'Try again'", async () => {
+      const outcome = {
+        kind: "generate",
+        revision: null,
+        result: { error: "Too many prep attempts in a short window. Wait a moment and try again." },
+      };
+      const el = await render(idle({ triggerMessage: null, sectionOutcomes: { stages: outcome } }));
+      const group = groupFor(el, "stages");
+      expect(group, "no stages group").toBeTruthy();
+      const alerts = [...group.querySelectorAll('[role="alert"]')];
+      expect(alerts).toHaveLength(1);
+      const text = norm(alerts[0].textContent);
+      expect(text).toContain(LABELS.stages);
+      expect(text).toContain("Too many prep attempts in a short window. Wait a moment and try again.");
+    });
+
+    it("[429, restore] a restore outcome with the server's own error text shows that text and the version", async () => {
+      const outcome = { kind: "restore", revision: 6, result: { error: "Too many prep attempts in a short window." } };
+      const el = await render(idle({ triggerMessage: null, sectionOutcomes: { stages: outcome } }));
+      const text = norm(groupFor(el, "stages").querySelector('[role="alert"]').textContent);
+      expect(text).toContain("Too many prep attempts in a short window.");
+      expect(text).toMatch(/\b6\b/);
+    });
+
+    it("[control] a networkError reply falls back to the generic line, never the raw fetch-level text", async () => {
+      const outcome = { kind: "generate", revision: null, result: { error: "Failed to fetch", networkError: true } };
+      const el = await render(idle({ triggerMessage: null, sectionOutcomes: { stages: outcome } }));
+      const text = norm(groupFor(el, "stages").querySelector('[role="alert"]').textContent);
+      expect(text).not.toContain("Failed to fetch");
+      expect(text).toMatch(/try again/i);
+    });
+  });
+
   it("the panel ignores the queue's bookkeeping: an outcome already marked seen still renders", async () => {
     const el = await render(idle({ triggerMessage: null, sectionOutcomes: { whyRole: { kind: "restore", revision: 2, result: { status: "conflict" }, seen: true } } }));
     const group = groupFor(el, "whyRole");
@@ -236,8 +270,11 @@ describe("D-4 -- an outcome is reported INSIDE the group where the action was ta
 
 describe("D-5 -- a queued whole-pack regenerate replaces its button, and the caption goes with it", () => {
   it("[wholePackQueued] no whole-pack Regenerate button, a non-interactive queued line that names the whole pack, and no destructive caption", async () => {
+    // M1 (N50 fix round 1): the locator was `/^regenerate$/i`; the whole-pack
+    // control's own accessible name is now "Regenerate whole pack" so it is
+    // never identical to a section's own "Regenerate" (PrepSectionActions.js).
     const el = await render(idle({ wholePackQueued: true }));
-    expect(buttons(el).find((b) => /^regenerate$/i.test(controlName(b))), "the whole-pack button must be replaced").toBeUndefined();
+    expect(buttons(el).find((b) => /^regenerate whole pack$/i.test(controlName(b))), "the whole-pack button must be replaced").toBeUndefined();
     const line = [...el.querySelectorAll("*")].find((n) => /queued/i.test(n.textContent || "") && /whole pack/i.test(n.textContent || "") && groupNameOf(n) === "" && n.children.length === 0);
     expect(line, "no queued line naming the whole pack").toBeTruthy();
     expect(line.closest("button, a[href], summary")).toBe(null);
@@ -247,7 +284,7 @@ describe("D-5 -- a queued whole-pack regenerate replaces its button, and the cap
 
   it("[control, green on HEAD] without the flag the whole-pack Regenerate and its caption are there", async () => {
     const el = await render(idle());
-    expect(buttons(el).find((b) => /^regenerate$/i.test(controlName(b)))).toBeTruthy();
+    expect(buttons(el).find((b) => /^regenerate whole pack$/i.test(controlName(b)))).toBeTruthy();
     expect(el.querySelector('[data-testid="regenerate-caption"]')).toBeTruthy();
   });
 
@@ -255,6 +292,93 @@ describe("D-5 -- a queued whole-pack regenerate replaces its button, and the cap
     // plan section 2.2: in-flight -> queued -> no-description -> button.
     const el = await render(idle({ wholePackQueued: true, generating: true, onGenerateNow: vi.fn() }));
     expect(norm(el.textContent)).toMatch(/generating/i);
-    expect(buttons(el).find((b) => /^regenerate$/i.test(controlName(b)))).toBeUndefined();
+    expect(buttons(el).find((b) => /^regenerate whole pack$/i.test(controlName(b)))).toBeUndefined();
+  });
+
+  // N50 fix round 7 (verify.r7.md minor m-5): `wholePackQueued` crossed with
+  // `hasDescription: false` used to render TWO contradictory sentences at
+  // once -- GenerateControl's own "there's nothing to generate a prep pack
+  // from" (round 6's own precedence fix, which the "Add a job description"
+  // case above still checks) beside this SAME queued line still promising
+  // "will regenerate once the current update finishes", although the
+  // description it needs is gone. The queued line must name the reason
+  // instead of repeating the promise the other sentence already contradicts.
+  it("[wholePackQueued + hasDescription:false] the queued line explains why the queue will not run, not that it will", async () => {
+    const el = await render(idle({ wholePackQueued: true, hasDescription: false }));
+    const text = norm(el.textContent);
+    expect(text).toMatch(/queued/i);
+    expect(text, "the queued line must not promise a run it cannot make").not.toMatch(
+      /queued.{0,80}will regenerate once the current update finishes/i,
+    );
+    expect(text).toMatch(/nothing to generate a prep pack from/i);
+  });
+});
+
+describe("M2 (N50 fix round 1) -- a `running` status this session attributes to a SECTION never claims a whole-pack generation", () => {
+  it("[no cache: pack absent] status='running' with an active aboutYou generate shows aboutYou's own in-progress line, never the generic whole-pack banner", async () => {
+    const el = await render(
+      idle({
+        pack: null,
+        completeSections: [],
+        status: "running",
+        sectionRevisions: {},
+        liveRevisions: {},
+        sectionActivity: { aboutYou: { state: "in-progress", kind: "generate", revision: null } },
+      }),
+    );
+    const text = norm(el.textContent);
+    expect(text).not.toMatch(/generating your interview prep pack now/i);
+    const group = groupFor(el, "aboutYou");
+    expect(group, "no aboutYou group").toBeTruthy();
+    const status = statusOf(el, "aboutYou");
+    expect(status, "no aboutYou status region").toBeTruthy();
+    expect(norm(status.textContent)).toMatch(/regenerating/i);
+    // the whole-pack control itself must not be forced into "Generating…"
+    // purely because the server said `running` -- this session knows it is
+    // aboutYou's own claim.
+    expect(buttons(el).find((b) => /^regenerate whole pack$|^prepare me for this interview$/i.test(controlName(b)))).toBeTruthy();
+  });
+
+  it("[cache present: pack has real content] status='running' with an active whyRole generate keeps the OTHER sections usable and names whyRole in the banner", async () => {
+    const el = await render(idle({ status: "running", sectionActivity: { whyRole: { state: "in-progress", kind: "generate", revision: null } } }));
+    const text = norm(el.textContent);
+    expect(text).not.toMatch(/generating your interview prep pack now/i);
+    expect(text).toMatch(/regenerating (why this role|.*why this role)/i);
+    expect(sectionRegenerate(el, "aboutYou"), "an idle section must stay usable while whyRole runs").toBeTruthy();
+  });
+
+  it("[control] a `running` status with NO section this session tracks still shows the generic whole-pack line (an externally-triggered run)", async () => {
+    const el = await render(idle({ status: "running", sectionActivity: {} }));
+    expect(norm(el.textContent)).toMatch(/generating your interview prep pack now/i);
+  });
+});
+
+describe("N50 fix round 5 (verify.r5.md M-1) -- sectionsEnabled is per-section, and packTimedOut blocks every section outright", () => {
+  const timedOutOutcome = {
+    kind: "generate",
+    revision: null,
+    result: { error: "No reply after a couple of minutes, so this attempt was abandoned here — it may still finish. Check back, or try again.", networkError: true, timedOut: true },
+  };
+
+  it("a section's OWN stale timeout re-enables only that section -- an untouched section stays blocked", async () => {
+    const el = await render(idle({ status: "running", packTimedOut: false, sectionOutcomes: { whyRole: timedOutOutcome } }));
+    const whyRole = groupFor(el, "whyRole");
+    expect(whyRole, "no whyRole group").toBeTruthy();
+    expect(sectionRegenerate(el, "whyRole"), "the section with its OWN stale timeout must regain a control").toBeTruthy();
+    const stages = groupFor(el, "stages");
+    expect(buttons(stages).filter((b) => /^(regenerate|restore)\b/i.test(controlName(b))), "an untouched section must stay blocked").toEqual([]);
+  });
+
+  it("packTimedOut:true blocks EVERY section, including the one with its own stale timeout (verify.r5.md's own reachable pair)", async () => {
+    const el = await render(idle({ status: "running", packTimedOut: true, sectionOutcomes: { whyRole: timedOutOutcome } }));
+    const whyRole = groupFor(el, "whyRole");
+    expect(whyRole, "no whyRole group").toBeTruthy();
+    expect(
+      buttons(whyRole).filter((b) => /^(regenerate|restore)\b/i.test(controlName(b))),
+      "a possibly-still-live WHOLE-PACK claim must block every section, even one with its own stale timeout",
+    ).toEqual([]);
+    for (const other of ["aboutYou", "stages", "askThem"]) {
+      expect(buttons(groupFor(el, other)).filter((b) => /^(regenerate|restore)\b/i.test(controlName(b)))).toEqual([]);
+    }
   });
 });

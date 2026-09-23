@@ -193,7 +193,12 @@ describe("AC-N29.10 -- while a generation is already 'running', no button exists
     await flush();
 
     expect(findButton(/prepare me for this interview/i)).toBeUndefined();
-    expect(findButton(/^regenerate$/i)).toBeUndefined();
+    // m-a (N50 fix round 2): was `/^regenerate$/i` -- the whole-pack
+    // control's own accessible name is now "Regenerate whole pack", so the
+    // old pattern could never match anything and this assertion was
+    // zero-power. Renamed rather than dropped: the "no button while running"
+    // rule still needs a positive locator for the control it forbids.
+    expect(findButton(/^regenerate whole pack$/i)).toBeUndefined();
 
     const callsBefore = fetchMock.mock.calls.length;
     // Clicking anywhere plausible in the dialog body must not manufacture a

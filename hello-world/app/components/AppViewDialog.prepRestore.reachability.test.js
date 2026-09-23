@@ -402,7 +402,12 @@ describe("[harness positive control] the same mount, finder and fetch reader wor
 
     expect(document.body.textContent).not.toBe(container.textContent); // the portal tripwire
 
-    const button = allButtons().find((node) => /^regenerate$/i.test(accessibleName(node)));
+    // B1 (N50 fix round 2): was `/^regenerate$/i` -- M1 (fix round 1) renamed
+    // the whole-pack control's own accessible name to "Regenerate whole
+    // pack", which left this harness's own positive control unable to find
+    // it (a defect the fix round's own gate run missed by running only
+    // app/components/tracking, not app/components).
+    const button = allButtons().find((node) => /^regenerate whole pack$/i.test(accessibleName(node)));
     expect(button, "the whole-pack Regenerate control is missing -- this harness is broken, not the feature").toBeTruthy();
 
     const before = fetchMock.mock.calls.length;

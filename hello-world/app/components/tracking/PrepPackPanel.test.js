@@ -173,6 +173,39 @@ describe("AC-N33.13 -- every reachable status renders distinct, honest UI", () =
   });
 });
 
+// N50 fix round 7 (verify.r7.md B-1) -- the blocker's own RED: `error` is
+// NOT exclusive with a real `status`. route.js's own successful GET returns
+// `error: trustedError` whenever the separate trusted-names read fails
+// closed, with `status` still the truth about the pack -- so a truthy
+// `error` must never delete the status copy above. verify.r7.md's own
+// instrument: "Grep for `error:` in every PrepPackPanel*.test.js -- every
+// one passes `error: null`", so nothing anywhere in the suite rendered this
+// shape before this round.
+describe("N50 fix round 7 (verify.r7.md B-1) -- a truthy error and a real status can both be set, and both must render", () => {
+  const NAMES_ERROR = "Could not verify saved names for this application.";
+  const CASES = [
+    ["ready", READY_PACK, ["aboutYou", "whyRole", "askThem", "stages"], /your interview prep pack is ready/i],
+    ["running", null, [], /generating your interview prep pack now/i],
+    ["partial", READY_PACK, ["aboutYou"], /partial/i],
+    ["failed", null, [], /last generation attempt failed/i],
+    ["unavailable", null, [], /nothing to research yet/i],
+  ];
+
+  for (const [status, pack, completeSections, statusCopyPattern] of CASES) {
+    it(`[status: ${status}] the real status copy still renders, alongside the names-read failure`, async () => {
+      const el = await render(baseProps({ pack, status, completeSections, error: NAMES_ERROR }));
+      expect(el.textContent).toMatch(statusCopyPattern);
+      expect(el.textContent).toContain(NAMES_ERROR);
+    });
+  }
+
+  it("[status: null, pack: null -- the absent state] the absent-state copy still renders, alongside the names-read failure", async () => {
+    const el = await render(baseProps({ pack: null, status: null, error: NAMES_ERROR }));
+    expect(el.textContent.toLowerCase()).toContain("no prep pack yet");
+    expect(el.textContent).toContain(NAMES_ERROR);
+  });
+});
+
 describe("AC-N33.15 -- a legacy (pre-N16) pack renders honestly, never crashes", () => {
   it("a pre-N16-shaped pack (top-level tellMeAboutYourself/whyThisPosition/questionsToAsk, no sections.aboutYou) renders without throwing", async () => {
     const legacyPack = {

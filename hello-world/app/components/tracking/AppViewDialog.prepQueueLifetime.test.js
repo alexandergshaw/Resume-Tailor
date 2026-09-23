@@ -57,6 +57,8 @@ import {
   mutations,
   sectionRegenerateControl,
   wholePackRegenerateControl,
+  sectionGroup,
+  runningPrepGetBody,
 } from "@/test/helpers/prepDialogHarness.js";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
@@ -97,16 +99,61 @@ function markedGet(marker) {
   body.pack.sections.aboutYou.answer.lines[0].text = `${marker} -- the first aboutYou line.`;
   return body;
 }
+// M2 (N50 fix round 1): what the real server actually returns to a GET
+// issued WHILE a claim is live -- `status:"running"`, pack blanked to the
+// normalized-empty shape (route.js's own GATE 9; claim_prep_pack_slot clears
+// the row before any content exists). The remount fakes below used to answer
+// every GET with the full, already-generated `markedGet("BASE_MARKER")` body
+// regardless of whether a claim was outstanding, a state the server can
+// never actually produce -- which is exactly why M2's reopen-during-a-
+// section-action defect had no test catching it (verify.r1.md M2).
+//
+// N50 fix round 5 (line-cap extraction; verify.r5.md M-3): this file used to
+// carry its OWN hand-written copy of this shape, blanking `sectionRevisions`/
+// `liveRevisions`/`candidateName`/`interviewerNames` -- fields the real
+// `claim_prep_pack_slot` RPC never touches -- which is the exact
+// unfaithfulness verify4.md's own M-2 first raised against
+// `prepDialogHarness.js`'s copy and verify.r5.md's M-3 found still
+// undefended here: two answers to "what does the server return during a
+// live claim", silently able to disagree. `runningPrepGetBody()` (imported
+// above) is now the ONE shared answer both files use.
+const runningGet = runningPrepGetBody;
+
+// m-1 (N50 fix round 6, verify.r6.md): the alias above reads as "this file
+// uses the shared body", but nothing pinned that it stays true -- verify.r6.md
+// found the alias could be replaced with a divergent, hand-written copy (the
+// four faithful fields blanked again, exactly the unfaithfulness verify4.md's
+// own M-2 first raised) and every case in this file kept passing. A plain
+// identity check closes that: it can only stay green while `runningGet` is
+// genuinely `runningPrepGetBody` itself, never a look-alike local copy.
+describe("canary -- the alias above is genuinely the shared fixture, not a local copy of it", () => {
+  it("runningGet is runningPrepGetBody", () => {
+    expect(runningGet).toBe(runningPrepGetBody);
+  });
+});
+
 const sectionsOf = (f) => mutations(f).map((m) => m.body.section || "pack");
 const alertText = () => [...document.body.querySelectorAll('[role="alert"]')].map((n) => norm(n.textContent)).join(" | ");
 const DISABLED = /isn't available/;
 
-/** aboutYou POSTs are held on `gate`; everything else answers `other`. */
+/** aboutYou POSTs are held on `gate`; everything else answers `other`. A GET
+ *  issued while an aboutYou POST is outstanding answers `runningGet()`
+ *  (M2), never the ready body -- the fix this round makes to this shared
+ *  fake, per the brief's own explicit carve-out. */
 function stub(gate, other = { status: "disabled" }) {
+  let aboutYouPending = false;
   const f = vi.fn((url, init) => {
-    if (!init || !init.method) return Promise.resolve(jsonResponse(markedGet("BASE_MARKER")));
+    if (!init || !init.method) {
+      return Promise.resolve(jsonResponse(aboutYouPending ? runningGet() : markedGet("BASE_MARKER")));
+    }
     const body = JSON.parse(init.body);
-    if (body.section === "aboutYou") return gate.then(() => jsonResponse({ status: "ready", section: "aboutYou" }));
+    if (body.section === "aboutYou") {
+      aboutYouPending = true;
+      return gate.then(() => {
+        aboutYouPending = false;
+        return jsonResponse({ status: "ready", section: "aboutYou" });
+      });
+    }
     return Promise.resolve(jsonResponse(other));
   });
   vi.stubGlobal("fetch", f);
@@ -141,6 +188,35 @@ describe("Q-6b (R4b) -- a remounted dialog still sees the old instance's action 
   });
 });
 
+describe("M2 (N50 fix round 1) -- reopening during a SECTION action shows the cached pack, not an apparent whole-pack wipe", () => {
+  it("close then reopen while aboutYou is held: the cached content renders, aboutYou reads in progress, and the banner names aboutYou instead of claiming a whole-pack generation", async () => {
+    const id = freshAppId("m2cache");
+    const a = deferred();
+    stub(a.promise);
+    await render(id);
+    await click(sectionRegenerateControl("aboutYou"));
+    await flush();
+    try {
+      await render(id, false);
+      await render(id);
+      // the reopen's own GET answered `running`, empty -- exactly what the
+      // real server returns while the claim is live (runningGet() above).
+      // The panel must still show the cached, pre-action content: the other
+      // three sections stay usable, and the banner must not claim the WHOLE
+      // pack is generating.
+      expect(document.body.textContent, "the reopen must show the cached pack, not an empty one").toContain("BASE_MARKER");
+      expect(sectionRegenerateControl("stages"), "an idle section must stay usable off the cached content").toBeTruthy();
+      expect(norm(document.body.textContent)).not.toMatch(/generating your interview prep pack now/i);
+      const group = sectionGroup("aboutYou");
+      expect(group, "no aboutYou group").toBeTruthy();
+      expect(norm(group.textContent)).toMatch(/regenerating/i);
+    } finally {
+      a.resolve();
+      await flush(15);
+    }
+  });
+});
+
 describe("Q-7 (R8) -- the refetch after an action reaches whichever dialog instance is mounted when it settles", () => {
   it("remount while A is outstanding, resolve A: the NEW instance renders the post-action body", async () => {
     // The GET stub returns the post-action marker ONLY for a GET issued after
@@ -149,9 +225,19 @@ describe("Q-7 (R8) -- the refetch after an action reaches whichever dialog insta
     // marker would let a build with no settled handler pass (plan M2).
     const id = freshAppId("q7");
     const a = deferred();
+    let actionStarted = false;
     let aSettled = false;
+    // M2 (N50 fix round 1): a GET issued AFTER the POST but BEFORE it settles
+    // must answer what the real server returns during a live claim --
+    // `running`, pack blanked -- never the full pre-action ready body, which
+    // is a state the server cannot produce while a claim is outstanding.
     const f = vi.fn((url, init) => {
-      if (!init || !init.method) return Promise.resolve(jsonResponse(markedGet(aSettled ? "POST_ACTION_MARKER" : "BASE_MARKER")));
+      if (!init || !init.method) {
+        if (aSettled) return Promise.resolve(jsonResponse(markedGet("POST_ACTION_MARKER")));
+        if (actionStarted) return Promise.resolve(jsonResponse(runningGet()));
+        return Promise.resolve(jsonResponse(markedGet("BASE_MARKER")));
+      }
+      actionStarted = true;
       return a.promise.then(() => {
         aSettled = true;
         return jsonResponse({ status: "ready", section: "aboutYou" });
@@ -248,5 +334,66 @@ describe("outcome lifetime (R20) -- an outcome lives until it has been SEEN, the
     await render(id);
     expect(document.body.textContent).toContain("BASE_MARKER");
     expect(alertText()).toBe("");
+  });
+});
+
+describe("m1 (N50 fix round 1) -- an outcome is marked seen only once the PREP PANEL ITSELF is shown", () => {
+  it("settling while the dialog shows a DIFFERENT page (JD) does not mark the outcome seen -- it still renders once Prep is shown again", async () => {
+    // Kills the mutant that marks seen on `appDialog.open` alone: that build
+    // would mark this outcome seen the instant it settles (the dialog stays
+    // open the whole time, just on a different page), so `dropSeenOutcomes`
+    // at the next fresh open would erase it before the candidate ever saw it
+    // in the Prep panel. Q05c in verify.r1.md, SURVIVED with no test.
+    const id = freshAppId("m1seen");
+    // The whole-pack POST is held open, and the candidate pages away from
+    // Prep BEFORE it settles -- so the outcome is CREATED while the panel is
+    // not shown at all, which is the case that actually discriminates the
+    // Q05c mutant. (Clicking and settling in the same instant, while still
+    // on Prep, would be marked seen correctly by BOTH the real code and the
+    // mutant, and would prove nothing.)
+    const gate = deferred();
+    const f = vi.fn((url, init) => {
+      if (!init || !init.method) return Promise.resolve(jsonResponse(markedGet("BASE_MARKER")));
+      return gate.promise.then(() => jsonResponse({ status: "disabled" }));
+    });
+    vi.stubGlobal("fetch", f);
+    let appDialog = { open: true, rowIndex: 0, kind: "prep" };
+    const base = dialogProps(id);
+    async function renderDialog() {
+      await act(async () =>
+        root.render(
+          createElement(AppViewDialog, {
+            ...base,
+            appDialog,
+            setAppDialog: (updater) => {
+              appDialog = typeof updater === "function" ? updater(appDialog) : updater;
+            },
+          }),
+        ),
+      );
+      await flush();
+    }
+    await renderDialog();
+    await click(wholePackRegenerateControl());
+    await flush();
+    const previous = document.body.querySelector('button[aria-label="Previous"]');
+    expect(previous, "no Previous control to page away from Prep").toBeTruthy();
+    await click(previous);
+    await renderDialog();
+    expect(appDialog.kind, "harness sanity: the click actually paged away from Prep").toBe("jd");
+    try {
+      gate.resolve();
+      await flush(15);
+      expect(alertText(), "positive control: nothing to see on the JD page, the panel is not mounted there").toBe("");
+    } finally {
+      // nothing else held
+    }
+    // close, then reopen straight to Prep: a fresh-open drop must not have
+    // already erased an outcome the candidate never actually saw.
+    appDialog = { open: false, rowIndex: null, kind: "jd" };
+    await renderDialog();
+    appDialog = { open: true, rowIndex: 0, kind: "prep" };
+    await renderDialog();
+    expect(alertText()).toMatch(DISABLED);
   });
 });

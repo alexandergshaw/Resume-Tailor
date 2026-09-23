@@ -130,11 +130,16 @@ describe("the Generate/Regenerate control -- each of the four new props is exerc
     expect(findButton(el, /prepare me for this interview/i)).toBeTruthy();
   });
 
-  it("[hasPack=true] the SAME control is labelled 'Regenerate', never 'Prepare me...'", async () => {
+  it("[hasPack=true] the SAME control is labelled 'Regenerate whole pack', never 'Prepare me...'", async () => {
+    // M1 (N50 fix round 1): the locator was `/^regenerate$/i` -- the exact
+    // word M1 found sitting next to a section's OWN "Regenerate" with nothing
+    // to tell them apart. The control still swaps label by `hasPack`; only
+    // the hasPack=true string itself changed, so it is never identical to a
+    // section's own control (PrepSectionActions.js).
     const el = await render(
       baseProps({ pack: READY_PACK, status: "ready", completeSections: ["aboutYou"], hasDescription: true }),
     );
-    expect(findButton(el, /^regenerate$/i)).toBeTruthy();
+    expect(findButton(el, /^regenerate whole pack$/i)).toBeTruthy();
     expect(findButton(el, /prepare me for this interview/i)).toBeUndefined();
   });
 
@@ -158,7 +163,7 @@ describe("the Generate/Regenerate control -- each of the four new props is exerc
   it("[generating=true] no button is rendered AT ALL for this control -- replaced by non-interactive text, never a disabled Button (the a11y rule DX §8 states)", async () => {
     const el = await render(baseProps({ generating: true, pack: null, status: null, hasDescription: true }));
     expect(findButton(el, /prepare me for this interview/i)).toBeUndefined();
-    expect(findButton(el, /^regenerate$/i)).toBeUndefined();
+    expect(findButton(el, /^regenerate whole pack$/i)).toBeUndefined();
     expect(el.textContent.toLowerCase()).toMatch(/generat/);
     // Never a disabled control standing in for the missing button.
     const anyDisabled = [...el.querySelectorAll("button[disabled]")];

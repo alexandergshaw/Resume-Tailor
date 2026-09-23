@@ -43,6 +43,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createElement, act } from "react";
 import { createRoot } from "react-dom/client";
+import Box from "@mui/material/Box";
 import PrepPackPanel from "./PrepPackPanel.js";
 import { PREP_SECTION_REVISIONS_MAX } from "@/lib/interviewPrep/prepConstants.js";
 import { maximalPanelProps, maximalPack, maximalPackStrings, maximalClaims, maximalRevisions } from "@/test/helpers/prepMaximalFixture.js";
@@ -76,6 +77,10 @@ async function render(props) {
   await act(async () => root.render(createElement(PrepPackPanel, props)));
   return container.firstElementChild;
 }
+async function renderFixture(element) {
+  await act(async () => root.render(element));
+  return container;
+}
 function click(node) {
   return act(async () => node.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
 }
@@ -105,6 +110,34 @@ function hostOf(el, text) {
 }
 const px = (node) => parseFloat(node.ownerDocument.defaultView.getComputedStyle(node).fontSize);
 const colorOf = (node) => node.ownerDocument.defaultView.getComputedStyle(node).color;
+
+/** m-2 (N50 fix round 3): `getComputedStyle` cannot be used to detect a
+ *  `border-top` declared with a CSS custom property (`var(--border)`) --
+ *  MEASURED: jsdom resolves that shorthand to the exact same "none"/
+ *  "medium"/"rgb(0, 0, 0)" INITIAL values whether or not the rule exists at
+ *  all, while the identical declaration with a literal colour resolves
+ *  correctly. This reads the element's own emitted stylesheet rule text
+ *  instead -- it only needs the custom property's NAME, never its resolved
+ *  value, so jsdom's gap never applies. `null` when no matching rule
+ *  declares `border-top` at all. */
+function declaredBorderTop(el) {
+  const classes = [...el.classList];
+  for (const sheet of [...el.ownerDocument.styleSheets]) {
+    let rules;
+    try {
+      rules = [...sheet.cssRules];
+    } catch {
+      continue;
+    }
+    for (const rule of rules) {
+      if (!rule.selectorText || !rule.style) continue;
+      if (!classes.some((c) => rule.selectorText.includes(`.${c}`))) continue;
+      const value = rule.style.getPropertyValue("border-top");
+      if (value) return value;
+    }
+  }
+  return null;
+}
 
 describe("AC-N50.8 zero-visible half (H-5, PER HELPER) -- no restore control is on screen on first paint", () => {
   const RESTORABLE = 4 * (PREP_SECTION_REVISIONS_MAX - 1);
@@ -165,6 +198,105 @@ describe("AC-N50.4 (H-7) -- type rank matches the tiers (ranks, never values)", 
     const largestT1 = Math.max(...t1Hosts.map(([, h]) => px(h)));
     expect(Number.isFinite(smallestHeading) && Number.isFinite(largestT1)).toBe(true);
     expect(smallestHeading, `heading ${smallestHeading}px vs largest T1 body ${largestT1}px`).toBeGreaterThan(largestT1);
+  });
+
+  it("m4 (N50 fix round 1) -- a section heading is DISTINCTLY larger than a stage heading, not merely 'greater' (17px vs 13.5px, both pinned)", async () => {
+    // HEAD (before this round) had 15px vs 13.5px -- a 1.11 ratio verify.r1.md
+    // found reads as one continuous list ("Interview stages" then "Recruiter
+    // screen" as apparent siblings). 17px widens the ratio past 1.2.
+    const el = await render(maximalPanelProps({ transients: false }));
+    const sectionHeading = sectionHeadingsOf(el)[0];
+    const firstStageName = maximalPack().sections.stages.stages[0].name;
+    const stageHeading = headingElements(el).find((h) => headingLevel(h) === 4 && norm(h.textContent) === firstStageName);
+    expect(sectionHeading, "no section heading").toBeTruthy();
+    expect(stageHeading, "no stage heading (not the 'Sources for' h4)").toBeTruthy();
+    const sectionPx = px(sectionHeading);
+    const stagePx = px(stageHeading);
+    expect(sectionPx).toBe(17);
+    expect(stagePx).toBe(13.5);
+    expect(sectionPx / stagePx).toBeGreaterThan(1.2);
+  });
+
+  it("[canary] declaredBorderTop discriminates a real var()-based rule from its absence, where getComputedStyle cannot", async () => {
+    const el = await renderFixture(
+      createElement(
+        "div",
+        null,
+        createElement(Box, { sx: { borderTop: "1px solid var(--border)" }, "data-t": "with" }, "x"),
+        createElement(Box, { sx: { mt: 1 }, "data-t": "without" }, "y"),
+      ),
+    );
+    const withRule = el.querySelector('[data-t="with"]');
+    const withoutRule = el.querySelector('[data-t="without"]');
+    expect(declaredBorderTop(withRule)).toBe("1px solid var(--border)");
+    expect(declaredBorderTop(withoutRule)).toBe(null);
+    // The discriminator itself, stated outright: getComputedStyle sees the
+    // SAME "none" for both, which is exactly why it cannot be used above.
+    expect(getComputedStyle(withRule).borderTopStyle).toBe("none");
+    expect(getComputedStyle(withoutRule).borderTopStyle).toBe("none");
+  });
+
+  it("m-d (N50 fix round 2) -- a 'Sources for' heading is visually set off from a stage's 'Suggested answer:' label, never merely another T2 line beside it", async () => {
+    // RED before this round: both were bold, 11.5-12px, secondary-colour,
+    // separated by a plain 12px gap -- close enough that "Sources for
+    // Interview stages" read as Team panel's own sub-label (verify.r2.md
+    // m-d). Pinned as exact values, like m4 above, because the defect this
+    // guards is two elements looking alike, not merely "some declared size".
+    const el = await render(maximalPanelProps({ transients: false }));
+    const sourcesHeading = headingElements(el).find((h) => accessibleName(h) === `Sources for ${LABELS.stages}`);
+    const answerLabel = hostOf(el, "Suggested answer:");
+    expect(sourcesHeading, "no 'Sources for Interview stages' heading").toBeTruthy();
+    expect(answerLabel, "no 'Suggested answer:' label to compare against").toBeTruthy();
+    // Distinct label style: smaller than the answer label, never its equal.
+    expect(px(sourcesHeading)).toBeLessThan(px(answerLabel));
+    const headingStyle = getComputedStyle(sourcesHeading);
+    expect(headingStyle.textTransform).toBe("uppercase");
+    // Set off from what precedes it: a stated top rule, and a gap wider than
+    // the plain inter-line gap "Suggested answer:" itself uses.
+    const wrapper = sourcesHeading.parentElement;
+    // m-2 (N50 fix round 3): `getComputedStyle(wrapper).borderTopWidth !==
+    // "0px"` can never fail in jsdom -- MEASURED (a throwaway probe): jsdom
+    // cannot resolve a CSS custom property inside a shorthand border
+    // declaration at all, so `borderTop: "1px solid var(--border)"` computes
+    // to the exact same "none"/"medium"/"rgb(0, 0, 0)" INITIAL values as no
+    // border rule whatsoever -- the SAME declaration with a literal color
+    // (no `var()`) resolves correctly. So no `getComputedStyle` read of this
+    // property can discriminate a real rule from its absence here (verify.r3.md
+    // m-2, mutants S1/S1a SURVIVED 0/482). `declaredBorderTop` below reads
+    // the element's own emitted stylesheet rule text instead -- it needs the
+    // custom property's NAME, never its resolved value, so jsdom's gap does
+    // not apply.
+    const borderTop = declaredBorderTop(wrapper);
+    expect(borderTop, "no border-top rule declared for the sources wrapper at all").toBeTruthy();
+    expect(borderTop).not.toMatch(/^\s*(0(px)?\s+)?none\b/);
+    expect(borderTop).toMatch(/^\d+(\.\d+)?px\s+\S+/);
+    const wrapperStyle = getComputedStyle(wrapper);
+    expect(parseFloat(wrapperStyle.marginTop)).toBeGreaterThan(parseFloat(getComputedStyle(answerLabel.parentElement).marginTop));
+  });
+
+  it("N50 fix round 7 (verify.r7.md M-3) -- the sources block's own bottom padding is ZERO, leaving the surrounding margins to order the gaps instead of fighting them", async () => {
+    // Rounds 4-6 each WIDENED this block's own `pb` (12px, then 24px)
+    // chasing the gap to the section's own Regenerate/history row past the
+    // 16px inter-section gap (sectionHeaders.test.js:908, unchanged by this
+    // round). verify.r7.md's own M-3 measured that this was the wrong
+    // quantity to move: `pb` is padding INSIDE a section; 16px is the gap
+    // BETWEEN sections. Widening the first past the second does not merely
+    // permit the action row to read as closer to the NEXT section than to
+    // the content above it that it belongs to -- it GUARANTEES that
+    // inversion (measured on the shipped build: 36px above the row, only
+    // 16px below it). `pb: 0` is pinned here rather than "some value less
+    // than 16": the section wrapper's own `mb: 1` ("8px", `Section` in
+    // PrepPackPanel.js) and `PrepSectionActions`'s own `mt: 0.5` ("4px")
+    // already separate the sources list from the action row without any
+    // help from this padding, so the correct contribution FROM THIS BLOCK
+    // is none at all, not merely a smaller positive one.
+    const el = await render(maximalPanelProps({ transients: false }));
+    const sourcesHeading = headingElements(el).find((h) => accessibleName(h) === `Sources for ${LABELS.stages}`);
+    expect(sourcesHeading, "no 'Sources for Interview stages' heading").toBeTruthy();
+    const wrapper = sourcesHeading.parentElement;
+    const paddingBottom = parseFloat(getComputedStyle(wrapper).paddingBottom);
+    expect(Number.isFinite(paddingBottom)).toBe(true);
+    expect(paddingBottom).toBe(0);
   });
 
   it("[maximal] (b) every T1 body element is at least as large as every T2 text element", async () => {
@@ -453,7 +585,9 @@ describe("AC-N50.19 -- behaviours other chunks landed on this surface stay intac
 
   it("the destructive caption stays adjacent to the whole-pack control it warns about", async () => {
     const el = await render(maximalPanelProps({ transients: false }));
-    const regen = buttons(el).find((b) => /^regenerate$/i.test(controlName(b)));
+    // M1 (N50 fix round 1): was `/^regenerate$/i` -- now "Regenerate whole
+    // pack", so it is never identical to a section's own "Regenerate".
+    const regen = buttons(el).find((b) => /^regenerate whole pack$/i.test(controlName(b)));
     const caption = el.querySelector('[data-testid="regenerate-caption"]');
     expect(regen).toBeTruthy();
     expect(caption).toBeTruthy();

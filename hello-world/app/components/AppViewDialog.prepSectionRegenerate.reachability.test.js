@@ -375,7 +375,11 @@ describe("[regression guard] the WHOLE-PACK control keeps its exact request shap
 
     expect(document.body.textContent).not.toBe(container.textContent); // the portal tripwire
 
-    const button = findButton(/^regenerate$/i);
+    // B1 (N50 fix round 2): was `/^regenerate$/i` -- M1 (fix round 1) renamed
+    // the whole-pack control's own accessible name to "Regenerate whole
+    // pack"; this positive control (and the request-shape guard below it)
+    // must find the real control under its real name.
+    const button = findButton(/^regenerate whole pack$/i);
     expect(button, "the whole-pack Regenerate control is missing -- this harness is broken, not the feature").toBeTruthy();
 
     const before = fetchMock.mock.calls.length;

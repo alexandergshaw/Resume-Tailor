@@ -42,13 +42,21 @@ async function readJson(res) {
 // what usePrepGeneration.test.js and
 // AppViewDialog.prepGenerate.reachability.test.js already pin with
 // `toEqual`.
-async function requestPrepGeneration(applicationId, { triggerClass = "B2", section } = {}) {
+//
+// M-1 (N50 fix round 2): `signal`, when supplied, rides straight into
+// `fetch` -- the queue's own timeout (lib/interviewPrep/prepActionQueue.js)
+// aborts it once the timeout wins the race, so this request actually stops
+// rather than merely being ignored. `generateNow` below turns the resulting
+// `AbortError` into an ordinary error result, same as any other fetch
+// rejection, so its own promise still never rejects.
+async function requestPrepGeneration(applicationId, { triggerClass = "B2", section, signal } = {}) {
   const body = { applicationId, triggerClass };
   if (section) body.section = section;
   const res = await fetch("/api/interview-prep", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal,
   });
   return readJson(res);
 }
@@ -67,7 +75,7 @@ function generationKey(applicationId, section) {
 /**
  * @returns {{
  *   generatingIds: Set<string>,
- *   generateNow: (applicationId: string, opts?: {section?: string, triggerClass?: string}) => Promise<object>
+ *   generateNow: (applicationId: string, opts?: {section?: string, triggerClass?: string, signal?: AbortSignal}) => Promise<object>
  * }}
  *
  * `generateNow`'s promise never rejects and never resolves to `undefined`.
@@ -105,14 +113,14 @@ export function usePrepGeneration() {
   }, []);
 
   const generateNow = useCallback(
-    async (applicationId, { section, triggerClass } = {}) => {
+    async (applicationId, { section, triggerClass, signal } = {}) => {
       if (!applicationId) return { error: "Missing applicationId." };
       const key = generationKey(applicationId, section);
       if (inFlightRef.current.has(key)) return { skipped: true };
       inFlightRef.current.add(key);
       markGenerating(key, true);
       try {
-        const json = await requestPrepGeneration(applicationId, { triggerClass, section });
+        const json = await requestPrepGeneration(applicationId, { triggerClass, section, signal });
         if (json && (json.status || json.error)) return json;
         return { error: "Could not start generation.", networkError: true };
       } catch (err) {

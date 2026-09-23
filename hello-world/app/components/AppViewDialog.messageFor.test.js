@@ -142,4 +142,54 @@ describe("fetchPrep -- direct-call coverage (ASSUMED signature: (applicationId, 
     const result = updater({});
     expect(typeof result["app-1"].error).toBe("string");
   });
+
+  // N50 fix round 5 (verify.r5.md B-1): the blocker's own root cause --
+  // `drain()` (prepActionQueue.js) awaits the settled handler, which awaits
+  // this function, and a bare `fetch` with no bound of its own left that
+  // await unresolved for as long as the underlying request never answered
+  // (a stalled connection, an edge function that accepted and hung). Bounded
+  // the same way `send` already is: an AbortController paired with a timer.
+  it("N50 fix round 5 (verify.r5.md B-1) -- a fetch that never settles on its own is bounded, not awaited forever", async () => {
+    vi.useFakeTimers();
+    try {
+      const f = vi.fn(
+        (url, init) =>
+          new Promise((resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              const err = new Error("The operation was aborted.");
+              err.name = "AbortError";
+              reject(err);
+            });
+          }),
+      );
+      vi.stubGlobal("fetch", f);
+      const setPrepById = vi.fn();
+      const settled = vi.fn();
+      fetchPrep("app-1", setPrepById, { timeoutMs: 5000 }).then(settled);
+
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(settled, "must not resolve before its own bound").not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(settled, "must resolve once its own bound elapses, even though the underlying fetch never settled on its own").toHaveBeenCalledTimes(1);
+      expect(setPrepById).toHaveBeenCalledTimes(1);
+      const updater = setPrepById.mock.calls[0][0];
+      expect(typeof updater({})["app-1"].error).toBe("string");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("[positive control] a fetch that settles well before its bound is unaffected", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ json: async () => ({ status: "ready" }) }));
+      const setPrepById = vi.fn();
+      const data = await fetchPrep("app-1", setPrepById, { timeoutMs: 5000 });
+      expect(data).toEqual({ status: "ready" });
+      await vi.advanceTimersByTimeAsync(6000); // the bound must never fire twice / throw after settling
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
