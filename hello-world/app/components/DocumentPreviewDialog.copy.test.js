@@ -812,14 +812,25 @@ describe("AC-C4: copying must not mark the document edited, and must not change 
     expect(writeTextCalls).toHaveLength(1); // ...and the copy really did happen
   });
 
-  it("POSITIVE CONTROL: forcing focus onto the control DOES blur-commit, so the harness can see the failure it claims absent", async () => {
+  it("POSITIVE CONTROL: typing a real edit then forcing focus onto the control DOES blur-commit, so the harness can see the failure it claims absent", async () => {
     // Measured: `button.click()` alone fires ZERO blur events while a
     // contenteditable has focus, so a .click()-only test cannot see a
     // blur-commit at all and the row above would pass over a broken guard.
+    //
+    // Typing before the blur (rather than blurring an untouched editor) is
+    // deliberate, not incidental: commitDraft's guard (draftEditGuard.js,
+    // N35/B2-B3) now compares the editor's live text+html against its own
+    // seed and skips onSave when NOTHING changed. A blur with nothing typed
+    // is exactly the no-op that guard exists to swallow, so asserting onSave
+    // fired on an untouched editor would pin the very bug the guard fixes.
+    // Typing a real edit first keeps this row's purpose intact -- proving a
+    // blur commits a genuine change -- without re-encoding the old
+    // every-blur-commits behaviour.
     installClipboardStub();
     const onSaveSpy = vi.fn();
     await renderStateful({ ...baseProps(), initialScopes: scopesFor(), onSaveSpy });
     await enterEditMode();
+    await typeInEditor("<p>A REAL EDIT FOR THE BLUR TO COMMIT</p>");
     await act(async () => {
       copyControl().focus();
     });

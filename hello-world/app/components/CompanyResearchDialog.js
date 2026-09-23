@@ -50,9 +50,15 @@ export default function CompanyResearchDialog({
   articles = [],
   warnings = [],
   busy = false,
+  // PB1 (plan.check.r2): the refusal reason / hand-edited notice from a real
+  // (or attempted) accept, rendered here so it's on screen next to the
+  // control that produced it rather than only held in state.
+  acceptError = "",
+  acceptNotice = "",
   coverLetterLines = [],
   onClose,
   onApply,
+  onAccept,
   onResearch,
   onAddUrl,
 }) {
@@ -111,6 +117,22 @@ export default function CompanyResearchDialog({
         target: targets[a.id] || DEFAULT_PLACEMENT,
       }))
       .filter((a) => a.suggestion);
+
+  // PB1 (plan.check.r2): the one-step accept, built from the SAME chosen()
+  // rows the two-step weave flow already computes -- no separate selection
+  // model to keep in sync.
+  const acceptSelection = () => ({
+    facts: chosen().map((c) => ({
+      factId: null,
+      text: c.suggestion,
+      url: c.url,
+      title: c.title,
+      source: c.source,
+      placement: c.target,
+      textOrigin: "template",
+    })),
+    declinedUrls: [],
+  });
 
   const addUrl = async () => {
     const u = urlInput.trim();
@@ -267,6 +289,14 @@ export default function CompanyResearchDialog({
         {step === "arrange" ? " · arrange" : ""}
       </DialogTitle>
       <DialogContent dividers>
+        {acceptError ? (
+          <Box sx={{ color: "var(--danger)", fontSize: "0.85rem", bgcolor: "var(--danger-soft)", p: 1, borderRadius: 1, mb: 1.5 }}>
+            {acceptError}
+          </Box>
+        ) : null}
+        {acceptNotice ? (
+          <Box sx={{ color: "var(--text-secondary)", fontSize: "0.85rem", mb: 1.5 }}>{acceptNotice}</Box>
+        ) : null}
         {needsCompany && (articles || []).length === 0 && !loading ? (
           <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5, py: 2 }}>
             <Box sx={{ fontSize: "0.9rem" }}>
@@ -331,9 +361,28 @@ export default function CompanyResearchDialog({
             </Button>
           </>
         ) : (articles || []).length > 0 ? (
-          <Button variant="contained" onClick={() => setStep("arrange")} disabled={chosen().length === 0} sx={{ textTransform: "none" }}>
-            Next: arrange ({chosen().length})
-          </Button>
+          <>
+            {onAccept ? (
+              <Button
+                variant="contained"
+                onClick={() => onAccept(acceptSelection())}
+                disabled={busy || chosen().length === 0}
+                sx={{ textTransform: "none" }}
+              >
+                {busy ? "Inserting…" : "Insert into cover letter"}
+              </Button>
+            ) : null}
+            {onApply ? (
+              <Button
+                variant={onAccept ? "outlined" : "contained"}
+                onClick={() => setStep("arrange")}
+                disabled={chosen().length === 0}
+                sx={{ textTransform: "none" }}
+              >
+                Next: arrange ({chosen().length})
+              </Button>
+            ) : null}
+          </>
         ) : null}
       </DialogActions>
     </Dialog>

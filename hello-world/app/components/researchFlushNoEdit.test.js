@@ -60,6 +60,7 @@ import DocumentPreviewMount from "./DocumentPreviewMount.js";
 import { useDocumentPreview } from "@/app/hooks/useDocumentPreview.js";
 import { useCompanyResearch } from "@/app/hooks/useCompanyResearch.js";
 import { editedForScope } from "@/lib/document/previewBlob.js";
+import { embeddedEngine } from "@/lib/llm/engines/tailor-lite/engine.js";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -383,3 +384,159 @@ describe("opening company research does NOT mark the letter hand-edited when not
 // It also cannot see the 600 ms debounce firing LATER and marking the scope
 // edited after the accept has already read the letter; that ordering belongs
 // with the accept's own test.
+
+// ---------------------------------------------------------------------------
+// verify.r1.md B2/B3/M5 (fix round). Everything above this line seeds the
+// editor from `coverLetterPreviewHtml: COVER_LINES.map(l => "<p>"+l+"</p>").join("")`
+// -- exactly one `<p>` per stored line, built BY THIS FILE so its own
+// `innerText` round-trips to `COVER_LINES.join("\n")` identically. That makes
+// a text-only comparison, an html comparison and a trimmed comparison all
+// indistinguishable (verify.r1.md M5: mutants V-html and V-trim survive
+// 62/62 against that fixture). It also never happens in production: an
+// unedited engine letter's `coverLetterPreviewHtml` is `undefined`, so the
+// editor is seeded from a REAL parsed .docx render, whose blank paragraphs
+// make its `innerText` differ from `coverLetterResultLines.join("\n")` --
+// measured on a real letter at 15 rendered lines against 8 stored
+// (verify.r1.md B2). Everything below drives the SAME guard against that
+// real shape instead, and against a formatting-only edit (B3).
+// ---------------------------------------------------------------------------
+
+function ProbeReal({ engineB64, engineLines }) {
+  const [tailoringMap, setTailoringMap] = useState({
+    [JOB_ID]: {
+      status: "done",
+      result: "RESUME TEXT",
+      resultLines: ["RESUME TEXT"],
+      docxB64: "",
+      docxPath: "",
+      coverLetterResultLines: [...engineLines],
+      // Undefined, unlike COVER_LINES' hand-built fixture above -- this is
+      // the real shape a never-edited engine letter has in production, so
+      // `ensureLoaded` takes the PARSE branch instead of the "saved" one.
+      coverLetterPreviewHtml: undefined,
+      coverLetterDocxB64: engineB64,
+      coverVersionId: "ver-1",
+    },
+  });
+  const [reloadKey, setPreviewReloadKey] = useState(0);
+  currentMap = tailoringMap;
+  preview = useDocumentPreview({
+    tailoringMap,
+    setTailoringMap,
+    updateTailoringJob: (jobId, updater) =>
+      setTailoringMap((c) => ({
+        ...c,
+        [jobId]: typeof updater === "function" ? updater(c[jobId] || {}) : { ...(c[jobId] || {}), ...updater },
+      })),
+    resumeFile: null,
+    coverLetterFile: null,
+    additionalContext: "",
+    aggressiveness: 3,
+    contextFiles: [],
+    downloadDocxFiles: async () => null,
+    startBackgroundResearch: () => {},
+    setPreviewReloadKey,
+    onDocumentEdited: () => {},
+    currentUser: { id: "user-1" },
+  });
+  research = useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewReloadKey });
+  return createElement(DocumentPreviewMount, {
+    preview,
+    tailoringMap,
+    research,
+    chat: null,
+    tailorEngine: "embedded",
+    previewReloadKey: reloadKey,
+    scrapePreviewPosting: null,
+    currentUser: { id: "user-1" },
+    resumeFile: null,
+    coverLetterFile: null,
+  });
+}
+
+async function openRealCoverPreviewInEditMode(engineB64, engineLines) {
+  await act(async () => {
+    root.render(createElement(ProbeReal, { engineB64, engineLines }));
+  });
+  await act(async () => {
+    preview.openResumePreview(JOB, { tab: "cover" });
+  });
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+  const edit = buttonsByText(/^Edit$/)[0];
+  expect(edit, "no Edit button in the open preview").toBeTruthy();
+  await act(async () => {
+    edit.click();
+  });
+  // A real .docx parse (JSZip + XML) takes more than a couple of microtask
+  // ticks -- unlike the hand-built fixture above, whose `saved` branch
+  // resolves synchronously. Poll instead of guessing a fixed tick count.
+  for (let i = 0; i < 50 && !editorEl(); i += 1) {
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10));
+    });
+  }
+  expect(editorEl(), "edit mode did not produce a contenteditable surface").toBeTruthy();
+}
+
+describe("the guard against a REAL parsed engine letter, not a hand-built fixture (B2)", () => {
+  let ENGINE_B64 = "";
+  let ENGINE_LINES = [];
+
+  beforeAll(async () => {
+    const cl = await embeddedEngine.tailorCoverLetter({
+      jobPosting: "Staff Engineer at Acme. React, Node, telemetry, accessibility.",
+      jobTitle: "Staff Engineer",
+      companyName: "Acme",
+    });
+    ENGINE_B64 = cl.docxB64;
+    ENGINE_LINES = cl.resultLines;
+  });
+
+  it("CONTROL: the real engine letter's rendered text really does differ from its stored lines", async () => {
+    // Without this, a "guard did not fire" result below could mean the
+    // fixture happens to round-trip cleanly instead of the guard actually
+    // doing its job against a real divergence.
+    await openRealCoverPreviewInEditMode(ENGINE_B64, ENGINE_LINES);
+    expect(editorEl().innerText).not.toBe(ENGINE_LINES.join("\n"));
+  });
+
+  it("blurring the unedited, REALLY-parsed letter with nothing typed does not mark it hand-edited", async () => {
+    await openRealCoverPreviewInEditMode(ENGINE_B64, ENGINE_LINES);
+    await act(async () => {
+      editorEl().dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+    expect(editedForScope(entry(), "cover")).toBe(false);
+    expect(entry().coverLetterResultLines).toEqual(ENGINE_LINES);
+    expect(entry().coverLetterDocxB64).toBe(ENGINE_B64);
+  });
+
+  it("clicking Research company on the REALLY-parsed letter with nothing typed does not mark it hand-edited", async () => {
+    await openRealCoverPreviewInEditMode(ENGINE_B64, ENGINE_LINES);
+    await clickResearchCompany();
+    expect(editedForScope(entry(), "cover")).toBe(false);
+    expect(entry().coverLetterResultLines).toEqual(ENGINE_LINES);
+  });
+});
+
+describe("a formatting-only edit is still committed (B3)", () => {
+  it("bolding a run of text, with the text itself unchanged, still saves", async () => {
+    await openCoverPreviewInEditMode();
+    const editor = editorEl();
+    // Same TEXT as the seed (COVER_LINES joined), different HTML -- exactly
+    // what Bold/Italic/Underline/Align/font-size do: they rewrite innerHTML
+    // and leave innerText alone.
+    editor.innerHTML = ["<p><b>Dear Hiring Manager,</b></p>", ...COVER_LINES.slice(1).map((l) => `<p>${l}</p>`)].join("");
+    expect(editor.innerText).toBe(COVER_LINES.join("\n"));
+    await act(async () => {
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      editor.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+    expect(entry().coverLetterPreviewHtml || "").toContain("<b>Dear Hiring Manager,</b>");
+    expect(editedForScope(entry(), "cover")).toBe(true);
+  });
+});

@@ -2968,8 +2968,11 @@ export default function Home() {
         warnings={research.researchByJob[research.companyResearch.jobId]?.warnings || []}
         busy={research.companyResearch.busy}
         coverLetterLines={tailoringMap[research.companyResearch.jobId]?.coverLetterResultLines || []}
+        acceptError={research.companyResearch.acceptError}
+        acceptNotice={research.companyResearch.acceptNotice}
         onClose={research.closeCompanyResearch}
         onApply={research.applyCompanyResearch}
+        onAccept={research.acceptFacts}
         onResearch={research.researchTypedCompany}
         onAddUrl={research.addResearchUrl}
       />

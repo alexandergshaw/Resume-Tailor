@@ -30,6 +30,7 @@ import { renderModelToHtml } from "@/lib/document/docxPreview";
 import { htmlToPlainText } from "@/lib/document/htmlToPlainText";
 import { writePlainText } from "@/lib/clipboard/plainText";
 import { changedScopes as changedScopesOf } from "@/lib/tailor/previewScopes";
+import { commitDraftSeed } from "@/lib/document/draftEditGuard";
 import { SCOPES, SCOPE_LABEL, DOCX_SCOPES } from "@/lib/tailor/documentScopes";
 import { useIsMobile } from "../hooks/useResponsive";
 import EditorToolbar from "./preview/EditorToolbar";
@@ -194,6 +195,7 @@ export default function DocumentPreviewDialog({
   const [highlightOn, setHighlightOn] = useState({ resume: false, cover: false });
   const editorRef = useRef(null);
   const draftHtmlRef = useRef({}); // scope -> edited innerHTML (uncommitted)
+  const seedRef = useRef({}); // scope -> {text, html} at last seed (B2/B3)
   const savedRangeRef = useRef(null); // selection captured before a control steals focus
   const saveTimerRef = useRef(null); // pending auto-save debounce timer
   // scope -> last text content this dialog has accounted for. Used to tell,
@@ -262,6 +264,7 @@ export default function DocumentPreviewDialog({
     const html = editorRef.current.innerHTML;
     const text = editorRef.current.innerText;
     draftHtmlRef.current[tab] = html;
+    if (commitDraftSeed(seedRef.current, tab, text, html)) return; // B2/B3
     onSave?.(tab, { text, html });
     // Our own save just moved this scope's text — record it as the known
     // baseline so a LATER reloadKey bump (from an unrelated revise) doesn't
@@ -371,7 +374,7 @@ export default function DocumentPreviewDialog({
   useEffect(() => {
     if (mode !== "edit" || !editorRef.current) return;
     editorRef.current.innerHTML = draftHtmlRef.current[tab] ?? docState[tab]?.html ?? "";
-    editorRef.current.focus();
+    seedRef.current[tab] = { text: editorRef.current.innerText, html: editorRef.current.innerHTML }; editorRef.current.focus(); // B2/B3
   }, [mode, tab, docState]);
 
   // Never leave a debounce timer running after unmount.
@@ -676,7 +679,7 @@ export default function DocumentPreviewDialog({
           <Button
             size="small"
             startIcon={researchLoading ? <CircularProgress size={14} /> : <TravelExploreIcon fontSize="small" />}
-            onClick={onResearchCompany}
+            onClick={() => { commitDraft(); onResearchCompany?.(); }}
             sx={{ textTransform: "none", my: 0.5 }}
           >
             {researchLoading
