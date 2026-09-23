@@ -9,17 +9,25 @@
 // ---------------------------------------------------------------------------
 // F1 -- THE COLLISION, MEASURED (not inferred)
 // ---------------------------------------------------------------------------
-// Article ids are minted BY POSITION, by both producers:
+// Both producers still mint an id BY POSITION:
 //     app/api/company-research/route.js:76      id: `art-${i}`
 //     lib/research/companyResearchLocal.js:78   id: `art-${idx}`
-// `useCompanyResearch.js:93-100` (`fetchResearchInto`) replaces the job's
-// article list WHOLESALE on every research run, so run 2's first card is
-// `art-0` exactly as run 1's first card was -- a different article, the same
-// id. `factInsertion.js:160-173` (`mergeAcceptedFacts`) dedupes by NORMALISED
-// TEXT ONLY, so both survive the merge and the PUT body carries
+// but since cc2406d that id is never what reaches state. `mintArticleId`
+// (`useCompanyResearch.js`), called from `fetchResearchInto` on every
+// arrival, overrides it with an id derived from the article's own url -- or,
+// when the url is unusable or the article is a same-url duplicate, a per-run
+// fallback -- before the job's article list, which `fetchResearchInto` still
+// replaces WHOLESALE on every research run, is stored. This file's original
+// premise was that run 2's first card, `art-0` by position exactly as run 1's
+// first card was, would collide with it on that basis; that specific route is
+// now closed, and what these tests actually pin is the CLASS the owner ruled
+// on: two distinct facts must never arrive under the SAME id, however that id
+// was derived. `factInsertion.js:160-173` (`mergeAcceptedFacts`) dedupes by
+// NORMALISED TEXT ONLY, so a collision would let both facts survive the merge
+// with the PUT body carrying
 //     facts.map(f => f.id) === ["art-0", "art-0"]
-// with two different `text` values. The same pair lands in
-// `coverVersion.insertedFacts`, which is written to
+// (or any other id the two shared) under two different `text` values. The
+// same pair would land in `coverVersion.insertedFacts`, which is written to
 // `generated_cover_letters.inserted_facts` -- the row that is supposed to say
 // WHICH accepted facts a letter version carries. Under a collision it names
 // one id for two distinct claims, and no reader can tell them apart.
@@ -37,7 +45,7 @@
 // `undefined` -- `Object.fromEntries` keeps the LAST suggestion, so both cards
 // render and both emit the SAME text, and `mergeAcceptedFacts`' text dedupe
 // then silently discards one of the candidate's two accepted facts. The paste
-// path already mints its own id (`useCompanyResearch.js:140`, `url-<ts>-<i>`),
+// path already mints its own id (`useCompanyResearch.js:166`, `url-<ts>-<i>`),
 // so arrival is where the gap is.
 //
 // ---------------------------------------------------------------------------
