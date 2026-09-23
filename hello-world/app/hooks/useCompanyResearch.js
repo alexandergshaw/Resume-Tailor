@@ -6,6 +6,8 @@ import { readEngine } from "../settings/engine";
 import { planAcceptForEntry, mergeAcceptedFacts } from "../../lib/acceptedFacts/factInsertion";
 import { applyCoverDocxEdits } from "../../lib/acceptedFacts/factDocx";
 import { editedForScope } from "../../lib/document/previewBlob";
+import { hashString } from "../../lib/text/phrasing";
+import { safeExternalHref } from "../../lib/url/safeExternalHref";
 
 // PB1 (plan.check.r2): shown when the accept is refused because the
 // engine's own copy of the cover letter is missing -- a restored chip or a
@@ -47,6 +49,30 @@ function withEditedScope(entry, scope, value) {
   const e = entry?.edited;
   const base = e && typeof e === "object" ? e : { resume: !!e, cover: !!e };
   return { ...base, [scope]: value };
+}
+
+// N35/F1+F4: mint a provenance id ON ARRIVAL, at the one seam every research
+// article passes through regardless of producer (the Gemini route and the
+// embedded engine both mint `art-${i}` BY POSITION -- route.js:76,
+// companyResearchLocal.js:78 -- so a run's first card is always `art-0`,
+// whatever article it actually is). Two different accepted facts must never
+// share an id, so this overrides whatever the producer sent, deriving the id
+// from the article's own url: stable for the SAME article across sessions
+// (a re-run finds the same article at the same url, and it should read back
+// as the same fact), yet distinct between different articles because
+// different articles carry different urls. `safeExternalHref` is the app's
+// one "is this usable as a url" check; an article that fails it (or carries
+// none at all, F4's hardening case) has no stable key to derive from, so it
+// falls back to a per-run component instead -- non-durable, per the owner
+// ruling, but still distinct and never null.
+function mintArticleId(article, runStamp, index) {
+  const url = typeof article?.url === "string" ? article.url.trim() : "";
+  if (safeExternalHref(url)) return `art-${hashString(url).toString(36)}`;
+  return `art-run${runStamp}-${index}`;
+}
+
+function withMintedIds(articles, runStamp) {
+  return (Array.isArray(articles) ? articles : []).map((a, i) => ({ ...a, id: mintArticleId(a, runStamp, i) }));
 }
 
 export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewReloadKey }) {
@@ -94,7 +120,7 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
         ...m,
         [jobId]: {
           loading: false, needsCompany: false, error: "",
-          articles: Array.isArray(data.articles) ? data.articles : [],
+          articles: withMintedIds(data.articles, Date.now()),
           warnings: Array.isArray(data.warnings) ? data.warnings : [],
         },
       }));
