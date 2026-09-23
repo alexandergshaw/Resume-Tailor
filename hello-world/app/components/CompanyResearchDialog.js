@@ -123,7 +123,7 @@ export default function CompanyResearchDialog({
   // model to keep in sync.
   const acceptSelection = () => ({
     facts: chosen().map((c) => ({
-      factId: null,
+      id: c.id,
       text: c.suggestion,
       url: c.url,
       title: c.title,

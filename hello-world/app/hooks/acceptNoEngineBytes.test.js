@@ -95,7 +95,7 @@ const FACT_URL = "https://acme.example.com/newsroom/dublin-lab";
 const SELECTION = {
   facts: [
     {
-      factId: null,
+      id: "art-1",
       text: FACT_TEXT,
       url: FACT_URL,
       title: "Acme opens Dublin telemetry lab",

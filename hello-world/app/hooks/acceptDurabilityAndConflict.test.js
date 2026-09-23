@@ -59,7 +59,7 @@ function factSelection(over = {}) {
   return {
     facts: [
       {
-        factId: null,
+        id: "art-dublin-lab",
         text: "Acme opened a Dublin telemetry lab in 2026.",
         url: "https://acme.example.com/newsroom/dublin-lab",
         title: "Acme opens Dublin telemetry lab",
@@ -76,7 +76,7 @@ function factSelection2() {
   return {
     facts: [
       {
-        factId: null,
+        id: "art-berlin-office",
         text: "Acme also opened a Berlin engineering office in 2026.",
         url: "https://acme.example.com/newsroom/berlin-office",
         title: "Acme opens Berlin office",

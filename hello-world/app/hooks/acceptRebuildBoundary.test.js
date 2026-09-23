@@ -94,7 +94,7 @@ const FACT_TEXT = "Acme opened a Dublin telemetry lab in 2026.";
 const SELECTION = {
   facts: [
     {
-      factId: null,
+      id: "art-dublin-lab",
       text: FACT_TEXT,
       url: "https://acme.example.com/newsroom/dublin-lab",
       title: "Acme opens Dublin telemetry lab",
