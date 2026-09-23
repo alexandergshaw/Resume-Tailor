@@ -48,68 +48,19 @@
 // This module is ADDITIVE and local to the glossary. It does not modify
 // `interactionCitations.js`, whose eight importers all read that module's `[]`
 // as "the model did not search" and whose stability rule is stated in its own
-// header. If a second feature ever needs a per-block walk, promoting this is the
-// right move; a second copy is not.
-
-/** @returns {value is Record<string, unknown>} */
-function isPlainObject(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-/**
- * The same walk `extractCitationSources` performs, but WITHOUT flattening: one
- * entry per `type: "text"` content block, in walk order, each carrying only its
- * OWN block's `url_citation` annotations and the index of the step it came from.
- *
- * Offsets are read snake_case (`start_index` / `end_index`) exactly as the wire
- * sends them, and are carried through VERBATIM. They are documented by the
- * vendor as BYTES, which is why they are named `startByte` / `endByte` and why
- * conversion to UTF-16 indices is `citationSpans.js`'s job and not this one's.
- * Nothing here falls back to `startIndex` / `endIndex`: that is the spelling
- * Google's own JS sample for this surface uses, the wire does not send it, and
- * `"x".slice(undefined, undefined)` returns the WHOLE STRING rather than
- * throwing -- so a camelCase read is silently wrong rather than loud.
- *
- * NEVER THROWS, for any input. Any level of the walk that is missing or
- * malformed contributes nothing and is skipped. A throw here would land on the
- * worker's per-batch catch and discard paid work.
- *
- * @param {unknown} interaction
- * @returns {Array<{ text: string, stepIndex: number,
- *   citations: Array<{ uri: unknown, title: unknown, startByte: unknown, endByte: unknown }> }>}
- */
-export function extractCitationSourcesByBlock(interaction) {
-  const out = [];
-  const steps = interaction && typeof interaction === "object" ? interaction.steps : null;
-  if (!Array.isArray(steps)) return out;
-
-  steps.forEach((step, stepIndex) => {
-    if (!isPlainObject(step) || step.type !== "model_output") return;
-    if (!Array.isArray(step.content)) return;
-    for (const block of step.content) {
-      if (!isPlainObject(block) || block.type !== "text") continue;
-      const citations = [];
-      if (Array.isArray(block.annotations)) {
-        for (const annotation of block.annotations) {
-          if (!isPlainObject(annotation) || annotation.type !== "url_citation") continue;
-          citations.push({
-            uri: annotation.url,
-            title: annotation.title,
-            startByte: annotation.start_index,
-            endByte: annotation.end_index,
-          });
-        }
-      }
-      out.push({
-        text: typeof block.text === "string" ? block.text : "",
-        stepIndex,
-        citations,
-      });
-    }
-  });
-
-  return out;
-}
+// header.
+//
+// N49 S2a: `extractCitationSourcesByBlock` was written here first,
+// additively, and this file's own header said "a second copy is not" the
+// right move once a second caller appeared. One has:
+// lib/tracking/citationLineAgreement.js. So the walk itself now lives in
+// lib/llm/interactionBlocks.js and this module re-exports it -- a RELATIVE
+// path is deliberately not used (only the build catches a wrong depth; the
+// `@/` alias sidesteps that hazard entirely). `assembleResearchDocument`
+// below is glossary-specific (it assembles the document definitions are
+// parsed from, which is a glossary concern, not a general citation one) and
+// stays here.
+export { extractCitationSourcesByBlock } from "@/lib/llm/interactionBlocks";
 
 /**
  * The document the definitions are parsed from, assembled by US with a stated

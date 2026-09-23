@@ -65,6 +65,9 @@ import { TOUCH_TARGET_SX, WRAP_ROW_SX, BREAK_LONG_WORDS_SX } from "@/app/theme/m
 import PrepSectionActions from "./PrepSectionActions";
 import NamesStrip from "./PrepPackNamesStrip";
 import { resolveSupport, numberResolved, sourcedOrphanVariant } from "@/lib/interviewPrep/prepCitations";
+import { packStagesSnapshot, stageSupportPlacement, researchSourceNumbers } from "@/lib/interviewPrep/stageResearchView";
+import PrepStageBlock, { StagesResearchState } from "./PrepStageBlock";
+import { CitationMarker, SourceList, RecommendedAnswer, Section } from "./PrepPackPrimitives";
 import { safeExternalHref } from "@/lib/url/safeExternalHref";
 import {
   answerLines,
@@ -105,189 +108,11 @@ const SECTION_LABELS = {
 // askThemQuestions, stageList, packClaims, allSupports) moved to
 // ./prepPackFields.js to keep this file under its own 1000-line cap -- see
 // that file's own header.
-
-// N43: a bracketed superscript, reused verbatim from DigestPanel.js's own
-// MARKER_SX/FOCUS_SX (measured there in a real Chromium layout -- see that
-// file's header for the 24x24 WCAG 2.5.8 floor and the `marginBlock: -6px`
-// line-height compensation) rather than re-derived here. DigestPanel.js does
-// not export either object, so this is an identical copy, not an import --
-// design-experience.r1.md ss1 leaves promoting the shared copy to a
-// structure seat.
-const FOCUS_SX = {
-  outlineWidth: "2px",
-  outlineStyle: "solid",
-  outlineColor: "var(--accent)",
-  outlineOffset: "2px",
-  borderRadius: "2px",
-};
-
-const MARKER_SX = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  boxSizing: "border-box",
-  minWidth: 24,
-  minHeight: 24,
-  marginBlock: "-6px",
-  fontSize: "0.75em",
-  lineHeight: 0,
-  verticalAlign: "super",
-  fontWeight: 600,
-  fontVariantNumeric: "tabular-nums",
-  padding: "0.5em 0.15em",
-  color: "currentColor",
-  textDecorationLine: "none",
-  "&::before": { content: '"["' },
-  "&::after": { content: '"]"' },
-  "&:hover": { textDecorationLine: "underline" },
-  "&:focus-visible": FOCUS_SX,
-};
-
-/** The citation marker itself. `resolved` is one `resolveSupport(...)`
- *  result and `n` its assigned per-section number -- both come from the
- *  caller's own `numberResolved(...)` pass, never computed here, so there is
- *  exactly one numbering implementation.
- *
- *  A cited marker is a real link, reachable by keyboard, named
- *  "Source {n}: {claim.text}" -- never the bare digit, which is decorative.
- *  An unsafe marker (AC-N43.7(b): `support` resolves but the claim's
- *  `sourceUrl` fails `safeExternalHref`) is a `<span>`, never an `<a>` stub:
- *  no `href`, no tabindex, no interactive role, and its own name discloses
- *  the link is unavailable rather than pretending to be a working source. */
-function CitationMarker({ resolved, n }) {
-  if (!resolved || resolved.state === "none" || n == null) return null;
-  if (resolved.state === "unsafe") {
-    return (
-      <Box
-        component="span"
-        aria-label={`Citation ${n}: link unavailable`}
-        data-citation-marker={String(n)}
-        sx={MARKER_SX}
-      >
-        {String(n)}
-      </Box>
-    );
-  }
-  // The href attribute is recomputed here, at the point of use, through
-  // safeExternalHref directly -- rather than trusting `resolved.href` (which
-  // prepCitations.js already computed the same way) -- so
-  // app/components/hrefSafety.sweep.test.js's own source-text sweep, which
-  // can only see gating within ONE file, finds the gate on this line too.
-  return (
-    <Box
-      component="a"
-      href={safeExternalHref(resolved.claim.sourceUrl)}
-      target="_blank"
-      rel="noopener noreferrer"
-      aria-label={`Source ${n}: ${resolved.claim.text}`}
-      data-citation-marker={String(n)}
-      sx={MARKER_SX}
-    >
-      {String(n)}
-    </Box>
-  );
-}
-
-/** A section's own numbered source list -- rendered only when that section
- *  resolved at least one citation (AC-N43.1); gated, never an empty
- *  heading. Per-section, never a combined list (owner ruling): each of the
- *  four sections gets its own "Sources for {label}" list, and the same
- *  claim cited from two sections earns two independent entries. The unsafe
- *  branch shows the claim's own text as inert content -- never a raw
- *  `href` built from the unvalidated string -- with something beyond the
- *  bare claim text so the reader is not left wondering why it isn't a link
- *  (design-experience.r1.md ss9 gates the exact wording, not the shape).
- *  N50/AC-N50.4(c): the list is T2 -- secondary colour throughout, its
- *  anchor kept `color: "inherit"` so it never reads as an ordinary,
- *  primary-colour link (F4).
- *  m-d (N50 fix round 2): a top rule and a wider gap set the block off from
- *  what precedes it -- verify.r2.md's own defect: it used to read as a
- *  stage's own "Suggested answer:" sub-label instead. Heading stays an h4
- *  named "Sources for {label}" (AC-N50.5's own walker) -- only the
- *  SURROUNDING style changes. Applies to all four sections, not just Stages.
- *  Rounds 3-6 (verify3/4/5/6.md) each WIDENED this block's own `pb` -- 12px,
- *  then 24px -- chasing the gap to the section's own Regenerate/history row
- *  past the 16px inter-section gap (sectionHeaders.test.js pins that value).
- *  N50 fix round 7 (verify.r7.md M-3): the wrong quantity was being moved.
- *  `pb` is padding INSIDE a section; 16px is the gap BETWEEN sections --
- *  widening the first past the second guarantees the action row reads as
- *  closer to the NEXT section than to the content above it it belongs to
- *  (measured: 36px above the row, 16px below -- 2.25:1 the wrong way).
- *  `pb: 0` restores the ordering instead: the section wrapper's own `mb: 1`
- *  ("8px", `Section` above) and `PrepSectionActions`'s own `mt: 0.5` ("4px")
- *  already separate the list from the action row without this padding. */
-function SourceList({ label, entries }) {
-  if (entries.length === 0) return null;
-  return (
-    <Box sx={{ mt: 2.5, mb: 0, pt: 1, pb: 0, borderTop: "1px solid var(--border)" }}>
-      <Box
-        component="h4"
-        sx={{
-          fontSize: 10.5,
-          fontWeight: 700,
-          mt: 0,
-          mb: 0.5,
-          color: "var(--text-secondary)",
-          textTransform: "uppercase",
-          letterSpacing: "0.06em",
-        }}
-      >
-        Sources for {label}
-      </Box>
-      <Box component="ol" sx={{ m: 0, pl: 2.5, display: "flex", flexDirection: "column", rowGap: 0.75, color: "var(--text-secondary)" }}>
-        {entries.map((entry) => {
-          // Same discipline as CitationMarker above: recomputed here, in
-          // this file, through safeExternalHref directly, rather than
-          // trusting the `href` prepCitations.js already resolved.
-          const href = safeExternalHref(entry.claim.sourceUrl);
-          return (
-            <Box component="li" key={entry.claim.id} sx={{ fontSize: 12.5, ...BREAK_LONG_WORDS_SX }}>
-              {href ? (
-                <Box component="a" href={href} target="_blank" rel="noopener noreferrer" sx={{ color: "inherit", display: "block" }}>
-                  {entry.claim.text}
-                </Box>
-              ) : (
-                <Box>
-                  {entry.claim.text}
-                  <Box component="span" sx={{ color: "var(--text-secondary)" }}>
-                    {" "}
-                    (source link unavailable)
-                  </Box>
-                </Box>
-              )}
-            </Box>
-          );
-        })}
-      </Box>
-    </Box>
-  );
-}
-
-const RECOMMENDED_ANSWER_LABEL_SX = { fontWeight: 700, fontSize: 11.5, color: "var(--text-secondary)" };
-const RECOMMENDED_ANSWER_BODY_SX = { fontSize: 12.5, color: "var(--text-secondary)", mt: 0.25, mb: 0 };
-
-/** N48: the model generates a `recommendedAnswer` for every stage and it was
- *  discarded at the last hop to a human -- the same defect class this chunk
- *  keeps shipping (a complete, correct mechanism with nothing rendering its
- *  output). Always visible, in full, never behind a disclosure control or a
- *  truncation: design-experience.r1.md ss3 argues a click-gate here is a
- *  stronger minimize-clicks violation than the usual "hide the details"
- *  case, because this is the section's primary payload, not optional detail.
- *  Demoted typographically instead -- smaller, secondary colour, labelled --
- *  so it reads as reference material after the questions rather than
- *  competing with them. `null`/blank renders nothing, same discipline as
- *  every other optional field in this file. */
-function RecommendedAnswer({ text }) {
-  if (typeof text !== "string" || text.trim() === "") return null;
-  return (
-    <Box sx={{ mt: 0.75, mb: 0 }}>
-      <Box component="span" sx={RECOMMENDED_ANSWER_LABEL_SX}>
-        Suggested answer:
-      </Box>
-      <Box sx={RECOMMENDED_ANSWER_BODY_SX}>{text}</Box>
-    </Box>
-  );
-}
+//
+// N49 (line-cap extraction, same standing rule): `CitationMarker`,
+// `SourceList`, `RecommendedAnswer` and `Section` moved to
+// ./PrepPackPrimitives.js, unchanged, to make room for this chunk's own
+// `ResearchStages` branch -- see that file's own header.
 
 // N50/AC-N50.14: neither variant may say WHERE the orphaned material sits
 // relative to the sections -- the restructure below moves things around, and
@@ -311,30 +136,6 @@ function OrphanClaimsNotice({ variant }) {
       sx={{ fontSize: 12.5, color: "var(--text-secondary)", bgcolor: "var(--bg-soft)", p: 1, borderRadius: 1, mb: 1.5 }}
     >
       {ORPHAN_NOTICE_TEXT[variant]}
-    </Box>
-  );
-}
-
-function Section({ heading, children }) {
-  return (
-    <Box sx={{ mb: 1 }}>
-      {/* N44/AC-N44.9: `margin-top` is stated explicitly (never left to the
-       *  browser's UA default `1em` on an `<h3>`) -- the same defect class
-       *  070e1ec fixed in a sibling file, now four times as visible because
-       *  this heading renders unconditionally in every state. N50/AC-N50.4:
-       *  15px, strictly larger than every T1 body line (13.5px), so the
-       *  heading always outranks what it labels. N50/C5: this wrapper's own
-       *  `mb: 1` ("8px") is the gap between the heading's body and its own
-       *  PrepSectionActions -- the gap BETWEEN sections is now owned by the
-       *  role="group" wrapper one level up. */}
-      {/* m4 (N50 fix round 1): 17px, widened from 15px so the step to a stage
-       *  h4 (13.5px) reads as two ranks apart rather than a 1.11 ratio that a
-       *  sighted reader can mistake for one continuous list ("Interview
-       *  stages" followed by "Recruiter screen" as siblings). */}
-      <Box component="h3" sx={{ fontSize: 17, fontWeight: 700, mt: 0, mb: 0.5 }}>
-        {heading}
-      </Box>
-      {children}
     </Box>
   );
 }
@@ -377,10 +178,21 @@ function AskThemSection({ pack }) {
   );
 }
 
+// N49: a pack carrying a research snapshot renders through `ResearchStages`
+// below instead. The `stages.length === 0` early return stays FIRST and
+// unchanged -- a snapshot pack with an empty stage list still hits it, same
+// as legacy -- which is exactly why the research-state line is hoisted to
+// the stages GROUP as a SIBLING of this whole function, further down: it is
+// the only way that line stays reachable when this function bails here. A
+// snapshot-less pack takes every line below unchanged -- byte-identically,
+// per the owner's scope ruling -- because `packStagesSnapshot` returns null
+// for it and this function never reaches the new branch at all.
 function StagesSection({ pack }) {
   const stages = stageList(pack);
   if (stages.length === 0) return null;
+  const snapshot = packStagesSnapshot(pack);
   const resolvedList = stages.map((stage) => resolveSupport(stage?.support, packClaims(pack)));
+  if (snapshot) return <ResearchStages pack={pack} stages={stages} snapshot={snapshot} resolvedList={resolvedList} />;
   const { numbers, entries } = numberResolved(resolvedList);
   return (
     <Section heading={SECTION_LABELS.stages}>
@@ -422,6 +234,48 @@ function StagesSection({ pack }) {
           ) : null}
           <RecommendedAnswer text={stage?.recommendedAnswer} />
         </Box>
+      ))}
+      <SourceList label={SECTION_LABELS.stages} entries={entries} />
+    </Section>
+  );
+}
+
+/** N49: the snapshot branch. `stageSupportPlacement` decides, per stage,
+ *  where the N43 marker draws (never "name" here -- see PrepStageBlock.js's
+ *  own header, including its recorded M6 finding): "answer" moves it to the
+ *  suggested-answer line, and "none" drops it from this section's own
+ *  numbered SourceList (the M5 correction: the claim's text still renders,
+ *  as plain text, in `answerMarker` below -- nothing is deleted, it is just
+ *  no longer a numbered citation). Research source numbers start AFTER
+ *  however many N43 entries this section itself numbered, and are assigned
+ *  in the same stage/name/roles/questions order PrepStageBlock renders in,
+ *  so a reader scanning "Source 1", "Source 2" never meets a number before
+ *  its own first appearance in the DOM. */
+function ResearchStages({ pack, stages, snapshot, resolvedList }) {
+  const placements = stages.map((stage) => stageSupportPlacement(stage, true));
+  const forNumbering = resolvedList.map((resolved, i) => (placements[i] === "none" ? { state: "none" } : resolved));
+  const { numbers, entries } = numberResolved(forNumbering);
+  const sourceNumbers = researchSourceNumbers(stages, snapshot, entries.length);
+  return (
+    <Section heading={SECTION_LABELS.stages}>
+      {stages.map((stage, i) => (
+        <PrepStageBlock
+          key={i}
+          stage={stage}
+          snapshot={snapshot}
+          numbers={sourceNumbers}
+          answerMarker={
+            <>
+              {placements[i] === "none" && resolvedList[i].state !== "none" ? (
+                <Box sx={{ mt: 0.75, mb: 0, fontSize: 12.5, color: "var(--text-secondary)" }}>
+                  {`From the model's own answer: ${resolvedList[i].claim.text}`}
+                </Box>
+              ) : null}
+              <RecommendedAnswer text={stage?.recommendedAnswer} />
+              {placements[i] === "answer" ? <CitationMarker resolved={resolvedList[i]} n={numbers[i]} /> : null}
+            </>
+          }
+        />
       ))}
       <SourceList label={SECTION_LABELS.stages} entries={entries} />
     </Section>
@@ -537,7 +391,21 @@ function PackSections({
     <Box>
       {group("aboutYou", complete.has("aboutYou") ? <AnswerSection name="aboutYou" pack={pack} /> : <EmptySection name="aboutYou" />)}
       {group("whyRole", complete.has("whyRole") ? <AnswerSection name="whyRole" pack={pack} /> : <EmptySection name="whyRole" />)}
-      {group("stages", complete.has("stages") ? <StagesSection pack={pack} /> : <EmptySection name="stages" />)}
+      {group(
+        "stages",
+        <>
+          {/* N49/M1, reordered (verify.r1.md M2): a SIBLING of the section
+           *  body, never inside it -- the shipped panel skips StagesSection
+           *  entirely for an empty stage list and renders EmptySection
+           *  instead of it, and this line must be reachable in both of
+           *  those states (plan.r4.md section 5.2). Returns null for a
+           *  snapshot-less pack. Rendered FIRST, not after: its own text
+           *  says "below" and points at the items the section renders, so
+           *  it has to precede them to be true. */}
+          <StagesResearchState pack={pack} />
+          {complete.has("stages") ? <StagesSection pack={pack} /> : <EmptySection name="stages" />}
+        </>,
+      )}
       {group("askThem", complete.has("askThem") ? <AskThemSection pack={pack} /> : <EmptySection name="askThem" />)}
     </Box>
   );

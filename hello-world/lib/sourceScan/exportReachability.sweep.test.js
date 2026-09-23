@@ -119,9 +119,9 @@
 // control is asserted to go red.
 
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
-import { buildExportGraph, parseModuleSource, resolveSpecifier, entryKindOf } from "./exportGraph.js";
+import { buildExportGraph, parseModuleSource, entryKindOf } from "./exportGraph.js";
 import { tokenizeSource } from "./tokenizeSource.js";
 import {
   ALLOWED_UNREACHABLE_MODULES,
@@ -129,134 +129,34 @@ import {
   ORPHAN_EXPORTS,
   DESYNCED_STATEMENTS,
 } from "./exportReachability.ledger.js";
-
-const ROOT = process.cwd();
-
-// ---------------------------------------------------------------------------
-// The universe: every production `.js` under app/ and lib/, plus middleware.js.
-// ---------------------------------------------------------------------------
-function walk(dir, out = []) {
-  for (const entry of readdirSync(dir)) {
-    const full = path.join(dir, entry);
-    if (statSync(full).isDirectory()) walk(full, out);
-    else if (entry.endsWith(".js")) out.push(full);
-  }
-  return out;
-}
-
-const rel = (full) => path.relative(ROOT, full).split(path.sep).join("/");
-
-const PRODUCTION = new Map();
-const TEST_FILES = new Map();
-for (const dir of ["app", "lib", "test"]) {
-  for (const full of walk(path.join(ROOT, dir))) {
-    const r = rel(full);
-    const src = readFileSync(full, "utf8");
-    if (r.endsWith(".test.js") || r.startsWith("test/")) TEST_FILES.set(r, src);
-    else PRODUCTION.set(r, src);
-  }
-}
-PRODUCTION.set("middleware.js", readFileSync(path.join(ROOT, "middleware.js"), "utf8"));
-
-const GRAPH = buildExportGraph({ files: PRODUCTION });
-const DEAD_KEYS = new Set(GRAPH.deadExports.map((d) => `${d.file}#${d.name}`));
-
-/** Which exported names does any test file import from this module? */
-function testImportIndex(files) {
-  const index = new Map();
-  const fileSet = new Set(PRODUCTION.keys());
-  for (const [from, src] of files) {
-    for (const edge of parseModuleSource(src).imports) {
-      const r = resolveSpecifier(edge.spec, from, fileSet);
-      if (r.kind !== "module") continue;
-      const add = (name) => {
-        const key = `${r.file}#${name}`;
-        if (!index.has(key)) index.set(key, new Set());
-        index.get(key).add(from);
-      };
-      if (edge.namespace) add("*");
-      for (const name of edge.names) add(name);
-    }
-  }
-  return index;
-}
-const TEST_IMPORTS = testImportIndex(TEST_FILES);
-const importedByATest = (file, name) => TEST_IMPORTS.has(`${file}#${name}`) || TEST_IMPORTS.has(`${file}#*`);
-
-// Symbols in a module shipping code DOES reach, that shipping code never asks
-// for. (Exports of a wholly unreachable module are reported at module
-// granularity instead, by the two module ledgers.)
-const UNUSED_IN_SHIPPING_MODULES = GRAPH.deadExports.filter((d) => d.reason === "unused-export");
-const TEST_REFERENCED = UNUSED_IN_SHIPPING_MODULES.filter((d) => importedByATest(d.file, d.name));
-const ORPHANS = UNUSED_IN_SHIPPING_MODULES.filter((d) => !importedByATest(d.file, d.name));
+import {
+  ROOT,
+  PRODUCTION,
+  TEST_FILES,
+  GRAPH,
+  DEAD_KEYS,
+  TEST_IMPORTS,
+  importedByATest,
+  UNUSED_IN_SHIPPING_MODULES,
+  TEST_REFERENCED,
+  ORPHANS,
+  keyOf,
+  sorted,
+  isReachableExport,
+  rejectedStatements,
+} from "./exportReachability.scan.js";
 
 // ---------------------------------------------------------------------------
-// LEDGERS 1-3 (ALLOWED_UNREACHABLE_MODULES, UNWIRED_MODULES, ORPHAN_EXPORTS)
-// now live in ./exportReachability.ledger.js, imported above. They moved
-// there, verbatim, to bring this file under the repo's 1000-line cap -- see
-// that module's own header for the full description of what each bucket
-// means and why there are three of them instead of one undifferentiated
-// allow-list. Nothing about what this file scans or asserts changed: the
-// ledgers are still matched EXACTLY against the live scan below, in both
-// directions, by the same assertions that always checked them.
+// The scan itself -- reading the real tree, building the export graph once,
+// and indexing which exports a test (as opposed to shipping code) reaches --
+// now lives in ./exportReachability.scan.js, imported above. It moved there,
+// verbatim, to bring this file under the repo's 1000-line cap, the same
+// reason ALLOWED_UNREACHABLE_MODULES/UNWIRED_MODULES/ORPHAN_EXPORTS/
+// DESYNCED_STATEMENTS moved to ./exportReachability.ledger.js before it.
+// Nothing about what this file scans or asserts changed: the same scan is
+// still matched EXACTLY against the ledgers below, by the same assertions
+// that always checked them.
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Helpers shared by the assertions and the controls.
-// ---------------------------------------------------------------------------
-const keyOf = (e) => `${e.file}#${e.name}`;
-const sorted = (xs) => [...xs].sort();
-
-/**
- * A reachable export, as this sweep defines it: the module ships, the scanner
- * SAW the symbol, and nothing reported it dead. All three clauses matter --
- * dropping the middle one is what lets a scanner that returns nothing pass
- * every positive control vacuously.
- */
-function isReachableExport(graph, file, name) {
-  if (!graph.shipping.has(file)) return false;
-  const names = (graph.exportsByFile.get(file) || []).map((e) => e.name);
-  if (!names.includes(name)) return false;
-  return !graph.deadExports.some((d) => d.file === file && d.name === name);
-}
-
-// ---------------------------------------------------------------------------
-// THE SCANNER'S OWN BLIND SPOT, MADE VISIBLE.
-//
-// Every `import`/`export` this scanner accepts is confirmed against
-// tokenizeSource()'s `codeMask` view, so a statement written inside a comment
-// or a template literal cannot register. The other side of that check is a
-// blind spot: if the tokenizer wrongly believes a region is string data, a REAL
-// statement there is silently dropped -- the module's export surface shrinks
-// and a dead export in it can never be reported. That is an under-report with
-// no error, which is the precise failure this repo already shipped once.
-//
-// So the rejected statements are enumerated rather than trusted, against
-// DESYNCED_STATEMENTS (imported above from ./exportReachability.ledger.js,
-// where its full history now lives -- moved verbatim along with the other
-// three ledgers to bring this file under the line cap). Anything the
-// codeMask check throws away must be on that list with a reason; it is
-// empty today, which the assertions below turn into a live guard rather
-// than a hope.
-// ---------------------------------------------------------------------------
-
-/** Line-start import/export tokens the codeMask confirmation threw away. */
-function rejectedStatements(files) {
-  const out = [];
-  for (const [file, src] of files) {
-    const { codeMask } = tokenizeSource(src);
-    const re = /(^|\n)([^\S\n]*)(import|export)\b/g;
-    let m;
-    while ((m = re.exec(src)) !== null) {
-      const at = m.index + m[1].length + m[2].length;
-      if (codeMask.slice(at, at + m[3].length) === m[3]) continue;
-      const text = src.slice(at, at + 120).split("\n")[0];
-      const named = /^(?:import|export)\s+(?:async\s+)?(?:function|class|const|let|var|default)?\s*\*?\s*([A-Za-z_$][\w$]*)/.exec(text);
-      out.push({ file, name: named ? named[1] : text.trim().slice(0, 40), line: src.slice(0, at).split("\n").length });
-    }
-  }
-  return out;
-}
 
 describe("the scanner's blind spot is enumerated, not trusted", () => {
   it("throws away exactly the statements on the desync ledger, and no others", () => {
@@ -358,7 +258,11 @@ describe("every module is reachable from something that ships, or is on a ledger
     // because this count has been bumped before with a comment naming a single
     // movement when the real delta was +2/-1, and a count that is right by
     // coincidence is worse than a red one.
-    expect(ALLOWED_UNREACHABLE_MODULES).toHaveLength(12);
+    // 12 -> 13 (N49): lib/sourceScan/exportReachability.scan.js, this file's own
+    // scan (ROOT/PRODUCTION/TEST_FILES/GRAPH/TEST_REFERENCED/ORPHANS/
+    // rejectedStatements and friends), extracted for the same reason as
+    // exportReachability.ledger.js's own self-entry just above it.
+    expect(ALLOWED_UNREACHABLE_MODULES).toHaveLength(13);
   });
 
   it("keeps the unwired-feature findings visible and described", () => {
@@ -384,8 +288,20 @@ describe("every module is reachable from something that ships, or is on a ledger
     // call sites, that suite is green, and the line is gone -- the prompt
     // working as designed, same as the rate-limiter pair above. prepLog.js
     // remains unwired.
+    //
+    // 1 -> 5 (N49): the same shape, four more times. An implementer landed
+    // the acceptance tests named in PrepPackPanel.n49Frame.test.js,
+    // citationLineAgreement.test.js, digestRoleScreen.test.js and
+    // interviewerRoles.test.js, plus the modules that satisfy them, ahead of
+    // this chunk's own later wiring steps (plan.r4.md sections 8.3-8.5) --
+    // see the ledger's own finding on each of the four for its named call
+    // site.
     expect(UNWIRED_MODULES.map((e) => e.file)).toEqual([
       "lib/interviewPrep/prepLog.js",
+      "lib/interviewPrep/interviewProcessGrammar.js",
+      "lib/interviewPrep/interviewerRoles.js",
+      "lib/tracking/citationLineAgreement.js",
+      "lib/tracking/digestRoleScreen.js",
     ]);
     for (const entry of UNWIRED_MODULES) {
       expect(entry.finding.length, `${entry.file} is recorded as unwired with no description`).toBeGreaterThan(60);
@@ -739,6 +655,26 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // the section-scoped path, which calls it inline) -- a real shipping
     // consumer, not merely a test one. mintClaimId and pruneSectionRevisions
     // are unmoved; route.js still never calls either directly.
+    // 363 -> 362 -> 363 (N35 fix round, both halves of the same uncommitted
+    // change): lib/document/coverLetterWeave.js#PLACEMENTS LEAVES this bucket
+    // -- lib/acceptedFacts/factInsertion.js now imports it directly (the
+    // verifier's own ruling: a hand-copied local anchor table had silently
+    // dropped PLACEMENTS' `position` field). coverLetterWeave.js
+    // #DEFAULT_PLACEMENT, imported at the same time, was already a real
+    // shipping consumer of CompanyResearchDialog.js and does not move. That
+    // -1 is exactly offset by a +1 from the SAME round's M4 fix:
+    // lib/acceptedFacts/factStore.js#sanitizeStoredFacts is called only
+    // inside factStore.js's own acceptFactsForJob (a same-module call this
+    // index does not count, the AppViewDialog.js#saveTrustedNames shape
+    // above), and its only cross-module reader is
+    // factStore.sanitize.test.js's by-name import -- the ordinary TR-1
+    // pattern, ENTERING this bucket the moment that guard was added. The
+    // literal was pinned at 362 from the PLACEMENTS half alone, before
+    // sanitizeStoredFacts existed in the same diff; re-run today it nets
+    // back to 363, verified against the real import graph with each half in
+    // isolation (PLACEMENTS absent + sanitizeStoredFacts present -> 363;
+    // PLACEMENTS present + sanitizeStoredFacts absent -> 363; both present,
+    // this checkout -> 363) as well as against the combined tree.
     expect(TEST_REFERENCED.length).toBe(363);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.

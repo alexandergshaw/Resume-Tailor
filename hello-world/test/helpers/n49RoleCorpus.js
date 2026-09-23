@@ -220,6 +220,18 @@ export const MUST_REFUSE_LABELS = [
   ["Hiring Manager Sarah Chen", "title then name"],
   ["Interview with Dana Whitfield", "prose carrying a name"],
   ["J. Okafor, Recruiter", "initialled name before the title"],
+  // verify.r1.md M4: the `<name-shaped vocab> + dean|head` shape and a
+  // headless all-vocabulary phrase, neither of which any row above already
+  // exercised -- so admitRoleLabel:141-142's own guards against them (M-ROLE-
+  // NOHEAD, M-ROLE-SURNAME) survived the whole suite though the production
+  // code already refuses each one. Paired positive controls that still admit
+  // ("Associate Dean", "Head of Product", "Art Director") are already in
+  // MUST_PASS_TITLES above.
+  ["Art Dean", "name-shaped vocab (art) before the surname-ambiguous head dean"],
+  ["Peer Head", "name-shaped vocab (peer) before the surname-ambiguous head head"],
+  ["Talent Dean", "name-shaped vocab (talent) before the surname-ambiguous head dean"],
+  ["Senior Global", "headless: two seniority words, no role/team head at all"],
+  ["Cloud Field", "headless: two function words, no role/team head at all"],
 ];
 
 /** The names in MUST_REFUSE_LABELS, for the AC-N51.3 requirement that the

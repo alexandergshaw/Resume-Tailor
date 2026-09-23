@@ -7,16 +7,17 @@
 // positive control, and self-exclusion by exact resolved path rather than a
 // `.test.js` suffix rule — is lib/supabase/driveMigrationShape.test.js.
 //
-// MEASURED, not assumed: a raw sweep of this corpus turns up NINE files, not
+// MEASURED, not assumed: a raw sweep of this corpus turns up TEN files, not
 // the "the module, plus the two dialogs if inlined" outcome the original
-// acceptance criteria envisioned. Six of the nine are coincidental
+// acceptance criteria envisioned. Seven of the ten are coincidental
 // collisions with a DIFFERENT vocabulary (a React `key=`, a
 // `Promise.allSettled` result `.status`, an email keyword list,
-// `interview_stages.stage_type` twice, and a `mainTab` UI-tab identifier) —
-// each individually verified below, by reading the exact line, not assumed
-// from a name. Five of those six are excluded WHOLESALE by resolved path
+// `interview_stages.stage_type` twice, a `mainTab` UI-tab identifier, and an
+// interview STAGE word from N49's own STAGE_WORDS) — each individually
+// verified below, by reading the exact line, not assumed from a name. Six of
+// those seven are excluded WHOLESALE by resolved path
 // (`KNOWN_FALSE_POSITIVES`) because each is entirely about its own unrelated
-// vocabulary; the sixth (the `mainTab` collision, in a shared hook that could
+// vocabulary; the seventh (the `mainTab` collision, in a shared hook that could
 // plausibly gain a real status literal later) is excluded more narrowly, by
 // stripping only its one proven construct's exact text
 // (`KNOWN_CONSTRUCT_FALSE_POSITIVES`) — see the comment there for why, and
@@ -138,6 +139,12 @@ const KNOWN_FALSE_POSITIVES = new Set([
   "lib/gmail/emailUtils.js",
   // The SAME interview_stages.stage_type vocabulary TrackingTab.js reads.
   "lib/tracking/stages.js",
+  // N49 fix round: STAGE_WORDS' own bare `"offer"` -- an interview STAGE
+  // word ("verbal offer round"), not an applications.status write. Same
+  // shape as the five entries above: a coincidental spelling collision with
+  // a wholly different vocabulary, verified by reading interviewerRoles.js
+  // directly rather than assumed from its name.
+  "lib/interviewPrep/interviewerRoles.js",
 ]);
 
 // ---------------------------------------------------------------------------

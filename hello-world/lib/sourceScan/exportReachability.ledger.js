@@ -42,6 +42,10 @@ export const ALLOWED_UNREACHABLE_MODULES = [
     why: "this file. The data ledgers for exportReachability.sweep.test.js (ALLOWED_UNREACHABLE_MODULES, UNWIRED_MODULES, ORPHAN_EXPORTS, DESYNCED_STATEMENTS), split out to bring that file under the 1000-line cap; a plain .js and not a .test.js for the same reason as exportGraph.js above, and unreachable for the same reason as every other entry in this ledger -- only the sweep test imports it, by name",
   },
   {
+    file: "lib/sourceScan/exportReachability.scan.js",
+    why: "the live scan exportReachability.sweep.test.js's ledgers are checked against -- reading the real tree, building the export graph once, and indexing which exports a test reaches -- split out for the same reason and in the same shape as this file's own self-entry above (that file tipped over the 1000-line cap a second time, from routine ledger growth rather than scan growth); only the sweep test imports it, by name",
+  },
+  {
     file: "lib/interviewPrep/migrationGrantReplay.js",
     why: "the grant/revoke replay and SQL-shape parsing for interviewPrepEffectiveSchema.test.js, split out to bring that file under the 1000-line cap -- same shape and same reason as exportGraph.js and this ledger itself. It parses supabase/migrations text to model the EFFECTIVE privilege state after every migration applies, which no shipping code does or should do; only that one test imports it, by name. Kept beside its consumer rather than in lib/sourceScan because its vocabulary (interview_prep_spend, claim_prep_pack_slot) is this feature's, not generic -- move it if a second feature ever needs the replay",
   },
@@ -124,10 +128,34 @@ export const ALLOWED_UNREACHABLE_MODULES = [
 // rule: delete the day a real caller lands. lib/interviewPrep/prepLog.js
 // remains: its own `finding` says what the missing wiring is; delete that
 // line the day PrepPackPanel.js (or another caller) lands a real one.
+//
+// 1 -> 5, N49. Four more of the ORIGINAL shape this bucket was built for: an
+// implementer landed a narrower slice of a multi-step chunk (the acceptance
+// tests named in PrepPackPanel.n49Frame.test.js, citationLineAgreement.test.js,
+// digestRoleScreen.test.js and interviewerRoles.test.js), and the production
+// call sites that would reach these four modules are later, named steps of
+// the SAME chunk (N49's own plan, sections 8.3-8.5), not yet built. Each
+// finding below names the specific call site.
 export const UNWIRED_MODULES = [
   {
     file: "lib/interviewPrep/prepLog.js",
     finding: "createPrepLog is the ephemeral per-tab counter behind design-experience.r2.md §4.2's \"N events recorded\" caption and its own D6(v) reset control; no component in this checkout calls it. design-structure.r1.md's module-boundaries table (§3) has no entry for this file at all, and the component that would call it, PrepPackPanel.js, is named in this file's own header as a later wave",
+  },
+  {
+    file: "lib/interviewPrep/interviewProcessGrammar.js",
+    finding: "CORRECTED (verify.r1.md M5): the previous line here said every export was \"built and tested against interviewerRoles.test.js and digestRoleScreen.test.js\"; measured false -- only stripTerminal was reached by those two suites, and INTERVIEW_PROCESS_HEADING/isInterviewProcessHeading/parseGrammarLine had zero references anywhere. This round adds interviewProcessGrammar.test.js, which now covers all four exports directly (the fixed heading string, the heading matcher's whitespace/case tolerance, and the strict per-line parser's Stage/Conducted by/Question shapes, including its refusals). The prompt/parse call sites that would read the heading and grammar lines in production (applicationDigest.js's buildDigestPrompt, prepSection.js's parseSectionResponse) are still N49's plan.r4.md section 8.5 step, landed in a later round of this same chunk",
+  },
+  {
+    file: "lib/interviewPrep/interviewerRoles.js",
+    finding: "admitRoleLabel and the two vocabulary predicates, measured against interviewerRoles.test.js's held-out and must-refuse corpora (60% floor met at 64.0%, 0 leaks). Its shipping call sites -- prepParse.js's normalizeStage, stageResearchAttach.js's role-line rule, digestRoleScreen.js once THAT is wired -- are N49's plan.r4.md section 8.4/8.7 steps, not yet built",
+  },
+  {
+    file: "lib/tracking/citationLineAgreement.js",
+    finding: "the three-convention (plus the silent allBlocksNL check) line-attachment rule, proven against citationLineAgreement.test.js including the mandatory P1 property (0/4000 wrong for the modelled conventions at two seeds, both seeds). Its shipping call site -- lib/tracking/digestCitations.js writing lineAttach at digest-write time -- is N49's plan.r4.md section 8.3 step, not yet built",
+  },
+  {
+    file: "lib/tracking/digestRoleScreen.js",
+    finding: "the digest name screen (isWithheldDigestLine/withholdDigestLines), proven against digestRoleScreen.test.js including the 800-real-name superset property. Its shipping call sites -- DigestPanel.js's three presentation paths, applicationDigest.js's digestSummaryLine -- are N49's plan.r4.md section 8.4 step, not yet built",
   },
 ];
 

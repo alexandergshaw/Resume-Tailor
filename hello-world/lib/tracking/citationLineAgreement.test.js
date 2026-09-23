@@ -288,6 +288,56 @@ describe("the shapes a human can reason about", () => {
   });
 });
 
+describe("the silent fourth gate has its own pinned power (verify.r1.md N49 fix round, M3/gate-power)", () => {
+  // The 5% ceiling on the DISCLOSED RESIDUAL property above can never go red
+  // from this gate alone -- the regression it exists to catch (0.6%-1.5% of
+  // attachments) is far under a 5% ceiling by construction. This row pins the
+  // gate DIRECTLY: one fixed scenario where the three MODELLED conventions
+  // agree and `allBlocksNL` does not, so a build that drops the gate
+  // (M-NLGATE-OFF), narrows it to fire only when `allBlocksNL` itself lands
+  // on a line (M-NLGATE-LAX -- our own `allBlocksNL` reading here is a
+  // CROSS, not a line, so a LAX gate never even looks at it), or drops the
+  // gate's trailing "\n" (M-NLPREFIX -- with a single, EMPTY leading block
+  // that "\n" is the gate's entire source of shift) all fail this row.
+  //
+  // An empty leading block (`texts[0] = ""`) is what makes the three modelled
+  // conventions coincide on a citation that sits on block 1: `block`'s own
+  // per-block base and `allBlocks`' own pre-tail offset are both zero, so all
+  // three read the stored bytes as the identical absolute position. The
+  // SAME bytes read under `allBlocksNL`'s own prefix -- which inserts one
+  // extra "\n" between the (empty) first block and the second -- land
+  // exactly one byte earlier: on the newline that ends line 0, which makes
+  // the span cross a line boundary rather than read a wrong line cleanly.
+  it("three-way agreement plus a disagreeing allBlocksNL votes this ambiguous, not agree", () => {
+    const texts = ["", BODY];
+    const target = { block: 1, innerStart: lineStart(1), innerEnd: lineStart(1) + 4 };
+    const s = buildScenario({ texts, tailStart: 0, targets: [target], convention: "outputText" });
+    expect(s.truth).toEqual([1]);
+    const r = la().citationLineAgreement({ outputText: s.raw, blocks: s.blocks });
+    expect(r.voting).toEqual(["block", "outputText", "allBlocks"]);
+    expect(r.basis).toBe("ambiguous");
+    expect(r.gatedBy).toBe("allBlocksNL");
+    expect(r.lines).toEqual([]);
+  });
+
+  it("[control] the SAME empty-leading-block shape, target further from the line boundary, still agrees when allBlocksNL also agrees", () => {
+    // Without this, a gate that fires on EVERY citation on block 1 --
+    // "ambiguous" no matter what -- would also pass the row above. Ten
+    // characters into the SAME line, the one-byte-earlier shift
+    // `allBlocksNL`'s own prefix introduces lands on an earlier character of
+    // the SAME line rather than crossing onto the newline before it, so the
+    // gate reads a matching line and must NOT fire.
+    const texts = ["", BODY];
+    const target = { block: 1, innerStart: lineStart(1) + 10, innerEnd: lineStart(1) + 14 };
+    const s = buildScenario({ texts, tailStart: 0, targets: [target], convention: "outputText" });
+    expect(s.truth).toEqual([1]);
+    const r = la().citationLineAgreement({ outputText: s.raw, blocks: s.blocks });
+    expect(r.basis).toBe("agree");
+    expect(r.gatedBy).toBeNull();
+    expect(r.lines).toEqual(s.truth);
+  });
+});
+
 describe("forged offsets", () => {
   it("a shift into the middle of a multi-byte character is structurally impossible for every convention", () => {
     // "Nestle" with an acute accent is two bytes; a +1 shift from an offset

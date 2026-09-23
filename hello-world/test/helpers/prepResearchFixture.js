@@ -60,6 +60,8 @@
 // Every builder returns a FRESH object.
 
 import { maximalPanelProps, maximalClaims } from "./prepMaximalFixture.js";
+import { safeExternalHref } from "@/lib/url/safeExternalHref";
+import { citationHost, servesGroundingRedirect } from "@/lib/tracking/citationHref";
 
 /** The employer the research was attached for. `canonicalEmployer` of the
  *  posting's own company string (design.r3.md section 5.2). */
@@ -300,11 +302,53 @@ export function researchItems() {
   return items;
 }
 
-/** The label KIND an item must carry, from its stored provenance alone:
- *  publishers >= 2 is "reported", exactly 1 is "single", and anything else --
- *  including a missing provenance, a malformed one, and an explicit 0 -- is
- *  "unsourced". This is design.r3.md section 8.1's table, restated here as
- *  the test's INDEPENDENT expectation.
+// verify.r1.md B2: a SECOND, INDEPENDENT copy of the publisher-key merge
+// (never imported from lib/interviewPrep/stageResearchView.js -- the module
+// under test -- for the same self-consistency reason expectedKind's own
+// header below gives for not asking stageItemLabel what it expects). Folds
+// the AC-N49.7 table's regional/country mirrors into one key; an unlisted
+// TLD stays its own market, which is what keeps this fixture's own
+// example.com/.org/.net hosts three publishers apart rather than one.
+const FIXTURE_COMMERCIAL_TLD_MARKET = new Set(["com", "co.uk", "ca", "com.au", "co.nz", "co.in", "com.br"]);
+
+function fixturePublisherKey(host) {
+  const labels = host.split(".");
+  if (labels.length < 2) return host;
+  const compound = labels.length >= 3 && ["co", "com"].includes(labels[labels.length - 2]);
+  const tld = compound ? labels.slice(-2).join(".") : labels[labels.length - 1];
+  const tldLabels = compound ? 2 : 1;
+  const sld = labels[labels.length - tldLabels - 1] || labels[0];
+  return `${sld}.${FIXTURE_COMMERCIAL_TLD_MARKET.has(tld) ? "com" : tld}`;
+}
+
+/** The count of DISTINCT, reachable, non-grounding-redirect publishers an
+ *  item's `src` rows actually name, read against THIS fixture's own
+ *  `researchSources()` -- independent of the panel/label logic under test. */
+function fixtureVerifiedCount(provenance) {
+  if (!provenance || typeof provenance !== "object" || !Array.isArray(provenance.src)) return 0;
+  const sources = researchSources();
+  const keys = new Set();
+  for (const index of provenance.src) {
+    const source = Number.isInteger(index) ? sources[index] : null;
+    if (!source || typeof source.url !== "string") continue;
+    const href = safeExternalHref(source.url);
+    if (href === null) continue;
+    const host = citationHost(href);
+    if (host === null || servesGroundingRedirect(host, href)) continue;
+    keys.add(fixturePublisherKey(host));
+  }
+  return keys.size;
+}
+
+/** The label KIND an item must carry, from its stored provenance -- design.r3.md
+ *  section 8.1's table, restated here as the test's INDEPENDENT expectation.
+ *  A stored count BELOW the "reported" threshold (0 or 1) is trusted as-is:
+ *  that is not where AC-N49.6's over-claim risk sits, and stageItemLabel's
+ *  own contract (see its header) leaves that boundary alone too. A stored
+ *  count AT OR ABOVE the threshold is checked against the sources actually
+ *  behind it (AC-N49.5.3, AC-N49.6, AC-N49.7) -- distinct, reachable,
+ *  non-redirect publishers -- and the SMALLER of the two decides, so a
+ *  stale or forged "reported" claim can only ever undersell.
  *
  *  It is deliberately NOT imported from the module under test. A census that
  *  asked `stageItemLabel` what it expected would be measuring the panel
@@ -314,7 +358,10 @@ export function researchItems() {
  *  made twice; that is the intended cost. */
 export function expectedKind(provenance) {
   if (!provenance || typeof provenance !== "object") return "unsourced";
-  const n = provenance.publishers;
-  if (!Number.isInteger(n) || n < 1) return "unsourced";
-  return n >= 2 ? "reported" : "single";
+  const stored = provenance.publishers;
+  if (!Number.isInteger(stored) || stored < 1) return "unsourced";
+  if (stored < 2) return "single";
+  const n = Math.min(stored, fixtureVerifiedCount(provenance));
+  if (n >= 2) return "reported";
+  return n === 1 ? "single" : "unsourced";
 }
