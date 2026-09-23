@@ -321,6 +321,97 @@ function orphanTerminalSegments(body) {
   return offenders;
 }
 
+// ---------------------------------------------------------------------------
+// F-R12-6 (fix round r12, MINOR, verify.r12.md) -- nothing in this repo
+// actually gated route.js's own line count. A repo-wide grep for
+// `toBeLessThanOrEqual(1000)` / `LINE_CAP` / a route.js-scoped assertion
+// found prose only (40+ mentions, zero enforcement for THIS file); the
+// canary this instrument names, app/api/copilot/answer/route.wiring.test.js,
+// proves a per-file gate is findable when one exists -- interview-prep had
+// none. This is that gate, RATCHETED to this round's own measured count
+// (998, verify.r12.md) rather than only the generic 1000-line convention:
+// two lines of headroom is a real budget only once something enforces it.
+//
+// F-R14-3/F-R14-4 (fix round r14, MINOR, verify.r14.md): both assertions
+// below police route.js's own NET line count, start to finish -- arithmetic
+// on `text.split("\n").length`, nothing more. Neither can tell prose from
+// code, and neither can tell "two lines moved to another file" from "two
+// lines of prose deleted for nothing": deleting route.js:424's provenance
+// comment AND adding any one line elsewhere nets back to 998 and passes
+// clean, which the floor's own PRIOR title claimed could not happen. If the
+// stronger property (a specific comment's own text survives) is ever wanted,
+// assert that directly with `expect(text).toContain(...)` -- a net count is
+// not that assertion and should not read as one.
+// ---------------------------------------------------------------------------
+
+describe("F-R12-6 -- route.js's own line count is ratcheted, not just held to the generic 1000-line convention", () => {
+  it("stays at or under its count as of this fix round (split on \\n, this repo's own idiom)", () => {
+    const text = readFileSync(ROUTE_PATH, "utf8");
+    const lines = text.split("\n").length;
+    // Measured at the end of fix round r12 (verify.r12.md): 998. A round
+    // that ADDS to this file raises this literal in the SAME step, never by
+    // more than it actually measured. A round that EXTRACTS code OUT of this
+    // file (N52's own plan -- the PATCH handler, route.js:899-997, is the
+    // named candidate) does the opposite: it LOWERS this literal, in the
+    // same step, to its own new measured count -- deliberately, never left
+    // at 998 once the file is genuinely smaller than that.
+    expect(lines, "route.js grew past its own r12 measurement with nothing raising this ratchet in the same step").toBeLessThanOrEqual(998);
+  });
+
+  it("[canary] the counter is sensitive -- one more line than the ratchet allows fails it", () => {
+    expect(("x\n".repeat(999)).split("\n").length).toBeGreaterThan(998);
+  });
+
+  // F-R13-3 (fix round r13, MINOR, verify.r13.md): the ceiling above had no
+  // matching floor, so the cheapest way to satisfy it was to delete
+  // load-bearing prose (this round's own two provenance comments included,
+  // route.js:424 and :925, each a single very long line) rather than move
+  // code. Same precedent this describe block already cites
+  // (app/api/copilot/answer/route.wiring.test.js:181-187): "The lower bound
+  // matters as much as the upper one: it is what stops a future edit from
+  // hitting a small number by deleting load-bearing prose."
+  //
+  // F-R13-3/F-R13-5 (fix round r13) set that floor at 997 -- one line below
+  // the 998 ceiling, because this file had no headroom to give a wider one.
+  // F-R14-3/F-R14-4 (fix round r14, MINOR, verify.r14.md): that pinned
+  // route.js to EXACTLY one legal line count -- 998 was the only value that
+  // could pass both bounds at once, so ANY edit that changed the count by
+  // even one line, in either direction, failed here, including a genuine
+  // extraction with nothing lost. N52 plans to cut route.js (the PATCH
+  // handler above); its first run against a 997 floor would fail with this
+  // message -- "a provenance comment (or other prose) was deleted rather
+  // than code moved" -- which is false for an extraction that moved real
+  // code out. The floor's own title also claimed a stronger property than a
+  // net count can prove: deleting route.js:424's comment alone failed the
+  // old floor, but deleting it AND adding any one line elsewhere netted back
+  // to 998 and passed clean -- a net line count polices arithmetic, never
+  // which particular line of prose survived.
+  //
+  // The floor is now 900 -- a floor, not a budget N52's own extraction fits
+  // inside untouched. N52's measured target (docs/BACKLOG.md: pure logic
+  // moved out to new lib/ modules, not the PATCH handler alone) lands
+  // route.js at 811 lines; even the narrower PATCH-handler-only cut above
+  // lands at 899 -- both trip this floor as it stands, exactly as the floor
+  // is supposed to when nothing has raised it yet. A genuine extraction
+  // lowers BOTH ratchets together, in the same step: the ceiling above
+  // (line 358) AND this floor, each to its own new measured count -- a
+  // shrink is only a defect when the literals were left behind instead of
+  // moved with it. (F-R13-5, verify.r13.md MINOR, still open as code: a
+  // no-op control mutation against THIS file, for any future mutation
+  // round, must be spliced onto an EXISTING line, never appended as a new
+  // one -- an appended no-op is not a no-op against the ceiling above.)
+  it("stays above a floor -- route.js's total NET line count must not drop below 900, so a genuine extraction (which pays for its own shrink by lowering this same literal) is never mistaken for the load-bearing-prose deletion this floor actually exists to catch", () => {
+    const text = readFileSync(ROUTE_PATH, "utf8");
+    const lines = text.split("\n").length;
+    expect(lines, "route.js shrank below its own floor -- either lower this literal in the same step as a genuine extraction, or restore what was deleted").toBeGreaterThanOrEqual(900);
+  });
+
+  it("stays under the project's hard 1000-line ceiling regardless of the ratchet above", () => {
+    const text = readFileSync(ROUTE_PATH, "utf8");
+    expect(text.split("\n").length).toBeLessThan(1000);
+  });
+});
+
 describe("post-claim terminal-exit census (fix round, F-M1) -- no return after the claim is orphaned", () => {
   it("[canary, synthetic] the segment splitter + orphan detector tell a covered exit from an orphaned one, and are not fooled by nested object-literal braces", () => {
     const covered = `

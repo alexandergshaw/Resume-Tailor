@@ -11,7 +11,7 @@
 // tenant-isolation hole). Every assertion below against claimPrepPack's `rpc`
 // call asserts the 3-parameter form; the 4-parameter row is treated as
 // superseded, not restated.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { makeSupabase } from "../../test/helpers/supabaseMock.js";
 import {
   readPrepPack,
@@ -24,6 +24,8 @@ import {
   listPrepEvents,
   checkPackByteBudget,
   isCheckViolation,
+  dbFailureResponse,
+  logDbFailure,
 } from "@/lib/interviewPrep/prepStore.js";
 import { PREP_PACK_MAX_BYTES } from "@/lib/interviewPrep/prepConstants.js";
 
@@ -117,6 +119,28 @@ describe("claimPrepPack -- N41's reason relabeling (a refused claim can no longe
     const result = await claimPrepPack(sb, { applicationId: APP_ID, userId: USER_ID });
     expect(result.claimed).toBe(false);
     expect(result.reason).toBe("error");
+  });
+
+  // F-R14-2 (fix round r14, MINOR, verify.r14.md): route.js's own 409 refusal
+  // has never actually surfaced `claim.error` (it returns only
+  // `{status, reason}`), but nothing stopped a future edit from adding it --
+  // and had it, this field would have carried the RPC's own raw text
+  // straight through. Sanitised at the source now, the same discipline
+  // dbFailureResponse/logDbFailure already give every other write path here.
+  it("[RED before this fix round] a genuine RPC error's `error` field is a GENERIC sentence, never the raw database text -- the raw detail is logged server-side instead", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const sb = makeSupabase(
+      {},
+      { rpc: { claim_prep_pack_slot: { data: null, error: { message: "PGRST301 relation interview_prep_packs does not exist at char 42" } } } },
+    );
+    const result = await claimPrepPack(sb, { applicationId: APP_ID, userId: USER_ID });
+    expect(result.claimed).toBe(false);
+    expect(result.error).toBe("Could not start this attempt.");
+    expect(result.error).not.toContain("PGRST301");
+    expect(spy).toHaveBeenCalledTimes(1);
+    const [, loggedMeta] = spy.mock.calls[0];
+    expect(loggedMeta.error.message).toContain("PGRST301");
+    spy.mockRestore();
   });
 });
 
@@ -725,5 +749,104 @@ describe("N14 -- writePrepPackResult omits pack/posting_fingerprint from its UPD
       pack: null,
     });
     expect(updatePayload(sb)).toHaveProperty("pack", null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-R12-1 (fix round r12, MAJOR, verify.r12.md) -- dbFailureResponse is the
+// single choke point route.js now routes every raw-database-text response
+// path through. This is the unit-level guarantee the route-level sweep
+// (app/api/interview-prep/route.dbFailureSweep.test.js) relies on: the
+// helper ITSELF must never fold its own `meta.error` into the body it
+// returns, regardless of what shape that error takes.
+// ---------------------------------------------------------------------------
+
+describe("dbFailureResponse -- the shared no-raw-database-text response builder", () => {
+  it("returns the given message, never the raw error, in the response body", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = dbFailureResponse(
+      "some failed read",
+      { applicationId: APP_ID, error: "PGRST301 relation interview_prep_section_revisions does not exist at char 42" },
+      "Could not load this application's prep pack.",
+    );
+    const body = await res.json();
+    expect(res.status).toBe(500);
+    expect(body).toEqual({ error: "Could not load this application's prep pack." });
+    expect(JSON.stringify(body)).not.toContain("PGRST301");
+    spy.mockRestore();
+  });
+
+  it("[no-op control] the message IS what the body carries -- this is not a helper that swallows everything into a blank body", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = dbFailureResponse("x", { error: "boom" }, "A real generic sentence.");
+    const body = await res.json();
+    expect(body.error).toBe("A real generic sentence.");
+    spy.mockRestore();
+  });
+
+  it("logs `where` and the full `meta` (including the raw error) server-side, exactly once", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const meta = { applicationId: APP_ID, error: "raw db text" };
+    dbFailureResponse("PATCH target revision read failed", meta, "generic");
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith("interview-prep: PATCH target revision read failed", meta);
+    spy.mockRestore();
+  });
+
+  // F-R14-5 (fix round r14, MINOR, verify.r14.md): this test's own title
+  // used to claim `extra` merges BEFORE `error`, so `error` always wins on a
+  // collision -- backwards. The body literal is `{ error: message }` FIRST,
+  // then only the keys named in DB_FAILURE_EXTRA_KEYS are copied ON TOP of
+  // it (prepStore.js's own `dbFailureResponse`); `extra.error` would
+  // overwrite the generic message, not the other way around. What protects
+  // the body today is the allow-list itself -- `DB_FAILURE_EXTRA_KEYS` is
+  // `["written"]`, so nothing extra carries can collide with `error` -- not
+  // any ordering guarantee this function makes.
+  it("copies only allow-listed `extra` keys ON TOP of `error` (today just `written`) -- what keeps `error` intact is the allow-list, never an ordering guarantee", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = dbFailureResponse("PUT candidate name save failed", { error: "raw" }, "Could not save your name.", { written: false });
+    const body = await res.json();
+    expect(body).toEqual({ written: false, error: "Could not save your name." });
+    spy.mockRestore();
+  });
+
+  it("[no-op control] with no `extra` argument, the body carries only `error`", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = dbFailureResponse("x", { error: "raw" }, "generic");
+    const body = await res.json();
+    expect(Object.keys(body)).toEqual(["error"]);
+    spy.mockRestore();
+  });
+
+  // F-R13-2 (fix round r13, MAJOR, verify.r13.md) -- EVADE-extraFourthArg: a
+  // caller passing raw database text through the FOURTH argument used to
+  // walk it straight into the response body (`{ ...extra, error: message }`
+  // copied every key `extra` carried, not just `written`), surviving the
+  // whole 814-test suite because nothing checked that argument's own shape.
+  it("[RED before this fix round] a fourth-argument key outside the declared allow-list is dropped, never merged into the body", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = dbFailureResponse(
+      "GET pack read failed",
+      { applicationId: APP_ID, error: "raw db text" },
+      "Could not load this application's prep pack.",
+      { detail: "PGRST301 relation interview_prep_packs does not exist at char 42", written: false },
+    );
+    const body = await res.json();
+    expect(body).toEqual({ error: "Could not load this application's prep pack.", written: false });
+    expect(body).not.toHaveProperty("detail");
+    expect(JSON.stringify(body)).not.toContain("PGRST301");
+    spy.mockRestore();
+  });
+});
+
+describe("logDbFailure -- the server-side-only logging discipline dbFailureResponse and readTrustedNames both share", () => {
+  it("logs `where` and the full `meta`, exactly once, and returns nothing to the caller", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const meta = { applicationId: APP_ID, error: "raw db text" };
+    const result = logDbFailure("some label", meta);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith("interview-prep: some label", meta);
+    expect(result).toBeUndefined();
+    spy.mockRestore();
   });
 });

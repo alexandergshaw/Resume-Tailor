@@ -47,7 +47,7 @@
 // r2 -- flagged in this seat's final report as a question for the
 // implementer/next design round, not silently assumed as settled.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { makeStatefulSupabase } from "../../test/helpers/supabaseFake.js";
 
 const SPECIFIER = "./trustedNames.js";
@@ -125,6 +125,29 @@ describe("readTrustedNames -- two independent PK lookups, fails closed", () => {
     );
     const result = await readTrustedNames(sb, { applicationId: "app-1", userId: "u1" });
     expect(result).toEqual({ candidateName: null, interviewerNames: [], error: expect.any(String) });
+  });
+
+  // F-R13-1 (fix round r13, MAJOR, verify.r13.md) -- the tenth leak: this
+  // module's own `error` field used to be the query's raw PostgREST message
+  // (errMessage(candidateResult.error)), which route.js's GET handler
+  // (:821) then handed straight to the candidate on an otherwise-200
+  // response. Fixed AT THE SOURCE, here, not by patching the route: the raw
+  // detail goes to logDbFailure (prepStore.js) instead, and `error` is
+  // always this one generic sentence.
+  it("[RED before this fix round] a query error's `error` field is a GENERIC sentence, never the raw database text -- the raw detail is logged server-side instead", async () => {
+    const { readTrustedNames } = await load();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const sb = makeStatefulSupabase(
+      { application_trusted_names: [{ application_id: "app-1", user_id: "u1", interviewer_names: ["Priya Nair"] }] },
+      { errors: { candidate_identity: { select: { message: "PGRST301 relation candidate_identity does not exist at char 42" } } } },
+    );
+    const result = await readTrustedNames(sb, { applicationId: "app-1", userId: "u1" });
+    expect(result.error).toBe("Could not verify saved names for this application.");
+    expect(result.error).not.toContain("PGRST301");
+    expect(spy).toHaveBeenCalledTimes(1);
+    const [, loggedMeta] = spy.mock.calls[0];
+    expect(loggedMeta.error.message).toContain("PGRST301");
+    spy.mockRestore();
   });
 });
 
@@ -208,6 +231,29 @@ describe("saveCandidateName -- one row per account, upserted on the user_id prim
     expect(result.written).toBe(false);
     expect(result.error).toBeTruthy();
   });
+
+  // F-R14-2 (fix round r14, MINOR, verify.r14.md): readTrustedNames got the
+  // fix-at-source treatment (F-R13-1), but this sibling did not -- it still
+  // returned errMessage(error) verbatim. Today that is safe only because
+  // route.js's own PUT caller feeds the result into dbFailureResponse's
+  // `meta` (logged, never returned), but nothing here stopped a different
+  // future caller from surfacing `result.error` directly.
+  it("[RED before this fix round] a write failure's `error` field is a GENERIC sentence, never the raw database text -- the raw detail is logged server-side instead", async () => {
+    const { saveCandidateName } = await load();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const sb = makeStatefulSupabase(
+      { candidate_identity: [] },
+      { errors: { candidate_identity: { upsert: { message: "PGRST301 relation candidate_identity does not exist at char 42" } } } },
+    );
+    const result = await saveCandidateName(sb, { userId: "u1", candidateName: "Alex Shaw" });
+    expect(result.written).toBe(false);
+    expect(result.error).toBe("Could not save your name.");
+    expect(result.error).not.toContain("PGRST301");
+    expect(spy).toHaveBeenCalledTimes(1);
+    const [, loggedMeta] = spy.mock.calls[0];
+    expect(loggedMeta.error.message).toContain("PGRST301");
+    spy.mockRestore();
+  });
 });
 
 describe("saveInterviewerNames -- one row per application, upserted on the application_id primary key", () => {
@@ -257,6 +303,26 @@ describe("saveInterviewerNames -- one row per application, upserted on the appli
     const result = await saveInterviewerNames(sb, { applicationId: "app-1", userId: "u1", interviewerNames: ["Priya Nair"] });
     expect(result.written).toBe(false);
     expect(result.error).toBeTruthy();
+  });
+
+  // F-R14-2 (fix round r14, MINOR, verify.r14.md): same asymmetry as
+  // saveCandidateName's own sibling test above -- this function still
+  // returned errMessage(error) verbatim before this fix round.
+  it("[RED before this fix round] a write failure's `error` field is a GENERIC sentence, never the raw database text -- the raw detail is logged server-side instead", async () => {
+    const { saveInterviewerNames } = await load();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const sb = makeStatefulSupabase(
+      { application_trusted_names: [] },
+      { errors: { application_trusted_names: { upsert: { message: "PGRST301 relation application_trusted_names does not exist at char 42" } } } },
+    );
+    const result = await saveInterviewerNames(sb, { applicationId: "app-1", userId: "u1", interviewerNames: ["Priya Nair"] });
+    expect(result.written).toBe(false);
+    expect(result.error).toBe("Could not save the interviewer names.");
+    expect(result.error).not.toContain("PGRST301");
+    expect(spy).toHaveBeenCalledTimes(1);
+    const [, loggedMeta] = spy.mock.calls[0];
+    expect(loggedMeta.error.message).toContain("PGRST301");
+    spy.mockRestore();
   });
 });
 

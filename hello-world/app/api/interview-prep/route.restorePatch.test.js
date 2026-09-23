@@ -68,7 +68,7 @@ const LIVE_TEXT = "The version that is live right now.";
 
 let userCounter = 0;
 
-function seedTree({ withStoredName = false, packsStatus = "ready" } = {}) {
+function seedTree({ withStoredName = false, packsStatus = "ready", errors = {} } = {}) {
   userCounter += 1;
   const userId = `user-patch-${userCounter}`;
   const livePack = {
@@ -151,6 +151,7 @@ function seedTree({ withStoredName = false, packsStatus = "ready" } = {}) {
       relationships: {
         "applications.positions": { localKey: "position_id", table: "positions", foreignKey: "id" },
       },
+      errors,
     },
   );
 
@@ -365,6 +366,145 @@ describe("AC-CONC.3 -- two concurrent restores of the same section", () => {
     const { body } = await restore(sb);
     expect(body.status).toBe("restored");
   });
+
+  it("F-m15: the loser's own PATCH leaves no phantom revision row behind -- the table grows by exactly one, not two", async () => {
+    const { sb } = seedTree();
+    const gate = holdFirstUpdate(sb, "interview_prep_packs");
+    const before = sb.rows(REVISIONS_TABLE).filter((r) => r.section === SECTION).map((r) => r.revision);
+
+    let firstError = null;
+    const first = restore(sb).catch((err) => {
+      firstError = err;
+      return { body: { status: `threw: ${err?.message}` } };
+    });
+    await waitUntil(
+      () => gate.length === 1 || firstError !== null,
+      "the first restore to reach its packs UPDATE",
+    );
+    const second = await restore(sb, { revision: 2 }).catch((err) => ({ body: { status: `threw: ${err?.message}` } }));
+
+    expect(firstError, `the first restore threw instead of running: ${firstError?.message}`).toBeNull();
+    expect(gate, "the first UPDATE was never held open -- this test is not concurrent").toHaveLength(1);
+    gate[0]();
+    const firstResult = await first;
+
+    const outcomes = [firstResult.body.status, second.body.status].sort();
+    expect(outcomes, `expected one restored and one conflict, got ${JSON.stringify(outcomes)}`).toEqual([
+      "conflict",
+      "restored",
+    ]);
+
+    // Only the WINNER's own append may survive: a lost race must not leave
+    // the loser's own revision row behind as a phantom "restored" version
+    // nothing ever points to.
+    const after = sb.rows(REVISIONS_TABLE).filter((r) => r.section === SECTION);
+    expect(after.length, "a lost restore race left a phantom revision row behind").toBe(before.length + 1);
+
+    // F-A1 (fix round): identity, not merely count. route.js's cleanup call
+    // (`deleteSectionRevision(..., { revision: newRevision })`) has both
+    // `revision` (the restore SOURCE, from the request body) and
+    // `newRevision` (this restore's own freshly appended row) in scope one
+    // line apart -- a mutant that deletes `revision` instead removes exactly
+    // one row too, same as the real fix, so the count assertion above cannot
+    // tell them apart. Every ORIGINAL row (both restores' own source
+    // revisions, 1 and 2, included) must survive: only a row NEITHER restore
+    // was ever asked to restore FROM -- the loser's own freshly appended one
+    // -- may be gone.
+    for (const revision of before) {
+      expect(
+        after.some((r) => r.revision === revision),
+        `original revision ${revision} was removed by the cleanup -- the cleanup deleted a SOURCE row, not the phantom`,
+      ).toBe(true);
+    }
+  });
+
+  it("[no-op control] a SINGLE successful restore still appends exactly one revision row, not zero", async () => {
+    // Without this, a "fix" that deletes the appended row unconditionally --
+    // not only on a lost race -- would satisfy the assertion above for the
+    // wrong reason.
+    const { sb } = seedTree();
+    const countBefore = sb.rows(REVISIONS_TABLE).length;
+    await restore(sb);
+    expect(sb.rows(REVISIONS_TABLE).length).toBe(countBefore + 1);
+  });
+});
+
+describe("F-A2 (fix round) -- the race the delete cleanup actually exists for", () => {
+  // The SAME-section race above (AC-CONC.3) never lets two inserts collide on
+  // one (section, revision): appendSectionRevisions' own PK makes that
+  // impossible in production, and this harness's `.insert()` resolves each
+  // restore's own append to completion before the next one is even issued --
+  // by the time a second same-section restore reads `newestBySection`, the
+  // first restore (already past its own held packs UPDATE) has already
+  // landed its append, so the second always allocates the NEXT number, never
+  // a colliding one. What genuinely races in production, and what this suite
+  // was missing, is two DIFFERENT writers -- here, two DIFFERENT sections'
+  // restores -- both racing the SAME packs row's optimistic `updated_at`.
+  it("a restore of one section can lose the packs-row race to a concurrent restore of a DIFFERENT section -- only the loser's OWN section's appended row is cleaned up", async () => {
+    const { sb } = seedTree();
+    const gate = holdFirstUpdate(sb, "interview_prep_packs");
+    const beforeAboutYou = sb.rows(REVISIONS_TABLE).filter((r) => r.section === SECTION).map((r) => r.revision);
+    const beforeWhyRole = sb.rows(REVISIONS_TABLE).filter((r) => r.section === "whyRole").map((r) => r.revision);
+
+    let firstError = null;
+    const first = restore(sb).catch((err) => {
+      firstError = err;
+      return { body: { status: `threw: ${err?.message}` } };
+    });
+    await waitUntil(
+      () => gate.length === 1 || firstError !== null,
+      "the first restore (aboutYou) to reach its packs UPDATE",
+    );
+    const second = await restore(sb, { section: "whyRole", revision: 1 }).catch((err) => ({
+      body: { status: `threw: ${err?.message}` },
+    }));
+
+    expect(firstError, `the first restore threw instead of running: ${firstError?.message}`).toBeNull();
+    expect(gate, "the first UPDATE was never held open -- this test is not concurrent").toHaveLength(1);
+    gate[0]();
+    const firstResult = await first;
+
+    const outcomes = [firstResult.body.status, second.body.status].sort();
+    expect(outcomes, `expected one restored and one conflict, got ${JSON.stringify(outcomes)}`).toEqual([
+      "conflict",
+      "restored",
+    ]);
+
+    // Every ORIGINAL row of BOTH sections survives the cleanup, whichever
+    // section actually lost.
+    const afterAboutYou = sb.rows(REVISIONS_TABLE).filter((r) => r.section === SECTION);
+    const afterWhyRole = sb.rows(REVISIONS_TABLE).filter((r) => r.section === "whyRole");
+    for (const revision of beforeAboutYou) {
+      expect(afterAboutYou.some((r) => r.revision === revision), `aboutYou revision ${revision} was removed by the cleanup`).toBe(true);
+    }
+    for (const revision of beforeWhyRole) {
+      expect(afterWhyRole.some((r) => r.revision === revision), `whyRole revision ${revision} was removed by the cleanup`).toBe(true);
+    }
+
+    // aboutYou is the request `holdFirstUpdate` intercepts (the first
+    // `.update(` call against the packs table), so it is deterministically
+    // the loser here: its own freshly appended row is the phantom, and only
+    // ITS section's row count stays unchanged while whyRole's grows by one.
+    expect(afterAboutYou.length, "aboutYou's own appended (losing) row was not cleaned up").toBe(beforeAboutYou.length);
+    expect(afterWhyRole.length, "whyRole's own appended (winning) row did not survive").toBe(beforeWhyRole.length + 1);
+  });
+
+  it("the append's own PK conflict (23505) reaches PATCH as a 500, not the packs-race's 409 -- the two concurrency guards answer differently (F-m4, minor, recorded rather than aligned this round)", async () => {
+    // AC-CONC.2 (prepSectionRevisions.test.js) already pins that
+    // appendSectionRevisions itself reports reason:"conflict" on a 23505 and
+    // never retries or throws. What was untested is PATCH's OWN handling of
+    // that reason -- route.js:958's `if (appended.reason)` branch, reached
+    // only when the insert conflicts BEFORE the packs write is ever
+    // attempted, so there is no row for the F-m15 cleanup to remove.
+    const { sb } = seedTree({ errors: { [REVISIONS_TABLE]: { insert: { code: "23505", message: 'duplicate key value violates unique constraint "interview_prep_section_revisions_pkey"' } } } });
+    const countBefore = sb.rows(REVISIONS_TABLE).length;
+    const { res, body } = await restore(sb);
+    expect(res.status).toBe(500);
+    expect(body.error).toBe("Could not save this restore.");
+    // No row was ever inserted -- the conflict is at the database, before
+    // this restore's own append could be recorded at all.
+    expect(sb.rows(REVISIONS_TABLE).length).toBe(countBefore);
+  });
 });
 
 describe("F-M4 (fix round) -- the PATCH ownership gate is a real, tested defence", () => {
@@ -442,5 +582,90 @@ describe("AC-UX.4 / AC-UX.5 -- restore spends nothing and survives a spend outag
     const { sb } = seedTree({ packsStatus: "running" });
     const { res } = await restore(sb);
     expect(res.status).toBe(409);
+  });
+});
+
+describe("F-R12-3 (fix round r12, MAJOR, verify.r12.md) -- PATCH's own base-read refusal never carries the database's own error text", () => {
+  // The PATCH twin of route.section.fixRound3.test.js's own F-R11-2 test
+  // (probe Q3's shape, verify.r12.md): that file drives POST only, so
+  // reverting PATCH's own sanitisation at route.js:926 (mutant
+  // PATCHSAN-rawErrorBack, <scratch>/r12/mutants.json) survived 785/785 --
+  // nothing exercised the PATCH half of the fix at all.
+  it("a packs-table read failure refuses the PATCH (500) with the generic sentence, never the raw database text", async () => {
+    const injected = "PGRST301 relation interview_prep_section_revisions does not exist at char 42";
+    const { sb } = seedTree({ errors: { interview_prep_packs: { select: { message: injected } } } });
+
+    const { res, body } = await restore(sb);
+
+    expect(res.status).toBe(500);
+    expect(body.error).toBe("Could not load this application's prep pack.");
+    expect(JSON.stringify(body), "the database's own error text reached the response body").not.toContain(injected);
+  });
+
+  it("[no-op control] the SAME tree with no injected failure restores normally, on the SAME code path", async () => {
+    const { sb } = seedTree();
+    const { res, body } = await restore(sb);
+    expect(res.status).toBe(200);
+    expect(body.status).toBe("restored");
+  });
+});
+
+describe("F-m1 (fix round r10, minor) -- PATCH's own base read never pulls round-two bodies it does not use", () => {
+  it("issues no targeted (revision-eq) select against the revisions table besides the restore target's own read", async () => {
+    // seedTree's own pointer names FOUR sections (aboutYou/whyRole/askThem/
+    // stages). Before this fix, readLiveSectionRevisions' round two read all
+    // four full bodies for a base PATCH never inspects (route.js reads only
+    // status/pack/liveRevisions/newestBySection/updatedAt off it) -- on top
+    // of readSectionRevision's own explicit read of the restore TARGET a few
+    // lines later. `withBodies:false` should leave exactly that one.
+    const { sb } = seedTree();
+    await restore(sb);
+    const targeted = sb.calls.filter(
+      (c) => c.table === REVISIONS_TABLE && c.verb === "select" && c.filters.some((f) => f.operator === "eq" && f.column === "revision"),
+    );
+    expect(targeted.length, `PATCH pulled ${targeted.length} full-body revision reads -- round two's own discarded bodies are back`).toBe(1);
+  });
+});
+
+describe("F-m4 (fix round r10, minor) -- a failed restore cleanup is recorded, not only logged", () => {
+  it("a lost race whose own cleanup delete ALSO fails records a ('delete','error') event for that section", async () => {
+    const { sb } = seedTree({ errors: { [REVISIONS_TABLE]: { delete: { message: "delete blew up" } } } });
+    const gate = holdFirstUpdate(sb, "interview_prep_packs");
+
+    let firstError = null;
+    const first = restore(sb).catch((err) => {
+      firstError = err;
+      return { body: { status: `threw: ${err?.message}` } };
+    });
+    await waitUntil(() => gate.length === 1 || firstError !== null, "the first restore to reach its packs UPDATE");
+    const second = await restore(sb, { revision: 2 }).catch((err) => ({ body: { status: `threw: ${err?.message}` } }));
+
+    expect(firstError, `the first restore threw instead of running: ${firstError?.message}`).toBeNull();
+    gate[0]();
+    const firstResult = await first;
+    const outcomes = [firstResult.body.status, second.body.status].sort();
+    expect(outcomes).toEqual(["conflict", "restored"]);
+
+    const cleanupEvents = sb.rows("interview_prep_events").filter((e) => e.event_type === "delete" && e.outcome === "error");
+    expect(cleanupEvents, "a failed restore cleanup left no record at all -- console.warn only, unchanged from before this fix").toHaveLength(1);
+    expect(cleanupEvents[0].section).toBe(SECTION);
+  });
+
+  it("[no-op control] a lost race whose cleanup delete SUCCEEDS records no such event", async () => {
+    const { sb } = seedTree();
+    const gate = holdFirstUpdate(sb, "interview_prep_packs");
+
+    let firstError = null;
+    const first = restore(sb).catch((err) => {
+      firstError = err;
+      return { body: { status: `threw: ${err?.message}` } };
+    });
+    await waitUntil(() => gate.length === 1 || firstError !== null, "the first restore to reach its packs UPDATE");
+    await restore(sb, { revision: 2 });
+    gate[0]();
+    await first;
+
+    const cleanupEvents = sb.rows("interview_prep_events").filter((e) => e.event_type === "delete" && e.outcome === "error");
+    expect(cleanupEvents, "a SUCCESSFUL cleanup still recorded a failure event").toHaveLength(0);
   });
 });

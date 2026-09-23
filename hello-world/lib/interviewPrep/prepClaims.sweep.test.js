@@ -35,7 +35,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { tokenizeSource } from "@/lib/sourceScan/tokenizeSource.js";
-import { writePrepPackResult } from "./prepStore.js";
+import { writePrepPackResult, isCheckViolation } from "./prepStore.js";
 import { makeSupabase } from "../../test/helpers/supabaseMock.js";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -324,6 +324,45 @@ describe("AC-CLAIM.8 -- a cross-owner pack is REFUSED by writePrepPackResult, an
       postingFingerprint: "fp-1",
     });
     expect(result.written).toBe(true);
+  });
+});
+
+describe("F-M5 (fix round, verify.r4.md MAJOR) -- a claim-ownership refusal is tagged for the SAME CHECK-safe retry every other post-claim failure gets", () => {
+  it("[RED on HEAD: code is null] a cross-owner refusal's `code` makes isCheckViolation true, so finishAttempt's fallback retries it", async () => {
+    // Without this, the refusal a few lines above prepClaims.sweep's own
+    // AC-CLAIM.8 block just exercised carries `code: null` --
+    // finishAttempt.js's CHECK-safe fallback (`isCheckViolation(write)`)
+    // never fires for it, so the pack a claim already blanked to '{}' is
+    // never restored: this gate's own refusal was the one post-claim
+    // failure that left a row permanently bricked (verify.r4.md F-M5).
+    const sb = packsClient();
+    const result = await writePrepPackResult(sb, {
+      applicationId: APP_ID,
+      userId: USER_ID,
+      leaseToken: LEASE_TOKEN,
+      status: "ready",
+      pack: crossOwnerPack(),
+      postingFingerprint: "fp-1",
+    });
+    expect(result.written).toBe(false);
+    expect(
+      isCheckViolation(result),
+      "a claim-ownership refusal is not wired to the CHECK-safe retry/restore path",
+    ).toBe(true);
+  });
+
+  it("[no-op control] a write that is NOT refused never reads isCheckViolation:true through the same predicate", async () => {
+    const sb = packsClient();
+    const result = await writePrepPackResult(sb, {
+      applicationId: APP_ID,
+      userId: USER_ID,
+      leaseToken: LEASE_TOKEN,
+      status: "ready",
+      pack: ownedPack(),
+      postingFingerprint: "fp-1",
+    });
+    expect(result.written).toBe(true);
+    expect(isCheckViolation(result)).toBe(false);
   });
 });
 

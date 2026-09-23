@@ -9,14 +9,37 @@
 // via the caller's own client, injected as the first argument -- never
 // `createAdminClient()`, matching prepStore.js's own precedent.
 
-function errMessage(error) {
-  if (!error) return null;
-  return typeof error.message === "string" ? error.message : String(error);
-}
+import { logDbFailure } from "./prepStore.js";
+
+// F-R14-2 (fix round r14): every raw-database-text branch in this module now
+// goes through logDbFailure below -- errMessage(error) (this file's own
+// prior, unsanitised convention) is no longer called anywhere in it.
 
 function isNonBlank(value) {
   return typeof value === "string" && value.trim().length > 0;
 }
+
+// F-R13-1 (fix round r13, MAJOR, verify.r13.md): the tenth site still
+// handing a raw PostgREST message to the candidate after F-R12-1 closed the
+// other nine. GET's own `error: trustedError` field (route.js) is a SOFT
+// field on an otherwise-200 response, never a terminal 500 -- so it cannot
+// route through prepStore.js's dbFailureResponse, but it must still never
+// carry more than this one generic sentence. The raw detail goes to
+// logDbFailure (prepStore.js), the same server-side-only discipline
+// dbFailureResponse itself uses, instead of being invented a second time.
+const TRUSTED_NAMES_READ_FAILED = "Could not verify saved names for this application.";
+
+// F-R14-2 (fix round r14, MINOR, verify.r14.md): readTrustedNames got the
+// fix-at-source treatment above, but its two siblings below did not -- both
+// still returned errMessage(error) verbatim. Today that is safe only because
+// route.js's own two PUT callers feed the result into dbFailureResponse's
+// `meta` argument (logged, never returned), but nothing in either function
+// stopped a DIFFERENT future caller from surfacing `result.error` directly,
+// the same way GET's soft field once did (F-R13-1). Same discipline as
+// readTrustedNames: the raw detail goes to logDbFailure, `error` is always
+// one of these two generic sentences.
+const SAVE_CANDIDATE_NAME_FAILED = "Could not save your name.";
+const SAVE_INTERVIEWER_NAMES_FAILED = "Could not save the interviewer names.";
 
 /**
  * Resolves the O-15 exemption's full set of user-supplied names for one
@@ -29,19 +52,25 @@ function isNonBlank(value) {
  * cannot be embedded into one nested PostgREST select.
  *
  * FAILS CLOSED on any query error: returns `{candidateName: null,
- * interviewerNames: [], error: <message>}` -- even when only ONE of the two
- * queries failed, so a broken `application_trusted_names` read never leaves
- * the account name readable on its own. The caller (`normalizePack`, via
- * `flattenTrustedNames`) cannot distinguish "no names saved" from "the
- * query broke," and the safe default for an O-15 gate is the more
- * restrictive one.
+ * interviewerNames: [], error: TRUSTED_NAMES_READ_FAILED}` -- a fixed,
+ * generic sentence, never the query's own raw message text (F-R13-1) --
+ * even when only ONE of the two queries failed, so a broken
+ * `application_trusted_names` read never leaves the account name readable
+ * on its own. The caller (`normalizePack`, via `flattenTrustedNames`)
+ * cannot distinguish "no names saved" from "the query broke," and the safe
+ * default for an O-15 gate is the more restrictive one. The raw detail
+ * (whichever query failed, or the caught error) is logged server-side via
+ * logDbFailure before this returns.
  *
  * @param {*} supabase  the caller's own client, never an admin client.
  * @param {{applicationId: string, userId: string}} args
  * @returns {Promise<{candidateName: string|null, interviewerNames: string[], error: string|null}>}
  */
 export async function readTrustedNames(supabase, { applicationId, userId }) {
-  const failClosed = (message) => ({ candidateName: null, interviewerNames: [], error: message });
+  const failClosed = (where, meta) => {
+    logDbFailure(where, meta);
+    return { candidateName: null, interviewerNames: [], error: TRUSTED_NAMES_READ_FAILED };
+  };
   try {
     const [candidateResult, trustedResult] = await Promise.all([
       supabase.from("candidate_identity").select("candidate_name").eq("user_id", userId).maybeSingle(),
@@ -53,8 +82,12 @@ export async function readTrustedNames(supabase, { applicationId, userId }) {
         .maybeSingle(),
     ]);
 
-    if (candidateResult.error) return failClosed(errMessage(candidateResult.error));
-    if (trustedResult.error) return failClosed(errMessage(trustedResult.error));
+    if (candidateResult.error) {
+      return failClosed("readTrustedNames candidate_identity read failed", { applicationId, userId, error: candidateResult.error });
+    }
+    if (trustedResult.error) {
+      return failClosed("readTrustedNames application_trusted_names read failed", { applicationId, userId, error: trustedResult.error });
+    }
 
     const candidateName = candidateResult.data?.candidate_name ?? null;
     const interviewerNames = Array.isArray(trustedResult.data?.interviewer_names)
@@ -62,7 +95,7 @@ export async function readTrustedNames(supabase, { applicationId, userId }) {
       : [];
     return { candidateName, interviewerNames, error: null };
   } catch (err) {
-    return failClosed(err?.message || "unknown error");
+    return failClosed("readTrustedNames unexpected error", { applicationId, userId, error: err?.message || "unknown error" });
   }
 }
 
@@ -108,10 +141,14 @@ export async function saveCandidateName(supabase, { userId, candidateName }) {
     const { error } = await supabase
       .from("candidate_identity")
       .upsert({ user_id: userId, candidate_name: value }, { onConflict: "user_id" });
-    if (error) return { written: false, error: errMessage(error) };
+    if (error) {
+      logDbFailure("saveCandidateName write failed", { userId, error });
+      return { written: false, error: SAVE_CANDIDATE_NAME_FAILED };
+    }
     return { written: true, error: null };
   } catch (err) {
-    return { written: false, error: err?.message || "unknown error" };
+    logDbFailure("saveCandidateName unexpected error", { userId, error: err?.message || "unknown error" });
+    return { written: false, error: SAVE_CANDIDATE_NAME_FAILED };
   }
 }
 
@@ -134,10 +171,14 @@ export async function saveInterviewerNames(supabase, { applicationId, userId, in
         { application_id: applicationId, user_id: userId, interviewer_names: names },
         { onConflict: "application_id" },
       );
-    if (error) return { written: false, error: errMessage(error) };
+    if (error) {
+      logDbFailure("saveInterviewerNames write failed", { applicationId, userId, error });
+      return { written: false, error: SAVE_INTERVIEWER_NAMES_FAILED };
+    }
     return { written: true, error: null };
   } catch (err) {
-    return { written: false, error: err?.message || "unknown error" };
+    logDbFailure("saveInterviewerNames unexpected error", { applicationId, userId, error: err?.message || "unknown error" });
+    return { written: false, error: SAVE_INTERVIEWER_NAMES_FAILED };
   }
 }
 

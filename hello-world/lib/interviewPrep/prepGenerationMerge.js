@@ -14,6 +14,8 @@
 import { mintSectionClaims, claimOwner, mintUnownedReferencedClaims } from "./prepClaims.js";
 import { buildPackDocument, baseProvenanceFromPack } from "./prepMerge.js";
 import { PREP_SECTION_NAMES } from "./prepContract.js";
+import { PREP_SECTION_REVISION_MAX_BYTES } from "./prepConstants.js";
+import { sectionRevisionBytes } from "./prepRevisionStore.js";
 
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -143,18 +145,56 @@ export function buildRevisionSections(normalizedPack, engine, names, newestBySec
  * Pure and total. A section not present in `pack.sections` at all (a
  * pre-N45 pack thinner than four sections) is never invented here.
  *
+ * Module-private since fix round F-m3: `sectionWriteNamesWithinBudget`
+ * below is the one shipping consumer now that route.js calls that instead,
+ * so this has no reason to be its own export (the same
+ * ORPHAN_EXPORTS trap `mintWholeReplace`'s own header above already names).
+ *
  * @param {string} section the section this attempt just regenerated
  * @param {*} pack the merged candidate this attempt is about to write
  * @param {Record<string, number>} liveRevisions the pointer AS READ before this write
  * @returns {string[]}
  */
-export function sectionWriteNames(section, pack, liveRevisions) {
+function sectionWriteNames(section, pack, liveRevisions) {
   const sections = isPlainObject(pack) && isPlainObject(pack.sections) ? pack.sections : {};
   const pointer = isPlainObject(liveRevisions) ? liveRevisions : {};
   const seeded = PREP_SECTION_NAMES.filter(
     (name) => name !== section && !Object.hasOwn(pointer, name) && Object.hasOwn(sections, name),
   );
   return [section, ...seeded];
+}
+
+/**
+ * F-m3 (fix round, verify.r4.md MINOR, widened): the sub-list of
+ * `sectionWriteNames`' OTHER names -- never `section` itself, whose own size
+ * cannot be known until the model replies -- that fit
+ * PREP_SECTION_REVISION_MAX_BYTES once minted exactly as
+ * buildRevisionSections would mint them. Measured PRE-model, from `pack`
+ * alone (the base document, never a reply), with the SAME sectionRevisionBytes
+ * appendSectionRevisions (prepStore.js) itself enforces, so nothing here can
+ * drift from what the real insert would refuse.
+ *
+ * An oversized OTHER section is left OUT of the returned list rather than
+ * refusing the whole attempt: `section` still regenerates normally, and the
+ * excluded name is simply not seeded this round -- restorePayload's own
+ * fallback (prepMerge.js, fix round F-M6/F-M3) rebuilds it from the live
+ * pack directly the next time it is needed, so nothing here is a permanent
+ * loss.
+ *
+ * Pure and total. Never calls a model, never performs I/O.
+ *
+ * @param {string} section the section THIS attempt is regenerating
+ * @param {*} pack the pre-attempt document (never the model's reply)
+ * @param {Record<string, number>} liveRevisions the pointer AS READ
+ * @param {Record<string, number>} newestBySection
+ * @returns {string[]} `section` first, then every OTHER seed candidate that fits.
+ */
+export function sectionWriteNamesWithinBudget(section, pack, liveRevisions, newestBySection) {
+  const others = sectionWriteNames(section, pack, liveRevisions).filter((name) => name !== section);
+  if (others.length === 0) return [section];
+  const seeded = buildRevisionSections(pack, "unknown", others, newestBySection);
+  const fitting = others.filter((name) => sectionRevisionBytes(seeded[name]) <= PREP_SECTION_REVISION_MAX_BYTES);
+  return [section, ...fitting];
 }
 
 /**

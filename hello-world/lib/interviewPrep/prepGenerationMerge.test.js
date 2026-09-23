@@ -30,7 +30,7 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect } from "vitest";
-import { seedEngineResolver, buildRevisionSections } from "./prepGenerationMerge.js";
+import { seedEngineResolver, buildRevisionSections, sectionWriteNamesWithinBudget } from "./prepGenerationMerge.js";
 import { claimOwner } from "./prepClaims.js";
 import { EMBEDDED_TEMPLATE_ORIGIN } from "./prepParse.js";
 
@@ -152,5 +152,49 @@ describe("buildRevisionSections -- F-B1 residual (fix round 2, verify.r3.md BLOC
     const out = buildRevisionSections(normalizedPack, "gemini", ["askThem", "aboutYou"], { askThem: 3 });
     expect(out.askThem.revision).toBe(4);
     expect(out.aboutYou.revision).toBe(1);
+  });
+});
+
+describe("sectionWriteNamesWithinBudget -- F-m3 (fix round, verify.r4.md MINOR, widened)", () => {
+  /** A legacy aboutYou whose minted content+claims exceed
+   *  PREP_SECTION_REVISION_MAX_BYTES -- the same padded shape verify.r4.md's
+   *  own R4-SIZE probe used. */
+  function bigLegacyAboutYou(count) {
+    const lines = [];
+    const claims = [];
+    for (let i = 0; i < count; i += 1) {
+      const id = `legacy-big-${i}`;
+      lines.push(supported(`Fact number ${i} about the org ${"x".repeat(150)}.`, id));
+      claims.push(claim(id, `Public detail ${i} ${"y".repeat(200)}.`, `https://acme.example/p/${i}`));
+    }
+    return { content: { answer: { lines } }, claims };
+  }
+
+  it("[RED: pre-fix] an OVERSIZED seed candidate is excluded, but `section` itself is ALWAYS kept regardless of its own size", () => {
+    const { content: oversizedAboutYou, claims } = bigLegacyAboutYou(120);
+    const pack = {
+      sections: { aboutYou: oversizedAboutYou, askThem: { questions: [{ text: "New?", support: null }] } },
+      claims,
+    };
+    const names = sectionWriteNamesWithinBudget("askThem", pack, {}, {});
+    expect(names).toContain("askThem");
+    expect(
+      names,
+      "an oversized OTHER section blocked the requested section's own regeneration from ever being seeded",
+    ).not.toContain("aboutYou");
+  });
+
+  it("[no-op control] every seed candidate under budget is still included, unchanged", () => {
+    const pack = {
+      sections: {
+        aboutYou: { answer: { lines: [{ text: "Small.", support: null }] } },
+        whyRole: { answer: { lines: [{ text: "Small too.", support: null }] } },
+        askThem: { questions: [{ text: "New?", support: null }] },
+        stages: { stages: [] },
+      },
+      claims: [],
+    };
+    const names = sectionWriteNamesWithinBudget("askThem", pack, {}, {});
+    expect(names.slice().sort()).toEqual(["aboutYou", "askThem", "stages", "whyRole"]);
   });
 });

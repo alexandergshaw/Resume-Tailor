@@ -22,6 +22,7 @@
 import { describe, it, expect } from "vitest";
 import { normalizePack, EMBEDDED_TEMPLATE_ORIGIN } from "./prepParse.js";
 import { restorePayload, buildPackDocument, baseProvenanceFromPack } from "./prepMerge.js";
+import { claimOwner } from "./prepClaims.js";
 
 const SECTIONS = ["aboutYou", "whyRole", "askThem", "stages"];
 
@@ -167,6 +168,203 @@ describe("restorePayload -- the F2 resolution (plan §2.4)", () => {
     expect(() => restorePayload(undefined)).not.toThrow();
     expect(() => restorePayload({})).not.toThrow();
     expect(JSON.stringify(base)).toBe(snapshot);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-R11-3 (fix round r11, minor) -- `sections: {}` cannot tell "no live
+// sections" apart from "bodies were never read" (PATCH's own
+// `withBodies:false` shape, prepRevisionStore.js). `bodiesRead` is the
+// explicit marker that shape now carries; a body-less base with a populated
+// pointer must never reach the F-M6/F-M3 fallback silently.
+// ---------------------------------------------------------------------------
+
+describe("restorePayload -- F-R11-3: refuses a body-less base rather than silently falling back for every section", () => {
+  it("throws when bodiesRead is explicitly false and the pointer is populated", () => {
+    const base = { status: "failed", pack: fullPack(), liveRevisions: { aboutYou: 2 }, sections: {}, bodiesRead: false };
+    expect(() => restorePayload(base)).toThrow();
+  });
+
+  it("[no-op control] the SAME shape with bodiesRead:true, matching every landed caller, does not throw", () => {
+    const base = { status: "failed", pack: fullPack(), liveRevisions: { aboutYou: 2 }, sections: {}, bodiesRead: true };
+    expect(() => restorePayload(base)).not.toThrow();
+  });
+
+  it("[no-op control] bodiesRead:false with an EMPTY pointer does not throw -- the pack fallback never touches sections", () => {
+    const base = { status: "failed", pack: fullPack(), liveRevisions: {}, sections: {}, bodiesRead: false };
+    expect(() => restorePayload(base)).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-M6/F-M3 -- restorePayload's own repair (fix round, verify.r4.md MAJOR).
+// Ruling (option b): when a section's restore source is missing, or lacks
+// the claims its lines reference, fall back to the LIVE pack's own content
+// and claims for that section, re-minted, instead of the degraded revision.
+// ---------------------------------------------------------------------------
+
+describe("restorePayload -- F-M6/F-M3 repair: a missing or degraded revision source falls back to the live pack", () => {
+  function livePackWithCitedAboutYou() {
+    return {
+      version: 1,
+      sections: {
+        aboutYou: {
+          answer: {
+            lines: [{ text: "Maria Lopez leads the platform team.", support: { kind: "claim", claimId: "legacy-name" } }],
+          },
+        },
+        whyRole: answerSection("uncited why"),
+        askThem: questionSection("uncited question"),
+        stages: stageSection("Overview", "Tell me about yourself."),
+      },
+      claims: [{ id: "legacy-name", text: "Maria Lopez leads the platform team.", sourceUrl: "https://acme.example/team" }],
+    };
+  }
+
+  it("[RED: pre-fix] a claims:[] degraded revision row (the 88adbca shape, F-M6) is rebuilt from the live pack, re-minted", () => {
+    const livePack = livePackWithCitedAboutYou();
+    const degraded = { content: livePack.sections.aboutYou, claims: [], engine: "gemini", revision: 1 };
+    const out = restorePayload({
+      status: "failed",
+      pack: livePack,
+      liveRevisions: { aboutYou: 1, whyRole: 1, askThem: 1, stages: 1 },
+      sections: {
+        aboutYou: degraded,
+        whyRole: { content: livePack.sections.whyRole, claims: [], engine: "gemini", revision: 1 },
+        askThem: { content: livePack.sections.askThem, claims: [], engine: "gemini", revision: 1 },
+        stages: { content: livePack.sections.stages, claims: [], engine: "gemini", revision: 1 },
+      },
+    });
+
+    const line = out.pack.sections.aboutYou.answer.lines[0];
+    expect(line.text).toContain("Maria Lopez");
+    expect(line.support, "a claims:[] revision row was used verbatim instead of repaired from the live pack").not.toBeNull();
+    expect(claimOwner(line.support.claimId)).toBe("aboutYou");
+  });
+
+  it("[RED: pre-fix] a section entirely missing from the pointer (the ff59a97 partial-pointer shape, F-M3) is still rebuilt, not dropped", () => {
+    const livePack = livePackWithCitedAboutYou();
+    // Only askThem is under the pointer -- aboutYou/whyRole/stages have no
+    // revision source at all.
+    const out = restorePayload({
+      status: "failed",
+      pack: livePack,
+      liveRevisions: { askThem: 1 },
+      sections: { askThem: { content: livePack.sections.askThem, claims: [], engine: "gemini", revision: 1 } },
+    });
+
+    expect(Object.keys(out.pack.sections).sort()).toEqual(["aboutYou", "askThem", "stages", "whyRole"]);
+    const line = out.pack.sections.aboutYou.answer.lines[0];
+    expect(line.text).toContain("Maria Lopez");
+    expect(line.support, "aboutYou was dropped instead of repaired from the live pack").not.toBeNull();
+  });
+
+  it("[no-op control] an INTACT revision row -- its own claims already cover its own refs -- is used AS IS, never overridden by the live-pack fallback", () => {
+    const rowContent = {
+      answer: { lines: [{ text: "The revision row's own text.", support: { kind: "claim", claimId: "c/aboutYou/0123456789abcdef" } }] },
+    };
+    const livePack = {
+      version: 1,
+      sections: { aboutYou: answerSection("A DIFFERENT live-pack text.") },
+      claims: [],
+    };
+    const out = restorePayload({
+      status: "failed",
+      pack: livePack,
+      liveRevisions: { aboutYou: 3 },
+      sections: {
+        aboutYou: {
+          content: rowContent,
+          claims: [{ id: "c/aboutYou/0123456789abcdef", text: "fact", sourceUrl: "https://acme.example/a" }],
+          engine: "gemini",
+          revision: 3,
+        },
+      },
+    });
+    expect(out.pack.sections.aboutYou.answer.lines[0].text).toBe("The revision row's own text.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-M8 (fix round, verify.r5.md MAJOR) -- the fallback's own engine must
+// never read "embedded" for content it did not itself confirm came from the
+// embedded template. `prepMerge.js:212` (`packProvenance[name] ?? "unknown"`)
+// is the only thing keeping O-15's templateOrigin exemption off
+// fallback-repaired, model-written content -- a one-token change to a literal
+// "embedded" survived the full landed suite (verify.r5.md's MF4 mutant).
+// ---------------------------------------------------------------------------
+
+describe("restorePayload -- F-M8: the fallback's engine fails CLOSED, never 'embedded' for unconfirmed content", () => {
+  function livePackWithCitedAboutYou() {
+    return {
+      version: 1,
+      sections: {
+        aboutYou: {
+          answer: {
+            lines: [{ text: "Maria Lopez leads the platform team.", support: { kind: "claim", claimId: "legacy-name" } }],
+          },
+        },
+        whyRole: answerSection("uncited why"),
+        askThem: questionSection("uncited question"),
+        stages: stageSection("Overview", "Tell me about yourself."),
+      },
+      claims: [{ id: "legacy-name", text: "Maria Lopez leads the platform team.", sourceUrl: "https://acme.example/team" }],
+    };
+  }
+
+  it("[fix round F-M8] a fallback-repaired section on a pack with NO templateOrigin does not make the whole restored document read as embedded", () => {
+    // MUTANT THIS KILLS: the fallback branch's `packProvenance[name] ?? "unknown"`
+    // hard-coded to the literal "embedded". Three sections are INTACT rows
+    // whose own engine genuinely is "embedded" (a real client-supplied
+    // engine); the fourth (aboutYou) has no revision source at all, so it
+    // MUST take the fallback branch. Under HEAD, aboutYou's fallback engine
+    // reads "unknown" (baseProvenanceFromPack finds no templateOrigin on the
+    // live pack), so contributingEngines is not uniformly "embedded" and no
+    // templateOrigin is emitted. Under the mutant, aboutYou's fallback also
+    // reads "embedded", every contributing engine agrees, and the restored
+    // pack wrongly carries the K1-SHAPE exemption over content this function
+    // never confirmed was embedded-authored.
+    const livePack = livePackWithCitedAboutYou();
+    const out = restorePayload({
+      status: "failed",
+      pack: livePack,
+      liveRevisions: { aboutYou: 1, whyRole: 1, askThem: 1, stages: 1 },
+      sections: {
+        // aboutYou: no entry at all -- the ff59a97 partial-pointer shape.
+        whyRole: { content: livePack.sections.whyRole, claims: [], engine: "embedded", revision: 1 },
+        askThem: { content: livePack.sections.askThem, claims: [], engine: "embedded", revision: 1 },
+        stages: { content: livePack.sections.stages, claims: [], engine: "embedded", revision: 1 },
+      },
+    });
+    expect(Object.hasOwn(out.pack, "templateOrigin"), "the fallback's engine leaked the O-15 exemption onto unconfirmed content").toBe(false);
+    expect(out.pack.sections.aboutYou.answer.lines[0].text).toContain("Maria Lopez");
+  });
+
+  it("[no-op control] when EVERY section genuinely IS embedded (including an intact fallback source), templateOrigin IS emitted", () => {
+    // Proves the assertion above is not vacuous -- a restorePayload that
+    // never emits templateOrigin at all would also pass it.
+    const embeddedLivePack = {
+      version: 1,
+      sections: {
+        aboutYou: answerSection("An embedded-authored line."),
+        whyRole: answerSection("uncited why"),
+        askThem: questionSection("uncited question"),
+        stages: stageSection("Overview", "Tell me about yourself."),
+      },
+      claims: [],
+      templateOrigin: EMBEDDED_TEMPLATE_ORIGIN,
+    };
+    const out = restorePayload({
+      status: "failed",
+      pack: embeddedLivePack,
+      liveRevisions: { aboutYou: 1, whyRole: 1, askThem: 1, stages: 1 },
+      sections: {
+        whyRole: { content: embeddedLivePack.sections.whyRole, claims: [], engine: "embedded", revision: 1 },
+        askThem: { content: embeddedLivePack.sections.askThem, claims: [], engine: "embedded", revision: 1 },
+        stages: { content: embeddedLivePack.sections.stages, claims: [], engine: "embedded", revision: 1 },
+      },
+    });
+    expect(out.pack.templateOrigin).toBe(EMBEDDED_TEMPLATE_ORIGIN);
   });
 });
 

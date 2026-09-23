@@ -1,10 +1,20 @@
-// The ONLY module that names any of the three interview-prep tables or
-// issues a query against them (design-structure.r1.md §3). Every exported
-// function here runs under the `authenticated` role and RLS -- this module
-// never imports or calls `createAdminClient()`, matching the contract's own
-// S-1/S-3 precedent (no service-role path for anything candidate-facing).
-// `supabase` is always the caller's own client, injected as the first
-// argument, exactly like every other Supabase-backed store in this repo.
+// One of the two modules that name any of the three interview-prep tables or
+// issue a query against them (design-structure.r1.md §3). The other is
+// `./prepRevisionStore.js` (fix round F-m2 extraction, this module having run
+// out of headroom under its own 1000-line cap): that file owns every read and
+// write of `interview_prep_section_revisions` EXCEPT deletePrepPackContent's
+// own cascade sweep, below (F-m1, fix round) -- that one delete stays here,
+// riding along with the rest of this function's own cascade -- plus the one
+// `interview_prep_packs` read a restore's base needs before
+// `writePrepPackResult` (below) ever runs. THIS file still owns
+// `interview_prep_spend`/`interview_prep_events` outright, and every WRITE to
+// `interview_prep_packs` -- `writePrepPackResult` remains the single writer
+// R-N45-CLAIMS depends on. Every exported function in either file runs under
+// the `authenticated` role and RLS -- neither module imports or calls
+// `createAdminClient()`, matching the contract's own S-1/S-3 precedent (no
+// service-role path for anything candidate-facing). `supabase` is always the
+// caller's own client, injected as the first argument, exactly like every
+// other Supabase-backed store in this repo.
 //
 // FIRST OBLIGATION OF THIS SEAT, per rulings.md R-IP3-61: the RPC this file
 // calls is the CORRECTED, 3-parameter `claim_prep_pack_slot` signature --
@@ -60,14 +70,9 @@
 //   ever issues the one `UPDATE` it is asked for.
 
 import { normalizePack } from "./prepParse.js";
-import { PREP_LEASE_MS, PREP_PACK_MAX_BYTES, PREP_SECTION_REVISIONS_MAX, PREP_SECTION_REVISION_MAX_BYTES } from "./prepConstants.js";
-import {
-  PREP_LIST_PROJECTION,
-  PREP_SPEND_PROJECTION,
-  PREP_REVISION_PROJECTION,
-  PREP_REVISION_LIST_PROJECTION,
-} from "./prepContract.js";
-import { claimOwnershipViolations } from "./prepClaims.js";
+import { PREP_LEASE_MS, PREP_PACK_MAX_BYTES } from "./prepConstants.js";
+import { PREP_LIST_PROJECTION, PREP_SPEND_PROJECTION } from "./prepContract.js";
+import { claimOwnershipViolations, normalizeLegacyClaimIds } from "./prepClaims.js";
 
 const PACKS_TABLE = "interview_prep_packs";
 const SPEND_TABLE = "interview_prep_spend";
@@ -129,6 +134,76 @@ function errCode(error) {
  */
 export function isCheckViolation(result) {
   return result?.code === PG_CHECK_VIOLATION;
+}
+
+/**
+ * The server-side-only half of dbFailureResponse's own discipline: logs a
+ * raw database failure (`meta.error` -- a raw Supabase/PostgREST message, an
+ * `Error`, `null`) under a stable `where` label, and NEVER returns it.
+ * Exported separately so a caller that cannot build a whole
+ * dbFailureResponse gets the SAME "log the raw text, never return it"
+ * discipline instead of inventing a second one: trustedNames.js's own
+ * readTrustedNames fails closed with a soft `error` field on an otherwise
+ * -200 GET response, never a terminal 500 this function could build, and it
+ * was the tenth site still handing raw database text to the candidate after
+ * F-R12-1 closed the other nine (F-R13-1, verify.r13.md MAJOR).
+ *
+ * @param {string} where a short, stable label for the server log only
+ * @param {{ error?: * }} meta identifying context for the log line
+ */
+export function logDbFailure(where, meta) {
+  console.error(`interview-prep: ${where}`, meta);
+}
+
+// The only response-body keys dbFailureResponse will ever copy out of its
+// `extra` argument -- everything else is dropped in silence. F-R13-2
+// (verify.r13.md MAJOR): a caller passing `{ detail: <raw error> }` here
+// used to have `detail` merged straight into the JSON body, walking the raw
+// text past every check the `message` parameter's own literal-only
+// discipline was supposed to guarantee. A caller cannot smuggle a new key
+// through this argument -- widening what this function returns means
+// editing this list, not just calling it differently.
+const DB_FAILURE_EXTRA_KEYS = ["written"];
+
+/**
+ * The single choke point for a route-facing database failure (F-R12-1,
+ * verify.r12.md MAJOR): nine separate `Response.json({ error: <raw db text> })`
+ * sites in route.js used to hand a PostgREST message straight to the
+ * candidate, because the fix round before this one sanitised only the ONE
+ * base-read refusal it targeted (F-R11-2) and left the other eight standing
+ * -- two comments in route.js went on to claim the whole class was closed,
+ * which was true of neither file-wide claim. Every one of route.js's own
+ * failure paths that used to build `Response.json({ error: <raw> })` by hand
+ * now calls this instead. "Does this route ever leak schema detail" is
+ * answered by reading THIS function's own discipline together with
+ * readTrustedNames's fail-closed branch (which shares it via logDbFailure,
+ * above) -- not by this one function alone; the tenth site (F-R13-1) is the
+ * one place that claim used to fall down.
+ *
+ * `meta.error` is logged server-side via logDbFailure, alongside `where` and
+ * any other identifying fields `meta` carries, and NEVER reaches the
+ * response body. `message` is the only candidate-facing text this returns.
+ * `extra` (default `{}`) lets a caller add body fields beyond `error`, but
+ * ONLY the keys named in DB_FAILURE_EXTRA_KEYS above are ever copied out of
+ * it -- PUT's own `written: false` is the one real caller today. Any other
+ * key `extra` carries, however it got there, is silently dropped rather
+ * than merged into the body (F-R13-2, verify.r13.md MAJOR: a `{ detail:
+ * <raw error> }` fourth argument used to survive whole).
+ *
+ * @param {string} where a short, stable label for the server log only
+ * @param {{ error?: * }} meta identifying context for the log line
+ * @param {string} message the generic, candidate-facing sentence
+ * @param {{ written?: boolean }} [extra] additional response body fields --
+ *   see DB_FAILURE_EXTRA_KEYS for the exact, exhaustive set this reads
+ * @returns {Response}
+ */
+export function dbFailureResponse(where, meta, message, extra = {}) {
+  logDbFailure(where, meta);
+  const body = { error: message };
+  for (const key of DB_FAILURE_EXTRA_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(extra, key)) body[key] = extra[key];
+  }
+  return Response.json(body, { status: 500 });
 }
 
 // N41 (owner decision, 2026-09-20): both interview-prep spend caps are
@@ -271,6 +346,14 @@ export async function listPrepPacks(supabase, { applicationIds, userId }) {
   return { packs, error: null };
 }
 
+// F-R14-2 (fix round r14, MINOR, verify.r14.md): route.js's own 409 refusal
+// below has never actually surfaced `claim.error` (it returns only
+// `{status, reason}`), but nothing stopped a future edit from adding it --
+// and had it, this field would have carried the RPC's own raw text straight
+// through. Sanitised at the source now, the same discipline dbFailureResponse
+// and logDbFailure already give every other write path in this file.
+const CLAIM_FAILED_MESSAGE = "Could not start this attempt.";
+
 /**
  * Claims a run slot via the corrected, 3-parameter `claim_prep_pack_slot` RPC
  * -- never a `p_user_id` argument (R-IP3-53/R-IP3-61).
@@ -302,7 +385,8 @@ export async function claimPrepPack(supabase, { applicationId, userId }) {
   });
 
   if (error) {
-    return { claimed: false, leaseToken: null, attempts: null, reason: "error", error: errMessage(error) };
+    logDbFailure("claimPrepPack RPC failed", { applicationId, error });
+    return { claimed: false, leaseToken: null, attempts: null, reason: "error", error: CLAIM_FAILED_MESSAGE };
   }
 
   if (data === true) {
@@ -423,16 +507,24 @@ export async function writePrepPackResult(
   },
 ) {
   const clearedReason = status === "ready" || status === "partial" ? null : reason;
-  const normalizedPack = pack != null ? normalizePack(pack, storedNames) : pack;
+  // F-M5 (fix round): legacy duplicates are normalized BEFORE the
+  // INV-CLAIM-1 gate below ever sees them -- see normalizeLegacyClaimIds'
+  // own header.
+  const normalizedPack = pack != null ? normalizeLegacyClaimIds(normalizePack(pack, storedNames)) : pack;
 
   if (normalizedPack != null) {
     const violations = claimOwnershipViolations(normalizedPack);
     if (violations.length > 0) {
+      // F-M5 (fix round): tagged PG_CHECK_VIOLATION as the SAME deliberate
+      // stand-in checkPackByteBudget's own refusal below already uses -- so
+      // finishAttempt's existing CHECK-safe fallback retries this refusal
+      // too, restoring the prior document like every other post-claim
+      // failure, instead of leaving the row blanked with nothing to retry.
       return {
         written: false,
         reason: "error",
         error: `pack has ${violations.length} claim ownership violation(s): ${violations.map((v) => v.kind).join(", ")}`,
-        code: null,
+        code: PG_CHECK_VIOLATION,
       };
     }
   }
@@ -548,275 +640,6 @@ export async function deletePrepPackContent(supabase, { applicationId, userId })
 
   const stillExists = Array.isArray(followUp.data) ? followUp.data.length > 0 : Boolean(followUp.data);
   return { deleted: false, reason: stillExists ? "in-flight" : "not-found", error: null };
-}
-
-// ---------------------------------------------------------------------------
-// N45/N46: per-section revision history (plan §S5/§S6).
-// ---------------------------------------------------------------------------
-
-/**
- * Appends one immutable revision per named section, in ONE insert. `revision`
- * comes from the caller's own prior read (`readLiveSectionRevisions`'s
- * `newestBySection`), never a re-read here -- the PK
- * `(application_id, section, revision)` is what makes a lost race
- * impossible: the loser's insert raises 23505 and is reported as reason
- * "conflict", never silently retried, never thrown.
- *
- * Does NOT make anything live -- that is `writePrepPackResult`'s own
- * `live_revisions` column, written by the caller as a separate step. Refuses,
- * before any statement runs, any section whose `JSON.stringify({content,
- * claims})` exceeds `PREP_SECTION_REVISION_MAX_BYTES`, measured with
- * `TextEncoder` (never `Buffer` -- this module stays browser-safe), the same
- * discipline `checkPackByteBudget` already uses.
- *
- * @param {*} supabase
- * @param {{applicationId: string, userId: string,
- *          sections: Record<string, {content: *, claims: Array<object>, engine: string,
- *                                    revision: number, restoredFrom?: number|null,
- *                                    contentVersion?: number}>}} args
- * @returns {Promise<{revisions: Record<string, number>|null,
- *                    reason: null|"conflict"|"too-large"|"error", error: string|null}>}
- */
-export async function appendSectionRevisions(supabase, { applicationId, userId, sections }) {
-  const names = Object.keys(sections || {});
-
-  for (const name of names) {
-    const entry = sections[name] || {};
-    const bytes = new TextEncoder().encode(JSON.stringify({ content: entry.content ?? null, claims: entry.claims ?? [] })).length;
-    if (bytes > PREP_SECTION_REVISION_MAX_BYTES) {
-      return {
-        revisions: null,
-        reason: "too-large",
-        error: `section "${name}" is ${bytes} bytes, ${bytes - PREP_SECTION_REVISION_MAX_BYTES} over the ${PREP_SECTION_REVISION_MAX_BYTES}-byte limit`,
-      };
-    }
-  }
-
-  const rows = names.map((name) => {
-    const entry = sections[name];
-    return {
-      application_id: applicationId,
-      user_id: userId,
-      section: name,
-      revision: entry.revision,
-      content: entry.content,
-      claims: Array.isArray(entry.claims) ? entry.claims : [],
-      engine: entry.engine,
-      content_version: entry.contentVersion ?? 1,
-      restored_from: entry.restoredFrom ?? null,
-    };
-  });
-
-  const { data, error } = await supabase.from(REVISIONS_TABLE).insert(rows).select("section, revision");
-
-  if (error) {
-    if (errCode(error) === "23505") return { revisions: null, reason: "conflict", error: null };
-    return { revisions: null, reason: "error", error: errMessage(error) };
-  }
-
-  const revisions = {};
-  for (const row of Array.isArray(data) ? data : []) revisions[row.section] = row.revision;
-  return { revisions, reason: null, error: null };
-}
-
-/**
- * The live document's per-section bodies, provenance and revision numbers,
- * resolved from `interview_prep_packs.live_revisions`. TWO queries issued
- * together with `Promise.all` (matching `readPrepPack`'s own shape), so ONE
- * wall-clock round trip.
- *
- * G1 (plan §2.5): the return carries `status`, and THIS FUNCTION'S OWN
- * CALLER must invoke it BEFORE `claimPrepPack`. Without `status`,
- * `restorePayload` cannot tell "this row has no content" from "this row's
- * content was blanked by an attempt that is still running", and the
- * difference is the whole fix.
- *
- * Returns `sections: {}` and `liveRevisions: {}` for a row whose pointer is
- * empty -- every pre-N45 row. That empty result is the caller's signal to
- * use the stored `pack` as the merge base instead, WHICH IS ONLY VALID IF
- * THIS READ HAPPENED BEFORE `claim_prep_pack_slot` ran.
- *
- * `newestBySection` is the max revision per section INCLUDING non-live ones.
- *
- * @param {*} supabase
- * @param {{applicationId: string, userId: string}} args
- * @returns {Promise<{status: string|null,
- *   sections: Record<string, {content: *, claims: Array<object>, engine: string, revision: number}>,
- *   liveRevisions: Record<string, number>, newestBySection: Record<string, number>,
- *   pack: *|null, updatedAt: string|null, error: string|null}>}
- */
-export async function readLiveSectionRevisions(supabase, { applicationId, userId }) {
-  const failure = (message) => ({
-    status: null,
-    sections: {},
-    liveRevisions: {},
-    newestBySection: {},
-    pack: null,
-    updatedAt: null,
-    error: message,
-  });
-
-  const [packResult, revisionsResult] = await Promise.all([
-    supabase
-      .from(PACKS_TABLE)
-      .select("status, pack, live_revisions, updated_at")
-      .eq("application_id", applicationId)
-      .eq("user_id", userId)
-      .maybeSingle(),
-    supabase.from(REVISIONS_TABLE).select(PREP_REVISION_PROJECTION).eq("application_id", applicationId).eq("user_id", userId),
-  ]);
-
-  if (packResult.error) return failure(errMessage(packResult.error));
-  if (revisionsResult.error) return failure(errMessage(revisionsResult.error));
-
-  const packRow = packResult.data;
-  const pointer = asPlainRecord(packRow?.live_revisions);
-  const rows = Array.isArray(revisionsResult.data) ? revisionsResult.data : [];
-
-  const newestBySection = {};
-  const bySectionRevision = new Map();
-  for (const row of rows) {
-    bySectionRevision.set(`${row.section}:${row.revision}`, row);
-    if (!(row.section in newestBySection) || row.revision > newestBySection[row.section]) {
-      newestBySection[row.section] = row.revision;
-    }
-  }
-
-  const liveRevisions = {};
-  const sections = {};
-  for (const [section, revision] of Object.entries(pointer)) {
-    liveRevisions[section] = revision;
-    const row = bySectionRevision.get(`${section}:${revision}`);
-    if (row) {
-      sections[section] = {
-        content: row.content,
-        claims: Array.isArray(row.claims) ? row.claims : [],
-        engine: row.engine ?? null,
-        revision: row.revision,
-      };
-    }
-  }
-
-  return {
-    status: packRow?.status ?? null,
-    sections,
-    liveRevisions,
-    newestBySection,
-    pack: packRow?.pack ?? null,
-    updatedAt: packRow?.updated_at ?? null,
-    error: null,
-  };
-}
-
-/**
- * The history list, newest first per section, WITHOUT content/claims -- a
- * list view must not ship ten bodies (`PREP_REVISION_LIST_PROJECTION`, never
- * `select("*")`).
- *
- * @param {*} supabase
- * @param {{applicationId: string, userId: string, limit?: number}} args
- * @returns {Promise<{revisions: Record<string, Array<{revision: number, engine: string,
- *   restoredFrom: number|null, createdAt: string}>>|null, error: string|null}>}
- */
-export async function listSectionRevisions(supabase, { applicationId, userId, limit = PREP_SECTION_REVISIONS_MAX }) {
-  const { data, error } = await supabase
-    .from(REVISIONS_TABLE)
-    .select(PREP_REVISION_LIST_PROJECTION)
-    .eq("application_id", applicationId)
-    .eq("user_id", userId)
-    .order("revision", { ascending: false });
-
-  if (error) return { revisions: null, error: errMessage(error) };
-
-  const revisions = {};
-  for (const row of Array.isArray(data) ? data : []) {
-    const list = revisions[row.section] || (revisions[row.section] = []);
-    if (list.length >= limit) continue;
-    list.push({
-      revision: row.revision,
-      engine: row.engine ?? null,
-      restoredFrom: row.restored_from ?? null,
-      createdAt: row.created_at ?? null,
-    });
-  }
-  return { revisions, error: null };
-}
-
-/**
- * One revision's full body, by exact (section, revision) -- the restore
- * path's read.
- *
- * @param {*} supabase
- * @param {{applicationId: string, userId: string, section: string, revision: number}} args
- * @returns {Promise<{content: *|null, claims: Array<object>, engine: string|null,
- *   restoredFrom: number|null, contentVersion: number|null, error: string|null}>}
- */
-export async function readSectionRevision(supabase, { applicationId, userId, section, revision }) {
-  const notFound = { content: null, claims: [], engine: null, restoredFrom: null, contentVersion: null, error: null };
-
-  const { data, error } = await supabase
-    .from(REVISIONS_TABLE)
-    .select(PREP_REVISION_PROJECTION)
-    .eq("application_id", applicationId)
-    .eq("user_id", userId)
-    .eq("section", section)
-    .eq("revision", revision)
-    .maybeSingle();
-
-  if (error) return { ...notFound, error: errMessage(error) };
-  if (!data) return notFound;
-
-  return {
-    content: data.content ?? null,
-    claims: Array.isArray(data.claims) ? data.claims : [],
-    engine: data.engine ?? null,
-    restoredFrom: data.restored_from ?? null,
-    contentVersion: data.content_version ?? null,
-    error: null,
-  };
-}
-
-/**
- * Retention. Deletes revisions of one section with `revision <= newest -
- * keep`, NEVER the one named by `liveRevision`. Best-effort: never throws,
- * returns its own failure, and the caller logs it rather than failing the
- * request -- so the honest bound is `keep` plus however many prunes have
- * failed, not a hard `keep`.
- *
- * Expressed with `.lte()`/`.neq()` rather than `.or()` -- this store's own
- * test harness (`test/helpers/supabaseFake.js`) throws loudly on `.or()` by
- * design, and the two-filter form is exactly equivalent for this predicate
- * (`revision <= threshold AND revision <> liveRevision`, never applying the
- * `<>` filter at all when there is no live revision to protect).
- *
- * @param {*} supabase
- * @param {{applicationId: string, userId: string, section: string, newest: number,
- *          liveRevision: number|null, keep?: number}} args
- * @returns {Promise<{deleted: number, error: string|null}>}
- */
-export async function pruneSectionRevisions(
-  supabase,
-  { applicationId, userId, section, newest, liveRevision = null, keep = PREP_SECTION_REVISIONS_MAX },
-) {
-  const threshold = newest - keep;
-  if (!Number.isFinite(threshold) || threshold < 1) return { deleted: 0, error: null };
-
-  try {
-    let query = supabase
-      .from(REVISIONS_TABLE)
-      .delete()
-      .eq("application_id", applicationId)
-      .eq("user_id", userId)
-      .eq("section", section)
-      .lte("revision", threshold);
-    if (liveRevision !== null && liveRevision !== undefined) query = query.neq("revision", liveRevision);
-
-    const { data, error } = await query.select();
-    if (error) return { deleted: 0, error: errMessage(error) };
-    return { deleted: Array.isArray(data) ? data.length : 0, error: null };
-  } catch (err) {
-    return { deleted: 0, error: err?.message || "unknown error" };
-  }
 }
 
 /**

@@ -28,14 +28,16 @@
 import { describe, it, expect, vi } from "vitest";
 import { makeSupabase } from "../../test/helpers/supabaseMock.js";
 import { makeStatefulSupabase } from "../../test/helpers/supabaseFake.js";
+import { readPrepPack } from "./prepStore.js";
 import {
   appendSectionRevisions,
   listSectionRevisions,
   readSectionRevision,
   pruneSectionRevisions,
   readLiveSectionRevisions,
-  readPrepPack,
-} from "./prepStore.js";
+} from "./prepRevisionStore.js";
+import { PREP_SECTION_REVISIONS_MAX } from "./prepConstants.js";
+import { PREP_SECTION_NAMES } from "./prepContract.js";
 
 const APP_ID = "11111111-1111-1111-1111-111111111111";
 const USER_ID = "22222222-2222-2222-2222-222222222222";
@@ -60,6 +62,10 @@ function sectionBody(text) {
  *   (statement) => ({data,error})  compute it from the statement itself
  *   {deferred: true}           HOLD the promise open; the test releases it
  *                              through `client.pending`
+ *   {reject: <error>}          REJECT this statement's own promise (F-A4:
+ *                              a dropped connection, not a returned
+ *                              `{error}`) -- never silently downgraded to a
+ *                              resolved result.
  * A statement beyond the end of the script resolves `{data: null, error: null}`.
  */
 function makeScriptedClient(script = []) {
@@ -72,6 +78,7 @@ function makeScriptedClient(script = []) {
     const spec = queue.shift();
     if (spec === undefined) return Promise.resolve({ data: null, error: null });
     if (typeof spec === "function") return Promise.resolve(spec(statement));
+    if (spec && spec.reject) return Promise.reject(spec.reject);
     if (spec && spec.deferred) {
       let release;
       const promise = new Promise((res) => {
@@ -424,6 +431,90 @@ describe("readLiveSectionRevisions -- the pre-claim base read (plan §2.5 G1)", 
 });
 
 // ---------------------------------------------------------------------------
+// F-R9-2 (fix round, MAJOR) -- readLiveSectionRevisions' own second read must
+// be narrowed and targeted, not full-projection over every row: unbounded,
+// it cost 471KB on a single PATCH and 481KB on a single POST at a 48-row
+// history (verify.r9.md), exactly the shape r8 blocked GET's own read on,
+// unnoticed on this function because no GET probe ever reaches it (GET's own
+// packs read is readPrepPack's, not this one).
+// ---------------------------------------------------------------------------
+
+describe("readLiveSectionRevisions -- F-R9-2: the second read is narrowed and targeted, not every row in full", () => {
+  function seedManyRevisions(perSectionCount) {
+    const rows = [];
+    let n = 0;
+    for (const section of PREP_SECTION_NAMES) {
+      for (let i = 1; i <= perSectionCount; i += 1) {
+        n += 1;
+        rows.push({
+          id: `rev-${n}`,
+          application_id: APP_ID,
+          user_id: USER_ID,
+          section,
+          revision: i,
+          content: sectionBody(`${section} revision ${i}`),
+          claims: [],
+          engine: "gemini",
+          restored_from: null,
+          content_version: 1,
+          created_at: new Date(1_700_000_000_000 + n * 1000).toISOString(),
+        });
+      }
+    }
+    return makeStatefulSupabase({
+      interview_prep_packs: [
+        {
+          id: "pack-1",
+          application_id: APP_ID,
+          user_id: USER_ID,
+          status: "ready",
+          pack: { version: 1, sections: {}, claims: [] },
+          live_revisions: Object.fromEntries(PREP_SECTION_NAMES.map((s) => [s, perSectionCount])),
+        },
+      ],
+      [REVISIONS_TABLE]: rows,
+    });
+  }
+
+  it("the narrow scan never selects content or claims", async () => {
+    const sb = seedManyRevisions(12);
+    await readLiveSectionRevisions(sb, { applicationId: APP_ID, userId: USER_ID });
+    const revisionSelects = sb.calls.filter((c) => c.table === REVISIONS_TABLE && c.verb === "select");
+    const narrowCall = revisionSelects.find((c) => !c.filters.some((f) => f.operator === "eq" && f.column === "revision"));
+    expect(narrowCall, "no unscoped scan over the revisions table was issued at all").toBeTruthy();
+    expect(narrowCall.select).not.toContain("content");
+    expect(narrowCall.select).not.toContain("claims");
+  });
+
+  it("a 4-section, 12-revisions-each history (48 rows) reads exactly 4 targeted bodies, never 48", async () => {
+    const sb = seedManyRevisions(12);
+    await readLiveSectionRevisions(sb, { applicationId: APP_ID, userId: USER_ID });
+    const revisionSelects = sb.calls.filter((c) => c.table === REVISIONS_TABLE && c.verb === "select");
+    const targetedCalls = revisionSelects.filter((c) => c.filters.some((f) => f.operator === "eq" && f.column === "revision"));
+    expect(
+      targetedCalls,
+      "the pointer names one revision per section (4 total) -- the targeted-body reads must equal that, not the table's row count",
+    ).toHaveLength(PREP_SECTION_NAMES.length);
+    for (const call of targetedCalls) {
+      expect(call.select).toContain("content");
+      const eqFilters = call.filters.filter((f) => f.operator === "eq").map((f) => [f.column, f.value]);
+      expect(eqFilters).toContainEqual(["revision", 12]);
+    }
+  });
+
+  it("newestBySection and the live bodies both stay correct under the split read", async () => {
+    const sb = seedManyRevisions(12);
+    const base = await readLiveSectionRevisions(sb, { applicationId: APP_ID, userId: USER_ID });
+    expect(base.error).toBeNull();
+    for (const name of PREP_SECTION_NAMES) {
+      expect(base.newestBySection[name]).toBe(12);
+      expect(base.liveRevisions[name]).toBe(12);
+      expect(base.sections[name].content.answer.lines[0].text).toBe(`${name} revision 12`);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Plan risk R5 -- readPrepPack's projection literal
 // ---------------------------------------------------------------------------
 
@@ -521,5 +612,246 @@ describe("listSectionRevisions / readSectionRevision -- the picker's data, and o
     expect(filters).toContainEqual(["section", "aboutYou"]);
     expect(filters).toContainEqual(["revision", 2]);
     expect(filters).toContainEqual(["user_id", USER_ID]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-m14 (fix round) -- `restorable`: whether PATCH's own gate
+// (sectionRevisionIsIntact, prepMerge.js) would actually restore this row,
+// so a picker can skip offering a Restore control known to only ever 409.
+// ---------------------------------------------------------------------------
+
+describe("listSectionRevisions -- F-m14: a restorable flag for a picker that must not offer a dead Restore button", () => {
+  it("marks an intact revision restorable:true -- its own claims cover everything its own content cites", async () => {
+    const CLAIM_ID = "c/aboutYou/aaaa1111bbbb2222";
+    const sb = makeScriptedClient([
+      {
+        data: [{ section: "aboutYou", revision: 1, engine: "gemini", restored_from: null, created_at: "2026-09-01T00:00:00.000Z" }],
+        error: null,
+      },
+      {
+        data: [
+          {
+            section: "aboutYou",
+            revision: 1,
+            content: { answer: { lines: [{ text: "Cited.", support: { kind: "claim", claimId: CLAIM_ID } }] } },
+            claims: [{ id: CLAIM_ID, text: "Cited.", sourceUrl: "https://acme.example/x" }],
+          },
+        ],
+        error: null,
+      },
+    ]);
+    const { revisions } = await listSectionRevisions(sb, { applicationId: APP_ID, userId: USER_ID });
+    expect(revisions.aboutYou[0].restorable, "an intact revision must be marked restorable").toBe(true);
+  });
+
+  it("marks a degraded revision restorable:false -- its content cites a claim its own claims do not carry", async () => {
+    const CLAIM_ID = "c/aboutYou/cccc3333dddd4444";
+    const sb = makeScriptedClient([
+      {
+        data: [{ section: "aboutYou", revision: 1, engine: "gemini", restored_from: null, created_at: "2026-09-01T00:00:00.000Z" }],
+        error: null,
+      },
+      {
+        data: [
+          {
+            section: "aboutYou",
+            revision: 1,
+            content: { answer: { lines: [{ text: "Cited but the claim is gone.", support: { kind: "claim", claimId: CLAIM_ID } }] } },
+            claims: [],
+          },
+        ],
+        error: null,
+      },
+    ]);
+    const { revisions } = await listSectionRevisions(sb, { applicationId: APP_ID, userId: USER_ID });
+    expect(revisions.aboutYou[0].restorable, "a degraded revision must not be marked restorable").toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-A3 (fix round) -- the SECOND (intact-computing) read's own projection,
+// filters, order and bound must be pinned, not just its returned boolean.
+// Without this, a mutation of statements[1] alone -- the wrong columns, the
+// wrong tenant scoping, the wrong breadth -- changes nothing this file's
+// other tests can see.
+// ---------------------------------------------------------------------------
+
+describe("listSectionRevisions -- F-A3: the second read's own query is pinned, not just its answer", () => {
+  function twoStatementScript() {
+    return makeScriptedClient([
+      { data: [], error: null },
+      { data: [], error: null },
+    ]);
+  }
+
+  it("the second statement selects content and claims -- never the list's own narrower projection", async () => {
+    const sb = twoStatementScript();
+    await listSectionRevisions(sb, { applicationId: APP_ID, userId: USER_ID });
+    const second = sb.statements[1];
+    expect(second.select, "the second read used the list's own projection -- content/claims never arrive, every row reads intact by default").toContain("content");
+    expect(second.select).toContain("claims");
+  });
+
+  it("the second statement is scoped to both application_id and user_id", async () => {
+    const sb = twoStatementScript();
+    await listSectionRevisions(sb, { applicationId: APP_ID, userId: USER_ID });
+    const filters = sb.statements[1].filters.filter((f) => f.op === "eq").map((f) => [f.column, f.value]);
+    expect(filters, "the second read is missing its application_id scope").toContainEqual(["application_id", APP_ID]);
+    expect(filters, "the second read is missing its user_id scope").toContainEqual(["user_id", USER_ID]);
+  });
+
+  // CORRECTED (fix round F-R9-1, authorized): this used to assert
+  // `limitFilter.value === PREP_SECTION_REVISIONS_MAX * PREP_SECTION_NAMES.length`
+  // -- the right total SIZE but the wrong SHAPE, pinning a single GLOBAL
+  // `ORDER BY revision DESC LIMIT 40` as if it were correct. The display cap
+  // is PER SECTION (`limit` rows each, see the per-section `.eq("section",
+  // ...)` bound the fix adds below), so a global ordering hands the whole
+  // budget to whichever section carries the highest revision numbers -- a
+  // pack with 41 revisions of one section and 1 of each other left three of
+  // four sections with no `restorable` key at all (verify.r9.md F-R9-1; the
+  // coverage half of that regression is pinned directly by the 41/1/1/1 test
+  // below). The corrected assertion is BEHAVIOURAL, not arithmetic: the
+  // second statement is scoped to ONE section and bounded to `limit` rows
+  // for THAT section alone, never multiplied by the section count.
+  it("the second statement is scoped to one section and bounded to `limit` rows for that section (F-R9-1)", async () => {
+    const sb = twoStatementScript();
+    await listSectionRevisions(sb, { applicationId: APP_ID, userId: USER_ID });
+    const second = sb.statements[1];
+    const order = second.filters.find((f) => f.op === "order");
+    expect(order, "the second read carries no ORDER BY -- a LIMIT with no order returns an arbitrary slice").toBeTruthy();
+    expect(order.column).toBe("revision");
+    expect(order.value).toMatchObject({ ascending: false });
+    const sectionFilter = second.filters.find((f) => f.op === "eq" && f.column === "section");
+    expect(sectionFilter, "the second read is not scoped to one section -- the bound is global again").toBeTruthy();
+    const limitFilter = second.filters.find((f) => f.op === "limit");
+    expect(limitFilter, "the second read carries no LIMIT -- it is unbounded again").toBeTruthy();
+    expect(limitFilter.value, "the per-section bound was multiplied by the section count again").toBe(PREP_SECTION_REVISIONS_MAX);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-R9-1 (fix round, MAJOR) -- the bound must be per SECTION, not global: an
+// uneven history (one section regenerated repeatedly, the others left at
+// whatever depth a whole-pack generation gave them -- exactly what
+// per-section regeneration produces) must never starve other sections' own
+// `restorable` coverage.
+// ---------------------------------------------------------------------------
+
+describe("listSectionRevisions -- F-R9-1: the bound is per section, so an uneven history cannot starve it", () => {
+  function seedUnevenRevisions(counts) {
+    const rows = [];
+    let n = 0;
+    for (const [section, count] of Object.entries(counts)) {
+      for (let i = 1; i <= count; i += 1) {
+        n += 1;
+        rows.push({
+          id: `rev-${n}`,
+          application_id: APP_ID,
+          user_id: USER_ID,
+          section,
+          revision: i,
+          content: sectionBody(`${section} revision ${i}`),
+          claims: [],
+          engine: "gemini",
+          restored_from: null,
+          content_version: 1,
+          created_at: new Date(1_700_000_000_000 + n * 1000).toISOString(),
+        });
+      }
+    }
+    return makeStatefulSupabase({ [REVISIONS_TABLE]: rows });
+  }
+
+  it("a 41/1/1/1 history (44 rows, four over the old global bound) still carries a `restorable` key on every entry every section shows", async () => {
+    const sb = seedUnevenRevisions({ aboutYou: 41, whyRole: 1, askThem: 1, stages: 1 });
+    const { revisions, error } = await listSectionRevisions(sb, { applicationId: APP_ID, userId: USER_ID });
+    expect(error).toBeNull();
+    for (const name of PREP_SECTION_NAMES) {
+      const list = revisions[name];
+      expect(list, `section "${name}" is missing from the list entirely`).toBeTruthy();
+      expect(list.length, `section "${name}" shows no entries`).toBeGreaterThan(0);
+      for (const entry of list) {
+        expect(
+          entry,
+          `revision ${entry.revision} of "${name}" carries no 'restorable' key -- the per-section bound did not cover it`,
+        ).toHaveProperty("restorable");
+      }
+    }
+  });
+
+  it("[no-op control] a level 10/10/10/10 history (within the old AND new bound) already carried coverage everywhere -- this is not a fixture artifact", async () => {
+    const sb = seedUnevenRevisions({ aboutYou: 10, whyRole: 10, askThem: 10, stages: 10 });
+    const { revisions } = await listSectionRevisions(sb, { applicationId: APP_ID, userId: USER_ID });
+    for (const name of PREP_SECTION_NAMES) {
+      for (const entry of revisions[name]) {
+        expect(entry).toHaveProperty("restorable");
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-A5 / F-B1's own minor (fix round) -- a row the second read never covers
+// (a read error, or one outside the bound) carries NO `restorable` key at
+// all: never `false`, which is a claim the code could not verify, and never
+// `true` by silent default either.
+// ---------------------------------------------------------------------------
+
+describe("listSectionRevisions -- F-A5: an unknown row omits `restorable`, it never fails open OR closed by default", () => {
+  it("a second-read ERROR leaves every entry without a `restorable` key -- not `false`", async () => {
+    const sb = makeScriptedClient([
+      {
+        data: [{ section: "aboutYou", revision: 1, engine: "gemini", restored_from: null, created_at: "2026-09-01T00:00:00.000Z" }],
+        error: null,
+      },
+      { data: null, error: { message: "connection reset" } },
+    ]);
+    const { revisions, error } = await listSectionRevisions(sb, { applicationId: APP_ID, userId: USER_ID });
+    expect(error, "a failed SECOND read must not fail the whole list").toBeNull();
+    expect(revisions.aboutYou[0]).not.toHaveProperty("restorable");
+  });
+
+  it("[F-A4] a second-read REJECTION (a dropped connection, not a returned error) is caught the same way -- GET must never die for this boolean", async () => {
+    const sb = makeScriptedClient([
+      {
+        data: [{ section: "aboutYou", revision: 1, engine: "gemini", restored_from: null, created_at: "2026-09-01T00:00:00.000Z" }],
+        error: null,
+      },
+      { reject: new Error("socket hang up") },
+    ]);
+    const { revisions, error } = await listSectionRevisions(sb, { applicationId: APP_ID, userId: USER_ID });
+    expect(error, "a rejected SECOND read must not fail the whole list").toBeNull();
+    expect(revisions.aboutYou[0]).not.toHaveProperty("restorable");
+  });
+
+  it("[negative control] a FIRST-read rejection is still a real failure -- this function's original contract for that read is unchanged", async () => {
+    const sb = makeScriptedClient([{ reject: new Error("socket hang up") }]);
+    await expect(listSectionRevisions(sb, { applicationId: APP_ID, userId: USER_ID })).rejects.toThrow("socket hang up");
+  });
+
+  it("[no-op control] a row the second read DOES cover still gets a real boolean, not an omission", async () => {
+    // Without this, a "fix" that always omits `restorable` -- never computing
+    // it at all -- would satisfy every assertion above for the wrong reason.
+    const CLAIM_ID = "c/aboutYou/eeee5555ffff6666";
+    const sb = makeScriptedClient([
+      {
+        data: [{ section: "aboutYou", revision: 1, engine: "gemini", restored_from: null, created_at: "2026-09-01T00:00:00.000Z" }],
+        error: null,
+      },
+      {
+        data: [
+          {
+            section: "aboutYou",
+            revision: 1,
+            content: { answer: { lines: [{ text: "Cited.", support: { kind: "claim", claimId: CLAIM_ID } }] } },
+            claims: [{ id: CLAIM_ID, text: "Cited.", sourceUrl: "https://acme.example/x" }],
+          },
+        ],
+        error: null,
+      },
+    ]);
+    const { revisions } = await listSectionRevisions(sb, { applicationId: APP_ID, userId: USER_ID });
+    expect(revisions.aboutYou[0]).toHaveProperty("restorable", true);
   });
 });

@@ -92,19 +92,8 @@ import { wantsEmbedded } from "@/lib/llm/featureEngine";
 import { createRateLimiter, identify, rateLimitHeaders } from "@/lib/rateLimit/index";
 import { listDigests } from "@/lib/supabase/applicationDigests";
 import { postingFingerprint } from "@/lib/copilot/glossaryStore";
-import {
-  claimPrepPack,
-  deletePrepPackContent,
-  recordModelCallIssued,
-  recordPrepEvent,
-  readPrepPack,
-  listPrepEvents,
-  readLiveSectionRevisions,
-  listSectionRevisions,
-  readSectionRevision,
-  appendSectionRevisions,
-  writePrepPackResult,
-} from "@/lib/interviewPrep/prepStore";
+import { claimPrepPack, deletePrepPackContent, recordModelCallIssued, recordPrepEvent, readPrepPack, listPrepEvents, writePrepPackResult, dbFailureResponse } from "@/lib/interviewPrep/prepStore";
+import { readLiveSectionRevisions, listSectionRevisions, readSectionRevision, appendSectionRevisions, deleteSectionRevision } from "@/lib/interviewPrep/prepRevisionStore";
 import { finishAttempt } from "@/lib/interviewPrep/finishAttempt";
 import { normalizePack, countRefusedLines } from "@/lib/interviewPrep/prepParse";
 import {
@@ -115,10 +104,10 @@ import {
   buildTrustedNamesPayload,
 } from "@/lib/interviewPrep/trustedNames";
 import { packStatus, buildEmbeddedPack, completeSections } from "@/lib/interviewPrep/prepPack";
-import { restorePayload } from "@/lib/interviewPrep/prepMerge";
+import { restorePayload, sectionRevisionIsIntact } from "@/lib/interviewPrep/prepMerge";
 import { mintSectionClaims } from "@/lib/interviewPrep/prepClaims";
 import { buildSectionPrompt, parseSectionResponse } from "@/lib/interviewPrep/prepSection";
-import { buildWholeCandidate, buildSectionCandidate, buildRevisionSections, sectionWriteNames, seedEngineResolver, buildEmbeddedCandidate } from "@/lib/interviewPrep/prepGenerationMerge";
+import { buildWholeCandidate, buildSectionCandidate, buildRevisionSections, sectionWriteNamesWithinBudget, seedEngineResolver, buildEmbeddedCandidate } from "@/lib/interviewPrep/prepGenerationMerge";
 import { PREP_SECTION_NAMES } from "@/lib/interviewPrep/prepContract";
 import { PREP_RATE_LIMIT, PREP_RATE_WINDOW_MS, PREP_GENERATION_TIMEOUT_MS } from "@/lib/interviewPrep/prepConstants";
 
@@ -298,7 +287,7 @@ function parsePrepResponse(response) {
 
 function writeFailureResponse(write) {
   if (write.reason === "stale-token") return Response.json({ status: "stale" });
-  return Response.json({ error: write.error || "Could not save this attempt." }, { status: 500 });
+  return dbFailureResponse("terminal write failed", { error: write.error, reason: write.reason }, "Could not save this attempt.");
 }
 
 // N45 step S8: the RESPONSE shape shared by every terminal write below,
@@ -308,6 +297,10 @@ function writeFailureResponse(write) {
 function sectionAwareResponse(write, status, section, sectionProduced) {
   if (!write.written) return writeFailureResponse(write);
   return section ? Response.json({ status, section, sectionProduced }) : Response.json({ status });
+}
+// F-m8/F-m9: one shared expression so sectionProduced can't drift between engines again.
+function sectionSucceeded(status) {
+  return status !== "failed";
 }
 
 // The spend gate's own refusal, factored out so the guard above it is a
@@ -386,7 +379,7 @@ export async function POST(request) {
     .eq("id", applicationId)
     .eq("user_id", userId)
     .maybeSingle();
-  if (appErr) return Response.json({ error: appErr.message || "Could not load this application." }, { status: 500 });
+  if (appErr) return dbFailureResponse("GATE 6 application read failed", { applicationId, error: appErr }, "Could not load this application.");
   if (!appRow) return notFound("Application not found.");
 
   // N45/N46 G2 (plan §2.5): resolved HERE, immediately after GATE 6, rather
@@ -428,13 +421,16 @@ export async function POST(request) {
   // outright rather than restored.
   const base = await readLiveSectionRevisions(supabase, { applicationId, userId });
   // F-B3 (fix round): a failed base read is a terminal refusal, never an empty base -- refused before the claim.
-  if (base.error) return Response.json({ error: base.error || "Could not load this application's prep pack." }, { status: 500 });
+  // F-R11-2 (fix round r11, minor): the refusal below used to hand the DATABASE'S OWN error text to the candidate (`base.error ||` never actually fell back -- `base.error` is truthy on every path that reaches here) -- the detail stays server-side only, at THIS site. F-R12-1 (fix round r12, MAJOR, verify.r12.md): this comment used to claim that closed the whole class; it closed only this one line -- the other eight raw-error response paths in this file now share the SAME discipline via dbFailureResponse (lib/interviewPrep/prepStore.js), the single choke point that comment should have pointed to.
+  if (base.error) { console.error("interview-prep: base read failed", { applicationId, error: base.error }); return Response.json({ error: "Could not load this application's prep pack." }, { status: 500 }); }
   const restore = restorePayload(base);
   // The section-scoped merge's own base document (S8), and the status a
   // section-scoped "nothing usable" write mirrors (AC-LOG.1) instead of
   // lying that the whole pack failed when only one section did.
   const currentPack = base.pack && typeof base.pack === "object" ? base.pack : {};
   const unaffectedStatus = base.status && base.status !== "running" ? base.status : "failed";
+  // F-m3 (fix round): decided pre-model so an oversized OTHER section never costs a model call or blocks `section` itself.
+  const seedNamesWithinBudget = section ? sectionWriteNamesWithinBudget(section, currentPack, base.liveRevisions, base.newestBySection) : null;
 
   // GATE 9. Serializes concurrent attempts on this row and enforces both
   // spend caps -- see lib/interviewPrep/prepStore.js's claimPrepPack.
@@ -484,7 +480,7 @@ export async function POST(request) {
   // retry still needs it.
   if (useEmbedded) {
     const embeddedPack = buildEmbeddedCandidate({ currentPack, section, embeddedRaw: buildEmbeddedPack({ position, digest }) });
-    const embeddedNames = section ? sectionWriteNames(section, embeddedPack, base.liveRevisions) : Object.keys(embeddedPack.sections || {});
+    const embeddedNames = section ? seedNamesWithinBudget : Object.keys(embeddedPack.sections || {});
     const embeddedEngine = section ? seedEngineResolver(currentPack, section, "embedded") : "embedded";
     const embeddedAppended = await appendSectionRevisions(supabase, {
       applicationId,
@@ -510,7 +506,7 @@ export async function POST(request) {
       researchedAt: new Date().toISOString(),
       restore,
     });
-    return sectionAwareResponse(write, status, section, Boolean(section));
+    return sectionAwareResponse(write, status, section, sectionSucceeded(status));
   }
 
   let client;
@@ -684,8 +680,8 @@ export async function POST(request) {
   // actually produced, BEFORE the packs-row UPDATE, so a write that fails
   // partway never leaves a live pointer naming a revision that was never
   // saved.
-  // F-B1 (fix round): also seeds any OTHER section the pointer lacks (sectionWriteNames), so it never stays partial.
-  const replacedNames = section ? sectionWriteNames(section, normalizedPack, base.liveRevisions) : Object.keys(normalizedPack.sections || {});
+  // F-B1 (fix round): also seeds any OTHER section the pointer lacks, within budget (F-m3), so it never stays partial.
+  const replacedNames = section ? seedNamesWithinBudget : Object.keys(normalizedPack.sections || {});
   const revisionEngine = section ? seedEngineResolver(currentPack, section, engine) : engine;
   const appended = await appendSectionRevisions(supabase, {
     applicationId,
@@ -720,7 +716,8 @@ export async function POST(request) {
     // prior document to fall back to if this write itself trips a CHECK.
     restore,
   });
-  return sectionAwareResponse(write, status, section, true);
+  // F-m8/F-m9: sectionProduced must not read true for a check-violation retry.
+  return sectionAwareResponse(write, status, section, sectionSucceeded(status));
 }
 
 // NEVER kill-switch-gated (O-16) -- the clear/delete control must survive a
@@ -741,7 +738,7 @@ export async function DELETE(request) {
   if (!applicationId) return badRequest("Missing applicationId.");
 
   const result = await deletePrepPackContent(supabase, { applicationId, userId });
-  if (result.error) return Response.json({ error: result.error }, { status: 500 });
+  if (result.error) return dbFailureResponse("DELETE failed", { applicationId, error: result.error }, "Could not delete this application's prep pack.");
 
   await recordPrepEvent(supabase, {
     applicationId,
@@ -800,7 +797,7 @@ export async function GET(request) {
     { applicationId, userId },
     storedNames,
   );
-  if (error) return Response.json({ error }, { status: 500 });
+  if (error) return dbFailureResponse("GET pack read failed", { applicationId, error }, "Could not load this application's prep pack.");
 
   // AC-N33.21's "Download prep log" control reads this, client-side, off the
   // SAME response -- never a second fetch, and never listPrepEvents called
@@ -855,7 +852,7 @@ export async function PUT(request) {
   if (!owned) return notFound("Application not found.");
 
   const stored = await readTrustedNames(supabase, { applicationId, userId });
-  if (stored.error) return Response.json({ error: stored.error }, { status: 500 });
+  if (stored.error) return dbFailureResponse("PUT stored-names read failed", { applicationId, error: stored.error }, "Could not load your saved names.");
 
   const { candidateNamePayload, interviewerNamesPayload } = buildTrustedNamesPayload({
     form: {
@@ -867,7 +864,7 @@ export async function PUT(request) {
 
   if (candidateNamePayload !== null) {
     const result = await saveCandidateName(supabase, { userId, candidateName: candidateNamePayload });
-    if (!result.written) return Response.json({ written: false, error: result.error }, { status: 500 });
+    if (!result.written) return dbFailureResponse("PUT candidate name save failed", { applicationId, error: result.error }, "Could not save your name.", { written: false });
   }
 
   if (interviewerNamesPayload !== null) {
@@ -876,7 +873,7 @@ export async function PUT(request) {
       userId,
       interviewerNames: interviewerNamesPayload,
     });
-    if (!result.written) return Response.json({ written: false, error: result.error }, { status: 500 });
+    if (!result.written) return dbFailureResponse("PUT interviewer names save failed", { applicationId, error: result.error }, "Could not save the interviewer names.", { written: false });
   }
 
   return Response.json({ written: true, error: null });
@@ -923,35 +920,35 @@ export async function PATCH(request) {
   // The pre-write base, read fresh -- this row's OWN `updated_at` is the
   // optimistic-concurrency token below (AC-CONC.3), and `status` is the
   // "genuinely running" guard (AC-UX.5's own sibling test).
-  const base = await readLiveSectionRevisions(supabase, { applicationId, userId });
-  if (base.error) return Response.json({ error: base.error }, { status: 500 });
+  // F-m1 (fix round r10): PATCH never reads `base.sections` below -- skip round two's own bodies entirely (prepRevisionStore.js's own header).
+  const base = await readLiveSectionRevisions(supabase, { applicationId, userId, withBodies: false });
+  // F-R11-2 (fix round r11, minor): same fix as POST's own base-read refusal above -- never the database's own error text, logged server-side instead, at THIS site. F-R12-1/F-R12-3 (fix round r12): PATCH's other two raw-error paths below (the target-revision read, the history append) were still leaking when this comment first claimed the class was handled -- both now go through the same dbFailureResponse helper POST's own remaining sites use.
+  if (base.error) { console.error("interview-prep: PATCH base read failed", { applicationId, error: base.error }); return Response.json({ error: "Could not load this application's prep pack." }, { status: 500 }); }
   if (base.status === null) return notFound("No prep pack for this application.");
   if (base.status === "running") return Response.json({ status: "refused", reason: "in-flight" }, { status: 409 });
 
   const target = await readSectionRevision(supabase, { applicationId, userId, section, revision });
-  if (target.error) return Response.json({ error: target.error }, { status: 500 });
+  if (target.error) return dbFailureResponse("PATCH target revision read failed", { applicationId, section, revision, error: target.error }, "Could not load this application's prep pack.");
   if (target.content === null) return notFound("That revision does not exist.");
 
+  // Class ruling (fix round, F-M9/F-M10/F-m12): PATCH no longer repairs a degraded revision -- sectionRevisionIsIntact (prepMerge.js) refuses before any write.
+  if (!sectionRevisionIsIntact(section, target)) {
+    return Response.json({ error: "This older version lost its sources and can't be restored. Regenerate the section instead.", status: "unrestorable", reason: "revision-degraded" }, { status: 409 });
+  }
   // AC-UX.1: a restore APPENDS a copy with `restored_from` set -- it never
   // rewinds, which is what makes restore itself reversible (AC-UX.3's own
-  // reasoning for skipping a confirmation dialog).
+  // reasoning for skipping a confirmation dialog). Appended BEFORE the pack
+  // write below so its own byte-size check still aborts a restore cleanly,
+  // with no pack write attempted -- F-m15's fix (below) deletes this row
+  // instead if the write LOSES the concurrent-restore race.
   const newRevision = (base.newestBySection[section] || 0) + 1;
   const appended = await appendSectionRevisions(supabase, {
     applicationId,
     userId,
-    sections: {
-      [section]: {
-        content: target.content,
-        claims: target.claims,
-        engine: target.engine,
-        revision: newRevision,
-        restoredFrom: revision,
-        contentVersion: target.contentVersion ?? 1,
-      },
-    },
+    sections: { [section]: { content: target.content, claims: target.claims, engine: target.engine, revision: newRevision, restoredFrom: revision, contentVersion: target.contentVersion ?? 1 } },
   });
   if (appended.reason) {
-    return Response.json({ error: appended.error || "Could not save this restore." }, { status: 500 });
+    return dbFailureResponse("PATCH restore append failed", { applicationId, section, reason: appended.reason, error: appended.error }, "Could not save this restore.");
   }
 
   // AC-O15.6 (H2): resolved fresh, HERE, at restore time -- never snapshotted
@@ -960,21 +957,10 @@ export async function PATCH(request) {
   const { candidateName, interviewerNames } = await readTrustedNames(supabase, { applicationId, userId });
   const storedNames = flattenTrustedNames({ candidateName, interviewerNames });
 
-  // `base.pack` is the row's own current (already-normalized) document --
-  // the merge base for the three untouched sections. Provenance comes from
-  // it via baseProvenanceFromPack (never `interview_prep_packs.engine`,
-  // which describes the last ATTEMPT, not the content -- plan §2.6.2).
-  // Screening happens inside writePrepPackResult's own normalizePack call
-  // (prepStore.js), the SAME single choke point every other write already
-  // uses -- this route file adds no second one.
-  const currentPack = base.pack && typeof base.pack === "object" ? base.pack : {};
-  const mergedPack = buildSectionCandidate({
-    currentPack,
-    section,
-    content: target.content,
-    claims: target.claims,
-    engine: target.engine,
-  });
+  // `base.pack` is the row's own current (already-normalized) document -- the merge base for the three untouched sections. Provenance comes from
+  // it via baseProvenanceFromPack (never `interview_prep_packs.engine`, which describes the last ATTEMPT, not the content -- plan §2.6.2). Screening
+  // happens inside writePrepPackResult's own normalizePack call (prepStore.js), the SAME single choke point every other write already uses -- this route file adds no second one.
+  const mergedPack = buildSectionCandidate({ currentPack: base.pack && typeof base.pack === "object" ? base.pack : {}, section, content: target.content, claims: Array.isArray(target.claims) ? target.claims : [], engine: target.engine ?? "unknown" });
 
   // Residual, disclosed rather than engineered around (matching plan
   // §2.6.1's identical treatment of `researched_at`): `engine`/`resume_id`/
@@ -992,6 +978,20 @@ export async function PATCH(request) {
     expectedUpdatedAt: base.updatedAt,
   });
 
-  if (!write.written) return Response.json({ status: "conflict" }, { status: 409 });
+  // F-m15: a lost race must not leave this restore's own revision row behind
+  // as a phantom "restored" version the live pointer never adopted.
+  if (!write.written) {
+    const cleanup = await deleteSectionRevision(supabase, { applicationId, userId, section, revision: newRevision });
+    // F-m3 (fix round): still safe either way (deleteSectionRevision's own
+    // header), but a failed cleanup used to be invisible -- logged only.
+    // F-m4 (fix round r10): also recorded, legally -- the events CHECK has
+    // no 'restore' member, but ('delete','error') with this section is a
+    // legal row today (recordPrepEvent's own signature already takes it).
+    if (!cleanup.deleted) {
+      console.warn("interview-prep: restore cleanup could not remove its own phantom revision row", { applicationId, section, revision: newRevision, error: cleanup.error });
+      await recordPrepEvent(supabase, { applicationId, userId, eventType: "delete", outcome: "error", section });
+    }
+    return Response.json({ status: "conflict" }, { status: 409 });
+  }
   return Response.json({ status: "restored" });
 }

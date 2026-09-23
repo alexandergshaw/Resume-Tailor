@@ -226,6 +226,42 @@ export function mintUnownedReferencedClaims(section, content, rawClaims) {
 }
 
 /**
+ * F-M5 (fix round, verify.r4.md MAJOR): normalizes `pack.claims` before ANY
+ * write ever validates or stores them -- keeps only the FIRST occurrence of
+ * a repeated UNOWNED (legacy, free-form) id. Pre-N45 model output used a
+ * free-form `"id": string` schema (route.js's old whole-pack prompt) that
+ * never guaranteed uniqueness, so a legacy pack can carry a genuine
+ * duplicate that predates this file's own INV-CLAIM-1 gate entirely -- the
+ * candidate never did anything to cause it and cannot fix it themselves, so
+ * the gate must never refuse a write for it. An OWNED id
+ * (`c/<section>/<hex>`) is left untouched: `mintUniqueClaimId` already
+ * guarantees those are unique at mint time, so a duplicate among them is a
+ * genuine bug the gate should still catch, never silently paper over.
+ *
+ * Pure and total: never throws, never mutates `pack`. `writePrepPackResult`
+ * (prepStore.js) is this function's one caller, applied to every pack it is
+ * ever asked to write -- generation, the CHECK-safe restore retry, and PATCH
+ * alike -- so nothing downstream needs its own copy of this rule.
+ *
+ * @param {*} pack
+ * @returns {*}
+ */
+export function normalizeLegacyClaimIds(pack) {
+  if (!isPlainObject(pack) || !Array.isArray(pack.claims)) return pack;
+  const seen = new Set();
+  const claims = pack.claims.filter((entry) => {
+    const id = entry && entry.id;
+    if (claimOwner(id) !== null) return true;
+    if (typeof id !== "string") return true;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+  if (claims.length === pack.claims.length) return pack;
+  return { ...pack, claims };
+}
+
+/**
  * THE INV-CLAIM-1 GATE. Returns every violation found in `pack`; `[]` means
  * well-owned. Pure, total, never throws. Same GENERIC walk rule as
  * `mintSectionClaims`.

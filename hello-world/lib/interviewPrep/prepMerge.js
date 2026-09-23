@@ -1,7 +1,7 @@
 // lib/interviewPrep/prepMerge.js -- the pure half of the N45/N46 mechanism
 // (plan §S3, §2.4, §6.1). Pure, no I/O.
 //
-// Three exports, three different jobs:
+// Four exports, four different jobs:
 //
 //   buildPackDocument      the single place the claims-fold is implemented
 //                          (H1's templateOrigin rule, plan risk R9) -- one
@@ -12,10 +12,21 @@
 //   restorePayload         THE F2 RESOLUTION (plan §2.2): what a terminal
 //                          FAILED/UNAVAILABLE write puts back so N47's
 //                          content loss cannot happen.
+//   sectionRevisionIsIntact true when a revision row's own claims already
+//                          cover everything its own content cites --
+//                          restorePayload's own fallback below and PATCH's
+//                          own restore gate (route.js) both decide
+//                          safe-as-is vs refuse from this ONE predicate.
+//
+// CLASS RULING (fix round): `resolveSectionRestoreTarget`, this module's own
+// PATCH-side REPAIR attempt, is DELETED. Three rounds running (F-M7/F-M9/
+// F-M10/F-m12) traced their findings back to the repair itself, not to any
+// one bug in it -- PATCH no longer repairs a degraded revision at all; it
+// refuses (409, before any write) when sectionRevisionIsIntact says no.
 
 import { EMBEDDED_TEMPLATE_ORIGIN } from "./prepParse.js";
 import { PREP_SECTION_NAMES } from "./prepContract.js";
-import { claimOwner } from "./prepClaims.js";
+import { claimOwner, claimOwnershipViolations, mintUnownedReferencedClaims } from "./prepClaims.js";
 
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -131,7 +142,9 @@ export function buildPackDocument({ base, baseProvenance, replace, wholePack = f
  * claim_prep_pack_slot's unconditional `pack = '{}'::jsonb`
  * (supabase/migrations/20260922000000_interview_prep_remove_spend_caps.sql:92).
  *
- * Pure and total: no I/O, never throws, never mutates `base`.
+ * Pure: no I/O, never mutates `base`. Throws only on the one caller-contract
+ * violation the `bodiesRead` guard below enforces (F-R12-4, verify.r12.md
+ * MINOR: this line used to say "never throws", contradicting :181 below).
  *
  * Returns `{}` -- design §8.3's "neither" case, which leaves BOTH columns
  * out of writePrepPackResult's SET list -- in exactly two situations and no
@@ -163,8 +176,11 @@ export function buildPackDocument({ base, baseProvenance, replace, wholePack = f
  *   status: string|null,
  *   pack: *,
  *   liveRevisions: Record<string, number>,
- *   sections: Record<string, {content: *, claims: Array<object>, engine: string, revision: number}>
- * }} base   the value readLiveSectionRevisions returned BEFORE the claim
+ *   sections: Record<string, {content: *, claims: Array<object>, engine: string, revision: number}>,
+ *   bodiesRead?: boolean
+ * }} base   the value readLiveSectionRevisions returned BEFORE the claim --
+ *   MUST have been read with `withBodies:true` (the default) whenever its
+ *   own `liveRevisions` is non-empty; throws otherwise (F-R11-3)
  * @returns {{}|{pack: object, liveRevisions: Record<string, number>}}
  */
 export function restorePayload(base) {
@@ -179,20 +195,85 @@ export function restorePayload(base) {
   if (!hasLivePointer && !packHasSections) return {};
   if (!hasLivePointer) return { pack: clone(pack), liveRevisions: {} };
 
+  // F-R11-3 (fix round r11, minor): `sections: {}` here is ambiguous on its
+  // own -- it means "no live sections" for a normal base, but it ALSO means
+  // "bodies were never read" for a base built with `withBodies:false`
+  // (PATCH's own shape, prepRevisionStore.js). Every branch below this point
+  // needs the real bodies to build a restore; a body-less base reaching here
+  // with a populated pointer is a caller contract violation, not data to
+  // merge from -- refuse loudly rather than silently falling back to the
+  // live pack for every section (the F-M6/F-M3 path below, meant for a
+  // MISSING/degraded row, not a skipped read).
+  if (safeBase.bodiesRead === false) {
+    throw new Error("restorePayload: base has a live pointer but was read with withBodies:false -- call readLiveSectionRevisions with its default withBodies:true here");
+  }
+
   const sections = isPlainObject(safeBase.sections) ? safeBase.sections : {};
+  const packSections = isPlainObject(pack) && isPlainObject(pack.sections) ? pack.sections : {};
+  const packClaims = isPlainObject(pack) && Array.isArray(pack.claims) ? pack.claims : [];
+  const packProvenance = baseProvenanceFromPack(pack);
   const baseProvenance = {};
   const replace = {};
   for (const name of PREP_SECTION_NAMES) {
     const entry = sections[name];
-    if (!isPlainObject(entry)) continue;
+    if (sectionRevisionIsIntact(name, entry)) {
+      replace[name] = {
+        content: entry.content,
+        claims: Array.isArray(entry.claims) ? entry.claims : [],
+        engine: entry.engine ?? "unknown",
+      };
+      baseProvenance[name] = entry.engine ?? "unknown";
+      continue;
+    }
+    // F-M6/F-M3 (fix round, verify.r4.md MAJOR, ruling option b): the
+    // revision row this section's pointer entry would have named is either
+    // missing outright (a partial pointer `ff59a97` could leave) or present
+    // but degraded (a `claims: []` row seeded before this fix minted them) --
+    // rebuilding from it loses every cited line. Fall back to the LIVE
+    // pack's own content for this section instead, re-minted against the
+    // live pack's own claims pool exactly like a first-time seed
+    // (buildRevisionSections/prepGenerationMerge.js), so a restore is safe
+    // no matter what an earlier write left in the database -- no migration
+    // or backfill needed.
+    if (!Object.hasOwn(packSections, name)) continue;
+    const minted = mintUnownedReferencedClaims(name, packSections[name], packClaims);
+    const engine = packProvenance[name] ?? "unknown";
     replace[name] = {
-      content: entry.content,
-      claims: Array.isArray(entry.claims) ? entry.claims : [],
-      engine: entry.engine ?? "unknown",
+      content: minted.content,
+      claims: packClaims.filter((c) => claimOwner(c?.id) === name).concat(minted.claims),
+      engine,
     };
-    baseProvenance[name] = entry.engine ?? "unknown";
+    baseProvenance[name] = engine;
   }
 
   const rebuilt = buildPackDocument({ base: {}, baseProvenance, replace, wholePack: true });
   return { pack: rebuilt, liveRevisions: clone(liveRevisions) };
+}
+
+/**
+ * True when `entry` (one section's own revision-row shape) already carries
+ * every claim its own content references -- i.e. it is safe to use AS IS.
+ * False for both of F-M6/F-M3's degraded shapes: `entry` missing entirely (a
+ * partial pointer, or any section outside `live_revisions`), and `entry`
+ * present but with `claims` that do not cover what its own `content` cites
+ * (the `claims: []` seeded rows an earlier bug left before this fix minted
+ * them). Probed with claimOwnershipViolations itself -- the SAME generic
+ * reference walk every other ownership check in this module shares -- rather
+ * than a second, hand-rolled one.
+ *
+ * Exported (fix round, class ruling): restorePayload's own fallback above
+ * calls this internally, and PATCH (route.js) now calls it directly too, as
+ * its OWN restore gate -- a NOT-intact target is refused outright (409,
+ * before any write), never repaired. `resolveSectionRestoreTarget`, the
+ * repair this module used to offer, is deleted; see this file's own header.
+ *
+ * @param {string} name
+ * @param {*} entry
+ * @returns {boolean}
+ */
+export function sectionRevisionIsIntact(name, entry) {
+  if (!isPlainObject(entry)) return false;
+  const claims = Array.isArray(entry.claims) ? entry.claims : [];
+  const probe = claimOwnershipViolations({ sections: { [name]: entry.content }, claims });
+  return !probe.some((violation) => violation.kind === "dangling" && violation.section === name);
 }

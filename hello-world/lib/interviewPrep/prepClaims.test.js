@@ -30,6 +30,7 @@ import {
   mintSectionClaims,
   mintUnownedReferencedClaims,
   claimOwnershipViolations,
+  normalizeLegacyClaimIds,
 } from "./prepClaims.js";
 
 const OWNED_ID_SHAPE = /^c\/(aboutYou|whyRole|askThem|stages)\/[0-9a-f]{16}$/;
@@ -168,6 +169,19 @@ describe("mintSectionClaims -- AC-CLAIM.9, no model-supplied string survives as 
     mintSectionClaims("askThem", content, claims);
     expect(JSON.stringify(content)).toBe(contentSnapshot);
     expect(JSON.stringify(claims)).toBe(claimsSnapshot);
+  });
+
+  it("[fix round F-m5, verify.r4.md MINOR] an unmatched ref is NULLED, never left as the model's own dangling id", () => {
+    // MUTANT THIS KILLS: rewriteClaimRefs's default `keepUnmatched = false`
+    // flipped to `true` (verify.r4.md's MR5-defaultKeep, which survived the
+    // full landed suite). mintSectionClaims calls rewriteClaimRefs with no
+    // third argument at all, so it relies entirely on that default -- an
+    // empty `rawClaims` here means nothing is ever minted, so the support
+    // below is unmatched by construction.
+    const content = { answer: { lines: [supported("An unsupported claim.", "not-a-real-claim")] } };
+    const out = mintSectionClaims("aboutYou", content, []);
+    expect(out.claims).toEqual([]);
+    expect(out.content.answer.lines[0].support, "an unmatched ref survived instead of being nulled").toBeNull();
   });
 });
 
@@ -310,5 +324,45 @@ describe("mintUnownedReferencedClaims -- F-B1 residual (fix round, verify.r3.md 
     mintUnownedReferencedClaims("aboutYou", content, pool);
     expect(JSON.stringify(content)).toBe(contentSnapshot);
     expect(JSON.stringify(pool)).toBe(poolSnapshot);
+  });
+});
+
+describe("normalizeLegacyClaimIds -- F-m6 (fix round, verify.r5.md MINOR): an OWNED duplicate is still refused", () => {
+  it("[fix round F-M5] a repeated LEGACY (unowned) id keeps only the FIRST occurrence", () => {
+    const pack = {
+      version: 1,
+      sections: {},
+      claims: [claim("legacy-1", "first"), claim("legacy-1", "second")],
+    };
+    const out = normalizeLegacyClaimIds(pack);
+    expect(out.claims).toHaveLength(1);
+    expect(out.claims[0].text).toBe("first");
+  });
+
+  it("[fix round F-m6, verify.r5.md MINOR] a repeated OWNED id is left INTACT -- never deduped -- so the ownership gate still reports duplicate-id", () => {
+    // MUTANT THIS KILLS (verify.r5.md's MN2, which survived the full landed
+    // suite): the `claimOwner(id) !== null` early return removed, so an
+    // OWNED duplicate is silently deduped away exactly like a legacy one.
+    // This function's own header states why that must never happen: an
+    // owned id is only ever duplicated by a genuine bug (mintUniqueClaimId's
+    // own collision guard failing), which claimOwnershipViolations must
+    // still catch -- deduping it here would hide that bug instead.
+    const ownedId = "c/aboutYou/0123456789abcdef";
+    const pack = {
+      version: 1,
+      sections: {},
+      claims: [claim(ownedId, "first"), claim(ownedId, "second")],
+    };
+    const out = normalizeLegacyClaimIds(pack);
+    expect(out.claims).toHaveLength(2);
+    expect(claimOwnershipViolations({ sections: {}, claims: out.claims })).toContainEqual({
+      kind: "duplicate-id",
+      id: ownedId,
+    });
+  });
+
+  it("[no-op control] a pack with no repeated id at all is returned UNCHANGED (same reference)", () => {
+    const pack = { version: 1, sections: {}, claims: [claim("legacy-1"), claim("legacy-2")] };
+    expect(normalizeLegacyClaimIds(pack)).toBe(pack);
   });
 });
