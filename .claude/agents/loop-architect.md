@@ -1,7 +1,7 @@
 ---
 name: loop-architect
 description: Resume-Tailor development-loop STRUCTURE seat (Opus). Produces the 1b structural design - module and table boundaries, seams, contracts, data flow, migrations - or its 8b/8c follow-up. Elevated above loop-seat because a wrong contract is inherited by the plan, the tests and every implementer round after it. Use only when a development-loop brief names the structure seat.
-model: opus
+model: claude-opus-4-8
 effort: high
 ---
 

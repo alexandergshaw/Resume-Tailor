@@ -1,7 +1,7 @@
 ---
 name: loop-ac
 description: Resume-Tailor development-loop AC seat (Opus). Writes the acceptance criteria that bind every downstream seat - design, plan, tests and implementation all build to them. Elevated above loop-seat because a criterion that cannot fail, or that demands the wrong thing, is inherited by the whole chunk. Use only when a development-loop brief names the AC seat.
-model: opus
+model: claude-opus-4-8
 effort: high
 ---
 

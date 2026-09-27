@@ -1,7 +1,7 @@
 ---
 name: loop-checker
 description: Resume-Tailor development-loop FRESH adversarial checker (Opus). Tries to break one artifact or one group of artifacts another agent produced - chunking and triage, AC, the G3 operate/attack/break group, reuse survey, plan (and its 3b re-triage), 3b facts, verification findings and trigger rulings, unit-test notes, accessibility findings, an adjudication, an RCA, a regression result's agent-executed buckets. Never checks its own work and never edits the artifact. Use only when a development-loop brief names the check.
-model: opus
+model: claude-opus-4-8
 effort: high
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: loop-tdd
 description: Resume-Tailor development-loop TDD seat (Opus). Writes the step-4b acceptance tests and lands them RED as the implementer hand-off. Elevated above loop-seat because a zero-power test is inherited by every round after it - the implementer builds to it, the suite goes green, and the defect ships defended. Use only when a development-loop brief names the 4b test seat.
-model: opus
+model: claude-opus-4-8
 effort: high
 ---
 

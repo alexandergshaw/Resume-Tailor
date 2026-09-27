@@ -1,7 +1,7 @@
 ---
 name: loop-plan
 description: Resume-Tailor development-loop PLAN seat (Opus). Turns a settled AC and design into ordered, independently-landable steps, the 4b test hand-off, and a risk table. Elevated above loop-seat because the plan is what the TDD seat encodes and the implementer builds - a wrong sequence or a missed blast radius is inherited by every round after it. Use only when a development-loop brief names the plan seat.
-model: opus
+model: claude-opus-4-8
 effort: high
 ---
 
