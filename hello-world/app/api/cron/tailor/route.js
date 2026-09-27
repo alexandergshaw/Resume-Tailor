@@ -25,6 +25,7 @@ import { MAX_TAILORS_PER_USER_PER_RUN, MAX_TAILORS_PER_USER_PER_UTC_DAY } from "
 import { reserveDailyTailor } from "@/lib/feed/autoTailorSpendLedger";
 import { reserveMailSend } from "@/lib/email/alertMailLedger";
 import { isFeatureDisabled } from "@/lib/feed/killSwitch";
+import { readAlertsPaused } from "@/lib/email/alertPause";
 import {
   MAX_ALERT_MAILS_PER_ADDRESS_PER_UTC_DAY,
   MAX_ALERT_MAILS_PER_ACCOUNT_PER_UTC_DAY,
@@ -110,6 +111,13 @@ async function processUser({
   // paths below (AC-R4/R6, owner ruling: alert_mail fails closed on its own
   // read error, the same as auto_tailor).
   const mailKill = await isFeatureDisabled(admin, "alert_mail");
+
+  // N60 S6 (AC-E4): the account-level pause, read once per user, ahead of
+  // both mail paths. Scoped to MAIL ONLY -- it never gates the auto-tailor
+  // branch below, so a paused account still tailors and queues materials.
+  // A read error fails CLOSED (readAlertsPaused returns paused:true,
+  // ok:false), the same posture as the mail kill switch above.
+  const pause = await readAlertsPaused(admin, userId);
 
   // A broken/errored auto-tailor eligibility query skips the whole feature
   // for this user rather than guessing -- the eligibility count and the
@@ -245,7 +253,7 @@ async function processUser({
     // Best-effort email alert for queued jobs whose search opted in. Never let
     // an email failure break the queueing pipeline.
     try {
-      await emailNewJobs({ admin, userId, queued, mailKill });
+      await emailNewJobs({ admin, userId, queued, mailKill, pause });
     } catch (err) {
       console.error(`[cron] new-jobs email step failed for user=${userId}:`, err?.message || err);
     }
@@ -262,6 +270,7 @@ async function processUser({
         userId,
         savedSearches: emailOnlySearches,
         mailKill,
+        pause,
       });
     } catch (err) {
       console.error(`[cron] email-only step failed for user=${userId}:`, err?.message || err);
@@ -279,6 +288,8 @@ async function processUser({
       emailed: emailedOnly,
       autoFeatureError: autoFeatureError || null,
       emailFeatureError: emailFeatureError || null,
+      emailKillSwitch: mailKill.disabled,
+      emailPaused: pause.paused,
     }),
     scanned: totalScanned,
   };
@@ -297,7 +308,7 @@ function buildAccountUnsubscribeUrl(userId) {
 
 // Email a summary of newly-queued jobs to the account's own email address.
 // There is no per-search recipient override (owner ruling 1).
-async function emailNewJobs({ admin, userId, queued, mailKill }) {
+async function emailNewJobs({ admin, userId, queued, mailKill, pause }) {
   const emailable = selectEmailableJobs(queued);
   if (emailable.length === 0) return;
 
@@ -317,8 +328,10 @@ async function emailNewJobs({ admin, userId, queued, mailKill }) {
       // required before sendEmail, never after (owner ruling, same shape as
       // the tailor reserve). N60 S5: an alert with no working unsubscribe
       // link is refused the same way -- checked before reserving, so a
-      // permanently unminted link never spends a mail slot.
-      if (mailKill.disabled || !unsubUrl) continue;
+      // permanently unminted link never spends a mail slot. N60 S6: the
+      // account-level pause gates the send the same way -- mail only, the
+      // auto-tailor branch above already ran regardless of this flag.
+      if (mailKill.disabled || pause.paused || !unsubUrl) continue;
       const slot = await reserveMailSend(admin, userId, to, {
         perAddressCap: MAX_ALERT_MAILS_PER_ADDRESS_PER_UTC_DAY,
         perAccountCap: MAX_ALERT_MAILS_PER_ACCOUNT_PER_UTC_DAY,
@@ -341,7 +354,7 @@ async function emailNewJobs({ admin, userId, queued, mailKill }) {
 // searches, without tailoring or queueing anything. Idempotent: postings are
 // recorded in `email_notified_postings` once delivered so they're never emailed
 // twice. Returns the number of postings emailed about.
-async function emailOnlyNewJobs({ admin, userId, savedSearches, mailKill }) {
+async function emailOnlyNewJobs({ admin, userId, savedSearches, mailKill, pause }) {
   if (!Array.isArray(savedSearches) || savedSearches.length === 0) return 0;
 
   const postings = await loadFeedPostings(admin, null);
@@ -373,10 +386,11 @@ async function emailOnlyNewJobs({ admin, userId, savedSearches, mailKill }) {
     try {
       // N60 S4: same kill-switch + reserve-before-send gate as emailNewJobs.
       // N60 S5: an alert with no working unsubscribe link is refused the same
-      // way, before reserving a slot. A refused/unreadable/unminted-link
-      // batch leaves anySent false, so the carry-forward below (AC-E2)
-      // retries these postings next run.
-      if (mailKill.disabled || !unsubUrl) continue;
+      // way, before reserving a slot. N60 S6: the account-level pause gates
+      // the send the same way -- mail only. A refused/unreadable/unminted-
+      // link/paused batch leaves anySent false, so the carry-forward below
+      // (AC-E2) retries these postings next run.
+      if (mailKill.disabled || pause.paused || !unsubUrl) continue;
       const slot = await reserveMailSend(admin, userId, to, {
         perAddressCap: MAX_ALERT_MAILS_PER_ADDRESS_PER_UTC_DAY,
         perAccountCap: MAX_ALERT_MAILS_PER_ACCOUNT_PER_UTC_DAY,

@@ -15,9 +15,14 @@ import { emailAlertsAvailable } from "./emailConfigStatus.js";
 
 describe("emailAlertsAvailable (AC-E5, server-reported)", () => {
   it("both RESEND_API_KEY and EMAIL_FROM set -> available, no reason", () => {
+    // N60 S6 (owner ruling): "fully configured" now also means the cron can
+    // mint the unsubscribe link -- see emailConfigStatus.unsubAlign.test.js.
+    // Env setup only; the assertion below is unchanged.
     const r = emailAlertsAvailable({
       RESEND_API_KEY: "re_test_key",
       EMAIL_FROM: "Resume Tailor <jobs@configured-domain.com>",
+      ALERT_UNSUBSCRIBE_SECRET: "unit-test-unsub-secret",
+      RESUME_TAILOR_API_URL: "https://app.example.com",
     });
     expect(r.available).toBe(true);
     expect(r.reason).toBeNull();

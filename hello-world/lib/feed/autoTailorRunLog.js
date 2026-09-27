@@ -40,6 +40,10 @@ const ZERO_REASONS = Object.freeze({
   COUNTER_UNREADABLE: "spend_counter_unreadable",
   KILL_SWITCH: "disabled_by_kill_switch",
   KILL_SWITCH_UNREADABLE: "kill_switch_unreadable",
+  // N60 S6: a paused account's zero-mail run must not mislabel itself as "no
+  // new postings" either -- the same class of fix as the kill-switch pair
+  // above, on the mail-only pause (AC-E4).
+  PAUSED: "alerts_paused",
 });
 
 // A broken/errored eligibility query always outranks every other zero-reason:
@@ -60,9 +64,15 @@ function autoZeroReason({ tailored, autoEligible, skipped, featureError }) {
   return ZERO_REASONS.NO_NEW_POSTINGS;
 }
 
-function emailZeroReason({ emailed, emailEligible, featureError }) {
+// N60 S6: ranks, when emailed === 0, an eligibility error above the mail kill
+// switch above the account pause above "nothing eligible" above "nothing
+// new" -- so a switched-off or paused run is never mislabelled "no new
+// postings", and neither one masks an actual eligibility outage.
+function emailZeroReason({ emailed, emailEligible, featureError, killSwitch, paused }) {
   if (emailed > 0) return null;
   if (featureError) return ZERO_REASONS.ELIGIBILITY_QUERY_FAILED;
+  if (killSwitch) return ZERO_REASONS.KILL_SWITCH;
+  if (paused) return ZERO_REASONS.PAUSED;
   if (!emailEligible) return ZERO_REASONS.NO_ENABLED_SEARCH;
   return ZERO_REASONS.NO_NEW_POSTINGS;
 }
@@ -70,7 +80,8 @@ function emailZeroReason({ emailed, emailEligible, featureError }) {
 /**
  * @param {{userId:string, autoEligible:number, autoProcessed:number, tailored:number,
  *   skipped:Record<string,number>, emailEligible:number, emailed:number,
- *   autoFeatureError:string|null, emailFeatureError:string|null}} raw
+ *   autoFeatureError:string|null, emailFeatureError:string|null,
+ *   emailKillSwitch?:boolean, emailPaused?:boolean}} raw
  * @returns {{userId:string, autoEligible:number, autoProcessed:number, tailored:number,
  *   skipped:Record<string,number>, emailEligible:number, emailed:number,
  *   autoFeatureError:string|null, emailFeatureError:string|null,
@@ -104,6 +115,8 @@ export function summarizeRun(raw) {
       emailed,
       emailEligible,
       featureError: r.emailFeatureError,
+      killSwitch: r.emailKillSwitch,
+      paused: r.emailPaused,
     }),
   };
 }

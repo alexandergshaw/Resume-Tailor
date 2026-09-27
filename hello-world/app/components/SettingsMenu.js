@@ -17,6 +17,7 @@ import GmailButton from "./GmailButton";
 import DriveButton from "./DriveButton";
 import AccountSection from "./AccountSection";
 import ActivityLogButton from "./ActivityLogButton";
+import AlertMailPause from "./AlertMailPause";
 
 // Section wrapper: an uppercase label above its control(s).
 function Section({ label, children }) {
@@ -121,6 +122,10 @@ export default function SettingsMenu() {
           <Divider />
           <Section label="Account">
             <AccountSection />
+          </Section>
+          <Divider />
+          <Section label="Email alerts">
+            <AlertMailPause />
           </Section>
           <Divider />
           <Section label="Admin tools">

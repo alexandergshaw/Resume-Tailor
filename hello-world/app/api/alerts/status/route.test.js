@@ -59,13 +59,29 @@ describe("GET /api/alerts/status (AC-E5)", () => {
   });
 
   it("[control] reports emailConfigured:true with no reason when fully configured", async () => {
+    // N60 S6 (owner ruling): "fully configured" now also means the cron can
+    // mint the unsubscribe link. Env setup only; the assertion is unchanged.
     vi.stubEnv("RESEND_API_KEY", "re_test_key");
     vi.stubEnv("EMAIL_FROM", "Resume Tailor <jobs@configured-domain.com>");
+    vi.stubEnv("ALERT_UNSUBSCRIBE_SECRET", "unit-test-unsub-secret");
+    vi.stubEnv("RESUME_TAILOR_API_URL", "https://app.example.com");
     createClient.mockResolvedValue(makeSupabase({}, { user: USER }));
 
     const res = await GET();
     const body = await res.json();
     expect(body.emailConfigured).toBe(true);
     expect(body.reason).toBeNull();
+  });
+
+  it("reports alertsPaused from the account's own settings row (N60 S6)", async () => {
+    vi.stubEnv("RESEND_API_KEY", "re_test_key");
+    vi.stubEnv("EMAIL_FROM", "Resume Tailor <jobs@configured-domain.com>");
+    createClient.mockResolvedValue(
+      makeSupabase({ user_alert_settings: { data: { alerts_paused: true } } }, { user: USER }),
+    );
+
+    const res = await GET();
+    const body = await res.json();
+    expect(body.alertsPaused).toBe(true);
   });
 });
