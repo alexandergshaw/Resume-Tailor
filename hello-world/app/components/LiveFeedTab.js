@@ -59,9 +59,10 @@ export default function LiveFeedTab({
   const [filters, setFilters] = useState(loadFilters);
   const [advanced, setAdvanced] = useState(loadAdvanced);
   const [advancedOpen, setAdvancedOpen] = useState(loadPanelOpen);
-  // Which view is active: the live feed list, or the auto-apply queue that the
-  // cron fills from these saved searches.
-  const [view, setView] = useState("feed"); // "feed" | "queue"
+  // Which view is active: the live feed list, the auto-apply queue that the
+  // cron fills from these saved searches, or the automation settings that
+  // decide whether it fills at all.
+  const [view, setView] = useState("feed"); // "feed" | "queue" | "automation"
   const [queueCount, setQueueCount] = useState(0);
   const [activeSavedSearchId, setActiveSavedSearchId] = useState(null);
   // Per-saved-search count of postings ingested since the search was last

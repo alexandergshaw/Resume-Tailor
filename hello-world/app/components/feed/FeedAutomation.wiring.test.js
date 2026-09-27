@@ -96,6 +96,10 @@ function serverSearch(overrides = {}) {
 
 let emailConfigured; // toggled per test for AC-E5
 let statusReason;
+// How /api/alerts/status behaves: "ok" answers, the rest are the three ways a
+// real read fails. Each must leave the control unavailable -- not knowing
+// whether the feature can work is not permission to switch it on.
+let statusMode; // "ok" | "reject" | "http-error" | "not-json"
 
 const json = (body) => Promise.resolve({ ok: true, json: async () => body });
 
@@ -103,6 +107,22 @@ function installFetch() {
   global.fetch = vi.fn((url, init = {}) => {
     const u = String(url);
     if (u.startsWith("/api/alerts/status")) {
+      // The status endpoint can fail, not only answer. A verifier found the
+      // panel treated a failed read as "configured" and left the switch
+      // enabled, and the reason it survived the suite was that this helper
+      // always resolved successfully.
+      if (statusMode === "reject") return Promise.reject(new Error("network down"));
+      if (statusMode === "http-error") {
+        return Promise.resolve({ ok: false, status: 500, json: async () => ({}) });
+      }
+      if (statusMode === "not-json") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => {
+            throw new Error("not json");
+          },
+        });
+      }
       return json({ emailConfigured, reason: statusReason, alertsPaused: false });
     }
     if (u.startsWith("/api/auto-apply-queue")) return json({ items: [] });
@@ -203,6 +223,7 @@ beforeEach(() => {
   viewportWidth = 1200;
   emailConfigured = true;
   statusReason = null;
+  statusMode = "ok";
   setAutoTailorSpy = vi.fn();
   window.localStorage.clear();
   installFetch();
@@ -382,6 +403,37 @@ describe("AC-E5: the enable control is unavailable when the server reports email
       /email|unavailable|not (?:set up|configured)|can'?t send/i,
     );
   });
+
+  // A verifier found the panel started from `emailConfigured: true` and
+  // swallowed every fetch failure, so any error from the status endpoint left
+  // the switch enabled -- a fail-open on the one gate whose job is to refuse an
+  // "on" switch that cannot work. The three cases below are the three ways that
+  // read really fails; each must leave the control unavailable. They are
+  // separate from the server-said-false case above, which was already covered:
+  // the gap was never "false", it was "we could not find out".
+  for (const mode of ["reject", "http-error", "not-json"]) {
+    it(`treats a status read that fails (${mode}) as NOT configured`, async () => {
+      // NON-VACUITY: asserts the control is present-but-disabled, not absent,
+      // and that no enabling write is reachable. The "ok" control below proves
+      // the same harness can produce a switchable control, so this cannot pass
+      // against a build whose switch is always disabled.
+      statusMode = mode;
+      emailConfigured = true; // the server WOULD say yes -- we just cannot hear it
+      await mount();
+      await openAutomation();
+      await settle();
+      const sw = autoTailorSwitch();
+      expect(sw, "the control still renders, it is not simply absent").toBeTruthy();
+      expect(sw.disabled, "an unreadable status must not leave the switch enabled").toBe(true);
+      await click(sw);
+      await settle();
+      expect(topDialog(), "no confirmation may open for a disabled control").toBeNull();
+      expect(
+        setAutoTailorSpy.mock.calls.filter(([, p]) => p && p.autoTailorEnabled === true),
+        "no enabling write is possible when the configuration is unknown",
+      ).toHaveLength(0);
+    });
+  }
 
   it("CONTROL: the same control CAN be switched on when emailConfigured is true", async () => {
     // Without this the case above passes against a build whose control is

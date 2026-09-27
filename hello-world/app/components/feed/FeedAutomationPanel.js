@@ -11,16 +11,34 @@ import FeedAutomationCard from "./FeedAutomationCard";
 // browser cannot see an env var, so it must consume /api/alerts/status rather
 // than guess) and renders one FeedAutomationCard per saved search.
 export default function FeedAutomationPanel({ currentUser, savedSearches, setSavedSearchAutoTailor }) {
-  const [status, setStatus] = useState({ emailConfigured: true, reason: null });
+  // Starts NOT configured, and an unreadable status stays not configured. Only a
+  // successful read saying so can enable the switch. The optimistic opposite is
+  // a fail-open: the whole point of AC-E5 is to refuse an "on" switch that
+  // cannot work, and a status endpoint that errors is precisely the case where
+  // we do not know that it can.
+  const [status, setStatus] = useState({
+    emailConfigured: false,
+    reason: "Checking your email configuration...",
+  });
 
   useEffect(() => {
     let live = true;
     fetch("/api/alerts/status")
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        return res.json();
+      })
       .then((data) => {
         if (live) setStatus({ emailConfigured: !!data.emailConfigured, reason: data.reason });
       })
-      .catch(() => {});
+      .catch(() => {
+        if (live) {
+          setStatus({
+            emailConfigured: false,
+            reason: "We could not check your email configuration. Reload to try again.",
+          });
+        }
+      });
     return () => {
       live = false;
     };
