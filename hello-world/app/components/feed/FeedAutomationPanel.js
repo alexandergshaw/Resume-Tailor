@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import FeedAutomationCard from "./FeedAutomationCard";
+import AutoTailorRunLog from "./AutoTailorRunLog";
 
 // N60 S8. The Automation view's single mount point -- a sibling of the queue
 // view, reached from FeedToolbar's third button, and OUTSIDE the Filters
@@ -72,6 +73,7 @@ export default function FeedAutomationPanel({ currentUser, savedSearches, setSav
           />
         ))
       )}
+      <AutoTailorRunLog mode="full" />
     </Box>
   );
 }

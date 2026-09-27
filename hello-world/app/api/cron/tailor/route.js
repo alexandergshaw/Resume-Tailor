@@ -21,6 +21,7 @@ import {
 import { sendEmail } from "@/lib/email/sendEmail";
 import { signUnsubscribeToken, unsubscribeUrl } from "@/lib/email/alertUnsubscribeToken";
 import { summarizeRun, SKIP_REASONS } from "@/lib/feed/autoTailorRunLog";
+import { recordRun } from "@/lib/feed/autoTailorRunStore";
 import { MAX_TAILORS_PER_USER_PER_RUN, MAX_TAILORS_PER_USER_PER_UTC_DAY } from "@/lib/feed/autoTailorBounds";
 import { reserveDailyTailor } from "@/lib/feed/autoTailorSpendLedger";
 import { reserveMailSend } from "@/lib/email/alertMailLedger";
@@ -277,20 +278,34 @@ async function processUser({
     }
   }
 
+  const runSummary = summarizeRun({
+    userId,
+    autoEligible: autoSearches.length,
+    autoProcessed,
+    tailored: queued.length,
+    skipped,
+    emailEligible: emailOnlySearches.length,
+    emailed: emailedOnly,
+    autoFeatureError: autoFeatureError || null,
+    emailFeatureError: emailFeatureError || null,
+    emailKillSwitch: mailKill.disabled,
+    emailPaused: pause.paused,
+  });
+
+  // N60 S7 (AC-R4): persist one row per user, AFTER every spend this run made
+  // (the tailoring loop and both email paths have already run). LOGGING IS
+  // NOT A GATE -- recordRun is fail-soft on its own terms, but this call is
+  // wrapped regardless so a mocked or otherwise-rejecting store can never
+  // abort the run or mark it errored (which would risk a retry re-spending
+  // the reserved slots).
+  try {
+    await recordRun(admin, runSummary);
+  } catch (err) {
+    console.error(`[cron] run-log record failed for user=${userId}:`, err?.message || err);
+  }
+
   return {
-    ...summarizeRun({
-      userId,
-      autoEligible: autoSearches.length,
-      autoProcessed,
-      tailored: queued.length,
-      skipped,
-      emailEligible: emailOnlySearches.length,
-      emailed: emailedOnly,
-      autoFeatureError: autoFeatureError || null,
-      emailFeatureError: emailFeatureError || null,
-      emailKillSwitch: mailKill.disabled,
-      emailPaused: pause.paused,
-    }),
+    ...runSummary,
     scanned: totalScanned,
   };
 }

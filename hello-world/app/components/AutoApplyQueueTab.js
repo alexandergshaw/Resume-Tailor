@@ -22,6 +22,7 @@ import InboxIcon from "@mui/icons-material/Inbox";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import TabHeader from "./TabHeader";
 import EmptyState from "./EmptyState";
+import AutoTailorRunLog from "./feed/AutoTailorRunLog";
 
 import styles from "../page.module.css";
 import { openPostingBeside } from "@/lib/window/openPostingBeside";
@@ -292,6 +293,8 @@ export default function AutoApplyQueueTab({ currentUser, savedSearches = [], onC
           </Box>
         }
       />
+
+      <AutoTailorRunLog mode="compact" />
 
       {/* Error alert with retry action */}
       {error && (

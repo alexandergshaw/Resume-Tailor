@@ -14,9 +14,14 @@
 //
 // ZERO_REASONS stays module-private: only `summarizeRun` consumes it, and
 // exporting it here would create a test-only export that moves the
-// reachability census (owner ruling 3 / plan §0.6). `renderRunLogMarkdown`
-// and `runLogFileName` (AC-R5) are deferred to S7, where the persisted run
-// record they format finally has a consumer.
+// reachability census (owner ruling 3 / plan §0.6).
+//
+// N60 S7 (AC-R5): `renderRunLogMarkdown`, `runLogFileName` and
+// `describeRunReason` land here now that the persisted run record they
+// format has a real consumer -- the AutoTailorRunLog component's download
+// control. `describeRunReason` is the single place a machine reason
+// (from either enum) turns into copy a user can read, so a run log never
+// shows a raw snake_case token.
 
 export const SKIP_REASONS = Object.freeze({
   PER_RUN_CAP: "per_run_cap_reached",
@@ -119,4 +124,97 @@ export function summarizeRun(raw) {
       paused: r.emailPaused,
     }),
   };
+}
+
+// N60 S7 (AC-R4/R5, brief item 5): one entry per value either enum can
+// produce, so a reason added later with no entry here falls back to the
+// GENERIC copy below rather than leaking its raw token -- and the
+// legibility class guard in autoTailorRunLogMarkdown.test.js fails loudly
+// when that happens, instead of the reader silently getting a code.
+const REASON_COPY = Object.freeze({
+  [SKIP_REASONS.PER_RUN_CAP]: "Reached this run's tailoring limit; the rest will be picked up next run.",
+  [SKIP_REASONS.PER_DAY_CEILING]: "Reached today's tailoring limit for this account.",
+  [SKIP_REASONS.NO_RESUME]: "No resume on file to tailor from.",
+  [SKIP_REASONS.ALREADY_TRACKED]: "This posting was already queued from an earlier run.",
+  [SKIP_REASONS.TAILOR_THREW]: "Tailoring failed unexpectedly for this posting.",
+  [SKIP_REASONS.COUNTER_UNREADABLE]: "Could not read today's usage counter, so tailoring paused as a precaution.",
+  [SKIP_REASONS.KILL_SWITCH]: "Auto-tailor is currently turned off for everyone.",
+  [SKIP_REASONS.KILL_SWITCH_UNREADABLE]: "Could not check whether auto-tailor is turned on, so it paused as a precaution.",
+  [ZERO_REASONS.NO_ENABLED_SEARCH]: "No saved search has auto-tailor enabled yet.",
+  [ZERO_REASONS.ELIGIBILITY_QUERY_FAILED]: "Could not check which searches are eligible, so this run was skipped as a precaution.",
+  [ZERO_REASONS.NO_NEW_POSTINGS]: "No new postings matched this search yet.",
+  [ZERO_REASONS.PAUSED]: "Email alerts are paused for this account.",
+});
+
+const GENERIC_REASON_COPY = "No further detail was recorded for this outcome.";
+
+/**
+ * Turns a machine reason (any SKIP_REASONS or ZERO_REASONS value) into copy a
+ * user can read. An unrecognised reason -- including null/undefined -- falls
+ * back to a generic, non-specific sentence rather than the raw token.
+ * @param {string|null|undefined} reason
+ * @returns {string}
+ */
+export function describeRunReason(reason) {
+  return REASON_COPY[reason] || GENERIC_REASON_COPY;
+}
+
+function formatRanAt(ranAt) {
+  const d = ranAt ? new Date(ranAt) : null;
+  return d && !Number.isNaN(d.getTime()) ? d.toLocaleString() : "Unknown time";
+}
+
+// Renders the skip-reason breakdown for one run as legible bullet lines,
+// never the raw map keys -- the same class guard the zero-reason line obeys.
+function renderSkippedLines(skipped) {
+  const entries = Object.entries(skipped || {}).filter(([, count]) => count > 0);
+  if (entries.length === 0) return [];
+  return entries.map(([reason, count]) => `  - ${describeRunReason(reason)} (${count})`);
+}
+
+function renderOneRun(row) {
+  const payload = row?.payload || {};
+  const lines = [`## Run at ${formatRanAt(row?.ran_at)}`];
+  lines.push(`- Eligible searches: ${payload.autoEligible || 0}`);
+  lines.push(`- Searches processed: ${payload.autoProcessed || 0}`);
+  lines.push(`- Resumes tailored and queued: ${payload.tailored || 0}`);
+  if (payload.zeroReason) lines.push(`- ${describeRunReason(payload.zeroReason)}`);
+  lines.push(...renderSkippedLines(payload.skipped));
+  lines.push(`- Email-eligible searches: ${payload.emailEligible || 0}`);
+  lines.push(`- Emails sent: ${payload.emailed || 0}`);
+  if (payload.emailZeroReason) lines.push(`- ${describeRunReason(payload.emailZeroReason)}`);
+  if (payload.autoFeatureError) lines.push(`- Auto-tailor eligibility check failed: ${payload.autoFeatureError}`);
+  if (payload.emailFeatureError) lines.push(`- Email eligibility check failed: ${payload.emailFeatureError}`);
+  return lines.join("\n");
+}
+
+/**
+ * Renders a list of persisted runs (as loadRecentRuns / the runs API return
+ * them: `{ id, ran_at, payload }` where payload is summarizeRun's output)
+ * into one markdown document. An empty list still produces a readable,
+ * non-empty file rather than a blank one or a throw. No reason renders as
+ * its raw enum token -- every one goes through describeRunReason.
+ * @param {Array<{id?:string, ran_at?:string, payload?:object}>} runs
+ * @param {{generatedAt?:string}} [o]
+ * @returns {string}
+ */
+export function renderRunLogMarkdown(runs, o) {
+  const list = Array.isArray(runs) ? runs : [];
+  const generatedAt = (o && o.generatedAt) || new Date().toISOString();
+  const header = `# Auto-Apply Run Log\n\nGenerated ${generatedAt}\n`;
+  if (list.length === 0) {
+    return `${header}\nNo automation runs yet. Once a saved search has auto-tailor enabled, its runs will appear here.\n`;
+  }
+  return `${header}\n${list.map(renderOneRun).join("\n\n")}\n`;
+}
+
+/**
+ * @param {{generatedAt?:string}} [o]
+ * @returns {string} a single .md filename, e.g. "auto-apply-runs-2026-09-27.md"
+ */
+export function runLogFileName(o) {
+  const generatedAt = (o && o.generatedAt) || new Date().toISOString();
+  const d = new Date(generatedAt);
+  const day = Number.isNaN(d.getTime()) ? "unknown-date" : d.toISOString().slice(0, 10);
+  return `auto-apply-runs-${day}.md`;
 }
