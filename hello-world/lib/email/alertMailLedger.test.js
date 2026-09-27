@@ -157,7 +157,6 @@ describe("reserveMailSend -- two overlapping runs share one count (genuine inter
     async function run(addr) {
       const outcomes = [];
       for (let i = 0; i < ACCT; i += 1) {
-        // eslint-disable-next-line no-await-in-loop
         outcomes.push(await reserveMail(admin, addr, localCaps));
       }
       return outcomes;

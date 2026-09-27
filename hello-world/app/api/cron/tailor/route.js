@@ -128,7 +128,13 @@ async function processUser({
       // searches' own (already-clamped) daily caps and the global ceiling.
       const userDailyCap = Math.min(
         MAX_TAILORS_PER_USER_PER_UTC_DAY,
-        ...autoSearches.map((s) => Math.max(1, s.auto_tailor_daily_cap || 10)),
+        // A stored 0 means "none" and must survive as 0 -- `cap || 10` turned it
+        // into 10, i.e. a user asking for no unattended work got the default.
+        // Only a missing or non-numeric value falls back; a negative floors at 0.
+        // The reserve function refuses anything below 1, so 0 tailors nothing.
+        ...autoSearches.map((s) =>
+          Number.isFinite(s.auto_tailor_daily_cap) ? Math.max(0, s.auto_tailor_daily_cap) : 10,
+        ),
       );
 
       const resumeBuffer = await loadStorageBuffer(admin, `${userId}/resume`);

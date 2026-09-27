@@ -149,7 +149,6 @@ describe("reserveDailyTailor -- two overlapping runs share one count (genuine in
     async function run() {
       const outcomes = [];
       for (let i = 0; i < CAP; i += 1) {
-        // eslint-disable-next-line no-await-in-loop
         outcomes.push(await reserve(admin, USER, { cap: CAP, now }));
       }
       return outcomes;
