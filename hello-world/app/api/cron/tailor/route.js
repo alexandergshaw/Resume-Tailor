@@ -20,6 +20,7 @@ import {
 } from "@/lib/feed/emailOnlyMatches";
 import { sendEmail } from "@/lib/email/sendEmail";
 import { summarizeRun, SKIP_REASONS } from "@/lib/feed/autoTailorRunLog";
+import { MAX_TAILORS_PER_USER_PER_RUN } from "@/lib/feed/autoTailorBounds";
 
 export const runtime = "nodejs";
 export const maxDuration = 300; // seconds, used by Vercel for long-running cron
@@ -29,12 +30,28 @@ export const maxDuration = 300; // seconds, used by Vercel for long-running cron
 // letter for every newly-matched posting, and parks it in the auto-apply queue.
 //
 // To control LLM cost/time within a single serverless invocation, we cap the
-// number of jobs tailored per user per run. The per-saved-search
-// `auto_tailor_daily_cap` still applies as an upper bound per search.
-const MAX_TAILORS_PER_USER_PER_RUN = 5;
-const ABSOLUTE_USER_CAP = 100; // safety ceiling
+// number of jobs tailored per user per run at MAX_TAILORS_PER_USER_PER_RUN
+// (lib/feed/autoTailorBounds.js). The per-saved-search `auto_tailor_daily_cap`
+// still applies as an upper bound per search -- it used to be wrapped in a
+// second Math.min against a local ABSOLUTE_USER_CAP = 100, but the column is
+// already clamped to <= its own cap before it ever reaches here, so that
+// second clamp enforced nothing and was deleted (AC-S2): a name asserting an
+// absolute ceiling that binds nothing is worse than no name at all.
 // How many recent postings to scan per saved search.
 const FEED_SCAN_LIMIT = 200;
+
+// N60 S3 (AC-C4) -- how often Vercel actually invokes this route, named so
+// every cost assumption that depends on "how many runs per day" (this file's
+// own MAX_TAILORS_PER_USER_PER_UTC_DAY math, and any future copy quoting a
+// daily total) derives from one constant instead of a copy of "*/15" typed
+// out again. MEASURED: the schedule itself is pinned at vercel.json:5 and
+// checked by app/api/cron/position-glossary/route.test.js:196-199; this
+// constant is the LINK from that literal to a name, proven by
+// cronSchedule.test.js in this same directory. Module-private: nothing here
+// reads it at runtime (Vercel's own vercel.json is what actually schedules
+// this route), so exporting it now would be a test-only export and move
+// lib/sourceScan/exportReachability.sweep.test.js's pinned counts (363/435).
+const TAILOR_CRON_MINUTES = 15;
 
 /**
  * Returns true if the request is authorized for cron access.
@@ -105,10 +122,7 @@ async function processUser({
         const externalIds = postings.map(postingExternalId).filter(Boolean);
         const alreadyTracked = await loadAlreadyTrackedExternalIds(admin, userId, externalIds);
 
-        const perSearchCap = Math.min(
-          ABSOLUTE_USER_CAP,
-          Math.max(1, savedSearch.auto_tailor_daily_cap || 10),
-        );
+        const perSearchCap = Math.max(1, savedSearch.auto_tailor_daily_cap || 10);
         const cap = Math.min(perSearchCap, remaining);
 
         const candidates = selectQueueCandidates(postings, savedSearch, alreadyTracked, cap);

@@ -27,6 +27,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { parseModuleSource, resolveSpecifier } from "@/lib/sourceScan/exportGraph";
 
 const APP_API = path.join(process.cwd(), "app", "api");
 
@@ -224,6 +225,29 @@ const DEFERRED = [
     route: "app/api/library/preview/route.js",
     why: "reaches an engine but the embedded one is deterministic and keyless; ranks last of the engine routes.",
   },
+  // --- found by the TRANSITIVE sweep below (N60 AC-S3), invisible to the ---
+  // old direct-import-only detector because each reaches the model through a
+  // chain of first-party imports rather than a direct one.
+  {
+    route: "app/api/cron/tailor/route.js",
+    why: "a cron worker, not a user-facing route -- CRON_SECRET/x-vercel-cron is the control and there is no caller identity to key a limiter on, the same reasoning cron/position-glossary is deferred on above. Real bounds are named, not blank: MAX_TAILORS_PER_USER_PER_RUN=5 per invocation, MAX_TAILORS_PER_USER_PER_UTC_DAY=20 (S4's durable counter), and the auto_tailor kill switch.",
+  },
+  {
+    route: "app/api/cron/feed-ingest/route.js",
+    why: "the same cron reasoning as cron/tailor above -- CRON_SECRET/x-vercel-cron is the control, no caller identity to bound. Real bounds: the Redis ingest lock in lib/feed/ingestFeed.js serialises concurrent runs, DEFAULT_MAX_QUERIES=3 caps grounded calls per run, and getLlmSearchIntervalMinutes() spreads the rest out over time.",
+  },
+  {
+    route: "app/api/auto-apply-queue/tailor/route.js",
+    why: "hard-authenticates via getUser() and is therefore cheap to bound -- but bounding it correctly needs its own behavioural limit+1-to-429 test, a change about rate limiting and not about this chunk. Same scope-reason deferral as app/api/copilot/answer/route.js above.",
+  },
+  {
+    route: "app/api/feed/refresh/route.js",
+    why: "hard-authenticates via getUser(), same scope-reason deferral as auto-apply-queue/tailor above -- bounding it is a rate-limiting change out of scope here. Also, the Redis ingest lock it shares with the cron already makes a rapid-fire burst a no-op.",
+  },
+  {
+    route: "app/api/experience/knowledge/question/route.js",
+    why: "the same reason its sibling app/api/experience/knowledge/route.js already carries above, verbatim: auth resolves inside openScopeRequest AFTER the scope fan-out, so a correct bound wants that helper reordered first. This route imports that very function (question/route.js:6).",
+  },
 ];
 
 /**
@@ -317,6 +341,128 @@ function allJsFiles() {
   }
   return JS_FILES;
 }
+
+// ---------------------------------------------------------------------------
+// TRANSITIVE model reach (N60 S3, AC-S3).
+//
+// The MODEL_IMPORT regex the sweep used to rely on matches DIRECT imports only.
+// It could not see a route that reaches the model through a chain of first-party
+// imports, and the largest unattended spender in the app was invisible to it
+// while this whole file stayed green: app/api/cron/tailor/route.js reaches the
+// engine in three hops (route -> lib/feed/tailorAndQueue ->
+// lib/llm/tailorForUserHeadless -> lib/llm/engines). This block folds in the
+// repo's OWN exported graph primitives -- parseModuleSource + resolveSpecifier,
+// both already covered by exportReachability.sweep.test.js -- and does a
+// per-route BFS. buildExportGraph is deliberately NOT used: it computes one
+// union `shipping` set over every entry and has no per-route answer.
+const MODEL_MODULES = new Set([
+  "lib/llm/geminiClient.js",
+  "lib/llm/extractEmployment.js",
+  "lib/llm/engines/index.js",
+]);
+
+let FILE_MAP = null;
+function fileMap() {
+  if (FILE_MAP) return FILE_MAP;
+  const map = new Map();
+  for (const abs of allJsFiles()) {
+    map.set(path.relative(process.cwd(), abs).split(path.sep).join("/"), readFileSync(abs, "utf8"));
+  }
+  try {
+    map.set("middleware.js", readFileSync(path.join(process.cwd(), "middleware.js"), "utf8"));
+  } catch {
+    /* no middleware.js is a fact resolveSpecifier tolerates -- it never resolves there */
+  }
+  FILE_MAP = map;
+  return map;
+}
+
+// Per-file import parse, cached for the real parser so the BFS below is O(files)
+// rather than O(routes x files). The no-op control MUST bypass the cache, or it
+// would read the real parser's cached answer and stop proving anything.
+let PARSE_CACHE = null;
+function importsOf(rel, parse) {
+  if (parse !== parseModuleSource) {
+    const src = fileMap().get(rel);
+    if (src === undefined) return [];
+    try {
+      return parse(src).imports;
+    } catch {
+      return [];
+    }
+  }
+  if (!PARSE_CACHE) PARSE_CACHE = new Map();
+  if (PARSE_CACHE.has(rel)) return PARSE_CACHE.get(rel);
+  let imports = [];
+  const src = fileMap().get(rel);
+  if (src !== undefined) {
+    try {
+      imports = parseModuleSource(src).imports;
+    } catch {
+      imports = [];
+    }
+  }
+  PARSE_CACHE.set(rel, imports);
+  return imports;
+}
+
+// Does `start` reach a model module through any chain of first-party imports?
+// `parse` is injectable ONLY so the no-op control can prove the BFS -- not the
+// tables -- answers the question. resolveSpecifier is always the real one:
+// substituting it would test a different resolver than the shipped sweeps trust.
+function reachesModel(start, parse = parseModuleSource) {
+  const files = fileMap();
+  const fileSet = new Set(files.keys());
+  const seen = new Set([start]);
+  const queue = [start];
+  while (queue.length) {
+    const cur = queue.pop();
+    for (const edge of importsOf(cur, parse)) {
+      const r = resolveSpecifier(edge.spec, cur, fileSet);
+      if (r.kind !== "module") continue;
+      if (MODEL_MODULES.has(r.file)) return true;
+      if (!seen.has(r.file)) {
+        seen.add(r.file);
+        queue.push(r.file);
+      }
+    }
+  }
+  return false;
+}
+
+// Which of `route`'s OWN direct imports resolve to a module that (itself or
+// transitively) reaches the model, and under what named imports. A route can
+// import the module that HOLDS a grounded search and still spend nothing, if it
+// imports only a cheap named symbol from it -- app/api/feed/route.js imports only
+// { getFeedMeta } from lib/feed/ingestFeed, a Redis GET. That is an exemption
+// that must be MACHINE-verified against the route's real imports, never a bare
+// string in a list, so it cannot be silently widened to cover a route that
+// later starts spending.
+function reachingDirectImports(route) {
+  const files = fileMap();
+  const fileSet = new Set(files.keys());
+  const reaching = new Map();
+  for (const edge of importsOf(route, parseModuleSource)) {
+    const r = resolveSpecifier(edge.spec, route, fileSet);
+    if (r.kind !== "module") continue;
+    if (MODEL_MODULES.has(r.file) || reachesModel(r.file)) {
+      reaching.set(r.file, [...(reaching.get(r.file) || []), ...edge.names]);
+    }
+  }
+  return reaching;
+}
+
+// Model-reaching routes that spend NOTHING on that path, each machine-verified
+// below. An exemption list is where defects hide; this one is executable prose.
+const MODEL_REACH_EXEMPT = [
+  {
+    route: "app/api/feed/route.js",
+    via: "lib/feed/ingestFeed.js",
+    importsOnly: ["getFeedMeta"],
+    why: "reaches the module that holds the grounded search, but imports only getFeedMeta -- a Redis GET in lib/feed/ingestFeed.js. No model call on this path.",
+  },
+];
+const MODEL_REACH_EXEMPT_ROUTES = new Set(MODEL_REACH_EXEMPT.map((entry) => entry.route));
 
 describe("every bounded route builds its limiter at MODULE scope", () => {
   it.each(BOUNDED)("$route", ({ route }) => {
@@ -443,20 +589,104 @@ describe("the four formerly-unauthenticated routes resolve an identity first", (
 });
 
 describe("the triage itself is pinned", () => {
-  it("leaves no model-calling route unaccounted for", () => {
+  it("leaves no model-calling route unaccounted for (TRANSITIVE reach)", () => {
     // A route that reaches the Gemini client, the shared extractor, or the
-    // tailoring engine registry spends money per request by definition. Every
-    // one of them must be a deliberate entry in BOUNDED or DEFERRED above --
-    // silence is not an option, because silence is exactly how 75 of 76 routes
-    // ended up unbounded in the first place.
-    const MODEL_IMPORT = /from "@\/lib\/llm\/(geminiClient|extractEmployment|engines)"/;
-    const modelRoutes = allRouteFiles().filter((route) => MODEL_IMPORT.test(sourceOf(route)));
+    // tailoring engine registry THROUGH ANY CHAIN of first-party imports spends
+    // money per request by definition. Direct-import-only was the hole that hid
+    // the cron tailor pipeline (N60 AC-S3); this now measures transitive reach.
+    // Every hit must be a deliberate entry in BOUNDED, DEFERRED, or the
+    // machine-checked MODEL_REACH_EXEMPT -- silence is not an option, because
+    // silence is exactly how 75 of 76 routes ended up unbounded in the first
+    // place, and how the biggest unattended spender stayed invisible after.
+    const modelRoutes = allRouteFiles().filter((route) => reachesModel(route));
     expect(modelRoutes.length).toBeGreaterThan(0);
 
     const unaccounted = modelRoutes.filter(
-      (route) => !BOUNDED_ROUTES.has(route) && !DEFERRED_ROUTES.has(route),
+      (route) =>
+        !BOUNDED_ROUTES.has(route) &&
+        !DEFERRED_ROUTES.has(route) &&
+        !MODEL_REACH_EXEMPT_ROUTES.has(route),
     );
     expect(unaccounted).toEqual([]);
+  });
+
+  it("the model modules the transitive sweep looks for actually exist", () => {
+    // A typo in MODEL_MODULES would make reachesModel() silently false for every
+    // route -- the sweep would then pass vacuously and the no-op control would be
+    // indistinguishable from the real parser. This is the positive control that
+    // the target set is real.
+    const files = fileMap();
+    for (const mod of MODEL_MODULES) expect(files.has(mod), `${mod} is not in the file map`).toBe(true);
+  });
+
+  it("transitive reach is a strict superset of the direct-import detector", () => {
+    // The old direct-only regex is kept as the baseline. Every route it flagged
+    // must still be a transitive hit -- a graph change that dropped one would be
+    // the sweep going quietly weaker -- and transitive must catch STRICTLY more,
+    // or folding the graph in bought nothing.
+    const MODEL_IMPORT = /from "@\/lib\/llm\/(geminiClient|extractEmployment|engines)"/;
+    const direct = allRouteFiles().filter((route) => MODEL_IMPORT.test(sourceOf(route)));
+    const transitive = allRouteFiles().filter((route) => reachesModel(route));
+    expect(direct.length).toBeGreaterThan(0);
+    for (const route of direct) expect(transitive).toContain(route);
+    expect(transitive.length).toBeGreaterThan(direct.length);
+  });
+
+  it("transitive reach catches every route the direct detector missed", () => {
+    // The hole, named. These six reach a model transitively and NOT directly:
+    // five are real spenders that must be accounted, and app/api/feed is the
+    // false positive the machine-checked exemption covers. toContain, NEVER
+    // toEqual -- an equality would be a ratchet against ever finding a seventh,
+    // and the cheapest way to turn the sweep above green is to NARROW the graph
+    // until these vanish. Requiring each to be PRESENT makes narrowing fail loud.
+    const transitive = allRouteFiles().filter((route) => reachesModel(route));
+    for (const route of [
+      "app/api/cron/tailor/route.js",
+      "app/api/auto-apply-queue/tailor/route.js",
+      "app/api/cron/feed-ingest/route.js",
+      "app/api/feed/refresh/route.js",
+      "app/api/experience/knowledge/question/route.js",
+      "app/api/feed/route.js",
+    ]) {
+      expect(transitive).toContain(route);
+    }
+  });
+
+  it("NO-OP CONTROL: a scanner that reports no imports collapses every route to no-reach", () => {
+    // If this ever failed to empty out, the sweep would be answering from the
+    // tables, not the graph. A parse that returns nothing must make reachesModel
+    // false everywhere -- that is what proves the BFS, not the entries, decides.
+    const noImports = () => ({ imports: [], exports: [] });
+    const collapsed = allRouteFiles().filter((route) => reachesModel(route, noImports));
+    expect(collapsed).toEqual([]);
+  });
+
+  it("every MODEL_REACH_EXEMPT entry is machine-verified against the route's real imports", () => {
+    // An exemption is only sound while the route's ACTUAL first-hop named imports
+    // from `via` are exactly `importsOnly` and `via` is the ONLY module it reaches
+    // the model through. Add a spending symbol to that import statement and this
+    // goes red, forcing the route into BOUNDED/DEFERRED -- the prose is executable
+    // and cannot be silently widened.
+    expect(MODEL_REACH_EXEMPT.length).toBeGreaterThan(0);
+    for (const entry of MODEL_REACH_EXEMPT) {
+      const reaching = reachingDirectImports(entry.route);
+      expect(
+        [...reaching.keys()].sort(),
+        `${entry.route}: the modules it reaches the model through`,
+      ).toEqual([entry.via]);
+      expect(
+        [...(reaching.get(entry.via) || [])].sort(),
+        `${entry.route}: its named imports from ${entry.via}`,
+      ).toEqual([...entry.importsOnly].sort());
+      expect(entry.why.length).toBeGreaterThan(20);
+    }
+  });
+
+  it("never lists a route as both accounted and model-reach-exempt", () => {
+    for (const route of MODEL_REACH_EXEMPT_ROUTES) {
+      expect(BOUNDED_ROUTES.has(route), `${route} is exempt AND bounded`).toBe(false);
+      expect(DEFERRED_ROUTES.has(route), `${route} is exempt AND deferred`).toBe(false);
+    }
   });
 
   it("never lists the same route as both bounded and deferred", () => {
