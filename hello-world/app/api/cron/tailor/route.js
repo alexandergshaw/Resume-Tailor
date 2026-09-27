@@ -10,7 +10,7 @@ import {
 } from "@/lib/feed/tailorAndQueue";
 import {
   selectEmailableJobs,
-  groupJobsByRecipient,
+  groupJobsForAccount,
   buildNewJobsEmail,
 } from "@/lib/email/newJobsEmail";
 import {
@@ -19,6 +19,7 @@ import {
   recordNotifiedExternalIds,
 } from "@/lib/feed/emailOnlyMatches";
 import { sendEmail } from "@/lib/email/sendEmail";
+import { summarizeRun, SKIP_REASONS } from "@/lib/feed/autoTailorRunLog";
 
 export const runtime = "nodejs";
 export const maxDuration = 300; // seconds, used by Vercel for long-running cron
@@ -67,26 +68,36 @@ async function loadFeedPostings(admin, savedSearch) {
   return data || [];
 }
 
-async function processUser({ admin, userId, savedSearches }) {
-  // A saved search can opt into auto-tailoring, email-only alerts, or both.
-  // Auto-tailor requires a resume and runs the (expensive) LLM pipeline;
-  // email-only just matches new postings and emails about them.
-  const autoSearches = savedSearches.filter((s) => s.auto_tailor_enabled);
-  const emailOnlySearches = savedSearches.filter(
-    (s) => s.email_on_new_jobs && !s.auto_tailor_enabled,
-  );
-
+async function processUser({
+  admin,
+  userId,
+  autoSearches,
+  emailOnlySearches,
+  autoFeatureError,
+  emailFeatureError,
+}) {
   let totalScanned = 0;
   const queued = [];
+  const skipped = {};
+  let autoProcessed = 0;
 
-  if (autoSearches.length > 0) {
+  // A broken/errored auto-tailor eligibility query skips the whole feature
+  // for this user rather than guessing -- the eligibility count and the
+  // feature error are reported separately below (AC-R4/AC-R6).
+  if (!autoFeatureError && autoSearches.length > 0) {
     const resumeBuffer = await loadStorageBuffer(admin, `${userId}/resume`);
-    if (resumeBuffer) {
+    if (!resumeBuffer) {
+      skipped[SKIP_REASONS.NO_RESUME] = (skipped[SKIP_REASONS.NO_RESUME] || 0) + autoSearches.length;
+    } else {
       const coverLetterBuffer = await loadStorageBuffer(admin, `${userId}/cover-letter`);
 
       for (const savedSearch of autoSearches) {
         const remaining = MAX_TAILORS_PER_USER_PER_RUN - queued.length;
-        if (remaining <= 0) break;
+        if (remaining <= 0) {
+          skipped[SKIP_REASONS.PER_RUN_CAP] = (skipped[SKIP_REASONS.PER_RUN_CAP] || 0) + 1;
+          break;
+        }
+        autoProcessed += 1;
 
         const postings = await loadFeedPostings(admin, savedSearch);
         totalScanned += postings.length;
@@ -121,9 +132,9 @@ async function processUser({ admin, userId, savedSearches }) {
                 savedSearchId: savedSearch.id,
                 savedSearchName: savedSearch.name,
                 emailOnNewJobs: !!savedSearch.email_on_new_jobs,
-                notifyEmail: savedSearch.notify_email || null,
               });
           } catch (err) {
+            skipped[SKIP_REASONS.TAILOR_THREW] = (skipped[SKIP_REASONS.TAILOR_THREW] || 0) + 1;
             console.error(`[cron] queue failed for user=${userId} posting=${posting?.id}:`, err?.message || err);
           }
         }
@@ -168,9 +179,10 @@ async function processUser({ admin, userId, savedSearches }) {
   }
 
   // Email-only alerts: searches that want emails without auto-tailoring. Runs
-  // independently of the resume/queue pipeline so it works even with no resume.
+  // independently of the resume/queue pipeline so it works even with no
+  // resume, and independently of an auto-tailor eligibility error (AC-R6).
   let emailedOnly = 0;
-  if (emailOnlySearches.length > 0) {
+  if (!emailFeatureError && emailOnlySearches.length > 0) {
     try {
       emailedOnly = await emailOnlyNewJobs({
         admin,
@@ -182,25 +194,37 @@ async function processUser({ admin, userId, savedSearches }) {
     }
   }
 
-  return { userId, scanned: totalScanned, queued, emailedOnly };
+  return {
+    ...summarizeRun({
+      userId,
+      autoEligible: autoSearches.length,
+      autoProcessed,
+      tailored: queued.length,
+      skipped,
+      emailEligible: emailOnlySearches.length,
+      emailed: emailedOnly,
+      autoFeatureError: autoFeatureError || null,
+      emailFeatureError: emailFeatureError || null,
+    }),
+    scanned: totalScanned,
+  };
 }
 
-// Email a summary of newly-queued jobs to each recipient that opted in. The
-// destination is the saved search's `notify_email` override, or the user's
-// account email when unset.
+// Email a summary of newly-queued jobs to the account's own email address.
+// There is no per-search recipient override (owner ruling 1).
 async function emailNewJobs({ admin, userId, queued }) {
   const emailable = selectEmailableJobs(queued);
   if (emailable.length === 0) return;
 
-  let fallbackEmail = null;
+  let accountEmail = null;
   try {
     const { data } = await admin.auth.admin.getUserById(userId);
-    fallbackEmail = data?.user?.email || null;
+    accountEmail = data?.user?.email || null;
   } catch (err) {
     console.error(`[cron] could not resolve account email for user=${userId}:`, err?.message || err);
   }
 
-  const groups = groupJobsByRecipient(emailable, fallbackEmail);
+  const groups = groupJobsForAccount(emailable, accountEmail);
   for (const [to, jobs] of groups.entries()) {
     try {
       const { subject, html, text } = buildNewJobsEmail(jobs);
@@ -235,15 +259,15 @@ async function emailOnlyNewJobs({ admin, userId, savedSearches }) {
   );
   if (jobs.length === 0) return 0;
 
-  let fallbackEmail = null;
+  let accountEmail = null;
   try {
     const { data } = await admin.auth.admin.getUserById(userId);
-    fallbackEmail = data?.user?.email || null;
+    accountEmail = data?.user?.email || null;
   } catch (err) {
     console.error(`[cron] could not resolve account email for user=${userId}:`, err?.message || err);
   }
 
-  const groups = groupJobsByRecipient(selectEmailableJobs(jobs), fallbackEmail);
+  const groups = groupJobsForAccount(selectEmailableJobs(jobs), accountEmail);
   let anySent = false;
   for (const [to, list] of groups.entries()) {
     try {
@@ -284,28 +308,40 @@ export async function POST(request) {
     );
   }
 
-  // Pull every saved search that wants work this run: auto-tailor OR email
-  // alerts. The two features are independent, so email-only searches (no
-  // auto-tailor) still need to be processed.
-  const { data: searches, error: searchErr } = await admin
-    .from("saved_searches")
-    .select("*")
-    .or("auto_tailor_enabled.eq.true,email_on_new_jobs.eq.true");
-  if (searchErr) {
-    return Response.json({ error: searchErr.message }, { status: 500 });
+  // Pull the saved searches for each feature INDEPENDENTLY (AC-R6): a broken
+  // or missing flag column on one predicate must not take the other feature
+  // down with it. Each select is its own try, and neither can 500 the route.
+  const auto = await selectFeatureSearches(admin, "auto_tailor_enabled");
+  const email = await selectFeatureSearches(admin, "email_on_new_jobs");
+
+  const autoByUser = new Map();
+  for (const s of auto.rows) {
+    if (!s.auto_tailor_enabled) continue;
+    if (!autoByUser.has(s.user_id)) autoByUser.set(s.user_id, []);
+    autoByUser.get(s.user_id).push(s);
+  }
+  // Email-only searches exclude auto-tailor-enabled ones, matching the
+  // pre-decoupling behavior: a search that does both is handled entirely by
+  // the auto-tailor branch, which sends its own new-jobs email.
+  const emailByUser = new Map();
+  for (const s of email.rows) {
+    if (!(s.email_on_new_jobs && !s.auto_tailor_enabled)) continue;
+    if (!emailByUser.has(s.user_id)) emailByUser.set(s.user_id, []);
+    emailByUser.get(s.user_id).push(s);
   }
 
-  // Group by user.
-  const byUser = new Map();
-  for (const s of searches || []) {
-    if (!byUser.has(s.user_id)) byUser.set(s.user_id, []);
-    byUser.get(s.user_id).push(s);
-  }
-
+  const userIds = new Set([...autoByUser.keys(), ...emailByUser.keys()]);
   const results = [];
-  for (const [userId, list] of byUser.entries()) {
+  for (const userId of userIds) {
     try {
-      const r = await processUser({ admin, userId, savedSearches: list });
+      const r = await processUser({
+        admin,
+        userId,
+        autoSearches: autoByUser.get(userId) || [],
+        emailOnlySearches: emailByUser.get(userId) || [],
+        autoFeatureError: auto.error,
+        emailFeatureError: email.error,
+      });
       results.push(r);
     } catch (err) {
       results.push({ userId, error: String(err?.message || err) });
@@ -315,16 +351,31 @@ export async function POST(request) {
   return Response.json({
     ok: true,
     users: results.length,
+    autoFeatureError: auto.error,
+    emailFeatureError: email.error,
     totalQueued: results.reduce(
-      (acc, r) => acc + (Array.isArray(r.queued) ? r.queued.length : 0),
+      (acc, r) => acc + (Number.isFinite(r.tailored) ? r.tailored : 0),
       0,
     ),
     totalEmailedOnly: results.reduce(
-      (acc, r) => acc + (Number.isFinite(r.emailedOnly) ? r.emailedOnly : 0),
+      (acc, r) => acc + (Number.isFinite(r.emailed) ? r.emailed : 0),
       0,
     ),
     results,
   });
+}
+
+// Selects the saved searches for one feature's flag column, in its own try
+// so a failure reading or filtering on ONE predicate cannot 500 the whole
+// route or suppress the other, independent feature (AC-R6).
+async function selectFeatureSearches(admin, column) {
+  try {
+    const { data, error } = await admin.from("saved_searches").select("*").eq(column, true);
+    if (error) return { rows: [], error: error.message };
+    return { rows: data || [], error: null };
+  } catch (err) {
+    return { rows: [], error: String(err?.message || err) };
+  }
 }
 
 // Vercel cron sends GETs in some configurations; accept both verbs.

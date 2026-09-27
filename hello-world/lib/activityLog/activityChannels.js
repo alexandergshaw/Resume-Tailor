@@ -168,4 +168,10 @@ export const FEATURE_LOG_LEDGER = [
     attached: false,
     why: "createPrepLog is the ephemeral, per-tab counter behind interview-prep's own \"N events recorded\" caption and its own reset control -- it dies with the tab by design and never reads or writes interview_prep_packs, interview_prep_spend or interview_prep_events. The durable record this feature actually exposes for download is served from listPrepEvents in lib/interviewPrep/prepStore.js, so there is nothing in this module for a markdown file to fold in.",
   },
+  {
+    module: "lib/feed/autoTailorRunLog.js",
+    label: "Auto-apply run log",
+    attached: false,
+    why: "The auto-tailor cron runs server-side with no user present, so its per-run outcome is summarized here and, once persisted, rebuilt into markdown at download time on the automation panel -- not accumulated in this per-tab in-memory activity log. Folding a headless run into this file would claim a session event that never happened in the tab.",
+  },
 ];
