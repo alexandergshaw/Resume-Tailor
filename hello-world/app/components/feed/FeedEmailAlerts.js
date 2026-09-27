@@ -2,7 +2,6 @@
 
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
-import TextField from "@mui/material/TextField";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import Switch from "@mui/material/Switch";
 
@@ -57,23 +56,9 @@ export default function FeedEmailAlerts({ currentUser, setSavedSearchAutoTailor,
                     sx={{ m: 0 }}
                   />
                   {entry.emailOnNewJobs && (
-                    <TextField
-                      type="email"
-                      size="small"
-                      placeholder="Account email (default)"
-                      value={entry.notifyEmail ?? ""}
-                      onChange={(e) =>
-                        setSavedSearchAutoTailor(entry.id, {
-                          notifyEmail: e.target.value,
-                          persist: false,
-                        })
-                      }
-                      onBlur={(e) =>
-                        setSavedSearchAutoTailor(entry.id, { notifyEmail: e.target.value.trim() })
-                      }
-                      slotProps={{ htmlInput: { style: { padding: "4px 6px", fontSize: "0.75rem" } } }}
-                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 1 } }}
-                    />
+                    <Box sx={{ color: "text.secondary", fontSize: "0.72rem" }}>
+                      Sent to your account email.
+                    </Box>
                   )}
                 </>
               ) : (

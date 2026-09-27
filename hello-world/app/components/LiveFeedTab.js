@@ -513,7 +513,6 @@ export default function LiveFeedTab({
       autoTailorEnabled: !!row.auto_tailor_enabled,
       autoTailorDailyCap: Number.isFinite(row.auto_tailor_daily_cap) ? row.auto_tailor_daily_cap : 10,
       emailOnNewJobs: !!row.email_on_new_jobs,
-      notifyEmail: row.notify_email || "",
     });
 
     if (currentUser) {
@@ -543,7 +542,6 @@ export default function LiveFeedTab({
       autoTailorEnabled: false,
       autoTailorDailyCap: 10,
       emailOnNewJobs: false,
-      notifyEmail: "",
     };
     setSavedSearches((prev) => [localEntry, ...prev]);
     setActiveSavedSearchId(localEntry.id);

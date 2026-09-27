@@ -588,7 +588,6 @@ export default function Home() {
       autoTailorEnabled: !!row.auto_tailor_enabled,
       autoTailorDailyCap: Number.isFinite(row.auto_tailor_daily_cap) ? row.auto_tailor_daily_cap : 10,
       emailOnNewJobs: !!row.email_on_new_jobs,
-      notifyEmail: row.notify_email || "",
     };
   }
 
@@ -760,7 +759,6 @@ export default function Home() {
       autoTailorEnabled: false,
       autoTailorDailyCap: 10,
       emailOnNewJobs: false,
-      notifyEmail: "",
     };
     if (currentUser) {
       try {
@@ -872,7 +870,7 @@ export default function Home() {
 
   // Toggle auto-tailor on/off for a saved search. Persists to the server when
   // the user is signed in; updates local state immediately for snappy UX.
-  async function setSavedSearchAutoTailor(id, { autoTailorEnabled, autoTailorDailyCap, emailOnNewJobs, notifyEmail, persist = true } = {}) {
+  async function setSavedSearchAutoTailor(id, { autoTailorEnabled, autoTailorDailyCap, emailOnNewJobs, persist = true } = {}) {
     setSavedSearches((prev) =>
       prev.map((s) => {
         if (s.id !== id) return s;
@@ -882,7 +880,6 @@ export default function Home() {
           next.autoTailorDailyCap = Math.max(1, Math.min(100, autoTailorDailyCap));
         }
         if (typeof emailOnNewJobs === "boolean") next.emailOnNewJobs = emailOnNewJobs;
-        if (typeof notifyEmail === "string") next.notifyEmail = notifyEmail;
         return next;
       }),
     );
@@ -893,7 +890,6 @@ export default function Home() {
       if (typeof autoTailorEnabled === "boolean") body.autoTailorEnabled = autoTailorEnabled;
       if (Number.isFinite(autoTailorDailyCap)) body.autoTailorDailyCap = autoTailorDailyCap;
       if (typeof emailOnNewJobs === "boolean") body.emailOnNewJobs = emailOnNewJobs;
-      if (typeof notifyEmail === "string") body.notifyEmail = notifyEmail;
       if (Object.keys(body).length === 0) return;
       await fetch(`/api/saved-searches/${encodeURIComponent(id)}`, {
         method: "PUT",
