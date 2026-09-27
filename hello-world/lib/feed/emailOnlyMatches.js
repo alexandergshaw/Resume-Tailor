@@ -28,7 +28,7 @@ import {
  * @param {number} capPerSearch          max matches to take per saved search
  * @returns {{ jobs: object[], externalIds: string[] }}
  *   jobs: email summary objects ({ title, company, url, savedSearchName,
- *         emailOnNewJobs, notifyEmail, externalId })
+ *         emailOnNewJobs, externalId }) -- no recipient override (ruling 1)
  *   externalIds: the new ids that should be recorded as notified
  */
 export function selectEmailOnlyJobs(
@@ -57,7 +57,6 @@ export function selectEmailOnlyJobs(
         url: job.url,
         savedSearchName: savedSearch.name,
         emailOnNewJobs: true,
-        notifyEmail: savedSearch.notify_email || null,
         externalId: extId,
       });
       seen.add(extId);

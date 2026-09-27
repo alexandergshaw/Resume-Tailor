@@ -16,19 +16,19 @@ export function selectEmailableJobs(queued) {
 }
 
 /**
- * Group emailable jobs by destination address. Jobs whose saved search has a
- * `notifyEmail` override go to that address; the rest fall back to the account
- * email. Jobs with no resolvable recipient are dropped.
+ * Group emailable jobs under the account's own email address. There is no
+ * per-search recipient override (owner ruling 1): every alert goes to the
+ * account email, and jobs are dropped only when there is no account address
+ * to send to.
  * @param {Array<object>} emailable
- * @param {string|null} fallbackEmail
+ * @param {string|null} accountAddress
  * @returns {Map<string, Array<object>>}
  */
-export function groupJobsByRecipient(emailable, fallbackEmail) {
+export function groupJobsForAccount(emailable, accountAddress) {
   const map = new Map();
+  const to = (typeof accountAddress === "string" ? accountAddress : "").trim();
+  if (!to) return map;
   for (const job of Array.isArray(emailable) ? emailable : []) {
-    const override = typeof job?.notifyEmail === "string" ? job.notifyEmail.trim() : "";
-    const to = override || (fallbackEmail || "").trim();
-    if (!to) continue;
     if (!map.has(to)) map.set(to, []);
     map.get(to).push(job);
   }

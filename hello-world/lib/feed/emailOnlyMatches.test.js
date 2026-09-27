@@ -100,14 +100,19 @@ describe("selectEmailOnlyJobs", () => {
     expect(jobs[0].externalId).toBe("gh-1");
   });
 
-  it("passes the per-search notify_email override through", () => {
+  it("does not emit a per-search recipient override on the job summary (N60 S2)", () => {
+    // Owner ruling 1: the notify_email recipient override is removed. Even when the
+    // saved-search row carries one, it must NOT be propagated onto the job summary
+    // -- alerts go only to the account address downstream. RED on HEAD, where the
+    // summary still carries `notifyEmail: "me@override.com"`.
     const postings = [posting({ source_posting_id: "gh-1" })];
     const { jobs } = selectEmailOnlyJobs(
       postings,
       [search({ notify_email: "me@override.com" })],
       new Set(),
     );
-    expect(jobs[0].notifyEmail).toBe("me@override.com");
+    expect(jobs[0]).not.toHaveProperty("notifyEmail");
+    expect(JSON.stringify(jobs[0])).not.toContain("me@override.com");
   });
 
   it("returns empty for no postings or no searches", () => {
