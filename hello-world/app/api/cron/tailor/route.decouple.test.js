@@ -84,6 +84,18 @@ function makeAdmin(cfg) {
     storage: {
       from: () => ({ download: vi.fn(async () => ({ data: null, error: { message: "nf" } })) }),
     },
+    // N60 S4: cron/tailor/route.js now reserves a slot via rpc before every
+    // tailor and every mail send. This file's assertions are about the two
+    // eligibility queries' independence, not the ledger, so the default here
+    // models a healthy, freshly-unspent counter (every reserve succeeds) --
+    // the same as a real project with no prior spend today. A real admin
+    // client always exposes `.rpc`; nothing here narrows what any test below
+    // asserts.
+    rpc: vi.fn(async (fn) => {
+      if (fn === "reserve_auto_tailor_slot") return { data: [{ reserved: true, used_today: 1 }], error: null };
+      if (fn === "reserve_alert_mail_slot") return { data: [{ reserved: true, blocked_by: null }], error: null };
+      return { data: null, error: { message: `unmocked rpc ${fn}` } };
+    }),
   };
 }
 

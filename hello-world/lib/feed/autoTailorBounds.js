@@ -15,14 +15,13 @@ export const MAX_TAILORS_PER_USER_PER_RUN = 5;
 // `auto_tailor_daily_cap` on saved_searches is the user's own LOWERABLE
 // version of this, never a per-search number of its own.
 //
-// Kept module-private on purpose: nothing at S3 reads it yet -- S4's durable
-// counter (lib/feed/autoTailorSpendLedger.js) is the first caller. Exporting
-// a not-yet-consumed constant now would make it a test-only export and move
-// lib/sourceScan/exportReachability.sweep.test.js's pinned counts (363/435),
-// the same reason lib/feed/llmSearchQueries.js keeps DEFAULT_MAX_QUERIES
-// module-private. Referenced by the predicate below so it is not a floating,
-// unused literal.
-const MAX_TAILORS_PER_USER_PER_UTC_DAY = 20;
+// N60 S4: now exported. app/api/cron/tailor/route.js imports it to compute
+// the user-scoped daily cap it passes into reserveDailyTailor -- a real
+// shipping call site, so this is no longer a test-only export (see the
+// header note this replaced, and exportReachability.sweep.test.js's pinned
+// counts, which this does not move because the sole new importer is
+// production code, not a test).
+export const MAX_TAILORS_PER_USER_PER_UTC_DAY = 20;
 
 /**
  * Pure. How many more postings may be tailored for this user today, given

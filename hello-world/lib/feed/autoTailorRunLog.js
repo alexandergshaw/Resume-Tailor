@@ -25,6 +25,10 @@ export const SKIP_REASONS = Object.freeze({
   ALREADY_TRACKED: "already_tracked",
   TAILOR_THREW: "tailor_threw",
   COUNTER_UNREADABLE: "spend_counter_unreadable",
+  // N60 S4: a kill-switch-disabled run must not mislabel itself as "no new
+  // postings" -- these are the two ways the feature switch stops a run.
+  KILL_SWITCH: "disabled_by_kill_switch",
+  KILL_SWITCH_UNREADABLE: "kill_switch_unreadable",
 });
 
 const ZERO_REASONS = Object.freeze({
@@ -34,6 +38,8 @@ const ZERO_REASONS = Object.freeze({
   CEILING_REACHED: "per_day_ceiling_reached",
   NO_NEW_POSTINGS: "no_new_matching_postings",
   COUNTER_UNREADABLE: "spend_counter_unreadable",
+  KILL_SWITCH: "disabled_by_kill_switch",
+  KILL_SWITCH_UNREADABLE: "kill_switch_unreadable",
 });
 
 // A broken/errored eligibility query always outranks every other zero-reason:
@@ -42,8 +48,12 @@ const ZERO_REASONS = Object.freeze({
 function autoZeroReason({ tailored, autoEligible, skipped, featureError }) {
   if (tailored > 0) return null;
   if (featureError) return ZERO_REASONS.ELIGIBILITY_QUERY_FAILED;
-  if (!autoEligible) return ZERO_REASONS.NO_ENABLED_SEARCH;
   const s = skipped || {};
+  // A switched-off run outranks everything below except an eligibility
+  // error: it explains a zero that "no new postings" would mislabel.
+  if (s[SKIP_REASONS.KILL_SWITCH_UNREADABLE]) return ZERO_REASONS.KILL_SWITCH_UNREADABLE;
+  if (s[SKIP_REASONS.KILL_SWITCH]) return ZERO_REASONS.KILL_SWITCH;
+  if (!autoEligible) return ZERO_REASONS.NO_ENABLED_SEARCH;
   if (s[SKIP_REASONS.NO_RESUME]) return ZERO_REASONS.NO_RESUME;
   if (s[SKIP_REASONS.COUNTER_UNREADABLE]) return ZERO_REASONS.COUNTER_UNREADABLE;
   if (s[SKIP_REASONS.PER_DAY_CEILING]) return ZERO_REASONS.CEILING_REACHED;

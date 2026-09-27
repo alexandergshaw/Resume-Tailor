@@ -101,48 +101,14 @@ export function buildNewJobsEmail(jobs) {
   return { subject, html, text };
 }
 
-// N60 S3 (AC-S2, AC-E2) -- the ceilings that govern alert-mail spend across
-// BOTH send sites in app/api/cron/tailor/route.js (emailNewJobs and
-// emailOnlyNewJobs), named in one place so
-// lib/feed/autoTailorSpendBounds.table.test.js's reasoned numbers and the
-// eventual send-site check can never quietly drift apart.
-//
-// Live here, not in a standalone lib/email/alertMailBounds.js, because
-// nothing calls either ceiling yet -- S4's alertMailLedger.js is the first
-// consumer -- and a brand-new file with no importer at all is a whole
-// UNREACHABLE MODULE by lib/sourceScan/exportReachability.sweep.test.js's own
-// definition (it starts from app/**/route.js et al. and follows only real
-// imports out of those), not merely an unused export. This module is already
-// reachable through cron/tailor/route.js's import of buildNewJobsEmail
-// above, so keeping the ceilings here avoids that finding without inventing
-// an import nobody needs. Both stay module-private for the same reason
-// DEFAULT_MAX_QUERIES does in lib/feed/llmSearchQueries.js: exporting a
-// not-yet-consumed constant would make it a test-only export and move
-// lib/sourceScan/exportReachability.sweep.test.js's pinned counts (363/435).
-
-// Alert-digest ceiling per recipient address per UTC day (AC-E2).
-const MAX_ALERT_MAILS_PER_ADDRESS_PER_UTC_DAY = 4;
-// Alert-digest ceiling per account across all its addresses per UTC day
-// (AC-E2). One account can hold more than one recipient address, so this is
-// a separate, wider ceiling rather than a derived multiple of the one above.
-const MAX_ALERT_MAILS_PER_ACCOUNT_PER_UTC_DAY = 10;
-
-/**
- * Pure. Whether one more alert mail may be sent, given the counts S4's
- * ledger already read for today.
- *
- * Not yet called anywhere -- S4's alertMailLedger.js is the first caller.
- * Kept module-private for the same reason the constants above are.
- *
- * @param {{perAddressCount: number, accountTotal: number}} counts
- * @returns {{allowed: boolean, reason: null | "address_day_ceiling" | "account_day_ceiling"}}
- */
-function maySendAlertMail({ perAddressCount, accountTotal }) {
-  if (perAddressCount >= MAX_ALERT_MAILS_PER_ADDRESS_PER_UTC_DAY) {
-    return { allowed: false, reason: "address_day_ceiling" };
-  }
-  if (accountTotal >= MAX_ALERT_MAILS_PER_ACCOUNT_PER_UTC_DAY) {
-    return { allowed: false, reason: "account_day_ceiling" };
-  }
-  return { allowed: true, reason: null };
-}
+// N60 S4: the alert-mail ceilings this file's S3 placeholder named here
+// (MAX_ALERT_MAILS_PER_ADDRESS_PER_UTC_DAY / _ACCOUNT_ / maySendAlertMail)
+// were never called and are now superseded by the real, atomic reserve --
+// the cap decision cannot be a client-side read-then-compare (the owner's
+// atomicity ruling, see lib/email/alertMailLedger.js's header). The ceilings
+// live in lib/email/alertMailBounds.js and are enforced server-side by
+// reserve_alert_mail_slot via lib/email/alertMailLedger.js's reserveMailSend,
+// which cron/tailor/route.js calls at both send sites. Removed rather than
+// left as dead code duplicating those two constants under the same names
+// (lib/feed/autoTailorSpendBounds.table.test.js requires each declared
+// exactly once across the tree).

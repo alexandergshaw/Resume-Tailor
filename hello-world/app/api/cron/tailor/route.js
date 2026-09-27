@@ -20,7 +20,14 @@ import {
 } from "@/lib/feed/emailOnlyMatches";
 import { sendEmail } from "@/lib/email/sendEmail";
 import { summarizeRun, SKIP_REASONS } from "@/lib/feed/autoTailorRunLog";
-import { MAX_TAILORS_PER_USER_PER_RUN } from "@/lib/feed/autoTailorBounds";
+import { MAX_TAILORS_PER_USER_PER_RUN, MAX_TAILORS_PER_USER_PER_UTC_DAY } from "@/lib/feed/autoTailorBounds";
+import { reserveDailyTailor } from "@/lib/feed/autoTailorSpendLedger";
+import { reserveMailSend } from "@/lib/email/alertMailLedger";
+import { isFeatureDisabled } from "@/lib/feed/killSwitch";
+import {
+  MAX_ALERT_MAILS_PER_ADDRESS_PER_UTC_DAY,
+  MAX_ALERT_MAILS_PER_ACCOUNT_PER_UTC_DAY,
+} from "@/lib/email/alertMailBounds";
 
 export const runtime = "nodejs";
 export const maxDuration = 300; // seconds, used by Vercel for long-running cron
@@ -98,65 +105,110 @@ async function processUser({
   const skipped = {};
   let autoProcessed = 0;
 
+  // N60 S4: the mail kill switch, read once per user, ahead of both mail
+  // paths below (AC-R4/R6, owner ruling: alert_mail fails closed on its own
+  // read error, the same as auto_tailor).
+  const mailKill = await isFeatureDisabled(admin, "alert_mail");
+
   // A broken/errored auto-tailor eligibility query skips the whole feature
   // for this user rather than guessing -- the eligibility count and the
   // feature error are reported separately below (AC-R4/AC-R6).
   if (!autoFeatureError && autoSearches.length > 0) {
-    const resumeBuffer = await loadStorageBuffer(admin, `${userId}/resume`);
-    if (!resumeBuffer) {
-      skipped[SKIP_REASONS.NO_RESUME] = (skipped[SKIP_REASONS.NO_RESUME] || 0) + autoSearches.length;
+    // N60 S4: the auto-tailor kill switch, read once per user, before any
+    // storage read or tailoring. A read error fails CLOSED (isFeatureDisabled
+    // returns disabled:true with ok:false) so an unreadable switch refuses
+    // the same way a deliberately-disabled one does, distinguishably.
+    const autoKill = await isFeatureDisabled(admin, "auto_tailor");
+    if (autoKill.disabled) {
+      const reason = autoKill.ok ? SKIP_REASONS.KILL_SWITCH : SKIP_REASONS.KILL_SWITCH_UNREADABLE;
+      skipped[reason] = (skipped[reason] || 0) + autoSearches.length;
     } else {
-      const coverLetterBuffer = await loadStorageBuffer(admin, `${userId}/cover-letter`);
+      // N60 S4 (owner ruling 2): the per-user daily cap is user-scoped, no
+      // per-search dimension -- the min across the user's auto-enabled
+      // searches' own (already-clamped) daily caps and the global ceiling.
+      const userDailyCap = Math.min(
+        MAX_TAILORS_PER_USER_PER_UTC_DAY,
+        ...autoSearches.map((s) => Math.max(1, s.auto_tailor_daily_cap || 10)),
+      );
 
-      for (const savedSearch of autoSearches) {
-        const remaining = MAX_TAILORS_PER_USER_PER_RUN - queued.length;
-        if (remaining <= 0) {
-          skipped[SKIP_REASONS.PER_RUN_CAP] = (skipped[SKIP_REASONS.PER_RUN_CAP] || 0) + 1;
-          break;
-        }
-        autoProcessed += 1;
+      const resumeBuffer = await loadStorageBuffer(admin, `${userId}/resume`);
+      if (!resumeBuffer) {
+        skipped[SKIP_REASONS.NO_RESUME] = (skipped[SKIP_REASONS.NO_RESUME] || 0) + autoSearches.length;
+      } else {
+        const coverLetterBuffer = await loadStorageBuffer(admin, `${userId}/cover-letter`);
+        // Set once a reserve refuses or the counter is unreadable -- both are
+        // user-level terminal states for this run, so no later search may
+        // spend either (N60 S4).
+        let userStop = false;
 
-        const postings = await loadFeedPostings(admin, savedSearch);
-        totalScanned += postings.length;
-
-        const externalIds = postings.map(postingExternalId).filter(Boolean);
-        const alreadyTracked = await loadAlreadyTrackedExternalIds(admin, userId, externalIds);
-
-        const perSearchCap = Math.max(1, savedSearch.auto_tailor_daily_cap || 10);
-        const cap = Math.min(perSearchCap, remaining);
-
-        const candidates = selectQueueCandidates(postings, savedSearch, alreadyTracked, cap);
-
-        for (const posting of candidates) {
-          if (queued.length >= MAX_TAILORS_PER_USER_PER_RUN) break;
-          try {
-            const result = await tailorAndQueueOne({
-              admin,
-              userId,
-              savedSearch,
-              posting,
-              resumeBuffer,
-              coverLetterBuffer,
-              savedSearchId: savedSearch.id,
-              sourceLabel: `saved search "${savedSearch.name}"`,
-            });
-            if (result)
-              queued.push({
-                ...result,
-                savedSearchId: savedSearch.id,
-                savedSearchName: savedSearch.name,
-                emailOnNewJobs: !!savedSearch.email_on_new_jobs,
-              });
-          } catch (err) {
-            skipped[SKIP_REASONS.TAILOR_THREW] = (skipped[SKIP_REASONS.TAILOR_THREW] || 0) + 1;
-            console.error(`[cron] queue failed for user=${userId} posting=${posting?.id}:`, err?.message || err);
+        for (const savedSearch of autoSearches) {
+          const remaining = MAX_TAILORS_PER_USER_PER_RUN - queued.length;
+          if (remaining <= 0) {
+            skipped[SKIP_REASONS.PER_RUN_CAP] = (skipped[SKIP_REASONS.PER_RUN_CAP] || 0) + 1;
+            break;
           }
-        }
+          autoProcessed += 1;
 
-        await admin
-          .from("saved_searches")
-          .update({ last_run_at: new Date().toISOString() })
-          .eq("id", savedSearch.id);
+          const postings = await loadFeedPostings(admin, savedSearch);
+          totalScanned += postings.length;
+
+          const externalIds = postings.map(postingExternalId).filter(Boolean);
+          const alreadyTracked = await loadAlreadyTrackedExternalIds(admin, userId, externalIds);
+
+          const perSearchCap = Math.max(1, savedSearch.auto_tailor_daily_cap || 10);
+          const cap = Math.min(perSearchCap, remaining);
+
+          const candidates = selectQueueCandidates(postings, savedSearch, alreadyTracked, cap);
+
+          for (const posting of candidates) {
+            if (queued.length >= MAX_TAILORS_PER_USER_PER_RUN) break;
+
+            // N60 S4: reserve the daily slot BEFORE any spend. An atomic
+            // rpc, so no spend can precede a successful reserve and no
+            // overlapping run can spend past the ceiling.
+            const reservation = await reserveDailyTailor(admin, userId, { cap: userDailyCap });
+            if (!reservation.ok) {
+              skipped[SKIP_REASONS.COUNTER_UNREADABLE] = (skipped[SKIP_REASONS.COUNTER_UNREADABLE] || 0) + 1;
+              userStop = true;
+              break;
+            }
+            if (!reservation.reserved) {
+              skipped[SKIP_REASONS.PER_DAY_CEILING] = (skipped[SKIP_REASONS.PER_DAY_CEILING] || 0) + 1;
+              userStop = true;
+              break;
+            }
+
+            try {
+              const result = await tailorAndQueueOne({
+                admin,
+                userId,
+                savedSearch,
+                posting,
+                resumeBuffer,
+                coverLetterBuffer,
+                savedSearchId: savedSearch.id,
+                sourceLabel: `saved search "${savedSearch.name}"`,
+              });
+              if (result)
+                queued.push({
+                  ...result,
+                  savedSearchId: savedSearch.id,
+                  savedSearchName: savedSearch.name,
+                  emailOnNewJobs: !!savedSearch.email_on_new_jobs,
+                });
+            } catch (err) {
+              skipped[SKIP_REASONS.TAILOR_THREW] = (skipped[SKIP_REASONS.TAILOR_THREW] || 0) + 1;
+              console.error(`[cron] queue failed for user=${userId} posting=${posting?.id}:`, err?.message || err);
+            }
+          }
+
+          await admin
+            .from("saved_searches")
+            .update({ last_run_at: new Date().toISOString() })
+            .eq("id", savedSearch.id);
+
+          if (userStop) break;
+        }
       }
     }
   }
@@ -186,7 +238,7 @@ async function processUser({
     // Best-effort email alert for queued jobs whose search opted in. Never let
     // an email failure break the queueing pipeline.
     try {
-      await emailNewJobs({ admin, userId, queued });
+      await emailNewJobs({ admin, userId, queued, mailKill });
     } catch (err) {
       console.error(`[cron] new-jobs email step failed for user=${userId}:`, err?.message || err);
     }
@@ -202,6 +254,7 @@ async function processUser({
         admin,
         userId,
         savedSearches: emailOnlySearches,
+        mailKill,
       });
     } catch (err) {
       console.error(`[cron] email-only step failed for user=${userId}:`, err?.message || err);
@@ -226,7 +279,7 @@ async function processUser({
 
 // Email a summary of newly-queued jobs to the account's own email address.
 // There is no per-search recipient override (owner ruling 1).
-async function emailNewJobs({ admin, userId, queued }) {
+async function emailNewJobs({ admin, userId, queued, mailKill }) {
   const emailable = selectEmailableJobs(queued);
   if (emailable.length === 0) return;
 
@@ -241,11 +294,22 @@ async function emailNewJobs({ admin, userId, queued }) {
   const groups = groupJobsForAccount(emailable, accountEmail);
   for (const [to, jobs] of groups.entries()) {
     try {
-      const { subject, html, text } = buildNewJobsEmail(jobs);
-      const result = await sendEmail({ to, subject, html, text });
-      if (result?.skipped) {
-        console.warn(`[cron] new-jobs email skipped for user=${userId}: ${result.reason}`);
+      // N60 S4: the mail kill switch gates every send; a reserved slot is
+      // required before sendEmail, never after (owner ruling, same shape as
+      // the tailor reserve).
+      if (mailKill.disabled) continue;
+      const slot = await reserveMailSend(admin, userId, to, {
+        perAddressCap: MAX_ALERT_MAILS_PER_ADDRESS_PER_UTC_DAY,
+        perAccountCap: MAX_ALERT_MAILS_PER_ACCOUNT_PER_UTC_DAY,
+      });
+      if (slot.ok && slot.reserved) {
+        const { subject, html, text } = buildNewJobsEmail(jobs);
+        const result = await sendEmail({ to, subject, html, text });
+        if (result?.skipped) {
+          console.warn(`[cron] new-jobs email skipped for user=${userId}: ${result.reason}`);
+        }
       }
+      // slot refused or counter_unreadable => do not send.
     } catch (err) {
       console.error(`[cron] new-jobs email failed for user=${userId} to=${to}:`, err?.message || err);
     }
@@ -256,7 +320,7 @@ async function emailNewJobs({ admin, userId, queued }) {
 // searches, without tailoring or queueing anything. Idempotent: postings are
 // recorded in `email_notified_postings` once delivered so they're never emailed
 // twice. Returns the number of postings emailed about.
-async function emailOnlyNewJobs({ admin, userId, savedSearches }) {
+async function emailOnlyNewJobs({ admin, userId, savedSearches, mailKill }) {
   if (!Array.isArray(savedSearches) || savedSearches.length === 0) return 0;
 
   const postings = await loadFeedPostings(admin, null);
@@ -285,13 +349,24 @@ async function emailOnlyNewJobs({ admin, userId, savedSearches }) {
   let anySent = false;
   for (const [to, list] of groups.entries()) {
     try {
-      const { subject, html, text } = buildNewJobsEmail(list);
-      const result = await sendEmail({ to, subject, html, text });
-      if (result?.skipped) {
-        console.warn(`[cron] email-only alert skipped for user=${userId}: ${result.reason}`);
-      } else {
-        anySent = true;
+      // N60 S4: same kill-switch + reserve-before-send gate as emailNewJobs.
+      // A refused/unreadable slot leaves anySent false for this batch, so
+      // the carry-forward below (AC-E2) retries these postings next run.
+      if (mailKill.disabled) continue;
+      const slot = await reserveMailSend(admin, userId, to, {
+        perAddressCap: MAX_ALERT_MAILS_PER_ADDRESS_PER_UTC_DAY,
+        perAccountCap: MAX_ALERT_MAILS_PER_ACCOUNT_PER_UTC_DAY,
+      });
+      if (slot.ok && slot.reserved) {
+        const { subject, html, text } = buildNewJobsEmail(list);
+        const result = await sendEmail({ to, subject, html, text });
+        if (result?.skipped) {
+          console.warn(`[cron] email-only alert skipped for user=${userId}: ${result.reason}`);
+        } else {
+          anySent = true;
+        }
       }
+      // slot refused or counter_unreadable => do not send, do not set anySent.
     } catch (err) {
       console.error(`[cron] email-only alert failed for user=${userId} to=${to}:`, err?.message || err);
     }
