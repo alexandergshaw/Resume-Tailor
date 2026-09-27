@@ -19,6 +19,7 @@ import {
   recordNotifiedExternalIds,
 } from "@/lib/feed/emailOnlyMatches";
 import { sendEmail } from "@/lib/email/sendEmail";
+import { signUnsubscribeToken, unsubscribeUrl } from "@/lib/email/alertUnsubscribeToken";
 import { summarizeRun, SKIP_REASONS } from "@/lib/feed/autoTailorRunLog";
 import { MAX_TAILORS_PER_USER_PER_RUN, MAX_TAILORS_PER_USER_PER_UTC_DAY } from "@/lib/feed/autoTailorBounds";
 import { reserveDailyTailor } from "@/lib/feed/autoTailorSpendLedger";
@@ -283,6 +284,17 @@ async function processUser({
   };
 }
 
+// N60 S5 (AC-E3 + owner ruling): the absolute one-click unsubscribe link for
+// an account's alert mail. Returns null when it cannot be built -- the secret
+// is unset, or there is no configured base URL -- and a null here is treated
+// as a config-gate refusal by both send paths below: an alert that cannot
+// carry a working off switch must not be sent (the same defect AC-E5 closes
+// for an unconfigured sender).
+function buildAccountUnsubscribeUrl(userId) {
+  const token = signUnsubscribeToken(userId);
+  return unsubscribeUrl(token, process.env.RESUME_TAILOR_API_URL);
+}
+
 // Email a summary of newly-queued jobs to the account's own email address.
 // There is no per-search recipient override (owner ruling 1).
 async function emailNewJobs({ admin, userId, queued, mailKill }) {
@@ -297,22 +309,25 @@ async function emailNewJobs({ admin, userId, queued, mailKill }) {
     console.error(`[cron] could not resolve account email for user=${userId}:`, err?.message || err);
   }
 
+  const unsubUrl = buildAccountUnsubscribeUrl(userId);
   const groups = groupJobsForAccount(emailable, accountEmail);
   for (const [to, jobs] of groups.entries()) {
     try {
       // N60 S4: the mail kill switch gates every send; a reserved slot is
       // required before sendEmail, never after (owner ruling, same shape as
-      // the tailor reserve).
-      if (mailKill.disabled) continue;
+      // the tailor reserve). N60 S5: an alert with no working unsubscribe
+      // link is refused the same way -- checked before reserving, so a
+      // permanently unminted link never spends a mail slot.
+      if (mailKill.disabled || !unsubUrl) continue;
       const slot = await reserveMailSend(admin, userId, to, {
         perAddressCap: MAX_ALERT_MAILS_PER_ADDRESS_PER_UTC_DAY,
         perAccountCap: MAX_ALERT_MAILS_PER_ACCOUNT_PER_UTC_DAY,
       });
       if (slot.ok && slot.reserved) {
-        const { subject, html, text } = buildNewJobsEmail(jobs);
+        const { subject, html, text } = buildNewJobsEmail(jobs, { unsubscribeUrl: unsubUrl });
         const result = await sendEmail({ to, subject, html, text });
-        if (result?.skipped) {
-          console.warn(`[cron] new-jobs email skipped for user=${userId}: ${result.reason}`);
+        if (!result?.ok) {
+          console.warn(`[cron] new-jobs email not sent for user=${userId}: ${result?.reason || "unknown"}`);
         }
       }
       // slot refused or counter_unreadable => do not send.
@@ -351,25 +366,33 @@ async function emailOnlyNewJobs({ admin, userId, savedSearches, mailKill }) {
     console.error(`[cron] could not resolve account email for user=${userId}:`, err?.message || err);
   }
 
+  const unsubUrl = buildAccountUnsubscribeUrl(userId);
   const groups = groupJobsForAccount(selectEmailableJobs(jobs), accountEmail);
   let anySent = false;
   for (const [to, list] of groups.entries()) {
     try {
       // N60 S4: same kill-switch + reserve-before-send gate as emailNewJobs.
-      // A refused/unreadable slot leaves anySent false for this batch, so
-      // the carry-forward below (AC-E2) retries these postings next run.
-      if (mailKill.disabled) continue;
+      // N60 S5: an alert with no working unsubscribe link is refused the same
+      // way, before reserving a slot. A refused/unreadable/unminted-link
+      // batch leaves anySent false, so the carry-forward below (AC-E2)
+      // retries these postings next run.
+      if (mailKill.disabled || !unsubUrl) continue;
       const slot = await reserveMailSend(admin, userId, to, {
         perAddressCap: MAX_ALERT_MAILS_PER_ADDRESS_PER_UTC_DAY,
         perAccountCap: MAX_ALERT_MAILS_PER_ACCOUNT_PER_UTC_DAY,
       });
       if (slot.ok && slot.reserved) {
-        const { subject, html, text } = buildNewJobsEmail(list);
+        const { subject, html, text } = buildNewJobsEmail(list, { unsubscribeUrl: unsubUrl });
         const result = await sendEmail({ to, subject, html, text });
-        if (result?.skipped) {
-          console.warn(`[cron] email-only alert skipped for user=${userId}: ${result.reason}`);
-        } else {
+        // N60 S5 (AC-E5 carry-forward): a send that did not succeed -- for
+        // ANY reason, `skipped` or the new `refused` shape alike -- must not
+        // mark these postings notified. Gating on `result.ok` (rather than
+        // the old `!result.skipped`) is what makes the guard catch every
+        // "did not send" outcome, not just the one HEAD already handled.
+        if (result?.ok) {
           anySent = true;
+        } else {
+          console.warn(`[cron] email-only alert not sent for user=${userId}: ${result?.reason || "unknown"}`);
         }
       }
       // slot refused or counter_unreadable => do not send, do not set anySent.

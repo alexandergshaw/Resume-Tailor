@@ -8,21 +8,29 @@
 // Configure with env vars:
 //   RESEND_API_KEY  — required to actually send (otherwise sends are skipped)
 //   EMAIL_FROM      — verified "From" address, e.g. "Resume Tailor <jobs@yourdomain.com>"
+//
+// N60 S5 (AC-E5): there is deliberately NO fallback "From" address. A missing
+// EMAIL_FROM used to silently substitute Resend's shared sandbox sender
+// ("onboarding@resend.dev") -- a domain this product does not control -- which
+// made a broken configuration look identical to a working one. A missing
+// EMAIL_FROM is now a visible, named REFUSAL: nothing is sent.
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
-const DEFAULT_FROM = "Resume Tailor <onboarding@resend.dev>";
 
 /**
  * Send a single transactional email. Best-effort: when no API key is
  * configured it resolves with `{ ok: false, skipped: true }` instead of
- * throwing, so callers can stay non-fatal. Genuine API failures throw.
+ * throwing, so callers can stay non-fatal. A missing EMAIL_FROM resolves with
+ * `{ ok: false, refused: true }` -- a distinct shape, so callers can tell "not
+ * configured at all" from "configured but missing a sender" -- and never
+ * reaches the network. Genuine API failures throw.
  *
  * @param {object} args
  * @param {string} args.to       recipient address
  * @param {string} args.subject
  * @param {string} args.html
  * @param {string} [args.text]
- * @returns {Promise<{ ok: boolean, id?: string|null, skipped?: boolean, reason?: string }>}
+ * @returns {Promise<{ ok: boolean, id?: string|null, skipped?: boolean, refused?: boolean, reason?: string }>}
  */
 export async function sendEmail({ to, subject, html, text }) {
   const apiKey = process.env.RESEND_API_KEY;
@@ -33,7 +41,10 @@ export async function sendEmail({ to, subject, html, text }) {
     return { ok: false, skipped: true, reason: "missing 'to' or 'subject'" };
   }
 
-  const from = process.env.EMAIL_FROM || DEFAULT_FROM;
+  const from = typeof process.env.EMAIL_FROM === "string" ? process.env.EMAIL_FROM.trim() : "";
+  if (!from) {
+    return { ok: false, refused: true, reason: "EMAIL_FROM not set" };
+  }
 
   const res = await fetch(RESEND_ENDPOINT, {
     method: "POST",

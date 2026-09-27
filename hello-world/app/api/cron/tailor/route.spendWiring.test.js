@@ -157,6 +157,14 @@ const resultFor = (body, userId = "user-1") =>
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("CRON_SECRET", "s3cret");
+  // N60 S5: the route now refuses to send when it cannot mint a working
+  // unsubscribe link (owner ruling -- folded into the config gate). This
+  // file's send controls are about the spend/kill-switch wiring, not the
+  // unsubscribe link, so both env vars are stubbed present here as mock
+  // plumbing, exactly as the reserve/kill-switch collaborators above are
+  // stubbed to succeed by default.
+  vi.stubEnv("ALERT_UNSUBSCRIBE_SECRET", "unit-test-secret-value");
+  vi.stubEnv("RESUME_TAILOR_API_URL", "https://app.example.com");
   // Sensible per-test defaults; tests override what they exercise.
   isFeatureDisabled.mockResolvedValue({ ok: true, disabled: false });
   reserveDailyTailor.mockResolvedValue({ ok: true, reserved: true, usedToday: 1 });

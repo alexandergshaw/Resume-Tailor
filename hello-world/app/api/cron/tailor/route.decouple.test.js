@@ -158,6 +158,13 @@ const authedReq = () =>
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("CRON_SECRET", "s3cret");
+  // N60 S5: the route now refuses to send when it cannot mint a working
+  // unsubscribe link (owner ruling -- folded into the config gate). This
+  // file's "still delivers email-only alerts" assertion is about AC-R6's
+  // feature independence, not the unsubscribe link, so both env vars are
+  // stubbed present as mock plumbing.
+  vi.stubEnv("ALERT_UNSUBSCRIBE_SECRET", "unit-test-secret-value");
+  vi.stubEnv("RESUME_TAILOR_API_URL", "https://app.example.com");
 });
 afterEach(() => vi.unstubAllEnvs());
 

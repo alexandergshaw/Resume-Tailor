@@ -52,10 +52,18 @@ function jobLine(job) {
 
 /**
  * Build subject + HTML + plain-text bodies summarizing newly-matched jobs.
+ *
+ * `unsubscribeUrl` is additive (N60 S5, AC-E3): when supplied it is embedded
+ * as a reachable link -- an `<a href>` in the HTML body, the absolute URL in
+ * the text body -- rather than the previous footer, which named the remedy
+ * ("email alerts are on for a saved search") without making it reachable.
+ * Omitting it keeps the original one-argument body unchanged.
+ *
  * @param {Array<object>} jobs summary objects ({ title, company, url, savedSearchName })
+ * @param {{ unsubscribeUrl?: string|null }} [options]
  * @returns {{ subject: string, html: string, text: string }}
  */
-export function buildNewJobsEmail(jobs) {
+export function buildNewJobsEmail(jobs, { unsubscribeUrl } = {}) {
   const list = Array.isArray(jobs) ? jobs.filter(Boolean) : [];
   const count = list.length;
 
@@ -82,10 +90,13 @@ export function buildNewJobsEmail(jobs) {
     })
     .join("");
 
+  const htmlUnsubscribe = unsubscribeUrl
+    ? ` <a href="${escapeHtml(unsubscribeUrl)}" style="color:#1565c0;">Unsubscribe</a>`
+    : "";
   const html = `<div style="font-family:Arial,Helvetica,sans-serif;color:#263238;line-height:1.5;">
     <p style="margin:0 0 12px;">${escapeHtml(intro)}</p>
     <ul style="padding-left:18px;margin:0 0 16px;">${htmlItems}</ul>
-    <p style="color:#90a4ae;font-size:12px;margin:0;">You're receiving this because email alerts are on for a saved search in Resume Tailor.</p>
+    <p style="color:#90a4ae;font-size:12px;margin:0;">You're receiving this because email alerts are on for a saved search in Resume Tailor.${htmlUnsubscribe}</p>
   </div>`;
 
   const textItems = list
@@ -96,7 +107,8 @@ export function buildNewJobsEmail(jobs) {
     })
     .join("\n");
 
-  const text = `${intro}\n\n${textItems}\n\nYou're receiving this because email alerts are on for a saved search in Resume Tailor.`;
+  const textUnsubscribe = unsubscribeUrl ? `\nUnsubscribe: ${unsubscribeUrl}` : "";
+  const text = `${intro}\n\n${textItems}\n\nYou're receiving this because email alerts are on for a saved search in Resume Tailor.${textUnsubscribe}`;
 
   return { subject, html, text };
 }
