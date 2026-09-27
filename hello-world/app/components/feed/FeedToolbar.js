@@ -124,6 +124,16 @@ export default function FeedToolbar({
             Queue
           </Badge>
         </Button>
+        <Button
+          size="small"
+          disableElevation
+          variant={view === "automation" ? "contained" : "text"}
+          color={view === "automation" ? "primary" : "inherit"}
+          onClick={() => onChangeView("automation")}
+          sx={{ textTransform: "none", fontWeight: 600, borderRadius: 0, px: 1.75 }}
+        >
+          Automation
+        </Button>
       </Box>
 
       <Badge

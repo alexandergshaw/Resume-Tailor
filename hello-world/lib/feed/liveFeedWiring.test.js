@@ -26,6 +26,9 @@ const FEED_COMPONENTS = [
   "../../app/components/feed/FeedPostingCard.js",
   "../../app/components/feed/FeedToolbar.js",
   "../../app/components/feed/FeedFilterSummary.js",
+  "../../app/components/feed/FeedRefinePanel.js",
+  "../../app/components/feed/FeedAutomationPanel.js",
+  "../../app/components/feed/FeedAutomationCard.js",
 ];
 
 describe("LiveFeedTab renders the extracted components", () => {

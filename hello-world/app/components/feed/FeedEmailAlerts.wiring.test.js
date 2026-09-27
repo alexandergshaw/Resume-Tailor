@@ -7,14 +7,21 @@
 // used to read `notifyEmail` was deleted in the same commits that left this
 // input standing.
 //
+// RE-POINTED (N60 S8). FeedEmailAlerts.js is gone -- its markup (the
+// email-alerts toggle, moved out of the Filters sheet per AC-F2/F3) now
+// lives in FeedAutomationCard.js, beside the auto-tailor enable control this
+// step adds. The three properties this file polices are about that markup,
+// not about which file it lives in, so they are re-pointed at the new file
+// rather than dropped.
+//
 // WHY STRUCTURAL, NOT A LITERAL GREP. A test that just asserts
 // `!source.includes("notifyEmail")` passes the moment someone reintroduces
 // the same control under a different prop name (`recipientEmail`,
 // `alertTo`, ...) -- exactly the kind of rename this repo's own traps note
-// warns about. This instead asks a structural question: does the alerts
-// panel render ANY editable text-entry control at all? It should not --
-// every alert in this panel is a toggle plus static text, nothing the user
-// types into. That property survives a rename of the removed field.
+// warns about. This instead asks a structural question: does the card
+// render ANY editable text-entry control at all? It should not -- every
+// email affordance in this card is a toggle plus static text, nothing the
+// user types into. That property survives a rename of the removed field.
 //
 // CANARIED. The detector below is exercised against a synthetic snippet
 // that DOES contain an editable control first, so a typo or a dead regex
@@ -25,7 +32,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 
 const source = readFileSync(
-  new URL("./FeedEmailAlerts.js", import.meta.url),
+  new URL("./FeedAutomationCard.js", import.meta.url),
   "utf8",
 );
 
@@ -53,7 +60,7 @@ function findEditableControls(src) {
   return found;
 }
 
-describe("class guard: FeedEmailAlerts never re-grows an editable recipient control", () => {
+describe("class guard: FeedAutomationCard never re-grows an editable recipient control", () => {
   it("canary: the detector actually finds an editable control when one is present", () => {
     // Proves findEditableControls is a real detector, not a regex that
     // always comes back empty. If this fails, the "none found" assertion
@@ -84,7 +91,7 @@ describe("class guard: FeedEmailAlerts never re-grows an editable recipient cont
     );
   });
 
-  it("the shipped alerts panel renders no editable text-entry control at all", () => {
+  it("the shipped automation card renders no editable text-entry control at all", () => {
     expect(findEditableControls(source)).toEqual([]);
   });
 

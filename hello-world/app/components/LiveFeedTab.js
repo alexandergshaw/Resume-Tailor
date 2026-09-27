@@ -17,15 +17,14 @@ import FormDialog from "./FormDialog";
 import { useIsMobile } from "../hooks/useResponsive";
 import { TOUCH_FIELD_SX, TOUCH_ICON_SX, TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 import styles from "../page.module.css";
-import JobFilterControls from "./JobFilterControls";
 import SavedSearchStrip from "./SavedSearchStrip";
 import AutoApplyQueueTab from "./AutoApplyQueueTab";
 import AutofillProfileDialog from "./AutofillProfileDialog";
 import FeedPostingCard from "./feed/FeedPostingCard";
 import FeedToolbar from "./feed/FeedToolbar";
 import FeedFilterSummary from "./feed/FeedFilterSummary";
-import FeedEmailAlerts from "./feed/FeedEmailAlerts";
-import FeedSearchFields from "./feed/FeedSearchFields";
+import FeedRefinePanel from "./feed/FeedRefinePanel";
+import FeedAutomationPanel from "./feed/FeedAutomationPanel";
 import { buildBookmarklet, profileHasValues } from "@/lib/autofill/buildBookmarklet";
 import { openPostingBeside } from "@/lib/window/openPostingBeside";
 import {
@@ -641,55 +640,24 @@ export default function LiveFeedTab({
         saveLabel="current feed search"
       />
 
-      <FeedEmailAlerts
-        currentUser={currentUser}
-        setSavedSearchAutoTailor={setSavedSearchAutoTailor}
-        savedSearches={savedSearches}
-      />
-
       <Divider sx={{ my: 2 }} />
 
       {/* Active filter summary chips */}
       <FeedFilterSummary chips={activeFilterChips} onClearAll={clearAllFilters} />
 
-      {/* Search section */}
-      <Typography
-        variant="overline"
-        color="text.secondary"
-        sx={{ display: "block", letterSpacing: 0.6, mb: 1 }}
-      >
-        Search
-      </Typography>
-      <FeedSearchFields filters={filters} updateFilter={updateFilter} />
-
-      <Divider sx={{ my: 2 }} />
-
-      {/* Refine section */}
-      <Typography
-        variant="overline"
-        color="text.secondary"
-        sx={{ display: "block", letterSpacing: 0.6, mb: 1 }}
-      >
-        Refine
-      </Typography>
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-        <JobFilterControls
-          jobKeywords={advanced.jobKeywords}
-          setJobKeywords={setJobKeywords}
-          maxYearsExp={advanced.maxYearsExp}
-          setMaxYearsExp={setMaxYearsExp}
-          selectedCategories={advanced.selectedCategories}
-          setSelectedCategories={setSelectedCategories}
-          selectedCompanies={advanced.selectedCompanies}
-          setSelectedCompanies={setSelectedCompanies}
-          excludedCompanies={advanced.excludedCompanies}
-          setExcludedCompanies={setExcludedCompanies}
-          excludedTitleKeywords={advanced.excludedTitleKeywords}
-          setExcludedTitleKeywords={setExcludedTitleKeywords}
-          GREENHOUSE_COMPANIES={GREENHOUSE_COMPANIES}
-          COMPANY_CATEGORIES={COMPANY_CATEGORIES}
-        />
-      </Box>
+      <FeedRefinePanel
+        filters={filters}
+        updateFilter={updateFilter}
+        advanced={advanced}
+        setJobKeywords={setJobKeywords}
+        setMaxYearsExp={setMaxYearsExp}
+        setSelectedCategories={setSelectedCategories}
+        setSelectedCompanies={setSelectedCompanies}
+        setExcludedCompanies={setExcludedCompanies}
+        setExcludedTitleKeywords={setExcludedTitleKeywords}
+        GREENHOUSE_COMPANIES={GREENHOUSE_COMPANIES}
+        COMPANY_CATEGORIES={COMPANY_CATEGORIES}
+      />
     </>
   );
 
@@ -750,7 +718,13 @@ export default function LiveFeedTab({
         </Collapse>
       )}
 
-      {view === "queue" ? (
+      {view === "automation" ? (
+        <FeedAutomationPanel
+          currentUser={currentUser}
+          savedSearches={savedSearches}
+          setSavedSearchAutoTailor={setSavedSearchAutoTailor}
+        />
+      ) : view === "queue" ? (
         <AutoApplyQueueTab
           currentUser={currentUser}
           savedSearches={savedSearches}
