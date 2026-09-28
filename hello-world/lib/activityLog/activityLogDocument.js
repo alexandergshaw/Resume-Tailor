@@ -29,7 +29,7 @@
 //      that overflows.
 
 import { formatDroppedNames } from "../experience/droppedNames.js";
-import { CAPTURED_CHANNELS, UNCAPTURED_SURFACES, FEATURE_LOG_LEDGER } from "./activityChannels.js";
+import { CAPTURED_CHANNELS, UNCAPTURED_SURFACES, FEATURE_LOG_LEDGER, DECISION_LEDGER } from "./activityChannels.js";
 import { MAX_ACTIVITY_EVENTS } from "./appActivityLog.js";
 
 // How much of the drop notice the NAMES may occupy. The reserve never moves,
@@ -152,6 +152,34 @@ function renderScope(lines) {
   lines.push("");
   for (const entry of FEATURE_LOG_LEDGER) {
     lines.push(entry.attached ? `- **${entry.label}** — included below.` : `- **${entry.label}** — not included. ${entry.why}`);
+  }
+  lines.push("");
+
+  renderDecisions(lines);
+}
+
+// ITEM 5: the reader must be able to tell "this feature was silent this
+// session" from "this feature never reports at all" -- exactly the
+// distinction the owner could not draw. So this section names every feature
+// registered on DECISION_LEDGER even when nothing was recorded: the list of
+// decision reporters, present EVEN IN AN EMPTY SESSION, is what draws that
+// line. Which of those features actually fired this session is answered by
+// the events list below, not by this section -- this section only answers
+// "which features could have".
+function renderDecisions(lines) {
+  lines.push("### Decisions this app can report on");
+  lines.push("");
+  if (DECISION_LEDGER.length === 0) {
+    lines.push("_No feature in this app is registered to report a decision._");
+    lines.push("");
+    return;
+  }
+  lines.push(
+    "These features record not just what happened but why: whether they acted and, when they did not, the reason. A feature listed here that never appears in the events below was silent this session -- it does not mean the feature cannot report at all.",
+  );
+  lines.push("");
+  for (const entry of DECISION_LEDGER) {
+    lines.push(`- **${entry.label}**`);
   }
   lines.push("");
 }

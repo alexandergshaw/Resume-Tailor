@@ -49,6 +49,7 @@
 // this one stays testable without a browser.
 
 import { redactSecretsDeep, redactSecretText } from "./activityRedaction.js";
+import { DECISION_LEDGER, DECISION_OUTCOMES } from "./activityChannels.js";
 
 export const ACTIVITY_LOG_SCHEMA = 1;
 
@@ -165,6 +166,40 @@ export function createActivityLog({ now = Date.now, startedAt } = {}) {
     }
   }
 
+  // recordDecision(id, outcome, fields) -- the decision seam
+  // (activityChannels.js's DECISION_LEDGER). Distinct from record() above: a
+  // feature action goes through record() carrying whatever fields it likes,
+  // but a DECISION is downgraded to a closed vocabulary on both axes before
+  // it ever reaches the ledger, because this file is downloaded and shared
+  // onward and a decision record's whole job is explaining why, never what.
+  //
+  // FAIL CLOSED: an id this ledger does not recognize gets an empty field
+  // vocabulary rather than the caller's fields verbatim, so an unknown
+  // decision can carry nothing instead of everything. An out-of-vocabulary
+  // outcome is normalized rather than passed through, so the type string
+  // this produces is always drawn from a closed, auditable set. Total, like
+  // record() itself: a decision record must never break the caller.
+  function recordDecision(id, outcome, fields) {
+    try {
+      const decisionId = typeof id === "string" && id.length > 0 ? id : "unrecognized-decision";
+      const entry = DECISION_LEDGER.find((e) => e && e.id === decisionId);
+      const allowedFields = entry && Array.isArray(entry.fields) ? entry.fields : [];
+      const safeOutcome = DECISION_OUTCOMES.includes(outcome) ? outcome : "unknown";
+      const picked = {};
+      if (isPlainObject(fields)) {
+        for (const key of allowedFields) {
+          if (Object.prototype.hasOwnProperty.call(fields, key)) picked[key] = fields[key];
+        }
+      }
+      record("act", `${decisionId}.${safeOutcome}`, picked);
+    } catch {
+      // Never break the caller over a logging failure -- the same posture
+      // record() itself takes, restated here because this function does real
+      // work (the ledger lookup, the field whitelist) before it ever reaches
+      // record()'s own guard.
+    }
+  }
+
   // The FIRST install is the boundary a reader needs ("nothing before this
   // instant is in this file"), so a later call cannot move it.
   function markInstalled(at) {
@@ -241,7 +276,7 @@ export function createActivityLog({ now = Date.now, startedAt } = {}) {
     return cloned;
   }
 
-  return { record, markInstalled, attachSection, snapshot };
+  return { record, recordDecision, markInstalled, attachSection, snapshot };
 }
 
 // ---------------------------------------------------------------------------
@@ -257,6 +292,10 @@ const defaultLog = createActivityLog({ startedAt: Date.now() });
 
 export function recordActivity(channel, type, fields) {
   defaultLog.record(channel, type, fields);
+}
+
+export function recordDecision(id, outcome, fields) {
+  defaultLog.recordDecision(id, outcome, fields);
 }
 
 export function attachActivitySection(id, options) {

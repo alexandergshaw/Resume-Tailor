@@ -10,8 +10,32 @@ import {
   duplicateApplyLogFileName,
 } from "@/lib/duplicateApply/duplicateApplyLogDocument.js";
 import { triggerBlobDownload } from "@/lib/document/download.js";
-import { attachActivitySection, recordActivity } from "@/lib/activityLog/appActivityLog.js";
+import { attachActivitySection, recordDecision } from "@/lib/activityLog/appActivityLog.js";
 import { TRACKING_TAB_HIDDEN_STATUSES, STATUS_LABELS } from "@/lib/applications/statusVocabulary";
+
+// The id this hook is registered under on activityChannels.js's
+// DECISION_LEDGER, and the decisionCoverage sweep's own DUPE constant --
+// changing this string without changing both would fail that sweep in both
+// directions (a listed id that never records, and a record under an id the
+// ledger does not recognize).
+const DUPE_DECISION_ID = "duplicate-check";
+
+// Maps the verdict buildDupeLogRecord() already produced -- never the raw
+// signal -- onto the closed DECISION_OUTCOMES vocabulary, so the fold-in
+// section above and this decision entry can never disagree about what
+// happened. A dismissal is always "refused": the one action that removes a
+// warning from the screen without anything about its truth changing. A check
+// is "failed" when either signal could not run at all, "acted" when either
+// signal actually found something to warn about, and "skipped" otherwise --
+// checked, and clear.
+function dupeDecisionOutcome(kind, record) {
+  if (kind === "dismiss") return "refused";
+  if (record.samePosition.verdict === "unavailable" || record.company.verdict === "unavailable") return "failed";
+  if (record.samePosition.verdict === "hit" || record.company.verdict === "hit" || record.company.verdict === "indeterminate") {
+    return "acted";
+  }
+  return "skipped";
+}
 
 // The duplicate-application flag's state and single call site
 // (3-plan-dupapply.md wave W3B). Split out of app/page.js -- not named by
@@ -113,18 +137,22 @@ export function useDuplicateApplyCheck({
       if (dupeLogStartedAtRef.current === null) dupeLogStartedAtRef.current = at;
       const record = buildDupeLogRecord({ verdict, jobId, entryPoint });
       dupeLogRef.current.push({ kind, at, record });
-      // …and one line in the session-wide timeline. This is NOT the same
+      // …and one line on the app-wide decision seam (activityChannels.js's
+      // DECISION_LEDGER, "duplicate-check" entry). This is NOT the same
       // information twice: the folded section carries this feature's full
-      // record, but only an entry in the app-wide stream puts the check in
-      // ORDER against the network calls and errors that surrounded it, which
-      // is the single question that stream exists to answer. Closed-vocabulary
-      // fields only -- the exact values buildDupeLogRecord has already
-      // validated against its own sets -- so this door cannot reopen anything
-      // duplicateApplyLog.js's MUST-NOT list closed.
-      recordActivity("act", `duplicate-check.${kind}`, {
-        samePosition: record.samePosition.verdict,
-        company: record.company.verdict,
+      // record, but only an entry on this seam puts the decision in ORDER
+      // against the network calls and errors that surrounded it, and says
+      // -- in the app-wide vocabulary every decision feature shares --
+      // whether this feature acted or not. recordDecision() itself enforces
+      // the closed field/outcome vocabulary; the values handed to it here are
+      // already the ones buildDupeLogRecord validated against its own sets,
+      // so this door cannot reopen anything duplicateApplyLog.js's MUST-NOT
+      // list closed.
+      recordDecision(DUPE_DECISION_ID, dupeDecisionOutcome(kind, record), {
+        reason: record.samePosition.reason || record.company.reason,
+        count: record.diagnostics.rowsCounted,
         entryPoint: record.entryPoint,
+        kind,
       });
       // FIFO, oldest first: a long session's TAIL is where the user noticed
       // something was wrong (lib/copilot/sessionLog.js's own reasoning).

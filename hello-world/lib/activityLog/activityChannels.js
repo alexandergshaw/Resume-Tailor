@@ -175,3 +175,49 @@ export const FEATURE_LOG_LEDGER = [
     why: "The auto-tailor cron runs server-side with no user present, so its per-run outcome is summarized here and, once persisted, rebuilt into markdown at download time on the automation panel -- not accumulated in this per-tab in-memory activity log. Folding a headless run into this file would claim a session event that never happened in the tab.",
   },
 ];
+
+// ---------------------------------------------------------------------------
+// THE DECISION LEDGER, AND THE CLOSED OUTCOME VOCABULARY.
+//
+// A DIFFERENT registry from FEATURE_LOG_LEDGER above, for a different gap.
+// FEATURE_LOG_LEDGER tracks whether a feature's OWN log folds into this file.
+// This ledger tracks the thing the owner's top-priority incident actually
+// hit: whether a feature that makes a user-visible DECISION -- act, or
+// don't, and why -- reports that decision at all. The `act` channel above
+// states its own blind spot in so many words: it "depends on feature code
+// calling recordActivity(), so a feature that never calls it contributes
+// nothing here, and this file cannot tell you that it happened." A decision
+// that stops before its first network call leaves nothing in ANY automatic
+// channel, so nothing but an explicit obligation closes that hole.
+//
+// Cross-checked against a derived scan of every real `recordDecision(` call
+// site (lib/activityLog/decisionCoverage.sweep.test.js), `toEqual` in both
+// directions -- the exact FEATURE_LOG_LEDGER idiom, for the exact same
+// reason: a hand list alone goes stale, a derived scan alone cannot carry a
+// human label or say why a feature reports the way it does.
+//
+// `fields` is the CLOSED field vocabulary lib/activityLog/appActivityLog.js's
+// recordDecision() enforces: only a name listed here survives onto the
+// record, and an id this ledger does not recognize keeps nothing at all --
+// fail closed, not fail open, because this file is downloaded and shared
+// onward. `outcomes` is drawn from DECISION_OUTCOMES below and MUST include
+// at least one value other than "acted": an entry that can only ever report
+// success reopens the exact hole the owner hit.
+// ---------------------------------------------------------------------------
+
+// The closed outcome vocabulary every recordDecision() call is normalized
+// into. "unknown" is the fallback recordDecision() itself substitutes for an
+// outcome no caller declared -- listed here, rather than left as a bare
+// string buried in that module, so the vocabulary a reader can audit and the
+// vocabulary the code actually enforces are the same array.
+export const DECISION_OUTCOMES = ["acted", "skipped", "refused", "failed", "unknown"];
+
+export const DECISION_LEDGER = [
+  {
+    module: "app/hooks/useDuplicateApplyCheck.js",
+    id: "duplicate-check",
+    label: "Duplicate-application check decisions",
+    fields: ["reason", "count", "entryPoint", "kind"],
+    outcomes: ["acted", "skipped", "refused", "failed"],
+  },
+];
