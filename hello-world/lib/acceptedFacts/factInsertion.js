@@ -103,14 +103,23 @@ function planCoverFacts(lines, { facts, record = [] } = {}) {
   }
   const original = lines.map((l) => String(l));
   const nextRecord = [...record];
+  // N81 fix-forward: `record` is scoped to the APPLICATION, never to the
+  // cover-letter VERSION currently on screen -- a version switch
+  // (selectDocumentVersion) swaps `coverLetterResultLines` without touching
+  // the accepted-facts log, so a fact's id can outlive the paragraph it was
+  // inserted into. `priorText` is the whole letter as one string, checked
+  // ALONGSIDE the id below: an id match is provenance, not proof the text is
+  // still there to duplicate.
+  const priorText = original.join("\n");
   // N81: the SHARED SEAM guard. `record` is the caller's prior-accepted
   // provenance (both acceptFacts and autoInsertFactsForJob pass their own
-  // `coverRecord` here); a fact whose id is already present there was
-  // already inserted at some earlier placement, and must not be inserted a
-  // second time just because it now resolves to a DIFFERENT paragraph. Id
-  // scoped -- never a blanket "skip on re-accept" -- and null-safe, so a
-  // fact with no id (never assigned by any current caller) falls through to
-  // the existing text-keyed dedupe below instead of being treated as "seen".
+  // `coverRecord` here); a fact whose id is already present there AND whose
+  // text is still present in these lines was already inserted and must not
+  // be inserted a second time just because it now resolves to a DIFFERENT
+  // paragraph. Id scoped -- never a blanket "skip on re-accept" -- and
+  // null-safe, so a fact with no id (never assigned by any current caller)
+  // falls through to the existing text-keyed dedupe below instead of being
+  // treated as "seen".
   const recordIds = new Set(record.filter((r) => r?.id != null).map((r) => r.id));
 
   // Group every surviving fact by the line index it targets (resolved
@@ -120,9 +129,9 @@ function planCoverFacts(lines, { facts, record = [] } = {}) {
   const groups = new Map();
   for (const fact of list) {
     if (!fact || typeof fact.text !== "string" || !fact.text.trim()) continue;
-    if (fact.id != null && recordIds.has(fact.id)) continue;
     const text = normalizeFactText(fact.text);
     if (!text) continue;
+    if (fact.id != null && recordIds.has(fact.id) && priorText.includes(text)) continue;
     const placement = resolvePlacement(fact.placement);
     const index = findTargetIndex(original, placement);
     if (index < 0 || index >= original.length) continue;

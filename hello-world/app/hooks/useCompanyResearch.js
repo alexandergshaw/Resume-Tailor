@@ -41,6 +41,12 @@ const SESSION_ONLY_NOTICE =
 // accurate and would mislead the candidate into thinking it is still lost.
 const PERSISTED_NOTICE =
   "The fact was added to your cover letter, and this session's styled copy is now saved — it survives a reload.";
+// N81 Finding B: shown when a re-accept dedupes -- the shared seam guard
+// (planCoverFacts) recognised the fact's id AND text as already present in
+// this letter, so nothing was inserted. Info, not error (mirrors the auto
+// path's N77 "nothing new" handling): the accept still resolves `{ok:true}`,
+// the dialog just needs to say something instead of sitting there silent.
+const ALREADY_PRESENT_NOTICE = "That fact is already in your cover letter.";
 
 // Per-job company research: warmed in the background when a preview opens, shown
 // behind the preview's "Research company" button, and (on apply) woven into the
@@ -450,6 +456,8 @@ export function useCompanyResearch({
         notice = coverDocxPath ? PERSISTED_NOTICE : SESSION_ONLY_NOTICE;
       } else if (coverChanged && coverAlreadyEdited) {
         notice = HAND_EDITED_NOTICE;
+      } else if (!coverChanged) {
+        notice = ALREADY_PRESENT_NOTICE;
       }
 
       // M2 (verify.r1.md): send the MERGED set (prior + this click's, deduped
