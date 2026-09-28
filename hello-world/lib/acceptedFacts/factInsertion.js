@@ -103,6 +103,15 @@ function planCoverFacts(lines, { facts, record = [] } = {}) {
   }
   const original = lines.map((l) => String(l));
   const nextRecord = [...record];
+  // N81: the SHARED SEAM guard. `record` is the caller's prior-accepted
+  // provenance (both acceptFacts and autoInsertFactsForJob pass their own
+  // `coverRecord` here); a fact whose id is already present there was
+  // already inserted at some earlier placement, and must not be inserted a
+  // second time just because it now resolves to a DIFFERENT paragraph. Id
+  // scoped -- never a blanket "skip on re-accept" -- and null-safe, so a
+  // fact with no id (never assigned by any current caller) falls through to
+  // the existing text-keyed dedupe below instead of being treated as "seen".
+  const recordIds = new Set(record.filter((r) => r?.id != null).map((r) => r.id));
 
   // Group every surviving fact by the line index it targets (resolved
   // against the ORIGINAL, untouched lines), preserving the order `facts`
@@ -111,6 +120,7 @@ function planCoverFacts(lines, { facts, record = [] } = {}) {
   const groups = new Map();
   for (const fact of list) {
     if (!fact || typeof fact.text !== "string" || !fact.text.trim()) continue;
+    if (fact.id != null && recordIds.has(fact.id)) continue;
     const text = normalizeFactText(fact.text);
     if (!text) continue;
     const placement = resolvePlacement(fact.placement);

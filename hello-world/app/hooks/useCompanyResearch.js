@@ -682,21 +682,18 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
     const priorFacts = seeded.facts || [];
     const removedLog = seeded.removed || [];
     const removedSet = new Set(removedLog);
-    // N62 Capability A / checker guard: an article already present among this
-    // entry's LOCATED inserted facts is skipped, regardless of placement.
-    // Without this, a run that lands a fact at one default and a LATER run
-    // (after the default changed) both target `planCoverFacts`' same-line
-    // dedupe by paragraph text -- but the second run resolves to a DIFFERENT
-    // paragraph than the first, so that dedupe never sees the fact's text
-    // there and re-inserts it: a duplicated claim whose second copy is
-    // unrecorded (an orphan). Keying on id here, before placement resolution,
-    // makes a second auto-run idempotent no matter which default it targets.
-    const insertedIds = new Set((entry.insertedFacts || []).map((r) => r.id));
+    // N81: the id-level "already inserted" guard now lives at the shared seam
+    // (`planCoverFacts` in lib/acceptedFacts/factInsertion.js), which both this
+    // auto path and the manual accept path (`acceptFacts` above) route
+    // through -- a local guard here duplicated that check and would leave a
+    // third caller of the seam unprotected. An article already inserted is
+    // therefore left "eligible" by this filter; `planAcceptForEntry` below
+    // skips it via `coverRecord`, yields no edit, and the caller falls
+    // through to the existing "nothing-new" info result just below.
     const eligible = articles.filter((a) => {
       if (!a || articleUrlKey(a.url) === null) return false;
       if (!String(a.suggestion || "").trim()) return false;
       if (removedSet.has(a.url) || removedSet.has(a.id)) return false;
-      if (insertedIds.has(a.id)) return false;
       return true;
     });
     if (eligible.length === 0) {
