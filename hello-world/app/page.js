@@ -923,7 +923,7 @@ export default function Home() {
   useEffect(() => {
     if (!currentUser || applicationData.length === 0) return;
     loadGmailMessages();
-    const id = setInterval(loadGmailMessages, 60 * 1000);
+    const id = setInterval(loadGmailMessages, 30 * 60 * 1000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser, applicationData.length]);
