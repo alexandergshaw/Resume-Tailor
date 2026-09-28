@@ -31,6 +31,24 @@ function introIndex(lines) {
   return i >= 0 ? i : lines.length > 1 ? 1 : 0;
 }
 
+// N89 Part 1 (moved from app/hooks/useCompanyResearch.js under the plan's own
+// file-size contingency, §P1-5 -- the hook's line count was on this file's
+// side of the ceiling): the one place the three-way branch is decided, so
+// acceptFacts and autoInsertFactsForJob cannot drift apart (AC-5). Bytes
+// present -> splice (byte-faithful), unless the letter is already
+// hand-edited, in which case the text-only path is used on purpose (the
+// candidate's edits are never overwritten). No bytes but the uploaded
+// template survives in session -> lines (Shape B, the owner's case). Neither
+// -> refuse, the residual Shape C today's NO_ENGINE_BYTES_REASON already
+// covers (owner ruling: dissolved by Part 2, left byte-identical here).
+// @param {{hasCoverBytes:boolean, canRebuild:boolean, coverAlreadyEdited:boolean}} args
+// @returns {"splice" | "lines" | "refuse"}
+export function coverFactStrategy({ hasCoverBytes, canRebuild, coverAlreadyEdited }) {
+  if (hasCoverBytes) return coverAlreadyEdited ? "lines" : "splice";
+  if (canRebuild) return "lines";
+  return "refuse";
+}
+
 function resolvePlacement(placementId) {
   return PLACEMENTS.find((p) => p.id === placementId) || PLACEMENTS.find((p) => p.id === DEFAULT_PLACEMENT);
 }

@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { weaveSources, DEFAULT_PLACEMENT } from "../../lib/document/coverLetterWeave";
 import { readEngine } from "../settings/engine";
-import { planAcceptForEntry, mergeAcceptedFacts, planRemoveFact } from "../../lib/acceptedFacts/factInsertion";
+import { planAcceptForEntry, mergeAcceptedFacts, planRemoveFact, coverFactStrategy } from "../../lib/acceptedFacts/factInsertion";
 import { applyCoverDocxEdits } from "../../lib/acceptedFacts/factDocx";
 import { uploadCoverDocx, fetchCoverDocxB64 } from "../../lib/document/coverDocxStore";
 import { messageForRefusal } from "../../lib/acceptedFacts/factRefusalMessage";
@@ -66,20 +66,6 @@ const NO_COVER_LETTER_REASON = "No cover letter to insert into.";
 // persistence state, which never applies here -- there is no spliced doc).
 const LINE_REBUILD_NOTICE =
   "The fact was added to your cover letter. The download rebuilds it from your uploaded template.";
-
-// N89 Part 1: the one place the three-way branch is decided, so acceptFacts
-// and autoInsertFactsForJob cannot drift apart (AC-5). Bytes present ->
-// splice (byte-faithful), unless the letter is already hand-edited, in which
-// case the text-only path is used on purpose (the candidate's edits are
-// never overwritten). No bytes but the uploaded template survives in session
-// -> lines (Shape B, the owner's case). Neither -> refuse, the residual
-// Shape C today's NO_ENGINE_BYTES_REASON already covers (owner ruling:
-// dissolved by Part 2, left byte-identical here).
-function coverFactStrategy({ hasCoverBytes, canRebuild, coverAlreadyEdited }) {
-  if (hasCoverBytes) return coverAlreadyEdited ? "lines" : "splice";
-  if (canRebuild) return "lines";
-  return "refuse";
-}
 
 // Per-job company research: warmed in the background when a preview opens, shown
 // behind the preview's "Research company" button, and (on apply) woven into the
