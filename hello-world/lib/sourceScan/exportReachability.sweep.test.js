@@ -399,7 +399,7 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // tests began importing it instead of re-typing the OOXML namespace, so
     // it is now counted as test-referenced above. One entry removed, none
     // added -- the same single movement as the TR-1 bump.
-    expect(ORPHAN_EXPORTS).toHaveLength(71);
+    expect(ORPHAN_EXPORTS).toHaveLength(70);
   });
 
   it("[RULE TR-1] counts the exports whose only consumer is a test, exactly", () => {
@@ -685,7 +685,7 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // namespace literal in a test is a worse outcome than a counted
     // test-only consumer -- the two would drift and the test would then be
     // asserting against a namespace the document does not use.
-    expect(TEST_REFERENCED.length).toBe(364);
+    expect(TEST_REFERENCED.length).toBe(365);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);

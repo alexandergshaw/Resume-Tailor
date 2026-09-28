@@ -250,11 +250,6 @@ export const ORPHAN_EXPORTS = [
   },
   {
     file: "lib/document/docx.js",
-    name: "docxFileFromBase64",
-    why: "declared and exported and not referenced even inside docx.js -- vestigial; a human should confirm it is not a half-landed step of the download-rebuild work before it goes",
-  },
-  {
-    file: "lib/document/docx.js",
     name: "getDirectChildrenByTag",
     why: "an XML-walking helper used twice more inside docx.js; exported for a test that does not exist",
   },

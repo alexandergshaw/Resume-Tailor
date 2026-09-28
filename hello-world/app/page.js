@@ -254,6 +254,7 @@ export default function Home() {
     defaultPlacement: coverFactPlacement,
     supabase: createClient(),
     currentUser,
+    coverLetterFile,
   });
 
   const [applicationsRefreshKey, setApplicationsRefreshKey] = useState(0);

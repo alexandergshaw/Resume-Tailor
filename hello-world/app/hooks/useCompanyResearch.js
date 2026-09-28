@@ -8,6 +8,7 @@ import { applyCoverDocxEdits } from "../../lib/acceptedFacts/factDocx";
 import { uploadCoverDocx, fetchCoverDocxB64 } from "../../lib/document/coverDocxStore";
 import { messageForRefusal } from "../../lib/acceptedFacts/factRefusalMessage";
 import { editedForScope } from "../../lib/document/previewBlob";
+import { isDocxResume } from "../../lib/document/docx";
 import { hashString } from "../../lib/text/phrasing";
 import { safeExternalHref } from "../../lib/url/safeExternalHref";
 import { servesGroundingRedirect } from "../../lib/tracking/citationHref";
@@ -55,6 +56,30 @@ const ALREADY_PRESENT_NOTICE = "That fact is already in your cover letter.";
 // all. This mirrors the sibling auto path's own no-cover-letter wording and
 // severity (autoInsertFactsForJob, below) exactly, so the two paths agree.
 const NO_COVER_LETTER_REASON = "No cover letter to insert into.";
+// N89 Part 1 (owner-blocking, 2026-09-28): shown for the LINE-ONLY path -- a
+// Gemini cover letter never produces server-side docx bytes, so when the
+// candidate's uploaded template File is still in session and the letter has
+// lines, the fact is inserted into the TEXT and no docx is spliced/uploaded;
+// the preview and download instead rebuild from the uploaded template
+// (resolveDocumentBlob's existing last-resort branch). Distinct from
+// SESSION_ONLY_NOTICE/PERSISTED_NOTICE (those describe a SPLICED document's
+// persistence state, which never applies here -- there is no spliced doc).
+const LINE_REBUILD_NOTICE =
+  "The fact was added to your cover letter. The download rebuilds it from your uploaded template.";
+
+// N89 Part 1: the one place the three-way branch is decided, so acceptFacts
+// and autoInsertFactsForJob cannot drift apart (AC-5). Bytes present ->
+// splice (byte-faithful), unless the letter is already hand-edited, in which
+// case the text-only path is used on purpose (the candidate's edits are
+// never overwritten). No bytes but the uploaded template survives in session
+// -> lines (Shape B, the owner's case). Neither -> refuse, the residual
+// Shape C today's NO_ENGINE_BYTES_REASON already covers (owner ruling:
+// dissolved by Part 2, left byte-identical here).
+function coverFactStrategy({ hasCoverBytes, canRebuild, coverAlreadyEdited }) {
+  if (hasCoverBytes) return coverAlreadyEdited ? "lines" : "splice";
+  if (canRebuild) return "lines";
+  return "refuse";
+}
 
 // Per-job company research: warmed in the background when a preview opens, shown
 // behind the preview's "Research company" button, and (on apply) woven into the
@@ -176,6 +201,10 @@ function withMintedIds(articles, runStamp) {
 // are optional: every call below degrades to "resolves nothing" / "persists
 // nothing" (never throws) when either is absent, so a caller that has not
 // been updated yet keeps today's session-only behaviour.
+// N89 Part 1: `coverLetterFile` is the candidate's uploaded cover-letter
+// template (page.js state, forwarded here new in this chunk) -- the AC-9
+// discriminator between a Gemini letter that can be rebuilt from its
+// template (Shape B) and one that genuinely cannot (residual Shape C).
 export function useCompanyResearch({
   tailoringMap,
   setTailoringMap,
@@ -183,6 +212,7 @@ export function useCompanyResearch({
   defaultPlacement,
   supabase,
   currentUser,
+  coverLetterFile,
 }) {
   const [companyResearch, setCompanyResearch] = useState({
     open: false,
@@ -198,6 +228,13 @@ export function useCompanyResearch({
   const [companyResearchByJob, setCompanyResearchByJob] = useState({});
   const [acceptedFactsByJob, setAcceptedFactsByJob] = useState({});
   const researchStartedRef = useRef(new Set());
+
+  // N89 Part 1 (AC-9): Shape B (Gemini, no bytes, but the uploaded template
+  // is still in session) vs the residual Shape C (no bytes, no template --
+  // refuse, unchanged). `canRebuild` is the ONE line Part 2 later widens to
+  // also accept a stored template path.
+  const hasInSessionTemplate = isDocxResume(coverLetterFile);
+  const canRebuild = hasInSessionTemplate;
 
   // N59/K8: the single seam every splice-producing path below resolves a
   // faithful engine source through -- in-session bytes if the entry still
@@ -427,7 +464,11 @@ export function useCompanyResearch({
     // restored/switched letters this widening exists to unblock.
     const resolvedCoverDocxB64 = hasCoverLetter ? await resolveCoverEngineBytes(entry) : "";
     const hasCoverBytes = resolvedCoverDocxB64.length > 0;
-    if (hasCoverLetter && !hasCoverBytes) {
+    // N89 Part 1: refuse only when there is NEITHER a faithful byte source
+    // NOR an in-session template to rebuild onto (residual Shape C) -- a
+    // Gemini letter with its uploaded template still in session (Shape B)
+    // falls through to the line-only path below instead of refusing here.
+    if (hasCoverLetter && !hasCoverBytes && !canRebuild) {
       setCompanyResearch((prev) => ({ ...prev, acceptError: NO_ENGINE_BYTES_REASON, acceptNotice: "" }));
       return { ok: false, reason: NO_ENGINE_BYTES_REASON };
     }
@@ -448,13 +489,17 @@ export function useCompanyResearch({
       const plan = planAcceptForEntry(entry, { facts, coverRecord: priorRecord });
       const coverChanged = plan.cover.edits.length > 0;
       const coverAlreadyEdited = editedForScope(entry, "cover");
+      // N89 Part 1: the one selector both siblings use, so they cannot drift
+      // (AC-5). hasCoverLetter is true here (the `!hasCoverLetter` refusal
+      // above already returned), so "refuse" is unreachable at this point.
+      const strategy = coverFactStrategy({ hasCoverBytes, canRebuild, coverAlreadyEdited });
       let coverDocxB64 = entry.coverLetterDocxB64;
       // K10: explicit null unless a splice actually uploads a fresh object
       // below -- never the pre-accept path (stale) and never left absent.
       let coverDocxPath = null;
       let notice = "";
 
-      if (coverChanged && hasCoverLetter && hasCoverBytes && !coverAlreadyEdited) {
+      if (coverChanged && strategy === "splice") {
         const spliced = await applyCoverDocxEdits(resolvedCoverDocxB64, entry.coverLetterResultLines, plan.cover.edits);
         if (!spliced.applied) {
           const reason = messageForRefusal(spliced.reason);
@@ -471,6 +516,13 @@ export function useCompanyResearch({
         notice = coverDocxPath ? PERSISTED_NOTICE : SESSION_ONLY_NOTICE;
       } else if (coverChanged && coverAlreadyEdited) {
         notice = HAND_EDITED_NOTICE;
+      } else if (coverChanged && strategy === "lines") {
+        // Shape B (N89 Part 1): no engine bytes, but the uploaded template is
+        // still in session -- insert into the text only, skip the docx-byte
+        // splice. coverDocxPath stays null; the download/preview rebuild
+        // from coverLetterFile + the now-updated lines (resolveDocumentBlob's
+        // existing uploaded-template last resort).
+        notice = LINE_REBUILD_NOTICE;
       } else if (!coverChanged) {
         notice = ALREADY_PRESENT_NOTICE;
       }
@@ -540,6 +592,11 @@ export function useCompanyResearch({
         [jobId]: { facts: data.facts || [], removed: data.removed || [], revision: data.revision ?? null },
       }));
       setCompanyResearch((prev) => ({ ...prev, busy: false, acceptError: "", acceptNotice: notice }));
+      // N89 Part 1/P1-3 (AC-4): repaint the preview beneath the dialog --
+      // unlike the auto path and removeInsertedFact, this never bumped the
+      // reload key before, so an accepted fact never showed until some other
+      // reload happened to fire.
+      if (coverChanged) setPreviewReloadKey((k) => k + 1);
       return { ok: true };
     } catch (err) {
       const reason = err?.message || "Couldn't save the accepted facts. Try again.";
@@ -728,7 +785,10 @@ export function useCompanyResearch({
     // surface that is already gone.
     if (!isOpen()) return { ok: false, reason: "No open review surface.", severity: "silent", code: "no-open-surface" };
     const hasCoverBytes = resolvedCoverDocxB64.length > 0;
-    if (!hasCoverBytes) {
+    // N89 Part 1: refuse only when there is neither a faithful byte source
+    // nor an in-session template to rebuild onto (residual Shape C) -- see
+    // the identical reasoning in acceptFacts above.
+    if (!hasCoverBytes && !canRebuild) {
       return { ok: false, reason: NO_ENGINE_BYTES_REASON, severity: "failure", code: "no-engine-bytes" };
     }
     // RULING (settled): suppressing auto-insert into a hand-edited letter is
@@ -740,6 +800,10 @@ export function useCompanyResearch({
     if (editedForScope(entry, "cover")) {
       return { ok: false, reason: "Cover letter already edited.", severity: "silent", code: "already-edited" };
     }
+    // N89 Part 1: past this point coverAlreadyEdited is always false (the
+    // branch above already returned), so this is "splice" (bytes resolved)
+    // or "lines" (Shape B -- no bytes, template in session).
+    const strategy = coverFactStrategy({ hasCoverBytes, canRebuild, coverAlreadyEdited: false });
 
     // N61 (AC-N61.20, cross-session gap): `acceptedFactsByJob[jobId]` is
     // seeded ONLY by the manual research dialog (`openCompanyResearch` ->
@@ -814,26 +878,38 @@ export function useCompanyResearch({
       return { ok: false, reason: "Nothing new to insert.", severity: "info", code: "nothing-new" };
     }
 
-    // The staleness guard `applyCoverDocxEdits` already makes (factDocx.js:33-34)
-    // compares each edit's `before` against `entry.coverLetterResultLines` --
-    // the snapshot this plan was built from -- so a splice against bytes that
-    // have since moved on is refused rather than silently misapplied. Spliced
-    // against the RESOLVED bytes (K8) -- entry.coverLetterDocxB64 alone is
-    // empty for exactly the saved-letter case this function exists to fix.
-    const spliced = await applyCoverDocxEdits(resolvedCoverDocxB64, entry.coverLetterResultLines, plan.cover.edits);
-    if (!spliced.applied) {
-      return { ok: false, reason: messageForRefusal(spliced.reason), severity: "failure", code: "splice-refused" };
+    // N89 Part 1 hazard (P1-2): hoisted to FUNCTION scope, not declared
+    // inside the `if` below -- setTailoringMap further down reads
+    // spliced.docxB64 conditionally, and a block-scoped declaration would
+    // leave it undefined there for Shape B, which never enters the block at
+    // all (a null deref).
+    let spliced = null;
+    let coverDocxPath = null;
+    if (strategy === "splice") {
+      // The staleness guard `applyCoverDocxEdits` already makes (factDocx.js:33-34)
+      // compares each edit's `before` against `entry.coverLetterResultLines` --
+      // the snapshot this plan was built from -- so a splice against bytes that
+      // have since moved on is refused rather than silently misapplied. Spliced
+      // against the RESOLVED bytes (K8) -- entry.coverLetterDocxB64 alone is
+      // empty for exactly the saved-letter case this function exists to fix.
+      spliced = await applyCoverDocxEdits(resolvedCoverDocxB64, entry.coverLetterResultLines, plan.cover.edits);
+      if (!spliced.applied) {
+        return { ok: false, reason: messageForRefusal(spliced.reason), severity: "failure", code: "splice-refused" };
+      }
+
+      // Write-time re-check #1: the docx splice above was a real await; do not
+      // fire the store write for a review surface that closed while it ran.
+      if (!isOpen()) return { ok: false, reason: "No open review surface.", severity: "silent", code: "no-open-surface" };
+
+      // N59/AC-9: persist the spliced bytes (accept-path key, R2) so a later
+      // reload -- or the next auto-insert run, which itself depends on this
+      // resolving -- has something to resolve. Best-effort; a failed upload
+      // still lets this run succeed in-session, same as before this chunk.
+      coverDocxPath = await uploadCoverDocx(supabase, currentUser?.id, spliced.docxB64);
     }
-
-    // Write-time re-check #1: the docx splice above was a real await; do not
-    // fire the store write for a review surface that closed while it ran.
-    if (!isOpen()) return { ok: false, reason: "No open review surface.", severity: "silent", code: "no-open-surface" };
-
-    // N59/AC-9: persist the spliced bytes (accept-path key, R2) so a later
-    // reload -- or the next auto-insert run, which itself depends on this
-    // resolving -- has something to resolve. Best-effort; a failed upload
-    // still lets this run succeed in-session, same as before this chunk.
-    const coverDocxPath = await uploadCoverDocx(supabase, currentUser?.id, spliced.docxB64);
+    // Shape B (strategy === "lines"): no splice, no upload, coverDocxPath
+    // stays null. No re-check is needed here -- unlike the splice branch
+    // above, nothing awaited since the last isOpen() check.
 
     const mergedFacts = mergeAcceptedFacts(priorFacts, facts);
     let res;
@@ -890,7 +966,9 @@ export function useCompanyResearch({
       const next = { ...cur };
       next.coverLetterResultLines = coverPlan.cover.lines;
       next.coverLetterPreviewHtml = undefined;
-      if (!linesChanged) next.coverLetterDocxB64 = spliced.docxB64;
+      // N89 Part 1: guarded on strategy === "splice" too -- Shape B has no
+      // spliced bytes (spliced is null) and must never write bytes anyway.
+      if (!linesChanged && strategy === "splice") next.coverLetterDocxB64 = spliced.docxB64;
       const located = coverPlan.cover.record.filter((r) => typeof r.lineIndex === "number" && typeof r.offset === "number");
       const untouched = (cur.insertedFacts || []).filter((p) => !located.some((r) => r.id === p.id));
       next.insertedFacts = [...untouched, ...located].map((r) => {
