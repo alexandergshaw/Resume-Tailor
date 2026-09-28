@@ -91,3 +91,27 @@ export function copyOutcome(result, scopeLabel) {
   const message = `Couldn't copy the ${lower}. Select the document text and copy it manually.`;
   return { polite: "", alert: message, visible: message, persist: true };
 }
+
+// N63: the file-name/title copy's own outcome builder -- passed to
+// CopyDocumentControl as `outcomeFor` so it never falls back to copyOutcome's
+// wording above. That wording says "text"/"document text" throughout, which
+// is wrong for a filename (byte-identical to the document-text control would
+// make the two actions indistinguishable, and "select the document text" is
+// the wrong remedy -- there is no document text involved; the file name is in
+// the field right there). Same {ok}-shaped result as copyOutcome, same
+// persist-on-failure rule; only the two sentences differ.
+export function titleCopyOutcome(result, scopeLabel) {
+  const lower = String(scopeLabel ?? "").toLowerCase();
+
+  if (result?.ok) {
+    const message = `${scopeLabel} file name copied.`;
+    return { polite: message, alert: "", visible: message, persist: false };
+  }
+
+  // Every non-ok shape (a genuine clipboard failure, or the control's own
+  // defensive empty-text refusal -- unreachable in practice, since the
+  // resolved title is never blank, but routed through here rather than
+  // assumed away) gets the same reachable remedy: the field is right there.
+  const message = `Couldn't copy the ${lower} file name. Copy it from the File name field above.`;
+  return { polite: "", alert: message, visible: message, persist: true };
+}

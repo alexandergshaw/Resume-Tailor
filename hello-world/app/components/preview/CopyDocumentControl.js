@@ -6,6 +6,14 @@
 // OWNS NO STRING of its own (every message comes from ./copyOutcome.js). Knows
 // nothing of the dialog's in-flight flags, docState, scopes, or drive -- those
 // stay in the dialog.
+//
+// N63: `outcomeFor` (default `copyOutcome`) lets a second caller with a
+// different thing to copy (the file-name/title control in FileNameRow.js)
+// supply its OWN wording for the empty-refusal and write-result outcomes,
+// without duplicating the click handler, the focus guard, or the
+// stale-activation token above -- every existing caller passes nothing and
+// gets byte-identical behaviour. The disabled-gate refusal below always uses
+// `disabledOutcome` directly; it never varies per caller.
 import { useRef } from "react";
 import Button from "@mui/material/Button";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
@@ -13,7 +21,7 @@ import { writePlainText } from "@/lib/clipboard/plainText";
 import { copyOutcome, disabledOutcome } from "./copyOutcome";
 import { TOUCH_TARGET_SX } from "@/app/theme/mobileSx";
 
-export default function CopyDocumentControl({ getText, getHtml, copyState, scopeLabel, accessibleName, variant, mode, onOutcome, label = "Copy text" }) {
+export default function CopyDocumentControl({ getText, getHtml, copyState, scopeLabel, accessibleName, variant, mode, onOutcome, label = "Copy text", outcomeFor = copyOutcome }) {
   // O-7: a monotonic counter, not a `useState` (which would re-render mid-
   // copy for no reason) -- only the NEWEST activation's outcome is ever
   // announced, so a slow permission prompt from an earlier click can never
@@ -42,7 +50,7 @@ export default function CopyDocumentControl({ getText, getHtml, copyState, scope
     // too, or the user pastes nothing but blank lines into an ATS field.
     const text = String((typeof getText === "function" ? getText() : "") ?? "");
     if (text.trim().length === 0) {
-      emit(copyOutcome({ ok: false, reason: "empty" }, label_));
+      emit(outcomeFor({ ok: false, reason: "empty" }, label_));
       return;
     }
 
@@ -53,7 +61,7 @@ export default function CopyDocumentControl({ getText, getHtml, copyState, scope
     const html = typeof getHtml === "function" ? getHtml() : undefined;
     const result = await writePlainText(text, { mode, html });
     if (tokenRef.current !== seq) return; // a newer activation already reported
-    emit(copyOutcome(result, label_));
+    emit(outcomeFor(result, label_));
   };
 
   return (

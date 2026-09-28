@@ -15,10 +15,7 @@ import ToggleButton from "@mui/material/ToggleButton";
 import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
 import Select from "@mui/material/Select";
 import MenuItem from "@mui/material/MenuItem";
-import TextField from "@mui/material/TextField";
-import InputAdornment from "@mui/material/InputAdornment";
 import CircularProgress from "@mui/material/CircularProgress";
-import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import DescriptionIcon from "@mui/icons-material/Description";
 import TravelExploreIcon from "@mui/icons-material/TravelExplore";
 import ManageSearchIcon from "@mui/icons-material/ManageSearch";
@@ -29,6 +26,7 @@ import SmartToyIcon from "@mui/icons-material/SmartToy";
 import { renderModelToHtml, applySpacingToHtml } from "@/lib/document/docxPreview";
 import { htmlToPlainText } from "@/lib/document/htmlToPlainText";
 import { writePlainText } from "@/lib/clipboard/plainText";
+import { resolveDocumentFileName } from "@/lib/document/docx";
 import { changedScopes as changedScopesOf } from "@/lib/tailor/previewScopes";
 import { commitDraftSeed } from "@/lib/document/draftEditGuard";
 import { SCOPES, SCOPE_LABEL, DOCX_SCOPES } from "@/lib/tailor/documentScopes";
@@ -43,6 +41,7 @@ import HighlightToggle from "./preview/HighlightToggle";
 import DriveActions from "./preview/DriveActions";
 import DriveResultRegion from "./preview/DriveResultRegion";
 import CopyDocumentControl from "./preview/CopyDocumentControl";
+import FileNameRow from "./preview/FileNameRow";
 import { useCopyFeedback, CopyFeedbackStrip } from "./preview/CopyFeedback";
 import { copyStateFor } from "./preview/copyOutcome";
 
@@ -529,6 +528,13 @@ export default function DocumentPreviewDialog({
   };
 
   const heading = [company, jobTitle].filter(Boolean).join(" · ");
+  // N63: the copyable title for the active docx document -- the SAME base the
+  // download and Drive save resolve (docx.js:720-721, driveNames.js:31),
+  // anchored to the COMMITTED override (scopes[tab].fileName, not the live
+  // fileNameDraft) so copy and download never disagree, and re-resolved
+  // (never copied raw) so a rename with characters the download sanitises
+  // away still matches what the employer actually receives.
+  const activeTitle = resolveDocumentFileName(scopes[tab]?.fileName, jobTitle, company, tab === "resume" ? "Resume" : "CL").replace(/\.docx$/i, "");
   const state = docState[tab] || {};
   // N69: apply the whole-document spacing override to the READ-ONLY render
   // only (edit mode reflects it cosmetically via pageSx's own lineHeight).
@@ -762,41 +768,20 @@ export default function DocumentPreviewDialog({
       ) : null}
 
       {/* File name only means anything for a docx download — the email tab
-          has no download, so this row (and the auto-save status it also
-          carries) stays hidden there. */}
+          has no download, so this row (and the auto-save status and title
+          copy it also carries) stays hidden there. */}
       {DOCX_SCOPES.includes(tab) && available(tab) ? (
-        <Box sx={{ px: { xs: 1.25, sm: 2 }, py: 0.75, display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", borderBottom: "1px solid var(--border)" }}>
-          <Box component="span" sx={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
-            File name
-          </Box>
-          <TextField
-            size="small"
-            value={fileNameDraft}
-            onChange={(e) => setFileNameDraft(e.target.value)}
-            onBlur={commitFileName}
-            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); e.currentTarget.blur(); } }}
-            placeholder={SCOPE_LABEL[tab]}
-            InputProps={{
-              endAdornment: <InputAdornment position="end" sx={{ color: "var(--text-muted)" }}>.docx</InputAdornment>,
-            }}
-            sx={{ flex: 1, minWidth: 200, maxWidth: 460, bgcolor: "var(--bg-surface)", borderRadius: 1 }}
-          />
-          {mode === "edit" ? (
-            <Box sx={{ ml: "auto", display: "flex", alignItems: "center", gap: 0.5, fontSize: "0.75rem", color: "var(--text-muted)", whiteSpace: "nowrap" }}>
-              {saveStatus === "saving" ? (
-                <>
-                  <CircularProgress size={13} sx={{ color: "var(--text-muted)" }} />
-                  Saving…
-                </>
-              ) : (
-                <>
-                  <CheckCircleIcon sx={{ fontSize: 15, color: "var(--success)" }} />
-                  Saved
-                </>
-              )}
-            </Box>
-          ) : null}
-        </Box>
+        <FileNameRow
+          tab={tab}
+          fileNameDraft={fileNameDraft}
+          setFileNameDraft={setFileNameDraft}
+          commitFileName={commitFileName}
+          placeholder={SCOPE_LABEL[tab]}
+          mode={mode}
+          saveStatus={saveStatus}
+          title={activeTitle}
+          onCopyOutcome={copy.announce}
+        />
       ) : null}
 
       {mode === "edit" && DOCX_SCOPES.includes(tab) && available(tab) ? (
