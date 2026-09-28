@@ -56,6 +56,11 @@ export default function CompanyResearchDialog({
   acceptError = "",
   acceptNotice = "",
   coverLetterLines = [],
+  // N62 Capability A: the user's saved default placement (a PLACEMENTS id,
+  // or "" when none is saved) -- seeds every card's target instead of the
+  // hardcoded DEFAULT_PLACEMENT so an accepted fact's placement follows the
+  // preference, not a constant.
+  defaultPlacement = "",
   onClose,
   onApply,
   onAccept,
@@ -87,7 +92,7 @@ export default function CompanyResearchDialog({
     setSuggestions(Object.fromEntries((articles || []).map((a) => [a.id, a.suggestion || ""])));
     setTargets((prev) => {
       const next = { ...prev };
-      for (const a of articles || []) if (!next[a.id]) next[a.id] = DEFAULT_PLACEMENT;
+      for (const a of articles || []) if (!next[a.id]) next[a.id] = defaultPlacement || DEFAULT_PLACEMENT;
       return next;
     });
   }
@@ -114,7 +119,7 @@ export default function CompanyResearchDialog({
       .map((a) => ({
         ...a,
         suggestion: (suggestions[a.id] ?? a.suggestion ?? "").trim(),
-        target: targets[a.id] || DEFAULT_PLACEMENT,
+        target: targets[a.id] || defaultPlacement || DEFAULT_PLACEMENT,
       }))
       .filter((a) => a.suggestion);
 

@@ -18,6 +18,7 @@ import DriveButton from "./DriveButton";
 import AccountSection from "./AccountSection";
 import ActivityLogButton from "./ActivityLogButton";
 import AlertMailPause from "./AlertMailPause";
+import CoverFactPlacementSetting from "./CoverFactPlacementSetting";
 
 // Section wrapper: an uppercase label above its control(s).
 function Section({ label, children }) {
@@ -126,6 +127,10 @@ export default function SettingsMenu() {
           <Divider />
           <Section label="Email alerts">
             <AlertMailPause />
+          </Section>
+          <Divider />
+          <Section label="Cover letter facts">
+            <CoverFactPlacementSetting />
           </Section>
           <Divider />
           <Section label="Admin tools">

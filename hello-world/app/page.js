@@ -43,6 +43,7 @@ import { runWithConcurrency } from "../lib/tailor/runWithConcurrency";
 import { useProfileEntries } from "./hooks/useProfileEntries";
 import { useScreenshots } from "./hooks/useScreenshots";
 import { useCompanyResearch } from "./hooks/useCompanyResearch";
+import { useCoverFactPlacement } from "./hooks/useCoverFactPlacement";
 import { useDocumentPreview } from "./hooks/useDocumentPreview";
 import { useManualTailor } from "./hooks/useManualTailor";
 import { useManualPostings } from "./hooks/useManualPostings";
@@ -237,8 +238,18 @@ export default function Home() {
   const educationCtl = useProfileEntries(EDUCATION_CONFIG);
   const employmentCtl = useProfileEntries(EMPLOYMENT_CONFIG);
 
+  // N62 Capability A: the user's saved default placement for auto-inserted
+  // cover-letter facts -- read once here so both the truly-automatic path
+  // (useCompanyResearch below) and the research dialog's card defaults
+  // inherit the SAME value, with no per-application re-selection step.
+  const { placement: coverFactPlacement } = useCoverFactPlacement();
   // Per-job company research (warmed behind the preview; woven into the cover).
-  const research = useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewReloadKey });
+  const research = useCompanyResearch({
+    tailoringMap,
+    setTailoringMap,
+    setPreviewReloadKey,
+    defaultPlacement: coverFactPlacement,
+  });
 
   const [applicationsRefreshKey, setApplicationsRefreshKey] = useState(0);
 
@@ -2953,6 +2964,7 @@ export default function Home() {
         warnings={research.researchByJob[research.companyResearch.jobId]?.warnings || []}
         busy={research.companyResearch.busy}
         coverLetterLines={tailoringMap[research.companyResearch.jobId]?.coverLetterResultLines || []}
+        defaultPlacement={coverFactPlacement}
         acceptError={research.companyResearch.acceptError}
         acceptNotice={research.companyResearch.acceptNotice}
         onClose={research.closeCompanyResearch}

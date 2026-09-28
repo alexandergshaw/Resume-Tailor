@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { getCached, setCached } from "@/lib/cache/jobCache";
+import { PLACEMENTS } from "@/lib/document/coverLetterWeave";
 
 export const runtime = "nodejs";
 
@@ -67,6 +68,15 @@ function sanitize(input) {
     } else if (key === "excludedTitleKeywords") {
       const list = sanitizeTitleKeywords(input[key]);
       if (list) out[key] = list;
+    } else if (key === "coverFactPlacement") {
+      // N62 Capability A: only a real placement id survives, on both write
+      // and read -- an id-membership check, not a type check, so a valid
+      // but unknown string (e.g. "middle") is dropped just like a wrong
+      // type. A garbage id would otherwise resolve through resolvePlacement's
+      // fallback and silently mis-default every future letter.
+      if (typeof input[key] === "string" && PLACEMENTS.some((p) => p.id === input[key])) {
+        out[key] = input[key];
+      }
     }
   }
   return out;

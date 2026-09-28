@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { weaveSources } from "../../lib/document/coverLetterWeave";
+import { weaveSources, DEFAULT_PLACEMENT } from "../../lib/document/coverLetterWeave";
 import { readEngine } from "../settings/engine";
 import { planAcceptForEntry, mergeAcceptedFacts, planRemoveFact } from "../../lib/acceptedFacts/factInsertion";
 import { applyCoverDocxEdits } from "../../lib/acceptedFacts/factDocx";
@@ -143,7 +143,12 @@ function withMintedIds(articles, runStamp) {
   return (Array.isArray(articles) ? articles : []).map((a, i) => ({ ...a, id: mintArticleId(a, runStamp, i) }));
 }
 
-export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewReloadKey }) {
+// N62 Capability A: `defaultPlacement` is the user's saved placement default
+// (a PLACEMENTS id, from useCoverFactPlacement via page.js), threaded so the
+// TRULY automatic path (autoInsertFactsForJob) honours it too -- not just the
+// research dialog. Absent/falsy is byte-identical to today: every fact still
+// resolves to DEFAULT_PLACEMENT.
+export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewReloadKey, defaultPlacement }) {
   const [companyResearch, setCompanyResearch] = useState({
     open: false,
     jobId: null,
@@ -677,17 +682,33 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
     const priorFacts = seeded.facts || [];
     const removedLog = seeded.removed || [];
     const removedSet = new Set(removedLog);
+    // N62 Capability A / checker guard: an article already present among this
+    // entry's LOCATED inserted facts is skipped, regardless of placement.
+    // Without this, a run that lands a fact at one default and a LATER run
+    // (after the default changed) both target `planCoverFacts`' same-line
+    // dedupe by paragraph text -- but the second run resolves to a DIFFERENT
+    // paragraph than the first, so that dedupe never sees the fact's text
+    // there and re-inserts it: a duplicated claim whose second copy is
+    // unrecorded (an orphan). Keying on id here, before placement resolution,
+    // makes a second auto-run idempotent no matter which default it targets.
+    const insertedIds = new Set((entry.insertedFacts || []).map((r) => r.id));
     const eligible = articles.filter((a) => {
       if (!a || articleUrlKey(a.url) === null) return false;
       if (!String(a.suggestion || "").trim()) return false;
       if (removedSet.has(a.url) || removedSet.has(a.id)) return false;
+      if (insertedIds.has(a.id)) return false;
       return true;
     });
     if (eligible.length === 0) {
       return { ok: false, reason: "No eligible facts to insert.", severity: "info", code: "nothing-eligible" };
     }
 
-    const facts = eligible.map((a) => ({ id: a.id, text: a.suggestion, url: a.url, title: a.title }));
+    // N62 Capability A: every auto-inserted fact takes the saved default
+    // placement (finding: this is the ONLY truly automatic path the owner
+    // named -- a preference threaded only into the research dialog would
+    // leave this path always resolving to "intro" regardless).
+    const placement = defaultPlacement || DEFAULT_PLACEMENT;
+    const facts = eligible.map((a) => ({ id: a.id, text: a.suggestion, url: a.url, title: a.title, placement }));
     const priorRecord = priorFacts.map((f) => ({ id: f?.id ?? null, text: f?.text ?? "" }));
     const plan = planAcceptForEntry(entry, { facts, coverRecord: priorRecord });
     if (plan.cover.edits.length === 0) {
