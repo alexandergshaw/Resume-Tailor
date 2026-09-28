@@ -249,8 +249,8 @@ export function useDocumentPreview({
             // cover-letter template, or to plain text when none is uploaded,
             // for the rest of the session. ACCEPTED: right content unformatted
             // beats wrong content formatted, which is what ships today. Do
-            // not restore the stale bytes or add a docx_path column here.
-            coverLetterDocxB64: "",
+            // not restore the bytes. Facts go too: they locate the OLD text.
+            coverLetterDocxB64: "", insertedFacts: [],
           }
         : {
             result: typeof version.content === "string" ? version.content : lines.join("\n"),
