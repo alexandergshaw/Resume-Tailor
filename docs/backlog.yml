@@ -990,6 +990,30 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N87"
+  state: "actionable"
+  title: "**`DriveButton.js` SWALLOWS A FAILED STATUS CHECK THE SAME WAY `GmailButton.js` DID.** Named by the N79/N80 plan as its Step E and NOT shipped with 3b574e0 — a plain oversight, not a scoping decision, caught by the fresh verifier on that commit. GmailButton gained a third state under N79/N80 so that a status check which FAILS is distinguishable from an account that is genuinely disconnected; before that, a failed check rendered as \"not connected\", telling the user to reconnect an account that was fine. DriveButton still has the original shape. **Fix direction**: mirror what GmailButton now does — a distinct state for \"we could not check\", which offers no misleading remedy. **Note the accessibility gap while there**: GmailButton's states are distinguishable by text but none uses `aria-live`, so a screen-reader user is not told when the state changes. That gap pre-dates N79/N80 (the old two states had no live region either) and was extended rather than introduced by it; whoever fixes DriveButton should decide whether both buttons get announced states, since doing one and not the other is worse than either. The verifier confirmed no Tooltip is involved in these components, so the accessible-name-stealing trap does not apply here."
+  owed_by: "A small round mirroring GmailButton's check-failed state onto DriveButton"
+  evidence: ["docs/loop/N79-N80.plan.r1.md Step E — filed this as owed, then not shipped", "app/components/GmailButton.js — the three-state pattern to mirror, landed in 3b574e0", "app/components/GmailButton.test.js:97-116 — states asserted distinguishable by text content", "Fresh verifier on 3b574e0, 2026-09-28 — verdict SHIP, raised this as a non-blocking gap"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N88"
+  state: "actionable"
+  title: "**THE GMAIL CLASSIFIER'S MOST LOAD-BEARING EDGE IS IMPLEMENTED CORRECTLY AND DEFENDED BY NOTHING.** `lib/gmail/authFailure.js:44-49` intercepts a non-object thrown value BEFORE the `Boolean(response)` check and returns `{cause: \"reauth_required\", logCode: \"unrecognized\"}` — which is the coordinator's explicit ruling, on the ground that `temporarily_unavailable` means STAY SILENT AND KEEP POLLING and so must require POSITIVE identification of a transient failure; defaulting an unknown into silence recreates the exact swallow the whole chunk removes. The code is right and the reasoning is recorded in source. **But `lib/gmail/authFailure.test.js:162-183` (\"is TOTAL\") deliberately declines to pin the VALUE** — it asserts only closed-set membership and a non-empty logCode. The fresh verifier on 3b574e0 built the mutant that deletes the guard, so every non-object throw falls through and silently classifies as `temporarily_unavailable` — the precise wrong branch the criteria forbid — **and confirmed the shipped test still PASSES against it**. So a future refactor can silently reverse this ruling with a green suite. **Also correct while there**: that test's comment at `:21-31` claims a contradiction between two directives, asserting the `Boolean(response)` gate would route a non-object throw to the network bucket. That does NOT describe the shipped code, which intercepts non-objects earlier — the comment is now misleading about the very behaviour it sits above. **Fix**: pin `classifyAuthFailure({kind: \"refresh-error\", error: \"boom\"})` and the null/undefined/number cases to exactly `{cause: \"reauth_required\", logCode: \"unrecognized\"}`, and correct the comment."
+  owed_by: "A small test round pinning the value, plus the comment correction"
+  evidence: ["lib/gmail/authFailure.js:44-49 — the non-object guard, ahead of the Boolean(response) check", "lib/gmail/authFailure.test.js:162-183 — the \"is TOTAL\" test, which pins membership but not the value", "lib/gmail/authFailure.test.js:21-31 — a comment describing a contradiction that the shipped code does not have", "Fresh verifier on 3b574e0, 2026-09-28 — guard-removal mutant built and watched PASSING against the shipped test"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 - id: "D2"
   state: "owner"
   title: "**The transport claim is doc-verified, not wire-verified.**"
