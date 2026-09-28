@@ -574,6 +574,131 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
     }
   }
 
+  // N72: auto-insert this job's eligible researched facts WITHOUT a per-fact
+  // accept click (owner ruling: "review after the fact" -- the safety line
+  // moves from insertion to egress, so the highlight + one-click removal in
+  // the modal ARE the review, not a click before insertion). `isOpen` is a
+  // LIVE getter, re-read here at entry and again at the write below -- a
+  // snapshot boolean cannot see a candidate who closes the modal mid-flight,
+  // which is exactly the case the write-time re-check exists to catch.
+  //
+  // THE AUTO-SELECT PREDICATE. An article inserts unasked only when it
+  // carries a real, openable, non-redirect source (`articleUrlKey` -- the
+  // same gate the manual accept path already trusts), is not already in this
+  // application's removed log (so a retracted fact is never silently
+  // reinstated by a later run), and actually carries suggestion text to
+  // insert. Fails toward NOT inserting: an unsourced or invented claim in the
+  // candidate's own voice, reaching an employer unreviewed, is the worst
+  // failure this app can produce.
+  async function autoInsertFactsForJob(jobId, isOpen) {
+    if (!jobId || typeof isOpen !== "function" || !isOpen()) {
+      return { ok: false, reason: "No open review surface." };
+    }
+    const entry = tailoringMap[jobId] || {};
+    const hasCoverLetter = Array.isArray(entry.coverLetterResultLines) && entry.coverLetterResultLines.length > 0;
+    if (!hasCoverLetter) return { ok: false, reason: "No cover letter to insert into." };
+    const hasCoverBytes = typeof entry.coverLetterDocxB64 === "string" && entry.coverLetterDocxB64.length > 0;
+    if (!hasCoverBytes) return { ok: false, reason: NO_ENGINE_BYTES_REASON };
+    if (editedForScope(entry, "cover")) return { ok: false, reason: "Cover letter already edited." };
+
+    const articles = researchByJob[jobId]?.articles || [];
+    const priorFacts = acceptedFactsByJob[jobId]?.facts || [];
+    const removedLog = acceptedFactsByJob[jobId]?.removed || [];
+    const removedSet = new Set(removedLog);
+    const eligible = articles.filter((a) => {
+      if (!a || articleUrlKey(a.url) === null) return false;
+      if (!String(a.suggestion || "").trim()) return false;
+      if (removedSet.has(a.url) || removedSet.has(a.id)) return false;
+      return true;
+    });
+    if (eligible.length === 0) return { ok: false, reason: "No eligible facts to insert." };
+
+    const facts = eligible.map((a) => ({ id: a.id, text: a.suggestion, url: a.url, title: a.title }));
+    const priorRecord = priorFacts.map((f) => ({ id: f?.id ?? null, text: f?.text ?? "" }));
+    const plan = planAcceptForEntry(entry, { facts, coverRecord: priorRecord });
+    if (plan.cover.edits.length === 0) return { ok: false, reason: "Nothing new to insert." };
+
+    // The staleness guard `applyCoverDocxEdits` already makes (factDocx.js:33-34)
+    // compares each edit's `before` against `entry.coverLetterResultLines` --
+    // the snapshot this plan was built from -- so a splice against bytes that
+    // have since moved on is refused rather than silently misapplied.
+    const spliced = await applyCoverDocxEdits(entry.coverLetterDocxB64, entry.coverLetterResultLines, plan.cover.edits);
+    if (!spliced.applied) return { ok: false, reason: messageForRefusal(spliced.reason) };
+
+    // Write-time re-check #1: the docx splice above was a real await; do not
+    // fire the store write for a review surface that closed while it ran.
+    if (!isOpen()) return { ok: false, reason: "No open review surface." };
+
+    const mergedFacts = mergeAcceptedFacts(priorFacts, facts);
+    let res;
+    try {
+      res = await fetch("/api/accepted-facts", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobRef: jobId,
+          facts: mergedFacts,
+          baseRevision: acceptedFactsByJob[jobId]?.revision ?? null,
+          declinedUrls: removedLog,
+          coverVersion: { lines: plan.cover.lines, insertedFacts: plan.cover.record },
+        }),
+      });
+    } catch (err) {
+      return { ok: false, reason: err?.message || "Couldn't add company facts." };
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const reason = typeof data?.error === "string" && data.error ? data.error : "Couldn't add company facts.";
+      return { ok: false, reason };
+    }
+
+    // Write-time re-check #2: the PUT above was also a real await -- the
+    // candidate may have closed the modal while it was in flight. No local
+    // write for a fact the review surface no longer exists to show.
+    if (!isOpen()) return { ok: false, reason: "No open review surface." };
+
+    setTailoringMap((current) => {
+      const cur = current[jobId];
+      if (!cur) return current;
+      // DO NOT copy acceptFacts' own updater (~:425-448): it writes
+      // `plan.cover.lines` unconditionally from the pre-await snapshot,
+      // harmless for a candidate's own click but a CLOBBER here -- this run
+      // can fire while the candidate is typing. Compare the snapshot this
+      // plan was built from against the CURRENT lines; if they moved on,
+      // recompute the insert against the FRESH lines and drop the spliced
+      // bytes computed against the stale ones (they no longer match what the
+      // fresh text says -- the same divergence acceptFacts already accepts
+      // for an already-hand-edited letter).
+      const snapshotLines = Array.isArray(entry.coverLetterResultLines) ? entry.coverLetterResultLines : [];
+      const freshLines = Array.isArray(cur.coverLetterResultLines) ? cur.coverLetterResultLines : [];
+      const linesChanged =
+        freshLines.length !== snapshotLines.length || freshLines.some((line, i) => line !== snapshotLines[i]);
+      const coverPlan = linesChanged ? planAcceptForEntry(cur, { facts, coverRecord: priorRecord }) : plan;
+      if (linesChanged && coverPlan.cover.edits.length === 0) return current;
+
+      const next = { ...cur };
+      next.coverLetterResultLines = coverPlan.cover.lines;
+      next.coverLetterPreviewHtml = undefined;
+      if (!linesChanged) next.coverLetterDocxB64 = spliced.docxB64;
+      const located = coverPlan.cover.record.filter((r) => typeof r.lineIndex === "number" && typeof r.offset === "number");
+      const untouched = (cur.insertedFacts || []).filter((p) => !located.some((r) => r.id === p.id));
+      next.insertedFacts = [...untouched, ...located].map((r) => {
+        const meta = mergedFacts.find((f) => f?.id === r.id);
+        return { id: r.id, text: r.text, lineIndex: r.lineIndex, offset: r.offset, url: meta?.url || r.url || "", title: meta?.title || r.title || "" };
+      });
+      if (coverPlan.pristineCoverLines !== undefined) next.pristineCoverLines = coverPlan.pristineCoverLines;
+      return { ...current, [jobId]: next };
+    });
+    setAcceptedFactsByJob((m) => ({
+      ...m,
+      [jobId]: { facts: data.facts || [], removed: data.removed || [], revision: data.revision ?? null },
+    }));
+    // Bump the reload key so an already-open preview re-parses the body model
+    // and shows the fact highlighted, the same way removeInsertedFact does.
+    setPreviewReloadKey((k) => k + 1);
+    return { ok: true };
+  }
+
   return {
     companyResearch,
     researchByJob,
@@ -587,5 +712,6 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
     addResearchUrl,
     acceptFacts,
     removeInsertedFact,
+    autoInsertFactsForJob,
   };
 }
