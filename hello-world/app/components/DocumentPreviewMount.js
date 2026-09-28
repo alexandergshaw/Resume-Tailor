@@ -98,8 +98,15 @@ export default function DocumentPreviewMount({
   // Surfaced as a readable alert in the strip; cleared on the next attempt
   // that succeeds.
   const [removeError, setRemoveError] = useState("");
+  // Shown on EVERY tab whenever the letter carries inserted facts, not only on
+  // the cover tab. The combine control builds from the cover letter and is
+  // reachable from any tab, so gating this on the active tab let a letter be
+  // combined and downloaded with its research sentences neither marked nor
+  // removable anywhere on screen -- a claim reaching an employer that the
+  // candidate never had the chance to see. Review has to be possible wherever
+  // the letter can leave.
   const insertedFactsStrip =
-    activeScope === "cover" && insertedFacts.length > 0 ? (
+    insertedFacts.length > 0 ? (
       <InsertedFactsStrip
         facts={insertedFacts}
         error={removeError}
