@@ -244,11 +244,16 @@ export default function Home() {
   // inherit the SAME value, with no per-application re-selection step.
   const { placement: coverFactPlacement } = useCoverFactPlacement();
   // Per-job company research (warmed behind the preview; woven into the cover).
+  // N59: supabase/currentUser let acceptFacts/autoInsertFactsForJob/
+  // removeInsertedFact resolve a saved letter's stored docx_path back into
+  // bytes and persist a fresh splice's bytes for the NEXT reload.
   const research = useCompanyResearch({
     tailoringMap,
     setTailoringMap,
     setPreviewReloadKey,
     defaultPlacement: coverFactPlacement,
+    supabase: createClient(),
+    currentUser,
   });
 
   const [applicationsRefreshKey, setApplicationsRefreshKey] = useState(0);
@@ -1132,7 +1137,7 @@ export default function Home() {
       if (coverIds.length > 0) {
         const { data: coverRows, error: coverErr } = await supabase
           .from("generated_cover_letters")
-          .select("id, content, content_lines")
+          .select("id, content, content_lines, docx_path")
           .in("id", coverIds);
         if (coverErr) {
           console.warn("[loadApplications] cover letter fetch failed (non-fatal):", coverErr);
@@ -1323,6 +1328,10 @@ export default function Home() {
           coverLetterResultLines: coverLines,
           // Preserve the faithful docx for the chip download's storage fallback.
           docxPath: typeof gen?.docx_path === "string" ? gen.docx_path : "",
+          // N59: the cover letter's OWN stored docx path (never the resume's) --
+          // lets a rehydrated preview/accept resolve the faithful engine
+          // document instead of only its text.
+          coverLetterDocxPath: typeof cover?.docx_path === "string" ? cover.docx_path : "",
           error: "",
         };
         changed = true;
@@ -2010,7 +2019,7 @@ export default function Home() {
           resume: applyResume ? { content: result, contentLines: resultLines, docxB64 } : null,
           coverLetter:
             applyCover && coverLetterResultLines.length > 0
-              ? { content: coverLetterResult, contentLines: coverLetterResultLines }
+              ? { content: coverLetterResult, contentLines: coverLetterResultLines, docxB64: coverLetterDocxB64 }
               : null,
           sourceResumePath: `${currentUser.id}/resume`,
           additionalContext: additionalContext || null,
@@ -2301,7 +2310,7 @@ export default function Home() {
           resume: applyResume ? { content: nextResult, contentLines: nextResultLines, docxB64: nextDocxB64 } : null,
           coverLetter:
             applyCover && nextCoverLetterResultLines.length > 0
-              ? { content: nextCoverLetterResult, contentLines: nextCoverLetterResultLines }
+              ? { content: nextCoverLetterResult, contentLines: nextCoverLetterResultLines, docxB64: nextCoverLetterDocxB64 }
               : null,
           sourceResumePath: `${currentUser.id}/resume`,
           additionalContext: additionalContext || null,
@@ -2561,7 +2570,7 @@ export default function Home() {
           resume: { content: nextResult, contentLines: nextResultLines, docxB64: nextDocxB64 },
           coverLetter:
             nextCoverLetterResultLines.length > 0
-              ? { content: nextCoverLetterResult, contentLines: nextCoverLetterResultLines }
+              ? { content: nextCoverLetterResult, contentLines: nextCoverLetterResultLines, docxB64: nextCoverLetterDocxB64 }
               : null,
           sourceResumePath: `${currentUser.id}/resume`,
           additionalContext: additionalContext || null,

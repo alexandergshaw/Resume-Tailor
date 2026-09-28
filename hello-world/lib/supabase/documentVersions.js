@@ -14,15 +14,16 @@ const TABLE_BY_SCOPE = {
 // D-1 fix (ARCH.md Wave 1): the résumé branch needs docx_path so
 // selectDocumentVersion (app/hooks/useDocumentPreview.js) can point the
 // preview/download at the SELECTED version's own stored docx instead of
-// leaving stale bytes in place. generated_cover_letters has no docx_path
-// column (F-11) -- adding it to a select string shared by both tables would
-// make the cover-letter query fail with a PostgREST undefined-column error,
-// which the catch below swallows (console.warn + return []), silently
-// disappearing the cover letter's entire version history. Keep this
-// per-scope, and never add `docx_path` to the cover row.
+// leaving stale bytes in place. N59: generated_cover_letters now ALSO has a
+// docx_path column (migration 20260928000000_n59_cover_letter_docx_path.sql,
+// F-11 resolved) -- the cover branch selects it too, so switching a cover
+// version can resolve its own stored engine document instead of falling back
+// to today's honest "no stored bytes" refusal. Kept per-scope (not merged
+// into one shared string) so a future divergence between the two tables'
+// columns stays easy to express.
 const COLUMNS_BY_SCOPE = {
   resume: "id, content, content_lines, created_at, docx_path",
-  cover: "id, content, content_lines, created_at",
+  cover: "id, content, content_lines, created_at, docx_path",
 };
 
 // A generous but finite cap. A single posting accumulates one row per
@@ -35,8 +36,8 @@ const MAX_VERSIONS = 25;
 
 /**
  * Returns one scope's generation history for a position, newest first:
- * id, content, content_lines, created_at, plus docx_path on the résumé scope
- * only (D-1 fix). Never throws — a signed-out client, an RLS-denied row, or
+ * id, content, content_lines, created_at, docx_path (D-1 fix for résumé,
+ * N59 for cover). Never throws — a signed-out client, an RLS-denied row, or
  * a transient query failure all resolve to an empty array, and the version
  * control (AC-7) treats that the same as "no history" rather than surfacing
  * an error.

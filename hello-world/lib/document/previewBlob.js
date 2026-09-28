@@ -100,9 +100,11 @@ export function previewBlobArgs(entry, scope, { resumeFile, coverLetterFile, tex
     const textChanged = suppliedText && text !== stored;
     return {
       engineDocxB64: typeof e.coverLetterDocxB64 === "string" ? e.coverLetterDocxB64 : "",
-      // generated_cover_letters has no docx_path column (F-11) — the cover
-      // branch never has a per-generation stored document to hand over.
-      docxPath: "",
+      // generated_cover_letters now has a docx_path column (F-11 resolved,
+      // N59) — the cover branch hands over its OWN stored path, never the
+      // resume's (entry.docxPath belongs to the resume scope; see
+      // previewBlob.coverDocxPath.test.js's cross-scope-leak guard).
+      docxPath: typeof e.coverLetterDocxPath === "string" ? e.coverLetterDocxPath : "",
       edited: editedForScope(e, "cover") || textChanged,
       text: suppliedText ? text : stored,
       lines: textChanged ? normalizeResultLines(text) : lines,

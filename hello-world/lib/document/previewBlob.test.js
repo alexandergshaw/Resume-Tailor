@@ -83,9 +83,11 @@ function entryFor({ scope, hasB64, hasPath, edited }) {
 //   text supplied -> text = the supplied text
 //                    edited = editedForScope(entry, scope) || text !== scopeText(entry, scope)
 //
-// and the cover scope NEVER carries docxPath: generated_cover_letters has no
-// docx_path column, so entry.docxPath belongs to the RESUME. Handing it to the
-// cover branch would serve the resume's stored .docx as the cover letter.
+// and the cover scope now carries its OWN docxPath (N59,
+// coverLetterDocxPath -> docxPath; see previewBlob.coverDocxPath.test.js) --
+// this file's fixtures never set coverLetterDocxPath, so every case below
+// still expects "" for cover; entry.docxPath itself remains the RESUME's own
+// path and must never leak into the cover branch.
 //
 // `lines` is pinned to the stored array (COVER_LINES/RESUME_LINES) ONLY for
 // "text omitted" and "text supplied unchanged" -- the NARROWED half of the

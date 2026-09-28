@@ -14,11 +14,10 @@ import { saveGeneratedCoverLetter } from "./saveGeneratedCoverLetter";
  * `{ content, contentLines, docxB64? }`. Tolerates being called with only a
  * resume, only a cover letter, or neither (a no-op returning nulls).
  *
- * AC-7 note: generated_cover_letters has no docx_path column (only
- * generated_resumes does), so a cover letter's docxB64 is never written
- * here even if the caller passes one on `coverLetter`. Bringing cover
- * letters up to parity (faithful docx storage) is a known follow-up that
- * needs its own migration.
+ * N59: generated_cover_letters now has a docx_path column (parity with
+ * generated_resumes), so a cover letter's docxB64 -- when the caller passes
+ * one on `coverLetter` -- is forwarded to saveGeneratedCoverLetter and
+ * uploaded/stored the same way a resume's is.
  *
  * Every generation is appended as a new row (generations are not deduped —
  * this is the foundation for future version history), so the pointer
@@ -35,7 +34,7 @@ import { saveGeneratedCoverLetter } from "./saveGeneratedCoverLetter";
  *   positionId?: string|null,
  *   applicationId?: string|null,
  *   resume?: { content: string, contentLines?: any[], docxB64?: string|null }|null,
- *   coverLetter?: { content: string, contentLines?: any[] }|null,
+ *   coverLetter?: { content: string, contentLines?: any[], docxB64?: string|null }|null,
  *   additionalContext?: string|null,
  *   sourceResumePath?: string|null,
  * }} params
@@ -74,6 +73,7 @@ export async function persistGeneratedDocuments(supabase, {
         contentLines: coverLetter.contentLines || [],
         sourceResumePath,
         additionalContext,
+        docxB64: coverLetter.docxB64 || null,
       });
     }
 

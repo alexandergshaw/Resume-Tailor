@@ -242,15 +242,18 @@ export function useDocumentPreview({
         ? {
             coverLetterResultLines: lines,
             coverLetterPreviewHtml: undefined,
-            // D-1 fix. Without this, docx.js:488 keeps serving the NEWEST
-            // generation's bytes for this OLDER version's text. No
-            // docx_path column on generated_cover_letters (F-11) to
-            // substitute, so loadPreviewModel falls back to the uploaded
-            // cover-letter template, or to plain text when none is uploaded,
-            // for the rest of the session. ACCEPTED: right content unformatted
-            // beats wrong content formatted, which is what ships today. Do
-            // not restore the bytes. Facts go too: they locate the OLD text.
-            coverLetterDocxB64: "", insertedFacts: [],
+            // D-1 fix, N59 (F-11 resolved): generated_cover_letters now has
+            // its own docx_path column, so the switched-to version's own
+            // stored path is carried onto the entry -- resolveDocumentBlob
+            // can fetch and serve it verbatim (branch 2) instead of falling
+            // back to the uploaded template. Still clear the in-session
+            // bytes (they belong to whichever version generated them, not
+            // this one) and the facts (they locate the OLD text) -- a
+            // version switch must never let a fact painted against a
+            // DIFFERENT version's text resurrect silently.
+            coverLetterDocxB64: "",
+            coverLetterDocxPath: version.docx_path || "",
+            insertedFacts: [],
           }
         : {
             result: typeof version.content === "string" ? version.content : lines.join("\n"),
@@ -671,6 +674,7 @@ export function useDocumentPreview({
                 ? payload.coverLetterResult
                 : lines.join("\n"),
             contentLines: lines,
+            docxB64: typeof payload.coverLetterDocxB64 === "string" ? payload.coverLetterDocxB64 : "",
           };
         }
       }

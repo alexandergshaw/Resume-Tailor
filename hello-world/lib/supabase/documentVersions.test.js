@@ -7,18 +7,16 @@
 // version's own path -- which preserves the engine's real formatting, where
 // merely clearing docxB64 would discard it.
 //
-// THE TRAP. fetchDocumentVersions uses ONE select string for BOTH tables
-// (TABLE_BY_SCOPE). generated_cover_letters has no docx_path column, so an
-// UNCONDITIONAL `docx_path` in that select makes the cover-letter query fail
+// X-13, INVERTED BY N59. fetchDocumentVersions used to use one select string
+// per table, and generated_cover_letters had no docx_path column, so an
+// unconditional `docx_path` in that select made the cover-letter query fail
 // with a PostgREST undefined-column error -- which lines 46-49 swallow
-// (console.warn, then `return []`) -- and VersionControl hides itself below
-// two entries. The cover letter's entire version history would vanish with no
-// error, no failing test, and nothing visible on screen.
-//
-// Asserting "it does not throw" would therefore prove NOTHING: the failure
-// path is a resolved empty array. The assertion has to be that the cover
-// scope still comes back NON-EMPTY, paired with a positive control proving
-// the fixture holds cover rows in the first place.
+// (console.warn, then `return []`) -- disappearing the whole cover version
+// history with no error and nothing visible on screen. Migration
+// 20260928000000_n59_cover_letter_docx_path.sql (pushed as 66ea826) added
+// that column, so the select now NAMES docx_path for both scopes on purpose;
+// the describe below asserts the column IS requested and IS returned, the
+// opposite of the pre-migration guard it replaces.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { fetchDocumentVersions, pointApplicationAtVersion } from "./documentVersions.js";
@@ -26,8 +24,8 @@ import { fetchDocumentVersions, pointApplicationAtVersion } from "./documentVers
 // The real column sets, from the migrations:
 //   generated_resumes       -- docx_path added by
 //                              20260617000000_generated_resume_docx_path.sql
-//   generated_cover_letters -- 20260610000000_auto_apply_queue.sql:11-20, no
-//                              docx_path (persistGeneration.js:17-21 records why)
+//   generated_cover_letters -- docx_path added by
+//                              20260928000000_n59_cover_letter_docx_path.sql
 const COLUMNS = {
   generated_resumes: [
     "id",
@@ -38,7 +36,15 @@ const COLUMNS = {
     "position_id",
     "user_id",
   ],
-  generated_cover_letters: ["id", "content", "content_lines", "created_at", "position_id", "user_id"],
+  generated_cover_letters: [
+    "id",
+    "content",
+    "content_lines",
+    "created_at",
+    "docx_path",
+    "position_id",
+    "user_id",
+  ],
 };
 
 const ROWS = {
@@ -68,6 +74,7 @@ const ROWS = {
       content: "NEWEST COVER",
       content_lines: ["NEWEST COVER"],
       created_at: "2026-08-02T00:00:00.000Z",
+      docx_path: "user-1/generated/c2.docx",
       position_id: "pos-1",
       user_id: "user-1",
     },
@@ -76,6 +83,7 @@ const ROWS = {
       content: "FIRST COVER",
       content_lines: ["FIRST COVER"],
       created_at: "2026-08-01T00:00:00.000Z",
+      docx_path: "user-1/generated/c1.docx",
       position_id: "pos-1",
       user_id: "user-1",
     },
@@ -165,14 +173,16 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// The trap
+// X-13, inverted (N59): the column now exists, so the select names it on
+// purpose instead of avoiding it.
 // ---------------------------------------------------------------------------
 
-describe("the cover-letter select must not ask for docx_path (X-13)", () => {
+describe("the cover-letter select now asks for docx_path (X-13, inverted by N59)", () => {
   it("still returns the cover letter's version history", async () => {
-    // FAILS the moment `docx_path` is added to a select string shared by both
-    // tables: the cover query errors, documentVersions.js:46-49 warns and
-    // returns [], and the version control silently disappears.
+    // Would FAIL if the select named a column the fixture's post-migration
+    // schema did not have: the cover query would error, documentVersions.js's
+    // catch would warn and return [], and the version control would silently
+    // disappear.
     const client = makeClient();
     const versions = await fetchDocumentVersions(client, "cover", "pos-1");
     expect(versions.map((v) => v.id)).toEqual(["c2", "c1"]);
@@ -187,12 +197,12 @@ describe("the cover-letter select must not ask for docx_path (X-13)", () => {
     expect(versions.map((v) => v.id)).toEqual(["c2", "c1"]);
   });
 
-  it("does not name docx_path in the cover-letter query", async () => {
+  it("names docx_path in the cover-letter query", async () => {
     const client = makeClient();
     await fetchDocumentVersions(client, "cover", "pos-1");
     expect(client.calls).toHaveLength(1);
     expect(client.calls[0].table).toBe("generated_cover_letters");
-    expect(client.calls[0].select).not.toMatch(/docx_path/);
+    expect(client.calls[0].select).toMatch(/docx_path/);
   });
 });
 

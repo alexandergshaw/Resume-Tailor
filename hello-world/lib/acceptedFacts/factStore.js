@@ -104,6 +104,12 @@ export async function acceptFactsForJob(supabase, userId, { jobRef, facts, baseR
     p_cover_content: coverVersion ? (coverVersion.lines || []).join("\n") : null,
     p_cover_lines: coverVersion ? coverVersion.lines || [] : null,
     p_inserted_facts: coverVersion ? coverVersion.insertedFacts || [] : null,
+    // N59/K10: the cover version's own stored docx path, so the accepted
+    // splice survives a reload. `?? null`, never `|| ""` -- an upload
+    // failure or a pre-migration row must store an explicit NULL pointer, so
+    // the next read honestly refuses rather than resolving a stale/fabricated
+    // path.
+    p_docx_path: coverVersion ? coverVersion.docxPath ?? null : null,
   });
 
   if (error) {

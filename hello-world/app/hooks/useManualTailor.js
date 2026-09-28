@@ -295,7 +295,7 @@ export function useManualTailor({
           resume: applyResume ? { content: nextResult, contentLines: nextResultLines, docxB64: nextDocxB64 } : null,
           coverLetter:
             applyCover && nextCoverLetterResultLines.length > 0
-              ? { content: nextCoverLetterResult, contentLines: nextCoverLetterResultLines }
+              ? { content: nextCoverLetterResult, contentLines: nextCoverLetterResultLines, docxB64: nextCoverLetterDocxB64 }
               : null,
           sourceResumePath: `${currentUser.id}/resume`,
           additionalContext: additionalContext || null,
