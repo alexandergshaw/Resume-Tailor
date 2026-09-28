@@ -74,7 +74,14 @@ function sanitize(input) {
       // but unknown string (e.g. "middle") is dropped just like a wrong
       // type. A garbage id would otherwise resolve through resolvePlacement's
       // fallback and silently mis-default every future letter.
-      if (typeof input[key] === "string" && PLACEMENTS.some((p) => p.id === input[key])) {
+      //
+      // N82: "" is additionally accepted as the distinct no-preference state
+      // ("let the app decide") -- it clears any previously pinned placement
+      // so the client's `defaultPlacement || DEFAULT_PLACEMENT` fallback
+      // applies. This widens the check by exactly one literal value; it is
+      // still id-membership-or-empty, never a type-only check, so an
+      // invalid-but-string id like "middle" is still dropped.
+      if (input[key] === "" || (typeof input[key] === "string" && PLACEMENTS.some((p) => p.id === input[key]))) {
         out[key] = input[key];
       }
     }
