@@ -3,7 +3,6 @@
 import Alert from "@mui/material/Alert";
 import Button from "@mui/material/Button";
 
-const CONNECT_HREF = "/api/gmail/connect";
 
 /**
  * The one-click, reachable remedy for a refused Gmail fetch (AC-6/AC-7).
@@ -31,7 +30,7 @@ export default function GmailConnectionNotice({ cause }) {
         severity="info"
         sx={{ mb: 2 }}
         action={
-          <Button href={CONNECT_HREF} color="inherit" size="small" sx={{ textTransform: "none" }}>
+          <Button href="/api/gmail/connect" color="inherit" size="small" sx={{ textTransform: "none" }}>
             Connect Gmail
           </Button>
         }
@@ -47,7 +46,7 @@ export default function GmailConnectionNotice({ cause }) {
         severity="warning"
         sx={{ mb: 2 }}
         action={
-          <Button href={CONNECT_HREF} color="inherit" size="small" sx={{ textTransform: "none" }}>
+          <Button href="/api/gmail/connect" color="inherit" size="small" sx={{ textTransform: "none" }}>
             Reconnect Gmail
           </Button>
         }
