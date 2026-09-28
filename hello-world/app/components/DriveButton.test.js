@@ -3,9 +3,9 @@
 // DriveButton is the settings-menu Google Drive connect/disconnect control,
 // modelled on GmailButton.js (app/components/GmailButton.js:16,41,52-68).
 // These tests exercise every state UX.md rev 2 §6.7 enumerates: loading,
-// not-configured (renders nothing), a failed status fetch (degrades to
-// disconnected, never to nothing — B-5), disconnected, connected, and
-// disconnecting.
+// not-configured (renders nothing), a failed status fetch (a distinct
+// "couldn't check" state, never silently degrading to disconnected — mirrors
+// GmailButton's AC-9 fix, N87), disconnected, connected, and disconnecting.
 //
 // NOT covered here: the MOUNT. `DriveButton` is rendered by
 // `app/components/SettingsMenu.js:105-106` (imported at `:16`) inside a
@@ -130,18 +130,52 @@ describe("DriveButton — not configured", () => {
   });
 });
 
-describe("DriveButton — status fetch failed", () => {
-  it("degrades to the disconnected view, not to nothing (B-5)", async () => {
+describe("DriveButton — status fetch failed (N87)", () => {
+  // Mirrors GmailButton.test.js's AC-9 block: a failed status check is its own
+  // "couldn't check" state, distinct from a genuine disconnect — collapsing the
+  // two would tell a candidate their Drive account is disconnected when the
+  // status check just hiccuped.
+  it("a thrown status fetch renders a distinct 'couldn't check' state, NOT the disconnected affordance", async () => {
     installFetch(() => Promise.reject(new Error("network down")));
     await mount();
-    const connect = findByText("Connect Drive");
-    expect(connect).not.toBeNull();
-    expect(connect.tagName).toBe("A");
-    expect(connect.getAttribute("href")).toBe("/api/drive/connect");
+    expect(findByText("Connect Drive")).toBeNull();
+    expect(container.textContent.length).toBeGreaterThan(0);
+    expect(container.textContent).not.toMatch(/^Checking/i);
   });
 
-  it("also degrades to disconnected on a non-OK response", async () => {
-    installFetch(() => Promise.resolve({ ok: false, json: async () => ({}) }));
+  it("a non-OK (500) status response also renders 'couldn't check', NOT disconnected", async () => {
+    installFetch(() => Promise.resolve({ ok: false, status: 500, json: async () => ({}) }));
+    await mount();
+    expect(findByText("Connect Drive")).toBeNull();
+    expect(container.textContent.length).toBeGreaterThan(0);
+    expect(container.textContent).not.toMatch(/^Checking/i);
+  });
+
+  it("the check-failed and disconnected states are observably DIFFERENT text", async () => {
+    installFetch(() => Promise.resolve({ ok: true, json: async () => ({ connected: false, configured: true }) }));
+    await mount();
+    const disconnectedText = container.textContent;
+
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    installFetch(() => Promise.reject(new Error("network down")));
+    await mount();
+    const checkFailedText = container.textContent;
+
+    expect(checkFailedText).not.toBe(disconnectedText);
+  });
+
+  // Positive control: the plain disconnected shape (no failure) still renders
+  // Connect Drive normally, so "no Connect Drive on failure" above can't be
+  // trivially satisfied by a component that never renders the control at all.
+  it("positive control: the same fetch shape minus the failure renders Connect Drive normally", async () => {
+    installFetch(() => Promise.resolve({ ok: true, json: async () => ({ connected: false, configured: true }) }));
     await mount();
     expect(findByText("Connect Drive")).not.toBeNull();
   });
@@ -478,10 +512,10 @@ describe("DriveButton — source-text checks", () => {
     expect(SOURCE).not.toContain("role=\"combobox\"");
   });
 
-  it("status-fetch failure degrades via .catch(() => setConnected(false)), GmailButton.js:19's exact posture", () => {
-    // Anchored tightly to the .catch block's own closing brace so this does
-    // NOT also match the unrelated setConnected(false) inside
-    // handleDisconnect further down the file.
-    expect(SOURCE).toMatch(/\.catch\(\(\) => \{\s*if \(cancelled\) return;\s*setConnected\(false\);\s*\}\);/);
+  it("status-fetch failure sets a distinct check-failed status, not a disconnected one (N87)", () => {
+    // Anchored tightly to the status fetch's own .catch block, closing brace
+    // and all, so this does NOT also match the unrelated setDisconnectFailed(true)
+    // catch inside handleDisconnect further down the file.
+    expect(SOURCE).toMatch(/\.catch\(\(\) => \{\s*if \(cancelled\) return;\s*setStatus\("check-failed"\);\s*\}\);/);
   });
 });

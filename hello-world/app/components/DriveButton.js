@@ -7,18 +7,20 @@ import Typography from "@mui/material/Typography";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 
 // Google Drive connection control for the settings menu. Modelled directly on
-// GmailButton.js: three states (loading / disconnected / connected), the same
-// button variants and tokens, the same disconnect idiom. Three differences,
-// all required by this feature and absent from the Gmail precedent:
+// GmailButton.js: four states (loading / disconnected / connected /
+// check-failed), the same button variants and tokens, the same disconnect
+// idiom, and -- as of N87 -- the same distinct "couldn't check" state
+// GmailButton gained under N79/N80: a failed status fetch (a non-OK response
+// or a thrown fetch) is its own state, not a silent degrade to disconnected,
+// so a connected user whose status call 500s isn't told their Drive account
+// needs reconnecting. Two differences remain, both required by this feature
+// and absent from the Gmail precedent:
 //
 // - A "not configured" state (the server has no Google client credentials):
 //   the control renders nothing at all, so a deploy with Drive turned off
-//   shows no half-built feature in Settings.
-// - A failed status fetch degrades to the DISCONNECTED view rather than to
-//   nothing, mirroring GmailButton.js's own `.catch(() => setConnected(false))`
-//   posture: a connected user whose status call 500s still sees a visible,
-//   clickable "Connect Drive" rather than a silently vanished feature with no
-//   way to recover.
+//   shows no half-built feature in Settings. Unknown until the status fetch
+//   resolves, so it defaults to configured=true -- a check-failed render
+//   never hides the feature either.
 // - The connected state names the granting Google account (AC-C10): people
 //   routinely have more than one signed in, and "Drive connected" alone
 //   doesn't say which one their documents are being written to. The status
@@ -28,7 +30,8 @@ import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 // Disconnecting takes no confirmation: the user's Drive files are untouched
 // (the caption below says so), so this is not a destructive action.
 export default function DriveButton() {
-  const [connected, setConnected] = useState(null); // null = loading
+  // "loading" | "connected" | "disconnected" | "check-failed"
+  const [status, setStatus] = useState("loading");
   const [configured, setConfigured] = useState(true); // unknown until the fetch resolves; assume yes so a failure never hides the feature
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   // WAVE4-SEAMS.md MAJOR-1: app/api/drive/disconnect/route.js was built so a
@@ -52,16 +55,16 @@ export default function DriveButton() {
   useEffect(() => {
     let cancelled = false;
     fetch("/api/drive/status")
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`status ${r.status}`))))
       .then((data) => {
         if (cancelled) return;
         setConfigured(data?.configured !== false);
-        setConnected(data?.connected ?? false);
+        setStatus(data?.connected ? "connected" : "disconnected");
         setEmail(typeof data?.email === "string" ? data.email.trim() : "");
       })
       .catch(() => {
         if (cancelled) return;
-        setConnected(false);
+        setStatus("check-failed");
       });
     return () => {
       cancelled = true;
@@ -74,7 +77,7 @@ export default function DriveButton() {
     try {
       const res = await fetch("/api/drive/disconnect", { method: "DELETE" });
       if (res.ok) {
-        setConnected(false);
+        setStatus("disconnected");
       } else {
         // The route only returns non-2xx when the disconnect did NOT
         // happen (401/503) -- the credential row survives, so the UI must
@@ -91,9 +94,17 @@ export default function DriveButton() {
     }
   }
 
-  if (connected === null) {
+  if (status === "loading") {
     return (
       <Typography sx={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>Checking…</Typography>
+    );
+  }
+
+  if (status === "check-failed") {
+    return (
+      <Typography sx={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
+        Couldn&apos;t check Drive status. Try again shortly.
+      </Typography>
     );
   }
 
@@ -101,7 +112,7 @@ export default function DriveButton() {
     return null;
   }
 
-  if (!connected) {
+  if (status === "disconnected") {
     return (
       <Button
         href="/api/drive/connect"

@@ -18,17 +18,19 @@
 // {cause, logCode} object with toEqual precisely so an err.code swap (which keeps
 // the coarse cause the same but changes the fine logCode) cannot survive.
 //
-// A DELIBERATE NON-ASSERTION, flagged up to the caller: the plan's U1 row 5 folds
-// "a non-object throw" into {reauth_required, unrecognized}. The 4b brief and the
-// settled design §2 both mandate gating the network case on Boolean(err.response)
-// ONLY. A non-object throw ("boom", null, a number) has a falsy `response`, so the
-// Boolean(response) gate sends it to the network bucket, not the unrecognized one —
-// the two directives disagree on this one edge. Rather than encode a contested
-// resolution, this file asserts the two clearly-specified fall-through rows
-// unambiguously (response-present-unknown-code → reauth_required; response-absent →
-// temporarily_unavailable) and asserts ONLY totality for the non-object throw.
-// The realistic "unrecognised persistent failure" that AC-3(iv) exists to catch is
-// the response-present-unknown-code row, which IS pinned.
+// The non-object-throw edge (a thrown string, null, undefined, or a bare number) is
+// NOT reached by the Boolean(err.response) gate at all: authFailure.js:44-49 checks
+// `!err || typeof err !== "object"` FIRST and returns {reauth_required, unrecognized}
+// directly, ahead of any response/network check. That guard exists because a
+// non-object thrown value carries no positive evidence of anything — not a provider
+// rejection, not a network failure — and the coordinator's ruling is that
+// temporarily_unavailable must be a POSITIVE identification of a transient failure,
+// never a default for the unidentified. Falling through to Boolean(response) (which
+// would happen to read falsy on a non-object too, by coincidence) and landing on
+// temporarily_unavailable would keep polling silently and recreate the exact swallow
+// this classifier exists to remove. The dedicated tests below pin that exact value
+// for the string/null/undefined/number cases; "is TOTAL" keeps its own, wider job —
+// closed-set membership and non-empty logCode across a broader adversarial set.
 
 import { describe, it, expect } from "vitest";
 import { classifyAuthFailure, GMAIL_AUTH_CAUSES } from "./authFailure.js";
@@ -159,12 +161,35 @@ describe("classifyAuthFailure — the coarse cause + fine logCode mapping (AC-1/
     ).toEqual({ cause: "reauth_required", logCode: "unrecognized" });
   });
 
+  describe("a non-object thrown value classifies to EXACTLY reauth_required/unrecognized (N88)", () => {
+    // Regression guard, not defect coverage: the fresh verifier on 3b574e0 confirmed
+    // all four cases below already behave correctly on HEAD — nothing here is red
+    // for a present defect. Their job is to catch a FUTURE regression: deleting the
+    // non-object guard at authFailure.js:44-49 lets these fall through to
+    // Boolean(err.response), which reads falsy on every one of them too, so they'd
+    // silently reclassify as temporarily_unavailable — the exact forbidden default
+    // this classifier exists to prevent (see the file header). The "is TOTAL" test
+    // below deliberately asserts only membership + a non-empty logCode, which is why
+    // it cannot catch that mutant; these rows assert the exact object with toEqual.
+    it.each([
+      ["a string", "boom"],
+      ["null", null],
+      ["undefined", undefined],
+      ["a number", 42],
+    ])("%s", (_label, thrown) => {
+      expect(classifyAuthFailure({ kind: "refresh-error", error: thrown })).toEqual({
+        cause: "reauth_required",
+        logCode: "unrecognized",
+      });
+    });
+  });
+
   it("is TOTAL: never throws, and always returns a valid coarse cause, for adversarial input", () => {
-    // The non-object-throw edge is DELIBERATELY not pinned to a specific cause
-    // (see the file header — plan U1 row 5 and the brief's Boolean(response) gate
-    // disagree on it). What IS pinned: the classifier is total and its cause is
-    // always in the closed vocabulary, so no input strands the caller in an
-    // undefined/empty state.
+    // This test's job is breadth, not the non-object-throw VALUE — that value is
+    // pinned exactly by the dedicated describe block above (N88). Here, what's
+    // checked is that the classifier is total and its cause is always in the closed
+    // vocabulary across a wider adversarial set, so no input strands the caller in
+    // an undefined/empty state.
     const weird = [
       { kind: "refresh-error", error: "boom" },
       { kind: "refresh-error", error: null },
