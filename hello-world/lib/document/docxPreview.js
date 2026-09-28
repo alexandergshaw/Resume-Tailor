@@ -229,10 +229,18 @@ function renderRunsHtml(runs) {
         // added/modified lines). Matches the app's existing highlight
         // treatment (CompanyResearchDialog's inserted-text `mark`).
         r.mark ? "background-color:rgba(255,213,79,0.55)" : "",
+        // Inserted-fact highlight (N61, versionDiff.js#markInsertedFacts):
+        // the SAME visual token as the version-diff mark above, but rendered
+        // as its own <mark data-fact> element (below) so the two are never
+        // conflated -- a check keyed on `data-fact` never matches ordinary
+        // version-diff output, and vice versa (AC-N61.13).
+        r.insertedFact ? "background-color:rgba(255,213,79,0.55)" : "",
       ]
         .filter(Boolean)
         .join(";");
-      return `<span${style ? ` style="${style}"` : ""}>${escapeHtml(r.text)}</span>`;
+      const tag = r.insertedFact ? "mark" : "span";
+      const attrs = r.insertedFact ? ' data-fact="1"' : "";
+      return `<${tag}${attrs}${style ? ` style="${style}"` : ""}>${escapeHtml(r.text)}</${tag}>`;
     })
     .join("");
 }

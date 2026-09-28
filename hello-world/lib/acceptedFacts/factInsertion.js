@@ -52,6 +52,21 @@ function insertFactText(line, text, position) {
   return (m ? `${m[1]} ${text} ${m[3]}` : `${p} ${text}`).replace(/\s{2,}/g, " ").trim();
 }
 
+// F1 (fresh-verifier finding, N61): the SAME whitespace normalisation
+// insertFactText applies to the composed line, applied to one fact's OWN
+// text before it is queued. Without this, a fact whose source text carries
+// two-or-more consecutive whitespace characters (e.g. a copy-pasted "Acme
+// opened  a Dublin  lab.") is inserted with that whitespace collapsed by
+// insertFactText's own `.replace(/\s{2,}/g," ")`, but the record stored the
+// RAW text -- so the recorded text never occurs in the letter at all: an
+// unremovable, unhighlightable claim that reaches egress unreviewed. Every
+// caller that records a fact's text (below) and every caller that composes
+// it into a line (insertFactText above) must agree on this same string, or
+// the record and the letter drift apart.
+function normalizeFactText(text) {
+  return String(text || "").trim().replace(/\s{2,}/g, " ");
+}
+
 // Plan every accepted fact against the cover letter's CURRENT lines. Never
 // mutates `lines`: with no facts to apply the identical array reference is
 // returned (§ invariant other callers rely on to skip a no-op splice).
@@ -65,11 +80,22 @@ function insertFactText(line, text, position) {
 // in SCREEN ORDER by one space each and NO lead-in, so screen order survives
 // (insertFactText's after-first-sentence rule matches the paragraph's
 // original first sentence every time -- two separate calls would insert the
-// second fact ahead of the first) and so each fact's exact text remains an
-// individually excisable substring (N61's one-click-removal precondition).
+// second fact ahead of the first).
+//
+// F2 (fresh-verifier finding, N61): a fact's exact text is NOT always a safe
+// key for removal or highlighting on its own -- the same text can occur a
+// second time elsewhere in the letter (ordinary prose that happens to say
+// the same thing), or be a SUBSTRING of another accepted fact on the same
+// line, and a plain text search then excises or marks the wrong occurrence.
+// So every fact this planner inserts is recorded LOCATED -- `{id, text,
+// lineIndex, offset}` -- pointing at the exact span it actually occupies in
+// the composed line, computed in insertion order with a running cursor so a
+// repeated or overlapping text still resolves to ITS OWN occurrence, never
+// an earlier one. `planRemoveFact` (below) and `lib/document/versionDiff.js`'s
+// `markInsertedFacts` consume that locator instead of searching for the text.
 //
 // @returns {{ lines: string[], edits: {lineIndex:number, before:string, after:string}[],
-//             record: {id:string, text:string}[], changed: boolean }}
+//             record: {id:string, text:string, lineIndex:number, offset:number}[], changed: boolean }}
 function planCoverFacts(lines, { facts, record = [] } = {}) {
   const list = Array.isArray(facts) ? facts : [];
   if (list.length === 0) {
@@ -85,14 +111,15 @@ function planCoverFacts(lines, { facts, record = [] } = {}) {
   const groups = new Map();
   for (const fact of list) {
     if (!fact || typeof fact.text !== "string" || !fact.text.trim()) continue;
-    const text = fact.text.trim();
+    const text = normalizeFactText(fact.text);
+    if (!text) continue;
     const placement = resolvePlacement(fact.placement);
     const index = findTargetIndex(original, placement);
     if (index < 0 || index >= original.length) continue;
 
     let group = groups.get(index);
     if (!group) {
-      group = { position: placement?.position, texts: [], seen: new Set() };
+      group = { position: placement?.position, items: [], seen: new Set() };
       groups.set(index, group);
       order.push(index);
     }
@@ -103,22 +130,81 @@ function planCoverFacts(lines, { facts, record = [] } = {}) {
     // these edits.
     if (original[index].includes(text) || group.seen.has(text)) continue;
     group.seen.add(text);
-    group.texts.push(text);
-    nextRecord.push({ id: fact.id ?? null, text });
+    group.items.push({ id: fact.id ?? null, text });
   }
 
   const out = [...original];
   const edits = [];
   for (const index of order) {
     const group = groups.get(index);
-    if (group.texts.length === 0) continue;
+    if (group.items.length === 0) continue;
     const before = original[index];
-    const after = insertFactText(before, group.texts.join(" "), group.position);
+    const after = insertFactText(before, group.items.map((it) => it.text).join(" "), group.position);
     out[index] = after;
     edits.push({ lineIndex: index, before, after });
+
+    // Locate each item in SCREEN ORDER with an advancing cursor: this is
+    // what keeps a repeated string, or a fact that is a substring of the
+    // NEXT item, resolving to its own occurrence rather than one already
+    // claimed by an earlier item in this same group (F2(b)).
+    let cursor = 0;
+    for (const item of group.items) {
+      const at = after.indexOf(item.text, cursor);
+      const offset = at >= 0 ? at : after.indexOf(item.text);
+      nextRecord.push({ id: item.id, text: item.text, lineIndex: index, offset });
+      if (offset >= 0) cursor = offset + item.text.length;
+    }
   }
 
   return { lines: edits.length > 0 ? out : lines, edits, record: nextRecord, changed: edits.length > 0 };
+}
+
+// Inverse of insertFactText / planCoverFacts (N61): excise one accepted
+// fact's clause from the cover letter's lines, leaving the paragraph as
+// readable as it was before the fact was inserted -- no doubled space, no
+// orphaned connective. LOCATED, not text-keyed (F2): `locator` is a record
+// entry from `planCoverFacts`' `record` -- `{text, lineIndex, offset}` -- so
+// this excises the fact's OWN occurrence even when its text is duplicated
+// elsewhere in the letter or is a substring of another accepted fact on the
+// same line. A stale locator (the text no longer sits at that exact
+// location -- e.g. a second remove of an already-removed fact) is a no-op
+// that returns the SAME `lines` reference, never a guess at a different
+// occurrence.
+//
+// @param {string[]} lines  the entry's coverLetterResultLines (post-insert)
+// @param {{text:string, lineIndex:number, offset:number}} locator  a
+//   `planCoverFacts` record entry (extra fields such as `id` are ignored)
+// @returns {{ lines: string[], edit: {lineIndex:number, before:string, after:string}|null, changed: boolean }}
+//   `edit` is the reverse rewrite for applyCoverDocxEdits (before=current
+//   line, after=line without the clause); null when nothing changed.
+export function planRemoveFact(lines, locator) {
+  const arr = Array.isArray(lines) ? lines : [];
+  const lineIndex = locator?.lineIndex;
+  const offset = locator?.offset;
+  const text = locator?.text;
+  if (typeof lineIndex !== "number" || typeof offset !== "number" || typeof text !== "string" || !text) {
+    return { lines: arr, edit: null, changed: false };
+  }
+  const before = String(arr[lineIndex] ?? "");
+  if (before.slice(offset, offset + text.length) !== text) {
+    return { lines: arr, edit: null, changed: false }; // stale locator -- idempotent no-op
+  }
+  const head = before.slice(0, offset);
+  const tail = before.slice(offset + text.length);
+  // Drop exactly ONE adjoining space -- the one insertFactText itself added
+  // -- preferring the space right before the clause (the common case: `end`
+  // placement, or a non-first item in a coalesced group) and falling back to
+  // the one right after when there is none before (the clause opened the
+  // paragraph). Dropping both would eat a space that belonged to the
+  // SURROUNDING text, not to this insertion.
+  const spliced = head.endsWith(" ") ? head.slice(0, -1) + tail : tail.startsWith(" ") ? head + tail.slice(1) : head + tail;
+  const after = spliced.replace(/\s{2,}/g, " ").trim();
+  if (after === before) {
+    return { lines: arr, edit: null, changed: false };
+  }
+  const out = [...arr];
+  out[lineIndex] = after;
+  return { lines: out, edit: { lineIndex, before, after }, changed: true };
 }
 
 // The two consumers that read `pristineCoverLines` back out (editMining.js

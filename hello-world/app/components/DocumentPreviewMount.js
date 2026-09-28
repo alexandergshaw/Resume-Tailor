@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import DocumentPreviewDialog from "./DocumentPreviewDialog";
 import FocusPickerDialog from "./FocusPickerDialog";
+import InsertedFactsStrip from "./preview/InsertedFactsStrip";
 import { getDownloadFileNameForTitle, getDownloadCoverLetterFileNameForTitle } from "../../lib/document/docx";
 import { emailPreviewText } from "../../lib/tailor/documentScopes";
 import { useDriveDocuments } from "../hooks/useDriveDocuments";
@@ -82,6 +83,19 @@ export default function DocumentPreviewMount({
     activeScope,
   });
 
+  // N61: the cover letter's inserted-fact review strip. Built here (not
+  // inside DocumentPreviewDialog.js, which is at its own line ceiling) and
+  // handed down as one pre-built element -- the same pattern `focusControls`
+  // already uses below. Gated on `activeScope`, not `preview.resumePreview.tab`
+  // (see that state's own doc comment above): the strip is a cover-tab-only
+  // band, like the companyReferences band it sits beside.
+  const insertedFactsJobId = preview.resumePreview.jobId;
+  const insertedFacts = tailoringMap[insertedFactsJobId]?.insertedFacts || [];
+  const insertedFactsStrip =
+    activeScope === "cover" && insertedFacts.length > 0 ? (
+      <InsertedFactsStrip facts={insertedFacts} onRemove={(factId) => research.removeInsertedFact(insertedFactsJobId, factId)} />
+    ) : null;
+
   return (
     <DocumentPreviewDialog
       open={preview.resumePreview.open}
@@ -138,6 +152,7 @@ export default function DocumentPreviewMount({
         (tailoringMap[preview.resumePreview.jobId]?.keywordEditsOverride?.exclude?.length || 0)
       }
       onOpenFocusPicker={() => setFocusPickerOpen((v) => !v)}
+      insertedFactsStrip={insertedFactsStrip}
       focusControls={
         <FocusPickerDialog
           embedded

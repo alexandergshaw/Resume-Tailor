@@ -113,6 +113,7 @@ export default function DocumentPreviewDialog({
   keywordEditsCount = 0,
   onOpenFocusPicker,
   focusControls = null,
+  insertedFactsStrip = null,
   onSetFraming,
   researchLoading = false,
   researchCount = 0,
@@ -348,7 +349,7 @@ export default function DocumentPreviewDialog({
         // AC-3/AC-5: a hand-edited scope always shows its saved HTML as-is
         // (never re-annotated); otherwise ask the loader to annotate the
         // model when this scope's highlight toggle is on (AC-4).
-        const html = saved || renderModelToHtml(await loadModel(scope, { highlight: highlightEnabled(scope) }));
+        const html = saved || renderModelToHtml(await loadModel(scope, { highlight: highlightEnabled(scope), factHighlight: scope === "cover" }));
         setDocState((s) => ({ ...s, [scope]: { loading: false, html } }));
       } catch (e) {
         setDocState((s) => ({ ...s, [scope]: { loading: false, error: e?.message || "Unable to render preview." } }));
@@ -439,10 +440,7 @@ export default function DocumentPreviewDialog({
   const handleClose = () => { commitDraft(); onClose?.(); };
 
   // Commit the file-name field to the parent when the user finishes editing it.
-  const commitFileName = () => {
-    const next = fileNameDraft.trim();
-    if (next !== (scopes[tab]?.fileName || "")) onRenameFile?.(tab, next);
-  };
+  const commitFileName = () => { const next = fileNameDraft.trim(); if (next !== (scopes[tab]?.fileName || "")) onRenameFile?.(tab, next); };
 
   // AC-A4: "on the consent return, focus returns to the element captured at
   // click time, else to the save control." Captured unconditionally on
@@ -755,6 +753,7 @@ export default function DocumentPreviewDialog({
       </Box>
 
       {focusControls}
+      {insertedFactsStrip}
 
       {scrapeNote ? (
         <Box

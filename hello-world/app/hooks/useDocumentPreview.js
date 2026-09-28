@@ -8,7 +8,7 @@ import {
   scopeText,
 } from "../../lib/document/previewBlob";
 import { parseDocxToModel, linesToModel, modelToLines } from "../../lib/document/docxPreview";
-import { markVersionChanges } from "../../lib/document/versionDiff";
+import { markVersionChanges, markInsertedFacts } from "../../lib/document/versionDiff";
 import { addedEditText, editFingerprint } from "../../lib/tailor/editMining";
 import { deriveEditRules } from "../../lib/tailor/editRules";
 import {
@@ -124,9 +124,7 @@ export function useDocumentPreview({
   // overlapping operations finishing out of order each touch only their own
   // scope's flags — the first to finish never re-enables or clears the
   // other's controls (AC-4).
-  function setScopeFlags(scopes, patch) {
-    setResumePreview((prev) => applyScopeFlags(prev, scopes, patch));
-  }
+  function setScopeFlags(scopes, patch) { setResumePreview((prev) => applyScopeFlags(prev, scopes, patch)); }
 
   // Does the tailoring entry have content for a given scope?
   function previewScopeAvailable(entry, scope) {
@@ -420,16 +418,18 @@ export function useDocumentPreview({
               ? emailPreviewLines(entry)
               : entry.resultLines || String(entry.result || "").split("\n"),
         );
-    if (!opts.highlight) return model;
+    // N61: gated on its own opts.factHighlight, independent of the version-diff toggle, so combine/download (which asks for neither) never sees it.
+    const highlighted = opts.factHighlight && scope === "cover" && entry.insertedFacts?.length ? markInsertedFacts(model, entry.insertedFacts) : model;
+    if (!opts.highlight) return highlighted;
     const previous = previousVersionFor(scope);
-    if (!previous) return model;
+    if (!previous) return highlighted;
     const previousLines =
       Array.isArray(previous.content_lines) && previous.content_lines.length > 0
         ? previous.content_lines
         : typeof previous.content === "string"
           ? previous.content.split("\n")
           : [];
-    return markVersionChanges(model, previousLines, modelToLines(model, { includeEmpty: true }));
+    return markVersionChanges(highlighted, previousLines, modelToLines(highlighted, { includeEmpty: true }));
   }
 
   // Save edits back to the tailoring entry so this becomes the document the

@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { weaveSources } from "../../lib/document/coverLetterWeave";
 import { readEngine } from "../settings/engine";
-import { planAcceptForEntry, mergeAcceptedFacts } from "../../lib/acceptedFacts/factInsertion";
+import { planAcceptForEntry, mergeAcceptedFacts, planRemoveFact } from "../../lib/acceptedFacts/factInsertion";
 import { applyCoverDocxEdits } from "../../lib/acceptedFacts/factDocx";
 import { messageForRefusal } from "../../lib/acceptedFacts/factRefusalMessage";
 import { editedForScope } from "../../lib/document/previewBlob";
@@ -429,6 +429,19 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
           next.coverLetterResultLines = plan.cover.lines;
           next.coverLetterPreviewHtml = undefined;
           if (hasCoverLetter && hasCoverBytes && !coverAlreadyEdited) next.coverLetterDocxB64 = coverDocxB64;
+          // N61: keep this session's LOCATED record in sync -- it is what the
+          // removal strip and the body highlight both read. `plan.cover.record`
+          // mixes this click's freshly-located entries (lineIndex/offset) with
+          // whatever `priorRecord` already carried (never located, kept only
+          // for the store's provenance log above); a fact this session located
+          // on an EARLIER accept and that this click didn't touch keeps ITS OWN
+          // prior location rather than being dropped.
+          const located = plan.cover.record.filter((r) => typeof r.lineIndex === "number" && typeof r.offset === "number");
+          const untouched = (cur.insertedFacts || []).filter((p) => !located.some((r) => r.id === p.id));
+          next.insertedFacts = [...untouched, ...located].map((r) => {
+            const meta = mergedFacts.find((f) => f?.id === r.id);
+            return { id: r.id, text: r.text, lineIndex: r.lineIndex, offset: r.offset, url: meta?.url || r.url || "", title: meta?.title || r.title || "" };
+          });
         }
         if (plan.pristineCoverLines !== undefined) next.pristineCoverLines = plan.pristineCoverLines;
         return { ...current, [jobId]: next };
@@ -446,6 +459,89 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
     }
   }
 
+  // Remove one inserted fact from THIS job's cover letter, everywhere it can
+  // egress (N61, the owner's "I should be able to remove any of the facts
+  // with a simple click"). jobId-parameterised, not bound to
+  // `companyResearch.jobId` -- the removal control lives in the PREVIEW
+  // modal, not the research dialog. LOCATED, not text-keyed (F2): `record`
+  // is this session's own located entry from `entry.insertedFacts`, so a
+  // duplicated or overlapping fact is excised at its own line/offset, never
+  // the wrong occurrence.
+  //
+  // Deliberately NOT gated on the engine's cover bytes: the accept path's
+  // `NO_ENGINE_BYTES_REASON` refusal protects INSERTION (never splice a fact
+  // into the candidate's generic template); that danger does not apply to
+  // removal, whose safe outcome is the fact leaving, so text removal
+  // proceeds even with no bytes to splice (a restored chip / cover-version
+  // switch, AC-N61.19). A splice REFUSAL (stale bytes) is likewise never
+  // allowed to trap the fact -- the bytes are dropped to "" (forcing the
+  // download to rebuild from the now fact-free lines) rather than shipping
+  // stale bytes that still carry the removed clause.
+  async function removeInsertedFact(jobId, factId) {
+    if (!jobId) return { ok: false, reason: "No job is open." };
+    const entry = tailoringMap[jobId] || {};
+    const insertedFacts = Array.isArray(entry.insertedFacts) ? entry.insertedFacts : [];
+    const record = insertedFacts.find((r) => r.id === factId);
+    if (!record) return { ok: false, reason: "That fact is no longer in the letter." };
+    const lines = Array.isArray(entry.coverLetterResultLines) ? entry.coverLetterResultLines : [];
+    const removal = planRemoveFact(lines, record);
+    if (!removal.changed) return { ok: false, reason: "That fact is no longer in the letter." };
+
+    const hasCoverBytes = typeof entry.coverLetterDocxB64 === "string" && entry.coverLetterDocxB64.length > 0;
+    const coverAlreadyEdited = editedForScope(entry, "cover");
+    let coverDocxB64 = entry.coverLetterDocxB64;
+    if (hasCoverBytes && !coverAlreadyEdited) {
+      const spliced = await applyCoverDocxEdits(entry.coverLetterDocxB64, lines, [removal.edit]);
+      coverDocxB64 = spliced.applied ? spliced.docxB64 : "";
+    }
+
+    const remainingFacts = insertedFacts.filter((r) => r.id !== factId);
+    const priorRemoved = acceptedFactsByJob[jobId]?.removed || [];
+    const removedKey = record.url || record.id || "";
+    const removedLog = removedKey && !priorRemoved.includes(removedKey) ? [...priorRemoved, removedKey] : priorRemoved;
+    const storedFacts = (acceptedFactsByJob[jobId]?.facts || []).filter((f) => f?.id !== factId);
+
+    try {
+      const res = await fetch("/api/accepted-facts", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobRef: jobId,
+          facts: storedFacts,
+          baseRevision: acceptedFactsByJob[jobId]?.revision ?? null,
+          declinedUrls: removedLog,
+          coverVersion: { lines: removal.lines, insertedFacts: remainingFacts },
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const reason = typeof data?.error === "string" && data.error ? data.error : "Couldn't remove that fact. Try again.";
+        return { ok: false, reason };
+      }
+      setTailoringMap((current) => {
+        const cur = current[jobId] || {};
+        return {
+          ...current,
+          [jobId]: {
+            ...cur,
+            coverLetterResultLines: removal.lines,
+            coverLetterPreviewHtml: undefined,
+            coverLetterDocxB64: hasCoverBytes ? coverDocxB64 : cur.coverLetterDocxB64,
+            insertedFacts: remainingFacts,
+          },
+        };
+      });
+      setAcceptedFactsByJob((m) => ({
+        ...m,
+        [jobId]: { facts: data.facts || [], removed: data.removed || [], revision: data.revision ?? null },
+      }));
+      setPreviewReloadKey((k) => k + 1);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, reason: err?.message || "Couldn't remove that fact. Try again." };
+    }
+  }
+
   return {
     companyResearch,
     researchByJob,
@@ -458,5 +554,6 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
     closeCompanyResearch,
     addResearchUrl,
     acceptFacts,
+    removeInsertedFact,
   };
 }
