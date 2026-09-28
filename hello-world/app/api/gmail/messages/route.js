@@ -2,6 +2,15 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getAuthenticatedClient, fetchJobRelatedMessages } from "@/lib/gmail/gmailClient";
 import { upsertGmailMessages } from "@/lib/supabase/upsertGmailMessages";
+import { GMAIL_AUTH_CAUSES } from "@/lib/gmail/authFailure";
+
+// Canned human copy per coarse cause. Route-local: the client keys on `cause`,
+// never on this string, so there is no reason to share it across modules.
+const HUMAN_BY_CAUSE = {
+  not_connected: "Gmail not connected. Please connect your Gmail account first.",
+  reauth_required: "Gmail access expired or was revoked. Please reconnect your Gmail account.",
+  temporarily_unavailable: "Couldn't reach Gmail right now. Please try again shortly.",
+};
 
 /**
  * POST /api/gmail/messages
@@ -9,7 +18,14 @@ import { upsertGmailMessages } from "@/lib/supabase/upsertGmailMessages";
  * Fetches job-related Gmail messages for the current user.
  * Body (optional): { companyNames: string[], maxResults: number }
  *
- * Response: { messages: Array<{ id, threadId, subject, from, date, snippet }> }
+ * Response:
+ *   200 { messages: Array<{ id, threadId, subject, from, date, snippet }> }
+ *   401 { error }                      — unauthenticated, no cause field
+ *   403 { error, cause }               — refused; cause is one of
+ *     not_connected | reauth_required | temporarily_unavailable, produced
+ *     only after auth succeeds so it can only ever describe the caller's own
+ *     account
+ *   500 { error }                      — Gmail API call itself failed
  */
 export async function POST(request) {
   const supabase = await createClient();
@@ -34,13 +50,19 @@ export async function POST(request) {
   const { origin } = new URL(request.url);
   const redirectUri = `${origin}/api/gmail/oauth2callback`;
 
-  const auth = await getAuthenticatedClient(user.id, redirectUri);
-  if (!auth) {
+  const result = await getAuthenticatedClient(user.id, redirectUri);
+  if (!result.ok) {
+    // Defensive: the cause must stay inside the closed vocabulary the client
+    // keys on (AC-2/AC-11). If a future change to getAuthenticatedClient ever
+    // produced something outside GMAIL_AUTH_CAUSES, fall back to the no-remedy
+    // transient cause rather than forwarding an unrecognised string.
+    const cause = GMAIL_AUTH_CAUSES.includes(result.cause) ? result.cause : "temporarily_unavailable";
     return NextResponse.json(
-      { error: "Gmail not connected. Please connect your Gmail account first." },
+      { error: HUMAN_BY_CAUSE[cause], cause },
       { status: 403 },
     );
   }
+  const auth = result.client;
 
   // Pull the user's tracked companies + job titles from the DB so we only
   // fetch Gmail messages that mention one of them.
@@ -77,7 +99,7 @@ export async function POST(request) {
   } catch (err) {
     console.error("Gmail messages fetch error:", err?.message || err, err?.stack);
     return NextResponse.json(
-      { error: "Failed to fetch Gmail messages.", detail: err?.message },
+      { error: "Failed to fetch Gmail messages." },
       { status: 500 },
     );
   }

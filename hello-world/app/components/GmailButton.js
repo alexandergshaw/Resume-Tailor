@@ -7,35 +7,49 @@ import Typography from "@mui/material/Typography";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 
 // Gmail connection control for the settings menu: connect when disconnected, or
-// show the connected state with a disconnect action.
+// show the connected state with a disconnect action. A failed status check (a
+// non-OK response or a thrown fetch) is its own "couldn't check" state,
+// distinct from a genuine disconnect — collapsing the two would tell a
+// candidate their account is disconnected when the status check just
+// hiccuped, the same swallow-a-failure-as-a-negative-verdict defect the
+// message fetch has (AC-9).
 export default function GmailButton() {
-  const [connected, setConnected] = useState(null); // null = loading
+  // "loading" | "connected" | "disconnected" | "check-failed"
+  const [status, setStatus] = useState("loading");
   const [isDisconnecting, setIsDisconnecting] = useState(false);
 
   useEffect(() => {
     fetch("/api/gmail/status")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => setConnected(data?.connected ?? false))
-      .catch(() => setConnected(false));
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`status ${r.status}`))))
+      .then((data) => setStatus(data?.connected ? "connected" : "disconnected"))
+      .catch(() => setStatus("check-failed"));
   }, []);
 
   async function handleDisconnect() {
     setIsDisconnecting(true);
     try {
       await fetch("/api/gmail/disconnect", { method: "DELETE" });
-      setConnected(false);
+      setStatus("disconnected");
     } finally {
       setIsDisconnecting(false);
     }
   }
 
-  if (connected === null) {
+  if (status === "loading") {
     return (
       <Typography sx={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>Checking…</Typography>
     );
   }
 
-  if (!connected) {
+  if (status === "check-failed") {
+    return (
+      <Typography sx={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
+        Couldn&apos;t check Gmail status. Try again shortly.
+      </Typography>
+    );
+  }
+
+  if (status === "disconnected") {
     return (
       <Button
         href="/api/gmail/connect"

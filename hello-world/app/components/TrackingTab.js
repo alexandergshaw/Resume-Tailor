@@ -36,6 +36,7 @@ import EditAppDialog from "./EditAppDialog";
 import AddAppDialog from "./AddAppDialog";
 import AppViewDialog from "./AppViewDialog";
 import ApplicationCard from "./tracking/ApplicationCard";
+import GmailConnectionNotice from "./tracking/GmailConnectionNotice";
 import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 // AC-K4: options for the compact (<900px) card layout's sort control, which
@@ -116,6 +117,9 @@ export default function TrackingTab({
   loadCommunicationsForApp,
   highlightedAppId,
   emailClassificationsByAppId = {},
+  // Gmail connection state for the applications surface - see
+  // app/hooks/useGmailMessages.js. null = connected/ok/not-yet-checked.
+  gmailConnection = null,
   // Company & role research column - see app/hooks/useApplicationDigests.js.
   digestsById = {},
   researchingIds,
@@ -346,6 +350,8 @@ export default function TrackingTab({
           )
         }
       />
+
+      <GmailConnectionNotice cause={gmailConnection?.cause} />
 
       {!currentUser ? (
         <EmptyState

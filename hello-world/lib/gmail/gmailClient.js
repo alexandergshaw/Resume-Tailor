@@ -1,6 +1,7 @@
 import { google } from "googleapis";
 import { getCached, setCached } from "../cache/jobCache";
 import { getServerEnv } from "../config/env";
+import { classifyAuthFailure } from "./authFailure";
 
 const GMAIL_SCOPES = [
   "https://www.googleapis.com/auth/gmail.readonly",
@@ -73,11 +74,23 @@ export async function deleteTokens(userId) {
 /**
  * Build an authenticated OAuth2 client for a user using stored tokens.
  * Automatically refreshes the access token if expired and persists the new token.
- * Returns null if the user has no tokens stored.
+ *
+ * @typedef {{ ok: true, client: import('googleapis').Auth.OAuth2Client }
+ *         | { ok: false, cause: import('./authFailure').GmailAuthCause }} GmailClientResult
+ * @returns {Promise<GmailClientResult>}
+ *
+ * On success: { ok: true, client }. On refusal: { ok: false, cause }, cause
+ * drawn from classifyAuthFailure's closed vocabulary. The raw error and the
+ * fine, server-only logCode never leave this function (AC-4/AC-11) — only the
+ * logCode is written to the server log here, and only for a refresh failure
+ * (no stored tokens is an ordinary state, not an operator alert).
  */
 export async function getAuthenticatedClient(userId, redirectUri) {
   const tokens = await loadTokens(userId);
-  if (!tokens) return null;
+  if (!tokens) {
+    const { cause } = classifyAuthFailure({ kind: "no-tokens" });
+    return { ok: false, cause };
+  }
 
   const oauth2Client = createOAuth2Client(redirectUri);
   oauth2Client.setCredentials(tokens);
@@ -88,13 +101,17 @@ export async function getAuthenticatedClient(userId, redirectUri) {
       const { credentials } = await oauth2Client.refreshAccessToken();
       oauth2Client.setCredentials(credentials);
       await saveTokens(userId, credentials);
-    } catch {
-      // Refresh failed — stored tokens may be revoked; caller should handle null
-      return null;
+    } catch (err) {
+      // Refresh failed. Classify the error and log ONLY the fine logCode plus
+      // userId — never err.message, err.stack, err.response, or the tokens
+      // themselves, which may carry provider text or token material (AC-11).
+      const { cause, logCode } = classifyAuthFailure({ kind: "refresh-error", error: err });
+      console.error("[gmail auth] refresh failed", { userId, logCode });
+      return { ok: false, cause };
     }
   }
 
-  return oauth2Client;
+  return { ok: true, client: oauth2Client };
 }
 
 /**
