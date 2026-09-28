@@ -50,6 +50,31 @@ function recordAutoInsertOutcome(result) {
   recordDecision(AUTO_INSERT_DECISION_ID, outcome, fields);
 }
 
+// The owner reported the auto-insert feature "still not working" twice, and
+// the activity log they sent both times proved research had succeeded and
+// yet carried NO fact-auto-insert event at all -- because the coordinating
+// effect below only ever calls `autoInsertFactsForJob` (and so only ever
+// records anything) when research resolved WITH at least one article. Three
+// ordinary outcomes -- research resolved empty, research failed outright, and
+// the candidate closing the preview before research finished -- left no trace
+// whatsoever, indistinguishable from the feature being broken. These three
+// canned, content-free reasons are what the effect (never the function, which
+// does not run in any of these cases) records for them below. Never the raw
+// research error: that string can carry the company name or a source url
+// (see the LEAKY_ERROR case the test file plants), and this record is written
+// into a file the candidate downloads and shares onward.
+const RESEARCH_EMPTY_REASON = "Company research finished but found nothing to add to this letter.";
+const RESEARCH_FAILED_REASON = "Company research could not be completed.";
+const RESEARCH_PENDING_REASON = "The letter was closed before company research finished.";
+
+// None of the three surface on screen (see the RED test file's header
+// ruling): this is a background nicety the candidate never asked for, and a
+// banner over "we found nothing" or "research failed" when they merely opened
+// their own letter reads as a fault, or a judgement on the employer, with no
+// action attached -- the same reasoning that already keeps the `already-edited`
+// refusal silent. The distinction the owner needs lives in the downloaded log
+// (distinct outcome + code), not on their screen.
+
 // Extracted verbatim from app/page.js:3172-3270 (Wave 5C, mechanical move --
 // no logic changed). `focusPickerOpen` moved from page-level state into this
 // component because it was already local to this JSX subtree (nothing else
@@ -156,6 +181,14 @@ export default function DocumentPreviewMount({
     researchRef.current = research;
   }, [research]);
   const autoInsertAttemptedRef = useRef(new Set());
+  // Tracks the PREVIOUS render's `previewOpen`, read (then overwritten) at the
+  // top of the coordinating effect below -- distinct from `openRef` above,
+  // which an earlier effect in this same commit already advances to the NEW
+  // value before the coordinating effect runs, so it can never answer "was
+  // this open a moment ago." Only a genuine true->false transition, caught
+  // here, counts as a close; a component that mounts already-closed must
+  // record nothing (see that effect's own comment).
+  const prevPreviewOpenRef = useRef(previewOpen);
   const autoInsertJobId = preview.resumePreview.jobId;
   const autoInsertResearchEntry = research.researchByJob[autoInsertJobId];
   const autoInsertResearchResolved =
@@ -163,6 +196,18 @@ export default function DocumentPreviewMount({
     !autoInsertResearchEntry.loading &&
     Array.isArray(autoInsertResearchEntry.articles) &&
     autoInsertResearchEntry.articles.length > 0;
+  // Resolved, no error, but nothing came back: distinct from "resolved with
+  // articles" above (autoInsertResearchResolved) and from "could not run"
+  // below (autoInsertResearchFailed) -- the three ordinary outcomes the
+  // effect now records.
+  const autoInsertResearchEmpty =
+    !!autoInsertResearchEntry &&
+    !autoInsertResearchEntry.loading &&
+    !autoInsertResearchEntry.error &&
+    Array.isArray(autoInsertResearchEntry.articles) &&
+    autoInsertResearchEntry.articles.length === 0;
+  const autoInsertResearchFailed = !!autoInsertResearchEntry && !autoInsertResearchEntry.loading && !!autoInsertResearchEntry.error;
+  const autoInsertResearchLoading = !!autoInsertResearchEntry && !!autoInsertResearchEntry.loading;
 
   // N77: the readable half of the fix. `autoInsertMessage` is `{ severity,
   // text }` or null -- `severity` is either "failure" (role=alert) or "info"
@@ -195,24 +240,74 @@ export default function DocumentPreviewMount({
   }, [autoInsertJobId]);
 
   useEffect(() => {
-    if (!previewOpen || !autoInsertResearchResolved || !autoInsertJobId) return;
+    // Captured (then overwritten) FIRST, unconditionally, so the "was this
+    // open a moment ago" read stays accurate across every early return below
+    // -- including the ones for a job this effect will never otherwise touch.
+    const wasOpen = prevPreviewOpenRef.current;
+    prevPreviewOpenRef.current = previewOpen;
+    if (!autoInsertJobId) return;
     if (autoInsertAttemptedRef.current.has(autoInsertJobId)) return;
-    autoInsertAttemptedRef.current.add(autoInsertJobId);
-    const jobId = autoInsertJobId;
-    researchRef.current.autoInsertFactsForJob(jobId, () => openRef.current).then((result) => {
-      recordAutoInsertOutcome(result);
-      if (result?.ok) {
-        // A stale refusal left over from an earlier attempt on this same job
-        // is worse than none once the facts actually arrive.
-        if (autoInsertJobIdRef.current === jobId) setAutoInsertMessage(null);
-        return;
-      }
-      const severity = result?.severity;
-      if ((severity === "failure" || severity === "info") && autoInsertJobIdRef.current === jobId) {
-        setAutoInsertMessage({ severity, text: result.reason || "" });
-      }
-    });
-  }, [previewOpen, autoInsertJobId, autoInsertResearchResolved]);
+
+    if (previewOpen && autoInsertResearchResolved) {
+      autoInsertAttemptedRef.current.add(autoInsertJobId);
+      const jobId = autoInsertJobId;
+      researchRef.current.autoInsertFactsForJob(jobId, () => openRef.current).then((result) => {
+        recordAutoInsertOutcome(result);
+        if (result?.ok) {
+          // A stale refusal left over from an earlier attempt on this same job
+          // is worse than none once the facts actually arrive.
+          if (autoInsertJobIdRef.current === jobId) setAutoInsertMessage(null);
+          return;
+        }
+        const severity = result?.severity;
+        if ((severity === "failure" || severity === "info") && autoInsertJobIdRef.current === jobId) {
+          setAutoInsertMessage({ severity, text: result.reason || "" });
+        }
+      });
+      return;
+    }
+
+    // The three ordinary "no facts arrived" outcomes below never reach
+    // `autoInsertFactsForJob` -- it never runs for any of them -- so the
+    // record can only come from here, the effect, exactly once per firing
+    // (the mutually exclusive `if` chain), never alongside the function's
+    // own record above.
+    if (previewOpen && autoInsertResearchEmpty) {
+      // Permanently dedupes like the real-attempt branch above: research
+      // resolving empty is a terminal state for this job, so there is no
+      // future retry this would wrongly suppress.
+      autoInsertAttemptedRef.current.add(autoInsertJobId);
+      recordDecision(AUTO_INSERT_DECISION_ID, "skipped", { reason: RESEARCH_EMPTY_REASON, code: "research-empty" });
+      return;
+    }
+
+    if (previewOpen && autoInsertResearchFailed) {
+      autoInsertAttemptedRef.current.add(autoInsertJobId);
+      recordDecision(AUTO_INSERT_DECISION_ID, "failed", { reason: RESEARCH_FAILED_REASON, code: "research-failed" });
+      return;
+    }
+
+    // The candidate closed the preview while research was still running --
+    // `wasOpen` (not merely `!previewOpen`) makes this a genuine close, never
+    // a mount that merely starts out closed. Deliberately NOT added to
+    // `autoInsertAttemptedRef`: unlike the two branches above, "pending" is
+    // not a terminal state -- research is still running and may resolve with
+    // articles the next time this job's preview is open, and that later,
+    // real attempt (the branch at the top of this effect) must still be free
+    // to fire then. The `wasOpen` transition check already keeps this branch
+    // from re-firing on every render while the preview stays closed -- it
+    // only fires again on a SUBSEQUENT close, which is a genuine new event.
+    if (!previewOpen && wasOpen && autoInsertResearchLoading) {
+      recordDecision(AUTO_INSERT_DECISION_ID, "skipped", { reason: RESEARCH_PENDING_REASON, code: "research-pending" });
+    }
+  }, [
+    previewOpen,
+    autoInsertJobId,
+    autoInsertResearchResolved,
+    autoInsertResearchEmpty,
+    autoInsertResearchFailed,
+    autoInsertResearchLoading,
+  ]);
 
   // N61: the cover letter's inserted-fact review strip. Built here (not
   // inside DocumentPreviewDialog.js, which is at its own line ceiling) and
