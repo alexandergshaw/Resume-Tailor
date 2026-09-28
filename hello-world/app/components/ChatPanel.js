@@ -11,6 +11,9 @@ import { useIsMobile } from "../hooks/useResponsive";
 import { useChatErrorAnnouncementSeq } from "../hooks/useChat";
 import { useEngine } from "../settings/engine";
 import { revokeAttachmentPreview } from "../../lib/chat/chatbot";
+import { requestSalaryEstimate } from "../../lib/chat/salaryEstimateRequest";
+import { formatSalary } from "../../lib/feed/salary";
+import { safeExternalHref } from "@/lib/url/safeExternalHref";
 import { TOUCH_ICON_SX } from "@/app/theme/mobileSx";
 
 const EMBEDDED_TOOLTIP =
@@ -258,6 +261,30 @@ export default function ChatPanel({
           <Box sx={{ flex: 1, fontSize: "0.85rem", color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {chatPinnedContext.label}
           </Box>
+          {/* N65/S1/S12: the pinned posting flows straight into the request --
+              nobody re-picks or re-pastes it -- and the control is hidden
+              outright when the posting already states its pay (the safe
+              default: `posting` is only ever set by a caller that computed a
+              real salaryStated, and every other pinned subject leaves it
+              null). One click reaches the real route with no intermediate
+              dialog. */}
+          {chatPinnedContext.posting && !chatPinnedContext.posting.salaryStated ? (
+            <Button
+              size="small"
+              disabled={chatSending}
+              onClick={() =>
+                requestSalaryEstimate({
+                  posting: chatPinnedContext.posting,
+                  engine,
+                  setChatMessages,
+                  setChatError,
+                })
+              }
+              sx={{ minWidth: 0, px: 1, fontSize: 11, textTransform: "none", color: "var(--accent)", whiteSpace: "nowrap" }}
+            >
+              Estimate salary
+            </Button>
+          ) : null}
           <Button
             size="small"
             onClick={() => setChatPinnedContext(null)}
@@ -333,6 +360,57 @@ export default function ChatPanel({
               >
                 {m.content}
               </Box>
+              {/* N65/S3/S4/S5: rendered ONLY for a real estimate ("estimated"
+                  status) -- a withhold/refuse/fail turn shows its
+                  app-authored `content` above and nothing more (S3/S14: no
+                  chip, no citations, so a degraded result never reads as a
+                  confident negative). The chip is visibly and textually
+                  labelled "Estimate", distinct from any stated-salary
+                  render (FeedPostingCard never uses this word), and every
+                  citation link is re-gated through safeExternalHref at
+                  render time even though the builder already admitted it. */}
+              {m.role === "assistant" && m.salaryEstimate && m.salaryEstimate.status === "estimated" ? (
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5, px: 0.5 }}>
+                  <Box sx={{ display: "flex", alignItems: "center", flexWrap: "wrap" }}>
+                    <Chip
+                      size="small"
+                      label={`Estimate · ${formatSalary(m.salaryEstimate.range.min, m.salaryEstimate.range.max)}`}
+                      sx={{
+                        height: 22,
+                        fontSize: 11.5,
+                        fontWeight: 700,
+                        color: "var(--accent)",
+                        backgroundColor: "var(--accent-soft)",
+                        border: "1px solid var(--accent)",
+                      }}
+                    />
+                  </Box>
+                  <Box sx={{ fontSize: 11.5, color: "var(--text-secondary)" }}>
+                    Based on {m.salaryEstimate.sourceCount} source{m.salaryEstimate.sourceCount === 1 ? "" : "s"} for{" "}
+                    {m.salaryEstimate.basisKind === "company" ? "this company" : "similar roles in this market"}.
+                  </Box>
+                  {m.salaryEstimate.citations.length > 0 ? (
+                    <Box sx={{ display: "flex", flexDirection: "column", gap: 0.25 }}>
+                      {m.salaryEstimate.citations.map((c, ci) => {
+                        const safeHref = safeExternalHref(c.url);
+                        if (!safeHref) return null;
+                        return (
+                          <Box
+                            key={`${c.url}-${ci}`}
+                            component="a"
+                            href={safeHref}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            sx={{ fontSize: 11.5, color: "var(--accent)" }}
+                          >
+                            {c.title || c.host}
+                          </Box>
+                        );
+                      })}
+                    </Box>
+                  ) : null}
+                </Box>
+              ) : null}
               {m.role === "user" && m.failed ? (
                 // A `data-chat-turn="failed"` attribute alone is invisible --
                 // slot re-use on the next send would silently replace this

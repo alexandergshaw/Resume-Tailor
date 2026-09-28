@@ -254,6 +254,10 @@ const DEFERRED = [
     route: "app/api/experience/knowledge/question/route.js",
     why: "the same reason its sibling app/api/experience/knowledge/route.js already carries above, verbatim: auth resolves inside openScopeRequest AFTER the scope fan-out, so a correct bound wants that helper reordered first. This route imports that very function (question/route.js:6).",
   },
+  {
+    route: "app/api/salary-estimate/route.js",
+    why: "hard-authenticates via getUser() and could be bounded like the routes above, but an owner ruling (N65 OWNER-2) rejected a numeric per-day/per-window cap for this feature: the route fires only when a signed-in user clicks \"Estimate salary\" in the Ask AI panel, and the automatic feed-ingestion path (ingestFeed.js, llmSearch.js, the tailor cron) gains no salary-provider call at all, so unattended spend stays at zero structurally rather than by a limiter. Per-decision usage is readable from the activity log (recordDecision). The module-scope createRateLimiter seam the routes above use is a documented, ready insertion point if the owner sets a number later.",
+  },
 ];
 
 /**

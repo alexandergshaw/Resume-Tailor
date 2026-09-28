@@ -230,4 +230,14 @@ export const DECISION_LEDGER = [
     fields: ["reason", "count", "code"],
     outcomes: ["acted", "skipped", "refused", "failed"],
   },
+  {
+    module: "lib/chat/salaryEstimateRequest.js",
+    id: "salary-estimate",
+    label: "Salary estimate decisions",
+    // A canned reason code, the surviving citation count, and the basis
+    // discriminator -- never the estimated number, the company name, a
+    // citation URL or a citation title (same N77 privacy precedent).
+    fields: ["reason", "citationCount", "basisKind"],
+    outcomes: ["acted", "skipped", "refused", "failed"],
+  },
 ];
