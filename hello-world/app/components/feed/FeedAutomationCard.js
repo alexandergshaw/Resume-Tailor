@@ -8,6 +8,7 @@ import Switch from "@mui/material/Switch";
 import Button from "@mui/material/Button";
 import FormDialog from "../FormDialog";
 import { MAX_TAILORS_PER_USER_PER_UTC_DAY } from "@/lib/feed/autoTailorBounds";
+import { describeCadence, clampIntervalMinutes } from "@/lib/feed/cronSchedule";
 
 // N60 S8. One card per server-backed saved search, moved into the Automation
 // view and out of the Filters sheet (AC-F2/F3): the email-alerts toggle
@@ -82,6 +83,9 @@ export default function FeedAutomationCard({ entry, setSavedSearchAutoTailor, em
           </Button>
         }
       >
+        <Typography sx={{ fontSize: "0.9rem", mb: 0.5 }}>
+          Checked {describeCadence(clampIntervalMinutes(entry.autoTailorMinIntervalMinutes))}.
+        </Typography>
         <Typography sx={{ fontSize: "0.9rem" }}>
           Up to {MAX_TAILORS_PER_USER_PER_UTC_DAY} matching postings a day will be tailored automatically and
           unattended, while you&apos;re away. The tailored r&eacute;sum&eacute; and cover letter are generated and

@@ -22,6 +22,7 @@ import { sendEmail } from "@/lib/email/sendEmail";
 import { signUnsubscribeToken, unsubscribeUrl } from "@/lib/email/alertUnsubscribeToken";
 import { summarizeRun, SKIP_REASONS } from "@/lib/feed/autoTailorRunLog";
 import { recordRun } from "@/lib/feed/autoTailorRunStore";
+import { clampIntervalMinutes, isAutoTailorDue } from "@/lib/feed/cronSchedule";
 import { MAX_TAILORS_PER_USER_PER_RUN, MAX_TAILORS_PER_USER_PER_UTC_DAY } from "@/lib/feed/autoTailorBounds";
 import { reserveDailyTailor } from "@/lib/feed/autoTailorSpendLedger";
 import { reserveMailSend } from "@/lib/email/alertMailLedger";
@@ -49,19 +50,6 @@ export const maxDuration = 300; // seconds, used by Vercel for long-running cron
 // absolute ceiling that binds nothing is worse than no name at all.
 // How many recent postings to scan per saved search.
 const FEED_SCAN_LIMIT = 200;
-
-// N60 S3 (AC-C4) -- how often Vercel actually invokes this route, named so
-// every cost assumption that depends on "how many runs per day" (this file's
-// own MAX_TAILORS_PER_USER_PER_UTC_DAY math, and any future copy quoting a
-// daily total) derives from one constant instead of a copy of "*/15" typed
-// out again. MEASURED: the schedule itself is pinned at vercel.json:5 and
-// checked by app/api/cron/position-glossary/route.test.js:196-199; this
-// constant is the LINK from that literal to a name, proven by
-// cronSchedule.test.js in this same directory. Module-private: nothing here
-// reads it at runtime (Vercel's own vercel.json is what actually schedules
-// this route), so exporting it now would be a test-only export and move
-// lib/sourceScan/exportReachability.sweep.test.js's pinned counts (363/435).
-const TAILOR_CRON_MINUTES = 15;
 
 /**
  * Returns true if the request is authorized for cron access.
@@ -107,6 +95,10 @@ async function processUser({
   const queued = [];
   const skipped = {};
   let autoProcessed = 0;
+  // N60 second chunk (AC2-C4b): captured once per processUser call so the
+  // cadence due-check below is a pure comparison against a single instant,
+  // not a fresh clock read per search.
+  const now = Date.now();
 
   // N60 S4: the mail kill switch, read once per user, ahead of both mail
   // paths below (AC-R4/R6, owner ruling: alert_mail fails closed on its own
@@ -163,6 +155,26 @@ async function processUser({
             skipped[SKIP_REASONS.PER_RUN_CAP] = (skipped[SKIP_REASONS.PER_RUN_CAP] || 0) + 1;
             break;
           }
+
+          // N60 second chunk (AC2-C4b): "frequency" -- the owner's own second
+          // word -- was stored but never honoured; every auto-enabled search
+          // ran on every cron tick regardless of its interval. `continue`,
+          // NOT `break`: a sibling search later in this user's list may be
+          // due even when this one is not, and a `break` would strand it.
+          // This must run BEFORE the `last_run_at` write below -- a skipped
+          // search's clock must not advance, or its interval never elapses
+          // and it is skipped forever (the ratchet).
+          if (
+            !isAutoTailorDue(
+              savedSearch.last_run_at,
+              clampIntervalMinutes(savedSearch.auto_tailor_min_interval_minutes),
+              now,
+            )
+          ) {
+            skipped[SKIP_REASONS.CADENCE_NOT_DUE] = (skipped[SKIP_REASONS.CADENCE_NOT_DUE] || 0) + 1;
+            continue;
+          }
+
           autoProcessed += 1;
 
           const postings = await loadFeedPostings(admin, savedSearch);

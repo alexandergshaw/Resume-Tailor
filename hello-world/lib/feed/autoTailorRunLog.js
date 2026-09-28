@@ -34,6 +34,11 @@ export const SKIP_REASONS = Object.freeze({
   // postings" -- these are the two ways the feature switch stops a run.
   KILL_SWITCH: "disabled_by_kill_switch",
   KILL_SWITCH_UNREADABLE: "kill_switch_unreadable",
+  // N60 second chunk (AC2-C4b) -- the per-search interval ("frequency") the
+  // cron now actually honours: a search still inside its interval is skipped
+  // for cadence, not for any of the reasons above, so it must not be
+  // mislabelled as one of them.
+  CADENCE_NOT_DUE: "cadence_not_due",
 });
 
 const ZERO_REASONS = Object.freeze({
@@ -49,6 +54,9 @@ const ZERO_REASONS = Object.freeze({
   // new postings" either -- the same class of fix as the kill-switch pair
   // above, on the mail-only pause (AC-E4).
   PAUSED: "alerts_paused",
+  // N60 second chunk (AC2-C4b/AC-R4): an all-not-due run is a cadence wait,
+  // not an idle "no new postings" -- ranked in autoZeroReason below.
+  CADENCE_NOT_DUE: "cadence_not_due",
 });
 
 // A broken/errored eligibility query always outranks every other zero-reason:
@@ -66,6 +74,9 @@ function autoZeroReason({ tailored, autoEligible, skipped, featureError }) {
   if (s[SKIP_REASONS.NO_RESUME]) return ZERO_REASONS.NO_RESUME;
   if (s[SKIP_REASONS.COUNTER_UNREADABLE]) return ZERO_REASONS.COUNTER_UNREADABLE;
   if (s[SKIP_REASONS.PER_DAY_CEILING]) return ZERO_REASONS.CEILING_REACHED;
+  // N60 second chunk: ranked immediately above the idle fallback -- an
+  // all-not-due run explains itself as a cadence wait, not "no new postings".
+  if (s[SKIP_REASONS.CADENCE_NOT_DUE]) return ZERO_REASONS.CADENCE_NOT_DUE;
   return ZERO_REASONS.NO_NEW_POSTINGS;
 }
 
@@ -140,6 +151,7 @@ const REASON_COPY = Object.freeze({
   [SKIP_REASONS.COUNTER_UNREADABLE]: "Could not read today's usage counter, so tailoring paused as a precaution.",
   [SKIP_REASONS.KILL_SWITCH]: "Auto-tailor is currently turned off for everyone.",
   [SKIP_REASONS.KILL_SWITCH_UNREADABLE]: "Could not check whether auto-tailor is turned on, so it paused as a precaution.",
+  [SKIP_REASONS.CADENCE_NOT_DUE]: "Waiting for this search's next scheduled check; nothing to do yet.",
   [ZERO_REASONS.NO_ENABLED_SEARCH]: "No saved search has auto-tailor enabled yet.",
   [ZERO_REASONS.ELIGIBILITY_QUERY_FAILED]: "Could not check which searches are eligible, so this run was skipped as a precaution.",
   [ZERO_REASONS.NO_NEW_POSTINGS]: "No new postings matched this search yet.",

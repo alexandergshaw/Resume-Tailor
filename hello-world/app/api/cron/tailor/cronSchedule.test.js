@@ -1,5 +1,5 @@
-// N60 S3, AC-C4 -- the link from vercel.json's actual tailor-cron schedule to
-// the constant this chunk's cadence-derived cost assumptions read.
+// N60 S3, AC-C4 / N60 SECOND CHUNK AC2-C4a -- the link from vercel.json's actual
+// tailor-cron schedule to the named cadence-floor constant.
 //
 // MEASURED: the schedule itself is already pinned at
 // app/api/cron/position-glossary/route.test.js:196-199 (one toContainEqual
@@ -7,18 +7,29 @@
 // than "crons"). This file does not duplicate that pin -- it proves the
 // LINK: that "*/15 * * * *" in vercel.json is not a bare literal a future
 // schedule edit could drift away from unnoticed, but is tied to the named
-// TAILOR_CRON_MINUTES constant in route.js. Same shape as
+// TAILOR_CRON_MINUTES constant. Same shape as
 // lib/copilot/glossaryConstants.test.js does for the position-glossary
 // cron's own cadence constant.
 //
-// SOURCE-TEXT READ, not an import: TAILOR_CRON_MINUTES has no runtime
-// consumer (Vercel's own vercel.json IS the schedule; nothing in the route
-// decides anything from the constant at request time). Importing it here
-// anyway would make it a test-only export and move
-// lib/sourceScan/exportReachability.sweep.test.js's pinned counts (363/435)
-// -- the exact reasoning lib/feed/autoTailorSpendBounds.table.test.js already
-// documents for DEFAULT_MAX_QUERIES. A source-text read pins the value
-// without creating an import edge, so the constant may stay module-private.
+// SECOND-CHUNK F1 MOVE (checker finding, resolved here): the cadence floor now
+// lives in lib/feed/cronSchedule.js -- the one module the cron route imports its
+// clamp + due-check from -- NOT as a module-private const in route.js. So this
+// pin reads TAILOR_CRON_MINUTES from lib/feed/cronSchedule.js. This is the ONE
+// drift pin between vercel.json and the floor; it is REPOINTED, not duplicated
+// (the checker warned that adding a second pin, or importing the const, would
+// either strand two literals that can drift or move the export census). On HEAD
+// lib/feed/cronSchedule.js does not exist yet, so both blocks below are RED
+// (subject absent) until Step A lands the module -- the accounted breakage this
+// edit deliberately introduces, in place of the plan's route.js-const removal
+// that would have left this file's old regex matching nothing.
+//
+// SOURCE-TEXT READ, not an import: TAILOR_CRON_MINUTES has no runtime consumer
+// (Vercel's own vercel.json IS the schedule; the route decides nothing from the
+// bare constant -- it uses clampIntervalMinutes/isAutoTailorDue instead).
+// Importing the constant here would make it a test-only export and move
+// lib/sourceScan/exportReachability.sweep.test.js's pinned counts (363/435). A
+// source-text read pins the value without an import edge, so the constant may
+// stay module-private inside cronSchedule.js.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -27,9 +38,9 @@ import path from "node:path";
 const ROOT = process.cwd();
 
 function tailorCronMinutes() {
-  const src = readFileSync(path.join(ROOT, "app", "api", "cron", "tailor", "route.js"), "utf8");
+  const src = readFileSync(path.join(ROOT, "lib", "feed", "cronSchedule.js"), "utf8");
   const match = /\bconst TAILOR_CRON_MINUTES\s*=\s*(\d+)\b/.exec(src);
-  if (!match) throw new Error("TAILOR_CRON_MINUTES not found in app/api/cron/tailor/route.js");
+  if (!match) throw new Error("TAILOR_CRON_MINUTES not found in lib/feed/cronSchedule.js");
   return Number(match[1]);
 }
 
