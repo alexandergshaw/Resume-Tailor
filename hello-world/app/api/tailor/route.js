@@ -418,34 +418,52 @@ export async function POST(request) {
       }
     }
 
-    // Optionally generate a tailored cover letter using the uploaded template.
-    let coverLetterResultLines = [];
-    let coverLetterResult = "";
-    let coverLetterError = "";
-    let coverLetterDocxB64 = "";
-    let coverLetterMatch = null;
-    let coverVariantUsed = null;
-    // The cover letter's own degradation warnings (an unparsed steering note,
-    // a missing focus area, an out-of-taxonomy buzzword, an applied recurring
-    // edit — see lib/llm/engines/tailor-lite/engine.js's tailorCoverLetter,
-    // and externalEngine.js's tailorCoverLetter for the "external" engine).
-    // Previously computed by the engine and then silently discarded here —
-    // never read off coverDraft, so a cover-letter-specific degradation never
-    // reached a client even after 7d0f1c2 wired up `result.warnings`. See the
-    // aggregation/attribution/dedup logic below (`warnings`).
-    let coverLetterWarnings = [];
     // The cover letter's content source: the client's stored (possibly hand-
     // edited) tailored résumé lines when it sent them, otherwise the résumé
     // just tailored above in this same request. Either way this is the
     // TAILORED résumé, never the raw upload — see buildCoverLetterPrompt.
     const tailoredResume = pickTailoredResume(tailoredResumeLines, result);
-    if (!(coverLetterFile instanceof File)) {
-      // No cover letter file uploaded — that's fine, just skip silently.
-    } else if (coverLetterTemplateLines.length === 0) {
-      coverLetterError = "Cover letter template appears empty; upload a .docx with text content.";
-    } else if (!isTextLikeFile(coverLetterFile) && !isDocxFile(coverLetterFile)) {
-      coverLetterError = "Cover letter must be .txt, .md, or .docx.";
-    } else {
+
+    // N68 L5(ii): the cover letter and the hiring email are each grounded only
+    // in the tailored résumé above, never in each other (confirmed against all
+    // three engines' tailorHiringEmail implementations — none reads a cover
+    // draft), so they run as two CONCURRENT, never-rejecting tasks below
+    // instead of one strictly after the other. Each task keeps its OWN
+    // try/catch — today's per-artifact error isolation, a failed email must
+    // not take down the cover letter and vice versa — so the Promise.all below
+    // has allSettled semantics by construction; neither task can reject it.
+    // The résumé itself is never parallelized with either: tailoredResume is
+    // fully computed above, outside both tasks, because parallelizing it away
+    // would ground the cover letter and email in nothing.
+
+    // Optionally generate a tailored cover letter using the uploaded template.
+    const runCoverLetter = async () => {
+      if (!(coverLetterFile instanceof File)) {
+        // No cover letter file uploaded — that's fine, just skip silently.
+        return { resultLines: [], result: "", docxB64: "", match: null, warnings: [], variantUsed: null, error: "" };
+      }
+      if (coverLetterTemplateLines.length === 0) {
+        return {
+          resultLines: [],
+          result: "",
+          docxB64: "",
+          match: null,
+          warnings: [],
+          variantUsed: null,
+          error: "Cover letter template appears empty; upload a .docx with text content.",
+        };
+      }
+      if (!isTextLikeFile(coverLetterFile) && !isDocxFile(coverLetterFile)) {
+        return {
+          resultLines: [],
+          result: "",
+          docxB64: "",
+          match: null,
+          warnings: [],
+          variantUsed: null,
+          error: "Cover letter must be .txt, .md, or .docx.",
+        };
+      }
       try {
         const coverDraft = await activeEngine.tailorCoverLetter({
           jobPosting: effectiveJobPosting,
@@ -472,25 +490,42 @@ export async function POST(request) {
           persona,
           userId,
         });
-        coverLetterResultLines = coverDraft.resultLines;
-        coverLetterResult = coverDraft.result;
-        coverLetterDocxB64 = typeof coverDraft.docxB64 === "string" ? coverDraft.docxB64 : "";
-        coverLetterMatch = coverDraft.report?.match || null;
-        coverLetterWarnings = Array.isArray(coverDraft.warnings) ? coverDraft.warnings : [];
-        // Which framing was used (teaching/staff/industry) and whether the user
-        // pinned it — the previewer's letter-framing control reads this.
-        coverVariantUsed = coverDraft.report?.meta?.coverVariant
-          ? {
-              name: coverDraft.report.meta.coverVariant,
-              source: coverDraft.report.meta.coverVariantSource || "auto",
-              detected: coverDraft.report.meta.coverVariantDetected || coverDraft.report.meta.coverVariant,
-            }
-          : null;
+        return {
+          resultLines: coverDraft.resultLines,
+          result: coverDraft.result,
+          docxB64: typeof coverDraft.docxB64 === "string" ? coverDraft.docxB64 : "",
+          match: coverDraft.report?.match || null,
+          // The cover letter's own degradation warnings (an unparsed steering
+          // note, a missing focus area, an out-of-taxonomy buzzword, an
+          // applied recurring edit — see
+          // lib/llm/engines/tailor-lite/engine.js's tailorCoverLetter, and
+          // externalEngine.js's tailorCoverLetter for the "external" engine).
+          // See the aggregation/attribution/dedup logic below (`warnings`).
+          warnings: Array.isArray(coverDraft.warnings) ? coverDraft.warnings : [],
+          // Which framing was used (teaching/staff/industry) and whether the
+          // user pinned it — the previewer's letter-framing control reads this.
+          variantUsed: coverDraft.report?.meta?.coverVariant
+            ? {
+                name: coverDraft.report.meta.coverVariant,
+                source: coverDraft.report.meta.coverVariantSource || "auto",
+                detected: coverDraft.report.meta.coverVariantDetected || coverDraft.report.meta.coverVariant,
+              }
+            : null,
+          error: "",
+        };
       } catch (err) {
         console.error("Error generating tailored cover letter:", err);
-        coverLetterError = `Cover letter generation failed: ${err.message || "unknown error"}`;
+        return {
+          resultLines: [],
+          result: "",
+          docxB64: "",
+          match: null,
+          warnings: [],
+          variantUsed: null,
+          error: `Cover letter generation failed: ${err.message || "unknown error"}`,
+        };
       }
-    }
+    };
 
     // Optionally generate a short hiring-team email, grounded in the same
     // tailored résumé as the cover letter (pickTailoredResume above). This is
@@ -505,14 +540,10 @@ export async function POST(request) {
     // contextDocuments at all — the hiring email is grounded only in the
     // tailored résumé. That asymmetry predates the project-pages context
     // added in this change and is left as-is here rather than widened.
-    let emailSubject = "";
-    let emailResultLines = [];
-    let emailError = "";
-    // The hiring email's own degradation warnings, if the engine ever supplies
-    // them (none does today — see the aggregation comment below — but the
-    // field is read defensively so a future producer needs no route change).
-    let emailWarnings = [];
-    if (typeof activeEngine.tailorHiringEmail === "function") {
+    const runHiringEmail = async () => {
+      if (typeof activeEngine.tailorHiringEmail !== "function") {
+        return { subject: "", resultLines: [], warnings: [], error: "" };
+      }
       try {
         const emailDraft = await activeEngine.tailorHiringEmail({
           jobPosting: effectiveJobPosting,
@@ -525,16 +556,46 @@ export async function POST(request) {
           persona,
           userId,
         });
-        if (emailDraft) {
-          emailSubject = typeof emailDraft.subject === "string" ? emailDraft.subject : "";
-          emailResultLines = Array.isArray(emailDraft.bodyLines) ? emailDraft.bodyLines : [];
-          emailWarnings = Array.isArray(emailDraft.warnings) ? emailDraft.warnings : [];
+        if (!emailDraft) {
+          return { subject: "", resultLines: [], warnings: [], error: "" };
         }
+        return {
+          subject: typeof emailDraft.subject === "string" ? emailDraft.subject : "",
+          resultLines: Array.isArray(emailDraft.bodyLines) ? emailDraft.bodyLines : [],
+          // The hiring email's own degradation warnings, if the engine ever
+          // supplies them (none does today — see the aggregation comment
+          // below — but read defensively so a future producer needs no route
+          // change).
+          warnings: Array.isArray(emailDraft.warnings) ? emailDraft.warnings : [],
+          error: "",
+        };
       } catch (err) {
         console.error("Error generating hiring-team email:", err);
-        emailError = `Hiring-team email generation failed: ${err.message || "unknown error"}`;
+        return {
+          subject: "",
+          resultLines: [],
+          warnings: [],
+          error: `Hiring-team email generation failed: ${err.message || "unknown error"}`,
+        };
       }
-    }
+    };
+
+    const [coverOutcome, emailOutcome] = await Promise.all([runCoverLetter(), runHiringEmail()]);
+    const {
+      resultLines: coverLetterResultLines,
+      result: coverLetterResult,
+      docxB64: coverLetterDocxB64,
+      match: coverLetterMatch,
+      warnings: coverLetterWarnings,
+      variantUsed: coverVariantUsed,
+      error: coverLetterError,
+    } = coverOutcome;
+    const {
+      subject: emailSubject,
+      resultLines: emailResultLines,
+      warnings: emailWarnings,
+      error: emailError,
+    } = emailOutcome;
 
     // Résumé warnings stay exactly as before (engine-fallback notices, then the
     // résumé result's own warnings) — unprefixed, in this same order — so a

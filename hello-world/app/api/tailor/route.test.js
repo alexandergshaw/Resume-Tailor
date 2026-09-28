@@ -274,9 +274,21 @@ describe("POST /api/tailor feeds project pages into the Gemini prompt", () => {
       }),
     );
     expect(res.status).toBe(200);
-    // Second generateContent call is the cover letter draft.
+    // Identify the cover-letter generateContent call by CONTENT, not by call
+    // index. Under N68 L5 the cover letter and the hiring email are issued
+    // CONCURRENTLY after the résumé, so `mock.calls[1]` is no longer
+    // deterministically the cover draft (it may be the email). Only
+    // buildCoverLetterPrompt (lib/llm/tailorResume.js) emits the "Cover letter
+    // template" section header — the résumé and hiring-email prompts never do —
+    // so it uniquely marks the cover-letter call regardless of dispatch order.
     expect(generateContent.mock.calls.length).toBeGreaterThanOrEqual(2);
-    const coverLetterPrompt = generateContent.mock.calls[1][0].contents;
+    const coverLetterCall = generateContent.mock.calls.find(
+      (call) =>
+        typeof call?.[0]?.contents === "string" &&
+        call[0].contents.includes("Cover letter template"),
+    );
+    expect(coverLetterCall).toBeTruthy();
+    const coverLetterPrompt = coverLetterCall[0].contents;
     expect(coverLetterPrompt).toContain("Payments migration");
   });
 });
