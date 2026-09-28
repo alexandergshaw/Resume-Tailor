@@ -35,6 +35,7 @@ import {
   base64ToDocxBlob,
 } from "../lib/document/docx";
 import { parseDocxToModel, linesToModel } from "../lib/document/docxPreview";
+import { rowToSavedSearchEntry } from "../lib/feed/savedSearchEntry";
 import { weaveSources } from "../lib/document/coverLetterWeave";
 import { editFingerprint } from "../lib/tailor/editMining";
 import { recordMatchGaps, annotateAndRank, promotedEditRules } from "../lib/tailor/localSignals";
@@ -573,23 +574,6 @@ export default function Home() {
     if (currentUser) return;
     try { localStorage.setItem("savedSearches", JSON.stringify(savedSearches)); } catch {}
   }, [savedSearches, currentUser]);
-
-  // Map a saved_searches row from the API into the shape this UI uses.
-  function rowToSavedSearchEntry(row) {
-    return {
-      id: row.id,
-      name: row.name || "",
-      jobKeywords: Array.isArray(row.job_keywords) ? row.job_keywords : [],
-      maxYearsExp: row.max_years_exp || "any",
-      selectedCategories: Array.isArray(row.selected_categories) ? row.selected_categories : [],
-      selectedCompanies: Array.isArray(row.selected_companies) ? row.selected_companies : [],
-      excludedCompanies: Array.isArray(row.excluded_companies) ? row.excluded_companies : [],
-      excludedTitleKeywords: Array.isArray(row.excluded_title_keywords) ? row.excluded_title_keywords : [],
-      autoTailorEnabled: !!row.auto_tailor_enabled,
-      autoTailorDailyCap: Number.isFinite(row.auto_tailor_daily_cap) ? row.auto_tailor_daily_cap : 10,
-      emailOnNewJobs: !!row.email_on_new_jobs,
-    };
-  }
 
   // One-time hydration + migration: when a user signs in, pull their
   // saved_searches from the API. If they have none on the server but local

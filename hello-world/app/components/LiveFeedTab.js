@@ -723,7 +723,10 @@ export default function LiveFeedTab({
         <FeedAutomationPanel
           currentUser={currentUser}
           savedSearches={savedSearches}
+          setSavedSearches={setSavedSearches}
           setSavedSearchAutoTailor={setSavedSearchAutoTailor}
+          GREENHOUSE_COMPANIES={GREENHOUSE_COMPANIES}
+          COMPANY_CATEGORIES={COMPANY_CATEGORIES}
         />
       ) : view === "queue" ? (
         <AutoApplyQueueTab

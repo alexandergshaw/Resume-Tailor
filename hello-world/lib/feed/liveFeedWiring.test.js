@@ -30,6 +30,9 @@ const FEED_COMPONENTS = [
   "../../app/components/feed/FeedAutomationPanel.js",
   "../../app/components/feed/FeedAutomationCard.js",
   "../../app/components/feed/AutoTailorRunLog.js",
+  "../../app/components/feed/FeedConfigChat.js",
+  "../../app/components/feed/DerivedConfigReview.js",
+  "../../app/components/feed/CadenceControl.js",
 ];
 
 describe("LiveFeedTab renders the extracted components", () => {
