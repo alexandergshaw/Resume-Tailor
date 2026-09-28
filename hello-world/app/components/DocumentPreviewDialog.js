@@ -26,13 +26,15 @@ import TrackChangesIcon from "@mui/icons-material/TrackChanges";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import CloseIcon from "@mui/icons-material/Close";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
-import { renderModelToHtml } from "@/lib/document/docxPreview";
+import { renderModelToHtml, applySpacingToHtml } from "@/lib/document/docxPreview";
 import { htmlToPlainText } from "@/lib/document/htmlToPlainText";
 import { writePlainText } from "@/lib/clipboard/plainText";
 import { changedScopes as changedScopesOf } from "@/lib/tailor/previewScopes";
 import { commitDraftSeed } from "@/lib/document/draftEditGuard";
 import { SCOPES, SCOPE_LABEL, DOCX_SCOPES } from "@/lib/tailor/documentScopes";
 import { useIsMobile } from "../hooks/useResponsive";
+import pageSx from "./documentPreviewPageSx";
+import SpacingControl from "./SpacingControl";
 import EditorToolbar from "./preview/EditorToolbar";
 import CombineDocumentsControl from "./preview/CombineDocumentsControl";
 import ReviseStrip from "./preview/ReviseStrip";
@@ -62,30 +64,6 @@ const FRAMING_LABEL = Object.fromEntries(FRAMING_OPTIONS.map((o) => [o.value, o.
 // prop/import, since the two components already agree on it for the "aria-
 // describedby points at the save control" wiring the a11y audit pinned).
 const DRIVE_SAVE_CONTROL_ID = "drive-save-control-label";
-
-// A page-like surface so the preview reads like the printed document. The
-// "paper" stays white with dark ink in both themes (it mirrors a printed page).
-const pageSx = {
-  bgcolor: "var(--paper-bg)",
-  color: "var(--paper-ink)",
-  fontFamily: 'Calibri, "Segoe UI", Arial, sans-serif',
-  fontSize: "11pt",
-  lineHeight: 1.3,
-  px: { xs: 2, sm: 5 },
-  py: { xs: 2.5, sm: 4 },
-  mx: "auto",
-  maxWidth: 720,
-  minHeight: 360,
-  border: "1px solid var(--border)",
-  borderRadius: 1,
-  boxShadow: "0 1px 6px rgba(0,0,0,0.10)",
-  "& p": { margin: 0 },
-  "& h1": { fontSize: "16pt", fontWeight: 700, margin: "8pt 0 3pt" },
-  "& h2": { fontSize: "13pt", fontWeight: 700, margin: "7pt 0 2pt" },
-  "& h3": { fontSize: "11.5pt", fontWeight: 700, margin: "5pt 0 2pt" },
-  "& ul, & ol": { margin: "3pt 0", paddingLeft: "1.5em" },
-  "& li": { margin: "1pt 0" },
-};
 
 // Preview + edit the tailored résumé and cover letter for a posting. Renders the
 // SAME .docx the download produces so formatting matches; supports flipping
@@ -140,6 +118,11 @@ export default function DocumentPreviewDialog({
   // the hiring-email caption, but `initialTab` alone is stale the moment the
   // user clicks a different tab (see DocumentPreviewMount.js's comment).
   onActiveScopeChange,
+  // N69: whole-document spacing override ({lineSpacing, paragraphSpacingPt}
+  // | null) and its setter -- owned by page.js/useDocumentPreview.js,
+  // mirroring the fileName/rename prop pair above.
+  spacing = null,
+  onSetSpacing,
 }) {
   // WAVE6-VERIFY.md MAJOR-1 (M15): `drive` used to default to a hand-copied
   // `DEFAULT_DRIVE` shape (`status: "unconfigured"`) whenever the prop was
@@ -547,6 +530,12 @@ export default function DocumentPreviewDialog({
 
   const heading = [company, jobTitle].filter(Boolean).join(" · ");
   const state = docState[tab] || {};
+  // N69: apply the whole-document spacing override to the READ-ONLY render
+  // only (edit mode reflects it cosmetically via pageSx's own lineHeight).
+  // No override leaves the rendered HTML untouched (CB-R-1: source fidelity
+  // survives when nothing is set).
+  const baseHtml = scopes[tab]?.html || state.html || "";
+  const displayHtml = spacing ? applySpacingToHtml(baseHtml, spacing) : baseHtml;
   // R-2/O-6: reads docState[tab] directly -- the `|| {}` local above erases
   // the null this gate's fourth conjunct needs on the very first paint.
   const copyState = copyStateFor(available(tab), docState[tab]);
@@ -749,6 +738,9 @@ export default function DocumentPreviewDialog({
             Read-only — copy the text below into your email client.
           </Box>
         ) : null}
+        {DOCX_SCOPES.includes(tab) ? (
+          <SpacingControl scope={tab} spacing={spacing} onSetSpacing={onSetSpacing} disabled={!available(tab)} />
+        ) : null}
         </Box>
       </Box>
 
@@ -862,7 +854,7 @@ export default function DocumentPreviewDialog({
         ) : (
           // AC-C14.5/D1: prefer scopes[tab].html (hand-edited) over the stale
           // docState -- ensureLoaded never re-parses after a commit.
-          <Box sx={pageSx} dangerouslySetInnerHTML={{ __html: scopes[tab]?.html || state.html || "" }} />
+          <Box sx={pageSx} dangerouslySetInnerHTML={{ __html: displayHtml }} />
         )}
 
         {activeError ? (

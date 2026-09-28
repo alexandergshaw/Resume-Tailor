@@ -492,6 +492,10 @@ export default function Home() {
           error: entry.error || "",
           downloaded: !!entry.downloaded,
           generatedJobTitle: entry.generatedJobTitle || "",
+          // N69: the whole-document spacing override, so the control shows
+          // (and downloads apply) the value the candidate set, across a
+          // reload -- CB-D-3 clause i. localStorage only; no migration.
+          spacing: entry.spacing || null,
         };
       }
       localStorage.setItem("tailoringMapStatus", JSON.stringify(slim));

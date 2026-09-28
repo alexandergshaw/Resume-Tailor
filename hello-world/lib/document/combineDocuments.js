@@ -59,11 +59,24 @@ function runPropsXml(run) {
   return `<w:rPr>${props}</w:rPr>`;
 }
 
+// CB-R-2 (EXTEND branch): carry the model's own line spacing into the
+// combined document too, so the combine path never disagrees with the
+// single-doc download's post-pass sweep (lib/document/docx.js). Mirrors
+// that sweep's mapping: "auto" is a multiplier of single-spacing (*240),
+// "exact"/"atLeast" an absolute point size (*20, same unit as before/after).
+// A paragraph with no lineSpacing gets no w:line at all (no-op control).
+function lineSpacingAttrs(paragraph) {
+  if (paragraph?.lineSpacing == null) return "";
+  const rule = paragraph.lineRule || "auto";
+  const line = Math.round(paragraph.lineSpacing * (rule === "auto" ? 240 : 20));
+  return ` w:line="${line}" w:lineRule="${rule}"`;
+}
+
 function paragraphXml(paragraph) {
   const jc = ALIGN_TO_JC[paragraph?.align] || "left";
   const before = Math.round((paragraph?.spaceBeforePt || 0) * 20);
   const after = Math.round((paragraph?.spaceAfterPt || 0) * 20);
-  const pPr = `<w:pPr><w:jc w:val="${jc}"/><w:spacing w:before="${before}" w:after="${after}"/></w:pPr>`;
+  const pPr = `<w:pPr><w:jc w:val="${jc}"/><w:spacing w:before="${before}" w:after="${after}"${lineSpacingAttrs(paragraph)}/></w:pPr>`;
   const runs = (paragraph?.runs || [])
     .map((run) => `<w:r>${runPropsXml(run)}${runInnerXml(run)}</w:r>`)
     .join("");

@@ -250,11 +250,6 @@ export const ORPHAN_EXPORTS = [
   },
   {
     file: "lib/document/docx.js",
-    name: "WORDPROCESSINGML_NS",
-    why: "the OOXML namespace string, used eight more times inside docx.js; one of twenty exports of a module whose consumers import six of them and whose only sibling test file (docxPreview.test.js) imports none of these nine",
-  },
-  {
-    file: "lib/document/docx.js",
     name: "docxFileFromBase64",
     why: "declared and exported and not referenced even inside docx.js -- vestigial; a human should confirm it is not a half-landed step of the download-rebuild work before it goes",
   },

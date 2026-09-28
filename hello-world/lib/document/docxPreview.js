@@ -159,6 +159,16 @@ function parseParagraph(blockXml, numberingFormats) {
   // w:spacing before/after are in twentieths of a point.
   const beforeTwips = (pPr.match(/<w:spacing\b[^>]*\bw:before="(\d+)"/) || [])[1];
   const afterRaw = (pPr.match(/<w:spacing\b[^>]*\bw:after="(\d+)"/) || [])[1];
+  // w:line/w:lineRule (N69, CB-L-1): "auto" is a MULTIPLIER of single-spacing
+  // (240 twips); "exact"/"atLeast" are an absolute point size (twentieths of
+  // a point, same unit as before/after). Documented default when absent:
+  // `lineSpacing: null`, so renderParagraphHtml falls back to the existing
+  // 1.3 and a document with no w:line renders byte-identical to today
+  // (CB-R-1) -- this is NOT a hardcoded 1.5, which is what a parser that
+  // merely echoed the one test fixture it saw would produce.
+  const lineRaw = (pPr.match(/<w:spacing\b[^>]*\bw:line="(\d+)"/) || [])[1];
+  const lineRule = (pPr.match(/<w:spacing\b[^>]*\bw:lineRule="(\w+)"/) || [])[1] || null;
+  const lineNum = lineRaw != null ? Number.parseInt(lineRaw, 10) : null;
 
   const runs = [];
   RUN_RE.lastIndex = 0;
@@ -173,6 +183,8 @@ function parseParagraph(blockXml, numberingFormats) {
     align: (jc && ALIGN_MAP[jc]) || "left",
     spaceBeforePt: beforeTwips ? Number.parseInt(beforeTwips, 10) / 20 : 0,
     spaceAfterPt: afterRaw ? Number.parseInt(afterRaw, 10) / 20 : 0,
+    lineSpacing: lineNum == null ? null : lineRule === "auto" ? lineNum / 240 : lineNum / 20,
+    lineRule: lineNum == null ? null : lineRule,
     list: parseListInfo(pPr, numberingFormats),
   };
 }
@@ -246,7 +258,13 @@ function renderRunsHtml(runs) {
 }
 
 function renderParagraphHtml(p) {
-  const pStyle = `text-align:${p.align};margin:${p.spaceBeforePt || 0}pt 0 ${p.spaceAfterPt || 0}pt;white-space:pre-wrap;`;
+  // CB-L-2: line spacing is per-paragraph inline line-height, sourced from
+  // the parsed model (p.lineSpacing) -- replacing the dialog's single
+  // hardcoded 1.3 as the spacing source of truth. Absent (null) means "no
+  // line spacing was parsed"; nothing is emitted, so a document with no
+  // w:line renders byte-identical to today (CB-R-1).
+  const lineHeight = p.lineSpacing != null ? `line-height:${p.lineSpacing};` : "";
+  const pStyle = `text-align:${p.align};margin:${p.spaceBeforePt || 0}pt 0 ${p.spaceAfterPt || 0}pt;${lineHeight}white-space:pre-wrap;`;
   if (!p.runs.length) return `<p style="${pStyle}min-height:0.9em;"><br></p>`;
   return `<p style="${pStyle}">${renderRunsHtml(p.runs)}</p>`;
 }
@@ -323,4 +341,33 @@ export function linesToModel(lines = []) {
       list: null,
     })),
   };
+}
+
+// N69: rewrite an ALREADY-RENDERED preview HTML string's <p>/<li> inline
+// styles to reflect a whole-document spacing OVERRIDE, without re-parsing
+// the source .docx -- the DISPLAY-time counterpart to docx.js's download
+// sweep, using the same OOXML-derived mapping so screen and file agree:
+// paragraphSpacingPt -> the paragraph's own "<top>pt 0 <bottom>pt" margin
+// shorthand (top forced to 0pt, matching the download's w:before=0);
+// lineSpacing -> a unitless CSS line-height. `override` of null/undefined,
+// or a dimension left unset on it, leaves that style untouched -- CB-R-1: a
+// spacing feature must never silently overwrite the source's own values.
+export function applySpacingToHtml(html, override) {
+  if (!override) return html;
+  const { lineSpacing, paragraphSpacingPt } = override;
+  if (lineSpacing == null && paragraphSpacingPt == null) return html;
+  return html.replace(/<(p|li)\b([^>]*)\sstyle="([^"]*)"/g, (_m, tag, attrs, style) => {
+    let next = style;
+    if (paragraphSpacingPt != null) {
+      next = /margin:[^;"]*/.test(next)
+        ? next.replace(/margin:[^;"]*/, `margin:0pt 0 ${paragraphSpacingPt}pt`)
+        : `${next};margin:0pt 0 ${paragraphSpacingPt}pt`;
+    }
+    if (lineSpacing != null) {
+      next = /line-height:[^;"]*/.test(next)
+        ? next.replace(/line-height:[^;"]*/, `line-height:${lineSpacing}`)
+        : `${next};line-height:${lineSpacing}`;
+    }
+    return `<${tag}${attrs} style="${next}"`;
+  });
 }

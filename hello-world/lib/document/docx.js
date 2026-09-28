@@ -533,6 +533,81 @@ async function fetchStoredDocxBlob(docxPath) {
   return null;
 }
 
+// N69 (SPACING): whole-document line/paragraph spacing override applied as a
+// POST-PASS on the finished .docx's paragraph properties -- structurally
+// unable to touch setParagraphText/the line-to-slot text rebuild above
+// (docx.js:268, the live N54 break-corruption seam), because it never reads
+// or writes a <w:t>/<w:r>/<w:br> node at all. Deliberately module-private:
+// its only caller is resolveDocumentBlob, below, in this same file.
+//
+// Schema-order rules (F1/F2 in docx.spacing.download.test.js, CT_PPR/ISO
+// 29500): <w:spacing> must be the FIRST of {pStyle, ind, contextualSpacing,
+// jc, rPr, sectPr, ...} to already exist in pPr that it needs to precede --
+// AFTER_SPACING_TAGS names the ones this sweep actually has to worry about
+// (an existing pStyle stays where it is automatically, since we only search
+// for the tags spacing must come BEFORE). An existing <w:spacing> is edited
+// IN PLACE -- found, then mutated -- never removed/re-appended, so its
+// position and any attribute this override doesn't touch both survive.
+const AFTER_SPACING_TAGS = ["ind", "contextualSpacing", "jc", "rPr", "sectPr"];
+
+// Set only the attributes this override actually specifies, independently
+// per dimension, so a partial override (e.g. line spacing only) never
+// clobbers a paragraph-spacing value -- or vice versa -- that the caller
+// didn't ask to change. An explicit paragraph-spacing value clears the
+// automatic-spacing flags (F4): Word silently IGNORES an explicit
+// w:before/w:after while w:beforeAutospacing/w:afterAutospacing="1" is set,
+// so leaving those flags in place would make the write a silent no-op.
+function applySpacingAttrs(spacingEl, override) {
+  const { lineSpacing, paragraphSpacingPt } = override || {};
+  if (paragraphSpacingPt != null) {
+    spacingEl.setAttribute("w:before", "0");
+    spacingEl.setAttribute("w:after", String(Math.round(paragraphSpacingPt * 20)));
+    spacingEl.removeAttribute("w:beforeAutospacing");
+    spacingEl.removeAttribute("w:afterAutospacing");
+    spacingEl.removeAttribute("w:beforeLines");
+    spacingEl.removeAttribute("w:afterLines");
+  }
+  if (lineSpacing != null) {
+    spacingEl.setAttribute("w:line", String(Math.round(lineSpacing * 240)));
+    spacingEl.setAttribute("w:lineRule", "auto");
+  }
+}
+
+function applySpacingToDocxXml(documentXml, override) {
+  const prologMatch = documentXml.match(/^<\?xml[^>]*\?>/);
+  const xmlDoc = new DOMParser().parseFromString(documentXml, "application/xml");
+  const paragraphs = xmlDoc.getElementsByTagNameNS(WORDPROCESSINGML_NS, "p");
+  for (const p of Array.from(paragraphs)) {
+    let pPr = getDirectChildrenByTag(p, "pPr")[0];
+    if (!pPr) {
+      pPr = xmlDoc.createElementNS(WORDPROCESSINGML_NS, "w:pPr");
+      p.insertBefore(pPr, p.firstChild);
+    }
+    let spacing = getDirectChildrenByTag(pPr, "spacing")[0];
+    if (!spacing) {
+      spacing = xmlDoc.createElementNS(WORDPROCESSINGML_NS, "w:spacing");
+      const before = Array.from(pPr.childNodes).find(
+        (n) => n.nodeType === Node.ELEMENT_NODE && AFTER_SPACING_TAGS.includes(n.localName),
+      );
+      pPr.insertBefore(spacing, before || null);
+    }
+    applySpacingAttrs(spacing, override);
+  }
+  const serialized = new XMLSerializer().serializeToString(xmlDoc);
+  // XMLSerializer drops the <?xml?> prolog even when the parsed source had
+  // one -- restore it so a spacing-only pass doesn't silently strip it from
+  // every document it touches.
+  return prologMatch && !serialized.startsWith("<?xml") ? `${prologMatch[0]}${serialized}` : serialized;
+}
+
+async function applySpacingToDocxBlob(blob, override) {
+  const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+  const xml = await zip.file("word/document.xml")?.async("string");
+  if (!xml) return blob;
+  zip.file("word/document.xml", applySpacingToDocxXml(xml, override));
+  return zip.generateAsync({ type: "blob", mimeType: DOCX_MIME });
+}
+
 // THE single source of truth for turning a document (résumé or cover letter)
 // into its final .docx blob. Every preview render, drag, and download funnels
 // through here so there is exactly one code path.
@@ -545,7 +620,26 @@ async function fetchStoredDocxBlob(docxPath) {
 //   3. edited   + in-session engine doc  -> apply edited text onto it
 //   4. edited   + persisted storage doc  -> fetch, apply edited text onto it
 //   5. uploaded template                 -> apply edited text onto it (legacy)
+//
+// `spacing` (N69) is applied as a POST-PASS AFTER any of the five branches
+// above produce a blob -- so a spacing-only download of an unedited document
+// still takes the verbatim-serve branch (never buildDocxFromUploadedTemplate/
+// setParagraphText) and only then gets its pPr swept.
 export async function resolveDocumentBlob({
+  engineDocxB64 = "",
+  docxPath = "",
+  edited = false,
+  text = "",
+  lines = [],
+  uploadedTemplate = null,
+  spacing = null,
+}) {
+  const blob = await resolveDocumentBlobBytes({ engineDocxB64, docxPath, edited, text, lines, uploadedTemplate });
+  if (!blob || !spacing) return blob;
+  return applySpacingToDocxBlob(blob, spacing);
+}
+
+async function resolveDocumentBlobBytes({
   engineDocxB64 = "",
   docxPath = "",
   edited = false,
@@ -618,6 +712,9 @@ export function createDocumentDownloaders(deps) {
     templateDocxB64,
     templateDocxPath,
     coverLetterTemplateDocxB64,
+    // N69: whole-document { lineSpacing, paragraphSpacingPt } | null, applied
+    // as resolveDocumentBlob's post-pass sweep to BOTH documents below.
+    spacing = null,
   }) {
     // Download names honor an optional user override typed in the preview.
     const resumeName = resolveDocumentFileName(resumeFileName, jobTitle, company, "Resume");
@@ -645,6 +742,7 @@ export function createDocumentDownloaders(deps) {
           text: result || "",
           lines: resultLines || [],
           uploadedTemplate: resumeFile,
+          spacing,
         });
         if (hasResume && !resumeBlob) return "Upload the source resume as .docx to download.";
         if (resumeBlob) triggerBlobDownload(resumeBlob, resumeName);
@@ -659,6 +757,7 @@ export function createDocumentDownloaders(deps) {
           text: hasCover ? coverLetterResultLines.join("\n") : "",
           lines: coverLetterResultLines || [],
           uploadedTemplate: coverLetterFile,
+          spacing,
         });
         if (coverBlob) triggerBlobDownload(coverBlob, coverName);
         else if (!hasResume && hasCover) {

@@ -395,7 +395,11 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // PREP_LIST_COLUMNS/PREP_SPEND_COLUMNS pair -- each used once, internally,
     // to build the *_PROJECTION string prepStore.js's new revision reads
     // actually import. Two entries added, none removed.
-    expect(ORPHAN_EXPORTS).toHaveLength(72);
+    // 72 -> 71 (N69): WORDPROCESSINGML_NS left this ledger when the spacing
+    // tests began importing it instead of re-typing the OOXML namespace, so
+    // it is now counted as test-referenced above. One entry removed, none
+    // added -- the same single movement as the TR-1 bump.
+    expect(ORPHAN_EXPORTS).toHaveLength(71);
   });
 
   it("[RULE TR-1] counts the exports whose only consumer is a test, exactly", () => {
@@ -675,7 +679,13 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // isolation (PLACEMENTS absent + sanitizeStoredFacts present -> 363;
     // PLACEMENTS present + sanitizeStoredFacts absent -> 363; both present,
     // this checkout -> 363) as well as against the combined tree.
-    expect(TEST_REFERENCED.length).toBe(363);
+    // 364 as of N69: the spacing tests read WORDPROCESSINGML_NS from docx.js
+    // rather than re-typing the OOXML namespace string, which moved that
+    // export out of the orphan ledger and into this bucket. A duplicated
+    // namespace literal in a test is a worse outcome than a counted
+    // test-only consumer -- the two would drift and the test would then be
+    // asserting against a namespace the document does not use.
+    expect(TEST_REFERENCED.length).toBe(364);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);

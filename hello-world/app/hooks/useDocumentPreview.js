@@ -27,7 +27,7 @@ import {
 } from "../../lib/tailor/localSignals";
 import { syncTemplateEdits } from "../../lib/tailor/templateEdits";
 import { applyScopeFlags, lockScopesFor } from "../../lib/tailor/previewScopes";
-import { emailPreviewLines } from "../../lib/tailor/documentScopes";
+import { emailPreviewLines, buildDownloadArgs } from "../../lib/tailor/documentScopes";
 import { readEngine } from "../settings/engine";
 import { createClient } from "../../lib/supabase/client";
 import { persistGeneratedDocuments } from "../../lib/supabase/persistGeneration";
@@ -489,6 +489,17 @@ export function useDocumentPreview({
     });
   }
 
+  // N69 (CB-D-3 clause i): write the whole-document spacing onto the active
+  // job's tailoring entry so page.js's slim summary can persist it and
+  // buildDownloadArgs (above) picks it up on the next download. Whole-
+  // document, not per-scope -- `scope` is accepted only to mirror the
+  // control's onSetSpacing(scope, value) call shape.
+  function setDocumentSpacing(scope, value) {
+    const jobId = resumePreview.jobId;
+    if (!jobId) return;
+    updateTailoringJob(jobId, { spacing: value });
+  }
+
   async function downloadDocumentPreview(scope, payload) {
     // Re-entrancy backstop, ref-based like resubmitDocumentPreview's guard
     // (AC-5) so it's immune to stale render-closure state — two clicks in the
@@ -507,39 +518,16 @@ export function useDocumentPreview({
       const entry = tailoringMapRef.current[resumePreview.jobId] || {};
       const unchanged = text === scopeText(entry, scope);
       const serveFinished = !editedForScope(entry, scope) && unchanged;
-      const args = {
-        jobTitle: resumePreview.title,
+      const args = buildDownloadArgs({
+        scope,
+        entry,
+        text,
+        lines,
+        serveFinished,
+        title: resumePreview.title,
         company: resumePreview.company,
-        result: "",
-        resultLines: [],
-        coverLetterResultLines: [],
-        docxB64: "",
-        coverLetterDocxB64: "",
-      };
-      if (scope === "cover") {
-        args.coverLetterResultLines = lines;
-        args.coverLetterFileName = entry.coverLetterFileName || "";
-        args.coverLetterTemplateDocxB64 = typeof entry.coverLetterDocxB64 === "string" ? entry.coverLetterDocxB64 : "";
-        if (serveFinished && typeof entry.coverLetterDocxB64 === "string") args.coverLetterDocxB64 = entry.coverLetterDocxB64;
-      } else {
-        args.result = text;
-        args.resultLines = lines;
-        args.resumeFileName = entry.resumeFileName || "";
-        args.templateDocxB64 = typeof entry.docxB64 === "string" ? entry.docxB64 : "";
-        // MAJOR-1 fix: unconditional, NOT gated on serveFinished. docxB64 is
-        // also the rebuild TEMPLATE an edited download falls onto, and a
-        // version switch (D-1) clears it while pointing docxPath at THIS
-        // version's own stored docx — so an edited download after a switch
-        // needs that pointer too, not just the verbatim-serve path below.
-        // docx.js resolves docxPath || templateDocxPath as the rebuild source.
-        args.templateDocxPath = typeof entry.docxPath === "string" ? entry.docxPath : "";
-        if (serveFinished && typeof entry.docxB64 === "string") args.docxB64 = entry.docxB64;
-        // Restored chips have no in-session docx blob but do carry the saved
-        // storage path — serve that faithful copy when the text is unedited.
-        if (serveFinished && !entry.docxB64 && typeof entry.docxPath === "string" && entry.docxPath) {
-          args.docxPath = entry.docxPath;
-        }
-      }
+        spacing: entry.spacing,
+      });
       const err = await downloadDocxFiles(args);
       setScopeFlags(scope, { busy: false, error: err || "" });
     } finally {
@@ -922,6 +910,7 @@ export function useDocumentPreview({
     loadPreviewModel,
     saveDocumentPreview,
     renameDocument,
+    setDocumentSpacing,
     downloadDocumentPreview,
     resubmitDocumentPreview,
     applyFocusArea,

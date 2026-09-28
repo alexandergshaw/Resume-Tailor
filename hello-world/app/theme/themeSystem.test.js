@@ -303,10 +303,20 @@ describe("SettingsMenu actually renders DriveButton (not just imports it)", () =
 
 describe("document paper stays theme-independent", () => {
   it("the preview dialogs render on constant paper tokens", () => {
-    for (const name of ["DocumentPreviewDialog.js", "CompanyResearchDialog.js"]) {
-      const src = read(join(COMPONENTS_DIR, name));
-      expect(src, `${name} paper-bg`).toContain("var(--paper-bg)");
-      expect(src, `${name} paper-ink`).toContain("var(--paper-ink)");
+    // Each entry is the dialog plus any module it extracted its paper styling
+    // into: N69 moved DocumentPreviewDialog's page styling out to pay a line
+    // ceiling, which took the tokens with it. The property being guarded is
+    // that the paper a document renders on is theme-independent, not which
+    // file spells it -- so follow the extraction rather than let a refactor
+    // quietly empty this check, and keep asserting the tokens are there.
+    const surfaces = [
+      ["DocumentPreviewDialog.js", ["DocumentPreviewDialog.js", "documentPreviewPageSx.js"]],
+      ["CompanyResearchDialog.js", ["CompanyResearchDialog.js"]],
+    ];
+    for (const [label, files] of surfaces) {
+      const src = files.map((f) => read(join(COMPONENTS_DIR, f))).join("\n");
+      expect(src, `${label} paper-bg`).toContain("var(--paper-bg)");
+      expect(src, `${label} paper-ink`).toContain("var(--paper-ink)");
     }
   });
 });
