@@ -56,6 +56,18 @@ function insertFactText(line, text, position) {
 // mutates `lines`: with no facts to apply the identical array reference is
 // returned (§ invariant other callers rely on to skip a no-op splice).
 //
+// N56: two or more facts that resolve to the SAME paragraph are COALESCED
+// into ONE edit against that paragraph's ORIGINAL text, never emitted as
+// separate edits against a shared, progressively-mutated array -- that was
+// the defect (the second edit's `before` was the first edit's OWN output,
+// which lib/acceptedFacts/factDocx.js's stale-plan guard then, correctly,
+// refused). Facts in one group are composed into a single insertion, joined
+// in SCREEN ORDER by one space each and NO lead-in, so screen order survives
+// (insertFactText's after-first-sentence rule matches the paragraph's
+// original first sentence every time -- two separate calls would insert the
+// second fact ahead of the first) and so each fact's exact text remains an
+// individually excisable substring (N61's one-click-removal precondition).
+//
 // @returns {{ lines: string[], edits: {lineIndex:number, before:string, after:string}[],
 //             record: {id:string, text:string}[], changed: boolean }}
 function planCoverFacts(lines, { facts, record = [] } = {}) {
@@ -63,27 +75,49 @@ function planCoverFacts(lines, { facts, record = [] } = {}) {
   if (list.length === 0) {
     return { lines, edits: [], record: [...record], changed: false };
   }
-  const out = lines.map((l) => String(l));
-  const edits = [];
+  const original = lines.map((l) => String(l));
   const nextRecord = [...record];
+
+  // Group every surviving fact by the line index it targets (resolved
+  // against the ORIGINAL, untouched lines), preserving the order `facts`
+  // arrives in -- both within a group and across groups.
+  const order = [];
+  const groups = new Map();
   for (const fact of list) {
     if (!fact || typeof fact.text !== "string" || !fact.text.trim()) continue;
     const text = fact.text.trim();
     const placement = resolvePlacement(fact.placement);
-    const index = findTargetIndex(out, placement);
-    if (index < 0 || index >= out.length) continue;
-    const before = out[index];
-    // M1 (verify.r1.md): a fact whose text is already IN the target
-    // paragraph is skipped, not re-appended -- otherwise a second accept of
-    // the same selection (a re-click on a dialog that stays open with the
-    // same rows checked) duplicates it in both the letter's text and the
-    // docx splice built from these edits.
-    if (before.includes(text)) continue;
-    const after = insertFactText(before, text, placement?.position);
-    out[index] = after;
-    edits.push({ lineIndex: index, before, after });
+    const index = findTargetIndex(original, placement);
+    if (index < 0 || index >= original.length) continue;
+
+    let group = groups.get(index);
+    if (!group) {
+      group = { position: placement?.position, texts: [], seen: new Set() };
+      groups.set(index, group);
+      order.push(index);
+    }
+    // M1 (verify.r1.md): skip a fact whose text is already in the
+    // paragraph's ORIGINAL text, or already queued earlier in this same
+    // group -- a re-click, or two cards carrying the same fact, must not
+    // duplicate it in the letter's text or in the docx splice built from
+    // these edits.
+    if (original[index].includes(text) || group.seen.has(text)) continue;
+    group.seen.add(text);
+    group.texts.push(text);
     nextRecord.push({ id: fact.id ?? null, text });
   }
+
+  const out = [...original];
+  const edits = [];
+  for (const index of order) {
+    const group = groups.get(index);
+    if (group.texts.length === 0) continue;
+    const before = original[index];
+    const after = insertFactText(before, group.texts.join(" "), group.position);
+    out[index] = after;
+    edits.push({ lineIndex: index, before, after });
+  }
+
   return { lines: edits.length > 0 ? out : lines, edits, record: nextRecord, changed: edits.length > 0 };
 }
 

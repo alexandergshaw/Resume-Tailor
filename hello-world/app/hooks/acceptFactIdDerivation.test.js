@@ -467,13 +467,12 @@ async function selectOnlyCard(index, total) {
 }
 
 // Accept every card on screen, ONE CARD PER CLICK. One card per click is
-// deliberate and unrelated to this chunk: accepting two cards in a single
-// click is refused outright today (both facts resolve to the same default
-// placement, the second edit's `before` is the first edit's output,
-// factDocx.js returns `stale-plan`, and the hook surfaces the no-engine-bytes
-// message). Driving two cards at once here would make every store-level
-// assertion below that refusal wearing an id defect's clothes, and no correct
-// id scheme could turn it green.
+// deliberate and unrelated to this chunk: multi-card accept works now (N56,
+// lib/acceptedFacts/factInsertion.js#planCoverFacts coalesces same-paragraph
+// facts into one edit) and has its own coverage in acceptMultiCard.test.js.
+// This file isolates id derivation/collision, which is orthogonal to how
+// many cards land per click -- driving two cards at once here would only
+// exercise N56's coalescing a second time, not this file's own charter.
 async function acceptEveryCardSeparately() {
   const shown = suggestionFieldValues();
   expect(shown.length, "no cards rendered -- instrument failure, not a product verdict").toBeGreaterThan(0);

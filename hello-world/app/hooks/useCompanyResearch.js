@@ -5,6 +5,7 @@ import { weaveSources } from "../../lib/document/coverLetterWeave";
 import { readEngine } from "../settings/engine";
 import { planAcceptForEntry, mergeAcceptedFacts } from "../../lib/acceptedFacts/factInsertion";
 import { applyCoverDocxEdits } from "../../lib/acceptedFacts/factDocx";
+import { messageForRefusal } from "../../lib/acceptedFacts/factRefusalMessage";
 import { editedForScope } from "../../lib/document/previewBlob";
 import { hashString } from "../../lib/text/phrasing";
 import { safeExternalHref } from "../../lib/url/safeExternalHref";
@@ -373,8 +374,9 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
       if (coverChanged && hasCoverLetter && hasCoverBytes && !coverAlreadyEdited) {
         const spliced = await applyCoverDocxEdits(entry.coverLetterDocxB64, entry.coverLetterResultLines, plan.cover.edits);
         if (!spliced.applied) {
-          setCompanyResearch((prev) => ({ ...prev, busy: false, acceptError: NO_ENGINE_BYTES_REASON }));
-          return { ok: false, reason: NO_ENGINE_BYTES_REASON };
+          const reason = messageForRefusal(spliced.reason);
+          setCompanyResearch((prev) => ({ ...prev, busy: false, acceptError: reason }));
+          return { ok: false, reason };
         }
         coverDocxB64 = spliced.docxB64;
         // B4 (verify.r1.md): the spliced bytes are session-only -- nothing
