@@ -8,29 +8,46 @@ import AutoInsertFactsMessage from "./preview/AutoInsertFactsMessage";
 import { getDownloadFileNameForTitle, getDownloadCoverLetterFileNameForTitle } from "../../lib/document/docx";
 import { emailPreviewText } from "../../lib/tailor/documentScopes";
 import { useDriveDocuments } from "../hooks/useDriveDocuments";
-import { recordActivity } from "@/lib/activityLog/appActivityLog.js";
+import { recordDecision } from "@/lib/activityLog/appActivityLog.js";
 
-// N77: turns one `autoInsertFactsForJob` result into the activity log's
-// `type` + payload. `code` (useCompanyResearch.js's own discriminator, e.g.
-// "no-engine-bytes"/"already-edited"/"nothing-eligible") becomes part of the
-// TYPE, not just a payload field, so three different refusals are
-// distinguishable even by type alone. The payload carries only the closed
-// shape `{ reason, severity }` (a canned, non-user-authored string) or
-// `{ count }` on success -- never the inserted sentence, never the letter
-// body; `recordActivity`'s own redactor (appActivityLog.js) is a second,
-// independent guard, not a substitute for keeping content out in the first
-// place.
+// The id this component is registered under on activityChannels.js's
+// DECISION_LEDGER, and decisionCoverage.sweep.test.js's own derived scan --
+// changing this string without changing both would fail that sweep in both
+// directions (a listed id that never records, and a record under an id the
+// ledger does not recognize). Same idiom as useDuplicateApplyCheck.js's
+// DUPE_DECISION_ID.
+const AUTO_INSERT_DECISION_ID = "fact-auto-insert";
+
+// Maps one `autoInsertFactsForJob` result onto the closed DECISION_OUTCOMES
+// vocabulary. `already-edited` is the one deliberate policy refusal (the
+// RULING in useCompanyResearch.js: a hand-edited letter is never
+// overwritten), so it reports as "refused" rather than "failed". The three
+// "nothing to do" gates (no open surface, nothing eligible, nothing new) are
+// normal, unremarkable outcomes, so they report as "skipped". Every other
+// refusal code means something that should have worked did not, so it
+// reports as "failed" -- including an unrecognized code, since an outcome
+// this function cannot explain is closer to a failure than a shrug.
+function autoInsertDecisionOutcome(result) {
+  if (result.ok) return "acted";
+  const code = result.code;
+  if (code === "already-edited") return "refused";
+  if (code === "no-open-surface" || code === "nothing-eligible" || code === "nothing-new") return "skipped";
+  return "failed";
+}
+
+// N77: turns one `autoInsertFactsForJob` result into a decision record on the
+// app-wide seam (activityChannels.js's DECISION_LEDGER, "fact-auto-insert"
+// entry). recordDecision() itself enforces the closed field vocabulary --
+// only `reason`, `count` and `code` ever survive onto the record -- so this
+// door cannot carry the inserted sentence, the company, the article title or
+// a byte of the letter body, whatever fields `result` happens to hold.
 function recordAutoInsertOutcome(result) {
   if (!result) return;
-  if (result.ok) {
-    recordActivity("act", "auto-insert.inserted", { count: typeof result.count === "number" ? result.count : 0 });
-    return;
-  }
-  const code = result.code || "unknown-refusal";
-  recordActivity("act", `auto-insert.refused.${code}`, {
-    reason: result.reason || "",
-    severity: result.severity || "failure",
-  });
+  const outcome = autoInsertDecisionOutcome(result);
+  const fields = result.ok
+    ? { count: typeof result.count === "number" ? result.count : 0 }
+    : { reason: result.reason || "", code: result.code || "unknown-refusal" };
+  recordDecision(AUTO_INSERT_DECISION_ID, outcome, fields);
 }
 
 // Extracted verbatim from app/page.js:3172-3270 (Wave 5C, mechanical move --

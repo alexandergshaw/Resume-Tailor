@@ -220,4 +220,14 @@ export const DECISION_LEDGER = [
     fields: ["reason", "count", "entryPoint", "kind"],
     outcomes: ["acted", "skipped", "refused", "failed"],
   },
+  {
+    module: "app/components/DocumentPreviewMount.js",
+    id: "fact-auto-insert",
+    label: "Auto-inserted company facts",
+    // A canned reason, the real inserted count, and the machine discriminator
+    // (`code`) the refusal actually returned -- never the fact text, the
+    // company, the article title or a byte of the letter itself (N77).
+    fields: ["reason", "count", "code"],
+    outcomes: ["acted", "skipped", "refused", "failed"],
+  },
 ];
