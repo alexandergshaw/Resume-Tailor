@@ -918,6 +918,30 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N81"
+  state: "actionable"
+  title: "**THE MANUAL ACCEPT PATH STILL DUPLICATES A FACT ON RE-ACCEPT AT A CHANGED PLACEMENT — the exact defect class 80b590f closed for the AUTO path, left open on its sibling.** `lib/acceptedFacts/factInsertion.js:126-134`: the M1 dedupe only checks `original[index].includes(text)` at the resolved-target line plus `group.seen`; it never consults `priorRecord` ids. `acceptFacts` (`app/hooks/useCompanyResearch.js:352-378`) DOES build `priorRecord` (id + text) but passes it only as provenance — `planCoverFacts` ignores it for dedupe. The auto path received the id-level guard (`useCompanyResearch.js:694-699`, `insertedIds`); the manual path did not. **Demonstrated**, not inferred: two `planAcceptForEntry` runs on the same fact with placement intro -> current yield occ2 = 2, a visible duplicate. **Reachability**: `selected` resets empty on each dialog open (`app/components/CompanyResearchDialog.js:71`), so it needs a deliberate re-check of an already-accepted article; the card then seeds to the new default (`:95`) and accept re-inserts at the new line. This was already reachable before the placement feature via the per-card Select override — the preference lowers the bar rather than creating the defect. **Fix direction**: give `acceptFacts` the same pre-resolution id-skip the auto path has, or have `planCoverFacts` skip any fact whose id is already present in `record`. **The regression-class obligation applies**: the guard belongs at the shared seam so a third caller cannot reintroduce it, and the test must fail for BOTH paths when the guard is removed."
+  owed_by: "A TDD round landing a red test on the manual path, then the shared-seam guard"
+  evidence: ["lib/acceptedFacts/factInsertion.js:126-134 — M1 dedupe checks only the resolved-target line text and group.seen, never priorRecord ids", "app/hooks/useCompanyResearch.js:352-378 — acceptFacts builds priorRecord but planCoverFacts uses it only as provenance", "app/hooks/useCompanyResearch.js:694-699 — the insertedIds id-level guard the AUTO path got", "app/components/CompanyResearchDialog.js:71 (selected resets empty per open), :95 (card seeds to the new default)", "Scratchpad mutation run 2026-09-28: two planAcceptForEntry runs, same fact, placement intro -> current, occ2 = 2"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N82"
+  state: "actionable"
+  title: "**THE COVER-FACT PLACEMENT SETTING SHIPPED WITHOUT ITS \"no preference\" OPTION, so the choice is one-way.** `app/components/CoverFactPlacementSetting.js:7` renders `placementOptions()`, which carries the four concrete placement ids only. `plan.n62A.r1.md` §2 specified an additional \"Default (opening paragraph)\" / no-preference option; it was not shipped. **Impact is low but real**: \"intro\" is the effective default, so behaviour is correct out of the box — but once a candidate picks a placement there is no way back to \"let the app decide\", only to pin intro explicitly, which is a different statement and would not follow a future change to the default. **Fix direction**: add the no-preference option as a distinct value (not a synonym for intro) that leaves `defaultPlacement` unset so `DEFAULT_PLACEMENT` continues to apply."
+  owed_by: "A small design + implementation round on the placement setting"
+  evidence: ["app/components/CoverFactPlacementSetting.js:7 — renders placementOptions(), four concrete ids only", "plan.n62A.r1.md §2 — specified a Default/no-preference option that was not shipped"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 - id: "D2"
   state: "owner"
   title: "**The transport claim is doc-verified, not wire-verified.**"
