@@ -47,6 +47,14 @@ const PERSISTED_NOTICE =
 // path's N77 "nothing new" handling): the accept still resolves `{ok:true}`,
 // the dialog just needs to say something instead of sitting there silent.
 const ALREADY_PRESENT_NOTICE = "That fact is already in your cover letter.";
+// N81 closing round, Bug 2 (fresh-verifier NOT-SHIP on 5e96be2): a job with
+// NO tailored cover letter yet always has `coverChanged === false` (there is
+// nothing for planCoverFacts to touch), so the `!coverChanged` branch below
+// used to fall through to ALREADY_PRESENT_NOTICE -- telling the candidate a
+// fact is "already in your cover letter" when there is no cover letter at
+// all. This mirrors the sibling auto path's own no-cover-letter wording and
+// severity (autoInsertFactsForJob, below) exactly, so the two paths agree.
+const NO_COVER_LETTER_REASON = "No cover letter to insert into.";
 
 // Per-job company research: warmed in the background when a preview opens, shown
 // behind the preview's "Research company" button, and (on apply) woven into the
@@ -422,6 +430,13 @@ export function useCompanyResearch({
     if (hasCoverLetter && !hasCoverBytes) {
       setCompanyResearch((prev) => ({ ...prev, acceptError: NO_ENGINE_BYTES_REASON, acceptNotice: "" }));
       return { ok: false, reason: NO_ENGINE_BYTES_REASON };
+    }
+    // N81 closing round, Bug 2: refuse honestly, before any write, rather than
+    // let `!coverChanged` below fall through to ALREADY_PRESENT_NOTICE for a
+    // job that never had a cover letter to begin with.
+    if (!hasCoverLetter) {
+      setCompanyResearch((prev) => ({ ...prev, acceptError: NO_COVER_LETTER_REASON, acceptNotice: "" }));
+      return { ok: false, reason: NO_COVER_LETTER_REASON };
     }
 
     setCompanyResearch((prev) => ({ ...prev, busy: true, acceptError: "", acceptNotice: "" }));

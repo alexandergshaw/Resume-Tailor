@@ -114,13 +114,26 @@ function planCoverFacts(lines, { facts, record = [] } = {}) {
   // N81: the SHARED SEAM guard. `record` is the caller's prior-accepted
   // provenance (both acceptFacts and autoInsertFactsForJob pass their own
   // `coverRecord` here); a fact whose id is already present there AND whose
-  // text is still present in these lines was already inserted and must not
-  // be inserted a second time just because it now resolves to a DIFFERENT
-  // paragraph. Id scoped -- never a blanket "skip on re-accept" -- and
-  // null-safe, so a fact with no id (never assigned by any current caller)
-  // falls through to the existing text-keyed dedupe below instead of being
-  // treated as "seen".
+  // RECORDED text is still present in these lines was already inserted and
+  // must not be inserted a second time just because it now resolves to a
+  // DIFFERENT paragraph. Id scoped -- never a blanket "skip on re-accept" --
+  // and null-safe, so a fact with no id (never assigned by any current
+  // caller) falls through to the existing text-keyed dedupe below instead of
+  // being treated as "seen".
+  //
+  // N81 closing round (Bug 1, fresh-verifier NOT-SHIP on 5e96be2): the
+  // presence half of this guard must consult the RECORDED fact's own text --
+  // `recordTextById.get(fact.id)` -- never the INCOMING `fact.text` a caller
+  // can freely re-edit before re-accepting. Comparing the incoming text let a
+  // candidate edit a suggestion down to a short fragment that coincidentally
+  // occurs elsewhere in the letter; that fragment was never inserted, but the
+  // guard suppressed it as "already present" because ITS text (not the
+  // recorded fact's) matched. Keying off the recorded text instead preserves
+  // version-switch healing (a regenerated letter lacking the recorded text ->
+  // allow) while killing the false positive (the edited incoming text plays
+  // no part in the presence check).
   const recordIds = new Set(record.filter((r) => r?.id != null).map((r) => r.id));
+  const recordTextById = new Map(record.filter((r) => r?.id != null).map((r) => [r.id, normalizeFactText(r.text)]));
 
   // Group every surviving fact by the line index it targets (resolved
   // against the ORIGINAL, untouched lines), preserving the order `facts`
@@ -131,7 +144,8 @@ function planCoverFacts(lines, { facts, record = [] } = {}) {
     if (!fact || typeof fact.text !== "string" || !fact.text.trim()) continue;
     const text = normalizeFactText(fact.text);
     if (!text) continue;
-    if (fact.id != null && recordIds.has(fact.id) && priorText.includes(text)) continue;
+    const recordedText = fact.id != null ? recordTextById.get(fact.id) : undefined;
+    if (fact.id != null && recordIds.has(fact.id) && recordedText && priorText.includes(recordedText)) continue;
     const placement = resolvePlacement(fact.placement);
     const index = findTargetIndex(original, placement);
     if (index < 0 || index >= original.length) continue;
