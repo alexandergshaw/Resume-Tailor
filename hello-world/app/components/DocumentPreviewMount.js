@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import DocumentPreviewDialog from "./DocumentPreviewDialog";
 import FocusPickerDialog from "./FocusPickerDialog";
 import InsertedFactsStrip from "./preview/InsertedFactsStrip";
@@ -82,6 +82,51 @@ export default function DocumentPreviewMount({
     company: preview.resumePreview.company,
     activeScope,
   });
+
+  // N73: the coordinating effect (backlog N61's missing last hop).
+  // `research.autoInsertFactsForJob` already does the whole insert -- locate,
+  // splice, highlight, store -- but on HEAD nothing called it; research
+  // resolved and the facts just sat in `researchByJob`, never reaching the
+  // letter. This fires it once per job, whenever the preview is OPEN, a job
+  // is loaded, and that job's research has resolved with at least one
+  // article -- the owner's "review after the fact": the candidate does
+  // nothing but open the preview and let research resolve, and the facts
+  // arrive on their own, already highlighted and one-click removable.
+  //
+  // `openRef` is a LIVE getter, not a captured boolean:
+  // `autoInsertFactsForJob` awaits a docx splice and a network PUT and
+  // re-checks `isOpen()` after each -- a snapshot boolean closed over at call
+  // time would never see a candidate who closes the modal mid-flight.
+  // `researchRef` holds the latest `research` prop the same way, so the
+  // effect always calls today's function without needing the `research`
+  // object itself (a fresh identity every render) in its own dependency
+  // array -- refs read via `.current` are exempt from exhaustive-deps.
+  // `autoInsertAttemptedRef` dedupes PER JOB, not globally: a re-render or a
+  // tab switch must not re-fire this for the same job, but switching to a
+  // different job -- or back -- must still insert that job's own facts.
+  const previewOpen = preview.resumePreview.open;
+  const openRef = useRef(previewOpen);
+  useEffect(() => {
+    openRef.current = previewOpen;
+  }, [previewOpen]);
+  const researchRef = useRef(research);
+  useEffect(() => {
+    researchRef.current = research;
+  }, [research]);
+  const autoInsertAttemptedRef = useRef(new Set());
+  const autoInsertJobId = preview.resumePreview.jobId;
+  const autoInsertResearchEntry = research.researchByJob[autoInsertJobId];
+  const autoInsertResearchResolved =
+    !!autoInsertResearchEntry &&
+    !autoInsertResearchEntry.loading &&
+    Array.isArray(autoInsertResearchEntry.articles) &&
+    autoInsertResearchEntry.articles.length > 0;
+  useEffect(() => {
+    if (!previewOpen || !autoInsertResearchResolved || !autoInsertJobId) return;
+    if (autoInsertAttemptedRef.current.has(autoInsertJobId)) return;
+    autoInsertAttemptedRef.current.add(autoInsertJobId);
+    researchRef.current.autoInsertFactsForJob(autoInsertJobId, () => openRef.current);
+  }, [previewOpen, autoInsertJobId, autoInsertResearchResolved]);
 
   // N61: the cover letter's inserted-fact review strip. Built here (not
   // inside DocumentPreviewDialog.js, which is at its own line ceiling) and

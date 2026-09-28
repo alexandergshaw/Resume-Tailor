@@ -258,19 +258,24 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
   // race against a row that already does. Best-effort: a failed fetch just
   // leaves the state as it was, and the first accept in a truly-new session
   // still works with baseRevision null (there really is no row yet).
+  // Returns the seeded `{facts, removed, revision}` (or null on failure) so a
+  // caller that needs the value THIS SAME turn -- `autoInsertFactsForJob`
+  // below -- doesn't have to read it back off `acceptedFactsByJob` state,
+  // which a `setState` call cannot make visible within the same synchronous
+  // continuation.
   async function fetchAcceptedFactsInto(jobId) {
-    if (!jobId) return;
+    if (!jobId) return null;
     try {
       const res = await fetch(`/api/accepted-facts?jobRef=${encodeURIComponent(jobId)}`);
-      if (!res.ok) return;
+      if (!res.ok) return null;
       const data = await res.json().catch(() => null);
-      if (!data) return;
-      setAcceptedFactsByJob((m) => ({
-        ...m,
-        [jobId]: { facts: data.facts || [], removed: data.removed || [], revision: data.revision ?? null },
-      }));
+      if (!data) return null;
+      const seeded = { facts: data.facts || [], removed: data.removed || [], revision: data.revision ?? null };
+      setAcceptedFactsByJob((m) => ({ ...m, [jobId]: seeded }));
+      return seeded;
     } catch {
       /* best-effort seed -- an accept still works with baseRevision null */
+      return null;
     }
   }
 
@@ -601,9 +606,41 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
     if (!hasCoverBytes) return { ok: false, reason: NO_ENGINE_BYTES_REASON };
     if (editedForScope(entry, "cover")) return { ok: false, reason: "Cover letter already edited." };
 
+    // N61 (AC-N61.20, cross-session gap): `acceptedFactsByJob[jobId]` is
+    // seeded ONLY by the manual research dialog (`openCompanyResearch` ->
+    // `fetchAcceptedFactsInto`). The auto path has no such call, so on this
+    // job's FIRST auto-insert this session, reading `acceptedFactsByJob`
+    // straight off state would see the same empty/never-seeded shape as a
+    // job with no removals and no existing store row -- indistinguishable
+    // from a fact the candidate genuinely removed in an EARLIER session,
+    // which would then be re-inserted unasked. Fetched fresh here so the
+    // eligibility filter below always sees this application's real removed
+    // log, seeded or not.
+    //
+    // This fetch ALSO carries `revision`, which `acceptFacts` above already
+    // depends on to avoid a stale-base 409 (see `fetchAcceptedFactsInto`'s own
+    // "B5" comment): an unseeded `revision` is `null`, and a PUT with a null
+    // base against an application that already HAS a facts row -- i.e. every
+    // returning candidate who has ever accepted or removed a fact here -- is
+    // a conflict the store refuses. Without this fetch, auto-insert would 409
+    // silently for exactly the candidates the removal log matters most for,
+    // making the whole feature look like a no-op weeks later.
+    //
+    // If the fetch fails AND this job was never seeded any other way (no
+    // prior manual-dialog open, no earlier accept/remove/auto-insert this
+    // session), there is no trustworthy removed-log/revision to act on --
+    // REFUSE rather than treat "couldn't check" as "nothing was ever removed,
+    // and no row exists yet". A missed insertion is a lost improvement; a
+    // wrongly-reinstated retracted fact, or a silent 409 no-op, are worse.
+    const priorSeed = acceptedFactsByJob[jobId];
+    const freshSeed = await fetchAcceptedFactsInto(jobId);
+    if (!isOpen()) return { ok: false, reason: "No open review surface." };
+    const seeded = freshSeed || priorSeed;
+    if (!seeded) return { ok: false, reason: "Couldn't verify prior removals before inserting." };
+
     const articles = researchByJob[jobId]?.articles || [];
-    const priorFacts = acceptedFactsByJob[jobId]?.facts || [];
-    const removedLog = acceptedFactsByJob[jobId]?.removed || [];
+    const priorFacts = seeded.facts || [];
+    const removedLog = seeded.removed || [];
     const removedSet = new Set(removedLog);
     const eligible = articles.filter((a) => {
       if (!a || articleUrlKey(a.url) === null) return false;
@@ -638,7 +675,7 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
         body: JSON.stringify({
           jobRef: jobId,
           facts: mergedFacts,
-          baseRevision: acceptedFactsByJob[jobId]?.revision ?? null,
+          baseRevision: seeded.revision ?? null,
           declinedUrls: removedLog,
           coverVersion: { lines: plan.cover.lines, insertedFacts: plan.cover.record },
         }),
