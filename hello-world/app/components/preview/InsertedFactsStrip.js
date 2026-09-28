@@ -20,7 +20,7 @@ import { safeExternalHref } from "@/lib/url/safeExternalHref";
 // No Tooltip wrapper on the Remove control: MUI's Tooltip can steal a
 // child's own accessible name, and this control's aria-label IS the
 // reachability contract removal's render-and-click tests key on.
-export default function InsertedFactsStrip({ facts = [], onRemove }) {
+export default function InsertedFactsStrip({ facts = [], onRemove, error = "" }) {
   const list = Array.isArray(facts) ? facts : [];
   if (list.length === 0) return null;
   return (
@@ -28,6 +28,11 @@ export default function InsertedFactsStrip({ facts = [], onRemove }) {
       <Box sx={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary)", mb: 0.5 }}>
         Added from research
       </Box>
+      {error ? (
+        <Box role="alert" sx={{ fontSize: "0.8rem", color: "var(--danger)", mb: 0.5 }}>
+          {error}
+        </Box>
+      ) : null}
       {list.map((fact) => {
         const href = safeExternalHref(fact?.url);
         return (

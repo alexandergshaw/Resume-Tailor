@@ -91,9 +91,23 @@ export default function DocumentPreviewMount({
   // band, like the companyReferences band it sits beside.
   const insertedFactsJobId = preview.resumePreview.jobId;
   const insertedFacts = tailoringMap[insertedFactsJobId]?.insertedFacts || [];
+  // N61 (live defect, chunk N61): this used to discard the hook's
+  // `{ok:false, reason}` outright, so a refused removal (e.g. a stale
+  // locator) showed the candidate nothing -- the click looked like a silent
+  // no-op, exactly what made the coalesced-offset bug above invisible.
+  // Surfaced as a readable alert in the strip; cleared on the next attempt
+  // that succeeds.
+  const [removeError, setRemoveError] = useState("");
   const insertedFactsStrip =
     activeScope === "cover" && insertedFacts.length > 0 ? (
-      <InsertedFactsStrip facts={insertedFacts} onRemove={(factId) => research.removeInsertedFact(insertedFactsJobId, factId)} />
+      <InsertedFactsStrip
+        facts={insertedFacts}
+        error={removeError}
+        onRemove={async (factId) => {
+          const result = await research.removeInsertedFact(insertedFactsJobId, factId);
+          setRemoveError(result && result.ok === false ? result.reason || "Couldn't remove that fact. Try again." : "");
+        }}
+      />
     ) : null;
 
   return (

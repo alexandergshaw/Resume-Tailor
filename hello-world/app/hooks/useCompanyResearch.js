@@ -459,6 +459,38 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
     }
   }
 
+  // N61 (live defect, chunk N61): every researched article defaults to the
+  // "intro" placement, so two or three accepted facts routinely COALESCE
+  // onto one paragraph (planCoverFacts groups same-line facts into a single
+  // edit -- see that function's own header comment). Removing one of several
+  // same-line facts left every LATER survivor's stored `offset` stale
+  // against the now-shorter line: `planRemoveFact(survivor)` then found the
+  // survivor's text was not where the record said and refused
+  // `{changed:false}` (permanently unremovable), and `markInsertedFacts`
+  // matched nothing either (permanently unhighlighted) -- an unremovable,
+  // unhighlightable claim reaching the employer-bound letter.
+  //
+  // `facts` is already in screen order (the order `planCoverFacts` located
+  // them in, preserved by `[...untouched, ...located]` in `acceptFacts`
+  // above), so relocating each survivor's text against the NEW line with a
+  // per-line cursor -- mirroring `planCoverFacts`' own locate loop -- finds
+  // each survivor's OWN occurrence rather than a sibling's, satisfying the
+  // invariant removal must never break: every surviving record locates its
+  // own text in the resulting line, regardless of removal order.
+  function relocateSurvivors(lines, facts) {
+    const arr = Array.isArray(lines) ? lines : [];
+    const cursorByLine = new Map();
+    return (Array.isArray(facts) ? facts : []).map((f) => {
+      if (typeof f?.lineIndex !== "number" || typeof f?.text !== "string" || !f.text) return f;
+      const line = String(arr[f.lineIndex] ?? "");
+      const from = cursorByLine.get(f.lineIndex) || 0;
+      let at = line.indexOf(f.text, from);
+      if (at < 0) at = line.indexOf(f.text);
+      if (at >= 0) cursorByLine.set(f.lineIndex, at + f.text.length);
+      return at >= 0 ? { ...f, offset: at } : f;
+    });
+  }
+
   // Remove one inserted fact from THIS job's cover letter, everywhere it can
   // egress (N61, the owner's "I should be able to remove any of the facts
   // with a simple click"). jobId-parameterised, not bound to
@@ -495,7 +527,7 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
       coverDocxB64 = spliced.applied ? spliced.docxB64 : "";
     }
 
-    const remainingFacts = insertedFacts.filter((r) => r.id !== factId);
+    const remainingFacts = relocateSurvivors(removal.lines, insertedFacts.filter((r) => r.id !== factId));
     const priorRemoved = acceptedFactsByJob[jobId]?.removed || [];
     const removedKey = record.url || record.id || "";
     const removedLog = removedKey && !priorRemoved.includes(removedKey) ? [...priorRemoved, removedKey] : priorRemoved;
