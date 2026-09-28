@@ -51,6 +51,12 @@ export function useManualTailor({
   maybeOfferLibraryUpdate,
   withClearedEditedScopes,
   finishByOpeningPreview,
+  // N73: warms company research the moment this run's company is known --
+  // the SAME (existing, deduped, fire-and-forget) callback
+  // finishByOpeningPreview already warms with at preview-open
+  // (useDocumentPreview.js:914). Keyed on this run's own syntheticJobId so
+  // the shared per-job dedupe collapses the two warms into one paid call.
+  startBackgroundResearch,
   // E4/E6's Signal-2 fire point (3-plan-dupapply.md §2.9). A callback, not
   // `applicationData` (1c U-7 #7): passing the row set in would put the row
   // set, the evaluator and the verdict in two places, and this hook would
@@ -232,6 +238,34 @@ export function useManualTailor({
         ...(applyResume ? { result: nextResult, resultLines: nextResultLines, docxB64: nextDocxB64 } : {}),
         ...(applyCover ? { coverLetterResultLines: nextCoverLetterResultLines, coverLetterDocxB64: nextCoverLetterDocxB64 } : {}),
       }));
+
+      // N73: warm company research now, ahead of the awaited persistence
+      // round-trips and the preview opening below -- a head start over
+      // today's preview-open warm (useDocumentPreview.js:914). Keyed on this
+      // run's OWN syntheticJobId, the same id passed to finishByOpeningPreview
+      // just below, so the shared per-job dedupe (useCompanyResearch's
+      // researchStartedRef) collapses the two warms into one paid call
+      // instead of double-spending. Gated exactly like finishByOpeningPreview
+      // itself: a cover letter to hold the facts, and a run that will
+      // actually open a review surface -- a queued run's openPreview:false
+      // opens no modal per posting, so it rides the later preview-open warm
+      // instead of spending on a letter the candidate may never open.
+      // Fire-and-forget (never awaited) and wrapped in try/catch: a slow or
+      // failing warm must never delay or fail this run, and a research
+      // problem must never surface to the candidate as a generation error.
+      const hasCoverForResearch = applyCover && nextCoverLetterResultLines.length > 0;
+      if (opts.openPreview !== false && hasCoverForResearch) {
+        try {
+          startBackgroundResearch({
+            jobId: syntheticJobId,
+            company: nextCompany,
+            jobTitle: nextJobTitle,
+            posting: sourcePosting || "",
+          });
+        } catch {
+          // Defense in depth only -- see the comment above.
+        }
+      }
 
       // Persist the generated resume + cover letter and link them to an application.
       if (currentUser) {

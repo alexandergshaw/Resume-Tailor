@@ -1480,6 +1480,7 @@ export default function Home() {
     maybeOfferLibraryUpdate,
     withClearedEditedScopes,
     finishByOpeningPreview: preview.finishByOpeningPreview,
+    startBackgroundResearch: research.startBackgroundResearch,
     // E4/E6's fire point: a callback, not `applicationData` (1c U-7 #7).
     onCheckDuplicate: dupeApply.runDuplicateCheck,
   });
