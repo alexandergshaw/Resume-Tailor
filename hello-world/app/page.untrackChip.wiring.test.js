@@ -116,8 +116,11 @@ describe("the refusal is visible and audible", () => {
 });
 
 describe("page.js stays under its line ceiling", () => {
-  it("is shorter than 3050 lines", () => {
+  it("is shorter than 3015 lines", () => {
+    // RATCHETED 3050 -> 3015 at N60 S11 against the 2995-line measured
+    // value at that chunk's close (20 lines of working room); see
+    // lib/feed/feedTailorFullDescription.test.js for the full note.
     const lines = pageSource.split("\n").length;
-    expect(lines).toBeLessThan(3050);
+    expect(lines).toBeLessThan(3015);
   });
 });

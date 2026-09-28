@@ -725,13 +725,17 @@ describe("AC-18 — the feature fits in app/page.js's remaining headroom", () =>
 
     // Deliberately duplicated from the four assertions in four other files, so
     // the ceiling fails HERE, at implementation time, rather than in an
-    // unrelated suite: app/page.untrackChip.wiring.test.js:121 (<3050),
-    // app/components/DocumentPreviewMount.test.js:81 (<3050),
-    // lib/feed/feedTailorFullDescription.test.js:102 (<=3050) and
-    // lib/drive/lineCeiling.test.js:32 (<3309, with :27-31 recording "Do not
-    // raise the constant"). The binding cap is 3249, not 3050 — the two
-    // `toBeLessThan(3050)` assertions are stricter than the
-    // `toBeLessThanOrEqual` one.
+    // unrelated suite: app/page.untrackChip.wiring.test.js:121 (<3015 as of
+    // N60 S11), app/components/DocumentPreviewMount.test.js:81 (<3015 as of
+    // N60 S11), lib/feed/feedTailorFullDescription.test.js:102 (<=3015 as of
+    // N60 S11) and lib/drive/lineCeiling.test.js:32 (<3309, with :27-31
+    // recording "Do not raise the constant" — left untouched by N60 S11 as
+    // the looser historical ratchet from a different wave).
+    // THIS assertion is deliberately NOT re-ratcheted alongside the three
+    // above: it sits inside a compound feature-vocabulary sweep together with
+    // the FEATURE_BUDGET check below, and tightening it here would couple an
+    // unrelated future page.js change to this sweep's own net-added-lines
+    // arithmetic. It stays at 3050 on purpose (N60 S11 review, 2026-09-27).
     // RATCHETED 3250 -> 3050 on 2026-09-08, in all five places at once, after
     // an extraction took app/page.js from 3233 to 2965 by moving three domain
     // hooks out (useLayoutPrefs, useEmploymentImport, useMaterialsLocker).

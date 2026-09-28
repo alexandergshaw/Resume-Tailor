@@ -98,7 +98,16 @@ describe("the feed listing does not pay for it", () => {
 });
 
 describe("app/page.js stays within its line budget", () => {
-  it("is at most 3050 lines", () => {
-    expect(read(PAGE).split("\n").length).toBeLessThanOrEqual(3050);
+  it("is at most 3015 lines", () => {
+    // RATCHETED 3050 -> 3015 at N60 S11: app/page.js measures 2995 lines
+    // (split("\n").length) at this chunk's close, so the previous 3050 cap
+    // left 55 lines nobody was watching. 3015 keeps 20 lines of ordinary
+    // working room without being wide enough to hide the next unnoticed
+    // regrowth. Same convention as the four other page.js line pins
+    // (app/components/DocumentPreviewMount.test.js,
+    // app/page.untrackChip.wiring.test.js, app/navigation/surfaceStack
+    // .sweep.test.js's compound sweep, lib/drive/lineCeiling.test.js) --
+    // do not raise this back to 3050 to make room for an unrelated change.
+    expect(read(PAGE).split("\n").length).toBeLessThanOrEqual(3015);
   });
 });
