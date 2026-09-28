@@ -166,6 +166,12 @@ const BOUNDED = [
     windowMs: 600_000,
     why: "one prep generation per application per ten minutes, matching PREP_RATE_LIMIT/PREP_RATE_WINDOW_MS and the grounded-call cadence application-digest is already sized for",
   },
+  {
+    route: "app/api/feed-config/chat/route.js",
+    limit: 12,
+    windowMs: 600_000,
+    why: "N60 second chunk -- one chat-derived configuration turn per ten minutes, matching interview-prep's human-paced bound above for the same reason: a single generation per user-triggered turn. app/api/feed-config/apply/route.js (the sibling write path) reaches no model and deliberately does NOT appear here.",
+  },
 ];
 
 /**
