@@ -966,6 +966,18 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N85"
+  state: "actionable"
+  title: "**THE ARRANGE-STEP \"Insert into cover letter\" CONTROL DUPLICATES A FACT ON A SECOND CLICK — a live, wired, second insertion path with NO dedupe of any kind, which the a36d6ae N81 fix does not and cannot reach.** `CompanyResearchDialog`'s arrange step has its OWN \"Insert into cover letter\" button (`app/components/CompanyResearchDialog.js:364`, `onClick={() => onApply(chosen())}`), wired in production to `research.applyCompanyResearch` (`app/page.js:2971`, live alongside `onAccept={research.acceptFacts}` at :2972 — both handlers active at once). `applyCompanyResearch` (`app/hooks/useCompanyResearch.js:310-330`) calls `weaveSources` (`hello-world/lib/document/coverLetterWeave.js:51`) directly, and `weaveSources` has ZERO dedupe — not the text-keyed M1 check, not the N81 id guard. It was never a caller of `planCoverFacts`/`planAcceptForEntry`, before or after a36d6ae, so the shared-seam guard cannot cover it. **Reproduced LIVE** (fresh-verifier probe, 2026-09-28): calling the real exported `applyCompanyResearch` twice with the same pick yields the fact TWICE in `coverLetterResultLines`. **This is PRE-EXISTING — not caused by a36d6ae** (`git show a36d6ae` touches only `useCompanyResearch.js`, `factInsertion.js`, and three test files; `coverLetterWeave.js` is untouched). But it directly contradicts a36d6ae's commit-message claim \"The guard now lives in planCoverFacts... so every caller inherits it\" / \"one change to the seam turns both paths red\": there is a THIRD, live, wired, zero-dedupe insertion control the regression-class obligation never reached. **Egress consequence** (per N61's settled ruling that the safety line is at egress): a duplicated employer-bound claim can leave the app via download/Drive/copy/Combine. **Fix direction**: route `applyCompanyResearch`'s weave through the shared `planCoverFacts` seam so it inherits the id+presence guard, or retire the arrange-step Insert control in favour of the accept path. **Related open item**: AC-A5 (weave-mechanism reconciliation) was descoped from N62; this is the concrete defect that reconciliation would close, and the two should be designed together rather than as two separate passes over `coverLetterWeave.js`."
+  owed_by: "A dedupe round routing applyCompanyResearch's weave through the shared planCoverFacts seam (or an owner ruling retiring the arrange-step Insert control in favour of the accept path), designed together with AC-A5's weave-mechanism reconciliation"
+  evidence: ["app/components/CompanyResearchDialog.js:364-365 — the arrange-step 'Insert into cover letter' button, onClick={() => onApply(chosen())}", "app/page.js:2971 — onApply={research.applyCompanyResearch} (live alongside onAccept={research.acceptFacts} at :2972)", "app/hooks/useCompanyResearch.js:310-330 — applyCompanyResearch calls weaveSources directly, never planAcceptForEntry", "hello-world/lib/document/coverLetterWeave.js:51 — weaveSources has no dedupe of any kind (not M1's text check, not N81's id guard)", "Fresh-verifier probe 2026-09-28 (scratchpad _checkerProbe.applyPathDup): the real applyCompanyResearch called twice with the same pick -> 2 occurrences of the fact in coverLetterResultLines", "git show a36d6ae — touches useCompanyResearch.js, factInsertion.js and three test files only; coverLetterWeave.js untouched, so the N81 seam guard never reached this path"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 - id: "D2"
   state: "owner"
   title: "**The transport claim is doc-verified, not wire-verified.**"
