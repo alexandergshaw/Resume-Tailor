@@ -595,16 +595,44 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
   // insert. Fails toward NOT inserting: an unsourced or invented claim in the
   // candidate's own voice, reaching an employer unreviewed, is the worst
   // failure this app can produce.
+  //
+  // N77: every refusal returns `{ ok: false, reason, severity, code }`, not
+  // just `{ ok, reason }` -- on HEAD the caller discarded the result
+  // entirely, so nine distinct refusal paths all looked like silence. `code`
+  // is the stable machine discriminator (`"no-engine-bytes"`,
+  // `"already-edited"`, `"nothing-eligible"`, ...); `severity` tells the
+  // caller how to SHOW it: "failure" (role=alert, something is actually
+  // broken), "info" (role=status, a normal "nothing new" outcome, never
+  // dressed as an error), or "silent" (never shown on screen -- currently
+  // only the already-edited ruling below -- but still always recorded). On
+  // success the return also carries `count`, the real number of facts this
+  // call inserted (`facts.length`, never a literal).
   async function autoInsertFactsForJob(jobId, isOpen) {
     if (!jobId || typeof isOpen !== "function" || !isOpen()) {
-      return { ok: false, reason: "No open review surface." };
+      // No surface exists to show anything on, so this refuses SILENTLY on
+      // screen (there is nothing to render into) but is still recorded by
+      // the caller -- see the `severity` contract on this function's own
+      // header comment below.
+      return { ok: false, reason: "No open review surface.", severity: "silent", code: "no-open-surface" };
     }
     const entry = tailoringMap[jobId] || {};
     const hasCoverLetter = Array.isArray(entry.coverLetterResultLines) && entry.coverLetterResultLines.length > 0;
-    if (!hasCoverLetter) return { ok: false, reason: "No cover letter to insert into." };
+    if (!hasCoverLetter) {
+      return { ok: false, reason: "No cover letter to insert into.", severity: "failure", code: "no-cover-letter" };
+    }
     const hasCoverBytes = typeof entry.coverLetterDocxB64 === "string" && entry.coverLetterDocxB64.length > 0;
-    if (!hasCoverBytes) return { ok: false, reason: NO_ENGINE_BYTES_REASON };
-    if (editedForScope(entry, "cover")) return { ok: false, reason: "Cover letter already edited." };
+    if (!hasCoverBytes) {
+      return { ok: false, reason: NO_ENGINE_BYTES_REASON, severity: "failure", code: "no-engine-bytes" };
+    }
+    // RULING (settled): suppressing auto-insert into a hand-edited letter is
+    // deliberate -- the candidate's own edits are never overwritten, and
+    // nothing here is broken. This refuses SILENTLY on screen (severity
+    // "silent"; no alert, no status) but is ALWAYS recorded to the activity
+    // log by the caller, so a diagnoser can tell "suppressed because you
+    // edited it" apart from "broken".
+    if (editedForScope(entry, "cover")) {
+      return { ok: false, reason: "Cover letter already edited.", severity: "silent", code: "already-edited" };
+    }
 
     // N61 (AC-N61.20, cross-session gap): `acceptedFactsByJob[jobId]` is
     // seeded ONLY by the manual research dialog (`openCompanyResearch` ->
@@ -634,9 +662,16 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
     // wrongly-reinstated retracted fact, or a silent 409 no-op, are worse.
     const priorSeed = acceptedFactsByJob[jobId];
     const freshSeed = await fetchAcceptedFactsInto(jobId);
-    if (!isOpen()) return { ok: false, reason: "No open review surface." };
+    if (!isOpen()) return { ok: false, reason: "No open review surface.", severity: "silent", code: "no-open-surface" };
     const seeded = freshSeed || priorSeed;
-    if (!seeded) return { ok: false, reason: "Couldn't verify prior removals before inserting." };
+    if (!seeded) {
+      return {
+        ok: false,
+        reason: "Couldn't verify prior removals before inserting.",
+        severity: "failure",
+        code: "verify-failed",
+      };
+    }
 
     const articles = researchByJob[jobId]?.articles || [];
     const priorFacts = seeded.facts || [];
@@ -648,23 +683,29 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
       if (removedSet.has(a.url) || removedSet.has(a.id)) return false;
       return true;
     });
-    if (eligible.length === 0) return { ok: false, reason: "No eligible facts to insert." };
+    if (eligible.length === 0) {
+      return { ok: false, reason: "No eligible facts to insert.", severity: "info", code: "nothing-eligible" };
+    }
 
     const facts = eligible.map((a) => ({ id: a.id, text: a.suggestion, url: a.url, title: a.title }));
     const priorRecord = priorFacts.map((f) => ({ id: f?.id ?? null, text: f?.text ?? "" }));
     const plan = planAcceptForEntry(entry, { facts, coverRecord: priorRecord });
-    if (plan.cover.edits.length === 0) return { ok: false, reason: "Nothing new to insert." };
+    if (plan.cover.edits.length === 0) {
+      return { ok: false, reason: "Nothing new to insert.", severity: "info", code: "nothing-new" };
+    }
 
     // The staleness guard `applyCoverDocxEdits` already makes (factDocx.js:33-34)
     // compares each edit's `before` against `entry.coverLetterResultLines` --
     // the snapshot this plan was built from -- so a splice against bytes that
     // have since moved on is refused rather than silently misapplied.
     const spliced = await applyCoverDocxEdits(entry.coverLetterDocxB64, entry.coverLetterResultLines, plan.cover.edits);
-    if (!spliced.applied) return { ok: false, reason: messageForRefusal(spliced.reason) };
+    if (!spliced.applied) {
+      return { ok: false, reason: messageForRefusal(spliced.reason), severity: "failure", code: "splice-refused" };
+    }
 
     // Write-time re-check #1: the docx splice above was a real await; do not
     // fire the store write for a review surface that closed while it ran.
-    if (!isOpen()) return { ok: false, reason: "No open review surface." };
+    if (!isOpen()) return { ok: false, reason: "No open review surface.", severity: "silent", code: "no-open-surface" };
 
     const mergedFacts = mergeAcceptedFacts(priorFacts, facts);
     let res;
@@ -681,18 +722,23 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
         }),
       });
     } catch (err) {
-      return { ok: false, reason: err?.message || "Couldn't add company facts." };
+      return {
+        ok: false,
+        reason: err?.message || "Couldn't add company facts.",
+        severity: "failure",
+        code: "save-failed",
+      };
     }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       const reason = typeof data?.error === "string" && data.error ? data.error : "Couldn't add company facts.";
-      return { ok: false, reason };
+      return { ok: false, reason, severity: "failure", code: "save-failed" };
     }
 
     // Write-time re-check #2: the PUT above was also a real await -- the
     // candidate may have closed the modal while it was in flight. No local
     // write for a fact the review surface no longer exists to show.
-    if (!isOpen()) return { ok: false, reason: "No open review surface." };
+    if (!isOpen()) return { ok: false, reason: "No open review surface.", severity: "silent", code: "no-open-surface" };
 
     setTailoringMap((current) => {
       const cur = current[jobId];
@@ -733,7 +779,11 @@ export function useCompanyResearch({ tailoringMap, setTailoringMap, setPreviewRe
     // Bump the reload key so an already-open preview re-parses the body model
     // and shows the fact highlighted, the same way removeInsertedFact does.
     setPreviewReloadKey((k) => k + 1);
-    return { ok: true };
+    // N77: `facts.length` is the real count of articles this call found
+    // eligible and spliced in -- not a literal -- so a caller that logs it
+    // (DocumentPreviewMount.js) reports the actual number inserted, and a
+    // one-fact run and a two-fact run are never reported identically.
+    return { ok: true, count: facts.length };
   }
 
   return {

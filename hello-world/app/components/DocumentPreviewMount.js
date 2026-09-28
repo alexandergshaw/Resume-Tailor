@@ -4,9 +4,34 @@ import { useEffect, useRef, useState } from "react";
 import DocumentPreviewDialog from "./DocumentPreviewDialog";
 import FocusPickerDialog from "./FocusPickerDialog";
 import InsertedFactsStrip from "./preview/InsertedFactsStrip";
+import AutoInsertFactsMessage from "./preview/AutoInsertFactsMessage";
 import { getDownloadFileNameForTitle, getDownloadCoverLetterFileNameForTitle } from "../../lib/document/docx";
 import { emailPreviewText } from "../../lib/tailor/documentScopes";
 import { useDriveDocuments } from "../hooks/useDriveDocuments";
+import { recordActivity } from "@/lib/activityLog/appActivityLog.js";
+
+// N77: turns one `autoInsertFactsForJob` result into the activity log's
+// `type` + payload. `code` (useCompanyResearch.js's own discriminator, e.g.
+// "no-engine-bytes"/"already-edited"/"nothing-eligible") becomes part of the
+// TYPE, not just a payload field, so three different refusals are
+// distinguishable even by type alone. The payload carries only the closed
+// shape `{ reason, severity }` (a canned, non-user-authored string) or
+// `{ count }` on success -- never the inserted sentence, never the letter
+// body; `recordActivity`'s own redactor (appActivityLog.js) is a second,
+// independent guard, not a substitute for keeping content out in the first
+// place.
+function recordAutoInsertOutcome(result) {
+  if (!result) return;
+  if (result.ok) {
+    recordActivity("act", "auto-insert.inserted", { count: typeof result.count === "number" ? result.count : 0 });
+    return;
+  }
+  const code = result.code || "unknown-refusal";
+  recordActivity("act", `auto-insert.refused.${code}`, {
+    reason: result.reason || "",
+    severity: result.severity || "failure",
+  });
+}
 
 // Extracted verbatim from app/page.js:3172-3270 (Wave 5C, mechanical move --
 // no logic changed). `focusPickerOpen` moved from page-level state into this
@@ -121,11 +146,55 @@ export default function DocumentPreviewMount({
     !autoInsertResearchEntry.loading &&
     Array.isArray(autoInsertResearchEntry.articles) &&
     autoInsertResearchEntry.articles.length > 0;
+
+  // N77: the readable half of the fix. `autoInsertMessage` is `{ severity,
+  // text }` or null -- `severity` is either "failure" (role=alert) or "info"
+  // (role=status); a "silent" result (see useCompanyResearch.js's ruling on
+  // an already-edited letter) is recorded below but never lands here. A LIVE
+  // ref, not the plain `autoInsertJobId` variable, guards the async
+  // completion below: a slow refusal for a job the candidate has since
+  // switched away from must not paint its message over the job now on
+  // screen (mirrors `openRef`/`researchRef` above for the same reason).
+  const [autoInsertMessage, setAutoInsertMessage] = useState(null);
+  const autoInsertJobIdRef = useRef(autoInsertJobId);
+  useEffect(() => {
+    autoInsertJobIdRef.current = autoInsertJobId;
+    // A message belongs to the job it was raised for; switching to a
+    // different job's preview (including one with no message of its own
+    // yet) must never leave the PRIOR job's refusal on screen. The same
+    // `await Promise.resolve()` microtask hop as the `activeScope` effect
+    // above (see its own comment) -- keeps this clear of
+    // react-hooks/set-state-in-effect without changing the observable
+    // timing: still cleared before any paint the candidate could see.
+    let cancelled = false;
+    (async () => {
+      await Promise.resolve();
+      if (cancelled) return;
+      setAutoInsertMessage(null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [autoInsertJobId]);
+
   useEffect(() => {
     if (!previewOpen || !autoInsertResearchResolved || !autoInsertJobId) return;
     if (autoInsertAttemptedRef.current.has(autoInsertJobId)) return;
     autoInsertAttemptedRef.current.add(autoInsertJobId);
-    researchRef.current.autoInsertFactsForJob(autoInsertJobId, () => openRef.current);
+    const jobId = autoInsertJobId;
+    researchRef.current.autoInsertFactsForJob(jobId, () => openRef.current).then((result) => {
+      recordAutoInsertOutcome(result);
+      if (result?.ok) {
+        // A stale refusal left over from an earlier attempt on this same job
+        // is worse than none once the facts actually arrive.
+        if (autoInsertJobIdRef.current === jobId) setAutoInsertMessage(null);
+        return;
+      }
+      const severity = result?.severity;
+      if ((severity === "failure" || severity === "info") && autoInsertJobIdRef.current === jobId) {
+        setAutoInsertMessage({ severity, text: result.reason || "" });
+      }
+    });
   }, [previewOpen, autoInsertJobId, autoInsertResearchResolved]);
 
   // N61: the cover letter's inserted-fact review strip. Built here (not
@@ -150,17 +219,28 @@ export default function DocumentPreviewMount({
   // removable anywhere on screen -- a claim reaching an employer that the
   // candidate never had the chance to see. Review has to be possible wherever
   // the letter can leave.
-  const insertedFactsStrip =
-    insertedFacts.length > 0 ? (
-      <InsertedFactsStrip
-        facts={insertedFacts}
-        error={removeError}
-        onRemove={async (factId) => {
-          const result = await research.removeInsertedFact(insertedFactsJobId, factId);
-          setRemoveError(result && result.ok === false ? result.reason || "Couldn't remove that fact. Try again." : "");
-        }}
-      />
-    ) : null;
+  // N77: rendered in the SAME slot as InsertedFactsStrip (DocumentPreviewDialog.js
+  // just renders `{insertedFactsStrip}` verbatim), ABOVE it, so it is visible
+  // regardless of whether any fact has arrived -- exactly the case a refusal
+  // produces, where `insertedFacts` stays empty and InsertedFactsStrip itself
+  // renders null. `AutoInsertFactsMessage` returns null on its own whenever
+  // there's nothing to show (no message, or a "silent" severity), so this
+  // fragment is harmless to always pass down.
+  const insertedFactsStrip = (
+    <>
+      <AutoInsertFactsMessage severity={autoInsertMessage?.severity} text={autoInsertMessage?.text} />
+      {insertedFacts.length > 0 ? (
+        <InsertedFactsStrip
+          facts={insertedFacts}
+          error={removeError}
+          onRemove={async (factId) => {
+            const result = await research.removeInsertedFact(insertedFactsJobId, factId);
+            setRemoveError(result && result.ok === false ? result.reason || "Couldn't remove that fact. Try again." : "");
+          }}
+        />
+      ) : null}
+    </>
+  );
 
   return (
     <DocumentPreviewDialog
