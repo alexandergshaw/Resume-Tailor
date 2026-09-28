@@ -15,6 +15,17 @@
 // exporting a helper with no production importer would create a test-only
 // export that moves lib/sourceScan/exportReachability.sweep.test.js's pinned
 // counts (owner ruling 2).
+//
+// `sanitizeChatDerivedSavedSearch` (N60 second chunk, Step B) is a THIRD
+// writer, deliberately separate from the two above rather than a shared-flag
+// variant of either: it is the one write path a chat turn can reach, and it
+// must be STRUCTURALLY incapable of switching on unattended paid work. Its
+// return value NEVER contains an `auto_tailor_enabled` key -- not `false`,
+// ABSENT -- for any input, including a body that sets the flag in both camel
+// and snake case (AC2-C3 part (i)). Only the explicit `FeedAutomationCard`
+// control (via sanitizeSavedSearchPatch) can ever flip that field.
+
+import { clampIntervalMinutes } from "@/lib/feed/cronSchedule";
 
 const DEFAULT_DAILY_CAP = 10;
 const MIN_DAILY_CAP = 1;
@@ -124,4 +135,47 @@ export function sanitizeSavedSearchPatch(body) {
     out.last_viewed_at = new Date().toISOString();
   }
   return out;
+}
+
+/**
+ * Full row for a chat-derived saved search (N60 second chunk, Step B,
+ * AC2-C3/AC2-C4/AC2-C5). Returns null when there is nothing to key a search
+ * on (mirrors sanitizeSavedSearchCreate's name-required refusal) -- the caller
+ * (the apply route) turns that into a 400.
+ *
+ * Deliberately NEVER sets `auto_tailor_enabled`, for any input: a chat turn
+ * cannot enable unattended tailoring, structurally rather than by discipline
+ * (AC2-C3). The cadence and per-day cap are CLAMPED rather than refused (a
+ * job-seeker asking for "every 5 minutes" or "500 a day" is a normal ask, not
+ * an error) via the shared clamps this module and lib/feed/cronSchedule.js
+ * already apply to every other write path.
+ * @param {object} body
+ * @returns {object|null}
+ */
+export function sanitizeChatDerivedSavedSearch(body) {
+  if (!body || typeof body !== "object") return null;
+  const name = sanitizeName(body.name);
+  if (!name) return null;
+  return {
+    name,
+    job_keywords: sanitizeStringArray(body.jobKeywords ?? body.job_keywords, { maxItems: 25, maxLen: 100 }),
+    max_years_exp:
+      typeof body.maxYearsExp === "string"
+        ? body.maxYearsExp.slice(0, 20)
+        : typeof body.max_years_exp === "string"
+          ? body.max_years_exp.slice(0, 20)
+          : "any",
+    selected_categories: sanitizeStringArray(body.selectedCategories ?? body.selected_categories, { maxItems: 50, maxLen: 100 }),
+    selected_companies: sanitizeStringArray(body.selectedCompanies ?? body.selected_companies, { maxItems: 200, maxLen: 200 }),
+    excluded_companies: sanitizeStringArray(body.excludedCompanies ?? body.excluded_companies, { maxItems: 200, maxLen: 200 }),
+    excluded_title_keywords: sanitizeStringArray(body.excludedTitleKeywords ?? body.excluded_title_keywords, { maxItems: 50, maxLen: 100 }),
+    auto_tailor_daily_cap: sanitizeCap(body.autoTailorDailyCap ?? body.auto_tailor_daily_cap),
+    auto_tailor_min_interval_minutes: clampIntervalMinutes(
+      body.autoTailorMinIntervalMinutes ?? body.auto_tailor_min_interval_minutes,
+    ),
+    // Owner ruling 2: the chat MAY set this -- the recipient is account-only
+    // and already bounded by the built mail ceilings. Only the enable flag
+    // above is excluded, because only it drives unattended LLM spend.
+    email_on_new_jobs: !!(body.emailOnNewJobs ?? body.email_on_new_jobs),
+  };
 }
