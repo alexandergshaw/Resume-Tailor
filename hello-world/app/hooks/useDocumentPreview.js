@@ -31,7 +31,8 @@ import { emailPreviewLines, buildDownloadArgs } from "../../lib/tailor/documentS
 import { readEngine } from "../settings/engine";
 import { createClient } from "../../lib/supabase/client";
 import { persistGeneratedDocuments } from "../../lib/supabase/persistGeneration";
-import { fetchDocumentVersions, pointApplicationAtVersion } from "../../lib/supabase/documentVersions";
+import { pointApplicationAtVersion } from "../../lib/supabase/documentVersions";
+import { resolvePositionId, fetchVersionScopes } from "../../lib/document/documentVersionLoad";
 import { fireDuplicateCheckSafely } from "../../lib/tailor/duplicateCheckFire";
 
 // Resume/cover-letter preview + edit modal (opened from the status-bar chips and
@@ -140,24 +141,6 @@ export function useDocumentPreview({
     return typeof entry.result === "string" && entry.result.trim().length > 0;
   }
 
-  // Resolve the position row backing a tracked job's external id. Returns
-  // null (never throws) when signed out or the job has no position row yet
-  // — both are normal, unremarkable states here (AC-7), not errors.
-  async function resolvePositionId(jobId) {
-    if (!currentUser?.id || !jobId) return null;
-    try {
-      const supabase = createClient();
-      const { data } = await supabase
-        .from("positions")
-        .select("id")
-        .eq("external_id", String(jobId))
-        .maybeSingle();
-      return data?.id || null;
-    } catch {
-      return null;
-    }
-  }
-
   // (Re)load the version history for one or more scopes of `jobId` and
   // merge it into state, guarded by `requestId` so a response for a job the
   // user has since navigated away from is dropped rather than clobbering
@@ -165,7 +148,7 @@ export function useDocumentPreview({
   // the external_id lookup when the caller already has it (e.g. right
   // after a revise persists a new generation).
   async function refreshDocumentVersions(jobId, scopesToLoad, requestId, knownPositionId = undefined) {
-    const positionId = knownPositionId !== undefined ? knownPositionId : await resolvePositionId(jobId);
+    const positionId = knownPositionId !== undefined ? knownPositionId : await resolvePositionId(currentUser, jobId);
     if (versionsRequestIdRef.current !== requestId) return; // superseded by a newer open/switch
     positionIdRef.current = positionId;
     if (!positionId) {
@@ -181,10 +164,7 @@ export function useDocumentPreview({
       });
       return;
     }
-    const supabase = createClient();
-    const results = await Promise.all(
-      scopesToLoad.map((s) => fetchDocumentVersions(supabase, s, positionId)),
-    );
+    const results = await fetchVersionScopes(positionId, scopesToLoad);
     if (versionsRequestIdRef.current !== requestId) return; // superseded while the fetch was in flight
     setDocumentVersions((prev) => {
       const next = { ...prev };
@@ -207,6 +187,25 @@ export function useDocumentPreview({
     setCurrentVersionId({ resume: null, cover: null });
     positionIdRef.current = null;
     void refreshDocumentVersions(jobId, VERSION_SCOPES, requestId);
+  }
+
+  // N68/L4: the open-time load above (loadVersionsForJob) can run before the
+  // now-backgrounded persistence creates the position row, so it finds
+  // nothing. Reload once that persistence resolves and hands back the
+  // positionId it knows, skipping the external_id lookup.
+  function reloadVersionsForPosition(jobId, positionId) {
+    const requestId = ++versionsRequestIdRef.current;
+    void refreshDocumentVersions(jobId, VERSION_SCOPES, requestId, positionId);
+  }
+
+  // N68/L4: surface a backgrounded persistence failure on the still-open
+  // preview's error channel (both scopes) instead of a silent swallow -- the
+  // generated document stays visible; only the "this is saved" implication
+  // was wrong. A no-op if the user has since navigated to a different job.
+  function notePersistFailure(jobId, message) {
+    setResumePreview((prev) =>
+      prev.jobId === jobId ? { ...prev, error: { resume: message, cover: message } } : prev,
+    );
   }
 
   // AC-3/AC-4: switch the ACTIVE scope's displayed content to a specific
@@ -919,6 +918,8 @@ export function useDocumentPreview({
     resubmitDocumentPreview,
     applyFocusArea,
     finishByOpeningPreview,
+    reloadVersionsForPosition,
+    notePersistFailure,
     documentVersions,
     currentVersionId,
     selectDocumentVersion,

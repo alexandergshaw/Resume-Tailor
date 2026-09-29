@@ -63,6 +63,12 @@ export function useManualTailor({
   // have to learn what an application is. Optional -- a caller that omits it
   // (e.g. an existing test) gets the pipeline's original behaviour.
   onCheckDuplicate,
+  // N68/L4: the interactive path now backgrounds persistence instead of
+  // awaiting it before opening the preview. Both callbacks are optional --
+  // opaque, like onCheckDuplicate above: this hook reports {jobId,
+  // positionId}/{jobId,error} and never learns what a "version" is.
+  onGenerationPersisted,
+  onGenerationPersistError,
 }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -267,8 +273,11 @@ export function useManualTailor({
         }
       }
 
-      // Persist the generated resume + cover letter and link them to an application.
-      if (currentUser) {
+      // N68/L4: persist the generated resume + cover letter and link them to
+      // an application. Body byte-identical to the original inline block --
+      // only pulled into its own function so it can run either awaited (the
+      // queued path, below) or backgrounded (the interactive path).
+      const persistGeneration = async () => {
         const supabase = createClient();
         const positionId = await upsertPosition(supabase, syntheticJob);
         if (positionId) {
@@ -300,10 +309,15 @@ export function useManualTailor({
           sourceResumePath: `${currentUser.id}/resume`,
           additionalContext: additionalContext || null,
         });
-      }
+        return positionId;
+      };
 
       // Change 2: only auto-open when the caller wants it (default true) —
       // a queued, multi-posting run passes false so N results don't fight.
+      // N68/L4: the preview now opens BEFORE persistence resolves -- the
+      // document is already in hand (updateTailoringJob above), so waiting
+      // on persistence first was pure dead time with nothing left to do but
+      // show what was already generated.
       if (opts.openPreview !== false) {
         finishByOpeningPreview({
           jobId: syntheticJobId,
@@ -314,6 +328,29 @@ export function useManualTailor({
           applyCover,
           coverLetterResultLines: nextCoverLetterResultLines,
         });
+      }
+
+      if (currentUser) {
+        if (opts.openPreview === false) {
+          // Queued/auto path (gated on openPreview, not opts.queued -- the
+          // one auto-open queued entry passes openPreview:true and must take
+          // the backgrounded branch below): the caller (useManualPostings)
+          // awaits this return to know a worker finished, so persistence
+          // must stay inline here.
+          await persistGeneration();
+        } else {
+          // N68/L4: backgrounded, never awaited -- wrapped so a throw (e.g.
+          // applicationStatusWriter.js:272) can never discard the
+          // already-generated, already-open document or vanish silently.
+          void (async () => {
+            try {
+              const positionId = await persistGeneration();
+              onGenerationPersisted?.({ jobId: syntheticJobId, positionId });
+            } catch (err) {
+              onGenerationPersistError?.({ jobId: syntheticJobId, error: err?.message || String(err) });
+            }
+          })();
+        }
       }
 
       return { ok: true, jobId: syntheticJobId, jobTitle: nextJobTitle, company: nextCompany, warning };

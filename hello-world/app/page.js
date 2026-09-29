@@ -1512,6 +1512,11 @@ export default function Home() {
     startBackgroundResearch: research.startBackgroundResearch,
     // E4/E6's fire point: a callback, not `applicationData` (1c U-7 #7).
     onCheckDuplicate: dupeApply.runDuplicateCheck,
+    // N68/L4: persistence now runs in the background after the preview
+    // opens; these let the still-open preview pick up the version row it
+    // created and surface a persist failure instead of swallowing it.
+    onGenerationPersisted: ({ jobId, positionId }) => preview.reloadVersionsForPosition(jobId, positionId),
+    onGenerationPersistError: ({ jobId, error }) => preview.notePersistFailure(jobId, error),
   });
 
   // Manual Applying › Job Description: several posting boxes, each tracked

@@ -1,146 +1,130 @@
-# N68 latency — TDD test hand-off (seat 4b, round r1) — STEP 1 / L5(ii) ONLY
+# N68 latency — L4 acceptance tests (seat 4b/TDD, round r1)
 
-Seat: TDD (4b). Scope: **AC-L5 / DS-2 / DS-3 / PL-2 / PL-3 only** — the tailor route running the
-cover letter concurrently with the hiring email, in `app/api/tailor/route.js`. Steps 2–5 (L4/L2/L3,
-held files) are explicitly OUT of scope this round. Inputs consumed: `N68-latency.ac.r1.md` (AC-L5,
-AC-L10 bind), `N68-latency.design-structure.r1.md` (DS-1..DS-3), `N68-latency.plan.r1.md`
-(Step 1, R-1). No source/production code written. No git writes.
+Seat: TDD (4b). Scope: **L4 only** — the preview opens without awaiting post-generation
+persistence, plus the version-history reload that keeps. Inputs: AC-L4 (binds),
+DS-4/DS-5/DS-6 (design), plan step 2 + risk rows. No production code written; no git writes.
 
-## Files created / edited (tests + fixtures only)
+Test file: `hello-world/app/hooks/useManualTailor.previewBeforePersist.test.js` (551 lines).
+Reference implementation + mutation run in an isolated scratchpad copy
+(`…/scratchpad/ref`, node_modules junctioned), never the working tree.
 
-| File | Lines | Status |
-|---|---|---|
-| `app/api/tailor/route.coverEmailConcurrency.test.js` | 325 | NEW — 6 tests |
-| `app/api/tailor/route.test.js` | 451 (was 440) | EDITED — R-1 adoption of the shipped `mock.calls[1]` assertion |
+## Verdict
 
-## The one RED test on HEAD, and WHY it is red
+8 tests. **4 RED on HEAD** (the L4 behaviour), 4 GREEN guards/controls (disclosed below).
+The reds are satisfiable — a reference implementation turns all 8 green and leaves 9
+neighbouring suites green (133/133). One cross-suite collision found and reported (§4).
 
-**`issues the cover letter and the hiring email concurrently — both in flight before either resolves`**
-is RED on HEAD. Verbatim failure (working tree, HEAD): `AssertionError: expected [ 'resume', 'cover' ]
-to include 'email'` at line 195. Reason: HEAD awaits `tailorCoverLetter` (route.js:450) strictly before
-it reaches `tailorHiringEmail` (route.js:517), so after the résumé deferred resolves only the cover
-letter is in flight — the email is never initiated until the cover letter resolves. The test resolves
-the résumé, flushes, and asserts BOTH engine methods have been invoked while both their deferreds are
-still pending (a pure initiation-order assertion — see AC-L10 / N74 note below).
-
-The other 5 tests in the file PASS on HEAD by design — they are **guards / controls**, not reds. They
-protect the properties the L5 change must not break; each has a proven-lethal mutant (below). They are
-disclosed as guards, not counted as coverage of a missing feature.
-
-## Working-tree run (HEAD), verbatim
+## The tests and their RED status (verbatim working-tree run)
 
 ```
- ❯ app/api/tailor/route.coverEmailConcurrency.test.js (6 tests | 1 failed)
-     × issues the cover letter and the hiring email concurrently — both in flight before either resolves
- Test Files  1 failed | 1 passed (2)
-      Tests  1 failed | 19 passed (20)
+ × reaches resumePreview.open=true only AFTER generation and BEFORE the persistence round-trips resolve
+ × shows a persist failure on the preview's error channel while keeping the modal open
+ × still shows the generated document in the preview when persistence fails
+ × populates version history via onGenerationPersisted -> reloadVersionsForPosition(knownPositionId)
+ Test Files  1 failed (1)
+      Tests  4 failed | 4 passed (8)
 ```
-(19 passed = my 5 guards + all 14 route.test.js tests including the R-1-adopted one.)
 
-## Reachability
+| # | Test | Property | HEAD status | Why |
+|---|------|----------|-------------|-----|
+| A | preview opens before persistence resolves | AC-L4 initiation order | **RED** | HEAD awaits `upsertPosition→upsertApplication→persistGeneratedDocuments` (useManualTailor.js:271-303) *before* `finishByOpeningPreview` (:307); with persistence held pending the modal never opens. |
+| B | persist failure surfaced on the preview error channel | DS-5 (dominant risk) | **RED** | a throwing `upsertApplication` (applicationStatusWriter.js:272) propagates to tailorPosting's catch (:320) → status "error", `{ok:false}`; modal never opens, nothing reaches the error channel. |
+| C | generated document still reaches the preview on persist failure | no paid-generation loss | **RED** | same root: the throw aborts before `finishByOpeningPreview`, discarding the paid-for document. |
+| D | version history reloads after background persist | DS-6 | **RED** | HEAD has no `reloadVersionsForPosition`/`onGenerationPersisted`; the open-time external_id lookup is stubbed to find no row (the design's regression condition), so history stays empty. |
+| B2 | CONTROL: successful persist raises no error alarm | over-fire control for B | GUARD (green HEAD) | success path opens with a clear error channel; RED against a build that always alarms. |
+| D2 | CONTROL: no completed persist ⇒ history stays empty | over-fire control for D | GUARD (green HEAD) | RED against a build that populates history regardless of persistence. |
+| E | queued path (openPreview:false) keeps persistence inline; opens no modal | DS-4 scope guard | GUARD (green HEAD) | HEAD already awaits inline; RED against the over-correction that backgrounds the queued path. |
+| F | download works from the opened preview after a good run | last hop | GUARD (green HEAD) | non-regression: the reorder must not break download; RED against a wrong-job open. |
 
-Every test drives the **real production entry point `POST`** with a real `FormData` request, exactly
-as the Next.js runtime does. The three engine methods are reached only through the route's own injected
-seam `getEngine(engineName)`, supplied via the **public `registerEngine` contract** — the same seam the
-shipped `route.test.js` already uses. No route-internal function is imported or called directly; nothing
-was exported to make a test reach it (no export sweep moved — verified: only `POST` and the pre-existing
-`pickTailoredResume` are exported from route.js, unchanged).
+**jsdom / N74 discipline.** Every timing claim is initiation-order: a mock is held as an
+unresolved deferred and state is asserted before/after it resolves. No timer, no elapsed
+duration, no true mid-flight race is asserted. Each test's comment says so.
 
-## The initiation-order instrument (AC-L10 / N74) — stated plainly
+**Reachability.** Tests A/B/C/D/F drive the real `tailorPosting` by dispatching a click on a
+rendered `<button>` (the repo's established `dispatchEvent(new MouseEvent("click"))` pattern),
+composing the real `useManualTailor` + the real `useDocumentPreview.finishByOpeningPreview`
+(the AC-L4 instrument). The harness stands in for page.js's Generate wiring (page.js is a held
+god-component, out of this seat's scope — the true button lives there). The queued path (E) is
+driven the way its real caller (`useManualPostings`) drives it: `tailorPosting` called directly.
 
-Every concurrency assertion proves **INITIATION ORDER** (which engine methods have been invoked at a
-point in time, before any deferred result resolves), never wall-clock and never a true mid-flight race.
-Mechanism: each engine method returns a test-controlled deferred; the test resolves the résumé, lets
-already-schedulable continuations run (four real macrotask boundaries, no fixed wait on a duration),
-and asserts on the call log while cover/email deferreds are still pending. **This proves INITIATION,
-NOT parallel execution of the provider work itself** — a later seat must not over-read it as a timed
-race. This is inside the runner's power and is not the thing N74 says jsdom/node cannot do.
+## Instruments discriminate (mutants watched against the reference; no-op survives)
 
-## R-1 ADOPTION (shipped test changed — disclosure)
+Faithful, compiling mutants; failures were assertion failures (valid instruments, rule #4).
 
-I edited the shipped `route.test.js:277-280` ("also grounds the cover letter in the project pages").
-It read `generateContent.mock.calls[1][0].contents` with the comment "Second generateContent call is
-the cover letter draft" — an ORDER-dependent index that becomes non-deterministic under L5 (cover and
-email both call `generateContent` after the résumé, in unspecified order; the email prompt receives no
-`contextDocuments` and would not contain "Payments migration"). Per the plan's R-1 ruling (ADOPT, not
-defer), I replaced the fixed index with a **content-based lookup**: find the `generateContent` call
-whose `contents` include the section header `"Cover letter template"`. Verified against
-`lib/llm/tailorResume.js`: only `buildCoverLetterPrompt` emits that header (`:436`) and the template
-lines; `buildHiringEmailPrompt` and the résumé prompt never do — so it uniquely marks the cover call
-regardless of dispatch order. The assertion's INTENT (cover letter grounded in project pages) is
-unchanged; only the order-coupled mechanism changed. Canary run (`grep -n "mock.calls\[" route.test.js`):
-the only index > 0 was line 279; all other sites use `[0]` (the résumé call, always first — safe). This
-test stays GREEN on HEAD and under the concurrent reference impl (order-independent — re-verified: it
-passes under the SERIAL mutant too).
+| Mutant | Change | Result (target in bold) |
+|--------|--------|-------------------------|
+| MUT-noop | benign comment line | **survives** — 8 passed (rule #7 control) |
+| MUT-A | await persistence BEFORE opening (HEAD order) | kills **A** (+B,C,B2 via double-persist artifact) — msg "the preview did not open while persistence was still pending" |
+| MUT-B | drop the catch's `onGenerationPersistError` (bare swallow) | kills **B** only (1 failed) |
+| MUT-D | never fire `onGenerationPersisted` | kills **D** only (1 failed) |
+| MUT-E | background persistence on the queued path too | kills **E** only (1 failed) |
+| MUT-F | `finishByOpeningPreview` opens the wrong jobId | kills **F** (+A,B,C) — download reads empty entry (`templateDocxB64` "") |
 
-## Satisfiability — reference implementation (isolated scratchpad, never the working tree)
+**Rebuilt (rule #4, not counted until valid):** MUT-E's first multi-line anchor FAILED TO APPLY
+(em-dash encoding mismatch → an instrument that proved nothing). Rebuilt with a single-line
+anchor (`await persistGeneration();` → `void persistGeneration();`); it then killed E.
 
-I built a concurrent reference implementation in an isolated scratchpad copy of the tree (source copied,
-`node_modules` junctioned, junction removed afterward without following it — real modules intact). The
-reference wraps the cover block and email block in two never-rejecting local async tasks
-(`runCoverLetter()`, `runHiringEmail()`), each keeping its OWN `try/catch`, and runs
-`await Promise.all([runCoverLetter(), runHiringEmail()])` placed BELOW `pickTailoredResume`, with
-`tailorResume` never inside the `Promise.all`. Results:
+## Satisfiability (reference implementation, isolated scratchpad)
 
-- New file + `route.test.js`: **20/20 passed** (the RED test turns green; all guards + R-1 stay green).
-- Neighbour suite `lib/llm/tailorResume.wire.test.js` (gemini config/tools nesting): **10/10 passed** —
-  L5 does not disturb the per-call wire shape.
+Reference L4 build: `useManualTailor` reorders so `finishByOpeningPreview` runs first on the
+interactive path, then a wrapped `void (async …)` background persist that calls
+`onGenerationPersisted({jobId,positionId})` on success and `onGenerationPersistError({jobId,error})`
+in the catch; the `openPreview===false` branch keeps `await persistGeneration()` inline.
+`useDocumentPreview` gains `reloadVersionsForPosition(jobId, positionId)` (fresh requestId →
+`refreshDocumentVersions` over the `knownPositionId` seam) and `notePersistFailure(jobId, message)`
+(sets `resumePreview.error` for the open job). Result: **8/8 green**, and neighbours green —
+`useManualTailor.test.js`, `useManualTailor.research.test.js`, `useManualPostings.test.js`,
+`useDocumentPreview.{wiring,download,warnings,duplicateCheck,spacing,lateWarm}.test.js` → **133/133**.
 
-So the reds describe a build that provably exists, and that build does not break the neighbouring suites.
+## §4 — CROSS-SUITE FINDING the plan/design missed (hand-off, blocking)
 
-## Mutation results — WATCHED, against the scratchpad reference impl (never the working tree)
+`app/hooks/useDocumentPreview.wiring.test.js:148-150` pins `useDocumentPreview.js` split-lines
+`< 935` ("Do not raise the constant… extract instead."). The working-tree file is **927** lines
+(8 lines of headroom). L4's two required additions (`reloadVersionsForPosition` +
+`notePersistFailure` + 2 return entries) need ~9-23 lines. A clean, commented implementation
+breaches (my first reference: 950 → wiring test fails "expected 950 to be less than 935"; even a
+lean one-comment form: 936). I could only get the whole suite green (932) by cramming both methods
+to one-liners — which the guard's own comment discourages. **The L4 implementer must extract to
+make room (the guard's prescribed remedy) OR the structure/wiring seat must re-judge the 935
+ceiling.** This is not a test defect; it is an implementation-packaging collision. The file is
+held/actively edited (undo chunk), so the count is a moving target — the implementer must measure
+at land time. Recommend: extract the version-history cluster (or the persist-failure surfacing)
+into a small module, sized so the wiring guard's shrink assertion still bites.
 
-Every mutant ran and produced a runner summary (assertion failures, not module-load errors), so each was
-a faithful behavioural change — an instrument, not a broken build. NO-OP control included per the
-standing rule. No mutant round-tripped clean; none had to be rebuilt.
+## The L4 contract this seat pins (for the checker to ratify)
 
-| Mutant (faithful change to behaviour under test) | Watched result |
-|---|---|
-| **NO-OP control** — reorder two independent `const` declarations | **SURVIVED, 20/20** (suite is not vacuously green) |
-| **SERIAL** — replace `Promise.all([...])` with two sequential `await`s (revert to today's order) | KILLED **only** the concurrency test (1 failed / 19 passed); route.test.js all green → proves the RED test's power AND that R-1 is order-independent |
-| **GROUNDING** — `pickTailoredResume(tailoredResumeLines, {})` (ground both docs in an empty résumé — models the ungrounded-cover risk row) | KILLED **only** `grounds both … in the tailored résumé's content` (1/6) |
-| **WARNING mis-attribution** — feed `emailOutcome.warnings` into `coverLetterWarnings` (models a concurrency wiring swap) | KILLED **only** `preserves warning order and per-document attribution` (1/6) |
-| **ISOLATION-LOST** — rethrow from both task `catch`es (models raw `Promise.all` without per-task isolation) | KILLED **both** isolation tests (2/6): the whole request 500s when either task rejects |
+Design named `reloadVersionsForPosition` and "surface via the preview notice/error channel" but
+left the exact failure seam unspecified. This seat pins it:
+- `useManualTailor` new props: `onGenerationPersisted({jobId, positionId})` (success),
+  `onGenerationPersistError({jobId, error})` (background catch — the non-swallow).
+- `useDocumentPreview` new return methods: `reloadVersionsForPosition(jobId, positionId)`,
+  `notePersistFailure(jobId, message)`.
+- None are module exports (hook props / return properties), so the ORPHAN=70 / TEST_REFERENCED=368
+  census is untouched. The test imports only already-exported symbols; no test-only export added.
 
-## Risk rows the brief required power over — covered
+## What I could not verify / limits (stated plainly)
 
-- **Ungrounded cover/email (200 with wrong content):** the grounding guard asserts on the CONTENT handed
-  to each engine call (`tailoredResume.result` contains the résumé sentinel), not just on status; proven
-  lethal by the GROUNDING mutant. The résumé-precedes-both guard forbids the dangerous over-correction.
-- **Warning/error ordering or attribution drift under concurrency:** the warning-order guard pins the
-  exact `[résumé, "Cover letter: …", "Hiring email: …"]` array; proven lethal by the WARNING mutant.
-- **Per-artifact error isolation:** both isolation guards (cover-throws, email-throws) assert 200 + the
-  surviving document + the correct error field; proven lethal by the ISOLATION-LOST mutant.
-
-## Gate results (verbatim)
-
-- ESLint on both files: **no output → 0 errors, 0 warnings.** (I removed an `eslint-disable` I had
-  briefly added to a flush loop and unrolled the loop instead — no suppression used, per standing rule 3.)
-- Emoji scan (Node, with a canary that HIT on a known emoji): **0 emoji in the new file.** Two hits in
-  `route.test.js` are the pre-existing typographic arrow `→` (U+2192) inside shipped assertion strings
-  ("recurring edit: X → Y") that must match real engine output — NOT emoji, NOT introduced by me, on
-  lines (364/370) outside my R-1 edit region.
-
-## What I could NOT verify / left to a later seat (stated plainly)
-
-- **Parallel EXECUTION** (a true race) is not proven and cannot be here (N74). Only initiation order is.
-- **The three engine `tailorHiringEmail` bodies take no cover-letter input** is INHERITED from DS-1 (the
-  design traced embedded/gemini/external; I did not re-trace them). My isolation + grounding tests are
-  the backstop: if the email engine ever began consuming the cover letter, the concurrent dispatch would
-  still pass these tests (they assert at the route seam, not inside the engine) — so this remains an
-  inherited assumption, not one I independently re-proved. Flagged for the checker.
-- **The implementer must run the FULL suite + full ESLint gate** at landing; I ran the two affected test
-  files (working tree), the reference impl + `route.test.js` + the wire neighbour (scratchpad), and
-  ESLint on my two files only.
+- **No wall-clock / true concurrency** (N74) — every timing claim is initiation-order only.
+- **D's regression condition is stubbed**: the open-time external_id lookup returns null so version
+  history can only come from the known-positionId reload. This faithfully models the design's
+  stated regression (the row is not written when the preview opens after the reorder); D's primary
+  discriminator is also the MUT-D mutant (open early, never reload).
+- **The exact persist-failure copy** is N84's (this seat only asserts the *error channel is
+  non-empty* and, in the success control, *stays empty* — not specific words).
+- **Held-file drift**: `useDocumentPreview.js` in the working tree already differs from the design's
+  line citations (design ~926 → now 927 split-lines; the file is being edited in parallel). My test
+  anchors on symbols, not lines; the reference edits applied cleanly, confirming the structures L4
+  depends on still exist. Rebase expected; §4 headroom must be re-measured at land time.
+- **F is a non-regression guard** (green on HEAD for download), not a red; disclosed.
 
 ## Proposed ledger lines
 
-| ID | Requirement (checkable) | Instrument | RED on HEAD? | Evidence |
-|----|-------------------------|------------|--------------|----------|
-| T-L5-1 | Cover letter and hiring email are both INITIATED (before either resolves) after the résumé resolves | initiation-order test at the `registerEngine` seam, driving real `POST`; SERIAL mutant is its control | **RED** (`expected ['resume','cover'] to include 'email'`) | new file; killed by SERIAL mutant, green under reference impl |
-| T-L5-2 | Neither cover nor email is initiated until the résumé resolves (guard vs parallelizing the résumé away) | initiation-order guard | guard (green on HEAD) | killed by a résumé-parallelizing build; grounding mutant demonstrates the harm |
-| T-L5-3 | Both documents are grounded in the tailored résumé's CONTENT, not an empty one | assert `tailoredResume.result` contains the résumé sentinel at each engine call | guard | killed by GROUNDING mutant |
-| T-L5-4 | Warnings stay in résumé→cover→email order with correct per-document attribution | `toEqual` on the assembled `warnings` array via real embedded aggregation path | guard | killed by WARNING mis-attribution mutant |
-| T-L5-5 | Per-artifact error isolation: a throwing cover letter or email still yields 200 + the other document | inject a throwing engine method; assert 200 + surviving doc + correct error field | guard (×2) | both killed by ISOLATION-LOST mutant |
-| T-L5-6 | R-1: shipped `route.test.js` cover-grounding assertion is order-INDEPENDENT (content-based, not `mock.calls[1]`) | content lookup for the `"Cover letter template"` prompt section | n/a (adoption; green on HEAD + serial + concurrent) | disclosed shipped-test change; passes under SERIAL mutant |
-| T-L5-7 | Satisfiability: a `Promise.all` reference impl turns T-L5-1 green without breaking route.test.js or the wire suite | scratchpad reference tree | n/a | 20/20 + wire 10/10 |
+| ID | Requirement (checkable) | Instrument | HEAD | Evidence |
+|----|-------------------------|------------|------|----------|
+| T-L4-A | Interactive preview reaches `open:true` after generation and before persistence resolves | initiation-order (fetch + upsertPosition deferreds); real hooks; click | **RED** | MUT-A kills; MUT-noop survives |
+| T-L4-B | A background persist failure sets the preview error channel; modal stays open (never swallowed) | throwing `upsertApplication`; assert open + error non-empty; success control asserts error empty | **RED** | MUT-B kills B only |
+| T-L4-C | The generated document still reaches the preview when persistence fails (no paid-generation loss) | throwing persist; assert open + entry content present | **RED** | MUT-A/F kill |
+| T-L4-D | Version history reloads via `onGenerationPersisted`→`reloadVersionsForPosition(knownPositionId)`; empty without a completed persist | open-time lookup stubbed null; assert `fetchDocumentVersions` called with known positionId + history non-empty; control asserts empty | **RED** | MUT-D kills D only |
+| T-L4-E | Queued path (`openPreview:false`) keeps persistence inline (return waits) and opens no modal | deferred persist; assert return unresolved while pending + no modal; resolves after | GUARD | MUT-E kills E only |
+| T-L4-F | Download works from the opened preview after a good run (reads the open job's bytes) | real `downloadDocumentPreview`; assert docx builder called with the open job's `templateDocxB64` | GUARD | MUT-F kills F |
+| T-L4-CEIL | L4's `useDocumentPreview.js` additions collide with the wiring test `<935` ceiling (927 now, ~9 needed) — extract or re-judge | `useDocumentPreview.wiring.test.js:148` | finding | reference: 950/936 breach; 932 only via cram |
