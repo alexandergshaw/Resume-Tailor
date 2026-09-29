@@ -8,7 +8,7 @@
 // own header comment for the full reasoning.
 
 import { describe, it, expect } from "vitest";
-import { captureCoverSnapshot, moveOptimisticPatch, moveSuccessPatch } from "./moveOptimism.js";
+import { captureCoverSnapshot, moveOptimisticPatch, moveSuccessPatch, resolveNoopMove } from "./moveOptimism.js";
 
 // resolveMoveDocxPath (the path-reconcile decision) is a module-private
 // helper -- moveSuccessPatch is its one caller and its public seam, so the
@@ -24,6 +24,36 @@ function moveSuccessDocxPath(args) {
     ...args,
   }).coverLetterDocxPath;
 }
+
+describe("resolveNoopMove", () => {
+  it("boundary reason -> skipped, with the boundary reason text", () => {
+    expect(resolveNoopMove({ reason: "boundary" })).toEqual({
+      outcome: "skipped",
+      reason: "That fact can't move any further in that direction.",
+    });
+  });
+
+  it("any other reason (e.g. stale) -> refused, with the reopen-the-letter reason text", () => {
+    expect(resolveNoopMove({ reason: "stale" })).toEqual({
+      outcome: "refused",
+      reason: "That fact is no longer where it was recorded -- try reopening the letter.",
+    });
+  });
+
+  it("a missing/undefined reason also falls to refused (not boundary)", () => {
+    expect(resolveNoopMove({})).toEqual({
+      outcome: "refused",
+      reason: "That fact is no longer where it was recorded -- try reopening the letter.",
+    });
+  });
+
+  it("boundary and non-boundary produce different outcomes AND different reason text", () => {
+    const boundary = resolveNoopMove({ reason: "boundary" });
+    const other = resolveNoopMove({ reason: "stale" });
+    expect(boundary.outcome).not.toBe(other.outcome);
+    expect(boundary.reason).not.toBe(other.reason);
+  });
+});
 
 describe("captureCoverSnapshot", () => {
   it("captures exactly the five cover-scoped fields, by reference", () => {
