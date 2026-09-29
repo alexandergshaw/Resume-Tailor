@@ -1039,6 +1039,18 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N91"
+  state: "actionable"
+  title: "**TEST GAP (non-blocking): the accept-un-declines-removed fix (N90, 62c1005) has no test for ID-BASED matching.** The fresh verifier on N90 found that a mutant dropping the `.id` half of `acceptedKeys` in `acceptFacts` (app/hooks/useCompanyResearch.js ~:447, `key => acceptedKeys.has(key)` where acceptedKeys is built from each accepted fact's url AND id) SURVIVED all 11 N90 tests -- every N90 test exercises url-based un-declining only. The production code is CORRECT (it matches on url OR id, mirroring removeInsertedFact's `removedKey = record.url || record.id`), and the id-only branch is effectively unreached today because a removed key is stored url-first when a url exists (N89.diagnosis.r1.md §4), so this is a coverage hole, not a live defect. Add one test: a removed entry stored by ID (no url) is un-declined when that fact is accepted -- and confirm the url-drop mutant AND an id-drop mutant both die. Small, test-only."
+  owed_by: "A small test round adding id-based un-decline coverage"
+  evidence: ["docs/loop/N90.verify.r1.md finding item 2/3 -- the id-drop mutant survived 11/11", "app/hooks/useCompanyResearch.js acceptFacts un-decline filter builds acceptedKeys from url and id", "N89.diagnosis.r1.md §4 -- removal stores url-first, so id-only matching is rarely reached"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 - id: "D2"
   state: "owner"
   title: "**The transport claim is doc-verified, not wire-verified.**"
