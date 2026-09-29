@@ -31,7 +31,7 @@ import { uploadCoverDocx } from "../document/coverDocxStore";
 // @param {object[]} args.facts  the accepted-facts store's current list (unchanged by a move)
 // @param {number|null} args.baseRevision
 // @param {string[]} args.declinedUrls
-// @returns {Promise<{ok:true, coverDocxB64:string, data:object} | {ok:false, reason:string}>}
+// @returns {Promise<{ok:true, coverDocxB64:string, coverDocxPath:string|null, data:object} | {ok:false, reason:string}>}
 export async function commitFactMove({
   jobId,
   lines,
@@ -73,7 +73,11 @@ export async function commitFactMove({
       const reason = typeof data?.error === "string" && data.error ? data.error : "Couldn't move that fact. Try again.";
       return { ok: false, reason };
     }
-    return { ok: true, coverDocxB64, data };
+    // N95: coverDocxPath is returned too (not just coverDocxB64) -- an
+    // optimistic caller nulls its OWN copy of the path before this resolves
+    // (lib/acceptedFacts/moveOptimism.js), and this is the only place that
+    // fresh, actually-persisted path exists to reconcile it from.
+    return { ok: true, coverDocxB64, coverDocxPath, data };
   } catch (err) {
     return { ok: false, reason: err?.message || "Couldn't move that fact. Try again." };
   }

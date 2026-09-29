@@ -206,7 +206,17 @@ function coverLines() {
 }
 
 // Click a move control the way a candidate does; the bytes path awaits a real
-// docx (de)serialize, so advance real time until the lines settle.
+// docx (de)serialize, so advance real time until the move settles.
+//
+// N95 (authorized helper edit, plan §0.4 / brief): under the optimistic move
+// the lines change SYNCHRONOUSLY on click, before the commit's PUT settles, and
+// the per-fact in-flight guard keeps the clicked fact's row aria-busy until it
+// does. Breaking on the lines-change alone would return MID-FLIGHT -- the next
+// clickMove would land on a disabled arrow, and putBodies would not yet reflect
+// the write. So wait for COMMIT-SETTLE: the lines changed AND the in-flight
+// marker has cleared. On HEAD (no optimism, no aria-busy) this is identical to
+// the old lines-change wait; it is a TIMING fix, not an invariant change, and
+// the per-fact guard stays per-fact (never weakened to per-direction).
 async function clickMove(getButtons, i = 0) {
   await flush();
   expect(getButtons().length, "the move control is not on screen -- it was never wired").toBeGreaterThan(i);
@@ -218,7 +228,7 @@ async function clickMove(getButtons, i = 0) {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
-    if (coverLines().join("\n") !== before) break;
+    if (coverLines().join("\n") !== before && !document.querySelector('[aria-busy="true"]')) break;
   }
   await flush();
 }

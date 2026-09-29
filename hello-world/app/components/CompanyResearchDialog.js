@@ -19,6 +19,7 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import { weaveSourcesAnnotated, placementOptions, DEFAULT_PLACEMENT } from "@/lib/document/coverLetterWeave";
 import { useIsMobile } from "../hooks/useResponsive";
 import { safeExternalHref } from "@/lib/url/safeExternalHref";
+import { visuallyHidden } from "@/lib/copilot/answerStatus";
 
 const PLACEMENT_OPTS = placementOptions();
 
@@ -77,6 +78,20 @@ export default function CompanyResearchDialog({
   const [step, setStep] = useState("pick"); // "pick" | "arrange"
   const [prevArticles, setPrevArticles] = useState(articles);
   const [prevOpen, setPrevOpen] = useState(open);
+  // AC-K2: the accept flow's in-flight state, ANNOUNCED via a live region on
+  // the busy false->true edge -- the button's own "Inserting..." label
+  // toggle (AC-K1, already shipped) is a disabled-button label change, never
+  // a live region, so a screen-reader user hears nothing today. Render-phase
+  // diff, matching this file's own open/articles reseed idiom above -- never
+  // inside an effect.
+  const [prevBusy, setPrevBusy] = useState(busy);
+  const [busyAnnounce, setBusyAnnounce] = useState("");
+  const [busySeq, setBusySeq] = useState(0);
+  if (busy !== prevBusy) {
+    setPrevBusy(busy);
+    setBusyAnnounce(busy ? "Inserting the fact into your cover letter." : "");
+    setBusySeq((n) => n + 1);
+  }
 
   if (open !== prevOpen) {
     setPrevOpen(open);
@@ -293,6 +308,9 @@ export default function CompanyResearchDialog({
         Company research{company ? ` — ${company}` : ""}
         {step === "arrange" ? " · arrange" : ""}
       </DialogTitle>
+      <Box component="span" role="status" aria-live="polite" data-copy-status="polite" sx={visuallyHidden}>
+        {busyAnnounce ? <span key={busySeq}>{busyAnnounce}</span> : null}
+      </Box>
       <DialogContent dividers>
         {acceptError ? (
           <Box sx={{ color: "var(--danger)", fontSize: "0.85rem", bgcolor: "var(--danger-soft)", p: 1, borderRadius: 1, mb: 1.5 }}>

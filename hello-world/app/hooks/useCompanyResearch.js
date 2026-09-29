@@ -13,6 +13,7 @@ import {
 } from "../../lib/acceptedFacts/factInsertion";
 import { planMoveFact } from "../../lib/acceptedFacts/factMove";
 import { commitFactMove } from "../../lib/acceptedFacts/commitFactMove";
+import { captureCoverSnapshot, moveOptimisticPatch, moveSuccessPatch, moveAcceptedFactsPatch, resolveNoopMove } from "../../lib/acceptedFacts/moveOptimism";
 import { commitSmoothedFact } from "../../lib/acceptedFacts/commitSmoothedFact";
 import { applyCoverDocxEdits } from "../../lib/acceptedFacts/factDocx";
 import { recordDecision } from "../../lib/activityLog/appActivityLog";
@@ -632,6 +633,10 @@ export function useCompanyResearch({
   // behaviour change) -- this function keeps the plan/boundary decision and
   // every React state update, since the decision ledger binds
   // `recordDecision` to this module (design section 5).
+  //
+  // N95 (owner ruling: optimistic-with-rollback) -- shifts the position
+  // synchronously on click, reconciled against the commit below; the server
+  // write is untouched (AC-X1). Rules: lib/acceptedFacts/moveOptimism.js.
   async function moveInsertedFact(jobId, factId, direction) {
     if (!jobId) return { ok: false, reason: "No job is open." };
     const entry = tailoringMap[jobId] || {};
@@ -639,14 +644,19 @@ export function useCompanyResearch({
     const lines = Array.isArray(entry.coverLetterResultLines) ? entry.coverLetterResultLines : [];
     const moved = planMoveFact({ lines, records: insertedFacts, id: factId, direction });
     if (!moved.changed) {
-      const outcome = moved.reason === "boundary" ? "skipped" : "refused";
+      const { outcome, reason } = resolveNoopMove(moved);
       recordDecision("fact-position", outcome, { direction, reason: moved.reason, code: moved.reason });
-      const reason =
-        moved.reason === "boundary"
-          ? "That fact can't move any further in that direction."
-          : "That fact is no longer where it was recorded -- try reopening the letter.";
       return { ok: false, reason };
     }
+
+    // Captured before the optimistic write (frozen `entry`) -- the commit
+    // below reads THIS entry, not the nulled live state (AC-X1).
+    const preMove = captureCoverSnapshot(entry);
+    setTailoringMap((current) => {
+      const cur = current[jobId] || {};
+      return { ...current, [jobId]: { ...cur, ...moveOptimisticPatch(moved) } };
+    });
+    setPreviewReloadKey((k) => k + 1);
 
     const resolvedCoverDocxB64 = await resolveCoverEngineBytes(entry);
     const hasCoverBytes = resolvedCoverDocxB64.length > 0;
@@ -667,30 +677,22 @@ export function useCompanyResearch({
     });
     if (!commit.ok) {
       recordDecision("fact-position", "failed", { direction, reason: "save-failed", code: "save-failed" });
+      // Exact rollback: the cover-scoped snapshot only, merged over current state (never a wholesale replace).
+      setTailoringMap((current) => {
+        const cur = current[jobId] || {};
+        return { ...current, [jobId]: { ...cur, ...preMove } };
+      });
+      setPreviewReloadKey((k) => k + 1);
       return { ok: false, reason: commit.reason };
     }
 
+    // moveSuccessPatch resolves the open decision: coverLetterDocxPath is RECONCILED on success, not left nulled.
     setTailoringMap((current) => {
       const cur = current[jobId] || {};
-      return {
-        ...current,
-        [jobId]: {
-          ...cur,
-          coverLetterResultLines: moved.lines,
-          coverLetterPreviewHtml: undefined,
-          coverLetterDocxB64: hasCoverBytes ? commit.coverDocxB64 : cur.coverLetterDocxB64,
-          insertedFacts: moved.records,
-        },
-      };
+      const patch = moveSuccessPatch({ moved, hasCoverBytes, coverAlreadyEdited, preMove, commit, curCoverDocxB64: cur.coverLetterDocxB64 });
+      return { ...current, [jobId]: { ...cur, ...patch } };
     });
-    setAcceptedFactsByJob((m) => ({
-      ...m,
-      [jobId]: {
-        facts: commit.data.facts || acceptedFactsByJob[jobId]?.facts || [],
-        removed: commit.data.removed || acceptedFactsByJob[jobId]?.removed || [],
-        revision: commit.data.revision ?? acceptedFactsByJob[jobId]?.revision ?? null,
-      },
-    }));
+    setAcceptedFactsByJob((m) => ({ ...m, [jobId]: moveAcceptedFactsPatch(commit, acceptedFactsByJob[jobId]) }));
     setPreviewReloadKey((k) => k + 1);
     recordDecision("fact-position", "acted", { direction, reason: "moved", code: "moved" });
     return { ok: true };

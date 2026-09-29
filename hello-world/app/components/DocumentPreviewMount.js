@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Box from "@mui/material/Box";
 import DocumentPreviewDialog from "./DocumentPreviewDialog";
 import FocusPickerDialog from "./FocusPickerDialog";
 import InsertedFactsStrip from "./preview/InsertedFactsStrip";
 import AutoInsertFactsMessage from "./preview/AutoInsertFactsMessage";
+import { useCopyFeedback } from "./preview/CopyFeedback";
 import { planMoveFact } from "../../lib/acceptedFacts/factMove";
 import {
   requestSmoothTransition,
@@ -16,6 +18,7 @@ import { getDownloadFileNameForTitle, getDownloadCoverLetterFileNameForTitle } f
 import { emailPreviewText } from "../../lib/tailor/documentScopes";
 import { useDriveDocuments } from "../hooks/useDriveDocuments";
 import { recordDecision } from "@/lib/activityLog/appActivityLog.js";
+import { visuallyHidden } from "@/lib/copilot/answerStatus";
 
 // The id this component is registered under on activityChannels.js's
 // DECISION_LEDGER, and decisionCoverage.sweep.test.js's own derived scan --
@@ -367,34 +370,77 @@ export default function DocumentPreviewMount({
       return next;
     });
   }
+  // N95: one in-flight op per fact -- MOVE and SMOOTH-PRODUCE share this flag
+  // (a fact cannot be doing both at once, since both live on the row's own
+  // controls), independent of `movability` (AC-M2's explicit requirement).
+  // `applyPending` is separate: it lives on the confirm surface, not the row.
+  const [factOpPending, setFactOpPending] = useState(null); // null | { factId, kind: "move" | "smooth-produce" }
+  const [applyPending, setApplyPending] = useState(false);
+  // Strip-action announcements (AC-M3/S3/K2-sibling). clearKey is JOB
+  // IDENTITY ONLY, never previewReloadKey -- a move's own reload bump would
+  // otherwise render-phase-reset this to EMPTY (CopyFeedback.js:75-78) and
+  // wipe "Fact moved." the instant it lands.
+  const { announce, regionProps } = useCopyFeedback(insertedFactsJobId);
+  async function handleMove(factId, direction) {
+    setFactOpPending({ factId, kind: "move" });
+    announce({ polite: "Moving the fact." });
+    try {
+      const result = await research.moveInsertedFact(insertedFactsJobId, factId, direction);
+      const failed = result && result.ok === false;
+      setRemoveError(failed ? result.reason || "Couldn't move that fact. Try again." : "");
+      if (failed) {
+        announce({ alert: result.reason || "Couldn't move that fact. Try again.", persist: true });
+      } else {
+        clearAppliedSmooth(factId);
+        announce({ polite: "Fact moved." });
+      }
+    } finally {
+      setFactOpPending(null);
+    }
+  }
   async function handleSmooth(factId) {
     clearAppliedSmooth(factId);
     const jobId = insertedFactsJobId;
     const entry = tailoringMap[jobId] || {};
-    const candidate = await requestSmoothTransition({
-      engine: tailorEngine,
-      lines: entry.coverLetterResultLines || [],
-      records: entry.insertedFacts || [],
-      id: factId,
-    });
-    if (candidate.status === "proposed") {
-      setPendingSmooth({ factId, candidate });
-    } else {
-      setPendingSmooth(null);
-      setRemoveError("Couldn't smooth that transition. Try again.");
+    setFactOpPending({ factId, kind: "smooth-produce" });
+    announce({ polite: "Smoothing the transition." });
+    try {
+      const candidate = await requestSmoothTransition({
+        engine: tailorEngine,
+        lines: entry.coverLetterResultLines || [],
+        records: entry.insertedFacts || [],
+        id: factId,
+      });
+      if (candidate.status === "proposed") {
+        setPendingSmooth({ factId, candidate });
+        announce({ polite: "Transition smoothed. Review before applying." });
+      } else {
+        setPendingSmooth(null);
+        setRemoveError("Couldn't smooth that transition. Try again.");
+        announce({ alert: "Couldn't smooth that transition. Try again.", persist: true });
+      }
+    } finally {
+      setFactOpPending(null);
     }
   }
   async function handleApplySmooth(factId) {
     if (!pendingSmooth || pendingSmooth.factId !== factId) return;
     const { candidate } = pendingSmooth;
     let applied = true;
-    await confirmSmoothTransition(candidate, {
-      persist: async (after) => {
-        const result = await research.applySmoothedFact(insertedFactsJobId, after);
-        applied = !(result && result.ok === false);
-        setRemoveError(applied ? "" : result.reason || "Couldn't apply the smoothed version.");
-      },
-    });
+    setApplyPending(true);
+    announce({ polite: "Applying the smoothed version." });
+    try {
+      await confirmSmoothTransition(candidate, {
+        persist: async (after) => {
+          const result = await research.applySmoothedFact(insertedFactsJobId, after);
+          applied = !(result && result.ok === false);
+          setRemoveError(applied ? "" : result.reason || "Couldn't apply the smoothed version.");
+        },
+      });
+    } finally {
+      setApplyPending(false);
+    }
+    announce(applied ? { polite: "Transition applied." } : { alert: "Couldn't apply the smoothed version.", persist: true });
     setPendingSmooth(null);
     // N93: only a genuinely persisted apply gets an Undo affordance -- a
     // failed persist left the letter unchanged, so there is nothing to undo.
@@ -437,6 +483,11 @@ export default function DocumentPreviewMount({
       backward: planMoveFact({ lines: insertedFactsLines, records: insertedFacts, id: fact.id, direction: "backward" }).changed,
     };
   }
+  // N95: the single fact (if any) with a move or smooth-produce in flight,
+  // and the narrower case of specifically a smooth-produce -- see
+  // InsertedFactsStrip's own header comment for why the two are separate.
+  const busyFactId = factOpPending?.factId ?? null;
+  const smoothingFactId = factOpPending?.kind === "smooth-produce" ? factOpPending.factId : null;
   // Shown on EVERY tab whenever the letter carries inserted facts, not only on
   // the cover tab. The combine control builds from the cover letter and is
   // reachable from any tab, so gating this on the active tab let a letter be
@@ -455,30 +506,43 @@ export default function DocumentPreviewMount({
     <>
       <AutoInsertFactsMessage severity={autoInsertMessage?.severity} text={autoInsertMessage?.text} />
       {insertedFacts.length > 0 ? (
-        <InsertedFactsStrip
-          facts={insertedFacts}
-          error={removeError}
-          movability={insertedFactsMovability}
-          onRemove={async (factId) => {
-            const result = await research.removeInsertedFact(insertedFactsJobId, factId);
-            const failed = result && result.ok === false;
-            setRemoveError(failed ? result.reason || "Couldn't remove that fact. Try again." : "");
-            if (!failed) clearAppliedSmooth(factId);
-          }}
-          onMove={async (factId, direction) => {
-            const result = await research.moveInsertedFact(insertedFactsJobId, factId, direction);
-            const failed = result && result.ok === false;
-            setRemoveError(failed ? result.reason || "Couldn't move that fact. Try again." : "");
-            if (!failed) clearAppliedSmooth(factId);
-          }}
-          onSmooth={handleSmooth}
-          smoothDisabled={tailorEngine === "embedded"}
-          pendingSmooth={pendingSmooth}
-          onApplySmooth={handleApplySmooth}
-          onDiscardSmooth={handleDiscardSmooth}
-          smoothApplied={appliedSmooth}
-          onUndoSmooth={handleUndoSmooth}
-        />
+        <>
+          {/* N95: the two hidden live regions only (no visible chip -- the
+              row is already dense) -- reused verbatim from CopyFeedback.js's
+              own markup so strip actions follow the same "already-mounted
+              region, text-change on announce()" contract (N84-safe) as every
+              other copy-feedback surface. Selected by data-copy-status, never
+              role -- DocumentPreviewDialog already mounts a first
+              role=status/alert pair for DriveResultRegion. */}
+          <Box component="span" role="status" aria-live="polite" data-copy-status="polite" sx={visuallyHidden}>
+            {regionProps.polite ? <span key={regionProps.seq}>{regionProps.polite}</span> : null}
+          </Box>
+          <Box component="span" role="alert" data-copy-status="alert" sx={visuallyHidden}>
+            {regionProps.alert ? <span key={regionProps.seq}>{regionProps.alert}</span> : null}
+          </Box>
+          <InsertedFactsStrip
+            facts={insertedFacts}
+            error={removeError}
+            movability={insertedFactsMovability}
+            busyFactId={busyFactId}
+            smoothingFactId={smoothingFactId}
+            applyPending={applyPending}
+            onRemove={async (factId) => {
+              const result = await research.removeInsertedFact(insertedFactsJobId, factId);
+              const failed = result && result.ok === false;
+              setRemoveError(failed ? result.reason || "Couldn't remove that fact. Try again." : "");
+              if (!failed) clearAppliedSmooth(factId);
+            }}
+            onMove={handleMove}
+            onSmooth={handleSmooth}
+            smoothDisabled={tailorEngine === "embedded"}
+            pendingSmooth={pendingSmooth}
+            onApplySmooth={handleApplySmooth}
+            onDiscardSmooth={handleDiscardSmooth}
+            smoothApplied={appliedSmooth}
+            onUndoSmooth={handleUndoSmooth}
+          />
+        </>
       ) : null}
     </>
   );

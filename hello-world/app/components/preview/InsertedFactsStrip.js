@@ -2,6 +2,7 @@
 
 import Box from "@mui/material/Box";
 import IconButton from "@mui/material/IconButton";
+import CircularProgress from "@mui/material/CircularProgress";
 import CloseIcon from "@mui/icons-material/Close";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
@@ -45,6 +46,14 @@ import CoverFactSmoothConfirm from "./CoverFactSmoothConfirm";
 // been cleared (used, or invalidated by a later move/remove/smooth of that
 // same fact). Same no-Tooltip rule: the aria-label IS the reachability
 // contract these controls are keyed on.
+//
+// N95: `busyFactId` is the ONE fact (if any) with a move or a smooth-produce
+// in flight -- its whole row is `aria-busy` and every control on it is
+// disabled, independent of `movability` (which legitimately recomputes under
+// optimistic MOVE). `smoothingFactId` is the narrower "specifically a smooth
+// produce" case, which additionally swaps the Smooth icon for an aria-hidden
+// spinner (the produce is the longest wait in the feature, with nothing to
+// show optimistically -- unlike MOVE, whose shift is already on screen).
 export default function InsertedFactsStrip({
   facts = [],
   onRemove,
@@ -57,6 +66,9 @@ export default function InsertedFactsStrip({
   onDiscardSmooth,
   smoothApplied = {},
   onUndoSmooth,
+  busyFactId = null,
+  smoothingFactId = null,
+  applyPending = false,
   error = "",
 }) {
   const list = Array.isArray(facts) ? facts : [];
@@ -73,8 +85,10 @@ export default function InsertedFactsStrip({
       ) : null}
       {list.map((fact) => {
         const href = safeExternalHref(fact?.url);
+        const busy = busyFactId === fact.id;
+        const smoothing = smoothingFactId === fact.id;
         return (
-          <Box key={fact.id}>
+          <Box key={fact.id} aria-busy={busy ? "true" : undefined}>
             <Box sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, mb: 0.5 }}>
               <Box sx={{ flex: 1, fontSize: "0.8rem" }}>
                 {fact.title || fact.text}
@@ -87,7 +101,7 @@ export default function InsertedFactsStrip({
               <IconButton
                 size="small"
                 aria-label="Move this fact one sentence earlier"
-                disabled={!movability[fact.id]?.backward}
+                disabled={busy || !movability[fact.id]?.backward}
                 onClick={() => onMove?.(fact.id, "backward")}
                 sx={{ p: 0.25 }}
               >
@@ -96,7 +110,7 @@ export default function InsertedFactsStrip({
               <IconButton
                 size="small"
                 aria-label="Move this fact one sentence later"
-                disabled={!movability[fact.id]?.forward}
+                disabled={busy || !movability[fact.id]?.forward}
                 onClick={() => onMove?.(fact.id, "forward")}
                 sx={{ p: 0.25 }}
               >
@@ -105,29 +119,35 @@ export default function InsertedFactsStrip({
               <IconButton
                 size="small"
                 aria-label="Smooth the transition into this fact"
-                disabled={smoothDisabled}
+                disabled={busy || smoothDisabled}
                 onClick={() => onSmooth?.(fact.id)}
                 sx={{ p: 0.25 }}
               >
-                <AutoFixHighIcon sx={{ fontSize: 16 }} />
+                {smoothing ? (
+                  <CircularProgress size={16} aria-hidden="true" sx={{ color: "currentColor" }} />
+                ) : (
+                  <AutoFixHighIcon sx={{ fontSize: 16 }} />
+                )}
               </IconButton>
               {smoothApplied?.[fact.id] ? (
                 <IconButton
                   size="small"
                   aria-label="Undo the smoothing"
+                  disabled={busy}
                   onClick={() => onUndoSmooth?.(fact.id)}
                   sx={{ p: 0.25 }}
                 >
                   <UndoIcon sx={{ fontSize: 16 }} />
                 </IconButton>
               ) : null}
-              <IconButton size="small" aria-label="Remove this fact" onClick={() => onRemove?.(fact.id)} sx={{ p: 0.25 }}>
+              <IconButton size="small" aria-label="Remove this fact" disabled={busy} onClick={() => onRemove?.(fact.id)} sx={{ p: 0.25 }}>
                 <CloseIcon sx={{ fontSize: 16 }} />
               </IconButton>
             </Box>
             {pendingSmooth && pendingSmooth.factId === fact.id ? (
               <CoverFactSmoothConfirm
                 candidate={pendingSmooth.candidate}
+                pending={applyPending}
                 onApply={() => onApplySmooth?.(fact.id)}
                 onDiscard={() => onDiscardSmooth?.(fact.id)}
               />
