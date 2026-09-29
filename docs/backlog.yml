@@ -1150,6 +1150,18 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N100"
+  state: "actionable"
+  title: "**A PERSISTENT 'KNOWN RED' IS A GENUINE PRE-EXISTING DEFECT, not expected noise: acceptNoEngineBytes.test.js's CONTROL fails deterministically.** The N95 fresh verifier PROVED this predates N95 by running the exact test against the parent commit fd900d9 (identical failure), and N95's diff never touches acceptFacts or the no-engine-bytes guard. The failing test is the CONTROL at acceptNoEngineBytes.test.js:363-374, titled roughly 'an entry with NO cover letter at all is not caught by the guard', which asserts acceptFacts returns ok:true for an empty/no-cover-letter entry -- but the code REFUSES with NO_COVER_LETTER_REASON. **Most likely the TEST is stale, not the code**: N90 (accept-un-declines-removed / the acceptFacts no-cover-letter handling) made 'no cover letter' an HONEST refusal, which is correct behavior; this CONTROL was written expecting the older pass-through and was never updated, so it has been RED on every full suite all session and I wrongly normalized it as an 'expected known red' alongside the N83 files. **Fix**: confirm which side is wrong -- if the code's no-cover-letter refusal is the intended behavior (it is, per N90), UPDATE the CONTROL to expect the refusal (ok:false / the honest reason), with a note tying it to N90; if instead the code is wrong, fix the code. Either way, STOP treating it as permanently-expected -- a normalized red hides real regressions in the same file. This is why the full suite has shown '3 known reds' all session; two are N83 (a real unshipped feature), this is the third and it should be resolved so the suite can be truly green."
+  owed_by: "A small round: decide test-vs-code (test is the likely-stale side per N90) and correct it"
+  evidence: ["docs/loop/N95.verify.r1.md finding — verifier ran the test against parent commit fd900d9, identical failure, proving it predates N95", "acceptNoEngineBytes.test.js:363-374 CONTROL asserts ok:true for a no-cover-letter entry; the code refuses NO_COVER_LETTER_REASON", "N90 (commit 62c1005 area) made the manual no-cover-letter path an honest refusal — the likely reason the control went stale"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 - id: "D2"
   state: "owner"
   title: "**The transport claim is doc-verified, not wire-verified.**"
