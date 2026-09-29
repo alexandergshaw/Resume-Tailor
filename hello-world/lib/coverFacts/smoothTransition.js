@@ -280,3 +280,30 @@ export async function declineSmoothTransition(candidate) {
   recordDecision("fact-smooth", "refused", { reason: "declined", code: "declined" });
   return { ok: true };
 }
+
+// undoSmoothTransition(applied, { persist }) -- POST-APPLY UNDO (AC-B6). Only
+// a genuinely applied ("proposed"->confirmed) candidate can be undone: hands
+// `persist` EXACTLY the pre-smoothing snapshot the candidate already carries
+// -- `applied.before.lines`/`applied.before.records`, the SAME references
+// confirmSmoothTransition was given, never a re-derived copy -- plus `edits`
+// built from `applied.after.edits` with `before`/`after` SWAPPED. The swap is
+// what lets the byte-splice path (applyCoverDocxEdits, via the same
+// commitFactMove/commitSmoothedFact I/O Apply already uses -- no new byte
+// path) re-splice the STORED docx back to the original text: at undo time the
+// stored bytes carry the SMOOTHED paragraph, so the edit's own `before` must
+// be that smoothed text (candidate.after.edits[].after) for the staleness
+// guard to accept it, and its `after` the original (candidate.after.edits[].before).
+// A null / non-"proposed" candidate (nothing was ever applied, or it was only
+// rejected/failed/declined) is a no-op: no persist call, `{ ok:false }`.
+export async function undoSmoothTransition(applied, { persist } = {}) {
+  if (!applied || applied.status !== "proposed") return { ok: false };
+  const edits = (Array.isArray(applied.after?.edits) ? applied.after.edits : []).map((edit) => ({
+    lineIndex: edit.lineIndex,
+    before: edit.after,
+    after: edit.before,
+  }));
+  const restore = { lines: applied.before.lines, records: applied.before.records, edits };
+  if (typeof persist === "function") await persist(restore);
+  recordDecision("fact-smooth", "acted", { reason: "undo", code: "undo" });
+  return { ok: true };
+}

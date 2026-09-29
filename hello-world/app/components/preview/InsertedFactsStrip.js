@@ -7,6 +7,7 @@ import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
 import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
+import UndoIcon from "@mui/icons-material/Undo";
 import { safeExternalHref } from "@/lib/url/safeExternalHref";
 import CoverFactSmoothConfirm from "./CoverFactSmoothConfirm";
 
@@ -37,6 +38,13 @@ import CoverFactSmoothConfirm from "./CoverFactSmoothConfirm";
 // the caller passes `engine === "embedded"`. `pendingSmooth` is at most ONE
 // `{factId, candidate}` at a time (CONFIRM-BEFORE-PERSIST) -- its before/
 // after confirm surface renders directly under the fact row it belongs to.
+//
+// N93 (AC-B6): a post-apply "Undo" control per row, shown only once that
+// fact has an applied smoothing stashed by the caller (`smoothApplied`, a
+// `{[factId]: true}` map) -- never before Apply, never once the stash has
+// been cleared (used, or invalidated by a later move/remove/smooth of that
+// same fact). Same no-Tooltip rule: the aria-label IS the reachability
+// contract these controls are keyed on.
 export default function InsertedFactsStrip({
   facts = [],
   onRemove,
@@ -47,6 +55,8 @@ export default function InsertedFactsStrip({
   pendingSmooth = null,
   onApplySmooth,
   onDiscardSmooth,
+  smoothApplied = {},
+  onUndoSmooth,
   error = "",
 }) {
   const list = Array.isArray(facts) ? facts : [];
@@ -101,6 +111,16 @@ export default function InsertedFactsStrip({
               >
                 <AutoFixHighIcon sx={{ fontSize: 16 }} />
               </IconButton>
+              {smoothApplied?.[fact.id] ? (
+                <IconButton
+                  size="small"
+                  aria-label="Undo the smoothing"
+                  onClick={() => onUndoSmooth?.(fact.id)}
+                  sx={{ p: 0.25 }}
+                >
+                  <UndoIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+              ) : null}
               <IconButton size="small" aria-label="Remove this fact" onClick={() => onRemove?.(fact.id)} sx={{ p: 0.25 }}>
                 <CloseIcon sx={{ fontSize: 16 }} />
               </IconButton>

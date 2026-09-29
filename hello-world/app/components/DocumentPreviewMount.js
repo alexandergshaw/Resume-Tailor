@@ -6,7 +6,12 @@ import FocusPickerDialog from "./FocusPickerDialog";
 import InsertedFactsStrip from "./preview/InsertedFactsStrip";
 import AutoInsertFactsMessage from "./preview/AutoInsertFactsMessage";
 import { planMoveFact } from "../../lib/acceptedFacts/factMove";
-import { requestSmoothTransition, confirmSmoothTransition, declineSmoothTransition } from "../../lib/coverFacts/smoothTransition";
+import {
+  requestSmoothTransition,
+  confirmSmoothTransition,
+  declineSmoothTransition,
+  undoSmoothTransition,
+} from "../../lib/coverFacts/smoothTransition";
 import { getDownloadFileNameForTitle, getDownloadCoverLetterFileNameForTitle } from "../../lib/document/docx";
 import { emailPreviewText } from "../../lib/tailor/documentScopes";
 import { useDriveDocuments } from "../hooks/useDriveDocuments";
@@ -345,7 +350,25 @@ export default function DocumentPreviewMount({
   // imports lib/coverFacts/smoothTransition.js -- the seam's own module is
   // what makes AC-B8a's "unattended paths never import it" guard provable.
   const [pendingSmooth, setPendingSmooth] = useState(null);
+  // N93 (AC-B6): the applied candidate for each fact that currently has a
+  // reachable Undo affordance -- at most one per fact, `{[factId]: candidate}`.
+  // Stashed here (not inside smoothTransition.js, which stays isomorphic and
+  // holds no state of its own) after a successful Apply; cleared -- WITHDRAWN,
+  // never silently reused -- by a later remove, move, or fresh smooth of that
+  // SAME fact, so an undo can never clobber work done after it (the safe
+  // direction the design and AC-B6 both call for; a moved fact's undo is
+  // withdrawn rather than guessed at restoring "relative to" its new spot).
+  const [appliedSmooth, setAppliedSmooth] = useState({});
+  function clearAppliedSmooth(factId) {
+    setAppliedSmooth((m) => {
+      if (!(factId in m)) return m;
+      const next = { ...m };
+      delete next[factId];
+      return next;
+    });
+  }
   async function handleSmooth(factId) {
+    clearAppliedSmooth(factId);
     const jobId = insertedFactsJobId;
     const entry = tailoringMap[jobId] || {};
     const candidate = await requestSmoothTransition({
@@ -363,18 +386,40 @@ export default function DocumentPreviewMount({
   }
   async function handleApplySmooth(factId) {
     if (!pendingSmooth || pendingSmooth.factId !== factId) return;
-    await confirmSmoothTransition(pendingSmooth.candidate, {
+    const { candidate } = pendingSmooth;
+    let applied = true;
+    await confirmSmoothTransition(candidate, {
       persist: async (after) => {
         const result = await research.applySmoothedFact(insertedFactsJobId, after);
-        setRemoveError(result && result.ok === false ? result.reason || "Couldn't apply the smoothed version." : "");
+        applied = !(result && result.ok === false);
+        setRemoveError(applied ? "" : result.reason || "Couldn't apply the smoothed version.");
       },
     });
     setPendingSmooth(null);
+    // N93: only a genuinely persisted apply gets an Undo affordance -- a
+    // failed persist left the letter unchanged, so there is nothing to undo.
+    if (applied) setAppliedSmooth((m) => ({ ...m, [factId]: candidate }));
   }
   async function handleDiscardSmooth(factId) {
     if (!pendingSmooth || pendingSmooth.factId !== factId) return;
     await declineSmoothTransition(pendingSmooth.candidate);
     setPendingSmooth(null);
+  }
+  // N93 (AC-B6): reverts a CONFIRMED, stashed smoothing. Withdraws the
+  // affordance FIRST (not after the persist resolves) so a second click
+  // during the in-flight undo can never fire a double-revert -- the same
+  // "gone the instant it's used" contract Apply's own pendingSmooth clear
+  // already follows.
+  async function handleUndoSmooth(factId) {
+    const candidate = appliedSmooth[factId];
+    if (!candidate) return;
+    clearAppliedSmooth(factId);
+    await undoSmoothTransition(candidate, {
+      persist: async (restored) => {
+        const result = await research.applySmoothedFact(insertedFactsJobId, restored);
+        setRemoveError(result && result.ok === false ? result.reason || "Couldn't undo the smoothing. Try again." : "");
+      },
+    });
   }
   // N92 Wave 1 (Control A): whether each inserted fact CAN move forward/
   // backward, computed with the exact same `planMoveFact` the click handler
@@ -416,17 +461,23 @@ export default function DocumentPreviewMount({
           movability={insertedFactsMovability}
           onRemove={async (factId) => {
             const result = await research.removeInsertedFact(insertedFactsJobId, factId);
-            setRemoveError(result && result.ok === false ? result.reason || "Couldn't remove that fact. Try again." : "");
+            const failed = result && result.ok === false;
+            setRemoveError(failed ? result.reason || "Couldn't remove that fact. Try again." : "");
+            if (!failed) clearAppliedSmooth(factId);
           }}
           onMove={async (factId, direction) => {
             const result = await research.moveInsertedFact(insertedFactsJobId, factId, direction);
-            setRemoveError(result && result.ok === false ? result.reason || "Couldn't move that fact. Try again." : "");
+            const failed = result && result.ok === false;
+            setRemoveError(failed ? result.reason || "Couldn't move that fact. Try again." : "");
+            if (!failed) clearAppliedSmooth(factId);
           }}
           onSmooth={handleSmooth}
           smoothDisabled={tailorEngine === "embedded"}
           pendingSmooth={pendingSmooth}
           onApplySmooth={handleApplySmooth}
           onDiscardSmooth={handleDiscardSmooth}
+          smoothApplied={appliedSmooth}
+          onUndoSmooth={handleUndoSmooth}
         />
       ) : null}
     </>
