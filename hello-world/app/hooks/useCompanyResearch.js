@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { weaveSources, DEFAULT_PLACEMENT } from "../../lib/document/coverLetterWeave";
 import { readEngine } from "../settings/engine";
-import { planAcceptForEntry, mergeAcceptedFacts, planRemoveFact, coverFactStrategy } from "../../lib/acceptedFacts/factInsertion";
+import { planAcceptForEntry, mergeAcceptedFacts, planRemoveFact, coverFactStrategy, filterEligibleArticles } from "../../lib/acceptedFacts/factInsertion";
 import { applyCoverDocxEdits } from "../../lib/acceptedFacts/factDocx";
 import { uploadCoverDocx, fetchCoverDocxB64 } from "../../lib/document/coverDocxStore";
 import { messageForRefusal } from "../../lib/acceptedFacts/factRefusalMessage";
@@ -437,12 +437,15 @@ export function useCompanyResearch({
     const entry = tailoringMap[jobId] || {};
     const facts = Array.isArray(selection?.facts) ? selection.facts : [];
     const priorFacts = acceptedFactsByJob[jobId]?.facts || [];
-    // M3 (verify.r1.md): the dialog has no removal UI yet, so it always
-    // sends `declinedUrls: []`. Sending that through unchanged would WIPE
-    // any existing retracted log on every accept (the RPC replaces, never
-    // appends). Until the removal pass lands, resend the CURRENT log
-    // unchanged instead of the dialog's placeholder value.
-    const declinedUrls = acceptedFactsByJob[jobId]?.removed || [];
+    // M3 (verify.r1.md): the dialog has no removal UI, so accept resends the
+    // CURRENT removed log instead of the dialog's `[]` placeholder (the RPC
+    // replaces, never appends). N90: an explicit accept also un-declines
+    // exactly the keys THIS click is accepting -- never any other removed
+    // entry -- so a fact the candidate hasn't touched stays suppressed
+    // exactly as before.
+    const priorRemoved = acceptedFactsByJob[jobId]?.removed || [];
+    const acceptedKeys = new Set(facts.flatMap((f) => [f?.url, f?.id]).filter(Boolean));
+    const declinedUrls = priorRemoved.filter((key) => !acceptedKeys.has(key));
 
     const hasCoverLetter = Array.isArray(entry.coverLetterResultLines) && entry.coverLetterResultLines.length > 0;
     // K8: resolved ONCE here and spliced against below -- never
@@ -842,14 +845,11 @@ export function useCompanyResearch({
     // therefore left "eligible" by this filter; `planAcceptForEntry` below
     // skips it via `coverRecord`, yields no edit, and the caller falls
     // through to the existing "nothing-new" info result just below.
-    const eligible = articles.filter((a) => {
-      if (!a || articleUrlKey(a.url) === null) return false;
-      if (!String(a.suggestion || "").trim()) return false;
-      if (removedSet.has(a.url) || removedSet.has(a.id)) return false;
-      return true;
-    });
+    // N90: filterEligibleArticles (factInsertion.js) also tallies why each
+    // dropped article was excluded, for the nothing-eligible log below.
+    const { eligible, ...dropped } = filterEligibleArticles(articles, { urlKey: articleUrlKey, removedSet, priorFacts });
     if (eligible.length === 0) {
-      return { ok: false, reason: "No eligible facts to insert.", severity: "info", code: "nothing-eligible" };
+      return { ok: false, reason: "No eligible facts to insert.", severity: "info", code: "nothing-eligible", articleCount: articles.length, ...dropped };
     }
 
     // N62 Capability A: every auto-inserted fact takes the saved default

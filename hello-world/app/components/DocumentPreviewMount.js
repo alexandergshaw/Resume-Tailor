@@ -38,15 +38,25 @@ function autoInsertDecisionOutcome(result) {
 // N77: turns one `autoInsertFactsForJob` result into a decision record on the
 // app-wide seam (activityChannels.js's DECISION_LEDGER, "fact-auto-insert"
 // entry). recordDecision() itself enforces the closed field vocabulary --
-// only `reason`, `count` and `code` ever survive onto the record -- so this
-// door cannot carry the inserted sentence, the company, the article title or
-// a byte of the letter body, whatever fields `result` happens to hold.
+// only the listed fields ever survive onto the record -- so this door cannot
+// carry the inserted sentence, the company, the article title or a byte of
+// the letter body, whatever fields `result` happens to hold.
+// N90: a `nothing-eligible` result also carries the eligibility breakdown
+// (plain counts, never content); gated to that code specifically so no other
+// outcome's field shape changes.
 function recordAutoInsertOutcome(result) {
   if (!result) return;
   const outcome = autoInsertDecisionOutcome(result);
   const fields = result.ok
     ? { count: typeof result.count === "number" ? result.count : 0 }
     : { reason: result.reason || "", code: result.code || "unknown-refusal" };
+  if (result.code === "nothing-eligible") {
+    fields.articleCount = typeof result.articleCount === "number" ? result.articleCount : 0;
+    fields.droppedNoUrl = typeof result.droppedNoUrl === "number" ? result.droppedNoUrl : 0;
+    fields.droppedNoSuggestion = typeof result.droppedNoSuggestion === "number" ? result.droppedNoSuggestion : 0;
+    fields.droppedRemoved = typeof result.droppedRemoved === "number" ? result.droppedRemoved : 0;
+    fields.droppedRemovedAlsoAccepted = typeof result.droppedRemovedAlsoAccepted === "number" ? result.droppedRemovedAlsoAccepted : 0;
+  }
   recordDecision(AUTO_INSERT_DECISION_ID, outcome, fields);
 }
 

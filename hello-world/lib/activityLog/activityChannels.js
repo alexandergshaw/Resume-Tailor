@@ -227,7 +227,18 @@ export const DECISION_LEDGER = [
     // A canned reason, the real inserted count, and the machine discriminator
     // (`code`) the refusal actually returned -- never the fact text, the
     // company, the article title or a byte of the letter itself (N77).
-    fields: ["reason", "count", "code"],
+    // N90: the nothing-eligible eligibility breakdown -- plain counts only,
+    // never a url, id, title or suggestion string.
+    fields: [
+      "reason",
+      "count",
+      "code",
+      "articleCount",
+      "droppedNoUrl",
+      "droppedNoSuggestion",
+      "droppedRemoved",
+      "droppedRemovedAlsoAccepted",
+    ],
     outcomes: ["acted", "skipped", "refused", "failed"],
   },
   {

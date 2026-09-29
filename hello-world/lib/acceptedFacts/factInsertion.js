@@ -356,3 +356,36 @@ export function planAcceptForEntry(entry, { facts, coverRecord = [] } = {}) {
   const cover = planCoverFacts(coverLines, { facts, record: coverRecord });
   return { cover, pristineCoverLines: replacePristineCoverLines(entry, cover) };
 }
+
+// N90 (moved from app/hooks/useCompanyResearch.js under the same file-size
+// contingency as coverFactStrategy above): tallies WHY each candidate
+// article was excluded from auto-insert eligibility, preserving the exact
+// same per-article short-circuit order (no-url -> no-suggestion -> removed)
+// so the reported reason for each drop is the same reason the filter itself
+// used, never a re-derived, possibly-different one. `droppedRemovedAlsoAccepted`
+// is the direct exposure of the accept-never-clears anomaly: an article
+// excluded as "removed" while the same key already sits in `priorFacts` is
+// only possible if an earlier accept failed to clear the removed log.
+// @param {object[]} articles
+// @param {{urlKey:(url:string)=>(string|null), removedSet:Set<string>, priorFacts:object[]}} args
+// @returns {{eligible:object[], droppedNoUrl:number, droppedNoSuggestion:number, droppedRemoved:number, droppedRemovedAlsoAccepted:number}}
+export function filterEligibleArticles(articles, { urlKey, removedSet, priorFacts }) {
+  const dropped = { droppedNoUrl: 0, droppedNoSuggestion: 0, droppedRemoved: 0, droppedRemovedAlsoAccepted: 0 };
+  const eligible = (Array.isArray(articles) ? articles : []).filter((a) => {
+    if (!a || urlKey(a.url) === null) {
+      dropped.droppedNoUrl += 1;
+      return false;
+    }
+    if (!String(a.suggestion || "").trim()) {
+      dropped.droppedNoSuggestion += 1;
+      return false;
+    }
+    if (removedSet.has(a.url) || removedSet.has(a.id)) {
+      dropped.droppedRemoved += 1;
+      if ((priorFacts || []).some((f) => f?.id === a.id || (a.url && f?.url === a.url))) dropped.droppedRemovedAlsoAccepted += 1;
+      return false;
+    }
+    return true;
+  });
+  return { eligible, ...dropped };
+}
