@@ -694,7 +694,31 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // importer (useCompanyResearch.js's `moveInsertedFact`), so
     // ORPHAN_EXPORTS is unmoved at 70. One entry added to this bucket, none
     // added to the orphan ledger.
-    expect(TEST_REFERENCED.length).toBe(366);
+    // 366 -> 368 (N92 Wave 3, net +2 of three ins, one out): the new
+    // lib/coverFacts/smoothTransition.js exports `scopeSentences` and
+    // `checkScope` (+2) -- each is called only from WITHIN that same module
+    // (a same-module call this index does not count, same precedent) and
+    // its only cross-module readers are smoothTransition.guards.test.js's
+    // by-name imports. `SMOOTH_ENDPOINT` (+1) is read the same way, only by
+    // smoothTransition.confirmPersist.rc.test.js -- app/components/
+    // DocumentPreviewMount.js imports requestSmoothTransition/
+    // confirmSmoothTransition/declineSmoothTransition directly, never this
+    // constant. `checkAddedTokens` is NOT counted here despite also being
+    // imported by that same test file: app/api/cover-fact-smooth/route.js
+    // imports it too, a real production consumer, so it is reachable, not
+    // test-referenced-only. Offsetting one of those three:
+    // lib/acceptedFacts/factMove.js's `sentenceBounds` LEAVES this bucket
+    // (-1) -- smoothTransition.js now imports it in production (deriving the
+    // three in-scope sentences for a smoothing request), so it gains the
+    // real cross-module consumer it lacked in Wave 1. Net 365 (Wave 1) + 3
+    // (Wave 3 additions) - 1 (Wave 3's own production pickup) = ... restated
+    // from THIS assertion's own prior value: 366 + 3 - 1 = 368.
+    // ORPHAN_EXPORTS is unmoved at 70: every other Wave 3 export
+    // (requestSmoothTransition, confirmSmoothTransition,
+    // declineSmoothTransition) has a real production importer
+    // (DocumentPreviewMount.js), and the route file itself is an entry
+    // point, never counted as an orphan export of a module.
+    expect(TEST_REFERENCED.length).toBe(368);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
@@ -817,7 +841,12 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // (sentenceBounds, described at that assertion above), with
     // ORPHAN_EXPORTS unmoved at 70 -- this total's +1 IS the TEST_REFERENCED
     // bucket's +1, not a second, independent change.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(436);
+    // 436 -> 438 (N92 Wave 3): exactly TEST_REFERENCED's own net +2
+    // (scopeSentences, checkScope, SMOOTH_ENDPOINT in; sentenceBounds out --
+    // described at that assertion above), with ORPHAN_EXPORTS unmoved at 70
+    // -- this total's +2 IS the TEST_REFERENCED bucket's +2, not a second,
+    // independent change.
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(438);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

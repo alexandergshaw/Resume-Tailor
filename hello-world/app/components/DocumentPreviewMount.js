@@ -6,6 +6,7 @@ import FocusPickerDialog from "./FocusPickerDialog";
 import InsertedFactsStrip from "./preview/InsertedFactsStrip";
 import AutoInsertFactsMessage from "./preview/AutoInsertFactsMessage";
 import { planMoveFact } from "../../lib/acceptedFacts/factMove";
+import { requestSmoothTransition, confirmSmoothTransition, declineSmoothTransition } from "../../lib/coverFacts/smoothTransition";
 import { getDownloadFileNameForTitle, getDownloadCoverLetterFileNameForTitle } from "../../lib/document/docx";
 import { emailPreviewText } from "../../lib/tailor/documentScopes";
 import { useDriveDocuments } from "../hooks/useDriveDocuments";
@@ -336,6 +337,45 @@ export default function DocumentPreviewMount({
   // that succeeds. Shared with N92 Wave 1's move controls below -- one
   // action-error slot for the strip, whichever control last failed.
   const [removeError, setRemoveError] = useState("");
+  // N92 Wave 3 (Control B): at most ONE pending smoothed candidate at a time
+  // -- CONFIRM-BEFORE-PERSIST (owner ruling D7). Produced by a "Smooth"
+  // click, shown by InsertedFactsStrip/CoverFactSmoothConfirm, and NEVER
+  // written to tailoringMap or the store until Apply (AC-B10/B12); Discard
+  // just clears it (AC-B11). This is the ONE production surface that
+  // imports lib/coverFacts/smoothTransition.js -- the seam's own module is
+  // what makes AC-B8a's "unattended paths never import it" guard provable.
+  const [pendingSmooth, setPendingSmooth] = useState(null);
+  async function handleSmooth(factId) {
+    const jobId = insertedFactsJobId;
+    const entry = tailoringMap[jobId] || {};
+    const candidate = await requestSmoothTransition({
+      engine: tailorEngine,
+      lines: entry.coverLetterResultLines || [],
+      records: entry.insertedFacts || [],
+      id: factId,
+    });
+    if (candidate.status === "proposed") {
+      setPendingSmooth({ factId, candidate });
+    } else {
+      setPendingSmooth(null);
+      setRemoveError("Couldn't smooth that transition. Try again.");
+    }
+  }
+  async function handleApplySmooth(factId) {
+    if (!pendingSmooth || pendingSmooth.factId !== factId) return;
+    await confirmSmoothTransition(pendingSmooth.candidate, {
+      persist: async (after) => {
+        const result = await research.applySmoothedFact(insertedFactsJobId, after);
+        setRemoveError(result && result.ok === false ? result.reason || "Couldn't apply the smoothed version." : "");
+      },
+    });
+    setPendingSmooth(null);
+  }
+  async function handleDiscardSmooth(factId) {
+    if (!pendingSmooth || pendingSmooth.factId !== factId) return;
+    await declineSmoothTransition(pendingSmooth.candidate);
+    setPendingSmooth(null);
+  }
   // N92 Wave 1 (Control A): whether each inserted fact CAN move forward/
   // backward, computed with the exact same `planMoveFact` the click handler
   // below calls -- a dry run against the CURRENT lines/records, never
@@ -382,6 +422,11 @@ export default function DocumentPreviewMount({
             const result = await research.moveInsertedFact(insertedFactsJobId, factId, direction);
             setRemoveError(result && result.ok === false ? result.reason || "Couldn't move that fact. Try again." : "");
           }}
+          onSmooth={handleSmooth}
+          smoothDisabled={tailorEngine === "embedded"}
+          pendingSmooth={pendingSmooth}
+          onApplySmooth={handleApplySmooth}
+          onDiscardSmooth={handleDiscardSmooth}
         />
       ) : null}
     </>

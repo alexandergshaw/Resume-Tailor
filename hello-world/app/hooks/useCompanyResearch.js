@@ -13,6 +13,7 @@ import {
 } from "../../lib/acceptedFacts/factInsertion";
 import { planMoveFact } from "../../lib/acceptedFacts/factMove";
 import { commitFactMove } from "../../lib/acceptedFacts/commitFactMove";
+import { commitSmoothedFact } from "../../lib/acceptedFacts/commitSmoothedFact";
 import { applyCoverDocxEdits } from "../../lib/acceptedFacts/factDocx";
 import { recordDecision } from "../../lib/activityLog/appActivityLog";
 import { uploadCoverDocx, fetchCoverDocxB64 } from "../../lib/document/coverDocxStore";
@@ -981,6 +982,14 @@ export function useCompanyResearch({
     acceptFacts,
     removeInsertedFact,
     moveInsertedFact,
+    // N92 Wave 3 (Control B, AC-B8a): persists a confirmed smoothed rewrite
+    // via commitSmoothedFact.js -- never imports the smoothing seam itself.
+    applySmoothedFact: (jobId, after) =>
+      commitSmoothedFact({
+        jobId, after, entry: tailoringMap[jobId] || {}, resolveCoverEngineBytes,
+        supabase, currentUserId: currentUser?.id, acceptedFactsByJob: acceptedFactsByJob[jobId],
+        setTailoringMap, setAcceptedFactsByJob, setPreviewReloadKey,
+      }),
     autoInsertFactsForJob,
   };
 }

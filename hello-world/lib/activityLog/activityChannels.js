@@ -267,4 +267,18 @@ export const DECISION_LEDGER = [
     fields: ["direction", "reason", "code", "count"],
     outcomes: ["acted", "skipped", "refused", "failed"],
   },
+  {
+    module: "lib/coverFacts/smoothTransition.js",
+    id: "fact-smooth",
+    label: "Cover-fact transition smoothing",
+    // N92 Wave 3: Control B records from its OWN module -- the sweep binds
+    // one ledger entry per module, and putting the smoothing call and its
+    // recordDecision( together here is also what AC-B8a's own-module
+    // structure is for. `reason`/`code` are canned discriminators off the
+    // module's own closed outcome set ("smoothed"/"declined"/"scope"/
+    // "added-token"/"stale-locator"/"provider_error"/"embedded"). Never the
+    // letter text, the fact text, or the before/after wording (N77).
+    fields: ["reason", "code"],
+    outcomes: ["acted", "skipped", "refused", "failed"],
+  },
 ];

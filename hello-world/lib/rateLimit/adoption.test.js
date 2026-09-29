@@ -258,6 +258,10 @@ const DEFERRED = [
     route: "app/api/salary-estimate/route.js",
     why: "hard-authenticates via getUser() and could be bounded like the routes above, but an owner ruling (N65 OWNER-2) rejected a numeric per-day/per-window cap for this feature: the route fires only when a signed-in user clicks \"Estimate salary\" in the Ask AI panel, and the automatic feed-ingestion path (ingestFeed.js, llmSearch.js, the tailor cron) gains no salary-provider call at all, so unattended spend stays at zero structurally rather than by a limiter. Per-decision usage is readable from the activity log (recordDecision). The module-scope createRateLimiter seam the routes above use is a documented, ready insertion point if the owner sets a number later.",
   },
+  {
+    route: "app/api/cover-fact-smooth/route.js",
+    why: "hard-authenticates via getUser() and could be bounded like the routes above, but AC-B8 (N92 Wave 3, same N65 precedent as salary-estimate above) rejects a numeric per-day/per-window cap for this feature: the route fires only when a signed-in user clicks the smoothing control on one inserted fact in the cover-letter review surface, and the unattended paths (autoInsertFactsForJob, letter generation, repaint, the cron tailor pipeline) never import lib/coverFacts/smoothTransition.js's client orchestrator or this route at all, so unattended spend stays at zero structurally rather than by a limiter (AC-B8a). The module-scope createRateLimiter seam the routes above use is a documented, ready insertion point if the owner sets a number later.",
+  },
 ];
 
 /**

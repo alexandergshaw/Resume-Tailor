@@ -6,7 +6,9 @@ import CloseIcon from "@mui/icons-material/Close";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
+import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
 import { safeExternalHref } from "@/lib/url/safeExternalHref";
+import CoverFactSmoothConfirm from "./CoverFactSmoothConfirm";
 
 // N61 -- the cover letter's inserted-fact review strip: the owner's "I
 // should be able to remove any of the facts with a simple click." One row
@@ -29,7 +31,24 @@ import { safeExternalHref } from "@/lib/url/safeExternalHref";
 // control at a boundary is DISABLED before the click, never a live-looking
 // arrow that silently no-ops (AC-A6) -- the caller knows the letter's lines
 // and every fact's slot; this component only renders what it is told.
-export default function InsertedFactsStrip({ facts = [], onRemove, onMove, movability = {}, error = "" }) {
+//
+// N92 Wave 3 (Control B): a "Smooth" control per row, disabled (never
+// hidden -- the reason must stay visible, AC-B9/X2) when `smoothDisabled` --
+// the caller passes `engine === "embedded"`. `pendingSmooth` is at most ONE
+// `{factId, candidate}` at a time (CONFIRM-BEFORE-PERSIST) -- its before/
+// after confirm surface renders directly under the fact row it belongs to.
+export default function InsertedFactsStrip({
+  facts = [],
+  onRemove,
+  onMove,
+  movability = {},
+  onSmooth,
+  smoothDisabled = false,
+  pendingSmooth = null,
+  onApplySmooth,
+  onDiscardSmooth,
+  error = "",
+}) {
   const list = Array.isArray(facts) ? facts : [];
   if (list.length === 0) return null;
   return (
@@ -45,36 +64,54 @@ export default function InsertedFactsStrip({ facts = [], onRemove, onMove, movab
       {list.map((fact) => {
         const href = safeExternalHref(fact?.url);
         return (
-          <Box key={fact.id} sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, mb: 0.5 }}>
-            <Box sx={{ flex: 1, fontSize: "0.8rem" }}>
-              {fact.title || fact.text}
-              {href ? (
-                <IconButton size="small" component="a" href={href} target="_blank" rel="noopener noreferrer" aria-label="Open the source article" sx={{ p: 0.25, ml: 0.5 }}>
-                  <OpenInNewIcon sx={{ fontSize: 14 }} />
-                </IconButton>
-              ) : null}
+          <Box key={fact.id}>
+            <Box sx={{ display: "flex", alignItems: "flex-start", gap: 0.5, mb: 0.5 }}>
+              <Box sx={{ flex: 1, fontSize: "0.8rem" }}>
+                {fact.title || fact.text}
+                {href ? (
+                  <IconButton size="small" component="a" href={href} target="_blank" rel="noopener noreferrer" aria-label="Open the source article" sx={{ p: 0.25, ml: 0.5 }}>
+                    <OpenInNewIcon sx={{ fontSize: 14 }} />
+                  </IconButton>
+                ) : null}
+              </Box>
+              <IconButton
+                size="small"
+                aria-label="Move this fact one sentence earlier"
+                disabled={!movability[fact.id]?.backward}
+                onClick={() => onMove?.(fact.id, "backward")}
+                sx={{ p: 0.25 }}
+              >
+                <ArrowBackIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+              <IconButton
+                size="small"
+                aria-label="Move this fact one sentence later"
+                disabled={!movability[fact.id]?.forward}
+                onClick={() => onMove?.(fact.id, "forward")}
+                sx={{ p: 0.25 }}
+              >
+                <ArrowForwardIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+              <IconButton
+                size="small"
+                aria-label="Smooth the transition into this fact"
+                disabled={smoothDisabled}
+                onClick={() => onSmooth?.(fact.id)}
+                sx={{ p: 0.25 }}
+              >
+                <AutoFixHighIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+              <IconButton size="small" aria-label="Remove this fact" onClick={() => onRemove?.(fact.id)} sx={{ p: 0.25 }}>
+                <CloseIcon sx={{ fontSize: 16 }} />
+              </IconButton>
             </Box>
-            <IconButton
-              size="small"
-              aria-label="Move this fact one sentence earlier"
-              disabled={!movability[fact.id]?.backward}
-              onClick={() => onMove?.(fact.id, "backward")}
-              sx={{ p: 0.25 }}
-            >
-              <ArrowBackIcon sx={{ fontSize: 16 }} />
-            </IconButton>
-            <IconButton
-              size="small"
-              aria-label="Move this fact one sentence later"
-              disabled={!movability[fact.id]?.forward}
-              onClick={() => onMove?.(fact.id, "forward")}
-              sx={{ p: 0.25 }}
-            >
-              <ArrowForwardIcon sx={{ fontSize: 16 }} />
-            </IconButton>
-            <IconButton size="small" aria-label="Remove this fact" onClick={() => onRemove?.(fact.id)} sx={{ p: 0.25 }}>
-              <CloseIcon sx={{ fontSize: 16 }} />
-            </IconButton>
+            {pendingSmooth && pendingSmooth.factId === fact.id ? (
+              <CoverFactSmoothConfirm
+                candidate={pendingSmooth.candidate}
+                onApply={() => onApplySmooth?.(fact.id)}
+                onDiscard={() => onDiscardSmooth?.(fact.id)}
+              />
+            ) : null}
           </Box>
         );
       })}

@@ -234,6 +234,26 @@ const KNOWN_RESIDUALS = new Set([
   // `writeApplicationStatus(..., STATUS.AUTO_QUEUED)` but never names this
   // first one. lib/feed/tailorAndQueue.js is off limits to this wave.
   "lib/feed/tailorAndQueue.js",
+  // N92 Wave 3's cover-fact-smooth route: `withheldSmoothed("rejected",
+  // "added-token")` writes the LLM-smoothing OUTCOME vocabulary
+  // (ok/failed/rejected/unavailable_embedded, defined in the route's own
+  // `withheldSmoothed` helper) that happens to spell one value the same as
+  // applications.status's own "rejected" -- the fact's smoothing candidate
+  // was rejected by the added-token guard, not an application. Off-lane:
+  // this route reads and writes no `applications` row at all (see its own
+  // header comment, "WRITES NOTHING TO ANY DATABASE").
+  "app/api/cover-fact-smooth/route.js",
+  // The sibling client orchestrator the route above is called from
+  // (requestSmoothTransition/confirmSmoothTransition). Its own `status`
+  // field walks the SAME smoothing-outcome vocabulary
+  // (proposed/rejected/failed/unavailable_embedded, spelled out in its
+  // header comment above requestSmoothTransition) -- "rejected" again
+  // collides by spelling only. Off-lane for the same reason as the route:
+  // this module never touches an `applications` row either. It applies its
+  // one write, `candidate.after`, through a caller-supplied `persist`
+  // callback that edits cover-letter lines/fact records
+  // (confirmSmoothTransition), never a Supabase call of its own.
+  "lib/coverFacts/smoothTransition.js",
 ]);
 
 describe("[src] applications.status literals — AC-3a, one home", () => {
@@ -340,7 +360,13 @@ describe("[src] applications.status literals — AC-3a, one home", () => {
   it("consolidates applications.status literals to ONE place, plus two named off-lane residuals — toEqual, not toContain", () => {
     const flagged = computeFlagged(sourceFiles());
 
-    expect(flagged).toEqual(["app/page.js", "lib/applications/statusVocabulary.js", "lib/feed/tailorAndQueue.js"]);
+    expect(flagged).toEqual([
+      "app/api/cover-fact-smooth/route.js",
+      "app/page.js",
+      "lib/applications/statusVocabulary.js",
+      "lib/coverFacts/smoothTransition.js",
+      "lib/feed/tailorAndQueue.js",
+    ]);
 
     // Every flagged file must be an EXPECTED residual — not merely "not a
     // false positive". A ninth file appearing here (a brand-new stray
