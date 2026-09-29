@@ -466,8 +466,17 @@ export function createChatHandlers(deps) {
     }
   }
 
-  function askAiAbout({ label, content, prompt = "", sourceJobId = null }) {
-    setChatPinnedContext({ label: label || "Context", content: content || "", sourceJobId: sourceJobId || null });
+  function askAiAbout({ label, content, prompt = "", sourceJobId = null, posting = null }) {
+    // N65 step 3: `posting` carries the pinned job's title/company/location +
+    // a computed `salaryStated` so the ChatPanel "Estimate salary" affordance
+    // (chatPinnedContext.posting) can appear. Safe default null: a caller that
+    // passes none (resume/cover-letter/material subjects) must never light it.
+    setChatPinnedContext({
+      label: label || "Context",
+      content: content || "",
+      sourceJobId: sourceJobId || null,
+      posting: posting || null,
+    });
     setChatError("");
     // Always prefix any button-triggered chat with a consistent
     // "I need help with <origin>" opener so we (and the model) know where

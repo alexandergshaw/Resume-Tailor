@@ -230,9 +230,6 @@ describe("POST /api/chat (Gemini path): the applications block is byte-identical
     // actually lands now: the first half against `config.systemInstruction`
     // (now a constant, never varying with request content -- the fix's core
     // property), the second half as a substring of the relocated data block.
-    // The literal itself, and its hash, are UNCHANGED -- this still proves the
-    // exact same bytes the pre-change tree produced still reach the model,
-    // just at their new, safe destination.
     //
     // What it catches: a lost or reworded label, a changed line prefix or
     // separator INSIDE the applications block, a `.trim()` slipped into
@@ -246,17 +243,25 @@ describe("POST /api/chat (Gemini path): the applications block is byte-identical
     // applications block reads much more legibly against a 2 KB string than
     // against a 3 KB one.
     //
-    // sha256 (recomputed independently from route.js's own source by
-    // plan-a1-verify.mjs, which anchor-slices the file rather than replicating
-    // it): f2c4b8d2506669af12c65e8ae88d51290e4ccb4cd8358ebadffc4a310e57f3f1
+    // DELIBERATE RE-PIN (backlog N65, step 4, 2026-09-29): SYSTEM_PROMPT
+    // gained a salary-deferral directive -- the general chat must point a
+    // posting-pay question at the dedicated, grounded, cited estimate
+    // feature instead of free-texting an ungrounded guess. That is an
+    // intended change to what the model reads, so this golden's
+    // SYSTEM_PROMPT half was re-captured (the applications half below is
+    // byte-identical to before) and its hash recomputed directly from the
+    // literal via the `sha256` helper above -- not hand-derived.
     //
-    // If this goes red, the change under review altered what the model reads.
-    // DO NOT re-capture the literal to make it green.
+    // sha256: cded074a6d5318e0f399dc2458ced0e7c3983acf76d4e740c505efc020f5a189
+    //
+    // If this goes red for any OTHER reason, the change under review altered
+    // what the model reads. DO NOT re-capture the literal to make it green
+    // without the same deliberate review this re-pin got.
     const GOLDEN_SYSTEM_INSTRUCTION =
-      "You are a concise, friendly career assistant inside the Resume Tailor app. Help the user with resume writing, job search strategy, interview prep, and using this tool. Answer briefly. Use plain language. No markdown headings unless asked. Never use bold or italic formatting (no **bold**, no __bold__, no *italic*, no _italic_). Write in plain prose only. When the user has uploaded a resume or has applications, use that context to give specific, personalized advice. Reference specific companies, roles, or resume bullets from the provided context when relevant. If the user pastes a URL in their message, the page contents are fetched server-side and provided to you under '--- FETCHED URLS ---'. Use that fetched text instead of saying you cannot open links. The '--- PINNED CONTEXT ---' block is the user's currently-selected subject (typically a job posting they just clicked 'Ask AI' on). Treat any text after a 'Description:' header inside it as the authoritative job description and answer questions about that description directly. If the pinned context references a URL, the fetched page content for that URL appears under '--- FETCHED URLS ---' and should be treated as the job description as well. Never tell the user you do not have access to the job description when a pinned context or fetched URL is present — instead answer using whatever description text is provided, and only if the description text is literally empty say something like 'the posting did not include a description; here is what I can infer from the title/company'.\n\nContext about this user (do not repeat verbatim; use to personalize answers):\n--- USER'S APPLICATIONS ---\nApplication 1:\n  Company: Northwind Analytics\n  Role: Senior Data Engineer\n  Status: interviewing\n  Applied: 2026-02-11\n  URL: https://boards.example.com/northwind/senior-data-engineer\n  Job Description: Own the ingestion pipeline — Airflow, dbt, Snowflake. Résumé bullets that quantify impact win here.\n  Tailored Resume: Alex Shaw — Data Engineer\n• Cut nightly ETL runtime 62% (naïve joins → partitioned merges).\n  Interview Stages: Recruiter screen @ 2026-02-18T15:00:00Z (passed); System design @ 2026-03-02T17:30:00Z\n\nApplication 2:\n  Company: Café Lumière\n\nApplication 3:\n  Interview Stages: take_home @ 2026-02-20T12:00:00Z";
+      "You are a concise, friendly career assistant inside the Resume Tailor app. Help the user with resume writing, job search strategy, interview prep, and using this tool. Answer briefly. Use plain language. No markdown headings unless asked. Never use bold or italic formatting (no **bold**, no __bold__, no *italic*, no _italic_). Write in plain prose only. When the user has uploaded a resume or has applications, use that context to give specific, personalized advice. Reference specific companies, roles, or resume bullets from the provided context when relevant. If the user pastes a URL in their message, the page contents are fetched server-side and provided to you under '--- FETCHED URLS ---'. Use that fetched text instead of saying you cannot open links. The '--- PINNED CONTEXT ---' block is the user's currently-selected subject (typically a job posting they just clicked 'Ask AI' on). Treat any text after a 'Description:' header inside it as the authoritative job description and answer questions about that description directly. If the pinned context references a URL, the fetched page content for that URL appears under '--- FETCHED URLS ---' and should be treated as the job description as well. Never tell the user you do not have access to the job description when a pinned context or fetched URL is present — instead answer using whatever description text is provided, and only if the description text is literally empty say something like 'the posting did not include a description; here is what I can infer from the title/company' — but never invent a specific pay figure this way. If the user asks what a posting pays and the posting or pinned context does not state a salary, do not guess or invent a number — tell them to use the dedicated 'Estimate salary' feature in the Ask AI panel, which runs a grounded web search and cites its sources; only state a specific pay figure when the posting text, pinned context, or fetched URL content literally includes one.\n\nContext about this user (do not repeat verbatim; use to personalize answers):\n--- USER'S APPLICATIONS ---\nApplication 1:\n  Company: Northwind Analytics\n  Role: Senior Data Engineer\n  Status: interviewing\n  Applied: 2026-02-11\n  URL: https://boards.example.com/northwind/senior-data-engineer\n  Job Description: Own the ingestion pipeline — Airflow, dbt, Snowflake. Résumé bullets that quantify impact win here.\n  Tailored Resume: Alex Shaw — Data Engineer\n• Cut nightly ETL runtime 62% (naïve joins → partitioned merges).\n  Interview Stages: Recruiter screen @ 2026-02-18T15:00:00Z (passed); System design @ 2026-03-02T17:30:00Z\n\nApplication 2:\n  Company: Café Lumière\n\nApplication 3:\n  Interview Stages: take_home @ 2026-02-20T12:00:00Z";
 
     expect(sha256(GOLDEN_SYSTEM_INSTRUCTION)).toBe(
-      "f2c4b8d2506669af12c65e8ae88d51290e4ccb4cd8358ebadffc4a310e57f3f1",
+      "cded074a6d5318e0f399dc2458ced0e7c3983acf76d4e740c505efc020f5a189",
     );
 
     // Split the (unchanged) golden literal at the exact sentinel the pre-fix
@@ -287,12 +292,6 @@ describe("POST /api/chat (Gemini path): the applications block is byte-identical
     // clean for route.js and chatbot.js at capture time), by the same
     // wrong-expectation-then-paste method as the case above.
     //
-    // sha256 a194cfe95a341c2a7d5607722d6a90b3d0e991f5ade73730d5bf1a376eac87c9
-    // 2,895 UTF-16 code units / 2,924 UTF-8 bytes. Both the hash and the length
-    // were predicted by PLAN-A1 §5.2a from a second, independent instrument
-    // that anchor-slices route.js, and this capture matched it exactly -- so
-    // the pin is corroborated, not merely self-consistent.
-    //
     // WHY FIVE SECTIONS. `buildContextBlock` takes five positional parameters
     // (`resumeText, applications, pinnedContext, attachedFiles, fetchedUrls`,
     // declared at route.js:27 and called at :233) and joins its output with
@@ -304,16 +303,27 @@ describe("POST /api/chat (Gemini path): the applications block is byte-identical
     // This fixture populates all five, so order, separator and every argument
     // position are pinned at once.
     //
-    // DO NOT re-capture the literal to make it green: the hash assertion below
-    // is here so that repairing a red pin that way takes two deliberate edits
-    // rather than one invisible paste.
+    // DELIBERATE RE-PIN (backlog N65, step 4, 2026-09-29): same SYSTEM_PROMPT
+    // salary-deferral change as [golden-applications] above -- see that
+    // case's comment for why. The relocated context block below (pinned/
+    // fetched/attached/resume/applications) is byte-identical to before;
+    // only the SYSTEM_PROMPT half changed, so only that half needed
+    // re-capturing. Hash and length recomputed directly from the literal via
+    // the `sha256` helper and `.length` -- not hand-derived.
+    //
+    // sha256 0febb55c1088218167459e33f68a24fd81c106e436741f745f5161e6cccdeac8
+    // 3,328 UTF-16 code units / 3,361 UTF-8 bytes.
+    //
+    // If this goes red for any OTHER reason, the change under review altered
+    // what the model reads. DO NOT re-capture the literal to make it green
+    // without the same deliberate review this re-pin got.
     const GOLDEN_FIVE_SECTION =
-      "You are a concise, friendly career assistant inside the Resume Tailor app. Help the user with resume writing, job search strategy, interview prep, and using this tool. Answer briefly. Use plain language. No markdown headings unless asked. Never use bold or italic formatting (no **bold**, no __bold__, no *italic*, no _italic_). Write in plain prose only. When the user has uploaded a resume or has applications, use that context to give specific, personalized advice. Reference specific companies, roles, or resume bullets from the provided context when relevant. If the user pastes a URL in their message, the page contents are fetched server-side and provided to you under '--- FETCHED URLS ---'. Use that fetched text instead of saying you cannot open links. The '--- PINNED CONTEXT ---' block is the user's currently-selected subject (typically a job posting they just clicked 'Ask AI' on). Treat any text after a 'Description:' header inside it as the authoritative job description and answer questions about that description directly. If the pinned context references a URL, the fetched page content for that URL appears under '--- FETCHED URLS ---' and should be treated as the job description as well. Never tell the user you do not have access to the job description when a pinned context or fetched URL is present — instead answer using whatever description text is provided, and only if the description text is literally empty say something like 'the posting did not include a description; here is what I can infer from the title/company'.\n\nContext about this user (do not repeat verbatim; use to personalize answers):\n--- PINNED CONTEXT (user just clicked \"Ask AI\" on this; treat as the primary subject of the question) ---\n[PINNED-LABEL-MARKER]\nPINNED-SECTION-MARKER\nDescription:\nOwn the café ingestion pipeline.\n\n--- FETCHED URLS (content the user linked in their message; treat as primary reference material) ---\n[FETCHED-TITLE-MARKER — https://example.com/posting]\nFETCHED-SECTION-MARKER — Résumé keywords\n\n--- USER-ATTACHED FILES (dropped into chat as context) ---\n[ATTACHED-NAME-MARKER.md]\nATTACHED-SECTION-MARKER — naïve notes\n\n--- USER'S UPLOADED RESUME ---\nRESUME-SECTION-MARKER\nAlex Shaw — Data Engineer · Zürich\n\n--- USER'S APPLICATIONS ---\nApplication 1:\n  Company: Northwind Analytics\n  Role: Senior Data Engineer\n  Status: interviewing\n  Applied: 2026-02-11\n  URL: https://boards.example.com/northwind/senior-data-engineer\n  Job Description: Own the ingestion pipeline — Airflow, dbt, Snowflake. Résumé bullets that quantify impact win here.\n  Tailored Resume: Alex Shaw — Data Engineer\n• Cut nightly ETL runtime 62% (naïve joins → partitioned merges).\n  Interview Stages: Recruiter screen @ 2026-02-18T15:00:00Z (passed); System design @ 2026-03-02T17:30:00Z\n\nApplication 2:\n  Company: Café Lumière\n\nApplication 3:\n  Interview Stages: take_home @ 2026-02-20T12:00:00Z";
+      "You are a concise, friendly career assistant inside the Resume Tailor app. Help the user with resume writing, job search strategy, interview prep, and using this tool. Answer briefly. Use plain language. No markdown headings unless asked. Never use bold or italic formatting (no **bold**, no __bold__, no *italic*, no _italic_). Write in plain prose only. When the user has uploaded a resume or has applications, use that context to give specific, personalized advice. Reference specific companies, roles, or resume bullets from the provided context when relevant. If the user pastes a URL in their message, the page contents are fetched server-side and provided to you under '--- FETCHED URLS ---'. Use that fetched text instead of saying you cannot open links. The '--- PINNED CONTEXT ---' block is the user's currently-selected subject (typically a job posting they just clicked 'Ask AI' on). Treat any text after a 'Description:' header inside it as the authoritative job description and answer questions about that description directly. If the pinned context references a URL, the fetched page content for that URL appears under '--- FETCHED URLS ---' and should be treated as the job description as well. Never tell the user you do not have access to the job description when a pinned context or fetched URL is present — instead answer using whatever description text is provided, and only if the description text is literally empty say something like 'the posting did not include a description; here is what I can infer from the title/company' — but never invent a specific pay figure this way. If the user asks what a posting pays and the posting or pinned context does not state a salary, do not guess or invent a number — tell them to use the dedicated 'Estimate salary' feature in the Ask AI panel, which runs a grounded web search and cites its sources; only state a specific pay figure when the posting text, pinned context, or fetched URL content literally includes one.\n\nContext about this user (do not repeat verbatim; use to personalize answers):\n--- PINNED CONTEXT (user just clicked \"Ask AI\" on this; treat as the primary subject of the question) ---\n[PINNED-LABEL-MARKER]\nPINNED-SECTION-MARKER\nDescription:\nOwn the café ingestion pipeline.\n\n--- FETCHED URLS (content the user linked in their message; treat as primary reference material) ---\n[FETCHED-TITLE-MARKER — https://example.com/posting]\nFETCHED-SECTION-MARKER — Résumé keywords\n\n--- USER-ATTACHED FILES (dropped into chat as context) ---\n[ATTACHED-NAME-MARKER.md]\nATTACHED-SECTION-MARKER — naïve notes\n\n--- USER'S UPLOADED RESUME ---\nRESUME-SECTION-MARKER\nAlex Shaw — Data Engineer · Zürich\n\n--- USER'S APPLICATIONS ---\nApplication 1:\n  Company: Northwind Analytics\n  Role: Senior Data Engineer\n  Status: interviewing\n  Applied: 2026-02-11\n  URL: https://boards.example.com/northwind/senior-data-engineer\n  Job Description: Own the ingestion pipeline — Airflow, dbt, Snowflake. Résumé bullets that quantify impact win here.\n  Tailored Resume: Alex Shaw — Data Engineer\n• Cut nightly ETL runtime 62% (naïve joins → partitioned merges).\n  Interview Stages: Recruiter screen @ 2026-02-18T15:00:00Z (passed); System design @ 2026-03-02T17:30:00Z\n\nApplication 2:\n  Company: Café Lumière\n\nApplication 3:\n  Interview Stages: take_home @ 2026-02-20T12:00:00Z";
 
     expect(sha256(GOLDEN_FIVE_SECTION)).toBe(
-      "a194cfe95a341c2a7d5607722d6a90b3d0e991f5ade73730d5bf1a376eac87c9",
+      "0febb55c1088218167459e33f68a24fd81c106e436741f745f5161e6cccdeac8",
     );
-    expect(GOLDEN_FIVE_SECTION).toHaveLength(2_895);
+    expect(GOLDEN_FIVE_SECTION).toHaveLength(3_328);
 
     const spy = geminiHarness();
     extractUrls.mockReturnValueOnce(["https://example.com/posting"]);

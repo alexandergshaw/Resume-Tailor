@@ -12,6 +12,7 @@ import { useIsMobile } from "../hooks/useResponsive";
 import { resolveDocumentBlob } from "../../lib/document/docx";
 import { selectAppliedToggleAction } from "../../lib/applications/applicationDecisions";
 import { openPostingBeside } from "../../lib/window/openPostingBeside";
+import { postingSalaryStated } from "../../lib/salary/salaryEstimate";
 
 // edited/*: a tailoring entry's hand-edit flag, per scope ({ resume, cover }),
 // mirroring the helper in app/hooks/useDocumentPreview.js. An object is
@@ -655,6 +656,21 @@ export default function StatusBar({
                       content: `${buildJobContextString(jobForContext)}${tailoredContent}`,
                       prompt: `Help me with the ${menuJob.title || "this"} role${menuJob.company ? ` at ${menuJob.company}` : ""}: `,
                       sourceJobId: menuJob.id,
+                      // N65 step 3: the posting descriptor the ChatPanel
+                      // "Estimate salary" affordance is gated on
+                      // (chatPinnedContext.posting). salaryStated reuses the
+                      // S1 gate so the affordance never offers to estimate
+                      // over a posting that already states pay.
+                      posting: {
+                        title: menuJob.title || "",
+                        company: menuJob.company || "",
+                        location: jobForContext.location || "",
+                        salaryStated: postingSalaryStated({
+                          salaryMin: jobForContext.salaryMin,
+                          salaryMax: jobForContext.salaryMax,
+                          description: jobForContext.description,
+                        }),
+                      },
                     });
                   })
                 }

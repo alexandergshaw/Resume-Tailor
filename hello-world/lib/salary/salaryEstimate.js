@@ -9,17 +9,18 @@
 // this from a chatbot guessing (app-vs-chat REMOVAL test, S13). Do not move
 // it, do not duplicate it, do not make it conditional.
 //
-// EXPORT SURFACE. Only `buildSalaryEstimate` is exported (plan P-R2):
-// `parseEstimateRange`, `usableCitations` and `deriveBasisKind` stay
-// module-private, reached only through the public builder, so the
-// export-reachability census (lib/sourceScan/exportReachability.sweep.test.js)
-// gains no test-only export. `postingSalaryStated` is added in a later step,
-// with its own production importer, and is deliberately not here yet.
+// EXPORT SURFACE. `buildSalaryEstimate` and `postingSalaryStated` are
+// exported (plan P-R2): `parseEstimateRange`, `usableCitations` and
+// `deriveBasisKind` stay module-private, reached only through the public
+// builder, so the export-reachability census
+// (lib/sourceScan/exportReachability.sweep.test.js) gains no test-only
+// export. `postingSalaryStated` (step 3) is the S1 "when not mentioned" gate:
+// its production importer is StatusBar.js.
 // ---------------------------------------------------------------------------
 
 import { citationHref, citationHost, servesGroundingRedirect } from "../tracking/citationHref.js";
 import { citationTitle } from "../tracking/citationLabel.js";
-import { parseSalary } from "../feed/salary.js";
+import { parseSalary, resolvePostingSalary } from "../feed/salary.js";
 
 // Reads ONLY the first `ESTIMATE:` line the model produced -- scanning the
 // whole prose for a stray number is deliberately NOT done, or an incidental
@@ -153,4 +154,14 @@ export function buildSalaryEstimate({ outputText, sources, searched, truncated, 
     searched: isSearched,
     truncated: isTruncated,
   };
+}
+
+// The S1 "when not mentioned" gate: true iff the posting ALREADY states pay
+// (structured columns, or a parseable figure in its own description text),
+// reusing lib/feed/salary.js's resolvePostingSalary rather than a second
+// detection. When true, the caller must show the stated figure and never
+// call the estimator (never estimate over a stated salary).
+export function postingSalaryStated({ salaryMin, salaryMax, description } = {}) {
+  const resolved = resolvePostingSalary({ min: salaryMin, max: salaryMax }, description);
+  return resolved.min != null || resolved.max != null;
 }
