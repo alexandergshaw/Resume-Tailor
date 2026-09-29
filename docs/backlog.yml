@@ -1138,6 +1138,18 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N99"
+  state: "actionable"
+  title: "**TEST GAP (non-blocking): `resolveNoopMove` has no direct test.** The N95 fresh verifier (SHIP on 4d2d5a7) found that `resolveNoopMove` in lib/acceptedFacts/moveOptimism.js -- the extracted boundary/refused-outcome helper for a move at the first/last slot -- has no direct unit test and no indirect test exercises its reason-text branches (grep confirms only the production call site references those strings). Its behavior is provably byte-identical to the pre-N95 inline code (per the commit diff), so this is a coverage hole, not a live defect. **Fix**: add a unit test pinning resolveNoopMove's no-op outcome and its reason text for a first-slot and last-slot move, so a future change to those branches cannot regress silently. Test-only."
+  owed_by: "A small test-only round"
+  evidence: ["docs/loop/N95.verify.r1.md finding (non-blocking) — fresh verifier on 4d2d5a7", "lib/acceptedFacts/moveOptimism.js resolveNoopMove — extracted, only the production call site references its reason strings"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 - id: "D2"
   state: "owner"
   title: "**The transport claim is doc-verified, not wire-verified.**"
