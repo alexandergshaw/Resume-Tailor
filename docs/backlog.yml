@@ -1063,6 +1063,30 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N93"
+  state: "actionable"
+  title: "**SMOOTHING HAS NO POST-APPLY UNDO (AC-B6), though the criteria promised one.** N92 Wave 3 (commit f980b66) shipped the LLM smooth-transition control with confirm-before-persist: the user approves a before/after and only then does it apply. That is verified sound. But AC-B6 in docs/loop/N92.ac.r1.md is a settled, unqualified criterion for post-apply UNDO (revert an already-applied smoothing), and it has ZERO implementation — grep for \"undo\" across the Wave-3 production files finds nothing. The decision to scope it out lived only in the 4b TDD hand-off notes, not the AC, so the AC and the shipped feature disagree about completeness; the orchestrator's own commit message overclaimed \"the fact-positioning controls are complete.\" **This is not safety-blocking**: the confirm step means nothing is applied without approval, the letter remains editable, and version history exists. **What it costs the user**: after approving a smoothing they later dislike, there is no one-click revert to the pre-smoothing text; they must edit by hand or regenerate. **Fix direction**: either implement B6 (stash the pre-smoothing before/fact/after and a one-click restore, parallel to the move's reversibility), or the owner formally accepts confirm-before-persist as sufficient and AC-B6 is retired with that rationale recorded. Owner call, since it is a scope decision, not a defect."
+  owed_by: "An owner decision (build B6 or retire it), then a small round if built"
+  evidence: ["docs/loop/N92.ac.r1.md AC-B6 — settled unqualified post-apply-undo criterion", "docs/loop/N92.verify.w3.r1.md — fresh verifier found zero undo implementation in Wave 3", "commit f980b66 — shipped confirm-before-persist but not undo; message overclaimed completeness", "docs/loop/N92.tests.w3.r1.md — the scope-out decision lived only here, not in the AC"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N94"
+  state: "actionable"
+  title: "**SMOOTHING: a provenance-coverage gap and two minor logging gaps (N92 Wave 3 follow-ups).** The fresh verifier on f980b66 SHIPPED the control but flagged three non-blocking items. (1) AC-B4 (a smoothing preserves the fact's source link + one-click Remove) has NO dedicated test, unit or end-to-end; the verifier confirmed the behavior is CORRECT via a scratchpad probe, so this is a coverage hole, not a live defect — add a test so a future change cannot silently break provenance after a smoothing. (2) `confirmSmoothTransition` logs the `fact-smooth` decision as \"acted\" UNCONDITIONALLY even if the internal persist fails — the log can claim success on a failure. (3) Smoothing a SECOND fact silently drops the first still-pending candidate without recording a decline — the pending-candidate is lost with no ledger trace. Neither logging gap compromises safety, but both undercut the activity log's job of telling the truth about what happened. Also a minor UX note for 8b: the disabled-on-embedded Smooth control shows no visible reason text/tooltip (unlike ChatPanel's \"Offline · no AI\" chip), so it may read as broken rather than unavailable."
+  owed_by: "A small test-plus-fix round"
+  evidence: ["docs/loop/N92.verify.w3.r1.md gaps 2 and 3 + the minor UX note — fresh verifier on f980b66", "AC-B4 in docs/loop/N92.ac.r1.md — provenance criterion with no dedicated test", "confirmSmoothTransition — unconditional acted logging", "a second smooth drops the first pending candidate with no decline recorded"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 - id: "D2"
   state: "owner"
   title: "**The transport claim is doc-verified, not wire-verified.**"
