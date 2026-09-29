@@ -10,11 +10,15 @@
 // `insertFactText` (factInsertion.js:252,:66-71) both finish with
 // `.replace(/\s{2,}/g," ").trim()` on the WHOLE line -- fine for their own
 // job, fatal for a reversible move, because it would eat any pre-existing
-// double space elsewhere in the paragraph. This module's excise/insert
-// helpers below touch ONLY the fact's own span plus exactly one
-// insertion-owned adjoining space, so a paragraph's own quirks (a candidate's
-// stray double space) survive a forward-then-backward round trip untouched.
-// `planMoveFact` therefore does NOT import or reuse `planRemoveFact`.
+// double space elsewhere in the paragraph. `planMoveFact` therefore does NOT
+// import or reuse `planRemoveFact`. A SAME-paragraph move (the common case)
+// swaps the fact with its adjacent sentence UNIT (`swapWithNextUnit` /
+// `swapWithPrevUnit` below) without discarding or reconstructing ANY
+// whitespace -- the two units trade places and every separator, including a
+// pre-existing double space on either side of the fact, is re-sliced
+// verbatim off the original line. A CROSS-paragraph move (the fact leaves
+// `line` entirely) still uses the excise/insert helpers, which touch only the
+// fact's own span plus exactly one insertion-owned adjoining space.
 
 // The sentence-boundary DEFINITION reused from lib/text/summarize.js:36
 // (`splitSentences`'s own regex, copied verbatim -- including its curly
@@ -55,6 +59,24 @@ const ABBREVIATIONS = new Set([
   "Co.",
   "vs.",
   "etc.",
+  // Month abbreviations, "No.", and the clock-time markers -- each a single
+  // whitespace-delimited token ending in a period, so a fact date like
+  // "Aug. 2023" or a ranking like "No. 1" is never read as a sentence end.
+  "Jan.",
+  "Feb.",
+  "Mar.",
+  "Apr.",
+  "Jun.",
+  "Jul.",
+  "Aug.",
+  "Sep.",
+  "Sept.",
+  "Oct.",
+  "Nov.",
+  "Dec.",
+  "No.",
+  "a.m.",
+  "p.m.",
 ]);
 
 // The token (including any internal periods, e.g. "U.S.") that ends at
@@ -89,38 +111,79 @@ export function sentenceBounds(text) {
   return bounds;
 }
 
-// The movable "slots" in `text`: the very start, the start of every sentence
-// after the first (sentenceBounds), and the very end. A fact can be spliced
-// into any of these -- never mid-sentence.
-function gapsOf(text) {
-  return [0, ...sentenceBounds(text), text.length];
+// The fact's movable slot boundaries, computed directly on the UNTOUCHED
+// `line` -- never a whitespace-eaten copy (AC-A4 / BUG 1: a carrier built by
+// eating one of the fact's flanking spaces cannot tell a genuine boundary
+// from the middle of a pre-existing double space, so slot-finding must never
+// go through one). Any `sentenceBounds` offset strictly INSIDE the fact's own
+// span (offset, offset+textLen) is excluded, so a multi-sentence fact
+// (AC-A11) is one atomic unit -- its internal boundary is never a slot. The
+// fact's own start/end are kept as slot markers when they coincide with a
+// real boundary.
+function lineGapsExcludingFact(line, offset, textLen) {
+  const boundaries = sentenceBounds(line).filter((g) => g <= offset || g >= offset + textLen);
+  return [0, ...boundaries, line.length];
 }
 
 // Excise the fact's own span (offset..offset+textLen) from `line`, dropping
 // exactly ONE insertion-owned adjoining space -- preferring the one right
 // before the clause, falling back to the one right after -- mirroring
 // `planRemoveFact`'s own rule (factInsertion.js:243-251) but stopping before
-// its line-global normalize (AC-A4). Also returns `gapOffset`: the position,
-// in the RESULTING carrier text and in the SAME coordinate frame
-// `sentenceBounds`/`gapsOf` use (the start of whatever content follows the
-// gap), that the excised fact used to occupy -- so the caller can find which
-// slot the fact is currently in without re-deriving it from `sentenceBounds`
-// alone (a value that would not exist if the fact's own text created the
-// only nearby boundary).
+// its line-global normalize (AC-A4). Used ONLY when a move crosses a
+// paragraph boundary (the fact leaves `line` entirely); a same-paragraph move
+// never calls this -- see `swapWithNextUnit`/`swapWithPrevUnit` below, which
+// operate on the untouched line so neither flanking space is ever discarded.
 function exciseSpanLocal(line, offset, textLen) {
   const head = line.slice(0, offset);
   const tail = line.slice(offset + textLen);
   const carrier = head.endsWith(" ") ? head.slice(0, -1) + tail : tail.startsWith(" ") ? head + tail.slice(1) : head + tail;
-  const tailContent = tail.startsWith(" ") ? tail.slice(1) : tail;
-  const gapOffset = carrier.length - tailContent.length;
-  return { carrier, gapOffset };
+  return { carrier };
 }
 
-// Insert `text` into `carrier` at `gapOffset` (a value from `gapsOf`),
-// adding exactly one owned space on each side that needs one -- the exact
-// inverse of exciseSpanLocal. Returns the exact offset `text` now occupies
-// (computed directly, never re-derived via `indexOf`, so a fact whose text
-// recurs elsewhere on the same line is never mislocated).
+// AC-A4 / BUG 1: swap the fact with the unit immediately AFTER it. Neither
+// unit's own flanking whitespace is touched -- the two units simply trade
+// places, so `midSep` (the run between them) survives byte-for-byte
+// regardless of whether it is a single space or a pre-existing double space,
+// and the move is trivially its own inverse (`swapWithPrevUnit` undoes it
+// exactly). `gaps`/`slotIndex` come from `lineGapsExcludingFact` on this same
+// `line`, so `gaps[slotIndex]` is the fact's own start (`offset`).
+function swapWithNextUnit(line, offset, textLen, gaps, slotIndex) {
+  const nextStart = gaps[slotIndex + 1];
+  const midSep = line.slice(offset + textLen, nextStart);
+  const nextEnd = slotIndex + 2 < gaps.length ? gaps[slotIndex + 2] : line.length;
+  const rawNext = line.slice(nextStart, nextEnd);
+  const trailing = rawNext.match(/\s+$/);
+  const nextText = trailing ? rawNext.slice(0, rawNext.length - trailing[0].length) : rawNext;
+  const before = line.slice(0, offset);
+  const fact = line.slice(offset, offset + textLen);
+  // Whatever trails `nextText` (its own trailing separator, then anything
+  // beyond) is re-sliced straight off `line` -- never reconstructed -- so it
+  // is preserved byte-for-byte regardless of length.
+  const after = line.slice(nextStart + nextText.length);
+  return { line: `${before}${nextText}${midSep}${fact}${after}`, offset: before.length + nextText.length + midSep.length };
+}
+
+// The mirror of `swapWithNextUnit`: swap the fact with the unit immediately
+// BEFORE it.
+function swapWithPrevUnit(line, offset, textLen, gaps, slotIndex) {
+  const prevStart = gaps[slotIndex - 1];
+  const rawPrev = line.slice(prevStart, offset);
+  const sepMatch = rawPrev.match(/\s+$/);
+  const sep = sepMatch ? sepMatch[0] : "";
+  const prevText = sep ? rawPrev.slice(0, rawPrev.length - sep.length) : rawPrev;
+  const before = line.slice(0, prevStart);
+  const fact = line.slice(offset, offset + textLen);
+  const after = line.slice(offset + textLen);
+  return { line: `${before}${fact}${sep}${prevText}${after}`, offset: before.length };
+}
+
+// Insert `text` into `carrier` at `gapOffset`, adding exactly one owned space
+// on each side that needs one -- the exact inverse of `exciseSpanLocal`. Used
+// ONLY for a cross-paragraph move's destination line (the fact's own
+// paragraph never calls this -- see the swap helpers above). Returns the
+// exact offset `text` now occupies (computed directly, never re-derived via
+// `indexOf`, so a fact whose text recurs elsewhere on the same line is never
+// mislocated).
 function insertSpanLocal(carrier, gapOffset, text) {
   const head = carrier.slice(0, gapOffset);
   const tail = carrier.slice(gapOffset);
@@ -186,32 +249,43 @@ export function planMoveFact({ lines, records, id, direction, bounds } = {}) {
   }
 
   const { minLine, maxLine } = bounds || bodyBounds(arr);
-  // AC-A11: excise the WHOLE fact span first (its own internal [.!?], if
-  // any, never reaches sentenceBounds below), then segment the CARRIER --
-  // the atomicity falls straight out of this ordering.
-  const { carrier, gapOffset } = exciseSpanLocal(sourceLine, offset, text.length);
-  const gaps = gapsOf(carrier);
-  let slotIndex = gaps.indexOf(gapOffset);
-  if (slotIndex < 0) slotIndex = gaps.reduce((best, g, i) => (g <= gapOffset ? i : best), 0);
-  const targetSlot = direction === "backward" ? slotIndex - 1 : slotIndex + 1;
+  // AC-A4/A11/BUG 1: find the fact's slot directly on the untouched
+  // `sourceLine` -- never a carrier that has already eaten one of its
+  // flanking spaces (see `lineGapsExcludingFact`). Its own internal [.!?],
+  // if any, is excluded from the boundary set, so a multi-sentence fact
+  // (AC-A11) is one atomic unit.
+  const gaps = lineGapsExcludingFact(sourceLine, offset, text.length);
+  let slotIndex = gaps.indexOf(offset);
+  if (slotIndex < 0) slotIndex = gaps.reduce((best, g, i) => (g <= offset ? i : best), 0);
+  const hasPrevUnit = slotIndex > 0;
+  const hasNextUnit = slotIndex + 1 < gaps.length - 1;
 
   const outLines = [...arr];
   const changedLines = new Map();
   let movedLineIndex;
   let movedOffset;
 
-  if (targetSlot >= 0 && targetSlot < gaps.length) {
-    // Same-paragraph move: re-insert into the same carrier at the adjacent slot.
-    const inserted = insertSpanLocal(carrier, gaps[targetSlot], text);
-    outLines[lineIndex] = inserted.line;
-    changedLines.set(lineIndex, inserted.line);
+  if (direction === "backward" && hasPrevUnit) {
+    // Same-paragraph move: swap with the unit immediately before, preserving
+    // every separator byte-for-byte (AC-A4).
+    const swapped = swapWithPrevUnit(sourceLine, offset, text.length, gaps, slotIndex);
+    outLines[lineIndex] = swapped.line;
+    changedLines.set(lineIndex, swapped.line);
     movedLineIndex = lineIndex;
-    movedOffset = inserted.offset;
-  } else if (targetSlot < 0) {
-    // AC-A3: backward past this paragraph's first slot -- cross into the
-    // PREVIOUS body paragraph's last slot, or a boundary no-op at minLine.
+    movedOffset = swapped.offset;
+  } else if (direction !== "backward" && hasNextUnit) {
+    // Same-paragraph move: swap with the unit immediately after.
+    const swapped = swapWithNextUnit(sourceLine, offset, text.length, gaps, slotIndex);
+    outLines[lineIndex] = swapped.line;
+    changedLines.set(lineIndex, swapped.line);
+    movedLineIndex = lineIndex;
+    movedOffset = swapped.offset;
+  } else if (direction === "backward") {
+    // AC-A3: no earlier unit in this paragraph -- cross into the PREVIOUS
+    // body paragraph's last slot, or a boundary no-op at minLine.
     const prevLineIndex = lineIndex - 1;
     if (prevLineIndex < minLine) return noop("boundary"); // never into the greeting
+    const { carrier } = exciseSpanLocal(sourceLine, offset, text.length);
     outLines[lineIndex] = carrier;
     changedLines.set(lineIndex, carrier);
     const destLine = String(arr[prevLineIndex] ?? "");
@@ -221,10 +295,11 @@ export function planMoveFact({ lines, records, id, direction, bounds } = {}) {
     movedLineIndex = prevLineIndex;
     movedOffset = inserted.offset;
   } else {
-    // AC-A3: forward past this paragraph's last slot -- cross into the NEXT
-    // body paragraph's first slot, or a boundary no-op at maxLine.
+    // AC-A3: no later unit in this paragraph -- cross into the NEXT body
+    // paragraph's first slot, or a boundary no-op at maxLine.
     const nextLineIndex = lineIndex + 1;
     if (nextLineIndex > maxLine) return noop("boundary"); // never into the closing/signature
+    const { carrier } = exciseSpanLocal(sourceLine, offset, text.length);
     outLines[lineIndex] = carrier;
     changedLines.set(lineIndex, carrier);
     const destLine = String(arr[nextLineIndex] ?? "");
@@ -254,7 +329,15 @@ export function planMoveFact({ lines, records, id, direction, bounds } = {}) {
 // occurrence rather than a sibling's (mirrors useCompanyResearch.js's own
 // `relocateSurvivors`). A record on an unaffected line is returned by
 // reference, unchanged.
+//
+// BUG 3 (AC-A5/A7): the moved fact's OWN new span is reserved on its
+// destination line before any survivor is resolved there, so a survivor with
+// IDENTICAL text never resolves onto the occurrence the moved fact now
+// occupies -- each keeps its own distinct physical occurrence.
 function relocateAffected(list, changedLines, movedId, movedLineIndex, movedOffset) {
+  const movedRecord = list.find((r) => r?.id === movedId);
+  const movedTextLen = movedRecord && typeof movedRecord.text === "string" ? movedRecord.text.length : 0;
+
   const byLine = new Map();
   for (const r of list) {
     if (r?.id === movedId) continue;
@@ -265,12 +348,26 @@ function relocateAffected(list, changedLines, movedId, movedLineIndex, movedOffs
   const relocatedById = new Map();
   for (const [li, recs] of byLine) {
     const lineText = changedLines.get(li);
+    const claimed = li === movedLineIndex && movedTextLen > 0 ? [[movedOffset, movedOffset + movedTextLen]] : [];
+    const overlapsClaimed = (start, len) => claimed.some(([cs, ce]) => start < ce && start + len > cs);
+    const findOwnOccurrence = (needle, fromIndex) => {
+      let at = lineText.indexOf(needle, fromIndex);
+      while (at >= 0 && overlapsClaimed(at, needle.length)) at = lineText.indexOf(needle, at + 1);
+      if (at < 0 && fromIndex > 0) {
+        at = lineText.indexOf(needle, 0);
+        while (at >= 0 && overlapsClaimed(at, needle.length)) at = lineText.indexOf(needle, at + 1);
+      }
+      return at;
+    };
+
     const sorted = [...recs].sort((a, b) => (a.offset ?? 0) - (b.offset ?? 0));
     let cursor = 0;
     for (const r of sorted) {
-      let at = lineText.indexOf(r.text, cursor);
-      if (at < 0) at = lineText.indexOf(r.text);
-      if (at >= 0) cursor = at + r.text.length;
+      const at = findOwnOccurrence(r.text, cursor);
+      if (at >= 0) {
+        claimed.push([at, at + r.text.length]);
+        cursor = at + r.text.length;
+      }
       relocatedById.set(r.id, at >= 0 ? { ...r, lineIndex: li, offset: at } : { ...r, lineIndex: li });
     }
   }
