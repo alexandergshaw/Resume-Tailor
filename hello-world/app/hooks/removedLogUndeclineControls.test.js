@@ -244,10 +244,91 @@ describe("N90 FIX 1 control: removing a fact still records its url in the remove
   });
 });
 
-// WHAT THIS FILE CANNOT CATCH. Both are GREEN controls -- they cannot fail on
-// HEAD and are not evidence of the FIX 1 defect (that is
-// acceptUndeclinesRemoved.rc.test.js). They stub /api/accepted-facts, so the
-// route/RPC/column are not exercised; they prove only the CLIENT sends the
-// right removed-log value. They are driven as hook functions, not through the
-// effect/strip that fires them in the app (reachability lives in the sibling
-// .rc files named in the header).
+// ===========================================================================
+// N91 -- the id-keyed half of FIX 1's own un-decline (regression guard; GREEN
+// on HEAD, unlike the RED-on-HEAD defect pinned in acceptUndeclinesRemoved.rc.
+// test.js). `acceptFacts`'s `acceptedKeys` Set matches on BOTH url and id
+// (useCompanyResearch.js:447, `facts.flatMap((f) => [f?.url, f?.id])`),
+// mirroring `removedKey = record.url || record.id` at :680 -- but every N90
+// test drives url-based un-declining only, so a mutant dropping the `.id`
+// half of that Set survived all 11 N90 tests (N90.verify.r1.md finding 2/3).
+//
+// Driven the same way this file drives autoInsertFactsForJob/removeInsertedFact
+// above: `probe.research.acceptFacts(...)` is the real exported function
+// page.js wires to the dialog's onAccept, called with a hand-built selection
+// shaped exactly like CompanyResearchDialog's acceptSelection() output for a
+// url-less article (`{id, text, url: "", title, source, placement,
+// textOrigin}`) -- the same pattern acceptDurabilityAndConflict.test.js uses
+// for acceptFacts generally. A DOM-driven fixture cannot pin the id branch:
+// useCompanyResearch's own withMintedIds/mintArticleId (:174-175) discards
+// every incoming article's id and re-mints it from the url, and a url-less
+// article's fallback id is a non-deterministic runStamp -- so a hand-built
+// selection is the only way to fix the id being un-declined to a known value.
+// ===========================================================================
+describe("N91: an explicit accept also un-declines an id-keyed removed entry (no url)", () => {
+  it("drops the accepted fact's id -- not just a url -- from the persisted removed log", async () => {
+    const ID_ONLY_KEY = "fact-support-hub";
+    const UNTOUCHED_URL = "https://press.example.org/keep-this-removed";
+    const FACT_TEXT = "Acme relocated its support hub to Austin, right as I was moving there myself.";
+
+    await mount({ [JOB_ID]: entryWithEngineLetter() });
+    // A returning candidate's store row after an earlier removal of a
+    // url-less fact: removeInsertedFact's `record.url || record.id` would
+    // have stored its id, not a url, in the removed log. Seeded through the
+    // real GET seedResearch fires, plus an untouched url-keyed entry so an
+    // over-broad fix (clearing by url only, or wiping the whole log) is
+    // distinguishable from the real, scoped one.
+    await seedResearch([], { removed: [ID_ONLY_KEY, UNTOUCHED_URL] });
+    expect(
+      probe.research.acceptedFactsByJob[JOB_ID]?.removed || [],
+      "the removed log was not seeded from the GET -- the prior-removal precondition is not in place",
+    ).toEqual([ID_ONLY_KEY, UNTOUCHED_URL]);
+
+    let result = null;
+    await act(async () => {
+      result = await probe.research.acceptFacts({
+        facts: [
+          {
+            id: ID_ONLY_KEY,
+            text: FACT_TEXT,
+            url: "",
+            title: "Acme relocates its support hub",
+            source: "Newsroom",
+            placement: "current",
+            textOrigin: "template",
+          },
+        ],
+        declinedUrls: [],
+      });
+    });
+    await drain();
+
+    expect(result?.ok, `the accept was refused -- the test would be vacuous: ${result?.reason}`).toBe(true);
+    // Non-vacuity: the accept genuinely inserted the fact.
+    expect(coverLines().join("\n"), "the accept did not insert the fact -- nothing was actually accepted").toContain(FACT_TEXT);
+
+    const put = lastPut();
+    expect(
+      put.declinedUrls || [],
+      "the accepted fact's id is STILL in the removed log after an explicit accept (N91 -- id-based un-decline gap)",
+    ).not.toContain(ID_ONLY_KEY);
+    expect(store.removed, "the store still holds the accepted id as removed").not.toContain(ID_ONLY_KEY);
+
+    // CONTROL: an unrelated url-keyed entry survives -- id-based un-declining
+    // must be scoped to what was accepted, same as the url-keyed case in
+    // acceptUndeclinesRemoved.rc.test.js.
+    expect(
+      put.declinedUrls || [],
+      "accepting the id-keyed fact wiped an unrelated url-keyed retraction from the removed log",
+    ).toContain(UNTOUCHED_URL);
+    expect(store.removed, "the store lost an unrelated url-keyed retraction on an id-based accept").toContain(UNTOUCHED_URL);
+  });
+});
+
+// WHAT THIS FILE CANNOT CATCH. All three describes above are GREEN controls
+// -- they cannot fail on HEAD and are not evidence of the FIX 1 defect (that
+// is acceptUndeclinesRemoved.rc.test.js). They stub /api/accepted-facts, so
+// the route/RPC/column are not exercised; they prove only the CLIENT sends
+// the right removed-log value. They are driven as hook functions, not
+// through the effect/strip/dialog that fires them in the app (reachability
+// lives in the sibling .rc files named in the header).
