@@ -360,17 +360,26 @@ describe("accepting a fact is refused when the engine's copy of the letter is ab
     expect(research.companyResearch.acceptError || "").toBe("");
   });
 
-  it("CONTROL: an entry with NO cover letter at all is not caught by the guard", async () => {
-    // The guard is about a letter whose BYTES are missing, not about the
-    // absence of a letter. An email-only accept must still go through.
+  it("CONTROL: an entry with NO cover letter at all is honestly refused, not silently passed through", async () => {
+    // Written before commit 607da82a (the N81 closing round), this control
+    // originally expected a no-cover-letter accept to pass through -- there
+    // was no other destination for the fact to land in back then, so that
+    // pass-through was itself silent data loss. 607da82a made the manual
+    // accept path give the SAME honest NO_COVER_LETTER_REASON the automatic
+    // path already used (useCompanyResearch.js:392-395, `!hasCoverLetter`)
+    // instead of a stray ALREADY_PRESENT_NOTICE. There is no other
+    // destination for an accepted fact in this codebase (no email path
+    // exists), so refusing before any write is the correct, honest behavior.
     const entry = baseEntry({ coverLetterResultLines: [], coverLetterDocxB64: "" });
     await mount(entry);
     let result;
     await act(async () => {
       result = await research.acceptFacts(SELECTION);
     });
-    expect(result.ok).toBe(true);
-    expect(acceptedFactsWrites()).toHaveLength(1);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/no cover letter/i);
+    expect(acceptedFactsWrites()).toHaveLength(0);
+    expect(research.companyResearch.acceptError).toBeTruthy();
   });
 
   it("leaves the document EXACTLY as it was -- text, bytes and edited flag", async () => {
