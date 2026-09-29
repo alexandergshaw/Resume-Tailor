@@ -109,11 +109,16 @@ const LINE_REBUILD_NOTICE =
 // template (page.js state, forwarded here new in this chunk) -- the AC-9
 // discriminator between a Gemini letter that can be rebuilt from its
 // template (Shape B) and one that genuinely cannot (residual Shape C).
+// N92 Wave 2 (Control C): `forwardPositioning` is the user's saved forward
+// preference (page.js's `forward` from useCoverFactPlacement) -- threaded
+// only into the truly-automatic path below (autoInsertFactsForJob), never
+// into acceptFacts' manual path (AC-C8: a hand-set placement outranks it).
 export function useCompanyResearch({
   tailoringMap,
   setTailoringMap,
   setPreviewReloadKey,
   defaultPlacement,
+  forwardPositioning,
   supabase,
   currentUser,
   coverLetterFile,
@@ -827,7 +832,10 @@ export function useCompanyResearch({
     const placement = defaultPlacement || DEFAULT_PLACEMENT;
     const facts = eligible.map((a) => ({ id: a.id, text: a.suggestion, url: a.url, title: a.title, placement }));
     const priorRecord = priorFacts.map((f) => ({ id: f?.id ?? null, text: f?.text ?? "" }));
-    const plan = planAcceptForEntry(entry, { facts, coverRecord: priorRecord });
+    // N92 Wave 2 (Control C, AC-C1): threaded here so the truly-automatic
+    // path honours the saved forward preference the same way it already
+    // honours the saved placement default just above.
+    const plan = planAcceptForEntry(entry, { facts, coverRecord: priorRecord, forwardNudge: forwardPositioning });
     if (plan.cover.edits.length === 0) {
       return { ok: false, reason: "Nothing new to insert.", severity: "info", code: "nothing-new" };
     }
@@ -914,7 +922,12 @@ export function useCompanyResearch({
       const freshLines = Array.isArray(cur.coverLetterResultLines) ? cur.coverLetterResultLines : [];
       const linesChanged =
         freshLines.length !== snapshotLines.length || freshLines.some((line, i) => line !== snapshotLines[i]);
-      const coverPlan = linesChanged ? planAcceptForEntry(cur, { facts, coverRecord: priorRecord }) : plan;
+      // N92 Wave 2: the re-plan branch must carry the SAME forwardNudge the
+      // snapshot plan above was built with, or a candidate typing mid-await
+      // would silently lose the forward nudge on this run.
+      const coverPlan = linesChanged
+        ? planAcceptForEntry(cur, { facts, coverRecord: priorRecord, forwardNudge: forwardPositioning })
+        : plan;
       if (linesChanged && coverPlan.cover.edits.length === 0) return current;
 
       const next = { ...cur };
@@ -939,6 +952,14 @@ export function useCompanyResearch({
     // Bump the reload key so an already-open preview re-parses the body model
     // and shows the fact highlighted, the same way removeInsertedFact does.
     setPreviewReloadKey((k) => k + 1);
+    // N92 Wave 2 (AC-X1): records under the SAME `fact-position` entry
+    // Control A's move uses (design section 5, no second ledger entry) --
+    // only when the preference actually moved a fact this run, so forward OFF
+    // (or a nudge that had nothing to move into) records nothing. Counts/enums
+    // only -- `plan.cover.nudgedCount` is a number, never the fact's own text.
+    if (forwardPositioning && plan.cover.nudgedCount > 0) {
+      recordDecision("fact-position", "acted", { direction: "forward", reason: "auto-nudge", code: "auto-nudge", count: plan.cover.nudgedCount });
+    }
     // N77: `facts.length` is the real count of articles this call found
     // eligible and spliced in -- not a literal -- so a caller that logs it
     // (DocumentPreviewMount.js) reports the actual number inserted, and a

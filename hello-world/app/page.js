@@ -242,7 +242,10 @@ export default function Home() {
   // cover-letter facts -- read once here so both the truly-automatic path
   // (useCompanyResearch below) and the research dialog's card defaults
   // inherit the SAME value, with no per-application re-selection step.
-  const { placement: coverFactPlacement } = useCoverFactPlacement();
+  // N92 Wave 2 (Control C): `forward` is the saved "position facts forward on
+  // future letters" preference, read off the SAME hook as coverFactPlacement
+  // above -- no second /api/user-prefs source.
+  const { placement: coverFactPlacement, forward: coverFactForward } = useCoverFactPlacement();
   // Per-job company research (warmed behind the preview; woven into the cover).
   // N59: supabase/currentUser let acceptFacts/autoInsertFactsForJob/
   // removeInsertedFact resolve a saved letter's stored docx_path back into
@@ -252,6 +255,7 @@ export default function Home() {
     setTailoringMap,
     setPreviewReloadKey,
     defaultPlacement: coverFactPlacement,
+    forwardPositioning: coverFactForward,
     supabase: createClient(),
     currentUser,
     coverLetterFile,

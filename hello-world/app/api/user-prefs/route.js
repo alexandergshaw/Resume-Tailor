@@ -10,6 +10,10 @@ const ALLOWED_BOOLEAN_KEYS = new Set([
   "referencesOpen",
   "educationOpen",
   "hideAppliedJobs",
+  // N92 Wave 2 (Control C): the persisted "position facts forward on all
+  // future generated cover letters" preference -- additive, strict-boolean
+  // like every other key in this set (AC-C3/C5); no other branch changes.
+  "coverFactForward",
 ]);
 
 // Sort preference for the applications table on the Interviewing tab.

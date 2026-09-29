@@ -8,6 +8,7 @@
 // sentence with one more clause.
 
 import { PLACEMENTS, DEFAULT_PLACEMENT } from "../document/coverLetterWeave.js";
+import { planMoveFact } from "./factMove.js";
 
 // The cover letter's paragraph "slots" a fact can land in: imports the SAME
 // table lib/document/coverLetterWeave.js uses for the research-weave
@@ -384,17 +385,73 @@ export function mergeAcceptedFacts(prior, incoming) {
   return merged;
 }
 
+// N92 Wave 2 (Control C, design section 4.3 / AC-C1/AC-C2/AC-C9): after
+// planCoverFacts locates each newly-inserted fact, nudge EACH ONE exactly one
+// sentence slot forward via planMoveFact -- the SAME primitive Control A
+// (Wave 1) uses, so the two controls cannot diverge (AC-C2). Applied per
+// fact (AC-C9), never as a group/paragraph-level shift; "newly-inserted"
+// means the tail of `cover.record` beyond the caller's `coverRecord` --
+// planCoverFacts only ever APPENDS to that array, never rewrites an earlier
+// entry, so the tail is exactly this call's own inserts.
+//
+// RIGHTMOST-FIRST (AC-C9 coalescing). Two facts N56-coalesces onto one
+// paragraph read, to the segmenter, as adjacent sentence units with nothing
+// between them -- moving the LEFTMOST one first would swap it past its own
+// trailing sibling (planMoveFact's forward move is "swap with the next
+// sentence unit", and a freshly-inserted sibling fact IS that unit),
+// reversing N56's screen order. Processing in decreasing (lineIndex, offset)
+// order relocates each trailing fact out of the way first, so a coalesced
+// pair shifts forward TOGETHER, in their original relative order.
+//
+// KNOWN RESIDUAL: only `lines`/`record` are updated here, `edits` is left
+// exactly as planCoverFacts produced it (the plain insert). Appending the
+// nudge's own edits would fail applyCoverDocxEdits' staleness guard -- every
+// edit's `before` is checked against the SAME pre-insert snapshot
+// (factDocx.js), so a nudge edit's `before` (the POST-insert paragraph)
+// would never match and the whole splice would be refused. Wave 2's own
+// tests exercise the lines-only path (Shape B) for exactly this reason;
+// reconciling the byte-splice path with a nudge is out of this wave's scope.
+function applyForwardNudge(cover, coverRecord) {
+  if (!cover.changed) return cover;
+  const baseLen = Array.isArray(coverRecord) ? coverRecord.length : 0;
+  const newlyLocated = cover.record
+    .slice(baseLen)
+    .filter((r) => typeof r?.lineIndex === "number" && typeof r?.offset === "number");
+  if (newlyLocated.length === 0) return cover;
+
+  const order = [...newlyLocated].sort((a, b) => b.lineIndex - a.lineIndex || b.offset - a.offset);
+  let lines = cover.lines;
+  let records = cover.record;
+  let nudgedCount = 0;
+  for (const rec of order) {
+    const moved = planMoveFact({ lines, records, id: rec.id, direction: "forward" });
+    if (moved.changed) {
+      lines = moved.lines;
+      records = moved.records;
+      nudgedCount += 1;
+    }
+  }
+  return { ...cover, lines, record: records, nudgedCount };
+}
+
 // The whole accept, for one tailoring entry. Currently plans the cover
 // letter only -- the hiring email is plain text assembled at generation
 // time (lib/llm/engines/tailor-lite/engine.js#buildHiringEmailText) and is
 // out of this round's scope.
 //
+// `forwardNudge` (N92 Wave 2, additive, default false): when true, composes
+// Control C's forward nudge on top of the placement this call already
+// resolves -- place FIRST, then nudge (AC-C1). `acceptFacts` (the manual
+// path) never passes it, so a hand-set placement is never nudged (AC-C8);
+// only `autoInsertFactsForJob` does.
+//
 // @param {object} entry  a tailoringMap[jobId] entry
-// @param {{facts: object[], coverRecord?: object[], emailRecord?: object[], previousFacts?: object[]}} opts
+// @param {{facts: object[], coverRecord?: object[], emailRecord?: object[], previousFacts?: object[], forwardNudge?: boolean}} opts
 // @returns {{ cover: ReturnType<typeof planCoverFacts>, pristineCoverLines: (string[]|undefined) }}
-export function planAcceptForEntry(entry, { facts, coverRecord = [] } = {}) {
+export function planAcceptForEntry(entry, { facts, coverRecord = [], forwardNudge = false } = {}) {
   const coverLines = Array.isArray(entry?.coverLetterResultLines) ? entry.coverLetterResultLines : [];
-  const cover = planCoverFacts(coverLines, { facts, record: coverRecord });
+  let cover = planCoverFacts(coverLines, { facts, record: coverRecord });
+  if (forwardNudge) cover = applyForwardNudge(cover, coverRecord);
   return { cover, pristineCoverLines: replacePristineCoverLines(entry, cover) };
 }
 
