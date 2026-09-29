@@ -1126,6 +1126,18 @@
   verify_proof: null
   blocked_by: []
 
+- id: "N98"
+  state: "actionable"
+  title: "**REDUCED-MOTION HOOK for the fact-move/confirm animations (N95 Step 6, deferred).** N95 (commit 4d2d5a7) shipped the optimistic move + working indicators + announcements, but its Step 6 -- honoring `prefers-reduced-motion` for the move/highlight transition -- was correctly NOT built: it touches lib/document/docxPreview.js / versionDiff.js (the widely-tested rendering pipeline, outside N95's authorized modal-file set), it is owner-judged with no jsdom gate, and forcing it in carried real regression risk for zero automated coverage. **Scope**: the fact-move and highlight-transition animation must collapse to no motion (or an instant change) when the user's OS/browser signals prefers-reduced-motion, via a CSS media-query hook on whatever transition N95's animation adds. **Owner-judged acceptance** (real browser with reduced-motion enabled): the transition is suppressed and nothing is lost. Route it as its own small chunk against the render pipeline, not folded into a modal chunk."
+  owed_by: "A small round adding a prefers-reduced-motion CSS hook to the move/highlight transition"
+  evidence: ["docs/loop/N95.ac.r1.md AC-O5 (prefers-reduced-motion, owner-judged)", "N95 implementer hand-back 2026-09-29: Step 6 deferred, touches docxPreview.js/versionDiff.js outside the modal set", "commit 4d2d5a7 shipped N95 without the reduced-motion hook"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
 - id: "D2"
   state: "owner"
   title: "**The transport claim is doc-verified, not wire-verified.**"
