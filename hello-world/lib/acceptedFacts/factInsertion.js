@@ -258,6 +258,47 @@ export function planRemoveFact(lines, locator) {
   return { lines: out, edit: { lineIndex, before, after }, changed: true };
 }
 
+// N61 (live defect, chunk N61): every researched article defaults to the
+// "intro" placement, so two or three accepted facts routinely COALESCE onto
+// one paragraph (planCoverFacts above groups same-line facts into a single
+// edit). Removing one of several same-line facts left every LATER survivor's
+// stored `offset` stale against the now-shorter line: `planRemoveFact`
+// (survivor) then found the survivor's text was not where the record said
+// and refused `{changed:false}` (permanently unremovable), and
+// `markInsertedFacts` matched nothing either (permanently unhighlighted) --
+// an unremovable, unhighlightable claim reaching the employer-bound letter.
+//
+// `facts` is expected in screen order (the order `planCoverFacts` located
+// them in), so relocating each survivor's text against the NEW line with a
+// per-line cursor -- mirroring `planCoverFacts`' own locate loop -- finds
+// each survivor's OWN occurrence rather than a sibling's, satisfying the
+// invariant removal must never break: every surviving record locates its own
+// text in the resulting line, regardless of removal order.
+//
+// Moved out of app/hooks/useCompanyResearch.js (N92 Wave 1 file-size
+// contingency, mirroring N89 Part 1's own move of `coverFactStrategy`/
+// `filterEligibleArticles` into this same file) so that hook's new
+// `moveInsertedFact` addition has room under its line ceiling; `removeInsertedFact`
+// there now imports this instead of defining it locally -- behaviour
+// byte-identical, only the module moved.
+//
+// @param {string[]} lines  the entry's coverLetterResultLines AFTER a removal
+// @param {object[]} facts  the surviving located records, in screen order
+// @returns {object[]} the same records, each with a re-located `offset`
+export function relocateSurvivors(lines, facts) {
+  const arr = Array.isArray(lines) ? lines : [];
+  const cursorByLine = new Map();
+  return (Array.isArray(facts) ? facts : []).map((f) => {
+    if (typeof f?.lineIndex !== "number" || typeof f?.text !== "string" || !f.text) return f;
+    const line = String(arr[f.lineIndex] ?? "");
+    const from = cursorByLine.get(f.lineIndex) || 0;
+    let at = line.indexOf(f.text, from);
+    if (at < 0) at = line.indexOf(f.text);
+    if (at >= 0) cursorByLine.set(f.lineIndex, at + f.text.length);
+    return at >= 0 ? { ...f, offset: at } : f;
+  });
+}
+
 // The two consumers that read `pristineCoverLines` back out (editMining.js
 // and editRules.js, see below) do not agree on one normalisation, so a
 // pristine line is considered "the same line" as the accept's pre-edit text

@@ -4,6 +4,8 @@ import Box from "@mui/material/Box";
 import IconButton from "@mui/material/IconButton";
 import CloseIcon from "@mui/icons-material/Close";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
+import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
 import { safeExternalHref } from "@/lib/url/safeExternalHref";
 
 // N61 -- the cover letter's inserted-fact review strip: the owner's "I
@@ -20,7 +22,14 @@ import { safeExternalHref } from "@/lib/url/safeExternalHref";
 // No Tooltip wrapper on the Remove control: MUI's Tooltip can steal a
 // child's own accessible name, and this control's aria-label IS the
 // reachability contract removal's render-and-click tests key on.
-export default function InsertedFactsStrip({ facts = [], onRemove, error = "" }) {
+//
+// N92 Wave 1 (Control A): a back and a forward move control per row, same
+// no-Tooltip rule. `movability` is a `{[factId]: {forward, backward}}` map
+// the caller pre-computes (via `planMoveFact`'s own `changed` flag) so a
+// control at a boundary is DISABLED before the click, never a live-looking
+// arrow that silently no-ops (AC-A6) -- the caller knows the letter's lines
+// and every fact's slot; this component only renders what it is told.
+export default function InsertedFactsStrip({ facts = [], onRemove, onMove, movability = {}, error = "" }) {
   const list = Array.isArray(facts) ? facts : [];
   if (list.length === 0) return null;
   return (
@@ -45,6 +54,24 @@ export default function InsertedFactsStrip({ facts = [], onRemove, error = "" })
                 </IconButton>
               ) : null}
             </Box>
+            <IconButton
+              size="small"
+              aria-label="Move this fact one sentence earlier"
+              disabled={!movability[fact.id]?.backward}
+              onClick={() => onMove?.(fact.id, "backward")}
+              sx={{ p: 0.25 }}
+            >
+              <ArrowBackIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+            <IconButton
+              size="small"
+              aria-label="Move this fact one sentence later"
+              disabled={!movability[fact.id]?.forward}
+              onClick={() => onMove?.(fact.id, "forward")}
+              sx={{ p: 0.25 }}
+            >
+              <ArrowForwardIcon sx={{ fontSize: 16 }} />
+            </IconButton>
             <IconButton size="small" aria-label="Remove this fact" onClick={() => onRemove?.(fact.id)} sx={{ p: 0.25 }}>
               <CloseIcon sx={{ fontSize: 16 }} />
             </IconButton>

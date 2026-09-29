@@ -685,7 +685,16 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // namespace literal in a test is a worse outcome than a counted
     // test-only consumer -- the two would drift and the test would then be
     // asserting against a namespace the document does not use.
-    expect(TEST_REFERENCED.length).toBe(365);
+    // 365 -> 366 (N92 Wave 1): lib/acceptedFacts/factMove.js's `sentenceBounds`
+    // is exported for AC-A10's own direct segmenter unit
+    // (factMove.sentenceBounds.test.js); its only Wave-1 consumer is that
+    // test -- `planMoveFact` calls it internally, a same-module call this
+    // index does not count (the sanitizeStoredFacts precedent above).
+    // `planMoveFact` itself is NOT counted here: it has a real production
+    // importer (useCompanyResearch.js's `moveInsertedFact`), so
+    // ORPHAN_EXPORTS is unmoved at 70. One entry added to this bucket, none
+    // added to the orphan ledger.
+    expect(TEST_REFERENCED.length).toBe(366);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
@@ -804,7 +813,11 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // own `mintWholeReplace` is deliberately module-private rather than
     // exported for exactly this reason, since its only caller is inside the
     // same file.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(435);
+    // 435 -> 436 (N92 Wave 1): exactly TEST_REFERENCED's own +1
+    // (sentenceBounds, described at that assertion above), with
+    // ORPHAN_EXPORTS unmoved at 70 -- this total's +1 IS the TEST_REFERENCED
+    // bucket's +1, not a second, independent change.
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(436);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

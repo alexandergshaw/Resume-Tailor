@@ -3,15 +3,23 @@
 import { useRef, useState } from "react";
 import { weaveSources, DEFAULT_PLACEMENT } from "../../lib/document/coverLetterWeave";
 import { readEngine } from "../settings/engine";
-import { planAcceptForEntry, mergeAcceptedFacts, planRemoveFact, coverFactStrategy, filterEligibleArticles } from "../../lib/acceptedFacts/factInsertion";
+import {
+  planAcceptForEntry,
+  mergeAcceptedFacts,
+  planRemoveFact,
+  coverFactStrategy,
+  filterEligibleArticles,
+  relocateSurvivors,
+} from "../../lib/acceptedFacts/factInsertion";
+import { planMoveFact } from "../../lib/acceptedFacts/factMove";
+import { commitFactMove } from "../../lib/acceptedFacts/commitFactMove";
 import { applyCoverDocxEdits } from "../../lib/acceptedFacts/factDocx";
+import { recordDecision } from "../../lib/activityLog/appActivityLog";
 import { uploadCoverDocx, fetchCoverDocxB64 } from "../../lib/document/coverDocxStore";
 import { messageForRefusal } from "../../lib/acceptedFacts/factRefusalMessage";
-import { editedForScope } from "../../lib/document/previewBlob";
+import { editedForScope, withEditedScope } from "../../lib/document/previewBlob";
 import { isDocxResume } from "../../lib/document/docx";
-import { hashString } from "../../lib/text/phrasing";
-import { safeExternalHref } from "../../lib/url/safeExternalHref";
-import { servesGroundingRedirect } from "../../lib/tracking/citationHref";
+import { articleUrlKey, dedupeArrivedArticles, withMintedIds } from "../../lib/research/articleIdentity";
 
 // PB1 (plan.check.r2): shown when the accept is refused because the
 // engine's own copy of the cover letter is missing -- a restored chip or a
@@ -74,106 +82,16 @@ const LINE_REBUILD_NOTICE =
 // Depends on the parent's tailoring map (to read/weave the cover letter) and the
 // preview reload key (to refresh the open preview after weaving).
 
-// Sets one scope of the tailoring entry's per-scope edited flag ({ resume,
-// cover }) without disturbing the other, mirroring the same helper in
-// useDocumentPreview.js (AC-2/AC-7: an entry may carry no `edited` field yet,
-// or a legacy plain boolean from before this migration — normalize either
-// into the per-scope shape before overwriting the target scope).
-function withEditedScope(entry, scope, value) {
-  const e = entry?.edited;
-  const base = e && typeof e === "object" ? e : { resume: !!e, cover: !!e };
-  return { ...base, [scope]: value };
-}
+// `withEditedScope` (setting one scope of the per-scope edited flag) is
+// imported from lib/document/previewBlob.js above -- that file already
+// exported it beside `editedForScope`, this hook just had its own duplicate
+// copy (removed; behaviour byte-identical).
 
-// Tracking-only query parameters this app strips when deriving an article's
-// dedupe/identity key -- campaign noise that varies per link to the SAME
-// story, never content that changes which story the link points at.
-const TRACKING_PARAM_NAMES = new Set(["gclid", "fbclid", "mc_cid", "mc_eid"]);
-
-// N35/V1/V3/V3(b): the key two arrived articles are the SAME article by. Null
-// for a url `safeExternalHref` refuses (there is no stable string to key on
-// -- F4's hardening case, an id-less/url-less article, included) and for a
-// grounding-redirect url: `servesGroundingRedirect` (lib/tracking/citationHref.js)
-// already knows `vertexaisearch.cloud.google.com/grounding-api-redirect/<token>`
-// is minted PER REQUEST, so the string looks stable but is not, and keying on
-// it would silently promise a durability the token cannot honour. Everything
-// else is normalised only in the four ways the owner ruling names -- host
-// case, fragment, tracking parameters, trailing slash -- because normalising
-// anything else (path, non-tracking query content) would merge genuinely
-// different articles and re-create the same collision with a different
-// cause. Scheme (`http:`/`https:`) and the `www.` prefix are deliberately
-// left exactly as given: two sites can legitimately differ by scheme, and
-// this app takes no position on the prefix either way.
-function articleUrlKey(rawUrl) {
-  const href = safeExternalHref(rawUrl);
-  if (href === null) return null;
-  let parsed;
-  try {
-    parsed = new URL(href);
-  } catch {
-    return null;
-  }
-  const host = parsed.hostname.toLowerCase();
-  if (servesGroundingRedirect(host, href)) return null;
-
-  parsed.hostname = host;
-  parsed.hash = "";
-  for (const key of [...parsed.searchParams.keys()]) {
-    if (key.startsWith("utm_") || TRACKING_PARAM_NAMES.has(key)) parsed.searchParams.delete(key);
-  }
-  if (parsed.pathname.length > 1 && parsed.pathname.endsWith("/")) {
-    parsed.pathname = parsed.pathname.slice(0, -1);
-  }
-  return parsed.href;
-}
-
-// N35/V1: dedupe articles by url ON ARRIVAL, before minting (owner ruling,
-// 2026-09-23). route.js:164 rewrites every article's url to
-// `scraped.finalUrl || candidate`, so a syndicated copy and its canonical --
-// or two grounding redirects for one story -- can arrive at the same url;
-// left alone, they would mint the SAME id below and collapse into one
-// coupled card downstream. An article whose key is null is never treated as
-// a duplicate of another null-keyed article: absence of a usable url is not
-// evidence of sameness (route.js:170 really returns `url: ""` for an article
-// the grounding metadata never matched), and deduping on that would drop
-// real research results.
-function dedupeArrivedArticles(articles) {
-  const list = Array.isArray(articles) ? articles : [];
-  const seenKeys = new Set();
-  const out = [];
-  for (const a of list) {
-    const key = articleUrlKey(a?.url);
-    if (key !== null) {
-      if (seenKeys.has(key)) continue;
-      seenKeys.add(key);
-    }
-    out.push(a);
-  }
-  return out;
-}
-
-// N35/F1+F4: mint a provenance id ON ARRIVAL, at the one seam every research
-// article passes through regardless of producer (the Gemini route and the
-// embedded engine both mint `art-${i}` BY POSITION -- route.js:76,
-// companyResearchLocal.js:78 -- so a run's first card is always `art-0`,
-// whatever article it actually is). Two different accepted facts must never
-// share an id, so this overrides whatever the producer sent, deriving the id
-// from `articleUrlKey` above: stable for the SAME article across sessions (a
-// re-run finds the same article at the same url, and it should read back as
-// the same fact), yet distinct between different articles because different
-// articles carry different urls. An article whose key is null -- an unusable
-// or missing url, or a grounding-redirect url with no stable identity of its
-// own -- falls back to a per-run component instead: non-durable, per the
-// owner ruling, but still distinct and never null.
-function mintArticleId(article, runStamp, index) {
-  const key = articleUrlKey(article?.url);
-  if (key !== null) return `art-${hashString(key).toString(36)}`;
-  return `art-run${runStamp}-${index}`;
-}
-
-function withMintedIds(articles, runStamp) {
-  return (Array.isArray(articles) ? articles : []).map((a, i) => ({ ...a, id: mintArticleId(a, runStamp, i) }));
-}
+// `articleUrlKey`/`dedupeArrivedArticles`/`mintArticleId`/`withMintedIds`
+// (the N35 arrival-identity helpers) moved to lib/research/articleIdentity.js
+// -- see that module's own header comment -- under the same N92 Wave 1
+// file-size contingency as `relocateSurvivors` above. Behaviour is
+// byte-identical; only imported now.
 
 // N62 Capability A: `defaultPlacement` is the user's saved placement default
 // (a PLACEMENTS id, from useCoverFactPlacement via page.js), threaded so the
@@ -594,37 +512,11 @@ export function useCompanyResearch({
     }
   }
 
-  // N61 (live defect, chunk N61): every researched article defaults to the
-  // "intro" placement, so two or three accepted facts routinely COALESCE
-  // onto one paragraph (planCoverFacts groups same-line facts into a single
-  // edit -- see that function's own header comment). Removing one of several
-  // same-line facts left every LATER survivor's stored `offset` stale
-  // against the now-shorter line: `planRemoveFact(survivor)` then found the
-  // survivor's text was not where the record said and refused
-  // `{changed:false}` (permanently unremovable), and `markInsertedFacts`
-  // matched nothing either (permanently unhighlighted) -- an unremovable,
-  // unhighlightable claim reaching the employer-bound letter.
-  //
-  // `facts` is already in screen order (the order `planCoverFacts` located
-  // them in, preserved by `[...untouched, ...located]` in `acceptFacts`
-  // above), so relocating each survivor's text against the NEW line with a
-  // per-line cursor -- mirroring `planCoverFacts`' own locate loop -- finds
-  // each survivor's OWN occurrence rather than a sibling's, satisfying the
-  // invariant removal must never break: every surviving record locates its
-  // own text in the resulting line, regardless of removal order.
-  function relocateSurvivors(lines, facts) {
-    const arr = Array.isArray(lines) ? lines : [];
-    const cursorByLine = new Map();
-    return (Array.isArray(facts) ? facts : []).map((f) => {
-      if (typeof f?.lineIndex !== "number" || typeof f?.text !== "string" || !f.text) return f;
-      const line = String(arr[f.lineIndex] ?? "");
-      const from = cursorByLine.get(f.lineIndex) || 0;
-      let at = line.indexOf(f.text, from);
-      if (at < 0) at = line.indexOf(f.text);
-      if (at >= 0) cursorByLine.set(f.lineIndex, at + f.text.length);
-      return at >= 0 ? { ...f, offset: at } : f;
-    });
-  }
+  // `relocateSurvivors` (the N61 stale-offset fix for coalesced facts) moved
+  // to lib/acceptedFacts/factInsertion.js -- see that export's own header
+  // comment -- under the N92 Wave 1 file-size contingency, the same kind of
+  // move N89 Part 1 already made for `coverFactStrategy`/
+  // `filterEligibleArticles`. Behaviour is byte-identical; only imported now.
 
   // Remove one inserted fact from THIS job's cover letter, everywhere it can
   // egress (N61, the owner's "I should be able to remove any of the facts
@@ -720,6 +612,82 @@ export function useCompanyResearch({
     } catch (err) {
       return { ok: false, reason: err?.message || "Couldn't remove that fact. Try again." };
     }
+  }
+
+  // N92 Wave 1 (Control A): move one inserted fact forward or backward by
+  // exactly one sentence (the owner's "controls to move each fact forward or
+  // backward a sentence"). A PARALLEL of removeInsertedFact above -- an
+  // ADDITION, not a rewrite of any existing function. `planMoveFact`
+  // (lib/acceptedFacts/factMove.js) is the single pure primitive that
+  // decides where the fact lands; Wave 2's forward nudge calls the exact
+  // SAME function from a different seam (AC-C2). The byte-splice+PUT I/O
+  // mirroring removeInsertedFact:665-676 lives in
+  // lib/acceptedFacts/commitFactMove.js (a file-size extraction, not a
+  // behaviour change) -- this function keeps the plan/boundary decision and
+  // every React state update, since the decision ledger binds
+  // `recordDecision` to this module (design section 5).
+  async function moveInsertedFact(jobId, factId, direction) {
+    if (!jobId) return { ok: false, reason: "No job is open." };
+    const entry = tailoringMap[jobId] || {};
+    const insertedFacts = Array.isArray(entry.insertedFacts) ? entry.insertedFacts : [];
+    const lines = Array.isArray(entry.coverLetterResultLines) ? entry.coverLetterResultLines : [];
+    const moved = planMoveFact({ lines, records: insertedFacts, id: factId, direction });
+    if (!moved.changed) {
+      const outcome = moved.reason === "boundary" ? "skipped" : "refused";
+      recordDecision("fact-position", outcome, { direction, reason: moved.reason, code: moved.reason });
+      const reason =
+        moved.reason === "boundary"
+          ? "That fact can't move any further in that direction."
+          : "That fact is no longer where it was recorded -- try reopening the letter.";
+      return { ok: false, reason };
+    }
+
+    const resolvedCoverDocxB64 = await resolveCoverEngineBytes(entry);
+    const hasCoverBytes = resolvedCoverDocxB64.length > 0;
+    const coverAlreadyEdited = editedForScope(entry, "cover");
+    const commit = await commitFactMove({
+      jobId,
+      lines,
+      moved,
+      hasCoverBytes,
+      coverAlreadyEdited,
+      resolvedCoverDocxB64,
+      entryCoverDocxB64: entry.coverLetterDocxB64,
+      supabase,
+      currentUserId: currentUser?.id,
+      facts: acceptedFactsByJob[jobId]?.facts || [],
+      baseRevision: acceptedFactsByJob[jobId]?.revision ?? null,
+      declinedUrls: acceptedFactsByJob[jobId]?.removed || [],
+    });
+    if (!commit.ok) {
+      recordDecision("fact-position", "failed", { direction, reason: "save-failed", code: "save-failed" });
+      return { ok: false, reason: commit.reason };
+    }
+
+    setTailoringMap((current) => {
+      const cur = current[jobId] || {};
+      return {
+        ...current,
+        [jobId]: {
+          ...cur,
+          coverLetterResultLines: moved.lines,
+          coverLetterPreviewHtml: undefined,
+          coverLetterDocxB64: hasCoverBytes ? commit.coverDocxB64 : cur.coverLetterDocxB64,
+          insertedFacts: moved.records,
+        },
+      };
+    });
+    setAcceptedFactsByJob((m) => ({
+      ...m,
+      [jobId]: {
+        facts: commit.data.facts || acceptedFactsByJob[jobId]?.facts || [],
+        removed: commit.data.removed || acceptedFactsByJob[jobId]?.removed || [],
+        revision: commit.data.revision ?? acceptedFactsByJob[jobId]?.revision ?? null,
+      },
+    }));
+    setPreviewReloadKey((k) => k + 1);
+    recordDecision("fact-position", "acted", { direction, reason: "moved", code: "moved" });
+    return { ok: true };
   }
 
   // N72: auto-insert this job's eligible researched facts WITHOUT a per-fact
@@ -991,6 +959,7 @@ export function useCompanyResearch({
     addResearchUrl,
     acceptFacts,
     removeInsertedFact,
+    moveInsertedFact,
     autoInsertFactsForJob,
   };
 }

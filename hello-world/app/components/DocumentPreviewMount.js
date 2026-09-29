@@ -5,6 +5,7 @@ import DocumentPreviewDialog from "./DocumentPreviewDialog";
 import FocusPickerDialog from "./FocusPickerDialog";
 import InsertedFactsStrip from "./preview/InsertedFactsStrip";
 import AutoInsertFactsMessage from "./preview/AutoInsertFactsMessage";
+import { planMoveFact } from "../../lib/acceptedFacts/factMove";
 import { getDownloadFileNameForTitle, getDownloadCoverLetterFileNameForTitle } from "../../lib/document/docx";
 import { emailPreviewText } from "../../lib/tailor/documentScopes";
 import { useDriveDocuments } from "../hooks/useDriveDocuments";
@@ -332,8 +333,25 @@ export default function DocumentPreviewMount({
   // locator) showed the candidate nothing -- the click looked like a silent
   // no-op, exactly what made the coalesced-offset bug above invisible.
   // Surfaced as a readable alert in the strip; cleared on the next attempt
-  // that succeeds.
+  // that succeeds. Shared with N92 Wave 1's move controls below -- one
+  // action-error slot for the strip, whichever control last failed.
   const [removeError, setRemoveError] = useState("");
+  // N92 Wave 1 (Control A): whether each inserted fact CAN move forward/
+  // backward, computed with the exact same `planMoveFact` the click handler
+  // below calls -- a dry run against the CURRENT lines/records, never
+  // mutating anything. This is what lets the strip disable a boundary
+  // control honestly, before any click (AC-A6): the fact's own move handler
+  // returning `{changed:false}` is the single source of truth for
+  // movability, so the render-time check and the click-time behaviour can
+  // never disagree.
+  const insertedFactsLines = tailoringMap[insertedFactsJobId]?.coverLetterResultLines || [];
+  const insertedFactsMovability = {};
+  for (const fact of insertedFacts) {
+    insertedFactsMovability[fact.id] = {
+      forward: planMoveFact({ lines: insertedFactsLines, records: insertedFacts, id: fact.id, direction: "forward" }).changed,
+      backward: planMoveFact({ lines: insertedFactsLines, records: insertedFacts, id: fact.id, direction: "backward" }).changed,
+    };
+  }
   // Shown on EVERY tab whenever the letter carries inserted facts, not only on
   // the cover tab. The combine control builds from the cover letter and is
   // reachable from any tab, so gating this on the active tab let a letter be
@@ -355,9 +373,14 @@ export default function DocumentPreviewMount({
         <InsertedFactsStrip
           facts={insertedFacts}
           error={removeError}
+          movability={insertedFactsMovability}
           onRemove={async (factId) => {
             const result = await research.removeInsertedFact(insertedFactsJobId, factId);
             setRemoveError(result && result.ok === false ? result.reason || "Couldn't remove that fact. Try again." : "");
+          }}
+          onMove={async (factId, direction) => {
+            const result = await research.moveInsertedFact(insertedFactsJobId, factId, direction);
+            setRemoveError(result && result.ok === false ? result.reason || "Couldn't move that fact. Try again." : "");
           }}
         />
       ) : null}

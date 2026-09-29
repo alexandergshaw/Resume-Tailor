@@ -251,4 +251,20 @@ export const DECISION_LEDGER = [
     fields: ["reason", "citationCount", "basisKind"],
     outcomes: ["acted", "skipped", "refused", "failed"],
   },
+  {
+    module: "app/hooks/useCompanyResearch.js",
+    id: "fact-position",
+    label: "Fact positioning (move / forward-nudge)",
+    // N92 Wave 1: Control A's manual move AND (Wave 2) Control C's insert-time
+    // forward nudge both record here -- the sweep binds one ledger entry per
+    // MODULE, and both features record from this same file, so they cannot
+    // have separate entries (design N92.design-structure.r1.md section 5).
+    // `direction` is the move's own discriminator (forward/backward);
+    // `reason`/`code` are canned enums off planMoveFact's own closed reason
+    // set ("ok"/"boundary"/"stale-locator"/"not-found"); `count` is reserved
+    // for Wave 2's per-insertion affected-fact count. Never the letter text,
+    // the company, a url or an article title (N77).
+    fields: ["direction", "reason", "code", "count"],
+    outcomes: ["acted", "skipped", "refused", "failed"],
+  },
 ];
