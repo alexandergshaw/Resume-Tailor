@@ -403,14 +403,25 @@ export function mergeAcceptedFacts(prior, incoming) {
 // order relocates each trailing fact out of the way first, so a coalesced
 // pair shifts forward TOGETHER, in their original relative order.
 //
-// KNOWN RESIDUAL: only `lines`/`record` are updated here, `edits` is left
-// exactly as planCoverFacts produced it (the plain insert). Appending the
-// nudge's own edits would fail applyCoverDocxEdits' staleness guard -- every
-// edit's `before` is checked against the SAME pre-insert snapshot
-// (factDocx.js), so a nudge edit's `before` (the POST-insert paragraph)
-// would never match and the whole splice would be refused. Wave 2's own
-// tests exercise the lines-only path (Shape B) for exactly this reason;
-// reconciling the byte-splice path with a nudge is out of this wave's scope.
+// AC-C4/AC-X3 fix-forward (fresh-verifier Sev-1, N92.verify.w2.r1.md Bug 1):
+// `cover.edits` must reach the nudged position too, not only `lines`/`record`
+// -- it is the EXACT input the byte-splice path feeds to
+// lib/acceptedFacts/factDocx.js#applyCoverDocxEdits, which checks every
+// edit's `before` against the entry's single, static pre-insert
+// `coverLetterResultLines` snapshot and refuses the WHOLE splice
+// ("stale-plan") the instant one edit's `before` is not that true original --
+// so at most ONE edit may exist per touched line, and it must describe the
+// line's ORIGINAL text all the way through to its FINAL, post-nudge text; a
+// second edit against an intermediate (post-insert or post-earlier-nudge)
+// snapshot of the same line is exactly what that guard rejects. `beforeByLine`
+// captures each touched line's true original exactly once: seeded from
+// planCoverFacts' own edits (already original-vs-post-insert), then extended
+// the FIRST time the nudge loop reaches a line planCoverFacts never touched --
+// at that moment nothing else has changed the line yet, so the move's own
+// `before` (computed against the untouched `arr` planMoveFact was handed) IS
+// the true original. Every later touch of that same line only updates
+// `lines`, never the recorded `before`, so the final edit rewritten from
+// `beforeByLine` always spans original -> final in one hop.
 function applyForwardNudge(cover, coverRecord) {
   if (!cover.changed) return cover;
   const baseLen = Array.isArray(coverRecord) ? coverRecord.length : 0;
@@ -420,18 +431,29 @@ function applyForwardNudge(cover, coverRecord) {
   if (newlyLocated.length === 0) return cover;
 
   const order = [...newlyLocated].sort((a, b) => b.lineIndex - a.lineIndex || b.offset - a.offset);
+  const beforeByLine = new Map(cover.edits.map((e) => [e.lineIndex, e.before]));
   let lines = cover.lines;
   let records = cover.record;
   let nudgedCount = 0;
   for (const rec of order) {
     const moved = planMoveFact({ lines, records, id: rec.id, direction: "forward" });
     if (moved.changed) {
+      for (const edit of moved.edits) {
+        if (!beforeByLine.has(edit.lineIndex)) beforeByLine.set(edit.lineIndex, edit.before);
+      }
       lines = moved.lines;
       records = moved.records;
       nudgedCount += 1;
     }
   }
-  return { ...cover, lines, record: records, nudgedCount };
+  if (nudgedCount === 0) return { ...cover, lines, record: records, nudgedCount };
+
+  const edits = [...beforeByLine.entries()]
+    .map(([lineIndex, before]) => ({ lineIndex, before, after: String(lines[lineIndex] ?? "") }))
+    .filter((e) => e.after !== e.before)
+    .sort((a, b) => a.lineIndex - b.lineIndex);
+
+  return { ...cover, lines, record: records, edits, nudgedCount };
 }
 
 // The whole accept, for one tailoring entry. Currently plans the cover
