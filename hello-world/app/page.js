@@ -1421,29 +1421,6 @@ export default function Home() {
     };
   }
 
-  function extractMinYearsRequired(description) {
-    if (!description) return null;
-    const text = description.toLowerCase();
-    const patterns = [
-      /(\d+)\s*\+\s*years?/,
-      /(\d+)\s*or\s*more\s*years?/,
-      /at\s*least\s*(\d+)\s*years?/,
-      /minimum\s*(?:of\s*)?(\d+)\s*years?/,
-      /(\d+)\s*-\s*\d+\s*years?/,
-      /(\d+)\s*to\s*\d+\s*years?/,
-      /(\d+)\s*years?\s*(?:of\s*)?(?:professional\s*)?(?:experience|exp)/,
-    ];
-    const found = [];
-    for (const pattern of patterns) {
-      const match = text.match(pattern);
-      if (match) {
-        const yrs = parseInt(match[1], 10);
-        if (!isNaN(yrs) && yrs <= 25) found.push(yrs);
-      }
-    }
-    return found.length > 0 ? Math.min(...found) : null;
-  }
-
   // Application-context builder for the chat + tracking table.
   const buildApplicationContextString = (app) =>
     buildApplicationContextStringBase(app, applicationStages);

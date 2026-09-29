@@ -135,12 +135,22 @@ export default function SpacingControl({ scope, spacing, onSetSpacing, disabled 
           order (DocumentPreviewDialog.js:748) than DriveResultRegion /
           CopyFeedbackStrip. A role="status" here would become the
           document-order-first [role="status"] and silently hijack the
-          drive/copy suites' lookups (B-1). */}
+          drive/copy suites' lookups (B-1).
+          `component="span"` (with `display:"block"` below to keep the exact
+          same visible, full-width layout a <div> would give): any element
+          carrying aria-live="polite" collides with
+          factAutoInsertMessage.rc.test.js's `spanless()` instrument, which
+          treats every NON-span aria-live/role=status node as "a message was
+          shown" -- the same tag-based signal DriveResultRegion.js/
+          CopyFeedback.js already use for their own live regions. Staying a
+          <div> here made an ordinary spacing readout register as a false
+          auto-insert message on every render. */}
       <Box
+        component="span"
         data-testid="spacing-current"
         aria-live="polite"
         aria-atomic="true"
-        sx={{ fontSize: "0.75rem", color: "var(--text-secondary)", width: "100%", ...BREAK_LONG_WORDS_SX }}
+        sx={{ display: "block", fontSize: "0.75rem", color: "var(--text-secondary)", width: "100%", ...BREAK_LONG_WORDS_SX }}
       >
         {spacingReadoutText(spacing)}
       </Box>
