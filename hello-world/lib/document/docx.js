@@ -633,8 +633,19 @@ export async function resolveDocumentBlob({
   lines = [],
   uploadedTemplate = null,
   spacing = null,
+  // N97: the per-type DEFAULT TEMPLATE override (a .docx File), or null when
+  // none is set -- see resolveDocumentBlobBytes below for the precedence.
+  formattingTemplate = null,
 }) {
-  const blob = await resolveDocumentBlobBytes({ engineDocxB64, docxPath, edited, text, lines, uploadedTemplate });
+  const blob = await resolveDocumentBlobBytes({
+    engineDocxB64,
+    docxPath,
+    edited,
+    text,
+    lines,
+    uploadedTemplate,
+    formattingTemplate,
+  });
   if (!blob || !spacing) return blob;
   return applySpacingToDocxBlob(blob, spacing);
 }
@@ -646,8 +657,21 @@ async function resolveDocumentBlobBytes({
   text = "",
   lines = [],
   uploadedTemplate = null,
+  formattingTemplate = null,
 }) {
   const hasText = typeof text === "string" && text.trim().length > 0;
+
+  // N97 (plan C2): a set DEFAULT TEMPLATE takes precedence over every branch
+  // below -- the engine's own finished doc, verbatim or rebuilt, and the
+  // user's uploaded template. Rebuilt the same way the edited path already
+  // rebuilds onto engineDocxB64 (buildDocxFromUploadedTemplate swaps text,
+  // preserves styling), so the DEFAULT's formatting -- not the engine's --
+  // reaches the output. Guarded by isDocxResume so a null/non-docx value
+  // (the overwhelming common case: no default set) can never fire this
+  // branch or produce an empty document -- byte-identical to today (AC-8).
+  if (formattingTemplate && isDocxResume(formattingTemplate) && (hasText || lines.length > 0)) {
+    return buildDocxFromUploadedTemplate(formattingTemplate, text, lines);
+  }
 
   // Unedited: serve the finished doc verbatim.
   if (!edited && engineDocxB64) return base64ToDocxBlob(engineDocxB64);
@@ -712,6 +736,11 @@ export function createDocumentDownloaders(deps) {
     templateDocxB64,
     templateDocxPath,
     coverLetterTemplateDocxB64,
+    // N97 (plan C1): the per-type default-template override. TWO params, not
+    // one -- a combined download (page.js's post-generation call) builds
+    // both documents in one call, so résumé and cover each need their own.
+    formattingTemplate = null,
+    coverFormattingTemplate = null,
     // N69: whole-document { lineSpacing, paragraphSpacingPt } | null, applied
     // as resolveDocumentBlob's post-pass sweep to BOTH documents below.
     spacing = null,
@@ -742,6 +771,7 @@ export function createDocumentDownloaders(deps) {
           text: result || "",
           lines: resultLines || [],
           uploadedTemplate: resumeFile,
+          formattingTemplate,
           spacing,
         });
         if (hasResume && !resumeBlob) return "Upload the source resume as .docx to download.";
@@ -757,6 +787,7 @@ export function createDocumentDownloaders(deps) {
           text: hasCover ? coverLetterResultLines.join("\n") : "",
           lines: coverLetterResultLines || [],
           uploadedTemplate: coverLetterFile,
+          formattingTemplate: coverFormattingTemplate,
           spacing,
         });
         if (coverBlob) triggerBlobDownload(coverBlob, coverName);

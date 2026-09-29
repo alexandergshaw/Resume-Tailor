@@ -14,6 +14,7 @@ import {
   BATCH_ERROR,
 } from "../../lib/drive/driveSaveBatch";
 import { driveErrorMessage, downloadedSummary, driveAnnounceStart } from "../../lib/drive/driveMessages";
+import { resolveDefaultTemplateFile } from "../../lib/document/defaultTemplateClient";
 
 // Wave 5A — the client-side Drive state machine (`ARCH.md` §11, module table
 // row 24). This is the hook that finally joins the three Drive components
@@ -153,14 +154,20 @@ async function templateDigestFor(file) {
 // condition `!engineDocxB64 && !docxPath` — exactly like AC-P6 specifies,
 // so a résumé that has real engine bytes never pays for hashing a template
 // that isn't even read.
-export async function computeCurrentHash(entry, scope, { resumeFile, coverLetterFile, text } = {}) {
-  const args = previewBlobArgs(entry, scope, { resumeFile, coverLetterFile, text });
+export async function computeCurrentHash(entry, scope, { resumeFile, coverLetterFile, text, formattingTemplate } = {}) {
+  const args = previewBlobArgs(entry, scope, { resumeFile, coverLetterFile, text, formattingTemplate });
   if (!args) return null;
   const { text: resolvedText, edited, engineDocxB64, docxPath, uploadedTemplate } = args;
   const templateDigest =
     !engineDocxB64 && !docxPath ? await templateDigestFor(uploadedTemplate) : "";
   const engineDocxDigest = await sha256Hex(engineDocxB64 || "");
-  const tuple = ["v1", scope, resolvedText, edited, engineDocxDigest, docxPath || "", templateDigest];
+  // N97: a set DEFAULT TEMPLATE overrides every branch above at the actual
+  // build (resolveDocumentBlob), so the hash must be sensitive to it too --
+  // otherwise a promote/replace could leave this hash unchanged while the
+  // bytes a save would actually upload change underneath it (AC-P6's whole
+  // reason for existing).
+  const formattingDigest = formattingTemplate ? await templateDigestFor(formattingTemplate) : "";
+  const tuple = ["v1", scope, resolvedText, edited, engineDocxDigest, docxPath || "", templateDigest, formattingDigest];
   return sha256Hex(JSON.stringify(tuple));
 }
 
@@ -270,6 +277,13 @@ export function useDriveDocuments({
   const [downloadStatus, setDownloadStatus] = useState("idle");
   const [driveRefs, setDriveRefs] = useState({});
   const [currentHashByScope, setCurrentHashByScope] = useState({ resume: null, cover: null });
+  // N97 (AC-4 egress: Drive save): the caller's default template per DOCX
+  // scope, resolved once per user (like driveRefs below) rather than on
+  // every entry/template change -- a storage fetch is comparatively
+  // expensive, and the default rarely changes mid-session. null when signed
+  // out, no default is set, or the substrate isn't deployed (BL-A) -- a
+  // strict no-op at resolveDocumentBlob (AC-8).
+  const [defaultTemplates, setDefaultTemplates] = useState({ resume: null, cover: null });
   const [prompt, setPrompt] = useState(null);
   const [lastRows, setLastRows] = useState([]);
   const [lastLeadingLine, setLastLeadingLine] = useState(null);
@@ -368,6 +382,31 @@ export function useDriveDocuments({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.id]);
 
+  // N97: resolve both DOCX scopes' default templates once per user, the same
+  // microtask-hop pattern the other per-user effects here use (see the
+  // comment above).
+  useEffect(() => {
+    let cancelled = false;
+    const userId = currentUser?.id || null;
+    (async () => {
+      await Promise.resolve();
+      if (cancelled || !isMountedRef.current) return;
+      if (!userId) {
+        setDefaultTemplates({ resume: null, cover: null });
+        return;
+      }
+      const [resume, cover] = await Promise.all([
+        resolveDefaultTemplateFile(userId, "resume"),
+        resolveDefaultTemplateFile(userId, "cover"),
+      ]);
+      if (cancelled || !isMountedRef.current) return;
+      setDefaultTemplates({ resume, cover });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser?.id]);
+
   // AC-C23: a connect/disconnect made in another tab is reflected here
   // without a reload.
   useEffect(() => {
@@ -445,8 +484,8 @@ export function useDriveDocuments({
       let coverHash = null;
       try {
         [resumeHash, coverHash] = await Promise.all([
-          computeCurrentHash(entry, "resume", { resumeFile, coverLetterFile }),
-          computeCurrentHash(entry, "cover", { resumeFile, coverLetterFile }),
+          computeCurrentHash(entry, "resume", { resumeFile, coverLetterFile, formattingTemplate: defaultTemplates.resume }),
+          computeCurrentHash(entry, "cover", { resumeFile, coverLetterFile, formattingTemplate: defaultTemplates.cover }),
         ]);
       } catch {
         resumeHash = null;
@@ -458,7 +497,7 @@ export function useDriveDocuments({
     return () => {
       cancelled = true;
     };
-  }, [entry, resumeFile, coverLetterFile]);
+  }, [entry, resumeFile, coverLetterFile, defaultTemplates]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -588,7 +627,10 @@ export function useDriveDocuments({
     async (scope, { activeScope: activeScopeArg, activeText, activeFileName }, { onConflict } = {}) => {
       const label = scopeLabel(scope);
       const text = scope === activeScopeArg ? activeText : undefined;
-      const blob = await buildPreviewBlob(entry, scope, { resumeFile, coverLetterFile, text });
+      // N97 (AC-4 egress: Drive save): the resolved default template for
+      // this scope, if any -- null is a strict no-op (AC-8).
+      const formattingTemplate = defaultTemplates[scope] || null;
+      const blob = await buildPreviewBlob(entry, scope, { resumeFile, coverLetterFile, text, formattingTemplate });
       if (!blob) {
         // AC-S27/AC-S28: reachable in normal use (a cover letter with no
         // recoverable bytes after a reload) — completes without throwing,
@@ -601,7 +643,7 @@ export function useDriveDocuments({
         return { scope, outcome: { scope, label, result: SCOPE_OUTCOME.TOO_LARGE } };
       }
 
-      const contentHash = await computeCurrentHash(entry, scope, { resumeFile, coverLetterFile, text });
+      const contentHash = await computeCurrentHash(entry, scope, { resumeFile, coverLetterFile, text, formattingTemplate });
       const override =
         scope === activeScopeArg ? activeFileName || "" : entry?.[FILE_NAME_FIELD[scope]] || "";
       const name = driveDocName({ override, jobTitle, company, kind: NAME_KIND[scope] });
@@ -679,7 +721,7 @@ export function useDriveDocuments({
         },
       };
     },
-    [entry, resumeFile, coverLetterFile, jobId, jobTitle, company, driveRefs],
+    [entry, resumeFile, coverLetterFile, jobId, jobTitle, company, driveRefs, defaultTemplates],
   );
 
   // ONE prompt per activation, even when both scopes conflict at once

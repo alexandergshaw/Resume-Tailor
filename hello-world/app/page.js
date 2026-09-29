@@ -35,6 +35,7 @@ import {
   base64ToDocxBlob,
 } from "../lib/document/docx";
 import { parseDocxToModel, linesToModel } from "../lib/document/docxPreview";
+import { resolveDefaultTemplateFile } from "../lib/document/defaultTemplateClient";
 import { rowToSavedSearchEntry } from "../lib/feed/savedSearchEntry";
 import { weaveSources } from "../lib/document/coverLetterWeave";
 import { editFingerprint } from "../lib/tailor/editMining";
@@ -2055,6 +2056,13 @@ export default function Home() {
         return { ok: true };
       }
 
+      // N97 (AC-4 last hop): resolve the caller's default templates so this
+      // fresh generation's download adopts them; null when none is set --
+      // a strict no-op at resolveDocumentBlob (AC-8).
+      const [resumeTemplate, coverTemplate] = await Promise.all([
+        resolveDefaultTemplateFile(currentUser?.id, "resume"),
+        resolveDefaultTemplateFile(currentUser?.id, "cover"),
+      ]);
       const dlError = await downloadDocxFiles({
         jobTitle: generatedJobTitle || job.title,
         company: job.company,
@@ -2063,6 +2071,8 @@ export default function Home() {
         coverLetterResultLines: applyCover ? coverLetterResultLines : [],
         docxB64: applyResume ? docxB64 : "",
         coverLetterDocxB64: applyCover ? coverLetterDocxB64 : "",
+        formattingTemplate: resumeTemplate,
+        coverFormattingTemplate: coverTemplate,
       });
 
       if (dlError) {
@@ -2565,6 +2575,11 @@ export default function Home() {
         setApplicationsRefreshKey((k) => k + 1);
       }
 
+      // N97 (AC-4 last hop): same resolve-and-pass as handleTailorJob above.
+      const [feedResumeTemplate, feedCoverTemplate] = await Promise.all([
+        resolveDefaultTemplateFile(currentUser?.id, "resume"),
+        resolveDefaultTemplateFile(currentUser?.id, "cover"),
+      ]);
       const dlError = await downloadDocxFiles({
         jobTitle: nextJobTitle || posting.title,
         company: nextCompany || posting.company,
@@ -2573,6 +2588,8 @@ export default function Home() {
         coverLetterResultLines: nextCoverLetterResultLines,
         docxB64: nextDocxB64,
         coverLetterDocxB64: nextCoverLetterDocxB64,
+        formattingTemplate: feedResumeTemplate,
+        coverFormattingTemplate: feedCoverTemplate,
       });
 
       // All three are surfaced through the same channel the download error

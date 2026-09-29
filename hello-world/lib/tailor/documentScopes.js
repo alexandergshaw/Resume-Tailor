@@ -35,7 +35,7 @@ export function emailPreviewText(entry) {
 // `spacing` (N69): the whole-document override, or null/undefined when the
 // user hasn't set one -- downloadDocxFiles's own no-op control depends on
 // this never inventing a value the caller didn't pass.
-export function buildDownloadArgs({ scope, entry, text, lines, serveFinished, title, company, spacing }) {
+export function buildDownloadArgs({ scope, entry, text, lines, serveFinished, title, company, spacing, formattingTemplate }) {
   const args = {
     jobTitle: title,
     company,
@@ -46,6 +46,13 @@ export function buildDownloadArgs({ scope, entry, text, lines, serveFinished, ti
     coverLetterDocxB64: "",
     spacing: spacing || null,
   };
+  // N97: the caller resolves ONE scope's default template and hands it in
+  // under this generic name; downloadDocxFiles wants it under the key that
+  // matches which document it belongs to (résumé vs. cover -- plan C1).
+  if (formattingTemplate) {
+    if (scope === "cover") args.coverFormattingTemplate = formattingTemplate;
+    else args.formattingTemplate = formattingTemplate;
+  }
   if (scope === "cover") {
     args.coverLetterResultLines = lines;
     args.coverLetterFileName = entry.coverLetterFileName || "";

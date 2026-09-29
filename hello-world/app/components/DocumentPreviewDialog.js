@@ -35,6 +35,7 @@ import pageSx from "./documentPreviewPageSx";
 import SpacingControl from "./SpacingControl";
 import EditorToolbar from "./preview/EditorToolbar";
 import CombineDocumentsControl from "./preview/CombineDocumentsControl";
+import SetDefaultTemplateControl from "./preview/SetDefaultTemplateControl";
 import ReviseStrip from "./preview/ReviseStrip";
 import VersionControl from "./preview/VersionControl";
 import HighlightToggle from "./preview/HighlightToggle";
@@ -80,6 +81,7 @@ export default function DocumentPreviewDialog({
   onRenameFile,
   onResubmit,
   onDownload,
+  onSetAsDefaultTemplate,
   onAskAi,
   onClose,
   onResearchCompany,
@@ -417,6 +419,10 @@ export default function DocumentPreviewDialog({
 
   // Commit any pending edit, then download the active document.
   const handleDownload = () => { commitDraft(); onDownload?.(tab, activePayload()); };
+
+  // N97: commit any pending edit, then promote the active document as the
+  // default template for its kind (résumé/cover only -- AC-1).
+  const handleSetAsDefaultTemplate = () => { commitDraft(); onSetAsDefaultTemplate?.(tab, activePayload()); };
 
   // Flush pending edits, then close.
   const handleClose = () => { commitDraft(); onClose?.(); };
@@ -861,6 +867,19 @@ export default function DocumentPreviewDialog({
           coverBlockedByResumeBusy={coverBlockedByResumeBusy}
           onResubmit={onResubmit}
         />
+      ) : null}
+
+      {/* N97/AC-1: a SIBLING of DialogActions (design §4.5's alternative to
+          mounting inside the action bar), never a member of it --
+          DocumentPreviewDialog.copy.test.js's AC-C12 census pins the bar's
+          button-shaped-control count exactly, so a new top-level control has
+          to land here, outside `.MuiDialogActions-root`, to avoid silently
+          invalidating that pin. Structurally absent on the email tab -- there
+          is no email template path (resume_templates.kind excludes 'email'). */}
+      {DOCX_SCOPES.includes(tab) && available(tab) ? (
+        <Box sx={{ px: { xs: 1.25, sm: 2 }, pt: 1 }}>
+          <SetDefaultTemplateControl scope={tab} disabled={busyActive} onClick={handleSetAsDefaultTemplate} />
+        </Box>
       ) : null}
 
       {/* UX.md rev 2 §3/§13: a SIBLING of DialogActions, in the slot

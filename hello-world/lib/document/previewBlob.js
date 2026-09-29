@@ -89,7 +89,7 @@ export function scopeText(entry, scope) {
 // saveDocumentPreview will eventually store (`text.split("\n")`, here with
 // normalizeResultLines' extra \r\n/trailing-whitespace handling) — so the
 // synchronous rebuild and the eventual React state agree instead of racing.
-export function previewBlobArgs(entry, scope, { resumeFile, coverLetterFile, text } = {}) {
+export function previewBlobArgs(entry, scope, { resumeFile, coverLetterFile, text, formattingTemplate } = {}) {
   if (scope === "email") return null;
   const e = entry || {};
   const suppliedText = text !== undefined;
@@ -98,7 +98,7 @@ export function previewBlobArgs(entry, scope, { resumeFile, coverLetterFile, tex
     const lines = Array.isArray(e.coverLetterResultLines) ? e.coverLetterResultLines : [];
     const stored = scopeText(e, "cover");
     const textChanged = suppliedText && text !== stored;
-    return {
+    const coverArgs = {
       engineDocxB64: typeof e.coverLetterDocxB64 === "string" ? e.coverLetterDocxB64 : "",
       // generated_cover_letters now has a docx_path column (F-11 resolved,
       // N59) — the cover branch hands over its OWN stored path, never the
@@ -110,6 +110,12 @@ export function previewBlobArgs(entry, scope, { resumeFile, coverLetterFile, tex
       lines: textChanged ? normalizeResultLines(text) : lines,
       uploadedTemplate: coverLetterFile ?? null,
     };
+    // N97: only added when actually supplied -- previewBlob.test.js's own
+    // "returns no keys resolveDocumentBlob does not accept" guard pins the
+    // key set for every call that omits it (the common case: no default
+    // template set), so this can never widen that shape unexpectedly.
+    if (formattingTemplate) coverArgs.formattingTemplate = formattingTemplate;
+    return coverArgs;
   }
 
   const lines = Array.isArray(e.resultLines) ? e.resultLines : [];
@@ -122,7 +128,7 @@ export function previewBlobArgs(entry, scope, { resumeFile, coverLetterFile, tex
   // onto it — a real behaviour change. Preserve the original formula.
   const defaultText = e.result || lines.join("\n");
   const textChanged = suppliedText && text !== stored;
-  return {
+  const resumeArgs = {
     engineDocxB64: typeof e.docxB64 === "string" ? e.docxB64 : "",
     docxPath: typeof e.docxPath === "string" ? e.docxPath : "",
     edited: editedForScope(e, "resume") || textChanged,
@@ -130,6 +136,8 @@ export function previewBlobArgs(entry, scope, { resumeFile, coverLetterFile, tex
     lines: textChanged ? normalizeResultLines(text) : lines,
     uploadedTemplate: resumeFile ?? null,
   };
+  if (formattingTemplate) resumeArgs.formattingTemplate = formattingTemplate;
+  return resumeArgs;
 }
 
 // IO. THE single entry point that turns a tailoring entry into its scope's

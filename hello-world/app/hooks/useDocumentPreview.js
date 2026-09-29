@@ -28,6 +28,7 @@ import {
 import { syncTemplateEdits } from "../../lib/tailor/templateEdits";
 import { applyScopeFlags, lockScopesFor } from "../../lib/tailor/previewScopes";
 import { emailPreviewLines, buildDownloadArgs } from "../../lib/tailor/documentScopes";
+import { resolveDefaultTemplateFile, promoteDefaultTemplateBlob } from "../../lib/document/defaultTemplateClient";
 import { readEngine } from "../settings/engine";
 import { createClient } from "../../lib/supabase/client";
 import { persistGeneratedDocuments } from "../../lib/supabase/persistGeneration";
@@ -529,6 +530,7 @@ export function useDocumentPreview({
         title: resumePreview.title,
         company: resumePreview.company,
         spacing: entry.spacing,
+        formattingTemplate: await resolveDefaultTemplateFile(currentUser?.id, scope), // N97/AC-4: null is a no-op (AC-8)
       });
       const err = await downloadDocxFiles(args);
       setScopeFlags(scope, { busy: false, error: err || "" });
@@ -536,6 +538,10 @@ export function useDocumentPreview({
       inFlightScopesRef.current.delete(downloadKey);
     }
   }
+  async function setDefaultTemplateFromPreview(scope, payload) { // N97: capture is engine-native (AC-2, no formattingTemplate); refuse/promote messaging is in promoteDefaultTemplateBlob (line-capped hook)
+    if (!resumePreview.jobId || scope === "email") return;
+    const blob = await buildPreviewBlob(tailoringMapRef.current[resumePreview.jobId] || {}, scope, { resumeFile, coverLetterFile, text: typeof payload === "string" ? payload : payload?.text || "" });
+    setScopeFlags(scope, await promoteDefaultTemplateBlob(blob, scope)); }
 
   // Re-run the Gemini tailor for the previewed document using the free-text
   // steering instructions the user typed in the preview. Updates only the
@@ -914,7 +920,7 @@ export function useDocumentPreview({
     saveDocumentPreview,
     renameDocument,
     setDocumentSpacing,
-    downloadDocumentPreview,
+    downloadDocumentPreview, setDefaultTemplateFromPreview,
     resubmitDocumentPreview,
     applyFocusArea,
     finishByOpeningPreview,

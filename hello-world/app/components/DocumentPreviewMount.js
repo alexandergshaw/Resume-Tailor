@@ -585,6 +585,7 @@ export default function DocumentPreviewMount({
       onRenameFile={preview.renameDocument}
       onResubmit={preview.resubmitDocumentPreview}
       onDownload={preview.downloadDocumentPreview}
+      onSetAsDefaultTemplate={preview.setDefaultTemplateFromPreview}
       onAskAi={(scope, payload) =>
         chat.askAiAbout({
           label: `${preview.resumePreview.company || "Job"}${preview.resumePreview.title ? ` · ${preview.resumePreview.title}` : ""} — ${scope === "cover" ? "Cover letter" : "Resume"}`,
