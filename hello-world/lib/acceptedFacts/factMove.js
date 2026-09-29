@@ -39,6 +39,24 @@ const BOUNDARY_PATTERN = /(?<=[.!?])\s+(?=[A-Z0-9"'“(])/;
 // OWNER-ACCEPTED limitation (design section 1.2): the denylist would (rarely)
 // suppress that real boundary rather than risk the far more common phantom
 // split. Not exercised by any fixture; named here so it is never silent.
+//
+// BUG-4 / AC-A10 INITIAL FIX: a closed token list can never name every
+// possible personal-name initial ("J." in "J. Smith", "R." in "J. R. Smith"),
+// so sentenceBounds also suppresses a boundary whenever the preceding token
+// is a single capital letter plus period (`/^[A-Z]\.$/`), alongside the
+// ABBREVIATIONS denylist above. That structural rule carries two disclosed,
+// owner-accepted residuals (design section 1.2), never left silent:
+// (a) a genuine single-capital sentence end is indistinguishable from an
+// initial by any local rule -- a sentence that truly ends "...an A." right
+// before a new capitalized sentence (e.g. "She earned an A. The next year
+// improved.") now MERGES with the following sentence into one movable unit
+// instead of splitting. Accepted because a rare merge is far less damaging
+// than splicing a fact into the middle of a person's name.
+// (b) a multi-letter abbreviation that is NOT on the closed ABBREVIATIONS
+// denylist above is untouched by this single-capital rule and may still
+// phantom-split -- the same class of known limitation the denylist itself
+// already carries, restated here as an owner-accepted limitation rather than
+// silently reintroduced by this fix.
 const ABBREVIATIONS = new Set([
   "Dr.",
   "Mr.",
@@ -103,7 +121,7 @@ export function sentenceBounds(text) {
   while (match) {
     const punctIndex = match.index - 1;
     const token = precedingToken(raw, punctIndex);
-    if (!ABBREVIATIONS.has(token)) {
+    if (!ABBREVIATIONS.has(token) && !/^[A-Z]\.$/.test(token)) {
       bounds.push(match.index + match[0].length);
     }
     match = re.exec(raw);
