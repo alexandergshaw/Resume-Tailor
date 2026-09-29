@@ -1162,6 +1162,18 @@
   verify_proof: null
   blocked_by: []
 
+
+- id: "N101"
+  state: "actionable"
+  title: "**N97 fresh-verify coverage gaps (SHIP with fast-follow): the set-default-template egress census is file-level, not call-site-level, and the client glue is untested.** Not live defects — every path traced by hand on e43200b is correct and the full suite is green — but exactly the dimension the N97 brief said N64 died in. Four gaps: **G1** — defaultTemplateEgress.census.test.js's app/page.js row is one whole-file `hasParam` regex, so it cannot distinguish handleTailorJob:2074 from handleTailorFeedPosting:2591; a mutant dropping EITHER call site's formattingTemplate/coverFormattingTemplate alone survives all 16,734 tests (proven by executed mutation). **G2** — same class in useDriveDocuments.js: the save-producing buildPreviewBlob call (:633) is one census row with the two computeCurrentHash calls (:487-488,:646); a mutant dropping the save-call override survives, and its shape is worse (staleness detection stays correct while the saved Drive doc silently regresses to engine-native formatting). **G3** — lib/document/defaultTemplateClient.js (resolveDefaultTemplateFile, promoteDefaultTemplateBlob) has ZERO direct test coverage. **G4** — setDefaultTemplateFromPreview (useDocumentPreview.js:541) is never exercised by any test. **Fix**: split the G1/G2 census rows into per-call-site checks (assert the token near each named function, not anywhere in the file) OR add a behavioral test per call site (mock resolveDefaultTemplateFile, drive handleTailorFeedPosting + the Drive save handler, assert the resolved File reaches downloadDocxFiles/buildPreviewBlob); add direct tests for the G3 client exports and the G4 handler (both correct on manual read but undefended)."
+  owed_by: "A coverage round: per-call-site census OR per-call-site behavioral tests for page.js + useDriveDocuments.js, plus direct tests for defaultTemplateClient.js and setDefaultTemplateFromPreview"
+  evidence: ["docs/loop/N97.verify.r1.md findings G1-G4 (V-ledger + section 2 Attack 1/3)", "executed mutation proofs: scratchpad census_mutation_check.mjs (page.js), census_mutation_check_drive.mjs (useDriveDocuments.js) — whole-file hasParam STILL PASSES on both single-site mutants", "Grep formattingTemplate glob *.test.js -> exactly 3 files; setDefaultTemplateFromPreview + promoteDefaultTemplateBlob/resolveDefaultTemplateFile -> production files only (canaried against saveDefaultTemplate/getDefaultTemplate which ARE covered)"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
 - id: "D2"
   state: "owner"
   title: "**The transport claim is doc-verified, not wire-verified.**"
