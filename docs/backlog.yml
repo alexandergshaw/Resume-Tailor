@@ -1258,6 +1258,18 @@
   verify: null
   verify_proof: null
   blocked_by: []
+
+- id: "N106-S2"
+  state: "actionable"
+  title: "**N106 slice 2: the LLM judge body `lib/review/geminiJudge.js` (deferred from N106 slice 1, which shipped the pure core verified SHIP at 9f9ad4e).** Implements the injected `options.judge` for the 3 LLM categories (employer-plausibility + full-depth unsupported-authority/consistency). Call-shape is I4 (3b): per N105 research, chain on configured gemini-2.5-flash, schema stages via responseJsonSchema on the no-tool path, never tool+schema in one stage; the judge is the ONLY network module (core stays pure). MUST route every judge flag through the core's emit()/assertContainedFlag chokepoint (already enforced core-side) and return only the 3 LLM categories. **Fold the N106 verify minors (docs/loop/N106.verify.r1.md):** M1 reconcile design §2 ('[]') vs §7/code (authorityReferenceSpans = draft.spans for internal-consistency); add a seam-level test pinning authorityReferenceSpans/referenceMode. M2 (real risk): reviewDocuments.js:97 passes the WHOLE realMaterial into judgeRequest, so design §4's 'physically scoped away from realMaterial on internal-consistency drafts' is NOT literally true — withhold/scope realMaterial per-draft OR add a seam-level invariance test (internal-consistency authority verdict invariant to judgeRequest.realMaterial). M3 (doc): design §1 module map omits computeUnresolvedQualifications. When this lands, embedded stays mechanical-only; only an LLM engine sets engineMode:full/complete:true."
+  owed_by: "Full loop; the deferred second slice of N106. Not on the N105 slice-1 critical path (N105 step 9 consumes the pure core already shipped)."
+  evidence: ["docs/loop/N106.verify.r1.md (SHIP 9f9ad4e) minors M1/M2/M3", "docs/loop/N106.design.r2.md geminiJudge.js slice-2", "docs/loop/N105.research.r1.md (chain call-shape, responseSchema x urlContext exclusivity on 2.5-flash)"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
 - id: "D2"
   state: "owner"
   title: "**The transport claim is doc-verified, not wire-verified.**"
