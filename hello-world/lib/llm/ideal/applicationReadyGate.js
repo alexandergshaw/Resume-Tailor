@@ -36,7 +36,7 @@ export const GATE_REASON = Object.freeze({
   MEMBERSHIP: "membership", // dropped: real material exists, but under a different employer
 });
 
-export const MIN_CONTENT_OVERLAP = 0.5;
+const MIN_CONTENT_OVERLAP = 0.5;
 
 const NUMBER_WORDS = {
   two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,

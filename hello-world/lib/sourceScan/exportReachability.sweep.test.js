@@ -262,7 +262,10 @@ describe("every module is reachable from something that ships, or is on a ledger
     // scan (ROOT/PRODUCTION/TEST_FILES/GRAPH/TEST_REFERENCED/ORPHANS/
     // rejectedStatements and friends), extracted for the same reason as
     // exportReachability.ledger.js's own self-entry just above it.
-    expect(ALLOWED_UNREACHABLE_MODULES).toHaveLength(13);
+    // 13 -> 14 (N105 Step 10): lib/llm/ideal/__fixtures__/examplePair.js, the
+    // example posting <-> resume pair four Ideal suites run through the real
+    // pipeline. ONE entry added, none removed; same shape as predictionCorpus.js.
+    expect(ALLOWED_UNREACHABLE_MODULES).toHaveLength(14);
   });
 
   it("keeps the unwired-feature findings visible and described", () => {
@@ -399,7 +402,13 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // tests began importing it instead of re-typing the OOXML namespace, so
     // it is now counted as test-referenced above. One entry removed, none
     // added -- the same single movement as the TR-1 bump.
-    expect(ORPHAN_EXPORTS).toHaveLength(70);
+    // 70 -> 67 (N105/N106): SIX out, THREE in. Out: the six docx.js entries moved
+    // to TR-1 only because docx.hypotheticalMarker.test.js namespace-imports
+    // docx.js (counted as a read of every export); still unread by name. In:
+    // tailorLevel.js's three unwired caption symbols. MIN_CONTENT_OVERLAP and
+    // REMOVED_COPY_MESSAGES also surfaced and were un-exported, not ledgered.
+    // Details are in the ledger beside each entry.
+    expect(ORPHAN_EXPORTS).toHaveLength(67);
   });
 
   it("[RULE TR-1] counts the exports whose only consumer is a test, exactly", () => {
@@ -718,7 +727,23 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // declineSmoothTransition) has a real production importer
     // (DocumentPreviewMount.js), and the route file itself is an entry
     // point, never counted as an orphan export of a module.
-    expect(TEST_REFERENCED.length).toBe(368);
+    // 368 -> 386 (N105/N106 slice, net +18 of 19 in, 1 out). IN, by name:
+    //   docx.js x7 -- HYPOTHETICAL_TOKEN (named imports in two suites) plus the
+    //     six ex-orphans that arrived only via docx.hypotheticalMarker.test.js's
+    //     namespace import (see ORPHAN_EXPORTS above);
+    //   lib/review x9 -- contract.js#FLOOR_CATEGORIES, #assertWellFormed;
+    //     flagPresentation.js#CHECK_LABELS, #FLAG_PRESENTATION, #REMOVAL_REASONS,
+    //     #evidenceNote, #presentFlag; index.js#CATEGORY, #ORIGIN (suites pin the
+    //     vocabulary tables and presenters by name; no shipping module imports
+    //     these names);
+    //   RemovedClaimsList.js#default (IdealResultBands imports its named
+    //   LeftOutGroup/RemovedGroup instead), idealChainConfig.js#IDEAL_WORST_CASE_MS
+    //   and idealDelivery.js#shouldAutoOpenIdealPreview, one each. The last has no
+    //   production caller yet -- the Ideal level is dark-launched.
+    // OUT (1): lib/resume/parseEmployment.js#extractDateRange, which gained real
+    // shipping importers (idealChronology.js and idealRealMaterial.js).
+    // ORPHAN_EXPORTS moved separately (70 -> 67).
+    expect(TEST_REFERENCED.length).toBe(386);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
@@ -846,7 +871,9 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // described at that assertion above), with ORPHAN_EXPORTS unmoved at 70
     // -- this total's +2 IS the TEST_REFERENCED bucket's +2, not a second,
     // independent change.
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(438);
+    // 438 -> 453 (N105/N106 slice): TEST_REFERENCED's +18 (368 -> 386) and
+    // ORPHAN_EXPORTS' -3 (70 -> 67), described at their own assertions above.
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(453);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

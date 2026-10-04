@@ -74,6 +74,10 @@ export const ALLOWED_UNREACHABLE_MODULES = [
     why: "the held-out K1-PROHIBITION fixture for prepParse.test.js -- PREDICTION_CORPUS is the corpus that suite imports directly by name; a plain .js beside the test it feeds, same shape as practiceSessionTestDoubles.js and driveWireProbe.js above, and never ships to a browser",
   },
   {
+    file: "lib/llm/ideal/__fixtures__/examplePair.js",
+    why: "N105 AC-14's example posting <-> resume PAIR, as plain data (no imports at all) that four suites run through the real Ideal pipeline -- idealPipeline.examplePair.test.js, docx.hypotheticalDownload.test.js, singleAnalyzer.census.test.js and IdealResultBands.pipelineCoverage.test.js -- and that N104's weakness summary is meant to read too. Same shape and same reason as predictionCorpus.js above: a fixture module beside the tests it feeds, imported by name, never code that ships",
+  },
+  {
     file: "lib/sourceScan/migrationDivergence.js",
     why: "11 -> 12 (N30a): the applied-vs-committed migration ledger and its appliedMigrationTexts/textsBefore helpers -- a test-only instrument (no shipping code models divergence between a migration's committed text and what actually ran) imported only by migrationDivergence.test.js, interviewPrepAppliedSchema.test.js and the two effective-schema suites it now feeds orderedTexts through",
   },
@@ -248,36 +252,23 @@ export const ORPHAN_EXPORTS = [
     name: "printCombinedHtml",
     why: "the hidden-iframe print path, called once by downloadCombinedDocuments; the browser-only Save-as-PDF step is not reachable on its own from any component",
   },
-  {
-    file: "lib/document/docx.js",
-    name: "getDirectChildrenByTag",
-    why: "an XML-walking helper used twice more inside docx.js; exported for a test that does not exist",
-  },
-  {
-    file: "lib/document/docx.js",
-    name: "getParagraphPlainText",
-    why: "used five more times inside docx.js's paragraph handling; no external importer",
-  },
-  {
-    file: "lib/document/docx.js",
-    name: "fitLinesToTemplate",
-    why: "declared and exported and never referenced, not even inside docx.js -- vestigial, and adjacent to the template-rebuild path the download work touched; a human should look before deleting",
-  },
-  {
-    file: "lib/document/docx.js",
-    name: "extractTemplateLinesFromDocx",
-    why: "used once inside docx.js; the uploaded-template reading step, exported but reached only through its own module",
-  },
-  {
-    file: "lib/document/docx.js",
-    name: "setParagraphText",
-    why: "used twice more inside docx.js's docx rewriting; no external importer",
-  },
-  {
-    file: "lib/document/docx.js",
-    name: "buildDocxFromUploadedTemplate",
-    why: "CORRECTED, and left in place after a delete was proposed on the strength of the old wording. The previous line here read 'never referenced anywhere, including inside docx.js'; that was FALSE. resolveDocumentBlob calls it three times (docx.js:503, :509, :515) and resolveDocumentBlob is imported by StatusBar.js, TrackingTab.js and previewBlob.js -- so this is live code on the edited-download rebuild path, the exact operation the download-rebuild rule cares about. Only the `export` keyword is surplus: no OTHER module imports the name, which is all `unused-export` has ever meant. Do not delete this symbol",
-  },
+  // REMOVED (N105 Step 2, the HYPOTHETICAL filename-marker work): the six
+  // lib/document/docx.js exports that stood here -- getDirectChildrenByTag,
+  // getParagraphPlainText, fitLinesToTemplate, extractTemplateLinesFromDocx,
+  // setParagraphText and buildDocxFromUploadedTemplate -- are no longer
+  // orphans AS THE SCAN COUNTS THEM, and for an artifact reason rather than a
+  // new reader: lib/document/docx.hypotheticalMarker.test.js imports the module
+  // as a NAMESPACE (`import * as docx from "./docx.js"`, deliberately -- it
+  // lets the suite collect before the marker exports exist), and the test-import
+  // index treats a namespace import as a read of EVERY export of that module.
+  // They moved into rule TR-1's bucket (a count the sweep test pins) while
+  // staying exactly as unread by name as before: none has a shipping importer
+  // or a named test importer. If that suite is ever switched to named imports,
+  // the six return here.
+  // buildDocxFromUploadedTemplate's old entry carried a standing instruction not
+  // to delete the symbol (it is live: resolveDocumentBlob calls it on the
+  // edited-download rebuild path, which StatusBar.js, TrackingTab.js and
+  // previewBlob.js reach). That still holds; only its bucket changed.
   {
     file: "lib/experience/knowledgeBase.js",
     name: "EXCERPT_HEADING_SUFFIX",
@@ -474,6 +465,31 @@ export const ORPHAN_EXPORTS = [
     file: "lib/tailor/localSignals.js",
     name: "writeSignals",
     why: "the writer half of a read/write localStorage pair, used seven more times inside localSignals.js by the higher-level recorders that ARE imported; nothing outside calls the raw writer",
+  },
+  // --- N105's slider caption copy: declared ahead of a caption leaf that is not
+  // built. lib/tailor/tailorLevel.js's own header says the slider, "the caption
+  // leaf", the route and the tests share this one table; the slider
+  // (ApplyingControls.js via levelAriaValueText) and the route (idealBranch.js
+  // via idealRefusalMessage) do, and the caption leaf has not landed. None of the
+  // three below is read anywhere -- not by shipping code, not by a test, not even
+  // inside tailorLevel.js -- so they cannot be un-exported without leaving an
+  // unused declaration (a lint warning), and deleting them is a feature decision
+  // for the caption work, not for this census. Delete each line the day the leaf
+  // imports it. ------------------------------------------------------------
+  {
+    file: "lib/tailor/tailorLevel.js",
+    name: "LEVEL_CAPTIONS",
+    why: "the standard / ideal / switched-to-Gemini caption strings for the slider's caption leaf, which has not been built; declared and exported and not referenced even inside tailorLevel.js, and no test reads it -- the ARIA text beside it (LEVEL_STOPS, levelAriaValueText) is the part the slider actually consumes",
+  },
+  {
+    file: "lib/tailor/tailorLevel.js",
+    name: "idealCannotRunCaption",
+    why: "the visible caption for Ideal selected on an engine that cannot run it, for the same unbuilt caption leaf as LEVEL_CAPTIONS; not referenced anywhere, including its own module. The route's refusal sentence for the same state (idealRefusalMessage) IS wired, so the user-facing refusal exists; only this slider-side caption is pending",
+  },
+  {
+    file: "lib/tailor/tailorLevel.js",
+    name: "idealCannotRunAnnouncement",
+    why: "the hidden announcer's short form of idealCannotRunCaption, for the same unbuilt caption leaf; not referenced anywhere, including its own module, and delete-or-wire together with its visible twin",
   },
   {
     file: "lib/techwatch/item.js",

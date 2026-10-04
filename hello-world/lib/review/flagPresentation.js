@@ -105,7 +105,7 @@ export const leftOutTitle = (n) => `Left out because your resume does not suppor
 
 // The announcer strings for the removed-line Copy action, in the {polite, alert,
 // visible, persist} shape the preview's existing live-region pair consumes.
-export const REMOVED_COPY_MESSAGES = Object.freeze({
+const REMOVED_COPY_MESSAGES = Object.freeze({
   copied: "Copied the removed line.",
   failed: "Couldn't copy. Select the line and copy it.",
 });
