@@ -41,6 +41,7 @@ import { weaveSources } from "../lib/document/coverLetterWeave";
 import { editFingerprint } from "../lib/tailor/editMining";
 import { recordMatchGaps, annotateAndRank, promotedEditRules } from "../lib/tailor/localSignals";
 import { runWithConcurrency } from "../lib/tailor/runWithConcurrency";
+import { appendTailorLevel } from "../lib/tailor/tailorLevelRequest";
 import { useProfileEntries } from "./hooks/useProfileEntries";
 import { useScreenshots } from "./hooks/useScreenshots";
 import { useCompanyResearch } from "./hooks/useCompanyResearch";
@@ -222,6 +223,7 @@ export default function Home() {
   // in this file ever read it.
   const [contextPanelOpen, setContextPanelOpen] = useState(false);
   const [aggressiveness, setAggressiveness] = useState(3);
+  const [tailorMode, setTailorMode] = useState(""); // "ideal" | "" -- separate from the saved 1..5 level
   // Document-generation engine ("gemini" | "external" | "embedded"). Owned by a
   // shared store so the top-bar picker and this tailoring logic stay in sync;
   // the store handles localStorage persistence under "tailorEngine".
@@ -1914,7 +1916,7 @@ export default function Home() {
       const formData = new FormData();
       formData.append("jobPosting", job.description);
       formData.append("additionalContext", additionalContext);
-      formData.append("aggressiveness", String(aggressiveness));
+      appendTailorLevel(formData, tailorMode, aggressiveness, { engine: tailorEngine });
       formData.append("engine", tailorEngine);
       // Promoted recurring hand-edits (localStorage) — the embedded engine
       // applies them document-wide so consistent fixes are pre-made.
@@ -2186,7 +2188,7 @@ export default function Home() {
       const formData = new FormData();
       formData.append("jobPostingUrl", trimmedUrl);
       formData.append("additionalContext", additionalContext);
-      formData.append("aggressiveness", String(aggressiveness));
+      appendTailorLevel(formData, tailorMode, aggressiveness, { engine: tailorEngine });
       formData.append("engine", tailorEngine);
       // Promoted recurring hand-edits (localStorage) — the embedded engine
       // applies them document-wide so consistent fixes are pre-made.
@@ -2448,7 +2450,7 @@ export default function Home() {
       if (jobPostingUrl) formData.append("jobPostingUrl", jobPostingUrl);
       if (jobPosting) formData.append("jobPosting", jobPosting);
       formData.append("additionalContext", additionalContext);
-      formData.append("aggressiveness", String(aggressiveness));
+      appendTailorLevel(formData, tailorMode, aggressiveness, { engine: tailorEngine });
       formData.append("engine", tailorEngine);
       // Promoted recurring hand-edits (localStorage) — the embedded engine
       // applies them document-wide so consistent fixes are pre-made.
@@ -2652,6 +2654,8 @@ export default function Home() {
           setContextPanelOpen={setContextPanelOpen}
           aggressiveness={aggressiveness}
           setAggressiveness={setAggressiveness}
+          tailorMode={tailorMode}
+          setTailorMode={setTailorMode}
           additionalContext={additionalContext}
           setAdditionalContext={setAdditionalContext}
           setContextFiles={setContextFiles}

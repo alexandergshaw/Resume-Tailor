@@ -16,12 +16,8 @@ import {
   EDUCATION_SECTION,
   EMPLOYMENT_SECTION,
 } from "./applying/sectionConfigs";
-
-const AGGRESSIVENESS_MARKS = [
-  { value: 1, label: "Light" },
-  { value: 3, label: "Balanced" },
-  { value: 5, label: "Strong" },
-];
+import { IDEAL_STOP, TAILOR_MODE_IDEAL, levelAriaValueText } from "../../lib/tailor/tailorLevel";
+import { levelSliderModel } from "../../lib/tailor/tailorLevelRequest";
 
 function formatBytes(bytes) {
   if (!Number.isFinite(bytes) || bytes < 0) return "";
@@ -40,6 +36,10 @@ export default function ApplyingControls({
   setContextPanelOpen,
   aggressiveness,
   setAggressiveness,
+  // The Ideal stop is a MODE, kept apart from the saved 1..5 level so choosing
+  // it never overwrites that level (lib/tailor/tailorLevel.js).
+  tailorMode = "",
+  setTailorMode = () => {},
   additionalContext,
   setAdditionalContext,
   setContextFiles,
@@ -59,6 +59,8 @@ export default function ApplyingControls({
   askAiAboutMaterial,
   currentUserPresent,
 }) {
+  // The sixth (Ideal) stop appears only while the dark-launch gate is on.
+  const level = levelSliderModel(tailorMode, aggressiveness);
   return (
     <>
       <TabHeader
@@ -184,20 +186,30 @@ export default function ApplyingControls({
           <AccordionDetails sx={{ pt: 1.5, pb: 2, px: 1.75, display: "grid", gap: 2.25, borderTop: "1px solid var(--border)" }}>
             <div className={styles.fieldGroup}>
               <Box sx={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-                <label htmlFor="aggressiveness" className={styles.label}>
-                  Aggressiveness
+                <label id="tailoring-level-label" htmlFor="tailoring-level" className={styles.label}>
+                  Tailoring level
                 </label>
               </Box>
               <Box sx={{ px: 1, pt: 0.25, pb: 1.5 }}>
                 <Slider
-                  id="aggressiveness"
-                  min={1}
-                  max={5}
+                  slotProps={{ input: { id: "tailoring-level" } }}
+                  aria-labelledby="tailoring-level-label"
+                  getAriaValueText={levelAriaValueText}
+                  min={level.min}
+                  max={level.max}
                   step={1}
-                  marks={AGGRESSIVENESS_MARKS}
-                  value={aggressiveness}
+                  marks={level.marks}
+                  value={level.value}
                   valueLabelDisplay="off"
-                  onChange={(_event, value) => setAggressiveness(Array.isArray(value) ? value[0] : value)}
+                  onChange={(_event, value) => {
+                    const next = Array.isArray(value) ? value[0] : value;
+                    if (next === IDEAL_STOP) {
+                      setTailorMode(TAILOR_MODE_IDEAL);
+                      return;
+                    }
+                    setTailorMode("");
+                    setAggressiveness(next);
+                  }}
                   sx={{
                     color: "var(--accent)",
                     height: 3,

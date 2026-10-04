@@ -281,4 +281,17 @@ export const DECISION_LEDGER = [
     fields: ["reason", "code"],
     outcomes: ["acted", "skipped", "refused", "failed"],
   },
+  {
+    module: "lib/tailor/tailorLevelRequest.js",
+    id: "n105-ideal-run",
+    label: "Ideal-level generation requests",
+    // N105 Step 6: the client records the moment an Ideal generation is
+    // requested ("acted") and the moment a stale Ideal selection is turned back
+    // into a standard run because the dark-launch gate is off ("skipped").
+    // `reason` is a canned code ("ideal-requested" / "gate-off"), `engine` the
+    // engine's code name and `level` "ideal" / "standard". Never the resume,
+    // the posting, a file name, a company or a title (N77).
+    fields: ["reason", "engine", "level"],
+    outcomes: ["acted", "skipped", "refused", "failed"],
+  },
 ];
