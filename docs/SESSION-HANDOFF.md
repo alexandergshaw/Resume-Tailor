@@ -52,3 +52,7 @@ _Last updated: 2026-10-04 by the orchestrator._
 - F-D (structure delta): ensureHypotheticalMarker inserts a SUFFIX; OC-3 = PREFIX. STRUCTURE DELTA D-8: prefix.
 - Verified SOUND first-hand: slider a11y fix (ApplyingControls.js:187-199), 422 refusal, visibleScopes phantom-tab, false other-version, OC-1/minimize-clicks/app-vs-chat.
 - DISPATCHED: N105 1c experience REVISION (terminating) = N105.ux.r2.md folding F-A/F-B/F-C + recording structure deltas D-6b (kept-only) + D-8 (prefix) as binding plan amendments. N106 structure design (aa717454) still running.
+
+## N106 STRUCTURE design COMPLETE (2026-10-04)
+- `docs/loop/N106.design.r1.md` (S-1..S-15). Home: new pure `lib/review/` (reviewDocuments.js, contract.js, mechanicalDetectors.js, referenceSelect.js) + second-slice `geminiJudge.js` (only network toucher). No table/migration. Reuse: WEAK_OPENERS (critique.js:9), extractKeywords (keywords.js:191), headerDateSpan (parseEmployment.js:123); NOT METRIC_RE (opposite polarity) — N106 owns NUMERIC_CLAIM_RE. LLM seam = injected async options.judge; engineMode decided by whether consumer injects a judge; core never reads env. coverage: evaluated = FLOOR(4) ∪ (judge∩LLM(3)); complete DERIVED (overclaim no code path). Richer prior art found: critiqueLocal.js (containsTerm:205-214).
+- DISPATCHED: N106 structure CHECK (loop-checker) — verify import-graph PURITY of the reused detectors (the key CITED risk), the polarity/reuse calls, coverage-derivation, judge-flag re-validation through AC-1 containment. N105 experience revision (ab22f418) still running.
