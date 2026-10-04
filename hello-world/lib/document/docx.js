@@ -43,31 +43,59 @@ export function sanitizeFileNamePart(value) {
     .trim();
 }
 
+// N105 (AC-3 / D-8): every file name of the HYPOTHETICAL resume must begin with
+// this token so the document can never leave under a submittable-looking name.
+// It is a PREFIX, never a suffix: resolveDocumentFileName slices a user override
+// to 150 characters, which would cut a trailing marker but never a leading one.
+export const HYPOTHETICAL_TOKEN = "HYPOTHETICAL";
+
+const HYPOTHETICAL_PREFIX = `[${HYPOTHETICAL_TOKEN}] `;
+// Already marked = the name's first word (after any leading punctuation) is the
+// token. A name that merely contains it further in is NOT marked.
+const BEGINS_WITH_HYPOTHETICAL = new RegExp(`^[^A-Za-z0-9]*${HYPOTHETICAL_TOKEN}\\b`);
+
+// The single forcing function behind every filename egress. IDEMPOTENT, so the
+// egresses can layer it freely: when isHypothetical is false the name is
+// returned untouched (every non-N105 caller stays byte-identical); when true
+// and the name does not already begin with the token, the token is prefixed.
+export function ensureHypotheticalMarker(name, isHypothetical = false) {
+  if (!isHypothetical) return name;
+  const text = typeof name === "string" ? name : "";
+  if (BEGINS_WITH_HYPOTHETICAL.test(text)) return text;
+  return text ? `${HYPOTHETICAL_PREFIX}${text}` : `[${HYPOTHETICAL_TOKEN}]`;
+}
+
 // Document file names follow "<Company> - <Position> - Resume/CL.docx". Company
 // is dropped when unknown so the name never starts with a stray " - ".
-function buildDocumentFileName(jobTitle, company, kind) {
+// The common base of the getDownload*FileNameForTitle family, so the marker is
+// forced here once for all of them.
+function buildDocumentFileName(jobTitle, company, kind, isHypothetical = false) {
   const titlePart = sanitizeFileNamePart(jobTitle || "").slice(0, 90) || "Target Role";
   const companyPart = sanitizeFileNamePart(company || "").slice(0, 60);
-  return companyPart
-    ? `${companyPart} - ${titlePart} - ${kind}.docx`
-    : `${titlePart} - ${kind}.docx`;
+  return ensureHypotheticalMarker(
+    companyPart ? `${companyPart} - ${titlePart} - ${kind}.docx` : `${titlePart} - ${kind}.docx`,
+    isHypothetical,
+  );
 }
 
-export function getDownloadFileNameForTitle(jobTitle, company) {
-  return buildDocumentFileName(jobTitle, company, "Resume");
+export function getDownloadFileNameForTitle(jobTitle, company, isHypothetical = false) {
+  return buildDocumentFileName(jobTitle, company, "Resume", isHypothetical);
 }
 
-export function getDownloadCoverLetterFileNameForTitle(jobTitle, company) {
-  return buildDocumentFileName(jobTitle, company, "CL");
+export function getDownloadCoverLetterFileNameForTitle(jobTitle, company, isHypothetical = false) {
+  return buildDocumentFileName(jobTitle, company, "CL", isHypothetical);
 }
 
 // Resolve the download file name for a document, honoring an optional user
 // override. The override is a base name (no extension) the user typed in the
 // preview; we sanitize it and append ".docx". Falls back to the derived
 // "<Company> - <Position> - <kind>.docx" name when there's no override.
-export function resolveDocumentFileName(override, jobTitle, company, kind) {
+// isHypothetical forces the N105 marker on the FINAL return, so a user-typed
+// override (which bypasses buildDocumentFileName) cannot strip it.
+export function resolveDocumentFileName(override, jobTitle, company, kind, isHypothetical = false) {
   const base = sanitizeFileNamePart(String(override || "")).slice(0, 150);
-  return base ? `${base}.docx` : buildDocumentFileName(jobTitle, company, kind);
+  const name = base ? `${base}.docx` : buildDocumentFileName(jobTitle, company, kind, isHypothetical);
+  return ensureHypotheticalMarker(name, isHypothetical);
 }
 
 export function isDocxResume(file) {

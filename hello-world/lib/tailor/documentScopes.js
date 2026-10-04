@@ -116,6 +116,9 @@ export function buildDownloadArgs({ scope, entry, text, lines, serveFinished, ti
 // download sanitises away still matches what the employer receives.
 // Extracted out of DocumentPreviewDialog.js so that file's own line ceiling
 // has room, same reasoning as buildDownloadArgs above.
-export function resolveActiveDocumentTitle(fileNameDraft, committedFileName, jobTitle, company, kind) {
-  return resolveDocumentFileName(fileNameDraft.trim() || committedFileName, jobTitle, company, kind).replace(/\.docx$/i, "");
+// N105 (AC-3): isHypothetical (default false -- every other caller is
+// unchanged) forces the HYPOTHETICAL prefix, so the copied title matches the
+// marked download name even when the user's rename dropped it.
+export function resolveActiveDocumentTitle(fileNameDraft, committedFileName, jobTitle, company, kind, isHypothetical = false) {
+  return resolveDocumentFileName(fileNameDraft.trim() || committedFileName, jobTitle, company, kind, isHypothetical).replace(/\.docx$/i, "");
 }
