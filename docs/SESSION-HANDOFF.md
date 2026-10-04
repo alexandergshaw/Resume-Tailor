@@ -65,3 +65,9 @@ _Last updated: 2026-10-04 by the orchestrator._
 - F4 (minor): state judge flags are deduped-any-category intentionally OR restrict to the 3 LLM categories symmetrically.
 - F5 (minor): AC-16 single-analyzer census must discriminate by the {flags,unresolvedQualifications,coverage} return shape (or make the 6 detect* module-internal) — else zero-power or over-sensitive.
 - DISPATCHED: N106 structure r2 (terminating) folding F1/F3/F4/F5 + surfacing the F2 ruling. N105 experience revision (ab22f418) still running.
+
+## N105 EXPERIENCE r2 FINAL (2026-10-04)
+- `docs/loop/N105.ux.r2.md` (UX-1..43). F-A partial-review state (coverage forwarded; "No issues flagged" only when fresh+complete+no-findings+not-thin = 1/36, never on slice-1 real input). F-B panel-only: file holds KEPT spans only; flagged = "Removed - verify and add back" in panel; dropped = "Left out". F-C Ideal never calls downloadDocxFiles; opens preview via finishByOpeningPreview; skipDownload path; cover-regenerate-under-global-Ideal routed to standard path (extra hazard closed). Bytes clean by construction + instrument.
+- STRUCTURE DELTAS (binding): D-6b recompose KEPT-ONLY; D-8 marker PREFIX on common base buildDocumentFileName + resolveDocumentFileName + both driveDocName branches, idempotent.
+- New plan inputs UXR-12..18: UXR-13 top-level result/resultLines/docxB64 = application-ready values; UXR-14 no orphan headings on kept-only recompose; UXR-16 editedForScope for hand-edited state; UXR-17 reuse N95 live-region pair (no new live node).
+- N105 DESIGN LAYER FULLY SETTLED (AC+structure+deltas+experience+research). DISPATCHED: N105 PLAN (loop-plan). N106 structure r2 still running. N105 step-6 consumes the frozen reviewDocuments contract (+coverage) = blocked on N106 landing, not on its structure revision.
