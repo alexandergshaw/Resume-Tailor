@@ -10,8 +10,18 @@ import { extractPostingMeta } from "@/lib/llm/postingMeta";
 import { createClient } from "@/lib/supabase/server";
 import { listPages } from "@/lib/supabase/experiencePages";
 import { buildTailorContextBlock } from "@/lib/experience/tailorContext";
+import { TAILOR_MODE_IDEAL } from "@/lib/tailor/tailorLevel";
+import { gateIdealRequest, runIdealBranch } from "@/app/api/tailor/idealBranch";
 
 export const runtime = "nodejs";
+// The Ideal level is an ATOMIC chain of up to four sequential model calls (a
+// posting read, the analysis, the hypothetical, the application-ready draft), each
+// bounded to 60 s in the engine (lib/llm/ideal/idealChainConfig.js), so its worst
+// case is 240 s. Without a declared duration the platform default would cut the
+// run off mid-chain and the user would lose the whole pair to a generic timeout.
+// 300 s is the ceiling on the default tier and leaves ~60 s for the posting scrape
+// and the document text extraction that run before the chain.
+export const maxDuration = 300;
 
 const MAX_RESUME_CHARS = 20000;
 const MAX_CONTEXT_CHARS = 12000;
@@ -223,6 +233,10 @@ export async function POST(request) {
     // Optional free-text steering from the preview's "revise with Gemini" box.
     const steeringInstructions = parseAdditionalContext(formData.get("steeringInstructions"));
     const aggressiveness = parseAggressiveness(formData.get("aggressiveness"));
+    // The Ideal level is a MODE, not an intensity: it arrives in its own field and
+    // is never folded into `aggressiveness`, which is clamped to 1..5 and would
+    // silently absorb it into "Strong".
+    const idealRun = formData.get("tailorMode")?.toString().trim().toLowerCase() === TAILOR_MODE_IDEAL;
     const contextDocuments = await parseContextDocuments(formData);
 
     // Feed the caller's own "Professional Experience" project pages into the
@@ -340,6 +354,20 @@ export async function POST(request) {
 
     const resumeText = await readResumeText(resumeFile);
 
+    // Ideal refuses (422, no artifact) before the posting is scraped or any model
+    // is called. The gate resolves the engine first, including the external ->
+    // gemini fallback, and reads `supportsIdeal` on the engine that will really run.
+    let idealEngine = null;
+    const idealWarnings = [];
+    if (idealRun) {
+      const gate = gateIdealRequest({ engineName, engine, getEngine, resumeText, resumeFileName: resumeFile.name });
+      if (gate.refused) {
+        return NextResponse.json(gate.refused.body, { status: gate.refused.status });
+      }
+      idealEngine = gate.engine;
+      idealWarnings.push(...gate.warnings);
+    }
+
     let scrapedJobTitle = "";
     let scrapedCompany = "";
     let scrapedDescription = "";
@@ -366,8 +394,10 @@ export async function POST(request) {
 
     // Only Gemini can read a URL on its own (urlContext); the offline engines
     // need the text we scraped. If a URL was given but produced nothing usable,
-    // tell the user plainly instead of failing with a generic error.
-    if (jobPostingUrl && !effectiveJobPosting.trim() && engineName !== "gemini") {
+    // tell the user plainly instead of failing with a generic error. (An Ideal
+    // run is judged on the engine it resolved to: an unconfigured external
+    // service has already fallen back to Gemini by this point.)
+    if (jobPostingUrl && !effectiveJobPosting.trim() && (idealEngine?.name ?? engineName) !== "gemini") {
       return NextResponse.json(
         {
           error: `Couldn't read the job posting from that URL${scrapeError ? ` (${scrapeError})` : ""}. Paste the description text instead.`,
@@ -380,6 +410,32 @@ export async function POST(request) {
     // to name the generated documents when neither the scrape nor the engine
     // supplied one (e.g. Gemini returned empty, or a pasted posting with no URL).
     const postingMeta = extractPostingMeta(effectiveJobPosting);
+
+    // The Ideal level: one atomic run that returns a resume PAIR, resume only (no
+    // cover letter or email). It never reaches tailorResume below, and nothing
+    // here builds or downloads a file: the client opens the preview for review.
+    if (idealRun) {
+      const ideal = await runIdealBranch({
+        engine: idealEngine,
+        args: {
+          jobPosting: effectiveJobPosting,
+          jobPostingUrl: effectiveJobPostingUrl,
+          resumeText,
+          resumeFileName: resumeFile.name,
+          templateLines,
+          additionalContext,
+          contextDocuments: contextDocumentsWithProjectPages,
+        },
+        // The same budget notice the standard path gives when project pages were
+        // left out of the model's context.
+        warnings: projectPagesTruncated
+          ? [...idealWarnings, formatDroppedProjectPagesWarning(projectPagesDropped)]
+          : idealWarnings,
+        scraped: { jobTitle: scrapedJobTitle, company: scrapedCompany, description: scrapedDescription },
+        postingMeta,
+      });
+      return NextResponse.json(ideal.body, { status: ideal.status });
+    }
 
     const resumeArgs = {
       jobPosting: effectiveJobPosting,
