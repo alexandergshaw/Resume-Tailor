@@ -425,21 +425,28 @@ describe("N63-T4: unknown/empty state copies a non-empty default, never a placeh
 // N63-T5 -- a rename is reflected; copy and download never disagree
 // ---------------------------------------------------------------------------
 
-describe("N63-T5: a stored rename is reflected, sanitised to match the download, and read from the COMMITTED value", () => {
+describe("N63-T5: a stored rename is reflected, sanitised to match the download, and read from the LIVE draft (N83)", () => {
+  // N83: these two rows now render closed->open so the File-name field seeds
+  // its draft from the committed override -- because the N83 fix reads the LIVE
+  // draft (what the user sees), not scopes[tab].fileName. On an already-open
+  // mount the draft would be "" and the copy would resolve to the derived
+  // default, so a bare `render()` here is no longer production-faithful. The
+  // seeded draft equals the committed override, so these stay GREEN on HEAD and
+  // after the fix; only the third row below (the inverted one) is RED on HEAD.
   it("a stored override is copied verbatim when it needs no sanitising", async () => {
     installClipboardStub();
-    await render(baseProps({ scopes: scopesFor({ resumeOverride: "Jane Doe CV" }) }));
+    await renderClosedThenOpen(baseProps({ scopes: scopesFor({ resumeOverride: "Jane Doe CV" }) }));
     await clickTitleCopy();
     expect(lastCopied()).toBe("Jane Doe CV");
   });
 
   it("SILENT-FAILURE ROW: an override with characters the resolver strips copies the RESOLVED form, matching the download", async () => {
-    // The plan's sharpest risk. If the copy read scopes[tab].fileName RAW it
+    // The plan's sharpest risk. If the copy read the field value RAW it
     // would hand "My/Resume:2024" to an employer's upload field while the
     // downloaded file is "MyResume2024.docx" -- copy and download disagree. The
     // copy must re-resolve through the same sanitiser the download uses.
     installClipboardStub();
-    await render(baseProps({ scopes: scopesFor({ resumeOverride: "My/Resume:2024" }) }));
+    await renderClosedThenOpen(baseProps({ scopes: scopesFor({ resumeOverride: "My/Resume:2024" }) }));
     await clickTitleCopy();
     // The download's own resolver is the independent oracle.
     const downloadBase = resolveDocumentFileName("My/Resume:2024", "Senior Engineer", "Acme", "Resume").replace(/\.docx$/i, "");
@@ -450,11 +457,18 @@ describe("N63-T5: a stored rename is reflected, sanitised to match the download,
     expect(lastCopied()).not.toMatch(/[\\/:*?"<>|]/);
   });
 
-  it("reads the COMMITTED value, not the live uncommitted draft in the input", async () => {
-    // A keystroke typed into the File-name field but not yet blurred/committed
-    // is not what the download uses either (handleDownload never calls
-    // commitFileName). The copy must agree with the download: it reads the
-    // committed scopes[tab].fileName, not the live fileNameDraft.
+  it("reads the LIVE uncommitted draft the user is looking at, not the last committed value (N83)", async () => {
+    // N83 INVERTS THIS ROW. It formerly asserted the copy reads the COMMITTED
+    // value, reasoning that Download must agree with Copy. That premise is
+    // right; the resolution was backwards. A fresh verifier (NOT-SHIP on N63
+    // commit b89371d) confirmed the bug: because the copy control's
+    // onMouseDown preventDefault (CopyDocumentControl.js:80) keeps a pointer
+    // click from blurring the field, a mouse/touch user who types a new name
+    // and clicks "Copy file name" without tabbing away copies the PREVIOUS
+    // name -- a silent wrong success. The fix makes BOTH Copy and Download read
+    // the LIVE draft (following handleSaveToDrive, which already does). See
+    // DocumentPreviewDialog.fileNameStaleness.test.js for the full class
+    // (copy + download + drive + keyboard, driven by a real pointer sequence).
     installClipboardStub();
     await renderClosedThenOpen(baseProps({ scopes: scopesFor({ resumeOverride: "Committed Name" }) }));
     const input = driveFileNameInput();
@@ -464,9 +478,11 @@ describe("N63-T5: a stored rename is reflected, sanitised to match the download,
     // onMouseDown preventDefault means clicking it never blurs the field).
     setNativeInputValue(input, "UNCOMMITTED DRAFT");
     await act(async () => {});
+    expect(input.value).toBe("UNCOMMITTED DRAFT"); // the field now shows the draft
     await clickTitleCopy();
-    expect(lastCopied()).toBe("Committed Name");
-    expect(lastCopied()).not.toBe("UNCOMMITTED DRAFT");
+    // RED ON HEAD: HEAD copies "Committed Name". The fix copies the live draft.
+    expect(lastCopied()).toBe("UNCOMMITTED DRAFT");
+    expect(lastCopied()).not.toBe("Committed Name");
   });
 });
 

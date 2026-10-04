@@ -26,10 +26,9 @@ import SmartToyIcon from "@mui/icons-material/SmartToy";
 import { renderModelToHtml, applySpacingToHtml } from "@/lib/document/docxPreview";
 import { htmlToPlainText } from "@/lib/document/htmlToPlainText";
 import { writePlainText } from "@/lib/clipboard/plainText";
-import { resolveDocumentFileName } from "@/lib/document/docx";
 import { changedScopes as changedScopesOf } from "@/lib/tailor/previewScopes";
 import { commitDraftSeed } from "@/lib/document/draftEditGuard";
-import { SCOPES, SCOPE_LABEL, DOCX_SCOPES } from "@/lib/tailor/documentScopes";
+import { SCOPES, SCOPE_LABEL, DOCX_SCOPES, resolveActiveDocumentTitle } from "@/lib/tailor/documentScopes";
 import { useIsMobile } from "../hooks/useResponsive";
 import pageSx from "./documentPreviewPageSx";
 import SpacingControl from "./SpacingControl";
@@ -417,8 +416,10 @@ export default function DocumentPreviewDialog({
     mode === "edit" && editorRef.current ? editorRef.current.innerHTML : scopes[tab]?.html || docState[tab]?.html || "";
   const copySourceText = () => htmlToPlainText(activeSourceHtml());
 
-  // Commit any pending edit, then download the active document.
-  const handleDownload = () => { commitDraft(); onDownload?.(tab, activePayload()); };
+  // Commit any pending edit and the file name, then download. N83: conveys
+  // the live fileNameDraft in the payload (handleSaveToDrive's pattern) --
+  // the last hop (buildDownloadArgs) reads the committed value one render late.
+  const handleDownload = () => { commitDraft(); commitFileName(); onDownload?.(tab, { ...activePayload(), fileName: fileNameDraft.trim() }); };
 
   // N97: commit any pending edit, then promote the active document as the
   // default template for its kind (résumé/cover only -- AC-1).
@@ -534,13 +535,10 @@ export default function DocumentPreviewDialog({
   };
 
   const heading = [company, jobTitle].filter(Boolean).join(" · ");
-  // N63: the copyable title for the active docx document -- the SAME base the
-  // download and Drive save resolve (docx.js:720-721, driveNames.js:31),
-  // anchored to the COMMITTED override (scopes[tab].fileName, not the live
-  // fileNameDraft) so copy and download never disagree, and re-resolved
-  // (never copied raw) so a rename with characters the download sanitises
-  // away still matches what the employer actually receives.
-  const activeTitle = resolveDocumentFileName(scopes[tab]?.fileName, jobTitle, company, tab === "resume" ? "Resume" : "CL").replace(/\.docx$/i, "");
+  // N63/N83: the copyable title for the active docx document, read from the
+  // LIVE fileNameDraft, not the stale committed value -- see
+  // resolveActiveDocumentTitle (documentScopes.js) for the full reasoning.
+  const activeTitle = resolveActiveDocumentTitle(fileNameDraft, scopes[tab]?.fileName, jobTitle, company, tab === "resume" ? "Resume" : "CL");
   const state = docState[tab] || {};
   // N69: apply the whole-document spacing override to the READ-ONLY render
   // only (edit mode reflects it cosmetically via pageSx's own lineHeight).

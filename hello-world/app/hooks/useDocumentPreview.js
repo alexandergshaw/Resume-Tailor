@@ -27,7 +27,7 @@ import {
 } from "../../lib/tailor/localSignals";
 import { syncTemplateEdits } from "../../lib/tailor/templateEdits";
 import { applyScopeFlags, lockScopesFor } from "../../lib/tailor/previewScopes";
-import { emailPreviewLines, buildDownloadArgs } from "../../lib/tailor/documentScopes";
+import { emailPreviewLines, buildDownloadArgs, resolveDownloadPayload } from "../../lib/tailor/documentScopes";
 import { resolveDefaultTemplateFile, promoteDefaultTemplateBlob } from "../../lib/document/defaultTemplateClient";
 import { readEngine } from "../settings/engine";
 import { createClient } from "../../lib/supabase/client";
@@ -514,8 +514,7 @@ export function useDocumentPreview({
     const downloadKey = `download:${scope}`;
     if (inFlightScopesRef.current.has(downloadKey)) return;
     inFlightScopesRef.current.add(downloadKey);
-    const text = typeof payload === "string" ? payload : payload?.text || "";
-    const lines = text.split("\n");
+    const { text, lines, fileNameOverride } = resolveDownloadPayload(payload); // N83: fileNameOverride is the LIVE file-name draft -- see resolveDownloadPayload's own comment for the shape.
     setScopeFlags(scope, { busy: true, error: "", notice: "" });
     try {
       const entry = tailoringMapRef.current[resumePreview.jobId] || {};
@@ -531,6 +530,7 @@ export function useDocumentPreview({
         company: resumePreview.company,
         spacing: entry.spacing,
         formattingTemplate: await resolveDefaultTemplateFile(currentUser?.id, scope), // N97/AC-4: null is a no-op (AC-8)
+        fileNameOverride,
       });
       const err = await downloadDocxFiles(args);
       setScopeFlags(scope, { busy: false, error: err || "" });

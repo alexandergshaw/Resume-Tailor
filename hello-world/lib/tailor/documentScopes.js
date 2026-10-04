@@ -1,3 +1,5 @@
+import { resolveDocumentFileName } from "../document/docx";
+
 // The document scopes the tailoring preview UI supports, shared so a new
 // scope means editing one file instead of the three (DocumentPreviewDialog,
 // CombineDocumentsControl, ReviseStrip) that used to each keep their own
@@ -26,6 +28,23 @@ export function emailPreviewText(entry) {
   return emailPreviewLines(entry).join("\n");
 }
 
+// N83: derive downloadDocumentPreview's text/lines/fileNameOverride from its
+// `payload` argument (a plain string, or an object carrying `text` and
+// optionally the LIVE file-name draft under `fileName`). Extracted out of
+// useDocumentPreview.js (that hook's own line ceiling has no room left) so
+// the hook keeps one destructuring line instead of deriving all three
+// inline. `fileNameOverride` is undefined when the caller didn't send one
+// (a string payload, or an object with no fileName) -- buildDownloadArgs
+// treats that as "keep today's behavior" and falls back to entry.*FileName.
+export function resolveDownloadPayload(payload) {
+  const text = typeof payload === "string" ? payload : payload?.text || "";
+  return {
+    text,
+    lines: text.split("\n"),
+    fileNameOverride: payload && typeof payload === "object" ? payload.fileName : undefined,
+  };
+}
+
 // Build downloadDocxFiles' per-scope args: the common empty-value baseline
 // plus that scope's own text/lines/fileName/rebuild-template pointers, and
 // (when unedited-and-unchanged) the finished doc's bytes/path served
@@ -35,7 +54,14 @@ export function emailPreviewText(entry) {
 // `spacing` (N69): the whole-document override, or null/undefined when the
 // user hasn't set one -- downloadDocxFiles's own no-op control depends on
 // this never inventing a value the caller didn't pass.
-export function buildDownloadArgs({ scope, entry, text, lines, serveFinished, title, company, spacing, formattingTemplate }) {
+// `fileNameOverride` (N83): the LIVE file-name draft the preview dialog's
+// download hop conveys, taking precedence over the committed
+// entry.*FileName one render late -- undefined/null (the caller didn't pass
+// one) keeps exactly today's behavior. Passed through RAW: downloadDocxFiles
+// itself re-resolves resumeFileName/coverLetterFileName via
+// resolveDocumentFileName (docx.js:749-750), so resolving it again here
+// would double-resolve an already-sanitised name.
+export function buildDownloadArgs({ scope, entry, text, lines, serveFinished, title, company, spacing, formattingTemplate, fileNameOverride }) {
   const args = {
     jobTitle: title,
     company,
@@ -55,13 +81,13 @@ export function buildDownloadArgs({ scope, entry, text, lines, serveFinished, ti
   }
   if (scope === "cover") {
     args.coverLetterResultLines = lines;
-    args.coverLetterFileName = entry.coverLetterFileName || "";
+    args.coverLetterFileName = fileNameOverride != null ? fileNameOverride : (entry.coverLetterFileName || "");
     args.coverLetterTemplateDocxB64 = typeof entry.coverLetterDocxB64 === "string" ? entry.coverLetterDocxB64 : "";
     if (serveFinished && typeof entry.coverLetterDocxB64 === "string") args.coverLetterDocxB64 = entry.coverLetterDocxB64;
   } else {
     args.result = text;
     args.resultLines = lines;
-    args.resumeFileName = entry.resumeFileName || "";
+    args.resumeFileName = fileNameOverride != null ? fileNameOverride : (entry.resumeFileName || "");
     args.templateDocxB64 = typeof entry.docxB64 === "string" ? entry.docxB64 : "";
     // MAJOR-1 fix: unconditional, NOT gated on serveFinished. docxB64 is
     // also the rebuild TEMPLATE an edited download falls onto, and a
@@ -78,4 +104,18 @@ export function buildDownloadArgs({ scope, entry, text, lines, serveFinished, ti
     }
   }
   return args;
+}
+
+// N83: the copyable title for the active docx document -- the SAME base the
+// download and Drive save resolve. Reads the LIVE fileNameDraft (what the
+// user is looking at), falling back to the committed override only when the
+// draft is blank -- a pointer click on the title-copy control never blurs
+// the field (CopyDocumentControl.js's onMouseDown preventDefault), so
+// anchoring to the committed value copied a stale name. Re-resolved through
+// resolveDocumentFileName (never copied raw) so a rename with characters the
+// download sanitises away still matches what the employer receives.
+// Extracted out of DocumentPreviewDialog.js so that file's own line ceiling
+// has room, same reasoning as buildDownloadArgs above.
+export function resolveActiveDocumentTitle(fileNameDraft, committedFileName, jobTitle, company, kind) {
+  return resolveDocumentFileName(fileNameDraft.trim() || committedFileName, jobTitle, company, kind).replace(/\.docx$/i, "");
 }
