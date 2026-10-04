@@ -90,3 +90,10 @@ _Last updated: 2026-10-04 by the orchestrator._
 ## N105 PLAN CHECK (2026-10-04): NEEDS REVISION — see docs/loop/N105.plan.check.r1.md
 - F1 page.js budget = 5 not 7 (>=3 pins at <3015; 6-7 lines reds two landed tests). F2 "every safety AC in slice 1" FALSE — AC-5 reviewer-dependent/Step 9/N106-blocked; DECISION: DARK-LAUNCH the Ideal selector until Step 9+N106 live (no review-less generation to the user). F3 maxDuration + per-call timeout/maxRetries unowned (Step 4 route + Step 3b). F4 stale refs. F5 lib/review ownership-seam note.
 - DISPATCHED: N105 PLAN r2 (terminating) folding F1-F5 + dark-launch gating. N106 plan check (aef596f7) still running.
+
+## N106 PLAN CHECK (2026-10-04): NEEDS REVISION (docs/loop/N106.plan.check.r1.md)
+- F1 (major, safety): 2b overclaim path — judge RESOLVES but returns malformed/missing evaluatedCategories ⇒ ∅ ⇒ complete:false, engineMode:full — NOT commissioned in the 4b per-AC table (seam-map lists only all-3/none/throw). #1 safety path; add explicit row.
+- F2 (major): judge-side emit() containment unpinned — no commissioned test injects a fake judge returning a fabricated/union spanId asserting it is DROPPED (mechanical-side IS guarded). Add row.
+- F3 (minor): §4 "target the barrel" vs Step-4 greening — step-4 behavioral tests must deep-import ./reviewDocuments.js; fix wording.
+- All other attacks SOUND (reference split, erratum binding, slice boundary, DAG acyclic). Both gaps are under-commissioned designed behaviors, not redesigns.
+- DISPATCHED: N106 PLAN r2 (terminating) adding the two 4b rows + wording fix. N105 plan r2 (af7be37) still running.
