@@ -56,3 +56,12 @@ _Last updated: 2026-10-04 by the orchestrator._
 ## N106 STRUCTURE design COMPLETE (2026-10-04)
 - `docs/loop/N106.design.r1.md` (S-1..S-15). Home: new pure `lib/review/` (reviewDocuments.js, contract.js, mechanicalDetectors.js, referenceSelect.js) + second-slice `geminiJudge.js` (only network toucher). No table/migration. Reuse: WEAK_OPENERS (critique.js:9), extractKeywords (keywords.js:191), headerDateSpan (parseEmployment.js:123); NOT METRIC_RE (opposite polarity) — N106 owns NUMERIC_CLAIM_RE. LLM seam = injected async options.judge; engineMode decided by whether consumer injects a judge; core never reads env. coverage: evaluated = FLOOR(4) ∪ (judge∩LLM(3)); complete DERIVED (overclaim no code path). Richer prior art found: critiqueLocal.js (containsTerm:205-214).
 - DISPATCHED: N106 structure CHECK (loop-checker) — verify import-graph PURITY of the reused detectors (the key CITED risk), the polarity/reuse calls, coverage-derivation, judge-flag re-validation through AC-1 containment. N105 experience revision (ab22f418) still running.
+
+## N106 STRUCTURE CHECK (2026-10-04): NEEDS REVISION
+- Load-bearing CLEARS: reused symbols pure to the leaf; coverage overclaim has NO code path.
+- F1 (major): WEAK_OPENERS is module-internal in critique.js — importing = add-an-export anti-pattern. Fix: REIMPLEMENT the 12-item lexicon (or extract to lib/text/); drop the import/canary framing.
+- F2 (AC erratum, RULED): embedded evaluatedCategories = 4 floor ONLY; unsupported-authority/employer-plausibility/consistency NOT in evaluatedCategories on embedded, complete:false. Erratum recorded atop N106.ac.r2.md; TDD binds to the ruling, not AC-8's literal clause.
+- F3 (minor): pin injected-judge failure semantics (throw/timeout/malformed ⇒ degrade to mechanical-only; malformed/missing judgeEvaluatedCategories ⇒ ∅ ⇒ complete:false, never full).
+- F4 (minor): state judge flags are deduped-any-category intentionally OR restrict to the 3 LLM categories symmetrically.
+- F5 (minor): AC-16 single-analyzer census must discriminate by the {flags,unresolvedQualifications,coverage} return shape (or make the 6 detect* module-internal) — else zero-power or over-sensitive.
+- DISPATCHED: N106 structure r2 (terminating) folding F1/F3/F4/F5 + surfacing the F2 ruling. N105 experience revision (ab22f418) still running.
