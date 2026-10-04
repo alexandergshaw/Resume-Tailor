@@ -1222,6 +1222,30 @@
   verify: null
   verify_proof: null
   blocked_by: []
+
+- id: "N83-F1"
+  state: "actionable"
+  title: "**MINOR residual of N83: Copy and Download disagree when the file field is BLANKED over a committed custom name.** Fresh verifier (SHIP on fa5635e) found: with a committed custom name seeded in the field, if the user clears the field to blank and acts via pointer (no blur/commit), Copy (resolveActiveDocumentTitle, documentScopes.js:119-121, does `\"\".trim() || committed`) resolves the COMMITTED name, while Download (handleDownload conveys fileName:\"\" -> fileNameOverride:\"\" -> buildDownloadArgs uses \"\" since `\"\" != null` -> resolveDocumentFileName(\"\") -> DERIVED DEFAULT). So Copy='Committed Name' but Download='Acme - Senior Engineer - Resume'. Violates the titleCopy describe-block invariant 'copy and download never disagree' (holds for every non-blank draft). Whitespace-only behaves the same. **Fix (pick one, apply to BOTH egresses):** either make resolveDownloadPayload/handleDownload fall back to the committed value when the trimmed draft is '' (mirror resolveActiveDocumentTitle's `|| committed`), OR make resolveActiveDocumentTitle resolve blank straight to the derived default (mirror download). Narrow trigger; not a ship blocker."
+  owed_by: "A small round: decide blank-field semantics (default vs keep-committed) and make both egresses agree"
+  evidence: ["docs/loop N83 fresh verify (fa5635e) F1 — empirically confirmed via scratchpad probe 4/4", "documentScopes.js:119-121 resolveActiveDocumentTitle vs DocumentPreviewDialog.js:422 handleDownload + buildDownloadArgs:84/90"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
+
+- id: "N83-F2"
+  state: "actionable"
+  title: "**MINOR (test coverage) for N83: the DOWNLOAD illegal-char fidelity seam has no test.** The copy sanitise path IS covered (titleCopy SILENT-FAILURE ROW; fileNameStaleness.test.js:350-369 'My/Live:Draft*4242' -> 'MyLiveDraft4242'), but the download path's illegal-char sanitisation is asserted nowhere — fileNameStaleness.test.js:378-402 uses a CLEAN draft 'ZZ-Live-DL-Draft-7777' and inspects only the conveyed payload JSON, never the resolved filename. The property is CORRECT (verifier drove the real chain: raw override -> resolveDocumentFileName -> sanitizeFileNamePart docx.js:39-44 strips illegal chars on both scopes, download base == copy base) but undefended against a future change that stops threading through resolveDocumentFileName. **Fix:** add one test row driving an illegal-char draft through buildDownloadArgs + resolveDocumentFileName (resume AND cover) asserting the base is sanitised and equals the copy base."
+  owed_by: "A test-only round: add the download illegal-char fidelity row (resume + cover)"
+  evidence: ["docs/loop N83 fresh verify (fa5635e) F2", "fileNameStaleness.test.js:378-402 uses a clean draft and asserts only payload conveyance, not the resolved filename"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
 - id: "D2"
   state: "owner"
   title: "**The transport claim is doc-verified, not wire-verified.**"
