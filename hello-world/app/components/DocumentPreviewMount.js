@@ -6,6 +6,8 @@ import DocumentPreviewDialog from "./DocumentPreviewDialog";
 import FocusPickerDialog from "./FocusPickerDialog";
 import InsertedFactsStrip from "./preview/InsertedFactsStrip";
 import AutoInsertFactsMessage from "./preview/AutoInsertFactsMessage";
+import HypotheticalBand from "./preview/HypotheticalBand";
+import IdealResultBands from "./preview/IdealResultBands";
 import { useCopyFeedback } from "./preview/CopyFeedback";
 import { planMoveFact } from "../../lib/acceptedFacts/factMove";
 import {
@@ -15,7 +17,9 @@ import {
   undoSmoothTransition,
 } from "../../lib/coverFacts/smoothTransition";
 import { getDownloadFileNameForTitle, getDownloadCoverLetterFileNameForTitle } from "../../lib/document/docx";
+import { linesToModel } from "../../lib/document/docxPreview";
 import { emailPreviewText, visibleScopesFor } from "../../lib/tailor/documentScopes";
+import { idealSurfaceFor } from "../../lib/tailor/idealSurface";
 import { useDriveDocuments } from "../hooks/useDriveDocuments";
 import { recordDecision } from "@/lib/activityLog/appActivityLog.js";
 import { visuallyHidden } from "@/lib/copilot/answerStatus";
@@ -381,6 +385,12 @@ export default function DocumentPreviewMount({
   // otherwise render-phase-reset this to EMPTY (CopyFeedback.js:75-78) and
   // wipe "Fact moved." the instant it lands.
   const { announce, regionProps } = useCopyFeedback(insertedFactsJobId);
+  // N105 Step 7: null unless this job carries an Ideal run (D-10 / UX-20 key on
+  // `entry.ideal`, never on the engine, so a later engine switch cannot undo it).
+  const idealSurface = idealSurfaceFor(tailoringMap[insertedFactsJobId], {
+    title: preview.resumePreview.title,
+    company: preview.resumePreview.company,
+  });
   async function handleMove(factId, direction) {
     setFactOpPending({ factId, kind: "move" });
     announce({ polite: "Moving the fact." });
@@ -505,7 +515,7 @@ export default function DocumentPreviewMount({
   const insertedFactsStrip = (
     <>
       <AutoInsertFactsMessage severity={autoInsertMessage?.severity} text={autoInsertMessage?.text} />
-      {insertedFacts.length > 0 ? (
+      {insertedFacts.length > 0 || idealSurface?.announces ? (
         <>
           {/* N95: the two hidden live regions only (no visible chip -- the
               row is already dense) -- reused verbatim from CopyFeedback.js's
@@ -513,39 +523,80 @@ export default function DocumentPreviewMount({
               region, text-change on announce()" contract (N84-safe) as every
               other copy-feedback surface. Selected by data-copy-status, never
               role -- DocumentPreviewDialog already mounts a first
-              role=status/alert pair for DriveResultRegion. */}
+              role=status/alert pair for DriveResultRegion. N105 Step 7: the
+              Application-ready band's Copy-line rows announce through this SAME
+              pair (its onOutcome), mounted only while that band has rows, so the
+              band adds no live region of its own. */}
           <Box component="span" role="status" aria-live="polite" data-copy-status="polite" sx={visuallyHidden}>
             {regionProps.polite ? <span key={regionProps.seq}>{regionProps.polite}</span> : null}
           </Box>
           <Box component="span" role="alert" data-copy-status="alert" sx={visuallyHidden}>
             {regionProps.alert ? <span key={regionProps.seq}>{regionProps.alert}</span> : null}
           </Box>
-          <InsertedFactsStrip
-            facts={insertedFacts}
-            error={removeError}
-            movability={insertedFactsMovability}
-            busyFactId={busyFactId}
-            smoothingFactId={smoothingFactId}
-            applyPending={applyPending}
-            onRemove={async (factId) => {
-              const result = await research.removeInsertedFact(insertedFactsJobId, factId);
-              const failed = result && result.ok === false;
-              setRemoveError(failed ? result.reason || "Couldn't remove that fact. Try again." : "");
-              if (!failed) clearAppliedSmooth(factId);
-            }}
-            onMove={handleMove}
-            onSmooth={handleSmooth}
-            smoothDisabled={tailorEngine === "embedded"}
-            pendingSmooth={pendingSmooth}
-            onApplySmooth={handleApplySmooth}
-            onDiscardSmooth={handleDiscardSmooth}
-            smoothApplied={appliedSmooth}
-            onUndoSmooth={handleUndoSmooth}
-          />
+          {insertedFacts.length > 0 ? (
+            <InsertedFactsStrip
+              facts={insertedFacts}
+              error={removeError}
+              movability={insertedFactsMovability}
+              busyFactId={busyFactId}
+              smoothingFactId={smoothingFactId}
+              applyPending={applyPending}
+              onRemove={async (factId) => {
+                const result = await research.removeInsertedFact(insertedFactsJobId, factId);
+                const failed = result && result.ok === false;
+                setRemoveError(failed ? result.reason || "Couldn't remove that fact. Try again." : "");
+                if (!failed) clearAppliedSmooth(factId);
+              }}
+              onMove={handleMove}
+              onSmooth={handleSmooth}
+              smoothDisabled={tailorEngine === "embedded"}
+              pendingSmooth={pendingSmooth}
+              onApplySmooth={handleApplySmooth}
+              onDiscardSmooth={handleDiscardSmooth}
+              smoothApplied={appliedSmooth}
+              onUndoSmooth={handleUndoSmooth}
+            />
+          ) : null}
         </>
       ) : null}
     </>
   );
+
+  // N105 Step 7: the Ideal run's two bands, keyed by the dialog's OWN tab so the
+  // HYPOTHETICAL banner appears in the same commit as the tab (a mount-chosen
+  // single band would lag one commit behind a click, via onActiveScopeChange).
+  // Null for a level 1-5 job, so its preview is unchanged.
+  const resultBands = idealSurface
+    ? {
+        resume: (
+          <IdealResultBands
+            ideal={idealSurface.ideal}
+            currentText={idealSurface.currentText}
+            handEdited={idealSurface.handEdited}
+            onOutcome={announce}
+          />
+        ),
+        hypothetical: (
+          <HypotheticalBand
+            fileName={idealSurface.hypothetical.fileName}
+            busy={!!preview.resumePreview.busy?.hypothetical}
+            onDownload={() =>
+              preview.downloadDocumentPreview("hypothetical", {
+                text: idealSurface.hypothetical.text,
+                fileName: idealSurface.hypothetical.fileName,
+              })
+            }
+          />
+        ),
+      }
+    : null;
+  // The hook's loader falls back to the application-ready resume for any scope
+  // it does not name (F-3), which would show the WRONG document under the
+  // HYPOTHETICAL banner. The hypothetical previews from its own lines instead.
+  const loadModel = idealSurface
+    ? async (scope, opts) =>
+        scope === "hypothetical" ? linesToModel(idealSurface.hypotheticalLines) : preview.loadPreviewModel(scope, opts)
+    : preview.loadPreviewModel;
 
   return (
     <DocumentPreviewDialog
@@ -561,6 +612,9 @@ export default function DocumentPreviewMount({
           fileName:
             tailoringMap[preview.resumePreview.jobId]?.resumeFileName ||
             getDownloadFileNameForTitle(preview.resumePreview.title, preview.resumePreview.company).replace(/\.docx$/i, ""),
+          // N105 Step 7: "Application-ready" is a claim, so it is derived -- null
+          // (the dialog's own "Resume") once the review no longer fits the file.
+          tabLabel: idealSurface?.resumeTabLabel,
         },
         cover: {
           available: preview.previewScopeAvailable(tailoringMap[preview.resumePreview.jobId], "cover"),
@@ -576,22 +630,30 @@ export default function DocumentPreviewMount({
           available: preview.previewScopeAvailable(tailoringMap[preview.resumePreview.jobId], "email"),
           text: emailPreviewText(tailoringMap[preview.resumePreview.jobId]),
         },
+        // N105 Step 7: present only for an Ideal job. `available` is the hypothetical's
+        // OWN text (previewScopeAvailable would answer for the application-ready one);
+        // no `html`, so the dialog always renders it read-only through `loadModel`.
+        ...(idealSurface ? { hypothetical: idealSurface.hypothetical } : {}),
       }}
       // N105 (D-10): the tab set -- the legacy three unless this job carries an
       // Ideal run's hypothetical, so a level 1-5 preview never shows its tab.
       visibleScopes={visibleScopesFor(tailoringMap[preview.resumePreview.jobId])}
+      resultBands={resultBands}
       engine={tailorEngine}
-      loadModel={preview.loadPreviewModel}
+      loadModel={loadModel}
       reloadKey={previewReloadKey}
       onClose={preview.closeResumePreview}
       onSave={preview.saveDocumentPreview}
       onRenameFile={preview.renameDocument}
-      onResubmit={preview.resubmitDocumentPreview}
+      // N105 (UX-20): Revise, Focus and Framing re-run the STANDARD route, which would
+      // replace the gated Application-ready text with an ungated one, so an Ideal job
+      // gets none of the three (the dialog hides each control when its callback is absent).
+      onResubmit={idealSurface ? null : preview.resubmitDocumentPreview}
       onDownload={preview.downloadDocumentPreview}
       onSetAsDefaultTemplate={preview.setDefaultTemplateFromPreview}
       onAskAi={(scope, payload) =>
         chat.askAiAbout({
-          label: `${preview.resumePreview.company || "Job"}${preview.resumePreview.title ? ` · ${preview.resumePreview.title}` : ""} — ${scope === "cover" ? "Cover letter" : "Resume"}`,
+          label: `${preview.resumePreview.company || "Job"}${preview.resumePreview.title ? ` · ${preview.resumePreview.title}` : ""} — ${scope === "cover" ? "Cover letter" : scope === "hypothetical" ? "HYPOTHETICAL resume (not the candidate's real record)" : "Resume"}`,
           content: payload?.text || "",
           sourceJobId: preview.resumePreview.jobId,
         })
@@ -606,7 +668,7 @@ export default function DocumentPreviewMount({
         (tailoringMap[preview.resumePreview.jobId]?.keywordEditsOverride?.boost?.length || 0) +
         (tailoringMap[preview.resumePreview.jobId]?.keywordEditsOverride?.exclude?.length || 0)
       }
-      onOpenFocusPicker={() => setFocusPickerOpen((v) => !v)}
+      onOpenFocusPicker={idealSurface ? null : () => setFocusPickerOpen((v) => !v)}
       insertedFactsStrip={insertedFactsStrip}
       focusControls={
         <FocusPickerDialog
@@ -626,13 +688,16 @@ export default function DocumentPreviewMount({
           onApply={preview.applyFocusArea}
         />
       }
-      onSetFraming={(variant) =>
-        preview.applyFocusArea(
-          tailoringMap[preview.resumePreview.jobId]?.focusAreaOverride || "",
-          tailoringMap[preview.resumePreview.jobId]?.keywordEditsOverride || null,
-          variant,
-          tailoringMap[preview.resumePreview.jobId]?.personaOverride || "",
-        )
+      onSetFraming={
+        idealSurface
+          ? null
+          : (variant) =>
+              preview.applyFocusArea(
+                tailoringMap[preview.resumePreview.jobId]?.focusAreaOverride || "",
+                tailoringMap[preview.resumePreview.jobId]?.keywordEditsOverride || null,
+                variant,
+                tailoringMap[preview.resumePreview.jobId]?.personaOverride || "",
+              )
       }
       onResearchCompany={() =>
         research.openCompanyResearch({

@@ -76,6 +76,8 @@ export default function DocumentPreviewDialog({
   // N105 (D-10): the tab set to render. Defaults to the legacy three, NEVER
   // SCOPES, so "hypothetical" shows only where the mount supplies it.
   visibleScopes = LEGACY_SCOPES,
+  // N105 Step 7: scope -> a mount-built element shown for that scope only (the Ideal review band, the HYPOTHETICAL banner).
+  resultBands = null,
   engine = "",
   loadModel,
   reloadKey = 0,
@@ -599,7 +601,7 @@ export default function DocumentPreviewDialog({
             <Tab
               key={scope}
               value={scope}
-              label={available(scope) ? SCOPE_LABEL[scope] : `${SCOPE_LABEL[scope]} (none)`}
+              label={`${scopes[scope]?.tabLabel ?? SCOPE_LABEL[scope]}${available(scope) ? "" : " (none)"}`}
               disabled={!available(scope)}
               sx={{ textTransform: "none", minHeight: 40 }}
             />
@@ -759,6 +761,7 @@ export default function DocumentPreviewDialog({
 
       {focusControls}
       {insertedFactsStrip}
+      {resultBands?.[tab]}
 
       {scrapeNote ? (
         <Box
@@ -950,7 +953,7 @@ export default function DocumentPreviewDialog({
           copyState={copyState}
           scopeLabel={SCOPE_LABEL[tab]}
           accessibleName={`Copy text of the ${SCOPE_LABEL[tab].toLowerCase()}`}
-          variant={DOCX_SCOPES.includes(tab) ? "outlined" : "contained"}
+          variant={DOCX_SCOPES.includes(tab) || tab === "hypothetical" ? "outlined" : "contained"}
           mode={mode}
           onOutcome={copy.announce}
         />
