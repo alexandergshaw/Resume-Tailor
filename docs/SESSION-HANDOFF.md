@@ -78,3 +78,7 @@ _Last updated: 2026-10-04 by the orchestrator._
 - DISPATCHED: N105 PLAN CHECK (loop-checker). N106 structure r2 still running. Next: TDD (4b) → implement slice 1; N106 (structure r2 → plan → TDD → impl) must land before N105 step 9.
 
 ## CORRECTION (2026-10-04): N106 structure r2 was NEVER dispatched despite earlier handoff notes claiming it was "running". Dispatching it now for real, together with the N105 plan check. (stated-plan-vs-executed trap.)
+
+## N106 STRUCTURE r2 FINAL (2026-10-04)
+- `docs/loop/N106.design.r2.md`. F1 REIMPLEMENT the weak-opener lexicon (VAGUE_OPENERS in mechanicalDetectors.js) + reimplement containsTerm word-boundary test; only extractKeywords(keywords.js:191) + headerDateSpan(parseEmployment.js:123) reused by import (both EXPORTED, pure-leaf). F2 erratum surfaced (AC-8 superseded; embedded=4 floor). F3 coverage derives from seamResolved: throwing/timeout judge ⇒ mechanical-only/complete:false; malformed judge ⇒ reportedLlmCategories=∅ ⇒ complete:false. F4 judge flags restricted to 3 LLM categories. F5 census = exported fn whose probe own-keys == {flags,unresolvedQualifications,coverage} (exactly 1 = reviewDocuments) + index.js barrel. No open structure question.
+- N106 DESIGN LAYER SETTLED (AC r2 + structure r2). DISPATCHED: N106 PLAN (loop-plan). N105 plan check (a3d252cf) still running.
