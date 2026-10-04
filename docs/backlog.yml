@@ -1246,6 +1246,18 @@
   verify: null
   verify_proof: null
   blocked_by: []
+
+- id: "N106"
+  state: "actionable"
+  title: "**FOUNDATIONAL (OD-3): the shared adversarial-reviewer primitive `reviewDocuments(...)`.** The ONE deterministic analyzer consumed by N103 (adversarial-review button), N104 (weakness summary) AND N105 step-6. Built FIRST as its own chunk; consumers grow no analyzer of their own. Pure/deterministic; app owns span ids (single-span containment, no re-chunk); authority reference SPLIT PER DRAFT (user-material for application-ready, internal-consistency for the hypothetical); unverifiable-metric flagged on both. FINAL contract (from N105 structure r2, docs/loop/N105.design.r2.md): `reviewDocuments({ drafts:[{kind, spans:[{id,text,section,contextKey}], authorityReference:'user-material'|'internal-consistency'}], posting:{requirements:[{id,text}]}, realMaterial:{spans:[{id,text,contextKey}]}|null }) => { flags:[{draftKind, spanId (EXACTLY ONE app-minted), category:'missing-keyword'|'vague-unsupported'|'repetition'|'unverifiable-metric'|'employer-plausibility'|'consistency'|'unsupported-authority', evidenceRef?:{origin:'posting'|'real-material'|'draft', draftKind?, spanId}, message}], unresolvedQualifications:[{requirementId,text}] }`. N105 AC-6 stays RED until this lands. Deterministic-vs-LLM story is a design question (the categories like employer-plausibility may need the engine; embedded must still return a meaningful subset or fail honestly)."
+  owed_by: "Full loop (AC -> design -> plan -> TDD -> implement -> verify). Blocks N105 step-6; unblocks N103/N104."
+  evidence: ["Owner OD-3 2026-10-04 (shared reviewer is its own foundational chunk)", "docs/loop/N105.design.r2.md section 6 (finalized contract with evidenceRef)"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
 - id: "D2"
   state: "owner"
   title: "**The transport claim is doc-verified, not wire-verified.**"
