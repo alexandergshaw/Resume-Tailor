@@ -44,3 +44,11 @@ _Last updated: 2026-10-04 by the orchestrator._
 - The `loop-retro` role fires on the NEXT BACKLOG Next-drain (not yet).
 
 > Tooling note (2026-10-04): `render.mjs` briefly failed with a yamlLite line-44 error on a byte-identical backlog.yml; rewriting the file (tr -d CR / cp) cleared it and render succeeded. No content change. If it recurs, rewrite the file before debugging yamlLite.
+
+## N105 G2 EXPERIENCE CHECK (2026-10-04): NEEDS REVISION
+- F-A (safety): no partial-review state; zero-flag renders "No issues flagged" which N106 AC-17 forbids when complete===false (false on EVERY slice-1 invocation). Fix: forward review.coverage via the orchestrator join (UXR-1); add `partial` band state; clean verdict only when flags empty AND complete===true; word-sweep forbids "No issues flagged" while incomplete.
+- F-B (safety): OC-2 panel-only means §5.4 inline-in-bytes marker is INVALID. SAFE reconciliation ADOPTED (default, owner may override): the emitted application-ready bytes contain KEPT (unflagged) spans ONLY; flagged middle-tier claims are DROPPED from the doc and surfaced in the panel to verify-and-re-add. Owner flagged: this REMOVES flagged bullets from the downloaded doc. STRUCTURE DELTA D-6b: recompose emits kept-only (was kept+flagged).
+- F-C (medium): chip/feed paths (handleTailorJob/handleTailorFeedPosting) only download today; "deliver by opening preview" is net-new and must be specified or the Ideal result has no surface (AC-13) / the immediate-download hazard stays.
+- F-D (structure delta): ensureHypotheticalMarker inserts a SUFFIX; OC-3 = PREFIX. STRUCTURE DELTA D-8: prefix.
+- Verified SOUND first-hand: slider a11y fix (ApplyingControls.js:187-199), 422 refusal, visibleScopes phantom-tab, false other-version, OC-1/minimize-clicks/app-vs-chat.
+- DISPATCHED: N105 1c experience REVISION (terminating) = N105.ux.r2.md folding F-A/F-B/F-C + recording structure deltas D-6b (kept-only) + D-8 (prefix) as binding plan amendments. N106 structure design (aa717454) still running.
