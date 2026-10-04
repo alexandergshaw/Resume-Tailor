@@ -124,9 +124,14 @@ describe("runIdealPipeline — two-file shape (UX-42/UXR-13, D-11)", () => {
     expect(out.ideal.applicationReady.title ?? "").not.toMatch(/HYPOTHETICAL/);
   });
 
-  it("carries review:null in slice 1 (no reviewer wired until Step 9)", async () => {
+  // Obsoleted by Step 9 (ruling R-N105-STEP9): this row used to pin review:null
+  // "until Step 9". The live reviewer is wired now and, with no judge injected,
+  // is the mechanical floor: present, partial, never complete.
+  it("carries the live mechanical-only review (Step 9 replaced the slice-1 review:null)", async () => {
     const out = await run();
-    expect(out.ideal.review).toBeNull();
+    expect(out.ideal.review).not.toBeNull();
+    expect(out.ideal.review.coverage.engineMode).toBe("mechanical-only");
+    expect(out.ideal.review.coverage.complete).toBe(false);
   });
 
   it("surfaces the gate's removed/leftOut and the posting analysis / keyword map", async () => {

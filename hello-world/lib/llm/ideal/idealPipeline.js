@@ -19,10 +19,19 @@
 // from the recomposed lines. The hypothetical keeps its own text and bytes and is
 // never gated: it is the best case, and the UI and filename mark it as such.
 //
-// Slice 1 has no reviewer (Step 9 is blocked on the shared reviewer), so
-// `review` is null here. The band state machine reads a null review as "the
-// review did not run", never as a clean result.
+// THE REVIEW (Step 9). After the emitted document is fixed, both drafts go to the
+// shared reviewer (lib/review, N106): the application-ready draft as its KEPT
+// spans, i.e. exactly the lines that ship, judged against the user's real
+// material, and the hypothetical as its own content spans, judged against its
+// own internal coherence. The result is advisory and panel-only: it is computed
+// AFTER `emitted` and nothing reads it back, so a flag can never re-admit a
+// removed claim into the document (K2). No judge is injected here, so the review
+// is the deterministic mechanical floor: its coverage reads engineMode
+// "mechanical-only" and complete:false, which the band shows as an honest
+// partial, never as a clean result. `ideal.spanTexts` carries the id -> text
+// tables the preview surface uses to quote the lines a flag names.
 //
+
 // A missing `realMaterial` is an EMPTY corpus: the gate drops every content span
 // and the chronology check removes every employer line. Failing closed here is
 // deliberate; the caller supplies the material (resume-derived spans plus the
@@ -37,6 +46,21 @@ import {
 import { stageError } from "@/lib/llm/ideal/idealStageResult";
 import { groundToPosting } from "@/lib/llm/ideal/postingGrounding";
 import { decomposeToSpans, recomposeFromSpans } from "@/lib/llm/ideal/spanDocument";
+import { reviewDocuments } from "@/lib/review";
+
+// The draft kinds the reviewer and the preview surface key their tables by
+// (spanTexts[kind][spanId]); idealSurface.js reads the same two strings.
+const DRAFT_KIND = { APPLICATION_READY: "applicationReady", HYPOTHETICAL: "hypothetical" };
+
+// { [id]: text } for the rows that have both; own keys only, so an id such as
+// "__proto__" stays an ordinary entry.
+function textTable(rows) {
+  return Object.fromEntries(
+    (Array.isArray(rows) ? rows : [])
+      .filter((row) => typeof row?.id === "string" && typeof row?.text === "string")
+      .map((row) => [row.id, row.text]),
+  );
+}
 
 // A chain draft as { result, resultLines, jobTitle, companyName }; anything that
 // is not a document fails the run (never a partial artifact, K7).
@@ -82,8 +106,11 @@ function anchorFor(entries, spanId, keptText) {
  *                                  education?: [{ institution, degree?, start, end }] } }
  *
  * => { engine, result, resultLines, jobTitle, companyName,   // APPLICATION-READY (UX-42)
- *      ideal: { hypothetical, applicationReady, review: null, postingAnalysis,
- *               keywordMap, removed, leftOut, counts } }
+ *      ideal: { hypothetical, applicationReady,
+ *               review,       // { flags, unresolvedQualifications, coverage }
+ *               spanTexts,    // { applicationReady, hypothetical, realMaterial, posting },
+ *                             // each { [spanId]: text }, for quoting the lines a flag names
+ *               postingAnalysis, keywordMap, removed, leftOut, counts } }
  *
  * Throws a stage error (never returns a partial) when the engine cannot run the
  * Ideal level or the chain returns something that is not a pair of documents.
@@ -137,6 +164,27 @@ export async function runIdealPipeline({ engine, args, realMaterial } = {}) {
     args?.jobPosting,
   );
 
+  // The reviewer sees the lines that ship (the kept spans) for the application-
+  // ready draft; reviewing the candidate would put flags on lines the file does
+  // not contain. The hypothetical is never gated, so every content line of it is
+  // reviewed. Span ids are scoped by draft kind, so the two drafts' "s1" never
+  // meet.
+  const hypotheticalSpans = decomposeToSpans(hypothetical.result, hypothetical.resultLines).spans;
+  const review = await reviewDocuments({
+    drafts: [
+      { kind: DRAFT_KIND.APPLICATION_READY, spans: kept, authorityReference: "user-material" },
+      { kind: DRAFT_KIND.HYPOTHETICAL, spans: hypotheticalSpans, authorityReference: "internal-consistency" },
+    ],
+    posting: grounded.postingAnalysis,
+    realMaterial: real,
+  });
+  const spanTexts = {
+    [DRAFT_KIND.APPLICATION_READY]: textTable(kept),
+    [DRAFT_KIND.HYPOTHETICAL]: textTable(hypotheticalSpans),
+    realMaterial: textTable(real.spans),
+    posting: textTable(grounded.postingAnalysis.requirements),
+  };
+
   const applicationReady = {
     result: emitted.result,
     resultLines: emitted.resultLines,
@@ -163,7 +211,8 @@ export async function runIdealPipeline({ engine, args, realMaterial } = {}) {
         ...(typeof chain.hypothetical?.docxB64 === "string" ? { docxB64: chain.hypothetical.docxB64 } : {}),
       },
       applicationReady,
-      review: null,
+      review,
+      spanTexts,
       postingAnalysis: grounded.postingAnalysis,
       keywordMap: grounded.keywordMap,
       removed,
