@@ -97,3 +97,7 @@ _Last updated: 2026-10-04 by the orchestrator._
 - F3 (minor): §4 "target the barrel" vs Step-4 greening — step-4 behavioral tests must deep-import ./reviewDocuments.js; fix wording.
 - All other attacks SOUND (reference split, erratum binding, slice boundary, DAG acyclic). Both gaps are under-commissioned designed behaviors, not redesigns.
 - DISPATCHED: N106 PLAN r2 (terminating) adding the two 4b rows + wording fix. N105 plan r2 (af7be37) still running.
+
+## N106 PLAN r2 FINAL (2026-10-04) — N106 PLAN-READY
+- `docs/loop/N106.plan.r2.md`. F1 commissioned the 4th coverage outcome (resolved judge w/ malformed evaluatedCategories ⇒ engineMode:full, complete:false, 4 FLOOR only; mutant c coerce-to-all-LLM must red). F2 commissioned judge-side containment (fake judge valid-id flag survives, fabricated/union-id flag dropped via emit()/assertContainedFlag; mutant d merge-bypass must red). F3 §4 wording: behavioral AC tests deep-import ./reviewDocuments.js at Step 4; only AC-16 barrel census targets index.js at Step 5. Seam-map now 4-way. No open plan question.
+- DISPATCHED: N106 TDD (loop-tdd) — land slice-1 (steps 1-5) acceptance tests RED under lib/review/, fixed FAKE judge, power controls + commissioned mutants. CODE PHASE BEGINS. N105 plan r2 (af7be37) still running.
