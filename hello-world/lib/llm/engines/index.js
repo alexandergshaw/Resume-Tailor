@@ -15,6 +15,13 @@ import { embeddedEngine } from "@/lib/llm/engines/tailor-lite";
 // endpoint on the standalone service and its `tailorHiringEmail` always
 // resolves to null rather than throwing; callers must treat a null/absent
 // result as "no email generated" rather than an error.
+//
+// Capability flag: `supportsIdeal` (N105, the Ideal tailoring level). True on
+// "gemini" only, which also carries `tailorIdeal(options)`; "embedded" and
+// "external" are false and have no such method. The registry is the single
+// source of that fact, but a caller must read the flag on the engine it
+// actually RESOLVED - the route can fall back external -> gemini when the
+// external service is unconfigured, and the gate belongs after that fallback.
 const ENGINES = {
   [geminiEngine.name]: geminiEngine,
   [externalEngine.name]: externalEngine,

@@ -91,6 +91,13 @@ function reportMeta(report) {
 export const externalEngine = {
   name: "external",
 
+  // N105 (the Ideal level): NOT supported in this chunk. The client below only
+  // ever forwards `{ posting, workflow, values }` - never the user's resume
+  // text - so it cannot produce an application-ready draft grounded in their
+  // own material (research F-1). It therefore refuses the Ideal level exactly
+  // as the embedded engine does. Flipping this needs the service's contract.
+  supportsIdeal: false,
+
   // True when the service is reachable from config (URL present).
   isConfigured() {
     return !!getConfig().url;

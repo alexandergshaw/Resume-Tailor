@@ -570,6 +570,11 @@ export function buildHiringEmailText({ role, organization, capabilities, profile
 export const embeddedEngine = {
   name: "embedded",
 
+  // N105 (the Ideal level) needs an LLM to author the hypothetical draft; this
+  // engine is deterministic and has no `tailorIdeal`. The route refuses the
+  // Ideal level honestly, with no artifact, when it resolves to this engine.
+  supportsIdeal: false,
+
   isConfigured() {
     return true;
   },
