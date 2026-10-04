@@ -15,7 +15,7 @@ import {
   undoSmoothTransition,
 } from "../../lib/coverFacts/smoothTransition";
 import { getDownloadFileNameForTitle, getDownloadCoverLetterFileNameForTitle } from "../../lib/document/docx";
-import { emailPreviewText } from "../../lib/tailor/documentScopes";
+import { emailPreviewText, visibleScopesFor } from "../../lib/tailor/documentScopes";
 import { useDriveDocuments } from "../hooks/useDriveDocuments";
 import { recordDecision } from "@/lib/activityLog/appActivityLog.js";
 import { visuallyHidden } from "@/lib/copilot/answerStatus";
@@ -577,6 +577,9 @@ export default function DocumentPreviewMount({
           text: emailPreviewText(tailoringMap[preview.resumePreview.jobId]),
         },
       }}
+      // N105 (D-10): the tab set -- the legacy three unless this job carries an
+      // Ideal run's hypothetical, so a level 1-5 preview never shows its tab.
+      visibleScopes={visibleScopesFor(tailoringMap[preview.resumePreview.jobId])}
       engine={tailorEngine}
       loadModel={preview.loadPreviewModel}
       reloadKey={previewReloadKey}

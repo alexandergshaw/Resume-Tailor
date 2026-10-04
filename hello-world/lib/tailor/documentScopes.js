@@ -4,15 +4,41 @@ import { resolveDocumentFileName } from "../document/docx";
 // scope means editing one file instead of the three (DocumentPreviewDialog,
 // CombineDocumentsControl, ReviseStrip) that used to each keep their own
 // copy of this list/label map.
-export const SCOPES = ["resume", "cover", "email"];
-export const SCOPE_LABEL = { resume: "Resume", cover: "Cover letter", email: "Hiring email" };
+// N105 (D-9): "hypothetical" is the Ideal run's second, best-case resume. It
+// joins SCOPES (tab vocabulary) and SCOPE_LABEL ONLY -- never DOCX_SCOPES, so
+// combine / set-default / Drive save refuse it structurally. LEGACY_SCOPES is
+// the tab set every non-Ideal preview renders, unchanged (AC-17): the dialog
+// renders a mount-supplied `visibleScopes` that defaults to it, never SCOPES,
+// so no phantom "Hypothetical resume (none)" tab appears in a level 1-5 run.
+export const LEGACY_SCOPES = ["resume", "cover", "email"];
+export const SCOPES = [...LEGACY_SCOPES, "hypothetical"];
+export const SCOPE_LABEL = {
+  resume: "Resume",
+  cover: "Cover letter",
+  email: "Hiring email",
+  hypothetical: "Hypothetical resume",
+};
+
+// The tab set the preview mount hands the dialog (N105 D-10): LEGACY_SCOPES
+// for every entry, plus "hypothetical" LAST only when the entry carries an
+// Ideal run's hypothetical result AND its application-ready résumé (the pair
+// is atomic -- no application-ready, no hypothetical tab). Returns the shared
+// LEGACY_SCOPES array itself in the ordinary case, so callers must not mutate.
+export function visibleScopesFor(entry) {
+  const hypotheticalText = entry?.ideal?.hypothetical?.result;
+  const hasHypothetical = typeof hypotheticalText === "string" && hypotheticalText.trim().length > 0;
+  const hasApplicationReady = typeof entry?.result === "string" && entry.result.trim().length > 0;
+  return hasHypothetical && hasApplicationReady ? [...LEGACY_SCOPES, "hypothetical"] : LEGACY_SCOPES;
+}
 
 // Scopes backed by a real .docx template + engine-produced document. "email"
 // is deliberately excluded: it is short plain text meant to be pasted into an
 // email client, never rendered through the docx pipeline. Anything that
 // builds or downloads a .docx (the combine-both control, for example) must
 // iterate THIS list, not SCOPES, so a plain-text scope never gets pulled
-// into a docx build.
+// into a docx build. "hypothetical" is excluded for a different reason: it
+// is a docx, but a markerless adoption of it (combine, set-default, Drive)
+// would let a best-case document leave without its HYPOTHETICAL marker.
 export const DOCX_SCOPES = ["resume", "cover"];
 
 // The hiring email's displayed/copyable text: the subject clearly labeled,
@@ -72,6 +98,27 @@ export function buildDownloadArgs({ scope, entry, text, lines, serveFinished, ti
     coverLetterDocxB64: "",
     spacing: spacing || null,
   };
+  // N105 (D-9b / F-3): the hypothetical reads ONLY its own bytes slot. Left to
+  // the else-branch below it would read entry.docxB64 -- the APPLICATION-READY
+  // résumé's bytes -- and serve the wrong document under the HYPOTHETICAL
+  // name. It rides the same résumé-shaped download args (one blob path,
+  // resolveDocumentBlobBytes, never buildMinimalistDocx) with `isHypothetical`
+  // so downloadDocxFiles layers the file-name marker. It maps to NO template
+  // kind (D-9), so the default-template override is deliberately not applied,
+  // and its file name never borrows the application-ready's rename.
+  if (scope === "hypothetical") {
+    const hypB64 = typeof entry.hypotheticalDocxB64 === "string" ? entry.hypotheticalDocxB64 : "";
+    const hypPath = typeof entry.hypotheticalDocxPath === "string" ? entry.hypotheticalDocxPath : "";
+    args.isHypothetical = true;
+    args.result = text;
+    args.resultLines = lines;
+    args.resumeFileName = fileNameOverride != null ? fileNameOverride : (entry.hypotheticalFileName || "");
+    args.templateDocxB64 = hypB64;
+    args.templateDocxPath = hypPath;
+    if (serveFinished && hypB64) args.docxB64 = hypB64;
+    if (serveFinished && !hypB64 && hypPath) args.docxPath = hypPath;
+    return args;
+  }
   // N97: the caller resolves ONE scope's default template and hands it in
   // under this generic name; downloadDocxFiles wants it under the key that
   // matches which document it belongs to (résumé vs. cover -- plan C1).

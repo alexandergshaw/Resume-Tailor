@@ -772,9 +772,14 @@ export function createDocumentDownloaders(deps) {
     // N69: whole-document { lineSpacing, paragraphSpacingPt } | null, applied
     // as resolveDocumentBlob's post-pass sweep to BOTH documents below.
     spacing = null,
+    // N105 (D-9b): set only by buildDownloadArgs's hypothetical branch, whose
+    // args already carry the hypothetical's OWN bytes in the résumé-shaped
+    // fields -- the same single blob path below -- so all that differs is the
+    // HYPOTHETICAL file-name marker on the résumé download.
+    isHypothetical = false,
   }) {
     // Download names honor an optional user override typed in the preview.
-    const resumeName = resolveDocumentFileName(resumeFileName, jobTitle, company, "Resume");
+    const resumeName = resolveDocumentFileName(resumeFileName, jobTitle, company, "Resume", isHypothetical);
     const coverName = resolveDocumentFileName(coverLetterFileName, jobTitle, company, "CL");
 
     const hasResume = !!result?.trim();

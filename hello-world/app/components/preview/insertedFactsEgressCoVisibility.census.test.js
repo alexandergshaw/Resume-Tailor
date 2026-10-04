@@ -40,7 +40,7 @@ import { useDocumentPreview } from "../../hooks/useDocumentPreview.js";
 import DocumentPreviewMount from "../DocumentPreviewMount.js";
 import { sanitizeStoredFacts } from "@/lib/acceptedFacts/factStore.js";
 import { embeddedEngine } from "@/lib/llm/engines/tailor-lite/engine.js";
-import { SCOPES } from "@/lib/tailor/documentScopes.js";
+import { LEGACY_SCOPES } from "@/lib/tailor/documentScopes.js";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -389,7 +389,10 @@ describe("egress roster: exactly the five known cover-letter egress surfaces exi
 // The binding: co-visibility on every tab. RED on HEAD for résumé and email.
 // ---------------------------------------------------------------------------
 describe("N61: the strip is co-visible wherever a cover-fact egress is reachable (AC-N61.21)", () => {
-  for (const scope of SCOPES) {
+  // The loop covers the scopes that actually RENDER in this (non-Ideal)
+  // fixture: hypothetical renders only in Ideal mode via visibleScopes (N105,
+  // ledger ruling R-N105-VIS) -- the next test pins that it is absent here.
+  for (const scope of LEGACY_SCOPES) {
     it(`from the ${scope} tab: a cover-fact egress is reachable, so the strip must be visible there`, async () => {
       await mount({ [JOB_ID]: entryBothDocs() });
       await openCoverPreview();
@@ -420,9 +423,22 @@ describe("N61: the strip is co-visible wherever a cover-fact egress is reachable
     // stayed green against an always-on strip would measure nothing.
     await mount({ [JOB_ID]: entryBothDocs() });
     await openCoverPreview();
-    for (const scope of SCOPES) {
+    for (const scope of LEGACY_SCOPES) {
       await switchToTab(TAB_LABEL[scope]);
       expect(stripVisible(document), `the strip is visible with no facts on the ${scope} tab -- hardwired on`).toBe(false);
     }
+  });
+
+  // N105 (AC-17, ledger ruling R-N105-VIS): `hypothetical` is in SCOPES but
+  // this fixture is an ordinary (level 1-5) run, so the preview must render
+  // exactly the three legacy tabs -- no hypothetical tab, enabled OR disabled
+  // "(none)". Reverting the dialog's tab list to raw SCOPES reds this.
+  it("N105: a non-Ideal preview renders exactly the three legacy tabs and NO hypothetical tab", async () => {
+    await mount({ [JOB_ID]: entryBothDocs() });
+    await openCoverPreview();
+    const labels = [...document.querySelectorAll('[role="tab"]')].map((t) => (t.textContent || "").trim());
+    expect(labels).toHaveLength(LEGACY_SCOPES.length);
+    expect(labels.filter((l) => /hypothetical/i.test(l))).toEqual([]);
+    expect(tabByLabel("Hypothetical")).toBeUndefined();
   });
 });

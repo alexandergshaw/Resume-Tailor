@@ -28,7 +28,7 @@ import { htmlToPlainText } from "@/lib/document/htmlToPlainText";
 import { writePlainText } from "@/lib/clipboard/plainText";
 import { changedScopes as changedScopesOf } from "@/lib/tailor/previewScopes";
 import { commitDraftSeed } from "@/lib/document/draftEditGuard";
-import { SCOPES, SCOPE_LABEL, DOCX_SCOPES, resolveActiveDocumentTitle } from "@/lib/tailor/documentScopes";
+import { SCOPES, LEGACY_SCOPES, SCOPE_LABEL, DOCX_SCOPES, resolveActiveDocumentTitle } from "@/lib/tailor/documentScopes";
 import { useIsMobile } from "../hooks/useResponsive";
 import pageSx from "./documentPreviewPageSx";
 import SpacingControl from "./SpacingControl";
@@ -73,6 +73,9 @@ export default function DocumentPreviewDialog({
   company = "",
   initialTab = "resume",
   scopes = {},
+  // N105 (D-10): the tab set to render. Defaults to the legacy three, NEVER
+  // SCOPES, so "hypothetical" shows only where the mount supplies it.
+  visibleScopes = LEGACY_SCOPES,
   engine = "",
   loadModel,
   reloadKey = 0,
@@ -282,7 +285,7 @@ export default function DocumentPreviewDialog({
       setFileNameDraft(scopes[startTab]?.fileName || "");
       setCombineError("");
       setHighlightOn({ resume: false, cover: false });
-      prevScopeSigRef.current = { resume: scopeSig("resume"), cover: scopeSig("cover"), email: scopeSig("email") };
+      prevScopeSigRef.current = Object.fromEntries(SCOPES.map((scope) => [scope, scopeSig(scope)]));
     }
   }
 
@@ -592,7 +595,7 @@ export default function DocumentPreviewDialog({
 
       <Box sx={{ px: { xs: 1, sm: 2 }, display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", borderBottom: "1px solid var(--border)" }}>
         <Tabs value={tab} onChange={(_e, v) => { commitDraft(); setTab(v); setMode("view"); }} sx={{ minHeight: 40, width: { xs: "100%", sm: "auto" } }}>
-          {SCOPES.map((scope) => (
+          {visibleScopes.map((scope) => (
             <Tab
               key={scope}
               value={scope}
