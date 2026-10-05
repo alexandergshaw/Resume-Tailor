@@ -448,3 +448,123 @@ describe("useManualTailor -- the duplicate-application check (onCheckDuplicate)"
     expect(result.ok).toBe(true);
   });
 });
+
+// N112 (N107 verify F1). This hook's "done" write is the FOURTH site that writes
+// the cover onto a tailoring entry; app/page.js's three handlers route theirs
+// through lib/tailor/idealDelivery.js (resolveIdealCoverEntryFields +
+// regeneratedEditedScopes) so an Ideal run -- which returns no cover letter --
+// keeps the cover the entry already has, and keeps its hand-edit flag with it.
+// Nothing feeds this hook an Ideal payload today (tailorPosting never sends a
+// tailorMode), so this is a latent trap rather than a live loss: the day an Ideal
+// run is wired into the manual/queued path, a bare write here would blank the
+// user's cover and clear its edit flag with no test red. page.idealGaps.wiring's
+// source-read join covers the three page.js handlers only; these drive the real
+// hook. The standard-run cases are over-fire controls: the non-Ideal write must
+// stay exactly what it was.
+describe("useManualTailor -- the cover write under an Ideal-shaped payload (N112)", () => {
+  // The entry as it stands before the run: a hand-edited cover letter with its
+  // own engine docx, and a hand-edited résumé.
+  const EXISTING_ENTRY = {
+    status: "tailoring",
+    coverLetterResultLines: ["My hand-edited cover"],
+    coverLetterDocxB64: "T0xELUNPVkVS",
+    result: "OLD RESUME",
+    resultLines: ["OLD RESUME"],
+    docxB64: "T0xELVJFU1VNRQ==",
+    edited: { resume: true, cover: true },
+  };
+  // Stand-in for app/page.js's withClearedEditedScopes: clears exactly the listed
+  // scopes' edited flag and leaves the rest alone.
+  const clearScopes = (entry, scopes) => ({
+    ...entry?.edited,
+    ...Object.fromEntries(scopes.map((scope) => [scope, false])),
+  });
+  // An Ideal run's /api/tailor body: an `ideal` block and NO cover letter.
+  const idealPayload = () =>
+    okPayload({
+      ideal: { bands: [] },
+      coverLetterResultLines: [],
+      coverLetterResult: "",
+      coverLetterDocxB64: "",
+    });
+
+  // Run the real hook against `payload`, then replay its "done" write onto
+  // EXISTING_ENTRY -- the updater is the function-form updateTailoringJob call
+  // (the "tailoring" write before it is a plain object).
+  async function runAndApplyDoneWrite(payload, opts) {
+    mockFetchOnce({ payload });
+    const withClearedEditedScopes = vi.fn(clearScopes);
+    const props = baseProps({ withClearedEditedScopes });
+    await mount(props);
+    await run({ overridePosting: "A posting", openPreview: false, ...opts });
+    const updater = props.updateTailoringJob.mock.calls.map((call) => call[1]).find((arg) => typeof arg === "function");
+    expect(updater, "the run never wrote a done entry").toBeTypeOf("function");
+    const next = updater(EXISTING_ENTRY);
+    expect(next.status, "the replayed write is not the done write").toBe("done");
+    return { next, scopes: withClearedEditedScopes.mock.calls[0][1] };
+  }
+
+  it("keeps the cover the entry already has, and its edited flag, on an Ideal run (both scopes)", async () => {
+    const { next, scopes } = await runAndApplyDoneWrite(idealPayload());
+    expect(next.coverLetterResultLines, "an Ideal run blanked the existing cover letter").toEqual(["My hand-edited cover"]);
+    expect(next.coverLetterDocxB64, "an Ideal run replaced the cover's engine docx").toBe("T0xELUNPVkVS");
+    expect(next.edited.cover, "an Ideal run cleared the cover's edited flag").toBe(true);
+    expect(scopes).toEqual(["resume"]);
+    // The résumé is still written: only the cover is preserved.
+    expect(next.resultLines).toEqual(["TAILORED RESUME TEXT"]);
+    expect(next.edited.resume).toBe(false);
+  });
+
+  it("keeps the cover on an Ideal run whose scope is the cover only (nothing is regenerated)", async () => {
+    const { next, scopes } = await runAndApplyDoneWrite(idealPayload(), { scope: "cover" });
+    expect(next.coverLetterResultLines).toEqual(["My hand-edited cover"]);
+    expect(next.coverLetterDocxB64).toBe("T0xELUNPVkVS");
+    expect(scopes).toEqual([]);
+    expect(next.edited).toEqual({ resume: true, cover: true });
+  });
+
+  it("CONTROL: a standard both-scope run still writes the fresh cover and clears both edited flags", async () => {
+    const { next, scopes } = await runAndApplyDoneWrite(
+      okPayload({ coverLetterResultLines: ["Fresh cover"], coverLetterDocxB64: "RlJFU0g=" }),
+    );
+    expect(next.coverLetterResultLines).toEqual(["Fresh cover"]);
+    expect(next.coverLetterDocxB64).toBe("RlJFU0g=");
+    expect(next.resultLines).toEqual(["TAILORED RESUME TEXT"]);
+    expect(scopes).toEqual(["resume", "cover"]);
+    expect(next.edited).toEqual({ resume: false, cover: false });
+  });
+
+  it("CONTROL: a standard résumé-only run leaves the cover and its flag alone", async () => {
+    const { next, scopes } = await runAndApplyDoneWrite(okPayload(), { scope: "resume" });
+    expect(next.coverLetterResultLines).toEqual(["My hand-edited cover"]);
+    expect(next.coverLetterDocxB64).toBe("T0xELUNPVkVS");
+    expect(scopes).toEqual(["resume"]);
+    expect(next.edited).toEqual({ resume: false, cover: true });
+  });
+
+  it("CONTROL: a standard cover-only run writes the cover and leaves the résumé alone", async () => {
+    const { next, scopes } = await runAndApplyDoneWrite(
+      okPayload({ coverLetterResultLines: ["Fresh cover"], coverLetterDocxB64: "RlJFU0g=" }),
+      { scope: "cover" },
+    );
+    expect(next.coverLetterResultLines).toEqual(["Fresh cover"]);
+    expect(next.resultLines).toEqual(["OLD RESUME"]);
+    expect(next.docxB64).toBe("T0xELVJFU1VNRQ==");
+    expect(scopes).toEqual(["cover"]);
+    expect(next.edited).toEqual({ resume: true, cover: false });
+  });
+
+  // `ideal` only marks an Ideal run when it is an object; a null, string or array
+  // there is a standard run and must keep writing its cover.
+  it.each([
+    ["null", null],
+    ["a string", "yes"],
+    ["an array", []],
+  ])("CONTROL: a payload whose `ideal` is %s is a standard run and still writes the fresh cover", async (_label, ideal) => {
+    const { next, scopes } = await runAndApplyDoneWrite(
+      okPayload({ ideal, coverLetterResultLines: ["Fresh cover"], coverLetterDocxB64: "RlJFU0g=" }),
+    );
+    expect(next.coverLetterResultLines).toEqual(["Fresh cover"]);
+    expect(scopes).toEqual(["resume", "cover"]);
+  });
+});

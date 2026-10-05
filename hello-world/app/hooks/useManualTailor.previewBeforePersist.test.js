@@ -158,11 +158,13 @@ function deferred() {
 // tailoringMap and updateTailoringJob, wired the way page.js wires them. The
 // rendered <button> is the reachable Generate control.
 // ---------------------------------------------------------------------------
+// Outer-scope capture of each hook's latest return, assigned by plain
+// reassignment (the sanctioned jsdom-probe pattern, see eslint.config.mjs's
+// react-hooks/globals note). Not `{ current }` objects: react-hooks/immutability
+// rejects writing a module-scoped object's `.current` from inside a component.
 let previewApi = null;
 let manualApi = null;
 let latestMap = null;
-const previewRef = { current: null };
-const manualRef = { current: null };
 let currentUserCfg = { id: "user-1" };
 let nextOpts = {};
 let downloadSpy = null;
@@ -195,7 +197,6 @@ function Harness() {
     currentUser: currentUserCfg,
   });
   previewApi = preview;
-  previewRef.current = preview;
 
   const manual = useManualTailor({
     resumeFile: RESUME,
@@ -213,14 +214,13 @@ function Harness() {
     startBackgroundResearch,
     // L4 success seam: reload version history for the freshly-persisted row.
     onGenerationPersisted: ({ jobId, positionId }) =>
-      previewRef.current.reloadVersionsForPosition?.(jobId, positionId),
+      previewApi.reloadVersionsForPosition?.(jobId, positionId),
     // L4 failure seam (the non-swallow): surface the persist failure on the
     // preview's error channel.
     onGenerationPersistError: ({ jobId, error }) =>
-      previewRef.current.notePersistFailure?.(jobId, error),
+      previewApi.notePersistFailure?.(jobId, error),
   });
   manualApi = manual;
-  manualRef.current = manual;
 
   return createElement(
     "button",
@@ -229,7 +229,7 @@ function Harness() {
       onClick: (e) => {
         // Exactly page.js's fire-and-forget: the click handler kicks off
         // tailorPosting and does not await it.
-        manualRef.current.tailorPosting(e, nextOpts);
+        manualApi.tailorPosting(e, nextOpts);
       },
     },
     "Generate",
@@ -273,8 +273,6 @@ beforeEach(() => {
   previewApi = null;
   manualApi = null;
   latestMap = null;
-  previewRef.current = null;
-  manualRef.current = null;
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -486,7 +484,7 @@ describe("L4/DS-4 -- the queued path (openPreview:false) keeps persistence inlin
     let resolved = false;
     let returnedVal = null;
     await act(async () => {
-      manualRef.current
+      manualApi
         .tailorPosting(null, { overridePosting: "A posting", syntheticJobId: "job-q", queued: true, openPreview: false })
         .then((v) => {
           resolved = true;

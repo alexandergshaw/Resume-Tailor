@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { buildTemplateLinesForUpload } from "../../lib/document/docx";
 import { promotedEditRules } from "../../lib/tailor/localSignals";
+import { resolveIdealCoverEntryFields, regeneratedEditedScopes } from "../../lib/tailor/idealDelivery";
 import { createClient } from "../../lib/supabase/client";
 import { upsertPosition } from "../../lib/supabase/upsertPosition";
 import { upsertApplication } from "../../lib/supabase/upsertApplication";
@@ -235,14 +236,20 @@ export function useManualTailor({
         generatedJobTitle: nextJobTitle,
         engine: nextEngine,
         // AC-3: clear only the scope(s) this run actually regenerated.
-        edited: withClearedEditedScopes(entry, [
-          ...(applyResume ? ["resume"] : []),
-          ...(applyCover ? ["cover"] : []),
-        ]),
+        // N112: the cover write and its edit flag go through the same
+        // lib/tailor/idealDelivery.js helpers as app/page.js's three handlers,
+        // so an Ideal payload (no cover letter) keeps the cover the entry
+        // already has; a standard run writes exactly what it always did.
+        edited: withClearedEditedScopes(entry, regeneratedEditedScopes({ payload, applyResume, applyCover })),
         emailSubject: nextEmailSubject,
         emailResultLines: nextEmailResultLines,
         ...(applyResume ? { result: nextResult, resultLines: nextResultLines, docxB64: nextDocxB64 } : {}),
-        ...(applyCover ? { coverLetterResultLines: nextCoverLetterResultLines, coverLetterDocxB64: nextCoverLetterDocxB64 } : {}),
+        ...resolveIdealCoverEntryFields({
+          payload,
+          applyCover,
+          coverLetterResultLines: nextCoverLetterResultLines,
+          coverLetterDocxB64: nextCoverLetterDocxB64,
+        }),
       }));
 
       // N73: warm company research now, ahead of the awaited persistence
