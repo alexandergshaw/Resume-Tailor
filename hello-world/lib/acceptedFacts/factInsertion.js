@@ -477,6 +477,23 @@ export function planAcceptForEntry(entry, { facts, coverRecord = [], forwardNudg
   return { cover, pristineCoverLines: replacePristineCoverLines(entry, cover) };
 }
 
+// N75: the one key `removeInsertedFact` writes to the retracted-fact log for a
+// located record. The per-fact `id`, NOT the source url -- the old
+// `record.url || record.id` gave two different facts citing the same page the
+// SAME key, so retracting one suppressed a legitimate re-add of the other,
+// collapsed two retractions into one entry, and an explicit re-accept of
+// either cleared both. A record with no id (a stored legacy row) falls back to
+// its url so its retraction is still recorded and still suppresses; a record
+// with neither yields "" (the caller writes nothing for it). The READ side
+// (`filterEligibleArticles` below) matches an article's id against this key,
+// and still matches its url too so a url-keyed entry written before N75 keeps
+// suppressing -- an old retraction is never silently reinstated.
+// @param {{id?: (string|null), url?: (string|null)}|null|undefined} record
+// @returns {string}
+export function removedFactKey(record) {
+  return record?.id || record?.url || "";
+}
+
 // N90 (moved from app/hooks/useCompanyResearch.js under the same file-size
 // contingency as coverFactStrategy above): tallies WHY each candidate
 // article was excluded from auto-insert eligibility, preserving the exact

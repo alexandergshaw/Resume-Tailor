@@ -233,12 +233,13 @@ describe("N90 FIX 1 control: removing a fact still records its url in the remove
 
     expect(putBodies.length, "removeInsertedFact sent no PUT").toBeGreaterThan(putsBefore);
     const put = lastPut();
-    // THE CONTROL: the removed url is now in the log.
+    // THE CONTROL: the removed fact's id (N75: the per-fact id, not its source
+    // url; `factId` above is the id the app minted for REAL_1) is now in the log.
     expect(
       put.declinedUrls || [],
-      "removeInsertedFact did NOT record the removed fact's url -- the removed log is the mechanism the fix relies on (N90 removal control)",
-    ).toContain(REAL_1.url);
-    expect(store.removed, "the store did not persist the removal").toContain(REAL_1.url);
+      "removeInsertedFact did NOT record the removed fact's id -- the removed log is the mechanism the fix relies on (N90 removal control)",
+    ).toContain(factId);
+    expect(store.removed, "the store did not persist the removal").toContain(factId);
     // The fact really left the letter (non-vacuity: the removal did something).
     expect(coverLines().join("\n"), "the fact was not actually removed from the letter").not.toContain(REAL_1.suggestion);
   });
@@ -248,8 +249,10 @@ describe("N90 FIX 1 control: removing a fact still records its url in the remove
 // N91 -- the id-keyed half of FIX 1's own un-decline (regression guard; GREEN
 // on HEAD, unlike the RED-on-HEAD defect pinned in acceptUndeclinesRemoved.rc.
 // test.js). `acceptFacts`'s `acceptedKeys` Set matches on BOTH url and id
-// (useCompanyResearch.js:447, `facts.flatMap((f) => [f?.url, f?.id])`),
-// mirroring `removedKey = record.url || record.id` at :680 -- but every N90
+// (useCompanyResearch.js, `facts.flatMap((f) => [f?.url, f?.id])`), matching
+// the id-first key `removedFactKey(record)` (`record.id || record.url`, N75)
+// that removeInsertedFact writes -- and the url half still clears a url-keyed
+// entry written before N75 -- but every N90
 // test drives url-based un-declining only, so a mutant dropping the `.id`
 // half of that Set survived all 11 N90 tests (N90.verify.r1.md finding 2/3).
 //

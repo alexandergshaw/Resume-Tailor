@@ -10,6 +10,7 @@ import {
   coverFactStrategy,
   filterEligibleArticles,
   relocateSurvivors,
+  removedFactKey,
 } from "../../lib/acceptedFacts/factInsertion";
 import { planMoveFact } from "../../lib/acceptedFacts/factMove";
 import { commitFactMove } from "../../lib/acceptedFacts/commitFactMove";
@@ -576,7 +577,7 @@ export function useCompanyResearch({
 
     const remainingFacts = relocateSurvivors(removal.lines, insertedFacts.filter((r) => r.id !== factId));
     const priorRemoved = acceptedFactsByJob[jobId]?.removed || [];
-    const removedKey = record.url || record.id || "";
+    const removedKey = removedFactKey(record);
     const removedLog = removedKey && !priorRemoved.includes(removedKey) ? [...priorRemoved, removedKey] : priorRemoved;
     const storedFacts = (acceptedFactsByJob[jobId]?.facts || []).filter((f) => f?.id !== factId);
 

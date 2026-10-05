@@ -261,8 +261,9 @@ describe("removal is reachable by render-and-click (AC-N61.14/.15/.18)", () => {
     const put = putBodies[putBodies.length - 1];
     // the removed fact is dropped from the stored set...
     expect(put.facts.map((f) => f.id)).not.toContain(FACT.id);
-    // ...its identity is recorded in the retracted log...
-    expect(put.declinedUrls, "the removed fact's identity was not recorded").toContain(FACT.url);
+    // ...its identity (the per-fact id; N75 -- the url is only the fallback for
+    // an id-less legacy row) is recorded in the retracted log...
+    expect(put.declinedUrls, "the removed fact's identity was not recorded").toContain(FACT.id);
     // ...and the saved cover version no longer carries the fact.
     expect(put.coverVersion, "removal must send a coverVersion or the store diverges").toBeTruthy();
     expect(JSON.stringify(put.coverVersion.lines)).not.toContain(FACT.text);
