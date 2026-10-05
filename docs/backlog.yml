@@ -1282,6 +1282,18 @@
   verify: null
   verify_proof: null
   blocked_by: []
+
+- id: "N111"
+  state: "actionable"
+  title: "**N105 Ideal go-live gap closure (N107 shipped the primary path LIVE at 9e66400; these are the secondary-path gaps the go-live implementer flagged).** (1) DATA LOSS (priority): a both-scope (resume+cover) Ideal chip REGENERATE blanks the session cover letter (UX-39) — must preserve the cover. (2) handleTailorFeedPosting still AUTO-DOWNLOADS an Ideal result and stores no payload.ideal — must use resolveIdealChipDelivery to OPEN the preview (not download) and store ideal so the review bands render. (3) handleUrlSubmit sends tailorMode but stores no payload.ideal — must store it so the URL preview shows bands. Safety holds on all paths (the submittable doc is gate-cleaned regardless of delivery); these are delivery/data-loss gaps, not fabrication risks. TDD in flight (affce90b)."
+  owed_by: "TDD -> implement -> verify (go-live completion). #1 is data-loss, do first."
+  evidence: ["N107 go-live implementer hand-back (a01b2da9) go-live gaps", "resolveIdealChipDelivery committed in lib/tailor/idealDelivery.js (reuse for feed path)"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
 - id: "D2"
   state: "owner"
   title: "**The transport claim is doc-verified, not wire-verified.**"
