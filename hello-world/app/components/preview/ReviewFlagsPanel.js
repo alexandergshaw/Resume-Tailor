@@ -3,6 +3,7 @@
 import { useId } from "react";
 import Box from "@mui/material/Box";
 import { BREAK_LONG_WORDS_SX } from "@/app/theme/mobileSx";
+import { CATEGORY } from "@/lib/review/contract";
 import {
   DRAFT_KIND,
   PANEL_COPY,
@@ -36,6 +37,16 @@ import CappedList, { LIST_RESET_SX } from "./CappedList";
 // band's clean-verdict sweep excludes it so a resume line that says "no issues"
 // cannot trip it. The reviewer's `message` is NOT quoted: it is the reviewer's own
 // sentence about the line, shown under the stable label.
+//
+// Two OPT-IN props (N104), both off by default so every existing surface renders
+// exactly what it did:
+//   documentLevelMissingKeyword  a missing-keyword flag is a statement about the
+//                                whole document that the reviewer anchors on its
+//                                first line; on, each such flag is its own row with
+//                                no quoted line ("From the posting: ..."), listed
+//                                before the line-level rows of its group
+//   classHints                   one sentence under the Confirm and Improve titles
+//                                saying what kind of finding the group holds
 
 const REQUIREMENT_SX = {
   m: 0,
@@ -113,28 +124,48 @@ function FlagRow({ row }) {
   );
 }
 
-function FlagGroup({ tier, rows }) {
+function FlagGroup({ tier, rows, hint }) {
   if (rows.length === 0) return null;
   return (
-    <Group title={tierTitle(tier)}>
+    <Group title={tierTitle(tier)} hint={hint}>
       <CappedList items={rows} renderItem={(row) => <FlagRow key={row.key} row={row} />} />
     </Group>
   );
+}
+
+// The rows of every flag. With `documentLevel`, each missing-keyword flag is given
+// no span (so it cannot merge with another row) and no line to quote, then its rows
+// are listed ahead of the line-level ones; the reviewer's own output is untouched.
+function rowsOf(flags, draftKind, documentLevel) {
+  if (!documentLevel) return groupFlagsBySpan(flags, draftKind);
+  const list = Array.isArray(flags) ? flags : [];
+  const isKeyword = (flag) => flag !== null && typeof flag === "object" && flag.category === CATEGORY.MISSING_KEYWORD;
+  const keywordRows = groupFlagsBySpan(
+    list.filter(isKeyword).map((flag) => ({ ...flag, spanId: null, excerpt: "" })),
+    draftKind,
+  ).map((row) => ({ ...row, key: `keyword-${row.key}` }));
+  return [...keywordRows, ...groupFlagsBySpan(list.filter((flag) => !isKeyword(flag)), draftKind)];
 }
 
 export default function ReviewFlagsPanel({
   flags = [],
   unresolvedQualifications = [],
   draftKind = DRAFT_KIND.APPLICATION_READY,
+  documentLevelMissingKeyword = false,
+  classHints = false,
 }) {
-  const rows = groupFlagsBySpan(flags, draftKind);
+  const rows = rowsOf(flags, draftKind, documentLevelMissingKeyword);
   const byTier = (tier) => rows.filter((row) => row.tier === tier);
   const unresolved = textRows(unresolvedQualifications);
   if (rows.length === 0 && unresolved.length === 0) return null;
 
   return (
     <Box>
-      <FlagGroup tier={TIER.CONFIRM} rows={byTier(TIER.CONFIRM)} />
+      <FlagGroup
+        tier={TIER.CONFIRM}
+        rows={byTier(TIER.CONFIRM)}
+        hint={classHints ? PANEL_COPY.confirmHint : undefined}
+      />
       {unresolved.length > 0 ? (
         <Group title={PANEL_COPY.unresolvedTitle} hint={PANEL_COPY.unresolvedHint}>
           <CappedList
@@ -149,7 +180,11 @@ export default function ReviewFlagsPanel({
           />
         </Group>
       ) : null}
-      <FlagGroup tier={TIER.IMPROVE} rows={byTier(TIER.IMPROVE)} />
+      <FlagGroup
+        tier={TIER.IMPROVE}
+        rows={byTier(TIER.IMPROVE)}
+        hint={classHints ? PANEL_COPY.improveHint : undefined}
+      />
       <FlagGroup tier={TIER.NOTE} rows={byTier(TIER.NOTE)} />
     </Box>
   );

@@ -135,7 +135,16 @@ async function runSchemaStage({ client, model, stage, prompt, schema, maxOutputT
  * are parameters only so a caller can pass a client built over a test server.
  */
 export async function runIdealChain(
-  { jobPosting, jobPostingUrl, resumeText, resumeFileName, templateLines, additionalContext, contextDocuments } = {},
+  {
+    jobPosting,
+    jobPostingUrl,
+    resumeText,
+    resumeFileName,
+    templateLines,
+    additionalContext,
+    contextDocuments,
+    weaknessSteering,
+  } = {},
   options = {},
 ) {
   const slots = Array.isArray(templateLines) ? templateLines.filter((line) => typeof line === "string") : [];
@@ -171,7 +180,9 @@ export async function runIdealChain(
   );
   const { jobTitle, companyName, postingAnalysis, keywordMap } = analysisResult;
   const analysis = { postingAnalysis, keywordMap };
-  const candidate = { resumeText, resumeFileName, additionalContext, contextDocuments };
+  // `weaknessSteering` (N104 regenerate) rides with the candidate into both draft
+  // prompts; the analysis prompt never sees it.
+  const candidate = { resumeText, resumeFileName, additionalContext, contextDocuments, weaknessSteering };
 
   const hypotheticalDraft = normalizeDraft(
     await runSchemaStage({

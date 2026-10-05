@@ -182,6 +182,47 @@ export const EXAMPLE_ROWS = {
   ],
 };
 
+// ---------------------------------------------------------------------------
+// N104 - the same pair, run through weakness summary -> regenerate -> re-review.
+//
+// THE FIRST PASS is EXAMPLE_CANDIDATE_LINES with ONE line under-weighted: the
+// checkout bullet is shortened so it no longer says "payments". The shortened line
+// is still supported by the resume (every fact in it is in the real line), so the
+// gate keeps it; the posting's first requirement asks for the checkout service that
+// processes card payments, and the resume DOES say that, so the reviewer reports
+// the keyword "Payments" as missing and the user's material supports it: a gap
+// rewording can close. EXAMPLE_CANDIDATE_LINES itself, which keeps the full
+// "processes card payments" wording, is the improved draft the regenerate's mock
+// engine returns, and it still carries every failable row above, so the run proves
+// the regenerate cannot admit them.
+//
+// THE GAPS (what each class is, on this pair, as the shipped reviewer reports it)
+//   mustClose      a posting keyword the resume supports, absent from the first pass
+//                  and present in the improved draft: the report must say it is gone
+//   mustLeaveOpen  requirements the reviewer finds nothing in the resume to support
+//                  (no Kubernetes or PCI; no mentoring in the words the reviewer
+//                  reads): they stay open and no line may close them
+//   mustConfirm    a finding only the user can verify (the 40% figure has no
+//                  baseline): reported, never a target
+//   mustNotFabricate  the six failable rows, shared with EXAMPLE_ROWS.mustDrop
+const CHECKOUT_UNDERWEIGHTED = "Built the checkout service for 2M customers";
+
+export const EXAMPLE_FIRST_PASS_LINES = EXAMPLE_CANDIDATE_LINES.map((line) =>
+  line === CHECKOUT ? CHECKOUT_UNDERWEIGHTED : line,
+);
+
+export const EXAMPLE_REGENERATE_ROWS = {
+  mustClose: [
+    { requirementText: "Build and operate the checkout service that processes card payments.", term: "Payments" },
+  ],
+  mustLeaveOpen: [
+    { requirementText: "Hands-on experience with payment processing, PCI compliance, and Kubernetes.", term: "Kubernetes" },
+    { requirementText: "Mentor junior engineers through their first production releases.", term: "Mentoring" },
+  ],
+  mustConfirm: [{ category: "unverifiable-metric", figure: "40%" }],
+  mustNotFabricate: EXAMPLE_ROWS.mustDrop,
+};
+
 // One requirement followed through the four stages.
 export const EXAMPLE_CHAIN_ITEM = {
   requirementText: "Reduce support load by improving the merchant onboarding flow.",

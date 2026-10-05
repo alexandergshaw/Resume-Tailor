@@ -13,6 +13,7 @@ import { buildTailorContextBlock } from "@/lib/experience/tailorContext";
 import { TAILOR_MODE_IDEAL } from "@/lib/tailor/tailorLevel";
 import { idealLevelEnabled, idealUnavailableRefusal } from "@/lib/tailor/idealDelivery";
 import { gateIdealRequest, runIdealBranch } from "@/app/api/tailor/idealBranch";
+import { readRegenerateFields } from "@/lib/tailor/regenerateRequest";
 
 export const runtime = "nodejs";
 // The Ideal level is an ATOMIC chain of up to four sequential model calls (a
@@ -432,6 +433,9 @@ export async function POST(request) {
           templateLines,
           additionalContext,
           contextDocuments: contextDocumentsWithProjectPages,
+          // A regenerate also names the run it improves on (N104); a first run
+          // sends neither field, so this adds nothing to its args.
+          ...readRegenerateFields(formData),
         },
         // The same budget notice the standard path gives when project pages were
         // left out of the model's context.

@@ -78,6 +78,51 @@ function candidateBlock({ resumeText, resumeFileName, additionalContext, context
   ];
 }
 
+// N104 - the regenerate's feedback channel. The terms a review found MISSING from
+// the previous draft, handed back as EMPHASIS and never as facts: the block sits in
+// the guidance region, before the candidate's material, and says in as many words
+// that it asserts nothing about the candidate. The application-ready draft is gated
+// downstream either way, so this only decides what the model leans toward.
+//
+//   weaknessSteering = { resolvable: [{ category, term }] }   resolvable bucket only
+//
+// The terms arrive from a request body, so each is held to what a skill or tool
+// name looks like (letters, digits, spaces, . + # / & ' -), at most 40 characters
+// and 4 words; anything else (a sentence, a quote, another symbol) is dropped rather
+// than quoted into the prompt, and any run of whitespace, line breaks included, is
+// collapsed to one space so a term is always a single line. No usable term, no
+// block: the prompt is then byte-for-byte what it was without steering.
+const STEERING_TERM_RE = /^[\p{L}\p{N}.#][\p{L}\p{N} .+#/&'-]{0,39}$/u;
+const STEERING_MAX_WORDS = 4;
+const STEERING_MAX_TERMS = 25;
+
+function steeringTerms(weaknessSteering) {
+  const seen = new Set();
+  const out = [];
+  for (const entry of Array.isArray(weaknessSteering?.resolvable) ? weaknessSteering.resolvable : []) {
+    const term = typeof entry?.term === "string" ? entry.term.replace(/\s+/g, " ").trim() : "";
+    if (!STEERING_TERM_RE.test(term) || term.split(" ").length > STEERING_MAX_WORDS) continue;
+    if (seen.has(term.toLowerCase())) continue;
+    seen.add(term.toLowerCase());
+    out.push(term);
+    if (out.length === STEERING_MAX_TERMS) break;
+  }
+  return out;
+}
+
+function steeringBlock(weaknessSteering) {
+  const terms = steeringTerms(weaknessSteering);
+  if (terms.length === 0) return [];
+  return [
+    "Emphasis from a review of the previous draft (guidance on wording only - NOT facts about the candidate):",
+    "The job posting names these terms and the previous draft never used them. Where the candidate's own",
+    "material below already supports one, use it in the wording of the line it fits. Do not add a term the",
+    "material does not support, and do not invent a number, employer, tool or claim to make room for one.",
+    ...terms.map((term) => `- ${term}`),
+    "",
+  ];
+}
+
 function layoutRules(slotCount) {
   return [
     "Layout rules:",
@@ -127,7 +172,16 @@ export function buildAnalysisPrompt({ postingText }) {
 }
 
 /** Stage 2: the best-case reference draft. NEVER submitted. */
-export function buildHypotheticalPrompt({ postingText, analysis, resumeText, resumeFileName, additionalContext, contextDocuments, templateLines }) {
+export function buildHypotheticalPrompt({
+  postingText,
+  analysis,
+  resumeText,
+  resumeFileName,
+  additionalContext,
+  contextDocuments,
+  templateLines,
+  weaknessSteering,
+}) {
   return [
     "You are an expert resume strategist. Write the HYPOTHETICAL IDEAL resume for the role below: the best-case",
     "resume of a candidate who has THIS candidate's real career chronology and fully satisfies the job posting.",
@@ -145,6 +199,7 @@ export function buildHypotheticalPrompt({ postingText, analysis, resumeText, res
     "",
     ...layoutRules(templateLines.length),
     "",
+    ...steeringBlock(weaknessSteering),
     postingBlock(postingText),
     "",
     analysisBlock(analysis),
@@ -166,6 +221,7 @@ export function buildApplicationReadyPrompt({
   additionalContext,
   contextDocuments,
   templateLines,
+  weaknessSteering,
 }) {
   return [
     "You are an expert resume editor. Produce the APPLICATION-READY version of this candidate's resume for the",
@@ -191,6 +247,7 @@ export function buildApplicationReadyPrompt({
     "",
     ...layoutRules(templateLines.length),
     "",
+    ...steeringBlock(weaknessSteering),
     postingBlock(postingText),
     "",
     analysisBlock(analysis),

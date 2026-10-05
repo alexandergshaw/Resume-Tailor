@@ -44,6 +44,7 @@ import {
   reconcileChronology,
 } from "@/lib/llm/ideal/idealChronology";
 import { stageError } from "@/lib/llm/ideal/idealStageResult";
+import { isValidPinnedAnalysis } from "@/lib/llm/ideal/pinnedAnalysis";
 import { groundToPosting } from "@/lib/llm/ideal/postingGrounding";
 import { decomposeToSpans, recomposeFromSpans } from "@/lib/llm/ideal/spanDocument";
 import { reviewDocuments } from "@/lib/review";
@@ -96,7 +97,7 @@ function anchorFor(entries, spanId, keptText) {
 }
 
 /**
- * runIdealPipeline({ engine, args, realMaterial })
+ * runIdealPipeline({ engine, args, realMaterial, pinnedAnalysis })
  *
  *   engine        a resolved engine with supportsIdeal === true and tailorIdeal()
  *   args          passed to engine.tailorIdeal verbatim; args.jobPosting (text) is
@@ -104,6 +105,12 @@ function anchorFor(entries, spanId, keptText) {
  *   realMaterial  { spans: [{ id, text, contextKey }],
  *                   chronology?: { employers: [{ name, start, end }],
  *                                  education?: [{ institution, degree?, start, end }] } }
+ *   pinnedAnalysis  optional { postingAnalysis, keywordMap } from an EARLIER run
+ *                 (N104 regenerate). When it passes isValidPinnedAnalysis the
+ *                 review scores against it and it is what `ideal.postingAnalysis`
+ *                 returns, so requirement ids are the earlier run's; the engine
+ *                 still writes a fresh document. Absent or invalid: today's
+ *                 grounding, unchanged.
  *
  * => { engine, result, resultLines, jobTitle, companyName,   // APPLICATION-READY (UX-42)
  *      ideal: { hypothetical, applicationReady,
@@ -115,7 +122,7 @@ function anchorFor(entries, spanId, keptText) {
  * Throws a stage error (never returns a partial) when the engine cannot run the
  * Ideal level or the chain returns something that is not a pair of documents.
  */
-export async function runIdealPipeline({ engine, args, realMaterial } = {}) {
+export async function runIdealPipeline({ engine, args, realMaterial, pinnedAnalysis } = {}) {
   if (!engine || engine.supportsIdeal !== true || typeof engine.tailorIdeal !== "function") {
     throw stageError("input", "unsupported-engine", "This engine cannot produce the Ideal level. Nothing was produced.");
   }
@@ -159,10 +166,13 @@ export async function runIdealPipeline({ engine, args, realMaterial } = {}) {
     ...chronology.removedEmployers.map((e) => ({ id: e.id, text: e.text, reason: GATE_REASON.NO_MATCH })),
   ].map((span) => ({ spanId: span.id, text: span.text, reasonCode: span.reason }));
 
-  const grounded = groundToPosting(
-    { postingAnalysis: chain.postingAnalysis, keywordMap: chain.keywordMap },
-    args?.jobPosting,
-  );
+  // The one place the requirement universe is fixed. A valid pin replaces the
+  // engine's own analysis (the gate above is upstream of this and is unaffected, so
+  // a pin cannot admit a claim); anything else grounds the engine's analysis as a
+  // first run does.
+  const grounded = isValidPinnedAnalysis(pinnedAnalysis)
+    ? { postingAnalysis: pinnedAnalysis.postingAnalysis, keywordMap: pinnedAnalysis.keywordMap ?? { entries: [] } }
+    : groundToPosting({ postingAnalysis: chain.postingAnalysis, keywordMap: chain.keywordMap }, args?.jobPosting);
 
   // The reviewer sees the lines that ship (the kept spans) for the application-
   // ready draft; reviewing the candidate would put flags on lines the file does

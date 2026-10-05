@@ -12,9 +12,15 @@
 //
 // The branch is selected by the distinct `tailorMode` field and nothing else; it
 // never reads `aggressiveness`, which stays clamped to 1..5 for every other run.
+//
+// A REGENERATE (N104) is this same request carrying the run it improves on; the
+// branch hands it to regenerateBranch.js instead of running the pipeline plainly,
+// and the response gains the closure report beside the usual body. A first run
+// carries neither and is unchanged.
 import { idealRefusalMessage } from "@/lib/tailor/tailorLevel";
 import { runIdealPipeline } from "@/lib/llm/ideal/idealPipeline";
 import { buildIdealRealMaterial } from "@/app/api/tailor/idealRealMaterial";
+import { runRegenerateRequest } from "@/app/api/tailor/regenerateBranch";
 
 // Ideal needs this engine; the refusal names it as the remedy.
 const IDEAL_ENGINE = "gemini";
@@ -94,8 +100,11 @@ function isIdealFailure(err) {
  */
 export async function runIdealBranch({ engine, args, warnings, scraped, postingMeta }) {
   let out;
+  let regeneration = null;
   try {
-    out = await runIdealPipeline({ engine, args, realMaterial: buildIdealRealMaterial(args.resumeText) });
+    const realMaterial = buildIdealRealMaterial(args.resumeText);
+    regeneration = await runRegenerateRequest({ engine, args, realMaterial });
+    out = regeneration ? regeneration.regenerated : await runIdealPipeline({ engine, args, realMaterial });
   } catch (err) {
     if (!isIdealFailure(err)) throw err;
     console.error("Error generating the Ideal resume pair:", err);
@@ -109,6 +118,13 @@ export async function runIdealBranch({ engine, args, warnings, scraped, postingM
     status: 200,
     body: {
       ...out,
+      ...(regeneration
+        ? {
+            closure: regeneration.closure,
+            confirm: regeneration.confirm,
+            genuinelyUnqualified: regeneration.genuinelyUnqualified,
+          }
+        : {}),
       // The chain returns no bytes for the application-ready resume (the client
       // fills the user's template from `resultLines`), and the candidate's own
       // bytes are never forwarded: they would carry the pre-gate text.

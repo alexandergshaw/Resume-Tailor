@@ -88,6 +88,12 @@ export const PANEL_COPY = Object.freeze({
   confirmTitle: "Confirm before you send",
   improveTitle: "Could be stronger",
   noteTitle: "Reviewer notes",
+  // N104 class hints: one sentence under a group title saying what KIND of finding
+  // the group holds. They describe the class, never a control, so they stay true on
+  // every engine; a surface shows them only when it opts in (ReviewFlagsPanel's
+  // `classHints`), so the other surfaces' panels read exactly as they did.
+  improveHint: "Rewording can address these.",
+  confirmHint: "Only you can check these - they depend on what is true of you.",
   unresolvedTitle: "Requirements your resume cannot meet by rewording",
   unresolvedHint: "Rewording cannot supply these - they need real experience or a different story.",
   removedHint:
