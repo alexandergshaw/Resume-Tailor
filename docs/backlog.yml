@@ -1294,6 +1294,18 @@
   verify: null
   verify_proof: null
   blocked_by: []
+
+- id: "N112"
+  state: "actionable"
+  title: "**N105 Ideal go-live LOW follow-ups (from N107 verify, GO-LIVE CONFIRMED b5be3ea).** (F1, latent) app/hooks/useManualTailor.js:238-245 is a FOURTH structurally-identical bare cover write (edited: withClearedEditedScopes(entry,[...applyResume,...applyCover]) + unconditional coverLetterResultLines/DocxB64) with NO Ideal guard and NO regression test — the exact data-loss shape N111 closed at the 3 page.js handlers. UNREACHABLE by Ideal today (tailorPosting never appends tailorMode; the hook isn't passed tailorMode), so NO live loss now. Trap: if Ideal is ever wired into the manual/queued path the data-loss returns silently and the 3-handler wiring test won't catch it. Fix (low value now): route this site through resolveIdealCoverEntryFields/regeneratedEditedScopes defensively, OR add a guard + a note in page.idealGaps.wiring.test.js documenting the manual-path exclusion. (OBS, owner-confirm) a feed Ideal run calls persistGeneratedDocuments before the preview-only early return, persisting the application-ready (safe) resume to the tracking DB (coverLetter null) — confirm an Ideal feed run SHOULD create/update a tracked application; not a defect."
+  owed_by: "A small defensive round + an owner runtime confirm"
+  evidence: ["docs/loop/N107.verify.r1.md F1 + OBS", "useManualTailor.js:238-245 bare cover write, no Ideal guard", "page.js:2557 persistGeneratedDocuments before feed preview-only return"]
+  blocked_reason: null
+  instrument: null
+  owns: null
+  verify: null
+  verify_proof: null
+  blocked_by: []
 - id: "D2"
   state: "owner"
   title: "**The transport claim is doc-verified, not wire-verified.**"
