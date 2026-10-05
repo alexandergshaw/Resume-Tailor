@@ -751,7 +751,12 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // presentFlag(...).tier), so it is no longer test-only.
     // N104 D/E: 385 -> 386 (+2, -1): regenerateSubmit.js#appendRegenerateFields and
     // #submitRegenerate, pinned by name by regenerateSubmit.test.js; only same-module callers.
-    expect(TEST_REFERENCED.length).toBe(386);
+    // N102: 386 -> 391 (+5): app/settings/answerAsMe.js#ANSWER_AS_ME_STORAGE_KEY,
+    // #DEFAULT_ANSWER_AS_ME, #normalizeAnswerAsMe, #subscribe, #setAnswerAsMe -- pinned by
+    // name by answerAsMe.test.js and used only inside their own module in production. The
+    // other two exports stay OUT of this bucket: readAnswerAsMe has a shipping consumer
+    // (lib/chat/chatbot.js) and useAnswerAsMe has one (app/components/ChatPanel.js).
+    expect(TEST_REFERENCED.length).toBe(391);
     // A classifier that swept everything into this bucket would make the
     // orphan ledger vacuous, so pin the split rather than only the total.
     expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(TEST_REFERENCED.length + ORPHANS.length);
@@ -888,7 +893,9 @@ describe("every export of a shipping module is asked for, or is on a ledger with
     // N104: 452 -> 451 (presentFlag gained a shipping consumer; the new N104
     // module exports are all wired, so net -1). TEST_REFERENCED 385 + ORPHANS 66.
     // N104 D/E: 451 -> 452 (TEST_REFERENCED's +1; ORPHAN_EXPORTS unmoved at 66).
-    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(452);
+    // N102: 452 -> 457 (TEST_REFERENCED's +5 from answerAsMe.js; ORPHAN_EXPORTS
+    // unmoved at 66 -- all five are test-referenced, none are new orphans).
+    expect(UNUSED_IN_SHIPPING_MODULES.length).toBe(457);
   });
 
   it("still reports the two symbol-level cases this sweep was built for", () => {

@@ -4,6 +4,7 @@
 // snapshot.
 
 import { readEngine } from "@/app/settings/engine";
+import { readAnswerAsMe } from "@/app/settings/answerAsMe";
 import { projectApplicationsForRequest } from "@/lib/chat/applicationContext";
 // Refusal message vocabulary (A2): the constants and selection functions
 // used below moved verbatim to lib/chat/refusal.js -- a self-contained block
@@ -622,6 +623,8 @@ export function createChatHandlers(deps) {
         section: activeSection,
         // Embedded engine answers from context offline; otherwise Gemini.
         engine: readEngine(),
+        // Voice only: always a boolean, present in both states.
+        answerAsMe: readAnswerAsMe(),
       };
       const requestBody = JSON.stringify(payload);
 

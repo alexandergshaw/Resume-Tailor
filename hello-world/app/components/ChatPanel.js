@@ -6,17 +6,22 @@ import Chip from "@mui/material/Chip";
 import Avatar from "@mui/material/Avatar";
 import IconButton from "@mui/material/IconButton";
 import CloseIcon from "@mui/icons-material/Close";
+import FormControlLabel from "@mui/material/FormControlLabel";
+import Switch from "@mui/material/Switch";
 import TextField from "@mui/material/TextField";
 import { useIsMobile } from "../hooks/useResponsive";
 import { useChatErrorAnnouncementSeq } from "../hooks/useChat";
 import { useEngine } from "../settings/engine";
+import { useAnswerAsMe } from "../settings/answerAsMe";
 import { useCopyFeedback } from "./preview/CopyFeedback";
 import DocumentReviewSection from "./preview/DocumentReviewSection";
 import { revokeAttachmentPreview } from "../../lib/chat/chatbot";
 import { requestSalaryEstimate } from "../../lib/chat/salaryEstimateRequest";
 import { formatSalary } from "../../lib/feed/salary";
 import { safeExternalHref } from "@/lib/url/safeExternalHref";
-import { TOUCH_ICON_SX } from "@/app/theme/mobileSx";
+import { TOUCH_ICON_SX, TOUCH_SWITCH_SX } from "@/app/theme/mobileSx";
+
+const ANSWER_AS_ME_NOTE_ID = "chat-answer-as-me-note";
 
 const EMBEDDED_TOOLTIP =
   "Embedded engine: replies are generated on-device from your pinned posting, resume, and applications — no AI, works offline. Switch to Gemini in the top bar for open-ended chat.";
@@ -62,6 +67,9 @@ export default function ChatPanel({
   // no-AI assistant, so surface that plainly in the header and empty state.
   const { engine } = useEngine();
   const isEmbedded = engine === "embedded";
+  // N102: the "answer as me" voice preference. Read from its own store (not a
+  // prop) exactly as the engine is, so no caller has to thread it through.
+  const { answerAsMe, setAnswerAsMe } = useAnswerAsMe();
   // AC-34: one number per announcement, used ONLY as a `key` on the error node
   // (never rendered). See app/hooks/useChat.js for the whole mechanism and for
   // why it is not a prop.
@@ -658,6 +666,35 @@ export default function ChatPanel({
             Drop files to attach as context…
           </Box>
         ) : null}
+        {/* N102: one switch, named by its own visible label (never a Tooltip,
+            which would steal the name). The embedded engine cannot draft in
+            the user's voice, so there it is disabled and its ON accent is
+            suppressed even when a stale ON value is stored -- generic
+            coaching prose must never read as the user's own draft. The
+            switch's own checked state is the announcement: no live region. */}
+        <Box sx={{ display: "flex", flexDirection: "column" }}>
+          <FormControlLabel
+            control={
+              <Switch
+                size="small"
+                checked={answerAsMe && !isEmbedded}
+                disabled={isEmbedded}
+                onChange={(e) => setAnswerAsMe(e.target.checked)}
+                sx={TOUCH_SWITCH_SX}
+                slotProps={{ input: isEmbedded ? { "aria-describedby": ANSWER_AS_ME_NOTE_ID } : undefined }}
+              />
+            }
+            label={<Box sx={{ fontSize: 12, color: "var(--text-secondary)" }}>Answer as me</Box>}
+            sx={{ m: 0 }}
+          />
+          {isEmbedded ? (
+            <Box id={ANSWER_AS_ME_NOTE_ID} sx={{ fontSize: 11, color: "var(--text-muted)" }}>
+              Answer as me applies to the AI engine. Switch to Gemini in the top bar.
+            </Box>
+          ) : answerAsMe ? (
+            <Box sx={{ fontSize: 11, color: "var(--text-muted)" }}>Replies are written in your voice.</Box>
+          ) : null}
+        </Box>
         <Box sx={{ display: "flex", gap: 0.75, alignItems: "flex-end" }}>
           <Button
             component="label"

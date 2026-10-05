@@ -35,6 +35,15 @@ const SYSTEM_PROMPT = [
   "If the user asks what a posting pays and the posting or pinned context does not state a salary, do not guess or invent a number — tell them to use the dedicated 'Estimate salary' feature in the Ask AI panel, which runs a grounded web search and cites its sources; only state a specific pay figure when the posting text, pinned context, or fetched URL content literally includes one.",
 ].join(" ");
 
+// N102: the "answer as me" voice. First-person voice and the no-fabrication
+// guard are ONE string on purpose: there is no code path that switches the
+// user's voice on without also carrying the clause that forbids inventing facts
+// about them, and removing either half reddens route.answerAsMe.test.js.
+const ANSWER_AS_ME_DIRECTIVE = [
+  "The user has turned on 'answer as me'. Write your reply in the FIRST PERSON AS THE USER: produce a message, answer, or response the user could send or say verbatim as themselves, not advice of the form 'you could say'. Do not address the user in the second person; speak as them.",
+  "Draft ONLY from facts given in this conversation and the user's provided documents (the pinned subject, their uploaded resume, attached files, and applications already in scope). NEVER invent experience, credentials, employers, job titles, dates, metrics, or any biographical fact about the user that was not provided. If a needed fact is missing, leave a clearly marked placeholder or ask for it; never fabricate it.",
+].join(" ");
+
 const MAX_RESUME_CHARS = 12000;
 const MAX_ATTACHED_FILES = 10;
 const MAX_ATTACHED_CHARS = 8000;
@@ -217,6 +226,9 @@ export async function POST(request) {
     const attachedFiles = Array.isArray(body?.attachedFiles) ? body.attachedFiles : [];
     const tab = typeof body?.tab === "string" ? body.tab : null;
     const section = typeof body?.section === "string" ? body.section : null;
+    // Strict: only the boolean true turns the persona on, so a malformed or
+    // truthy-string value from a direct caller resolves to today's voice.
+    const answerAsMe = body?.answerAsMe === true;
 
     if (messages.length === 0) {
       return Response.json({ error: "No messages provided." }, { status: 400 });
@@ -331,8 +343,9 @@ export async function POST(request) {
 
     // `config.systemInstruction` is now a CONSTANT -- see the module-level
     // comment above `wrapUntrustedContext` for why. It never varies with
-    // request content (AC-1).
-    const systemInstruction = SYSTEM_PROMPT;
+    // request content (AC-1). `answerAsMe` is a mode flag, not content: ON
+    // appends the bundled directive, OFF is the bare SYSTEM_PROMPT unchanged.
+    const systemInstruction = answerAsMe ? `${SYSTEM_PROMPT} ${ANSWER_AS_ME_DIRECTIVE}` : SYSTEM_PROMPT;
 
     // The five untrusted context channels, unchanged in how they are
     // rendered (buildContextBlock is untouched), relocated to the user turn
