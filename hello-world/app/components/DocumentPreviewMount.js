@@ -372,6 +372,15 @@ export default function DocumentPreviewMount({
   // imports lib/coverFacts/smoothTransition.js -- the seam's own module is
   // what makes AC-B8a's "unattended paths never import it" guard provable.
   const [pendingSmooth, setPendingSmooth] = useState(null);
+  // N94: a live mirror of `pendingSmooth`, written ONLY through `setPending`.
+  // handleSmooth awaits a network round-trip, so the `pendingSmooth` it closed
+  // over at click time can be stale by the time the produce resolves -- the
+  // candidate it must account for is whichever one is pending NOW.
+  const pendingSmoothRef = useRef(null);
+  function setPending(next) {
+    pendingSmoothRef.current = next;
+    setPendingSmooth(next);
+  }
   // N93 (AC-B6): the applied candidate for each fact that currently has a
   // reachable Undo affordance -- at most one per fact, `{[factId]: candidate}`.
   // Stashed here (not inside smoothTransition.js, which stays isomorphic and
@@ -468,14 +477,21 @@ export default function DocumentPreviewMount({
         records: entry.insertedFacts || [],
         id: factId,
       });
+      // N94: whatever is pending at this moment is about to be dropped -- replaced
+      // by this candidate, or cleared by a failed produce. It was never approved,
+      // so the log records it as the same "declined" decision Discard writes
+      // (a candidate Apply already consumed is no longer pending, so it is never
+      // double-recorded). Captured BEFORE the swap below.
+      const superseded = pendingSmoothRef.current;
       if (candidate.status === "proposed") {
-        setPendingSmooth({ factId, candidate });
+        setPending({ factId, candidate });
         announce({ polite: "Transition smoothed. Review before applying." });
       } else {
-        setPendingSmooth(null);
+        setPending(null);
         setRemoveError("Couldn't smooth that transition. Try again.");
         announce({ alert: "Couldn't smooth that transition. Try again.", persist: true });
       }
+      if (superseded) await declineSmoothTransition(superseded.candidate);
     } finally {
       setFactOpPending(null);
     }
@@ -483,22 +499,29 @@ export default function DocumentPreviewMount({
   async function handleApplySmooth(factId) {
     if (!pendingSmooth || pendingSmooth.factId !== factId) return;
     const { candidate } = pendingSmooth;
-    let applied = true;
+    let failureReason = "";
+    let confirmed = { ok: false };
     setApplyPending(true);
     announce({ polite: "Applying the smoothed version." });
     try {
-      await confirmSmoothTransition(candidate, {
+      // N94: the persist wrapper hands the hook's own { ok, reason } back to
+      // confirmSmoothTransition -- that is how the ledger learns a refused save
+      // and records "failed" rather than "acted". `confirmed.ok` is then the one
+      // answer to "did it land", also for a persist that threw.
+      confirmed = await confirmSmoothTransition(candidate, {
         persist: async (after) => {
           const result = await research.applySmoothedFact(insertedFactsJobId, after);
-          applied = !(result && result.ok === false);
-          setRemoveError(applied ? "" : result.reason || "Couldn't apply the smoothed version.");
+          if (result && result.ok === false) failureReason = result.reason || "";
+          return result;
         },
       });
     } finally {
       setApplyPending(false);
     }
+    const applied = confirmed.ok;
+    setRemoveError(applied ? "" : failureReason || "Couldn't apply the smoothed version.");
     announce(applied ? { polite: "Transition applied." } : { alert: "Couldn't apply the smoothed version.", persist: true });
-    setPendingSmooth(null);
+    setPending(null);
     // N93: only a genuinely persisted apply gets an Undo affordance -- a
     // failed persist left the letter unchanged, so there is nothing to undo.
     if (applied) setAppliedSmooth((m) => ({ ...m, [factId]: candidate }));
@@ -506,7 +529,7 @@ export default function DocumentPreviewMount({
   async function handleDiscardSmooth(factId) {
     if (!pendingSmooth || pendingSmooth.factId !== factId) return;
     await declineSmoothTransition(pendingSmooth.candidate);
-    setPendingSmooth(null);
+    setPending(null);
   }
   // N93 (AC-B6): reverts a CONFIRMED, stashed smoothing. Withdraws the
   // affordance FIRST (not after the persist resolves) so a second click

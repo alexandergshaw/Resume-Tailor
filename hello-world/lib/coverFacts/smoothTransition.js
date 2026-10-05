@@ -265,9 +265,31 @@ export async function requestSmoothTransition({ engine, lines, records, id, fetc
 // "acted". A no-op (never calls persist) on anything but a genuinely
 // "proposed" candidate -- an already-rejected/failed/declined one cannot be
 // confirmed into a write.
+//
+// N94: "acted" is recorded ONLY when the write actually landed. `persist` is
+// the caller's store write; it signals a refused save the way
+// app/hooks/useCompanyResearch.js's applySmoothedFact does, by RESOLVING
+// `{ ok:false, reason }` (a bare resolve, or `{ ok:true }`, is a landed write),
+// and an unexpected I/O error by THROWING. Either is recorded as the existing
+// "failed" outcome with the "save-failed" code the sibling fact-position entry
+// already uses for a failed save, returned as `{ ok:false }`, and never
+// rethrown -- the activity log must not claim a success the letter does not
+// carry, and the caller learns of the failure from the return value.
 export async function confirmSmoothTransition(candidate, { persist } = {}) {
   if (!candidate || candidate.status !== "proposed") return { ok: false };
-  if (typeof persist === "function") await persist(candidate.after);
+  let landed = true;
+  if (typeof persist === "function") {
+    try {
+      const result = await persist(candidate.after);
+      landed = !(result && result.ok === false);
+    } catch {
+      landed = false;
+    }
+  }
+  if (!landed) {
+    recordDecision("fact-smooth", "failed", { reason: "save-failed", code: "save-failed" });
+    return { ok: false };
+  }
   recordDecision("fact-smooth", "acted", { reason: "smoothed", code: "smoothed" });
   return { ok: true };
 }

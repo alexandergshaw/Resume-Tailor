@@ -12,6 +12,10 @@ import UndoIcon from "@mui/icons-material/Undo";
 import { safeExternalHref } from "@/lib/url/safeExternalHref";
 import CoverFactSmoothConfirm from "./CoverFactSmoothConfirm";
 
+const SMOOTH_DISABLED_NOTE_ID = "inserted-facts-smooth-note";
+// ChatPanel's ANSWER_AS_ME_NOTE wording for the same embedded-engine gate.
+const SMOOTH_DISABLED_NOTE = "Smoothing applies to the AI engine. Switch to Gemini in the top bar.";
+
 // N61 -- the cover letter's inserted-fact review strip: the owner's "I
 // should be able to remove any of the facts with a simple click." One row
 // per fact currently in the letter, each with its OWN one-click Remove
@@ -39,6 +43,14 @@ import CoverFactSmoothConfirm from "./CoverFactSmoothConfirm";
 // the caller passes `engine === "embedded"`. `pendingSmooth` is at most ONE
 // `{factId, candidate}` at a time (CONFIRM-BEFORE-PERSIST) -- its before/
 // after confirm surface renders directly under the fact row it belongs to.
+//
+// N94: a disabled Smooth control states WHY, the way ChatPanel's N102 "Answer
+// as me" switch does for the same embedded engine -- one visible note for the
+// strip (not one per row, not a hover-only title: a disabled MUI button takes
+// no pointer events, so a title on it would never show) and an
+// aria-describedby on each disabled Smooth control pointing at it. Never a
+// Tooltip, for the no-Tooltip reason above; the control's aria-label is
+// untouched.
 //
 // N93 (AC-B6): a post-apply "Undo" control per row, shown only once that
 // fact has an applied smoothing stashed by the caller (`smoothApplied`, a
@@ -78,6 +90,11 @@ export default function InsertedFactsStrip({
       <Box sx={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary)", mb: 0.5 }}>
         Added from research
       </Box>
+      {smoothDisabled ? (
+        <Box id={SMOOTH_DISABLED_NOTE_ID} sx={{ fontSize: "0.7rem", color: "var(--text-muted)", mb: 0.5 }}>
+          {SMOOTH_DISABLED_NOTE}
+        </Box>
+      ) : null}
       {error ? (
         <Box role="alert" sx={{ fontSize: "0.8rem", color: "var(--danger)", mb: 0.5 }}>
           {error}
@@ -119,6 +136,7 @@ export default function InsertedFactsStrip({
               <IconButton
                 size="small"
                 aria-label="Smooth the transition into this fact"
+                aria-describedby={smoothDisabled ? SMOOTH_DISABLED_NOTE_ID : undefined}
                 disabled={busy || smoothDisabled}
                 onClick={() => onSmooth?.(fact.id)}
                 sx={{ p: 0.25 }}
